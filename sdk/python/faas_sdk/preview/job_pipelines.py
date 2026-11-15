@@ -23,6 +23,15 @@ from ..job_runtime import (
     _scope as _job_scope,
 )
 from ..workflows import RetryPolicy, WorkflowContext, WorkflowDefinition
+from .pipeline_gates import (
+    GateKind,
+    PipelineGateError,
+    PipelineGateOptions,
+    PipelineGateOutcome,
+    PipelineGateStore,
+    pipeline_gate_intent,
+    run_pipeline_gate,
+)
 from .pipeline_state import (
     PipelineError,
     PipelineJobReceipt,
@@ -44,7 +53,7 @@ async def _scope(timeout: float, work: Callable[[Callable[[], None]], Awaitable[
     async def safe(check: Callable[[], None]) -> T:
         try:
             return await work(check)
-        except PipelineError:
+        except (PipelineError, PipelineGateError):
             raise
         except Exception:
             check()
@@ -109,11 +118,15 @@ class JobPipelineOptions:
 
 
 class JobPipelineContext:
-    def __init__(self, pipeline: JobPipeline[Any, Any], workflow: WorkflowContext, owner_id: str):
+    def __init__(
+        self, pipeline: JobPipeline[Any, Any], workflow: WorkflowContext, owner_id: str, input_sha256: str | None = None
+    ):
         self._pipeline, self._wf, self.owner_id = pipeline, workflow, owner_id
         self.run_id = workflow.run_id
         self._used: set[str] = set()
-        self._operations = self._journal_bytes = 0
+        self._operations = self._journal_bytes = self._pending_gates = 0
+        self._blocked = False
+        self._input_sha256 = input_sha256
 
     def _claim(self) -> None:
         self._operations += 1
@@ -125,9 +138,65 @@ class JobPipelineContext:
         if self._journal_bytes > self._pipeline.options.max_journal_bytes:
             raise PipelineError("journal_limit")
 
+    def _can_submit(self) -> None:
+        if self._pending_gates or self._blocked:
+            raise PipelineGateError("blocked")
+
+    async def approval(
+        self, name: str, contract: JobContract[I, O], review: I, *, options: PipelineGateOptions
+    ) -> PipelineGateOutcome[O]:
+        return await self._gate("approval", name, contract, review, options)
+
+    async def wait_for_input(
+        self, name: str, contract: JobContract[I, O], review: I, *, options: PipelineGateOptions
+    ) -> PipelineGateOutcome[O]:
+        return await self._gate("input", name, contract, review, options)
+
+    async def _gate(
+        self, kind: GateKind, name: str, contract: JobContract[I, O], review: I, options: PipelineGateOptions
+    ) -> PipelineGateOutcome[O]:
+        p = self._pipeline
+        if p.gate_store is None or name in self._used:
+            raise PipelineGateError("invalid_input")
+        self._used.add(name)
+        self._pending_gates += 1
+        try:
+            milliseconds = options.timeout * 1000
+            if (
+                type(options.timeout) not in (int, float)
+                or not 0 < milliseconds <= 86400000
+                or milliseconds != int(milliseconds)
+            ):
+                raise PipelineGateError("invalid_input")
+            intent = pipeline_gate_intent(
+                kind=kind,
+                name=name,
+                scope=p.scope.to_dict(),
+                workflow_run_id=self.run_id,
+                owner_id=self.owner_id,
+                pipeline_sha256=p.contract.sha256,
+                input_sha256=self._input_sha256,
+                contract_sha256=contract.sha256,
+                review=contract.input(review),
+                required_roles=options.required_roles,
+                timeout_ms=int(milliseconds),
+            )
+            outcome = await run_pipeline_gate(
+                self._wf, p.gate_store, intent, contract, p.options.request_timeout, self._claim, self._budget
+            )
+            if outcome.state not in ("approved", "submitted"):
+                self._blocked = True
+            return outcome
+        except BaseException:
+            self._blocked = True
+            raise
+        finally:
+            self._pending_gates -= 1
+
     async def job(
         self, step: str, inputs: Sequence[JobInput[I]], *, definition: PipelineJob[I, O]
     ) -> PipelineJobResult[O]:
+        self._can_submit()
         p, wf, settings = self._pipeline, self._wf, self._pipeline.options
         if step not in p.jobs or p.jobs[step] is not definition or step in self._used:
             raise PipelineError("invalid_input", step)
@@ -208,6 +277,7 @@ class JobPipelineContext:
                         raise PipelineError("receipt_conflict", step)
                     check()
                     try:
+                        self._can_submit()
                         accepted = await definition.job.submit(
                             list(captured),
                             options=JobSubmitOptions(
@@ -229,7 +299,7 @@ class JobPipelineContext:
                             {"intent": intent, "checkpoint": checkpoint.to_dict()}
                         ):
                             raise PipelineError("receipt_conflict", step)
-                    except PipelineError:
+                    except (PipelineError, PipelineGateError):
                         raise
                     except Exception:
                         check()  # uncertain acceptance stays in the durable intent
@@ -327,10 +397,12 @@ class JobPipeline(Generic[PI, PO]):
         jobs: Mapping[str, PipelineJob[Any, Any]],
         run: Callable[[PI, JobPipelineContext], Awaitable[PO]],
         options: JobPipelineOptions | None = None,
+        gate_store: PipelineGateStore | None = None,
     ):
         self.contract, self.scope, self.store = contract, scope, store
+        self.gate_store = gate_store
         self.jobs, self.options = dict(jobs), options or JobPipelineOptions()
-        if not self.jobs or any(not pipeline_name(k) for k in self.jobs):
+        if not self.jobs and gate_store is None or any(not pipeline_name(k) for k in self.jobs):
             raise PipelineError("invalid_input")
 
         async def entry(envelope: Any, wf: WorkflowContext) -> dict[str, Any]:
@@ -343,8 +415,10 @@ class JobPipeline(Generic[PI, PO]):
             ):
                 raise PipelineError("scope_mismatch")
             value = contract.input(envelope["input"])
-            context = JobPipelineContext(self, wf, envelope["owner_id"])
+            context = JobPipelineContext(self, wf, envelope["owner_id"], job_value_hash(envelope | {"input": value}))
             output = contract.output(await run(value, context))
+            if context._pending_gates:
+                raise PipelineGateError("pending")
             context._budget(output)
             return {
                 "version": 1,

@@ -4907,3 +4907,13 @@ be continued; attach-by-ID reconnects for reading. Cancelling orchestration leav
 accepted Jobs running until separately cancelled. See
 [usage, limits and recovery](../../docs/sdk-job-pipelines.md) and the
 [three-stage CSV example](../../examples/sdk-csv-jobs/README.md#durable-three-stage-pipeline-preview).
+
+## Approval gates and external input (preview)
+
+Durable typed pipelines can pause for a generated review/reply contract using
+`approval` or `waitForInput` (Python: `wait_for_input`). The application-owned
+PostgreSQL ledger binds exact reviewed inputs, checks current user roles,
+expires decisions using database time, and recovers uncertain native event
+delivery. Existing pipelines remain unchanged until a gate store is configured.
+See [usage, authentication and recovery](../../docs/sdk-pipeline-gates.md) and
+the [reviewed CSV import](../../examples/sdk-csv-jobs/README.md#reviewed-import-preview).

@@ -55,6 +55,13 @@ class LiveJobFailure:
 
 
 @dataclass(frozen=True, kw_only=True)
+class LiveJobWaiting:
+    kind: Literal["approval", "input"]
+    gate_id: str
+    name: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class LiveJobSnapshot:
     version: Literal[1]
     resource_id: str
@@ -67,6 +74,7 @@ class LiveJobSnapshot:
     running: int
     report: Literal["none", "pending", "ready", "unavailable"]
     failures: tuple[LiveJobFailure, ...]
+    waiting: LiveJobWaiting | None = None
 
     @classmethod
     def from_dict(cls, value: Any, resource_id: str) -> LiveJobSnapshot:
@@ -107,7 +115,23 @@ class LiveJobSnapshot:
             or any(not isinstance(f, dict) or not _id(f.get("input_id")) or not _id(f.get("code")) for f in failures)
         ):
             raise LiveJobError("invalid_snapshot")
+        waiting = v.get("waiting")
+        if "waiting" in v and waiting is None:
+            raise LiveJobError("invalid_snapshot")
+        if waiting is not None and (
+            not isinstance(waiting, dict)
+            or waiting.get("kind") not in ("approval", "input")
+            or not isinstance(waiting.get("gate_id"), str)
+            or re.fullmatch(r"[a-f0-9]{64}", waiting["gate_id"]) is None
+            or not isinstance(waiting.get("name"), str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}", waiting["name"]) is None
+            or v["status"] not in ("running", "queued")
+        ):
+            raise LiveJobError("invalid_snapshot")
         return cls(
+            waiting=None
+            if waiting is None
+            else LiveJobWaiting(kind=waiting["kind"], gate_id=waiting["gate_id"], name=waiting["name"]),
             version=1,
             resource_id=resource_id,
             run_id=v["run_id"],
@@ -124,6 +148,8 @@ class LiveJobSnapshot:
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["failures"] = list(value["failures"])
+        if self.waiting is None:
+            value.pop("waiting")
         return value
 
     @property

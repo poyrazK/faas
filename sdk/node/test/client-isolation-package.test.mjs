@@ -320,7 +320,14 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     declare const pipelineStore: import('@gregale/sdk-node/preview').PipelineJobStore;
     declare const pipelineScope: import('@gregale/sdk-node/preview').PipelineScope;
     const {defineJobPipeline,createJobPipelineClient}=await import('@gregale/sdk-node/preview');
-    const jobPipeline=defineJobPipeline(jobContract,{scope:pipelineScope,store:pipelineStore,jobs:{work:{contract:jobContract,job:client.jobs.defineJob(jobContract)}}},async(input,wf)=>{
+    declare const gateStore: import('@gregale/sdk-node/preview').PipelineGateStore;
+    type GateView = import('@gregale/sdk-node/preview/browser').PipelineGateView<string,number>;
+    const jobPipeline=defineJobPipeline(jobContract,{scope:pipelineScope,store:pipelineStore,gateStore,jobs:{work:{contract:jobContract,job:client.jobs.defineJob(jobContract)}}},async(input,wf)=>{
+      const approval = await wf.approval('review',jobContract,input,{timeoutMs:60000,requiredRoles:['reviewer']});
+      if(approval.state==='approved'){ const typed:number=approval.payload;void typed; }
+      // @ts-expect-error review must match its generated contract
+      await wf.approval('bad',jobContract,42,{timeoutMs:60000,requiredRoles:['reviewer']});
+      const reply:Promise<import('@gregale/sdk-node/preview').PipelineGateOutcome<number>>=wf.waitForInput('input',jobContract,input,{timeoutMs:60000,requiredRoles:['reviewer']});void reply;
       const result=await wf.job('work',[{id:'one',value:input}]);
       const number:number=result.results[0]!.result;
       // @ts-expect-error registered stages remain checked
@@ -332,6 +339,8 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     const pipelineClient=createJobPipelineClient({baseURL:'https://api.test',token:'backend',scope:pipelineScope,ownerId:'alice',contract:jobContract});
     const pipelineRun=await pipelineClient.start('input',{timeoutMs:1000,idempotencyKey:'one'});
     const pipelineOutput:Promise<number>=pipelineRun.result({timeoutMs:1000});void pipelineOutput;void jobPipeline;
+    // @ts-expect-error approval services remain preview-only
+    type PublicGate=import('@gregale/sdk-node').PipelineGateStore;
     // @ts-expect-error job pipelines remain preview-only
     type PublicJobPipeline=import('@gregale/sdk-node').JobPipeline;
     // @ts-expect-error live jobs remain preview-only

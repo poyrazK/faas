@@ -138,6 +138,10 @@ async def main() -> None:
             jobs={"validate": validate, "import": importer, "report": report},
             run=run,
         )
+        if os.environ.get("GREGALE_REVIEWED_PIPELINE") == "1":
+            from reviewed_pipeline import reviewed_csv_pipeline
+            from faas_sdk.preview import PostgresPipelineGateStore
+            pipeline = reviewed_csv_pipeline(scope=scope, store=PostgresPipelineJobStore(query), gate_store=PostgresPipelineGateStore(query), validate=validate, importer=importer, report=report)
         if os.environ.get("GREGALE_PIPELINE_BARRIER"):
             async with await psycopg.AsyncConnection.connect(
                 os.environ["DATABASE_URL"], autocommit=True, row_factory=dict_row

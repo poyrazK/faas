@@ -3839,3 +3839,13 @@ consuming task to stop local requests. Native orchestration cancellation leaves
 accepted Jobs running. Attach-by-ID does not continue failed native code
 workflows. See [usage and recovery](../../docs/sdk-job-pipelines.md) and the
 [CSV pipeline](../../examples/sdk-csv-jobs/README.md#durable-three-stage-pipeline-preview).
+
+## Approval gates and external input (preview)
+
+Durable typed pipelines can pause for a generated review/reply contract using
+`approval` or `waitForInput` (Python: `wait_for_input`). The application-owned
+PostgreSQL ledger binds exact reviewed inputs, checks current user roles,
+expires decisions using database time, and recovers uncertain native event
+delivery. Existing pipelines remain unchanged until a gate store is configured.
+See [usage, authentication and recovery](../../docs/sdk-pipeline-gates.md) and
+the [reviewed CSV import](../../examples/sdk-csv-jobs/README.md#reviewed-import-preview).

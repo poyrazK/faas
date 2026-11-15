@@ -20,7 +20,7 @@ try{
     }return result;
   };
   const scope=JSON.parse(process.env.GREGALE_PIPELINE_SCOPE),store=sdk.postgresPipelineJobStore(query),jobStore=await files.jobStore({timeoutMs:10000});
-  const {pipeline}=await csvPipeline({sdk,client,scope,store,jobStore});
+  const {pipeline}=await csvPipeline({sdk,client,scope,store,jobStore,reviewed:process.env.GREGALE_REVIEWED_PIPELINE==='1',gateStore:sdk.postgresPipelineGateStore(query)});
   // Wait for both module imports before starting the SDK's operation deadline.
   if(process.env.GREGALE_PIPELINE_BARRIER){
     await pool.query("INSERT INTO sdk_pipeline_barrier VALUES ('node-ready') ON CONFLICT DO NOTHING");

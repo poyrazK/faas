@@ -309,3 +309,65 @@ files, live readiness, account/user isolation and cancellation. Workflow timers,
 scheduling and storage are local protocol fixtures; deployed acceptance remains
 separate. Regenerate each `*-generated.ts` / `*_generated.py` with the existing
 job type generator when changing the corresponding `*-contract.json`.
+
+## Reviewed import (preview)
+
+Set `GREGALE_REVIEWED_PIPELINE=1` to use the separate `csv-reviewed-pipeline`
+contract. It runs validation, pauses to review the exact source descriptor and
+validated row inputs, and imports/reports only after approval. Rejection,
+expiry, and cancellation return a typed business outcome with no import writes.
+The original `csv-pipeline` and file-upload examples keep their existing behavior.
+`reviewed_pipeline.py` and `pipeline.mjs` define the same typed workflow.
+Generate review/root types with the existing `job-types` commands, using
+`review-contract.json` and `reviewed-pipeline-contract.json` respectively.
+
+Apply the existing job/pipeline schemas and
+[`sdk/request-contracts/pipeline-gates.sql`](../../sdk/request-contracts/pipeline-gates.sql)
+as explicit application migrations. The API refuses to start without the table.
+Use the same primary and acknowledged autocommit connections for every adapter.
+
+Configure `GREGALE_REVIEW_USERS` with demo application identities, for example:
+
+```json
+{"alice":{"token":"YOUR_ALICE_APP_TOKEN","owner_id":"alice","roles":["reviewer"]},"bob":{"token":"YOUR_BOB_APP_TOKEN","owner_id":"bob","roles":["reviewer"]}}
+```
+
+These are application tokens. Keep `FAAS_TOKEN` on the backend. Replace this
+static demo identity map with your real session/membership lookup in production;
+identity, owner and roles must never come from the decision request body.
+Set `GREGALE_REVIEW_REALTIME` to your private managed endpoint configuration:
+`{"url":"wss://YOUR_ENDPOINT","endpointId":"YOUR_ENDPOINT_ID"}`.
+Start `pipeline-api.mjs` with the same database, bucket, scope and backend token
+as the existing pipeline example. Serve the native workflow entry at
+`/csv-reviewed-pipeline`; it retains the SDK's gateway source checks.
+
+Start the reviewed pipeline with the existing authenticated application SDK
+flow, then visit `/?run=WORKFLOW_RUN_ID` on the API server. Enter Alice's app
+token, attach, inspect source digest/rows/expiry, and approve or reject with a
+note. Bob cannot attach to Alice's run. A successful import enables the verified
+report download. Changing credentials clears the review and report immediately.
+The browser uses private realtime tickets and the existing live snapshot bridge.
+Its tokens and reviewed rows are not saved to local storage.
+
+The server runs a bounded pending-delivery recovery pass every second, including
+when no browser is attached. The ledger survives server/driver restarts. Open
+and resolution steps are native journal steps; decision events only wake them.
+An uncertain event acknowledgment preserves the decision for recovery using the
+same native key. Keep root run checkpoints and gate rows for your audit period.
+Reviews/replies are bounded at 16 KiB, so this demo is for small CSV imports;
+large imports should review a verified immutable plan artifact and its digest.
+
+Run the local acceptance fixtures (PostgreSQL and Chrome paths use the same
+`GREGALE_LOCAL_*` settings as the original example):
+
+```sh
+npm --prefix sdk/node run build
+node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+They exercise both original/reviewed modes, alternating Node/Python drivers and
+workers, dropped journals, a lost event ACK, two-user isolation, browser approval
+and report download, concurrent opposing Node/Python decisions, database expiry
+and parent cancellation. See [SDK gate semantics](../../docs/sdk-pipeline-gates.md)
+for backend authorization, recovery and native workflow limitations. The native
+control plane and realtime transport in this test are local protocol fixtures.

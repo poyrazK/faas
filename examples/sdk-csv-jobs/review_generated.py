@@ -1,0 +1,12 @@
+# Generated from a Gregale job contract.
+# ruff: noqa: F401
+import json
+from typing import Literal, NotRequired, TypeAlias, TypedDict
+from faas_sdk.job_runtime import JobContract
+Input_source_scope = TypedDict("Input_source_scope", {"base_url": str, "app_slug": str, "bucket": str})
+Input_source = TypedDict("Input_source", {"version": Literal[1], "scope": Input_source_scope, "owner_id": str, "key": str, "version_id": NotRequired[str], "size_bytes": int, "sha256": str})
+Input_rows_item_value = TypedDict("Input_rows_item_value", {"row": int, "email": str, "fail_once": NotRequired[bool]})
+Input_rows_item = TypedDict("Input_rows_item", {"id": str, "value": Input_rows_item_value})
+Input = TypedDict("Input", {"source": Input_source, "rows": list[Input_rows_item]})
+Output = TypedDict("Output", {"reason": str})
+contract: JobContract[Input, Output] = JobContract(json.loads("{\"version\":1,\"name\":\"csv-review\",\"input\":{\"type\":\"object\",\"properties\":{\"source\":{\"type\":\"object\",\"properties\":{\"version\":{\"type\":\"integer\",\"enum\":[1]},\"scope\":{\"type\":\"object\",\"properties\":{\"base_url\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":1024},\"app_slug\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":63},\"bucket\":{\"type\":\"string\",\"minLength\":36,\"maxLength\":36}},\"required\":[\"base_url\",\"app_slug\",\"bucket\"],\"additionalProperties\":false},\"owner_id\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64},\"key\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":1024},\"version_id\":{\"type\":\"string\",\"minLength\":36,\"maxLength\":36},\"size_bytes\":{\"type\":\"integer\",\"minimum\":0},\"sha256\":{\"type\":\"string\",\"minLength\":64,\"maxLength\":64}},\"required\":[\"version\",\"scope\",\"owner_id\",\"key\",\"size_bytes\",\"sha256\"],\"additionalProperties\":false},\"rows\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":1000,\"items\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":128},\"value\":{\"type\":\"object\",\"properties\":{\"row\":{\"type\":\"integer\",\"minimum\":0},\"email\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":10000},\"fail_once\":{\"type\":\"boolean\"}},\"required\":[\"row\",\"email\"],\"additionalProperties\":false}},\"required\":[\"id\",\"value\"],\"additionalProperties\":false}}},\"required\":[\"source\",\"rows\"],\"additionalProperties\":false},\"output\":{\"type\":\"object\",\"properties\":{\"reason\":{\"type\":\"string\",\"maxLength\":256}},\"required\":[\"reason\"],\"additionalProperties\":false}}"))

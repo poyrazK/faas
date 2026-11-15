@@ -4,6 +4,7 @@
  */
 export type LiveJobStatus = 'awaiting_storage_event' | 'submission_unresolved' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'dead_letter';
 export interface LiveJobSnapshot {
+  readonly waiting?: { readonly kind: 'approval' | 'input'; readonly gate_id: string; readonly name: string };
   readonly version: 1;
   readonly resource_id: string;
   readonly run_id: string | null;
@@ -79,7 +80,9 @@ export function parseLiveJobSnapshot(value: unknown, resourceId: string): LiveJo
     if (!id(f.input_id) || !id(f.code)) throw new LiveJobError('invalid_snapshot');
     return Object.freeze({ input_id: f.input_id, code: f.code });
   });
-  return Object.freeze({ version: 1, resource_id: resourceId, run_id: v.run_id as string | null, status: v.status as LiveJobStatus,
+  const waiting = v.waiting as LiveJobSnapshot['waiting'];
+  if (waiting !== undefined && (!waiting || !['approval', 'input'].includes(waiting.kind) || !/^[a-f0-9]{64}$/.test(waiting.gate_id) || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/.test(waiting.name) || !['running', 'queued'].includes(v.status as string))) throw new LiveJobError('invalid_snapshot');
+  return Object.freeze({ ...(waiting ? { waiting: Object.freeze({ kind: waiting.kind, gate_id: waiting.gate_id, name: waiting.name }) } : {}), version: 1, resource_id: resourceId, run_id: v.run_id as string | null, status: v.status as LiveJobStatus,
     total: v.total as number, succeeded: v.succeeded as number, failed: v.failed as number, cancelled: v.cancelled as number,
     running: v.running as number, report: v.report as LiveJobSnapshot['report'], failures: Object.freeze(failures) });
 }

@@ -11,9 +11,10 @@ elsewhere its calls answer 404 no such API route.
 
 # ruff: noqa: F401
 from .pipeline_state import PipelineFailure, pipeline_failure, PIPELINE_JOB_SCHEMA, PipelineError, PipelineJobReceipt, PipelineJobStore, PipelineScope, PostgresPipelineJobStore, pipeline_job_identity, read_pipeline_artifact
+from .pipeline_gates import PIPELINE_GATE_SCHEMA, NativePipelineGateTransport, PipelineGateActor, PipelineGateError, PipelineGateOptions, PipelineGateOutcome, PipelineGateRecord, PipelineGateService, PipelineGateStore, PipelineGateTransport, PipelineGateView, PostgresPipelineGateStore, pipeline_gate_intent
 from .job_pipelines import JobPipeline, JobPipelineContext, JobPipelineOptions, PipelineItem, PipelineJob, PipelineJobResult
 from .job_pipeline_client import job_pipeline_live_snapshot, JobPipelineClient, PipelineCheckpoint, PipelineInspection, PipelineStepInspection, TypedPipelineRun
-from .live_jobs import LiveJob, LiveJobError, LiveJobFailure, LiveJobSink, LiveJobSnapshot, LiveJobSource, LiveJobStatus, realtime_live_job_source
+from .live_jobs import LiveJobWaiting, LiveJob, LiveJobError, LiveJobFailure, LiveJobSink, LiveJobSnapshot, LiveJobSource, LiveJobStatus, realtime_live_job_source
 from .file_pipelines import FILE_PIPELINE_SCHEMA, FileCreatedEvent, FileDelivery, FilePipeline, FilePipelineError, FilePipelineInput, FilePipelineIntent, FilePipelineOptions, FilePipelineOutcome, FilePipelineOwner, FilePipelineReceipt, FilePipelineScope, FilePipelineStore, NativeFileVerifier, PostgresFilePipelineStore, file_event_invocation_id, file_pipeline_identity, parse_file_created_event
 from .files import BytesFileSource, FileBucket, FileCheckpoint, FileCode, FileError, FileMetadata, FileObject, FileOptions, FilePage, FilePart, FileProgress, FileSource, FileUploadResult, PathFileSource, file_source_digest
 from .. import (
@@ -640,6 +641,7 @@ from .realtime_workers import (
 )
 
 __all__ = (
+    'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
     'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',
     'LiveJob', 'LiveJobError', 'LiveJobFailure', 'LiveJobSink', 'LiveJobSnapshot', 'LiveJobSource', 'LiveJobStatus', 'realtime_live_job_source',
     'FILE_PIPELINE_SCHEMA', 'FileCreatedEvent', 'FileDelivery', 'FilePipeline', 'FilePipelineError', 'FilePipelineInput', 'FilePipelineIntent', 'FilePipelineOptions', 'FilePipelineOutcome', 'FilePipelineOwner', 'FilePipelineReceipt', 'FilePipelineScope', 'FilePipelineStore', 'NativeFileVerifier', 'PostgresFilePipelineStore', 'file_event_invocation_id', 'file_pipeline_identity', 'parse_file_created_event',
