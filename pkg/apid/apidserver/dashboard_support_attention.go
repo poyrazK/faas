@@ -212,7 +212,7 @@ func (s *server) attentionDismissWrite(id int64, outcome, note string) accountHa
 }
 
 // dismissAttention dismisses an open signal with an outcome, for the staff
-// page and the operator console (ADR-20261115120000).
+// page and the operator console (ADR-20261115183907).
 func (s *server) dismissAttention(ctx context.Context, id int64, staffID, outcome, note string) *api.Problem {
 	signal, err := s.attention.Get(ctx, id)
 	if err == nil {
@@ -245,7 +245,7 @@ func (s *server) attentionContactWrite(signal api.ObsAttentionSignal, form *Supp
 }
 
 // contactAttention opens the support ticket, then links it to the signal,
-// for the staff page and the operator console (ADR-20261115120000). A retry
+// for the staff page and the operator console (ADR-20261115183907). A retry
 // with the same idempotency key replays the ticket and links it again, so a
 // failure between the two steps heals on resubmit.
 func (s *server) contactAttention(ctx context.Context, signal api.ObsAttentionSignal, staffID, key string, in api.ObsAttentionContactRequest) (string, *api.Problem) {

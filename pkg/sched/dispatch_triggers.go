@@ -926,7 +926,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	}
 	stopRenewing()
 	// A queue batch whose gateway answer does not parse retries like a
-	// failed post (ADR-20261113180000, R7-2): the fault is the platform's,
+	// failed post (ADR-20261115183906, R7-2): the fault is the platform's,
 	// and dead-lettering every message in the batch as a poison record spent
 	// none of their attempts on their own handling.
 	if _, isQueue := poller.(*queuePoller); postErr == nil && isQueue && !agentTarget && exclusiveBinding == nil {
@@ -1574,7 +1574,7 @@ func (l *Loop) queueTriggerAppHeld(ctx context.Context, appID string) bool {
 }
 
 // refreshHeldQueueMessages keeps a held push queue's messages within their
-// retention while the hold lasts (ADR-20261113180000, R5-5): skipping the
+// retention while the hold lasts (ADR-20261115183906, R5-5): skipping the
 // queue spent no attempts, but its messages expired as queue_message_expired
 // once the hold outlasted the plan's retention.
 func (l *Loop) refreshHeldQueueMessages(ctx context.Context, t sqlc.Trigger) {

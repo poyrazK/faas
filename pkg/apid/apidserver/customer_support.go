@@ -115,7 +115,7 @@ func (s *server) registerSupportStaffRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/engineering/publish", write("engineering_publish"))
 	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/redactions/preview", write("redaction_preview"))
 	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/redactions/apply", write("redaction_apply"))
-	// ADR-20261115120000: the ticket's account panel for the operator console.
+	// ADR-20261115183907: the ticket's account panel for the operator console.
 	mux.HandleFunc("GET /v1/admin/support/tickets/{ticket}/customer", s.authLimited(s.requireSessionPrincipal(s.supportTicketCustomer)))
 }
 

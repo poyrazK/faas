@@ -115,7 +115,7 @@ func testQueueSuspendedOwnerMessagesDoNotExpire(t *testing.T, store state.Store)
 	if err := store.UpdateAccountStatus(ctx, p.account.ID, state.AccountActive); err != nil {
 		t.Fatal(err)
 	}
-	// adr: 20261113180000 (R5-3) — the hold restarted the wait, so the
+	// adr: 20261115183906 (R5-3) — the hold restarted the wait, so the
 	// reactivated owner's message is not expired by the next sweep.
 	if _, err := expiry.ExpirePendingQueueMessages(ctx, time.Now().Add(26*time.Hour), 100); err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestMemQueueReplayClearsDeadLetterHorizon(t *testing.T) {
 	testQueueReplayClearsDeadLetterHorizon(t, state.NewMemStore())
 }
 
-// adr: 20261113180000 (R6-1, R8-2) — a replay kept the dead letter's
+// adr: 20261115183906 (R6-1, R8-2) — a replay kept the dead letter's
 // retention horizon and outcome code: the reaper deleted the replayed
 // message as soon as it settled again, and a later success reported the old
 // expiry.
@@ -165,7 +165,7 @@ func TestMemQueueHeldPushMessagesKeepRetention(t *testing.T) {
 	testQueueHeldPushMessagesKeepRetention(t, state.NewMemStore())
 }
 
-// adr: 20261113180000 (R5-5) — a push queue skipped for a spend cap or a
+// adr: 20261115183906 (R5-5) — a push queue skipped for a spend cap or a
 // compute budget hold spent no attempts, but its messages expired once the
 // hold outlasted the retention. A refresh restarts the wait of messages that
 // have waited the given age, and only theirs.
@@ -193,7 +193,7 @@ func TestMemQueueBindingRecreateUnderNewQueueName(t *testing.T) {
 	testQueueBindingRecreateUnderNewQueueName(t, state.NewMemStore())
 }
 
-// adr: 20261113180000 (R5-2) — a retired binding revived only when the
+// adr: 20261115183906 (R5-2) — a retired binding revived only when the
 // create repeated its old queue name too; re-created under a new queue name
 // it was refused and its held messages stranded. The name alone revives it
 // now, and the held messages drain under the new queue name.
