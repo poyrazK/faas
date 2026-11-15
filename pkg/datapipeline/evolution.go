@@ -56,6 +56,9 @@ func evolutionPlan(p Pipeline, r api.DataPipelineEvolutionRequest) (*api.DataPip
 	if p.State != "live" && !repairAuth && !repairRelationship {
 		return nil, ErrConflict
 	}
+	if snapshotMode(p) && r.Kind == "projection" {
+		return nil, ErrInvalid
+	}
 	after := normalizeServing(p.Serving)
 	if after == nil {
 		after = &api.DataPipelineServing{}

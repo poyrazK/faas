@@ -126,6 +126,8 @@ func (h *Handler) applyDashboardAction(r *http.Request, account string) (string,
 	ctx := r.Context()
 	id := r.FormValue("connection_id")
 	switch r.FormValue("action") {
+	case "operations":
+		return h.manageDashboardOperations(r, account)
 	case "evolution_preview", "evolution_approve", "evolution_discard", "evolution_retry":
 		return h.manageDashboardEvolution(r, account)
 	case "freshness", "indexes":
@@ -158,7 +160,7 @@ func (h *Handler) applyDashboardAction(r *http.Request, account string) (string,
 		if err != nil {
 			return "", datapipeline.ErrInvalid
 		}
-		selection := api.RequestDataConnectionCheck{ExpectedRevision: revision, DatabaseID: r.FormValue("database_id"), Search: r.FormValue("search")}
+		selection := api.RequestDataConnectionCheck{Mode: r.FormValue("source_mode"), ExpectedRevision: revision, DatabaseID: r.FormValue("database_id"), Search: r.FormValue("search")}
 		if names := strings.TrimSpace(r.FormValue("discovery_tables")); names != "" {
 			selection.Tables = strings.Split(names, ",")
 			for i := range selection.Tables {
@@ -168,6 +170,10 @@ func (h *Handler) applyDashboardAction(r *http.Request, account string) (string,
 		_, err = h.Service.RequestCheck(ctx, account, id, selection)
 		return id, err
 	case "create":
+		operations, err := dashboardSnapshotConfig(r)
+		if err != nil {
+			return "", err
+		}
 		serving, err := dashboardServing(r)
 		if err != nil {
 			return "", err
@@ -179,7 +185,7 @@ func (h *Handler) applyDashboardAction(r *http.Request, account string) (string,
 		for i := range subjects {
 			subjects[i] = strings.TrimSpace(subjects[i])
 		}
-		_, err = h.Service.Create(ctx, account, api.CreateDataPipelineRequest{Serving: serving, Name: r.FormValue("name"), SourceConnectionID: id, DatabaseID: r.FormValue("database_id"), Tables: r.Form["tables"], ReadSubjects: subjects})
+		_, err = h.Service.Create(ctx, account, api.CreateDataPipelineRequest{Operations: operations, Serving: serving, Name: r.FormValue("name"), SourceConnectionID: id, DatabaseID: r.FormValue("database_id"), Tables: r.Form["tables"], ReadSubjects: subjects})
 		return id, err
 	case "control":
 		if r.FormValue("control") == "delete" && r.FormValue("confirm_delete") != "yes" {

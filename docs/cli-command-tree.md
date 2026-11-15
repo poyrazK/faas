@@ -473,6 +473,7 @@ touch them. The tables below map each earlier name.
 | `gregale pipeline indexes` | `gregale pipeline index approve` |
 | `gregale pipeline indexes` | `gregale pipeline index check` |
 | `gregale pipeline indexes` | `gregale pipeline index review` |
+| `gregale pipeline operations` | `gregale pipeline work update` |
 | `gregale platform-tenants activation` | `gregale api tenant activation get` |
 | `gregale platform-tenants activation` | `gregale api tenant activation wait` |
 | `gregale platform-tenants billing-policy-delete` | `gregale api tenant billing-policy delete` |

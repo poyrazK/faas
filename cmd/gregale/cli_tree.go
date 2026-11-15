@@ -212,6 +212,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"pipeline index review", "pipeline indexes"},
 	{"pipeline access review", "pipeline access"},
 	{"pipeline evolution review", "pipeline evolve"},
+	{"pipeline work update", "pipeline operations"},
 	{"pipeline", "pipeline"},
 	{"data-api", "data-api"},
 	{"ai", "ai"},

@@ -142,7 +142,7 @@ func (s *PostgresStore) RequestTables(ctx context.Context, account, id string, r
 	if err != nil {
 		return err
 	}
-	if p.Serving != nil && len(p.Serving.Columns) > 0 {
+	if snapshotMode(p) || p.Serving != nil && len(p.Serving.Columns) > 0 {
 		return ErrConflict
 	}
 	if revision < 1 || len(added) == 0 {

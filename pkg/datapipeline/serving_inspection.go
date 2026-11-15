@@ -106,7 +106,7 @@ func ValidateServingSelection(check api.DataConnectionCheck, tables []string, se
 }
 
 func inspectPipelineTable(ctx context.Context, p Pipeline, source sourceMetadata, name string) (relation, api.DataSourceTable, error) {
-	r, table, err := inspectSourceTable(ctx, source, name)
+	r, table, err := inspectSourceTableMode(ctx, source, name, snapshotMode(p))
 	if err != nil || p.Serving == nil {
 		return r, table, err
 	}
