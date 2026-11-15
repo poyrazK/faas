@@ -303,8 +303,10 @@ func (s *Store) BuildRunner(ctx context.Context, buildID string) (secretd.BuildR
 	return secretd.BuildRun{
 		AppID:     uuid.UUID(row.AppID.Bytes).String(),
 		Running:   row.Status == "running",
-		StartedAt: row.StartedAt.Time,
-		Node:      row.BuilderNodeName,
+		StartedAt:     row.StartedAt.Time,
+		Node:          row.BuilderNodeName,
+		ScopeRecorded: row.ScopeRecorded,
+		Scope:         row.BuildRegistryScope,
 	}, nil
 }
 

@@ -29,6 +29,17 @@ const (
 	ReasonOtherApp = "other_app"
 	// ReasonEnvelope: an envelope or stored value did not open.
 	ReasonEnvelope = "envelope"
+	// ReasonOutOfScope: a build asked for a registry repository its
+	// deployment's Dockerfiles do not name, or its deployment recorded none
+	// (slice 3j-4, enforce mode).
+	ReasonOutOfScope = "out_of_scope"
+)
+
+// Build registry scope results (faas_secretd_build_registry_scope_total).
+const (
+	scopeInScope    = "in_scope"
+	scopeOutOfScope = "out_of_scope"
+	scopeUnrecorded = "unrecorded"
 )
 
 // RPC names (faas_secretd_*_total{rpc}).
@@ -55,8 +66,9 @@ var (
 
 // Metrics counts secretd's answers. A nil *Metrics counts nothing.
 type Metrics struct {
-	opens    *prometheus.CounterVec
-	refusals *prometheus.CounterVec
+	opens      *prometheus.CounterVec
+	refusals   *prometheus.CounterVec
+	buildScope *prometheus.CounterVec
 }
 
 // NewMetrics registers secretd's counters on reg.
@@ -71,10 +83,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		}, []string{"rpc", "via"}),
 		refusals: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "faas_secretd_refusals_total",
-			Help: "Requests secretd refused, by RPC and reason (unauthenticated, unknown_node, not_authorized, budget_exhausted, unreferenced, wrong_account, other_app, envelope).",
+			Help: "Requests secretd refused, by RPC and reason (unauthenticated, unknown_node, not_authorized, budget_exhausted, unreferenced, wrong_account, other_app, envelope, out_of_scope).",
 		}, []string{"rpc", "reason"}),
+		buildScope: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "faas_secretd_build_registry_scope_total",
+			Help: "Build manifest pulls checked against the deployment's recorded registry scope (slice 3j-4), by result (in_scope, out_of_scope, unrecorded), in observe and enforce mode.",
+		}, []string{"result"}),
 	}
-	for _, c := range []prometheus.Collector{m.opens, m.refusals} {
+	for _, c := range []prometheus.Collector{m.opens, m.refusals, m.buildScope} {
 		if err := reg.Register(c); err != nil {
 			return nil, err
 		}
@@ -83,11 +99,20 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	// refusal instead of a series appearing at 1.
 	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader, rpcOpenTriggerConfig, rpcOpenEdgeHeaderSecret, rpcRegistryFetch, rpcVerifyPostgresCutover} {
 		for _, reason := range []string{ReasonUnauthenticated, ReasonUnknownNode, ReasonNotAuthorized,
-			ReasonBudgetExhausted, ReasonUnreferenced, ReasonWrongAccount, ReasonOtherApp, ReasonEnvelope} {
+			ReasonBudgetExhausted, ReasonUnreferenced, ReasonWrongAccount, ReasonOtherApp, ReasonEnvelope, ReasonOutOfScope} {
 			m.refusals.WithLabelValues(rpc, reason)
 		}
 	}
+	for _, result := range []string{scopeInScope, scopeOutOfScope, scopeUnrecorded} {
+		m.buildScope.WithLabelValues(result)
+	}
 	return m, nil
+}
+
+func (m *Metrics) scope(result string) {
+	if m != nil {
+		m.buildScope.WithLabelValues(result).Inc()
+	}
 }
 
 func (m *Metrics) open(rpc, via string) {
