@@ -24,7 +24,13 @@ func RemovableTables(p Pipeline) []string {
 	if p.VerificationProgress != nil && slices.Contains([]string{"running", "waiting"}, p.VerificationProgress.State) {
 		return nil
 	}
-	return slices.Clone(p.Tables)
+	tables := slices.Clone(p.Tables)
+	if p.Serving != nil {
+		tables = slices.DeleteFunc(tables, func(table string) bool {
+			return slices.ContainsFunc(p.Serving.Relationships, func(r api.DataPipelineRelationship) bool { return r.SourceTable == table || r.TargetTable == table })
+		})
+	}
+	return tables
 }
 
 func (s *Service) TableRemoval(ctx context.Context, account, id string, revision int64, table, approval string) error {

@@ -14,9 +14,11 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.data_pipeline_capacity import DataPipelineCapacity
+    from ..models.data_pipeline_evolution import DataPipelineEvolution
     from ..models.data_pipeline_freshness import DataPipelineFreshness
     from ..models.data_pipeline_health import DataPipelineHealth
     from ..models.data_pipeline_index_advice import DataPipelineIndexAdvice
+    from ..models.data_pipeline_schema_review import DataPipelineSchemaReview
     from ..models.data_pipeline_serving import DataPipelineServing
     from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
     from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
@@ -46,6 +48,12 @@ class DataPipeline:
     tables_ready: int
     verification: DataPipelineVerification
     created_at: datetime.datetime
+    schema_review: DataPipelineSchemaReview | Unset = UNSET
+    """Worker-generated exact source-definition review with column and table metadata only. Its ID binds the
+    generation, recorded baseline and requested source schema."""
+    evolution: DataPipelineEvolution | Unset = UNSET
+    """Frozen account and generation-bound serving preview. Approved indicates owner intent; applied requires
+    worker verification and any required API cache refresh."""
     freshness_target_seconds: int | Unset = UNSET
     """Current owner-configured checkpoint confirmation target; zero means disabled and enabled targets range from
     15 to 86400 seconds."""
@@ -58,9 +66,9 @@ class DataPipeline:
     owned indexes per pipeline, with a two-second deadline and 250 ms lock timeout. Failures roll back and require a
     fresh preview."""
     serving: DataPipelineServing | Unset = UNSET
-    """Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit
-    columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims
-    grant nothing. At least columns or tenant_access is required. A missing version defaults to 1 at creation."""
+    """Versioned serving contract affecting publication, mirror schema and recovery. Creation accepts version 1;
+    approved evolution installs version 2. Omit columns for all-column replication. Tenant claims grant no
+    memberships. Column expansion requires source-definition approval, backfill, verification and API refresh."""
     tenant_change: DataPipelineTenantChange | Unset = UNSET
     """Frozen membership preview. Approval applies this exact after set atomically at the mirror before catalog
     acknowledgement."""
@@ -111,6 +119,14 @@ class DataPipeline:
         verification: str = self.verification
 
         created_at = self.created_at.isoformat()
+
+        schema_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.schema_review, Unset):
+            schema_review = self.schema_review.to_dict()
+
+        evolution: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.evolution, Unset):
+            evolution = self.evolution.to_dict()
 
         freshness_target_seconds = self.freshness_target_seconds
 
@@ -179,6 +195,10 @@ class DataPipeline:
                 "created_at": created_at,
             }
         )
+        if schema_review is not UNSET:
+            field_dict["schema_review"] = schema_review
+        if evolution is not UNSET:
+            field_dict["evolution"] = evolution
         if freshness_target_seconds is not UNSET:
             field_dict["freshness_target_seconds"] = freshness_target_seconds
         if freshness is not UNSET:
@@ -211,9 +231,11 @@ class DataPipeline:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.data_pipeline_capacity import DataPipelineCapacity
+        from ..models.data_pipeline_evolution import DataPipelineEvolution
         from ..models.data_pipeline_freshness import DataPipelineFreshness
         from ..models.data_pipeline_health import DataPipelineHealth
         from ..models.data_pipeline_index_advice import DataPipelineIndexAdvice
+        from ..models.data_pipeline_schema_review import DataPipelineSchemaReview
         from ..models.data_pipeline_serving import DataPipelineServing
         from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
         from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
@@ -248,6 +270,20 @@ class DataPipeline:
         verification = check_data_pipeline_verification(d.pop("verification"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _schema_review = d.pop("schema_review", UNSET)
+        schema_review: DataPipelineSchemaReview | Unset
+        if isinstance(_schema_review, Unset):
+            schema_review = UNSET
+        else:
+            schema_review = DataPipelineSchemaReview.from_dict(_schema_review)
+
+        _evolution = d.pop("evolution", UNSET)
+        evolution: DataPipelineEvolution | Unset
+        if isinstance(_evolution, Unset):
+            evolution = UNSET
+        else:
+            evolution = DataPipelineEvolution.from_dict(_evolution)
 
         freshness_target_seconds = d.pop("freshness_target_seconds", UNSET)
 
@@ -341,6 +377,8 @@ class DataPipeline:
             tables_ready=tables_ready,
             verification=verification,
             created_at=created_at,
+            schema_review=schema_review,
+            evolution=evolution,
             freshness_target_seconds=freshness_target_seconds,
             freshness=freshness,
             index_advice=index_advice,

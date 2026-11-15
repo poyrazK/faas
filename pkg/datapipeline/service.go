@@ -10,20 +10,22 @@ import (
 )
 
 type Service struct {
-	PlanDataAPI        func(context.Context, string, SetupRequest) (DataAPIPlan, error)
-	PrepareDataAPI     func(context.Context, Setup) (string, bool, error)
-	DeployDataAPI      func(context.Context, Setup) (string, string, error)
-	DataAPIState       func(context.Context, Setup) (string, string, error)
-	PlanExistingMirror func(context.Context, string, string) (MirrorPlan, error)
-	PlanMirror         func(context.Context, string, string) (MirrorPlan, error)
-	EnsureMirror       func(context.Context, Setup) error
-	MirrorState        func(context.Context, string, string) (string, error)
-	Store              Store
-	Recipient          *age.X25519Recipient
-	Allowed            func(context.Context, string) bool
-	CanCreate          func(context.Context, string) bool
-	ValidateTarget     func(context.Context, string, string) error
-	CapacityStatus     func(context.Context, string, string) (*api.DataPipelineCapacity, error)
+	AuthMemberships          func(context.Context, Pipeline) (AuthMembershipSnapshot, error)
+	ResolveAuthOrganizations func(context.Context, string, string, api.DataPipelineAuthOrganizations) (*api.DataPipelineAuthOrganizations, error)
+	PlanDataAPI              func(context.Context, string, SetupRequest) (DataAPIPlan, error)
+	PrepareDataAPI           func(context.Context, Setup) (string, bool, error)
+	DeployDataAPI            func(context.Context, Setup) (string, string, error)
+	DataAPIState             func(context.Context, Setup) (string, string, error)
+	PlanExistingMirror       func(context.Context, string, string) (MirrorPlan, error)
+	PlanMirror               func(context.Context, string, string) (MirrorPlan, error)
+	EnsureMirror             func(context.Context, Setup) error
+	MirrorState              func(context.Context, string, string) (string, error)
+	Store                    Store
+	Recipient                *age.X25519Recipient
+	Allowed                  func(context.Context, string) bool
+	CanCreate                func(context.Context, string) bool
+	ValidateTarget           func(context.Context, string, string) error
+	CapacityStatus           func(context.Context, string, string) (*api.DataPipelineCapacity, error)
 }
 
 func (s *Service) Available(ctx context.Context, account string) bool {
