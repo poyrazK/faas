@@ -1338,10 +1338,19 @@ func runBuildOnce(m api.BuildManifest) error {
 		"--oci-worker-snapshotter", buildkitSnapshotter(m),
 		"--oci-worker-net", "host",
 	}
+	// ADR-20261110210000 slice 3j-3: vmmd may serve this build its app's
+	// private registries as loopback mirrors; the guest holds no password.
+	privateMirrors, mirrorErr := buildRegistryMirrors(m)
+	if mirrorErr != nil {
+		return writeAndPoweroff(m, mirrorErr, "")
+	}
+	if mirrorErr := startBuildRegistryForwarders(privateMirrors); mirrorErr != nil {
+		return writeAndPoweroff(m, mirrorErr, "")
+	}
 	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
 	// before Docker Hub, which limits anonymous pulls per IP.
-	if len(m.DockerHubMirrors) > 0 {
-		config, err := buildkitMirrorConfig(m.DockerHubMirrors)
+	if len(m.DockerHubMirrors) > 0 || len(privateMirrors) > 0 {
+		config, err := buildkitRegistryConfig(m.DockerHubMirrors, privateMirrors)
 		if err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("buildkit mirror config: %w", err), "")
 		}

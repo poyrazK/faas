@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -273,10 +274,10 @@ func drain(resp *http.Response) {
 // slice 3j).
 func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.ServerStreamingServer[secretdpb.RegistryFetchResponse]) error {
 	ctx := stream.Context()
-	subject := registrySubject{appID: req.GetAppId(), jobID: req.GetJobId()}
+	subject := registrySubject{appID: req.GetAppId(), jobID: req.GetJobId(), buildID: req.GetBuildId()}
 	method := req.GetMethod()
-	if (subject.appID == "") == (subject.jobID == "") || (method != http.MethodGet && method != http.MethodHead) {
-		return rpcErr(codes.InvalidArgument, "secretd needs an app id or a job id, and a GET or HEAD")
+	if subject.count() != 1 || (method != http.MethodGet && method != http.MethodHead) {
+		return rpcErr(codes.InvalidArgument, "secretd needs one of an app id, a job id or a build id, and a GET or HEAD")
 	}
 	target, err := parseRegistryTarget(req.GetUrl())
 	if err != nil {
@@ -293,7 +294,13 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 		}
 		username, sealed, err = s.store.JobRegistryCredential(ctx, subject.jobID, target.url.Host)
 	} else {
-		if name, nodeID, via, err = s.authorizeRegistryFetch(ctx, subject.appID); err != nil {
+		if subject.buildID != "" {
+			// The build pulls with its app's credential; from here on the
+			// subject is that app (caches, budget, audit).
+			if name, nodeID, via, subject.appID, err = s.authorizeBuildRegistryFetch(ctx, subject.buildID); err != nil {
+				return err
+			}
+		} else if name, nodeID, via, err = s.authorizeRegistryFetch(ctx, subject.appID); err != nil {
 			return err
 		}
 		username, sealed, err = s.store.RegistryCredential(ctx, subject.appID, target.url.Host)
@@ -353,8 +360,20 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 }
 
 // registrySubject is whose credential a fetch uses: an app's, or a job's
-// (jobs belong to an account, not an app).
-type registrySubject struct{ appID, jobID string }
+// (jobs belong to an account, not an app). A build's fetch names the build
+// and, once authorized, uses its app's credential.
+type registrySubject struct{ appID, jobID, buildID string }
+
+// count is how many of the three the request named.
+func (r registrySubject) count() int {
+	n := 0
+	for _, id := range []string{r.appID, r.jobID, r.buildID} {
+		if id != "" {
+			n++
+		}
+	}
+	return n
+}
 
 // key names the subject in caches, budgets and logs.
 func (r registrySubject) key() string {
@@ -391,6 +410,47 @@ func (s *Server) authorizeJobRegistryFetch(ctx context.Context, jobID string) (n
 		return "", "", "", rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
 	}
 	return name, nodeID, "grant", nil
+}
+
+// buildRunWindow bounds how long after its claim a build's node may pull
+// for it: the builder VM's wall clock (api.BuildTimeoutSeconds) and the
+// cache-export VM that may follow, with margin. A build stuck in running
+// past it pulls nothing.
+const buildRunWindow = 2*time.Duration(api.BuildTimeoutSeconds)*time.Second + 10*time.Minute
+
+// authorizeBuildRegistryFetch admits the node that claimed a running build
+// (builds.builder_node_name, recorded at the claim; slice 3j-3) while the
+// build is within buildRunWindow of its start, within the node's
+// distinct-app budget. It returns the build's app, whose credential the
+// pull uses. The builder VM's mirror is the caller; the password never
+// leaves secretd.
+func (s *Server) authorizeBuildRegistryFetch(ctx context.Context, buildID string) (name, nodeID, via, appID string, err error) {
+	name, nodeID, err = s.caller(ctx, rpcRegistryFetch)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	run, err := s.store.BuildRunner(ctx, buildID)
+	if errors.Is(err, ErrUnknownBuild) {
+		return "", "", "", "", rpcErr(codes.NotFound, "secretd found no such build")
+	}
+	if err != nil {
+		s.log.Error("secretd: build lookup", "build_id", logsanitize.Field(buildID), "err", err)
+		return "", "", "", "", rpcErr(codes.Unavailable, "secretd could not look up the build")
+	}
+	if !run.Running || run.Node == "" || run.Node != name || !s.now().Before(run.StartedAt.Add(buildRunWindow)) {
+		s.log.Warn("secretd: refused build registry fetch", "node", logsanitize.Field(name), "build_id", logsanitize.Field(buildID),
+			"running", run.Running, "claimed_by", logsanitize.Field(run.Node))
+		s.metrics.refuse(rpcRegistryFetch, ReasonNotAuthorized)
+		return "", "", "", "", rpcErr(codes.PermissionDenied, "secretd refused: the caller is not running that build")
+	}
+	if !s.budget.allow(nodeID, run.AppID, s.now()) {
+		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "build_id", logsanitize.Field(buildID))
+		s.metrics.refuse(rpcRegistryFetch, ReasonBudgetExhausted)
+		return "", "", "", "", rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
+	}
+	// secret_open_audit.via is owner or grant: the claim the scheduler's
+	// queue gave the node is recorded as a grant.
+	return name, nodeID, "grant", run.AppID, nil
 }
 
 // imagePreparationWindow bounds how old a preparation may be and still let

@@ -32,6 +32,7 @@ type publicationFixture struct {
 	loseBegin      bool
 	block          <-chan struct{}
 	started        chan struct{}
+	sourceFile     string
 	observedSource string
 }
 
@@ -106,6 +107,7 @@ func (f *publicationFixture) cli(ctx context.Context, args []string, _ []byte) (
 	}
 	f.deploys++
 	fail, lose, block, started := f.fail, f.lose, f.block, f.started
+	sourceFile := f.sourceFile
 	f.mu.Unlock()
 	if started != nil {
 		close(started)
@@ -117,7 +119,10 @@ func (f *publicationFixture) cli(ctx context.Context, args []string, _ []byte) (
 			return LocalCLIResult{}, ctx.Err()
 		}
 	}
-	source, err := os.ReadFile(filepath.Join(value("--path"), "server.js"))
+	if sourceFile == "" {
+		sourceFile = "server.js"
+	}
+	source, err := os.ReadFile(filepath.Join(value("--path"), sourceFile))
 	if err != nil {
 		return LocalCLIResult{}, err
 	}
