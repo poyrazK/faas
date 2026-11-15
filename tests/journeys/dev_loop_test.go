@@ -1,0 +1,97 @@
+package journeys
+
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TestDevLoop is the remote developer loop: `gregale dev` builds a
+// developer environment from a local checkout, an edit is live without a
+// redeploy, `gregale dev list` finds the environment, and `--stop` removes
+// it. The checkout carries a 1 MiB virtualenv file, which the sync must
+// skip rather than upload on every edit.
+func TestDevLoop(t *testing.T) {
+	tg := needs(t, tierFull, true)
+	t.Parallel()
+	s := newStory(t)
+	name := tg.slug("devloop")
+	src := probeSource(t, "dev-v1")
+	venv := filepath.Join(src, ".venv", "lib")
+	if err := os.MkdirAll(venv, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(venv, "big.bin"), make([]byte, 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := tg.startDev(t, src, "dev", "--path", src, "--name", name, "--no-logs", "--ttl", "1h")
+	t.Cleanup(func() {
+		stop()
+		tg.run(t, 3*time.Minute, "dev", "--path", src, "--name", name, "--stop", "--yes")
+	})
+
+	var devURL string
+	if !s.step("first_sync", func(t *testing.T) {
+		// The first sync builds the environment, which takes a few minutes.
+		eventually(t, "the developer environment serving dev-v1", 12*time.Minute, 10*time.Second, func() (bool, string) {
+			devURL = tg.devSessionURL(t, name)
+			if devURL == "" {
+				return false, "not listed by `gregale dev list`"
+			}
+			r := tg.devGet(devURL + "/")
+			return r.status == http.StatusOK && strings.Contains(string(r.body), "dev-v1"), r.String()
+		})
+	}) {
+		return
+	}
+	if !s.step("edit_to_live", func(t *testing.T) {
+		start := time.Now()
+		if err := os.WriteFile(filepath.Join(src, "version.txt"), []byte("dev-v2\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "the edit serving without a redeploy", 2*time.Minute, 2*time.Second, func() (bool, string) {
+			r := tg.devGet(devURL + "/")
+			return r.status == http.StatusOK && strings.Contains(string(r.body), "dev-v2"), r.String()
+		})
+		t.Logf("metric dev_edit_to_live_s=%.1f", time.Since(start).Seconds())
+	}) {
+		return
+	}
+	s.step("stop", func(t *testing.T) {
+		stop()
+		tg.ok(t, 3*time.Minute, "dev", "--path", src, "--name", name, "--stop", "--yes")
+		eventually(t, "the environment gone from `gregale dev list`", 2*time.Minute, 5*time.Second, func() (bool, string) {
+			return tg.devSessionURL(t, name) == "", "still listed"
+		})
+	})
+}
+
+// devSessionURL returns the URL `gregale dev list` shows for project, or ""
+// when it is not listed.
+func (tg *target) devSessionURL(t *testing.T, project string) string {
+	t.Helper()
+	res := tg.run(t, time.Minute, "dev", "list")
+	if res.exit != 0 {
+		return ""
+	}
+	sessions, _ := field(object(t, res.stdout), "sessions").([]any)
+	for _, session := range sessions {
+		if str(session, "project") == project && (str(session, "state") == "" || str(session, "state") == "open") {
+			return strings.TrimRight(str(session, "url"), "/")
+		}
+	}
+	return ""
+}
+
+// devGet reads a developer environment URL. Environments on paid plans
+// require a Gregale key, so the journey's key is sent when it has one.
+func (tg *target) devGet(rawURL string) httpResult {
+	if tg.token == "" {
+		return get(rawURL)
+	}
+	return fetch(http.MethodGet, rawURL, map[string]string{"Authorization": "Bearer " + tg.token})
+}

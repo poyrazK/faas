@@ -39,6 +39,7 @@ func main() {
 	runtime := flag.String("runtime", "node22", "runtime id (informational)")
 	handlerPath := flag.String("handler", "/app/node22.js", "path to customer handler")
 	flag.Parse()
+	internal.RegisterStatelessRunner("node22-runner")
 	if *runtime != "node22" {
 		log.Printf("warning: --runtime=%s ignored; only node22 is supported by this binary", *runtime)
 	}

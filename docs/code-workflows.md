@@ -130,6 +130,7 @@ once. `faas.RunWorkflowLocally` is the local test runner.
 | `step(name, fn, { retry })` | Runs `fn` and records its JSON result. A thrown error is retried under the step's policy (`retry` option, else `code.retry`, else 3 attempts with exponential back-off). After the last attempt the next call throws `WorkflowStepError` into your function, where you may catch it. Throw `NonRetryableError` to fail at once. |
 | `sleep(name, duration)` | Parks the run for 1 s up to the plan's maximum wait (30 days on Hobby, 90 on Pro, 365 on Scale). |
 | `waitForEvent(name, { event, timeout })` | Waits for an event named `event` (default: `name`) sent with `gregale workflow events RUN_ID approved --payload '{...}'` or `POST /v1/workflows/runs/{id}/events`. Resolves with the payload, or `null` after `timeout` (default: the plan's maximum wait). |
+| `call(function, input, { name })` | Calls a function the workflow's app may call (a sibling in its functions project, or an app under its `calls:`) and resolves with its output. The run parks while the function runs, with no VM held; the call is an async invocation with the callee's own retries, and waits up to the plan's maximum wait. A failed call throws `WorkflowCallError` (code `function_call_failed`). Python: `await wf.call(function, input, name=...)`; Go: `faas.WorkflowCall[T](wf, function, input)`. |
 
 The exact event or callback payload `{"timeout":true}` is reserved for internal
 timeouts. If customer data needs that shape, wrap it, for example as
