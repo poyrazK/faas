@@ -392,6 +392,14 @@ func loadPackRules(srcDir string, dockerfile bool) packRules {
 			rules.patterns = parseDockerignore(data)
 		}
 	}
+	rules.patterns = append(rules.patterns, composeServiceDockerignorePatterns(func(rel string) ([]byte, bool) {
+		info, err := os.Lstat(filepath.Join(srcDir, filepath.FromSlash(rel)))
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxGitignoreBytes {
+			return nil, false
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, filepath.FromSlash(rel)))
+		return data, err == nil
+	})...)
 	rules.patterns = append(rules.patterns, loadGregaleignore(srcDir)...)
 	return rules
 }
@@ -916,6 +924,9 @@ func packDirToTarGzReported(srcDir, destPath string, capMB int, envOverride map[
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
+	if len(entries)+len(buildOnlyFiles) > api.SourceArchiveMaxEntries {
+		entries = dropComposeUnusedDirs(srcDir, entries)
+	}
 	expandedCap := api.SourceArchiveMaxExpandedBytes
 	var totalUncompressed int64
 	existingEntries := make(map[string]bool, len(entries))

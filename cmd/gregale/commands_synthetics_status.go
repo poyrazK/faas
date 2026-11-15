@@ -15,12 +15,13 @@ import (
 // <check-id>` (ADR-748): uptime, latency, and the most recent runs.
 func cmdSyntheticsStatus(args []string) int {
 	fs := newFlagSet("synthetics status", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert check status --app <slug> <check-id|name>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check status [--app <slug>] <check-id|name>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()

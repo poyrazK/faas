@@ -132,6 +132,33 @@ func TestComposeCalledServicesServeRequests(t *testing.T) {
 			want: map[string]Class{"worker": ClassWorker, "beat": ClassWorker},
 		},
 		{
+			name: "a gRPC host:port target that listens",
+			compose: `services:
+  frontend:
+    build: ./src/frontend
+    ports: ["8080:8080"]
+    environment: {PRODUCT_CATALOG_SERVICE_ADDR: "productcatalogservice:3550"}
+  productcatalogservice: {build: ./src/productcatalogservice}
+`,
+			files: map[string]string{
+				"src/frontend/Dockerfile":              "FROM golang:1.26\nEXPOSE 8080\n",
+				"src/productcatalogservice/Dockerfile": "FROM golang:1.26\nEXPOSE 3550\nCMD [\"/server\"]\n",
+			},
+			want: map[string]Class{"productcatalogservice": ClassHTTP},
+		},
+		{
+			name: "a host:port target that shows no listener stays a worker",
+			compose: `services:
+  web:
+    image: ghcr.io/x/web:1
+    ports: ["80:3000"]
+    environment: {QUEUE_ADDR: "consumer:7000"}
+  consumer: {build: ./consumer}
+`,
+			files: map[string]string{"consumer/Dockerfile": "FROM golang:1.26\nCMD [\"/consumer\"]\n"},
+			want:  map[string]Class{"consumer": ClassWorker},
+		},
+		{
 			name: "expose alone is not a call",
 			compose: `services:
   cache: {image: ghcr.io/x/cache:1, expose: ["6379"]}

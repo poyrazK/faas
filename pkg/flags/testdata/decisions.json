@@ -1,0 +1,66 @@
+{
+  "bundle": {
+    "environment_id": "00000000-0000-4000-8000-0000000000e1",
+    "version": 7,
+    "groups": {},
+    "flags": [
+      {
+        "key": "eu-checkout",
+        "enabled": true,
+        "default": false,
+        "seed": "seed-eu",
+        "rules": [
+          {"id": "eu", "attributes": [{"attribute": "gregale.country", "op": "in", "values": ["DE", "FR"]}], "value": true}
+        ]
+      },
+      {
+        "key": "pro-only",
+        "enabled": true,
+        "default": false,
+        "seed": "seed-pro",
+        "rules": [
+          {"id": "pro-humans", "attributes": [
+            {"attribute": "app.plan", "op": "in", "values": ["pro", "scale"]},
+            {"attribute": "gregale.ua_family", "op": "not_in", "values": ["bot"]}
+          ], "value": true}
+        ]
+      },
+      {
+        "key": "staff-theme",
+        "type": "variant",
+        "enabled": true,
+        "default": "classic",
+        "seed": "seed-theme",
+        "variants": [{"key": "classic", "weight": 5000}, {"key": "bold", "weight": 5000}],
+        "rules": [
+          {"id": "staff", "attributes": [{"attribute": "app.email", "op": "ends_with", "values": ["@example.com"]}], "value": "bold"}
+        ]
+      },
+      {
+        "key": "risky-path",
+        "enabled": true,
+        "killed": true,
+        "default": true,
+        "seed": "seed-risky",
+        "rules": [{"id": "everyone", "rollout": 10000, "value": true}]
+      }
+    ]
+  },
+  "cases": [
+    {"name": "country in list", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.country": "DE"}, "fallback": false, "value": true, "reason": "rule_match", "rule_id": "eu"},
+    {"name": "country not in list", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.country": "US"}, "fallback": false, "value": false, "reason": "default"},
+    {"name": "country missing", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "fallback": true, "value": false, "reason": "default"},
+    {"name": "anonymous never matches", "flag": "eu-checkout", "attributes": {"gregale.country": "DE"}, "fallback": false, "value": false, "reason": "customer_missing"},
+    {"name": "all conditions hold", "flag": "pro-only", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"app.plan": "pro", "gregale.ua_family": "chrome"}, "fallback": false, "value": true, "reason": "rule_match", "rule_id": "pro-humans"},
+    {"name": "not_in on a missing attribute does not match", "flag": "pro-only", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"app.plan": "pro"}, "fallback": false, "value": false, "reason": "default"},
+    {"name": "not_in excludes", "flag": "pro-only", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"app.plan": "pro", "gregale.ua_family": "bot"}, "fallback": false, "value": false, "reason": "default"},
+    {"name": "invalid value reads as missing", "flag": "pro-only", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"app.plan": "pro\n", "gregale.ua_family": "chrome"}, "fallback": false, "value": false, "reason": "default"},
+    {"name": "ends_with matches", "flag": "staff-theme", "type": "variant", "customer": "00000000-0000-4000-8000-000000000002", "attributes": {"app.email": "ann@example.com"}, "fallback": "classic", "value": "bold", "reason": "rule_match", "rule_id": "staff"},
+    {"name": "ends_with misses", "flag": "staff-theme", "type": "variant", "customer": "00000000-0000-4000-8000-000000000002", "attributes": {"app.email": "ann@example.org"}, "fallback": "classic", "value": "classic", "reason": "default"},
+    {"name": "killed in bundle serves the app fallback, not the default", "flag": "risky-path", "customer": "00000000-0000-4000-8000-000000000001", "fallback": false, "value": false, "reason": "killed"},
+    {"name": "gateway kill beats a matching rule", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.country": "DE"}, "kills": ["eu-checkout"], "fallback": false, "value": false, "reason": "killed"},
+    {"name": "gateway kill of a flag the bundle does not have yet", "flag": "brand-new", "customer": "00000000-0000-4000-8000-000000000001", "kills": ["brand-new"], "fallback": true, "value": true, "reason": "killed"},
+    {"name": "gateway kill of a variant", "flag": "staff-theme", "type": "variant", "customer": "00000000-0000-4000-8000-000000000002", "attributes": {"app.email": "ann@example.com"}, "kills": ["staff-theme"], "fallback": "classic", "value": "classic", "reason": "killed"},
+    {"name": "kills of other flags do not apply", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.country": "DE"}, "kills": ["staff-theme"], "fallback": false, "value": true, "reason": "rule_match", "rule_id": "eu"}
+  ]
+}
