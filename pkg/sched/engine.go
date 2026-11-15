@@ -442,7 +442,10 @@ type Engine struct {
 	// from releasing its retired destination's reservation more than once.
 	functionDestinationReleases releasedDestinations
 	vmm                         RoutedVMM
-	notif                       Notifier
+	// cleanRecapture queues clean init snapshot recaptures instead of
+	// capturing a used instance at park (ADR-20261115100000); nil captures.
+	cleanRecapture cleanRecaptureSink
+	notif          Notifier
 	// notifyInPublication sends a wake's instance_changed from its RUNNING
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
@@ -8892,6 +8895,14 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			}
 		}
 		return nil
+	}
+
+	// ADR-20261115100000: with no init snapshot to reuse on this node, the
+	// capture below would hold what this instance's requests left in memory.
+	// Retire it and let the refresher capture a fresh, primed boot instead.
+	if allowReuse && e.parkNeedsCleanRecapture(ctx, ins, app,
+		app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled, frozenFunction) {
+		return e.parkForCleanRecapture(ctx, ins)
 	}
 
 	if !allowReuse && !frozenFunction {

@@ -79,6 +79,12 @@ type SnapshotRefresher struct {
 	// passed is the release and CPU shape each node's last completed pass
 	// was for.
 	passed map[string]string
+
+	// Clean init snapshot recapture (ADR-20261115100000): requests queued by
+	// parks, keyed by app and node, and a wake-up for Run.
+	cleanMode  string
+	recaptures map[string]*cleanRecaptureRequest
+	recaptureC chan struct{}
 }
 
 // NewSnapshotRefresher builds a refresher over e, off until SetMode turns it
@@ -87,11 +93,15 @@ func NewSnapshotRefresher(e *Engine, reg prometheus.Registerer, log *slog.Logger
 	if log == nil {
 		log = slog.Default()
 	}
-	return &SnapshotRefresher{
+	r := &SnapshotRefresher{
 		e: e, log: log, now: time.Now, metrics: newSnapshotRefreshMetrics(reg),
 		mode: api.DefaultSnapshotRefresh, windowHours: api.DefaultSnapshotRefreshWindowHours,
-		passed: map[string]string{},
+		passed:    map[string]string{},
+		cleanMode: api.DefaultSnapshotCleanRecapture, recaptures: map[string]*cleanRecaptureRequest{},
+		recaptureC: make(chan struct{}, 1),
 	}
+	e.cleanRecapture = r
+	return r
 }
 
 // SetMode applies `snapshot_refresh`.
@@ -126,12 +136,22 @@ func (r *SnapshotRefresher) settings() (string, time.Duration) {
 func (r *SnapshotRefresher) Run(ctx context.Context) error {
 	ticker := time.NewTicker(snapshotRefreshInterval)
 	defer ticker.Stop()
+	recaptureTicker := time.NewTicker(cleanRecaptureInterval)
+	defer recaptureTicker.Stop()
+	refreshDue := true
 	for {
-		r.Tick(ctx)
+		if refreshDue {
+			r.Tick(ctx)
+			refreshDue = false
+		}
+		r.DrainCleanRecaptures(ctx)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			refreshDue = true
+		case <-recaptureTicker.C:
+		case <-r.recaptureC:
 		}
 	}
 }
@@ -391,8 +411,9 @@ func (r *SnapshotRefresher) initSnapshotOnNode(ctx context.Context, deploymentID
 }
 
 type snapshotRefreshMetrics struct {
-	outcomes *prometheus.CounterVec
-	pend     *prometheus.GaugeVec
+	outcomes   *prometheus.CounterVec
+	recaptures *prometheus.CounterVec
+	pend       *prometheus.GaugeVec
 }
 
 func newSnapshotRefreshMetrics(reg prometheus.Registerer) *snapshotRefreshMetrics {
@@ -400,6 +421,10 @@ func newSnapshotRefreshMetrics(reg prometheus.Registerer) *snapshotRefreshMetric
 		outcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "schedd_snapshot_refresh_total",
 			Help: "Snapshot refresh pass decisions per candidate app (ADR-20261106214916). would_refresh counts stale snapshots a shadow pass found.",
+		}, []string{"outcome"}),
+		recaptures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "schedd_init_snapshot_clean_recapture_total",
+			Help: "Clean init snapshot recaptures (ADR-20261115100000): queued when a park found no init snapshot on its node and destroyed the used instance instead of capturing it; refreshed, deferred (no headroom or a live instance), failed (retried with backoff) or dropped (no longer needed or possible).",
 		}, []string{"outcome"}),
 		pend: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "schedd_snapshot_refresh_pending",
@@ -409,8 +434,11 @@ func newSnapshotRefreshMetrics(reg prometheus.Registerer) *snapshotRefreshMetric
 	for _, o := range snapshotRefreshOutcomes {
 		m.outcomes.WithLabelValues(o)
 	}
+	for _, o := range cleanRecaptureOutcomes {
+		m.recaptures.WithLabelValues(o)
+	}
 	if reg != nil {
-		reg.MustRegister(m.outcomes, m.pend)
+		reg.MustRegister(m.outcomes, m.recaptures, m.pend)
 	}
 	return m
 }
