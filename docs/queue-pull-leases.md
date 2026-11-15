@@ -143,7 +143,7 @@ a queue by pull yet: an enabled stage pull binding is refused; use push.
 ## Long-polls
 
 A lease with `wait_seconds` waits for a message on its queue. An account has
-at most 64 waiting leases on one apid; a lease past that cap leases once and,
+at most 64 waiting leases per API server; a lease past that cap leases once and,
 finding nothing, waits out `wait_seconds` without being woken, so an idle
 consumer never polls in a tight loop. A worker token may address its app by
 the slug it had before a rename.
