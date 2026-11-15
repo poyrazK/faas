@@ -43,7 +43,7 @@ test('CSV import: cross-language resume, row rejection, failed-only replay and d
       if(task.status==='cancelled')continue;if(code===0){task.output_manifest=JSON.parse(await readFile(manifest,'utf8'));task.status='succeeded';}else{task.status='failed';task.outcome_code='handler_failed';}
     }
   };
-  const storage=fileStorageFixture(()=>env.FAAS_API);
+  const storage=fileStorageFixture(()=>env.FAAS_API,{accountId:accountID});
   const control=createServer(async(req,res)=>{const send=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
     try{if(await storage.handle(req,res))return;if(req.headers.authorization!=='Bearer fixture-owner'){send(404,{});return;}const url=new URL(req.url,'http://localhost'),parts=url.pathname.split('/');
       if(url.pathname==='/v1/jobs/csv-import'){send(200,{id:jobID,account_id:accountID,name:'csv-import'});return;}
@@ -90,9 +90,24 @@ test('CSV import: cross-language resume, row rejection, failed-only replay and d
   const preview=await import(new URL('../../sdk/node/dist/preview.js',import.meta.url)),client=preview.createClient(env.FAAS_API,{token:'fixture-owner'});
   const files=client.storage.files({appSlug:'imports',bucket:storage.bucket}),store=await files.jobStore({timeoutMs:10000});
   const fileJob=client.jobs.defineJob(contract,{store}),users={alice:'alice-application-token',bob:'bob-application-token'},fileDirectory=join(home,'file-state');
-  const makeApp=()=>createFileImportServer({client,files,job:fileJob,directory:fileDirectory,users,sdk:preview,browserModule:new URL('../../sdk/node/dist/files.js',import.meta.url)});
+  await pool.query(preview.filePipelineSchema);
+  const pipelineConfig={scope:{...files.scope,account_id:accountID,app_id:storage.app},contract,jobStore:store,store:preview.postgresFilePipelineStore((sql,values)=>pool.query(sql,values))};
+  const makeApp=()=>createFileImportServer({client,files,job:fileJob,directory:fileDirectory,users,sdk:preview,browserModule:new URL('../../sdk/node/dist/files.js',import.meta.url),pipelineConfig});
   let fileApp=await makeApp();await new Promise(r=>fileApp.listen(0,'127.0.0.1',r));cleanup.push(()=>new Promise(r=>fileApp.close(r)));
   let fileURL=`http://127.0.0.1:${fileApp.address().port}`;
+  env.GREGALE_FILE_ACCOUNT_ID=accountID;env.GREGALE_FILE_APP_ID=storage.app;env.GREGALE_IMPORT_STATE=fileDirectory;env.GREGALE_FILE_USERS=JSON.stringify(users);
+  const notify=async delivery=>{
+    const pythonNotify=async()=>{
+      const path=join(home,'native-delivery-'+delivery.invocationId+'.json');await writeFile(path,JSON.stringify(delivery));
+      const result=await exec(python,[join(here,'file_pipeline.py'),path],{env,timeout:90000}),outcome=JSON.parse(result.stdout).outcome;
+      assert.ok(['submitted','duplicate','ignored','unresolved'].includes(outcome));return outcome!=='unresolved';
+    };
+    if(language==='python')return pythonNotify();
+    const nodeNotify=async()=>{const r=await fetch(fileURL+'/',{method:'POST',headers:{'Content-Type':'application/json','x-faas-invocation-id':delivery.invocationId,'x-faas-invocation-source':'async_invoke','x-faas-app-id':storage.app,'x-faas-tenant-id':accountID},body:delivery.body});if(r.status!==200)assert.equal((await r.json()).code,'submission_unresolved');return r.status===200;};
+    // Competing Node and Python processes must share one PostgreSQL intent.
+    return (await Promise.all([nodeNotify(),pythonNotify()])).some(Boolean);
+  };
+  storage.setNotificationHandler(notify);
   const appRequest=async(path,init={})=>{const r=await fetch(fileURL+path,{...init,headers:{Authorization:'Bearer '+users.alice,'Content-Type':'application/json'}});assert.ok(r.ok,await r.clone().text());return r.json();};
   for(const workerLanguage of ['node','python']){
     language=workerLanguage;const data=new Blob([csv]),source=preview.blobFileSource(data),source_digest=await preview.fileSourceDigest(source,new AbortController().signal);
@@ -107,6 +122,7 @@ test('CSV import: cross-language resume, row rejection, failed-only replay and d
       const method=['','/progress','/rejections'].includes(action)?'GET':'POST';
       const denied=await fetch(fileURL+'/files/'+record.id+action,{method,headers:{Authorization:'Bearer '+users.bob},...(method==='POST'?{body:JSON.stringify({id:checkpoint.upload_id,part:1})}:{})});assert.equal(denied.status,404);
     }assert.equal(storage.counts().issued,deniedBefore);
+    storage.setNotificationHandler(null);
     if(workerLanguage==='python'){
       const checkpointPath=join(home,'file-checkpoint.json'),sourcePath=join(home,'upload.csv');await writeFile(checkpointPath,JSON.stringify(checkpoint));await writeFile(sourcePath,csv);
       await exec(python,['-c',`import asyncio,json,os
@@ -121,11 +137,25 @@ asyncio.run(main())`],{env:{...env,FILE_CHECKPOINT:checkpointPath,FILE_SOURCE:so
       checkpoint=JSON.parse(await readFile(checkpointPath,'utf8'));
     }
     await preview.createFileBucket(record.scope,fileBroker(record.id,appRequest)).resume(preview.parseFileCheckpoint(JSON.parse(JSON.stringify(checkpoint))),source,{timeoutMs:10000});
-    const accepted=await appRequest('/files/'+record.id+'/start',{method:'POST',body:'{}'});assert.ok(accepted.runId);
+    assert.equal((await appRequest('/files/'+record.id+'/progress')).status,'awaiting_storage_event');
+    // The uploader has returned and the app restarts before notification delivery.
+    await new Promise(r=>fileApp.close(r));fileApp=await makeApp();await new Promise(r=>fileApp.listen(0,'127.0.0.1',r));fileURL=`http://127.0.0.1:${fileApp.address().port}`;
+    storage.setNotificationHandler(notify);
+    // Processing is triggered by the durable notification, after the upload
+    // caller has returned. No /start call participates in this journey.
+    await storage.flushNotifications();
     await until(async()=>{const p=await appRequest('/files/'+record.id+'/progress');assert.notEqual(p.status,'failed');return p.status==='succeeded';});
     const report=await fetch(fileURL+'/files/'+record.id+'/rejections',{headers:{Authorization:'Bearer '+users.alice}});assert.equal(report.status,200);assert.ok((await report.text()).includes(record.id+':3,invalid_email'));
     assert.ok(storage.objects.has(record.key));assert.ok(storage.objects.has('imports/'+record.id+'/rejections.csv'));
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM sdk_csv_rows WHERE input_id LIKE $1',[record.id+':%'])).rows[0].n,2);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM gregale_file_pipeline_receipts WHERE identity=$1',[preview.filePipelineIdentity('csv-files-v1',pipelineConfig.scope,checkpoint.upload_id)])).rows[0].n,1);
+    const count=runs.size;assert.equal(await storage.redeliver(record.key),true);assert.equal(runs.size,count);
+    // The other SDK adopts the exact same PostgreSQL receipt without posting.
+    language=workerLanguage==='node'?'python':'node';assert.equal(await storage.redeliver(record.key),true);assert.equal(runs.size,count);language=workerLanguage;
+    const delivery=storage.delivery(record.key),forged=JSON.parse(delivery.body);forged.Records[0].s3.object.key='imports/foreign/input.csv';
+    for(const headers of [{Authorization:'Bearer '+users.bob},{'x-faas-invocation-id':delivery.invocationId,'x-faas-invocation-source':'async_invoke','x-faas-app-id':storage.app,'x-faas-tenant-id':accountID}]){
+      const refused=await fetch(fileURL+'/',{method:'POST',headers,body:JSON.stringify(forged)});assert.equal(refused.status,403);
+    }assert.equal(runs.size,count);
   }
   const chrome=process.env.GREGALE_LOCAL_CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   try{await access(chrome);}catch{t.diagnostic('Browser UI check skipped: set GREGALE_LOCAL_CHROME');return;}
@@ -135,6 +165,7 @@ asyncio.run(main())`],{env:{...env,FILE_CHECKPOINT:checkpointPath,FILE_SOURCE:so
     language='node';const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
     page.on('request',request=>{const u=new URL(request.url());if(u.pathname.startsWith('/file-data/'))assert.equal(request.headers().authorization,undefined);assert.notEqual(request.headers().authorization,'Bearer fixture-owner');});
     await page.goto(fileURL);await page.fill('#token',users.alice);await page.setInputFiles('#file',{name:'rows.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});
+    page.on('request',request=>assert.equal(new URL(request.url()).pathname.endsWith('/start'),false));
     await page.click('#start');await page.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('succeeded:'),{},{timeout:60000});
     const pendingDownload=page.waitForEvent('download');await page.click('#report');const download=await pendingDownload;await download.saveAs(join(home,'browser-rejections.csv'));
     assert.ok((await readFile(join(home,'browser-rejections.csv'),'utf8')).includes('invalid_email'));assert.deepEqual(errors,[]);

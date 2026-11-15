@@ -18,6 +18,7 @@
 
 export { createClient, type GregaleClient } from './isolated-client-preview.js';
 export * from './files.js';
+export * from './file-pipelines.js';
 export type { ManagedFileBucket, FileHelpers } from './file-client.js';
 export { pathFileSource } from './file-client.js';
 export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';

@@ -40,6 +40,9 @@ export interface JobRunOptions {
 export interface JobSubmitOptions extends JobRunOptions {
     /** Persist and reuse for the SAME submission within the server's 24h window. */
     readonly idempotencyKey: string;
+    /** Optional guards for composed workflows; checked before preparing inputs or POST. */
+    readonly expectedAccountId?: string;
+    readonly expectedBaseURL?: string;
     readonly parallelism?: number;
     readonly retryMax?: number;
     readonly failurePolicy?: 'continue' | 'fail_fast';
@@ -346,6 +349,8 @@ export function bindTypedJobs(getConfig: () => ClientConfig): TypedJobs {
                 }, submit(inputs: readonly JobInput<Input>[], options: JobSubmitOptions) {
                     const caps=limits(options);if(!Array.isArray(inputs)||!inputs.length||inputs.length>caps.items)throw new JobError('invalid_input');
                     const config = getConfig(), idem = key(options.idempotencyKey), captured = inputs.map(i => ({ id: i.id, value: contract.input(i.value) }));
+                    if(options.expectedAccountId!==undefined&&!uuid(options.expectedAccountId))throw new JobError('invalid_input');
+                    if(options.expectedBaseURL!==undefined&&endpoint(config.BASE)!==endpoint(options.expectedBaseURL))throw new JobError('invalid_receipt');
                     if (!captured.length || captured.length > 10000 || new Set(captured.map(i => i.id)).size !== captured.length || captured.some(i => !jobInputId(i.id)))
                         throw new JobError('invalid_input');
                     for (const n of [options.parallelism, options.retryMax])
@@ -359,7 +364,7 @@ export function bindTypedJobs(getConfig: () => ClientConfig): TypedJobs {
                         if (captured.length > op.caps.items)
                             throw new JobError('limit');
                         const job = await op.request(path(contract.spec.name));
-                        if (!uuid(job.id) || !uuid(job.account_id) || job.name !== contract.spec.name)
+                        if (!uuid(job.id) || !uuid(job.account_id) || job.name !== contract.spec.name || settings.expectedAccountId!==undefined&&job.account_id!==settings.expectedAccountId)
                             throw new JobError('invalid_response');
                         const refs: JobInputBinding[] = [];
                         for (const input of captured) {

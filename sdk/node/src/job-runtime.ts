@@ -82,6 +82,8 @@ function stable(v: unknown): string {
         return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stable((v as Record<string, unknown>)[k])).join(',') + '}';
     return JSON.stringify(v);
 }
+/** @internal Canonical JSON value hash shared by durable SDK receipts. Validate values first. */
+export const jobValueHash = (value: unknown): string => jobHash(Buffer.from(stable(value)));
 function schemaCheck(s: JobSchema, depth = 0): void {
     if (!s || depth > 12 || !['object', 'array', 'string', 'integer', 'number', 'boolean', 'null'].includes(s.type))
         throw new JobError('invalid_contract');

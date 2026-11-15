@@ -9,6 +9,14 @@ import {createClient as preview} from '../src/preview.js';
 import {jobBytes,jobHash} from '../src/job-runtime.js';
 import {generateJobTypes} from '../src/job-types.js';
 
+test('optional submission scope guards reject another endpoint or account before POST',async()=>{
+  const h=harness(),job=createClient(base,{token:'owner',fetch:h.fetch}).jobs.defineJob(contract);
+  assert.throws(()=>job.submit(f.inputs,{timeoutMs:1000,idempotencyKey:'guard-base',expectedBaseURL:'https://other.test'}),code('invalid_receipt'));
+  await assert.rejects(job.submit(f.inputs,{timeoutMs:1000,idempotencyKey:'guard-account',expectedAccountId:'99999999-9999-4999-8999-999999999999'}),code('invalid_response'));
+  assert.equal(h.counts().posts,0);
+  await job.submit(f.inputs,{timeoutMs:1000,idempotencyKey:'guard-match',expectedBaseURL:base,expectedAccountId:f.account_id});assert.equal(h.counts().posts,1);
+});
+
 type Input={row:number;email:string;fail_once?:boolean};type Output={row:number;saved:boolean;rejection:'none'|'invalid_email'};
 const f=JSON.parse(readFileSync(new URL('../../../request-contracts/typed-jobs.json',import.meta.url),'utf8')) as {contract:JobContractSpec;inputs:{id:string;value:Input}[];account_id:string;job_id:string;run_id:string;replay_id:string;cases:{scenario:string;outcome:string|null;error:string|null}[]};
 const contract=new JobContract<Input,Output>(f.contract),base='https://jobs.test/prefix';

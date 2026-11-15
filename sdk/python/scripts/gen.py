@@ -210,6 +210,7 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "file_pipelines.py",
     "files.py",
     "_wrapper.py",
     "_binding_qualification.py",
@@ -1281,6 +1282,7 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from .file_pipelines import FILE_PIPELINE_SCHEMA, FileCreatedEvent, FileDelivery, FilePipeline, FilePipelineError, FilePipelineInput, FilePipelineIntent, FilePipelineOptions, FilePipelineOutcome, FilePipelineOwner, FilePipelineReceipt, FilePipelineScope, FilePipelineStore, NativeFileVerifier, PostgresFilePipelineStore, file_event_invocation_id, file_pipeline_identity, parse_file_created_event
 from .files import BytesFileSource, FileBucket, FileCheckpoint, FileCode, FileError, FileMetadata, FileObject, FileOptions, FilePage, FilePart, FileProgress, FileSource, FileUploadResult, PathFileSource, file_source_digest
 from ..job_runtime import (
     JobContract as JobContract,
@@ -1799,6 +1801,7 @@ from .event_acknowledgment_intent_recovery_pass import (
 
 __all__ = (
     "BytesFileSource", "FileBucket", "FileCheckpoint", "FileCode", "FileError", "FileMetadata", "FileObject", "FileOptions", "FilePage", "FilePart", "FileProgress", "FileSource", "FileUploadResult", "PathFileSource", "file_source_digest",
+    'FILE_PIPELINE_SCHEMA', 'FileCreatedEvent', 'FileDelivery', 'FilePipeline', 'FilePipelineError', 'FilePipelineInput', 'FilePipelineIntent', 'FilePipelineOptions', 'FilePipelineOutcome', 'FilePipelineOwner', 'FilePipelineReceipt', 'FilePipelineScope', 'FilePipelineStore', 'NativeFileVerifier', 'PostgresFilePipelineStore', 'file_event_invocation_id', 'file_pipeline_identity', 'parse_file_created_event',
     *_PACKAGE_ALL,
     "AI_CALL_HEADER",
     "AI_SESSION_HEADER",

@@ -4822,3 +4822,56 @@ application routes. Authorize each server-owned file ID/session/operation; never
 expose a generic signing proxy or Gregale credentials. Checkpoints contain no
 signed URLs. See the [complete browser CSV import example](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
 and [design decisions](../../docs/adr/20261115153000-sdk-application-files.md).
+
+## File-triggered typed jobs (preview)
+
+`createFilePipeline` connects native file notifications to an existing typed job:
+
+```ts
+import {createFilePipeline, createNativeFileVerifier, postgresFilePipelineStore}
+  from '@gregale/sdk-node/preview';
+
+const pipeline = createFilePipeline({
+  name: 'csv-files-v1', revision: '1', scope, prefix: 'imports/', suffix: '/input.csv',
+  contract, job, files, jobStore,
+  store: postgresFilePipelineStore((sql, params) => pool.query(sql, params)),
+  verify: createNativeFileVerifier(scope, (id, signal) =>
+    client.invocations.getInvocation({id}, {signal, timeoutMs: 0, retry: false})),
+  authorize: async event => findOwnedUpload(event),
+  map: async (event, bytes, owner, signal) => mapValidatedCSV(event, bytes, owner, signal),
+});
+const result = await pipeline.handle({body, invocationId}, {timeoutMs: 60_000});
+if (result.outcome === 'unresolved') {
+  // Inspect the original acceptance; keep the intent, never auto-repost.
+  await saveRecoveryIdentity(result.receipt.intent.identity);
+}
+// After explicitly identifying the accepted run, match its exact saved inputs:
+await pipeline.reconcile(savedIdentity, inspectedRunId, {timeoutMs: 30_000});
+```
+
+`scope` contains `base_url`, `account_id`, `app_id`, `app_slug`, and `bucket`.
+`authorize` resolves a durable app record and returns `{id, sha256?}` or
+`{id, source_digest?}` (fixed 1 MiB block digest), or null to ignore an unowned
+file. Mutable files require a trusted digest; immutable events select that exact
+version. Missing old versions never read the current object. Mapping is pure
+and receives bounded verified bytes (default 16 MiB); default maximum 1,000 inputs.
+For stored inputs, use the SAME content-addressed `jobStore` as `job`; its URI
+must be stable for a digest. The managed JobStore meets this requirement.
+
+Install exported `filePipelineSchema` separately through your migration runner.
+The SQL query callback must execute one acknowledged AUTOCOMMIT statement,
+outside ambient transactions; configure driver timeouts. Native verification
+needs account-scoped invocation read access. It checks the retained original,
+including replays; pruned proof is refused. HTTP adapters still require a trusted
+gateway/authenticated delivery boundary. Event headers alone are not proof.
+
+Concurrent deliveries share one durable intent. Only its acknowledged creator
+can POST. Saved intents without a checkpoint remain unresolved across restart
+and the API idempotency window. Reconciliation reads Jobs and matches account,
+endpoint, contract and manifest; it never resubmits or requires source bytes.
+Keep receipts while notifications/replays can arrive. Job effects remain at
+least once. Separate input/output filters when enabling native triggers.
+
+The [automatic CSV application](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+includes trigger setup, two-user authorization, delayed delivery, cross-language
+recovery and PostgreSQL/Chrome tests. See [the design](../../docs/adr/20261115210000-sdk-file-triggered-jobs.md).

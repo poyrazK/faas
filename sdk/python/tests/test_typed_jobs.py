@@ -35,6 +35,21 @@ INPUTS = [JobInput(i["id"], i["value"]) for i in F["inputs"]]
 BASE = "https://jobs.test/prefix"
 
 
+async def test_optional_submit_scope_guards_stop_before_post():
+    h=Harness()
+    client=FaaSClient(base_url=BASE,token='owner',httpx_args={'transport':httpx.MockTransport(h.handler)})
+    try:
+        job=client.define_job(CONTRACT,store=h)
+        with pytest.raises(JobError,match='invalid_receipt'):
+            job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-base',expected_base_url='https://other.test'))
+        with pytest.raises(JobError,match='invalid_response'):
+            await job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-account',expected_account_id='99999999-9999-4999-8999-999999999999'))
+        assert h.posts==0
+        await job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-match',expected_base_url=BASE,expected_account_id=F['account_id']))
+        assert h.posts==1
+    finally:await client.aclose()
+
+
 class Harness:
     def __init__(self, scenario="success"):
         self.scenario, self.refs, self.blobs = scenario, [], {}

@@ -3752,3 +3752,57 @@ objects, verifies SHA-256 bytes and restricts references to its configured prefi
 10,000 parts and 60 polls, with a maximum supported part size of 64 MiB. ETags
 are opaque. See the [browser CSV import example](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
 for app-owned authorization, restart recovery and downloadable rejection reports.
+
+## File-triggered typed jobs (preview)
+
+`faas_sdk.preview` exports `FilePipeline`, `FilePipelineScope`,
+`FilePipelineOptions`, `NativeFileVerifier` and `PostgresFilePipelineStore`:
+
+```python
+from faas_sdk.preview import (
+    FileDelivery, FilePipeline, FilePipelineOptions, NativeFileVerifier,
+    PostgresFilePipelineStore,
+)
+pipeline = FilePipeline(
+    name="csv-files-v1", revision="1", scope=scope,
+    prefix="imports/", suffix="/input.csv", contract=contract, job=job,
+    files=files, job_store=job_store, store=PostgresFilePipelineStore(query),
+    verify=NativeFileVerifier(scope, lookup_invocation),
+    authorize=find_owned_upload, map_inputs=map_validated_csv,
+)
+result = await pipeline.handle(FileDelivery(body, invocation_id),
+                               options=FilePipelineOptions(timeout=60))
+if result.outcome == "unresolved" and result.receipt is not None:
+    save_recovery_identity(result.receipt.intent.identity)
+# Once an operator has identified the accepted run:
+await pipeline.reconcile(saved_identity, inspected_run_id,
+                         options=FilePipelineOptions(timeout=30))
+```
+
+See [file_pipeline.py](../../examples/sdk-csv-jobs/file_pipeline.py) for complete
+authenticated API lookup, owner mapping, CSV validation and psycopg integration.
+Callbacks receive a `check_cancelled()` callable; call it between your own work.
+Cancel the asyncio task to stop. One positive total timeout covers all stages,
+including callbacks, response bodies and receipt persistence.
+
+Install `FILE_PIPELINE_SCHEMA` separately with your migration runner. `query`
+must execute one acknowledged AUTOCOMMIT statement and return mapping rows,
+outside ambient transactions. Configure driver timeouts. `authorize` returns
+`FilePipelineOwner` from a durable application record or None; a mutable file
+needs its trusted SHA-256 or fixed-block `source_digest`. Immutable versions
+never fall back to the current object. Input mapping buffers within `max_bytes`
+(default 16 MiB), with at most `max_items` (default 1,000). Use the SAME stable,
+content-addressed `job_store` as the job for stored inputs. Mapping must be pure.
+
+Native verification checks account/app/bucket, payload and retained original
+invocation identity; public event headers are insufficient. HTTP adapters need a
+trusted gateway/authenticated boundary. Pruned proof fails closed. Duplicates
+share one durable intent. An uncertain intent/run/checkpoint acknowledgment never
+causes an automatic repost, including beyond the API idempotency window. Explicit
+run-ID reconciliation matches the exact saved manifest and scope without source
+bytes. Retain receipts while events/replays can arrive; deleting permits another
+submission. Job side effects remain at least once.
+
+The [CSV application](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+shows native trigger setup, separate input/output filters, browser-free job
+submission, two-user isolation, restart recovery and shared Node/Python receipts.

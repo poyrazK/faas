@@ -20,7 +20,9 @@ from faas_sdk.preview.files import (
     file_source_digest,
 )
 
-ROOT = Path(__file__).resolve().parents[2] / "request-contracts"
+ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
+if not ROOT.exists():
+    ROOT = Path(__file__).resolve().parents[2] / "request-contracts"
 F = json.loads((ROOT / "files.json").read_text())
 DATA = F["source"].encode()
 OPTIONS = FileOptions(timeout=3, max_polls=2, poll_delay=0)

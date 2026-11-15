@@ -49,6 +49,7 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     const publicBrowser = await import('@gregale/sdk-node/browser');
     assert.equal(typeof fileBrowser.createFileBucket,'function'); assert.equal(publicBrowser.createFileBucket,undefined);
     assert.equal(sourceSdk.FileError,undefined); assert.equal(typeof previewSdk.pathFileSource,'function');
+    assert.equal(sourceSdk.createFilePipeline,undefined);assert.equal(typeof previewSdk.createFilePipeline,'function');assert.equal(fileBrowser.createFilePipeline,undefined);
     const sourceOptions = {timeoutMs:10000,onCheckpoint:value => sourceSdk.saveSourceUploadCheckpoint('source-state.json',value)};
     const staged = await sourceClient.uploads.uploadSource({path:'source.tar.gz',appSlug:'api'},sourceOptions);
     assert.equal(staged.stage,'ready');
@@ -302,6 +303,14 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
       c.part_digests.push('changed');
     }});
     void fileUpload;
+    declare const filePipeline: import('@gregale/sdk-node/preview').FilePipeline<unknown,unknown>;
+    const triggered:Promise<import('@gregale/sdk-node/preview').FilePipelineOutcome> = filePipeline.handle({body:new Uint8Array(),invocationId:'id'},{timeoutMs:1000});
+    const reconciled:Promise<import('@gregale/sdk-node/preview').FilePipelineOutcome> = filePipeline.reconcile('identity','run',{timeoutMs:1000});
+    void triggered;void reconciled;
+    // @ts-expect-error pipeline execution requires a total budget
+    filePipeline.handle({body:new Uint8Array(),invocationId:'id'},{});
+    // @ts-expect-error file pipelines remain preview-only
+    type PublicPipeline = import('@gregale/sdk-node').FilePipeline;
     // @ts-expect-error files remain preview only
     client.storage.files({appSlug:'app',bucket:'bucket'});
     // @ts-expect-error a total transfer budget is required

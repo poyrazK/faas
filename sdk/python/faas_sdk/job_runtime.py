@@ -71,6 +71,11 @@ def _stable(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
+def job_value_hash(value: Any) -> str:
+    """Internal canonical JSON value hash; validate values before hashing."""
+    return job_hash(_stable(value).encode())
+
+
 def _schema_check(schema: Any, depth: int = 0) -> None:
     if (
         not isinstance(schema, dict)

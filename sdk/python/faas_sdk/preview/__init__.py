@@ -10,6 +10,7 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from .file_pipelines import FILE_PIPELINE_SCHEMA, FileCreatedEvent, FileDelivery, FilePipeline, FilePipelineError, FilePipelineInput, FilePipelineIntent, FilePipelineOptions, FilePipelineOutcome, FilePipelineOwner, FilePipelineReceipt, FilePipelineScope, FilePipelineStore, NativeFileVerifier, PostgresFilePipelineStore, file_event_invocation_id, file_pipeline_identity, parse_file_created_event
 from .files import BytesFileSource, FileBucket, FileCheckpoint, FileCode, FileError, FileMetadata, FileObject, FileOptions, FilePage, FilePart, FileProgress, FileSource, FileUploadResult, PathFileSource, file_source_digest
 from .. import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
@@ -635,6 +636,7 @@ from .realtime_workers import (
 )
 
 __all__ = (
+    'FILE_PIPELINE_SCHEMA', 'FileCreatedEvent', 'FileDelivery', 'FilePipeline', 'FilePipelineError', 'FilePipelineInput', 'FilePipelineIntent', 'FilePipelineOptions', 'FilePipelineOutcome', 'FilePipelineOwner', 'FilePipelineReceipt', 'FilePipelineScope', 'FilePipelineStore', 'NativeFileVerifier', 'PostgresFilePipelineStore', 'file_event_invocation_id', 'file_pipeline_identity', 'parse_file_created_event',
     "BytesFileSource", "FileBucket", "FileCheckpoint", "FileCode", "FileError", "FileMetadata", "FileObject", "FileOptions", "FilePage", "FilePart", "FileProgress", "FileSource", "FileUploadResult", "PathFileSource", "file_source_digest",
     *_PACKAGE_ALL,
     "AI_CALL_HEADER",

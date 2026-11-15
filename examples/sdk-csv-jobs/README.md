@@ -100,10 +100,10 @@ result storage. Local tests do not establish deployed scheduler acceptance.
 
 ## Browser file imports (preview)
 
-`file-api.mjs` and `file-index.html` extend this example with a complete file
-workflow: authenticated application record → direct resumable upload → confirmed
-stored CSV → typed jobs → progress → stored rejection report download. Both
-worker languages can now use the SDK's built-in managed JobStore.
+`file-api.mjs` and `file-index.html` provide an automatic workflow: authenticated
+application record → resumable upload → native storage event → typed job →
+progress → stored rejection report. The browser never calls `/start`. Both SDKs
+share a PostgreSQL submission ledger and the managed JobStore.
 
 Configure an existing app and bucket with storage preview access and read/write
 grants. Set bucket CORS to allow your application origin, PUT, and the returned
@@ -115,10 +115,12 @@ export FAAS_API=https://your-gregale-api
 export FAAS_TOKEN=your-backend-token
 export GREGALE_FILE_APP=imports
 export GREGALE_FILE_BUCKET=your-bucket-uuid
+export GREGALE_FILE_ACCOUNT_ID=the-bucket-owning-account-uuid
 # On workers, prefer a credential scoped to this app/bucket:
 export GREGALE_FILE_TOKEN=your-worker-storage-token
 export GREGALE_IMPORT_STATE=/private/path/file-imports
 export GREGALE_FILE_USERS='{"alice":"replace-with-alice-app-token","bob":"replace-with-bob-app-token"}'
+psql "$DATABASE_URL" -f sdk/request-contracts/file-pipelines.sql
 npm --prefix sdk/node run build
 node examples/sdk-csv-jobs/file-api.mjs
 ```
@@ -128,6 +130,31 @@ The backend credential stays on the server. Replace the static token map with
 your normal application authentication before using the example as a product.
 The demo listens on loopback; production hosting also needs TLS. This file flow
 accepts up to 1 MiB per CSV and generates its own unique storage keys.
+
+Before accepting uploads, enable a native compute trigger on the bucket's owning
+app (the app running `file-api.mjs`). Include every desired managed trigger:
+
+```yaml
+buckets:
+  - bucket: your-bucket-name
+    app: imports
+    prefix: GREGALE_S3_IMPORTS
+    triggers:
+      - id: csv-upload
+        prefix: imports/
+        suffix: /input.csv
+        events: ["s3:ObjectCreated:CompleteMultipartUpload"]
+```
+
+Historical completions are not delivered retroactively. Managed reconciliation
+checks the observed revision and preserves manual rules; its list replaces the
+app's managed rules. Existing storage preview, MFA and
+plan gates apply. Notifications POST to `/`. The adapter requires gateway-owned
+source/app/account headers, then re-reads native invocation proof and checks the
+payload. Public body/header claims alone are refused. Set `HOST=0.0.0.0` for the
+deployed process behind Gregale's gateway; other hosting needs an authenticated
+proxy that strips forged platform claims. The backend token needs invocation
+read, app read, storage read/write and Jobs access. Output reports do not match the trigger.
 
 Pause preserves the remote session. After a reload, enter the same application's
 token, select the same file and choose **Resume saved import**. The browser saves
@@ -141,7 +168,8 @@ keys, type and size; it does not proxy arbitrary storage requests.
 Before submitting rows the backend reads the stored bytes, checks the initially
 declared size and fixed-block source digest, and uses an immutable version when
 available. Submission intent is saved before Jobs access. If acceptance is
-uncertain, inspect that intent/run explicitly rather than creating another
+uncertain, its ledger remains `unresolved` and duplicate deliveries never POST
+again. Inspect that intent/run explicitly rather than creating another
 submission. Row/task failures remain visible in progress and results; the CSV
 report lists validation rejections. Stored reports and inputs remain after task
 cancellation, following the application's retention policy.
@@ -153,3 +181,24 @@ Chrome is available, it runs the real browser flow including progress, download
 and reload/resume. Set `GREGALE_LOCAL_CHROME` to a Chrome/Chromium executable on
 other systems. Storage and the scheduler are local protocol fixtures; this does
 not establish deployed preview access, provider behavior or bucket CORS.
+
+`file_pipeline.py DELIVERY.json` consumes the same event/ledger using Python.
+Run it on a trusted host/adapter with the environment above and
+`GREGALE_FILE_APP_ID` (the owning app UUID). Its private input JSON contains
+`invocationId` and the original JSON `body` string. It independently verifies
+native proof and ownership. Local tests run competing Node/Python consumers,
+re-delivery through the other SDK, and delivery after app restart with the
+uploader gone; each upload creates one retained submission.
+
+Recover a known accepted run by placing its ledger `identity` and inspected
+`run_id` in a private JSON file:
+
+```sh
+python examples/sdk-csv-jobs/file_pipeline.py recovery.json reconcile
+```
+
+Reconciliation reads Jobs and updates the ledger only after matching the exact
+saved manifest/account/endpoint/contract. It never resubmits. Retain ledger rows
+while old notifications can replay. The demo's private upload records need a
+shared state directory; replicated products should move ownership records into
+their application database too.

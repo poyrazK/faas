@@ -27,9 +27,9 @@ if(typeof document!=='undefined'){
     const files=createFileBucket(record.scope,fileBroker(record.id,request));
     const options={timeoutMs:120000,signal:controller.signal,maxBytes:1024*1024,onCheckpoint:c=>{checkpoint=c;save();},onProgress:p=>{status.textContent=`Uploaded ${p.confirmed_bytes} / ${p.total_bytes} bytes`;}};
     if(checkpoint)await files.resume(checkpoint,source,options);else await files.upload(record.key,source,{...options,contentType:'text/csv'});
-    await request(`/files/${record.id}/start`,{method:'POST',body:'{}',signal:controller.signal});
     for(let i=0;i<120;i++){
       controller.signal.throwIfAborted();const p=await request(`/files/${record.id}/progress`,{signal:controller.signal});status.textContent=`${p.status}: ${p.succeeded}/${p.total} rows saved or validated; ${p.failed} failed`;
+      if(p.status==='submission_unresolved')throw new Error('Submission needs explicit recovery by run ID. The upload is saved.');
       if(['succeeded','failed','cancelled','dead_letter'].includes(p.status)){report.disabled=false;return;}
       await new Promise(r=>setTimeout(r,500));
     }throw new Error('Polling limit reached; resume to inspect progress');

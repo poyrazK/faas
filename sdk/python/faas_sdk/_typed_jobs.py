@@ -184,6 +184,8 @@ def _key(value: str) -> str:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class JobSubmitOptions(JobRunOptions):
     idempotency_key: str
+    expected_account_id: str | None = None
+    expected_base_url: str | None = None
     parallelism: int | None = None
     retry_max: int | None = None
     failure_policy: Literal["continue", "fail_fast"] | None = None
@@ -191,6 +193,10 @@ class JobSubmitOptions(JobRunOptions):
     def __post_init__(self) -> None:
         super(JobSubmitOptions, self).__post_init__()
         _key(self.idempotency_key)
+        if self.expected_account_id is not None and not _uuid(self.expected_account_id):
+            raise JobError('invalid_input')
+        if self.expected_base_url is not None:
+            _base(self.expected_base_url)
         if (
             any(v is not None and not _nonnegative(v) for v in (self.parallelism, self.retry_max))
             or self.parallelism == 0
@@ -680,6 +686,8 @@ class TypedJob(Generic[Input, Output]):
         ):
             raise JobError("invalid_input")
         base = _base(str(self._owner.async_httpx_client.base_url))
+        if options.expected_base_url is not None and base != _base(options.expected_base_url):
+            raise JobError('invalid_receipt')
 
         async def work(op: _Operation) -> TypedJobRun[Input, Output]:
             job = await op.request(_path(self._contract.spec["name"]))
@@ -687,6 +695,7 @@ class TypedJob(Generic[Input, Output]):
                 not _uuid(job.get("id"))
                 or not _uuid(job.get("account_id"))
                 or job.get("name") != self._contract.spec["name"]
+                or options.expected_account_id is not None and job.get('account_id') != options.expected_account_id
             ):
                 raise JobError("invalid_response")
             refs = []
