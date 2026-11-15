@@ -94,6 +94,16 @@ func exerciseRegistry(t *testing.T, store state.Store, reconnect func() state.St
 	if w := call("PUT", "/v1/tool-publications/"+id, changed, owner, nil); w.Code != 409 {
 		t.Fatalf("changed review: %d %s", w.Code, w.Body.String())
 	}
+	// A retained begin must reject changed nested permissions without rewriting
+	// the caller's maps while comparing them (including concurrent callers).
+	changedNested := in
+	changedNested.ToolScopes = map[string][]string{"csv_profile": {"review:changed"}}
+	if _, err := store.(state.ToolPublicationStore).BeginToolPublication(ctx, owner.ID, id, changedNested); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("changed nested review accepted: %v", err)
+	}
+	if scopes := changedNested.ToolScopes["csv_profile"]; len(scopes) != 1 || scopes[0] != "review:changed" {
+		t.Fatal("retained begin rewrote caller permissions")
+	}
 	if w := call("GET", "/v1/tool-publications/"+id, nil, other, nil); w.Code != 404 {
 		t.Fatalf("cross-account read: %d", w.Code)
 	}

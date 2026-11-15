@@ -22759,12 +22759,13 @@ func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expires
 	m.cliAuthCodes[string(tokenHash)] = CliAuthCode{
 		TokenHash: append([]byte(nil), tokenHash...),
 		ExpiresAt: expiresAt,
+		CreatedAt: time.Now(),
 	}
 	return nil
 }
 
 // IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore.
-func (m *MemStore) IssueCliAuthDeviceCode(_ context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+func (m *MemStore) IssueCliAuthDeviceCode(_ context.Context, tokenHash, deviceHash, verifierHash []byte, expiresAt time.Time) error {
 	tokenHash = storedCredential(credTagCLIAuthCode, tokenHash)
 	deviceHash = storedCredential(credTagCLIDeviceCode, deviceHash)
 	m.mu.Lock()
@@ -22775,25 +22776,64 @@ func (m *MemStore) IssueCliAuthDeviceCode(_ context.Context, tokenHash, deviceHa
 	if _, exists := m.cliAuthCodes[string(tokenHash)]; exists {
 		return ErrConflict
 	}
-	m.cliAuthCodes[string(tokenHash)] = CliAuthCode{
+	row := CliAuthCode{
 		TokenHash:  append([]byte(nil), tokenHash...),
 		DeviceHash: append([]byte(nil), deviceHash...),
 		ExpiresAt:  expiresAt,
+		CreatedAt:  time.Now(),
 	}
+	if len(verifierHash) > 0 {
+		row.VerifierHash = append([]byte(nil), verifierHash...)
+	}
+	m.cliAuthCodes[string(tokenHash)] = row
 	return nil
 }
 
 // ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore.
-func (m *MemStore) ConsumeCliAuthDeviceCode(_ context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+func (m *MemStore) ConsumeCliAuthDeviceCode(_ context.Context, deviceHash, verifierHash []byte) (api.CliAuthStatus, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for key, row := range m.cliAuthCodes {
 		if len(row.DeviceHash) == 0 || !credentialIn(credTagCLIDeviceCode, deviceHash, row.DeviceHash) {
 			continue
 		}
+		// A row bound to a verifier is left untouched without it: still
+		// pending reads as pending, approved reads as unavailable.
+		if len(row.VerifierHash) > 0 && !bytes.Equal(row.VerifierHash, verifierHash) {
+			if row.ExpiresAt.After(time.Now()) && row.AccountID == "" && row.ConsumedAt == nil {
+				return api.CliAuthStatusPending, "", nil
+			}
+			return api.CliAuthStatusExpired, "", ErrNotFound
+		}
 		return m.consumeCliAuthRowLocked(key, row)
 	}
 	return api.CliAuthStatusExpired, "", ErrNotFound
+}
+
+// RecordCliAuthRequester implements CliAuthRequesterStore.
+func (m *MemStore) RecordCliAuthRequester(_ context.Context, tokenHash []byte, ip string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
+	if !ok || row.AccountID != "" || row.ConsumedAt != nil {
+		return ErrNotFound
+	}
+	row.RequesterIP = ip
+	m.cliAuthCodes[key] = row
+	return nil
+}
+
+// CliAuthRequester implements CliAuthRequesterStore.
+func (m *MemStore) CliAuthRequester(_ context.Context, tokenHash []byte) (CliAuthRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
+	if !ok || !row.ExpiresAt.After(time.Now()) {
+		return CliAuthRequest{}, ErrNotFound
+	}
+	return CliAuthRequest{IP: row.RequesterIP, CreatedAt: row.CreatedAt}, nil
 }
 
 // PeekCliAuthCode returns the row's status without mutating it. Used
