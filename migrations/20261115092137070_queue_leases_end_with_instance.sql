@@ -1,4 +1,4 @@
--- filename: 20261113180100000_queue_leases_end_with_instance.sql
+-- filename: 20261115092137070_queue_leases_end_with_instance.sql
 -- migration-compat: expand
 -- ADR-20261113180000 (R6-4): a pull lease names the worker instance that
 -- took it. When that instance stops or fails, nothing will settle its
