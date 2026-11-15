@@ -363,7 +363,8 @@ func cmdBuildList(args []string) int {
 	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
 	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
-	stream := fs.Bool("stream", false, "emit rows as JSON Lines as pages arrive (requires --json --all)")
+	stream := fs.Bool("stream", false, "emit rows as JSON Lines as pages arrive (stdout requires --json --all)")
+	outputPath := fs.String("output", "", "publish a new JSON Lines file after all pages complete (requires --all)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -390,7 +391,13 @@ func cmdBuildList(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale build list --limit N (1 <= N <= 200)", "build")
 		return 1
 	}
-	if !validateListStream(*stream, *all) {
+	output, err := prepareListOutput(*outputPath, flagWasSet(fs, "output"), *all, "build list")
+	if err != nil {
+		return printErr("Invalid list output", err)
+	}
+	if output != nil {
+		defer output.Close()
+	} else if !validateListStream(*stream, *all, "build list") {
 		return 1
 	}
 	client, err := authedClient()
@@ -401,6 +408,9 @@ func cmdBuildList(args []string) int {
 	fetch := func(ctx context.Context, cursor string) ([]api.BuildResponse, string, error) {
 		page, err := client.GetBuilds(ctx, *app, *status, cursor, *limit)
 		return page.Items, page.NextBefore, err
+	}
+	if output != nil {
+		return runListFileExport("Could not list builds", *before, output, fetch)
 	}
 	if *stream {
 		return runStreamList("Could not list builds", *before, fetch)

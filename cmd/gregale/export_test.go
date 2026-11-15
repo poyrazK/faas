@@ -2903,6 +2903,9 @@ func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, i
 	return waitPrivatePublicationVerification(ctx, c, id, in)
 }
 
+var RememberInitApp = rememberInitApp
+var LinkedDefaultAppName = linkedDefaultAppName
+
 // gregale dev findings (2026-11-15).
 var DevSourceFingerprint = devSourceFingerprint
 var DevLocalEnvExcludes = devLocalEnvExcludes

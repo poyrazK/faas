@@ -129,6 +129,14 @@
       <p class="errorbox">Only continue if you ran <code>gregale login</code> yourself, just now, on a computer you control. Anyone who sent you this link gets access to your account if you approve it.</p>
       {{end}}
 
+      {{/* Account audit F10: where the code came from, beside this
+          browser's address, so a code someone else sent looks foreign. */}}
+      {{with index .Data "Request"}}{{if not (index $.Data "MCP")}}
+      <p class="fine" id="cli-auth-request">
+        Requested {{.At}}{{if .IP}} from <code>{{.IP}}</code>{{if .SameIP}} (this network){{else if .BrowserIP}}; this browser is at <code>{{.BrowserIP}}</code>{{end}}{{else}}, from an unrecorded address{{end}}.
+      </p>
+      {{end}}{{end}}
+
       <form method="POST" action="/cli-auth">
         {{if index .Data "MCP"}}
         <input type="hidden" name="code" value="{{index .Data "Code"}}">

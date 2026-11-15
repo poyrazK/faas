@@ -107,6 +107,21 @@ func (s Service) WorkloadScope(r *http.Request) (state.Account, state.App, strin
 	return s.WorkloadScopeFor(r, workloadidentity.QueuesAudience, true)
 }
 
+// workloadPathNamesApp reports whether the path's slug addresses the token's
+// app: its current slug, or a slug it had before a rename that no other app
+// holds now. Workers name their app by the slug they were configured with, so
+// requiring the current slug broke every running pull consumer on a rename
+// until its code changed and it was redeployed (ADR-20261113180000, R8-1).
+// The token, not the slug, carries the authority.
+func workloadPathNamesApp(r *http.Request, store state.Store, app state.App) bool {
+	slug := r.PathValue("slug")
+	if slug == app.Slug {
+		return true
+	}
+	other, err := store.AppBySlug(r.Context(), slug)
+	return errors.Is(err, state.ErrNotFound) || err == nil && other.ID == app.ID
+}
+
 // WorkloadScopeFor binds a token for audience to a live instance of the app
 // named in the path. productionOnly also refuses an instance that runs a
 // stage deployment, or a token that names one.
@@ -122,7 +137,7 @@ func (s Service) WorkloadScopeFor(r *http.Request, audience string, productionOn
 	}
 	store := s.Host.Store()
 	app, err := store.AppByID(r.Context(), c.AppID)
-	if err != nil || app.AccountID != c.AccountID || app.Slug != r.PathValue("slug") || app.Status == state.AppDeleted {
+	if err != nil || app.AccountID != c.AccountID || app.Status == state.AppDeleted || !workloadPathNamesApp(r, store, app) {
 		return state.Account{}, state.App{}, "", errors.New("token does not name this app")
 	}
 	acct, err := state.AppResourceAccount(r.Context(), store, app)
@@ -224,7 +239,22 @@ func (s Service) lease(ctx context.Context, store state.QueueLeaseStore, req sta
 	}
 	release, ok := s.Waiters.acquire(req.AccountID)
 	if !ok {
-		return store.LeaseQueueMessages(ctx, req)
+		// Over the waiter cap the call leases once and, finding nothing,
+		// holds the request for its wait without touching the database.
+		// Returning at once made the SDK consumers, which poll again on an
+		// empty answer, spin lease transactions back to back
+		// (ADR-20261113180000, R5-1).
+		leases, err := store.LeaseQueueMessages(ctx, req)
+		if err != nil || len(leases) > 0 {
+			return leases, err
+		}
+		idle := time.NewTimer(wait)
+		defer idle.Stop()
+		select {
+		case <-ctx.Done():
+		case <-idle.C:
+		}
+		return leases, nil
 	}
 	defer release()
 	waitCtx, cancel := context.WithTimeout(ctx, wait)
@@ -243,7 +273,7 @@ func (s Service) lease(ctx context.Context, store state.QueueLeaseStore, req sta
 		if err != nil || len(leases) > 0 {
 			return leases, err
 		}
-		if !waitForQueueWake(waitCtx, &wakes, recheck.C, req.AppID) {
+		if !waitForQueueWake(waitCtx, &wakes, recheck.C, req.AppID, req.QueueName) {
 			return leases, nil
 		}
 	}
@@ -251,7 +281,7 @@ func (s Service) lease(ctx context.Context, store state.QueueLeaseStore, req sta
 
 // waitForQueueWake returns true when the lease should try again, false when
 // the wait is over. A closed notification stream leaves the recheck timer.
-func waitForQueueWake(ctx context.Context, wakes *<-chan db.Notification, recheck <-chan time.Time, appID string) bool {
+func waitForQueueWake(ctx context.Context, wakes *<-chan db.Notification, recheck <-chan time.Time, appID, queueName string) bool {
 	for {
 		select {
 		case <-ctx.Done():
@@ -263,7 +293,7 @@ func waitForQueueWake(ctx context.Context, wakes *<-chan db.Notification, rechec
 				*wakes = nil
 				continue
 			}
-			if queueMessageDue(n.Payload, appID) {
+			if queueMessageDue(n.Payload, appID, queueName) {
 				coalesceQueueWakes(ctx, *wakes)
 				return true
 			}
@@ -296,13 +326,22 @@ func coalesceQueueWakes(ctx context.Context, wakes <-chan db.Notification) {
 }
 
 // queueMessageDue matches an invocation_due payload for a queue message of
-// appID. The payload is only a hint; the next lease re-checks everything.
-func queueMessageDue(payload, appID string) bool {
+// appID. The payload is only a hint; the next lease re-checks everything. A
+// payload that names a queue matches only queueName (ADR-20261113180000,
+// R5-10): every message of the app used to wake every waiter of the app. A
+// payload without the key, from a database before that migration, matches
+// any queue. Messages sent under a binding's earlier name are found by the
+// recheck.
+func queueMessageDue(payload, appID, queueName string) bool {
 	var p struct {
-		AppID  string `json:"app_id"`
-		Source string `json:"source"`
+		AppID     string  `json:"app_id"`
+		Source    string  `json:"source"`
+		QueueName *string `json:"queue_name"`
 	}
-	return json.Unmarshal([]byte(payload), &p) == nil && p.AppID == appID && p.Source == string(state.InvocationQueue)
+	if json.Unmarshal([]byte(payload), &p) != nil || p.AppID != appID || p.Source != string(state.InvocationQueue) {
+		return false
+	}
+	return p.QueueName == nil || *p.QueueName == queueName
 }
 
 func message(lease state.QueueLease) api.QueueLeaseMessage {

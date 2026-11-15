@@ -22,5 +22,9 @@ export type DevSessionResponse = {
    * The stored Go command; omitted when none.
    */
   go_command?: string;
+  /**
+   * Whether this control plane delivers live source patches to developer environments. Automatic watch mode is chosen only when it does. Omitted by older servers.
+   */
+  live_patches?: boolean;
 };
 

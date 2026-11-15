@@ -190,7 +190,7 @@ expiring preview does not create a permanent receipt.
 ## Customers who may be stuck
 
 apid flags customers who look stuck before they write in
-(ADR-20261113123000, ADR-20261113180000): repeated failed deployments of one
+(ADR-20261113123000, ADR-20261115175928): repeated failed deployments of one
 app, an app that keeps running out of memory or failing to boot, a scheduled
 job whose recent runs all failed, a custom domain that is not serving, a
 burst of one refused API problem code, repeated plan-limit refusals, or a

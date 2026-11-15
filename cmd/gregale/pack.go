@@ -367,6 +367,24 @@ func parseDockerignore(data []byte) []gregaleignorePattern {
 	return patterns
 }
 
+// rootDockerignorePatterns is the root .dockerignore followed by the files
+// Docker always sends whatever it says: the Dockerfile and .dockerignore. A
+// .dockerignore listing `Dockerfile` (common, to keep it out of the image)
+// otherwise left the build with no Dockerfile (2026-11-15 agent eval).
+// Compose service contexts get the same re-include in
+// composeServiceDockerignorePatterns.
+func rootDockerignorePatterns(data []byte) []gregaleignorePattern {
+	patterns := parseDockerignore(data)
+	if len(patterns) == 0 {
+		return nil
+	}
+	for _, rel := range []string{"Dockerfile", dockerignoreFile} {
+		patterns = append(patterns, gregaleignorePattern{raw: "!" + rel, anchor: true, negate: true,
+			globSegments: []string{escapeGregaleignoreLiteral(rel)}, source: "Docker build context"})
+	}
+	return patterns
+}
+
 // dockerfileSource reports whether dir builds with a Dockerfile: one at its
 // root, or a gregale.yaml build: section naming one.
 func dockerfileSource(dir string) bool {
@@ -389,9 +407,17 @@ func loadPackRules(srcDir string, dockerfile bool) packRules {
 	}}
 	if dockerfile {
 		if data, err := os.ReadFile(filepath.Join(srcDir, dockerignoreFile)); err == nil {
-			rules.patterns = parseDockerignore(data)
+			rules.patterns = rootDockerignorePatterns(data)
 		}
 	}
+	rules.patterns = append(rules.patterns, composeServiceDockerignorePatterns(func(rel string) ([]byte, bool) {
+		info, err := os.Lstat(filepath.Join(srcDir, filepath.FromSlash(rel)))
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxGitignoreBytes {
+			return nil, false
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, filepath.FromSlash(rel)))
+		return data, err == nil
+	})...)
 	rules.patterns = append(rules.patterns, loadGregaleignore(srcDir)...)
 	return rules
 }

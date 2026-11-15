@@ -91,7 +91,7 @@ func loopbackLogin(ctx context.Context, c *Client, ln net.Listener, codeResp api
 	port := ln.Addr().(*net.TCPAddr).Port
 	results := make(chan loopbackResult, 1)
 	srv := &http.Server{
-		Handler:           loopbackCallback(ctx, c, port, codeResp.Code, results),
+		Handler:           loopbackCallback(ctx, c, port, codeResp.Code, codeResp.Verifier, results),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() { _ = srv.Serve(ln) }()
@@ -143,7 +143,9 @@ var loopbackPage = template.Must(template.New("loopback").Parse(`<!doctype html>
 // loopbackCallback serves the one-click callback. It accepts only this
 // login's own code on 127.0.0.1:port (a page elsewhere cannot rebind a name
 // to it, and does not know the code), and only the first good callback.
-func loopbackCallback(ctx context.Context, c *Client, port int, code string, results chan<- loopbackResult) http.Handler {
+// verifier is the minted code's verifier: the device code the browser brings
+// exchanges only together with it, and it never leaves this process.
+func loopbackCallback(ctx context.Context, c *Client, port int, code, verifier string, results chan<- loopbackResult) http.Handler {
 	var mu sync.Mutex
 	done := false
 	wantHost := "127.0.0.1:" + strconv.Itoa(port)
@@ -167,7 +169,7 @@ func loopbackCallback(ctx context.Context, c *Client, port int, code string, res
 			_ = loopbackPage.Execute(w, map[string]string{"Title": "Already signed in", "Detail": "You can close this tab."})
 			return
 		}
-		resp, err := c.ExchangeCliAuthLogin(ctx, api.CliAuthCodeResponse{Code: code, DeviceCode: q.Get("device_code")})
+		resp, err := c.ExchangeCliAuthLogin(ctx, api.CliAuthCodeResponse{Code: code, DeviceCode: q.Get("device_code"), Verifier: verifier})
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			_ = loopbackPage.Execute(w, map[string]string{"Title": "Sign-in failed", "Detail": "Return to your terminal for details."})

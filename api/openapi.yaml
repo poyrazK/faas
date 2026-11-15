@@ -31267,6 +31267,32 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [deployments]
+      operationId: createDatabaseSwitch
+      summary: Restore a database and move the app to the copy.
+      description: "Restores one of the app's managed PostgreSQL databases to point_in_time as a new database and moves the app's bindings in the scope to it, keeping the live release. The app stops serving from fencing until it resumes on the copy. Writes after point_in_time stay only in the source database, which keeps every write. Needs the postgres:manage scope and a verified email. Follow the returned switch with GET; cancel it before it starts switching."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDatabaseSwitchRequest' }
+            example: {"database_id":"0123456789abcdef0123456789abcdef","name":"orders-0900","point_in_time":"2026-10-30T09:00:00Z"}
+      responses:
+        '202':
+          description: The switch was recorded and runs in the background.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitch' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/database-switches/{id}:
     parameters:
@@ -62561,6 +62587,26 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/flags/lifecycle:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlagLifecycle
+      summary: Report each flag's owner, expiry, last change and use.
+      description: "Flags whose attention list is not empty need a decision: expired, expires_soon (within 7 days), stale (serves one value and unchanged for 14 days), never_evaluated (enabled, no decision in 7 days of retained request telemetry) or no_owner. An hourly check also records one flags.lifecycle_attention audit event per flag, reason and configuration version."
+      responses:
+        '200':
+          description: Lifecycle report for the current configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagLifecycleReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/flags/rollback:
     parameters:
       - { $ref: '#/components/parameters/FlagsProjectSlug' }
@@ -88130,11 +88176,43 @@ components:
         subjects: { type: array, minItems: 1, maxItems: 1000, uniqueItems: true, items: { type: string, pattern: '^[!-~]{1,128}$' }, description: "Opaque application subject IDs, matched inside the selected customers/group. Use stable internal IDs, not emails or display names." }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of eligible customers by default, or eligible subjects when rollout_unit is subject; omitted means all eligible targets." }
         rollout_unit: { type: string, enum: [customer, subject], description: Allocation unit for rollout percentages. Omitted preserves customer-level allocation. Subject rollout requires a customer or group constraint and an authenticated subject context. }
+        attributes: { type: array, minItems: 1, maxItems: 8, items: { $ref: '#/components/schemas/FlagCondition' }, description: "Request attribute conditions; all must hold. Runtime SDKs need capability attribute-targeting-v1." }
         progression: { $ref: '#/components/schemas/ProgressiveRollout' }
         value:
           oneOf:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
+    FlagLifecycleReport:
+      description: Lifecycle of every flag in the current configuration.
+      type: object
+      required: [config_version, generated_at, flags]
+      properties:
+        config_version: { type: integer, format: int64, minimum: 0 }
+        generated_at: { type: string, format: date-time }
+        flags: { type: array, items: { $ref: '#/components/schemas/FlagLifecycle' } }
+    FlagLifecycle:
+      description: One flag's owner, expiry, last change and recent use.
+      type: object
+      required: [key, last_changed_version, last_changed_at, serves_one_value, evidence, attention]
+      properties:
+        key: { type: string }
+        owner: { type: string }
+        expires_at: { type: string, format: date }
+        last_changed_version: { type: integer, format: int64, description: "Newest version that changed this flag, within the last 200 versions." }
+        last_changed_at: { type: string, format: date-time }
+        serves_one_value: { type: boolean, description: "True when every request gets the same value (disabled, killed, no rules, or a first rule matching everybody)." }
+        evaluated_requests: { type: integer, format: int64, description: Requests with a decision for this flag in the last 7 days of retained telemetry. }
+        evidence: { type: string, enum: [available, unavailable] }
+        attention: { type: array, items: { type: string, enum: [expired, expires_soon, stale, never_evaluated, no_owner] } }
+    FlagCondition:
+      description: "One request attribute condition. gregale.country (ISO 3166-1 alpha-2) and gregale.ua_family are verified by the gateway; app.<name> attributes are supplied by the application after it authenticates the user. A missing attribute never matches, including not_in. ends_with applies only to app.* attributes."
+      type: object
+      additionalProperties: false
+      required: [attribute, op, values]
+      properties:
+        attribute: { type: string, pattern: '^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$' }
+        op: { type: string, enum: [in, not_in, ends_with] }
+        values: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string, pattern: '^[ -~]{1,128}$' } }
     ProgressiveRollout:
       description: Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
       type: object
@@ -88237,6 +88315,9 @@ components:
         description: { type: string, maxLength: 512 }
         type: { type: string, enum: [boolean, variant], default: boolean }
         enabled: { type: boolean }
+        owner: { type: string, maxLength: 128, description: "Who decides about this flag, for example a team or an email. Not used in evaluation." }
+        expires_at: { type: string, format: date, description: Date after which the lifecycle report marks the flag expired. Not used in evaluation. }
+        killed: { type: boolean, default: false, description: "Forces every evaluation to the application's fallback (reason killed), whatever the default, rules or inherited decisions say. Gregale's gateway also reports killed flags on each request, so a kill applies on the next request. SDKs without capability kill-v1 receive bundles without killed flags." }
         default:
           description: Boolean fallback for boolean flags or named fallback variant for variant flags.
           oneOf:
@@ -88301,6 +88382,11 @@ components:
         version: { type: integer, format: int64, minimum: 0, description: Zero or omitted selects current configuration. }
         fallback: { type: boolean, default: false }
         fallback_variant: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Fallback variant for an absent flag; configured variant flags use their own default. }
+        attributes:
+          type: object
+          maxProperties: 18
+          description: Simulated request attributes (gregale.country, gregale.ua_family, app.<name>) for attribute-targeted rules.
+          additionalProperties: { type: string, pattern: '^[ -~]{1,128}$' }
     FlagDecision:
       description: Explainable boolean or named-variant decision against a configuration version.
       type: object
@@ -88314,7 +88400,7 @@ components:
         type: { type: string, enum: [boolean, variant], description: Present as variant for named-variant decisions; omitted for legacy boolean decisions. }
         config_version: { type: integer, format: int64, minimum: 0 }
         rule_id: { type: string }
-        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, subject_missing, rule_match, configuration_stale, type_mismatch] }
+        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, subject_missing, rule_match, configuration_stale, type_mismatch, killed] }
         bucket: { type: integer, minimum: 0, maximum: 9999, description: Boolean rollout bucket or weighted variant assignment bucket. }
         rollout_bucket: { type: integer, minimum: 0, maximum: 9999, description: Eligibility bucket for rollout-gated variant rules. }
         source: { type: string, enum: [configuration, fallback, inherited] }
@@ -120779,6 +120865,7 @@ components:
           type: array
           items: { type: string, format: uuid }
           description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        keeps_release: { type: boolean, description: "True for a restore that moves the app to the copy without changing its code; the target deployment is the release that served when it was requested." }
         source_database_id: { type: string, format: uuid, description: "The database the app leaves. It keeps every write." }
         source_database_name: { type: string }
         target_database_id: { type: string, format: uuid, description: "The restored copy, once its restore has started." }
@@ -120798,6 +120885,17 @@ components:
         phase_started_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    CreateDatabaseSwitchRequest:
+      description: "Restore a managed database the app binds and move the app to the copy, keeping its code."
+      type: object
+      additionalProperties: false
+      required: [database_id, name, point_in_time]
+      properties:
+        database_id: { type: string, format: uuid, description: "The managed database the app's bindings point at." }
+        name: { type: string, minLength: 1, maxLength: 63, description: "Name of the restored copy; it becomes the app's database." }
+        point_in_time: { type: string, format: date-time, description: "A time inside the database's restore range. Writes after it stay only in the source database." }
+        scope: { type: string, description: "The environment whose bindings move; empty is the default scope." }
 
     DatabaseSwitchDrain:
       description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
@@ -124121,7 +124219,7 @@ components:
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
 
     QueueReceiveResponse:
-      description: "200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout."
+      description: "200 — a settled queue invocation observed by the long-poll feed: every waiting receive sees it, and one that settles while none waits is not replayed. 204 (no body) on timeout. Consume with pull leases instead."
       type: object
       required: [id, payload]
       properties:
@@ -124130,6 +124228,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
         result: { type: object, additionalProperties: true }
+        state: { type: string, description: "How the message settled: completed, failed or cancelled. A failed or cancelled message's result is its error." }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         traceparent: { type: string, description: "W3C traceparent propagated from the producer." }
 
