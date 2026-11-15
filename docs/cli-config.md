@@ -349,6 +349,34 @@ transient failure. Successful and unsuccessful terminal outcomes keep their
 existing exit behavior, including exit `1` for failed/cancelled/dead or unknown
 terminal state. Diagnostic text and recovery metadata redact credentials.
 
+## App health wait recovery
+
+`gregale --json app health APP --wait` includes a `recovery` object in timeout,
+interruption and permanent API-error Problems on stderr. It contains `app`,
+optional `environment`, `inspect_command` and `resume_command`. For example:
+
+```sh
+gregale --profile staging app health --app my-api --env production
+gregale --profile staging app health --app my-api --env production --wait --timeout 5m0s --poll-interval 30s
+```
+
+The commands retain the resolved app, selected profile, environment, timeout
+and polling interval. When no environment was selected, recovery keeps the
+default-scope read without adding an environment flag. A resumed wait starts
+a new local budget of the same duration. Retain endpoint and credential
+overrides separately; recovery commands redact credentials and contain no
+tokens. These commands only read recorded health; they do not wake, restart,
+redeploy or probe the app, and do not establish that its health is known.
+
+The existing health assessment stays on stdout when an observation is
+available, including after Ctrl-C or a later permanent read failure. Its scope
+and evidence timestamps are unchanged and can be stale or unhealthy. No
+observation means empty stdout. Freshness and scope checks still determine
+success; retaining a snapshot does not make the wait successful. Timeout exits
+`124`, interruption exits `130`, and permanent API errors retain their existing
+Problems, exit mapping and valid request IDs. Local stops do not reuse a
+request ID from an earlier transient failure. Human output is unchanged.
+
 ## Request IDs on API errors
 
 When an API failure includes one valid `X-Faas-Request-Id`, normal text errors

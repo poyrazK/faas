@@ -71,7 +71,8 @@ rather than continue displaying a healthy cached result. The console refreshes
 while visible every 30 seconds and hides expired evidence. API read failures
 and unreachability take precedence over cached success.
 
-This first slice assesses default-scope HTTP request and service workloads.
+This assessment covers HTTP request and service workloads in the default
+scope or an explicitly selected project environment.
 It excludes preview/dark releases, mirrors and one-off tasks from serving
 capacity. Worker/job execution is explicitly unassessed. Active-instance scans
 are bounded to 256 rows, deployment history to 50 recent rows, and collection
@@ -85,8 +86,30 @@ not exposed.
 This assessment does not prove public reachability, verify artifact existence,
 probe dependencies, or provide an uptime guarantee. It describes evidence that
 Gregale already has. Opt-in notifications for status changes are described
-below. Active public probes, arbitrary environment selection and worker/job
-checks are future slices.
+below. Active public probes and worker/job checks are future slices.
+
+## Waiting and recovering
+
+Wait for a fresh healthy assessment in the selected scope:
+
+```sh
+gregale --json app health my-api --wait --timeout 5m --poll-interval 30s
+gregale --json app health my-api --env production --wait --timeout 5m --poll-interval 30s
+```
+
+Timeout, interruption and permanent read-error JSON Problems include
+`recovery.inspect_command` and `recovery.resume_command` for the same app,
+profile and environment. The latter preserves the timeout and polling
+interval. Run it to continue observing from a new local deadline. Both commands
+only read recorded evidence; stopping or continuing a wait does not change
+the app. Keep the same endpoint and credential overrides.
+
+If waiting stops after an assessment was received, JSON stdout retains that
+last observation, including after an API refusal or interruption. Its original
+timestamps and scope still apply; it is not proof of current health. With no
+observation, stdout remains empty. See
+[App health wait recovery](cli-config.md#app-health-wait-recovery) for the
+recovery fields and exit contract.
 
 ## Recorded health history
 
