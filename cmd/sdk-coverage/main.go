@@ -1454,6 +1454,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/deployments/{id}/schedule":                                  "ScheduleDeployment",
 	"DELETE /v1/deployments/{id}/schedule":                               "CancelDeploymentSchedule",
 	"GET /v1/apps/{slug}/database-switches":                              "ListDatabaseSwitches",
+	"POST /v1/apps/{slug}/database-switches":                             "CreateDatabaseSwitch",
 	"GET /v1/apps/{slug}/database-switches/{id}":                         "GetDatabaseSwitch",
 	"POST /v1/apps/{slug}/database-switches/{id}/cancel":                 "CancelDatabaseSwitch",
 	"PUT /v1/apps/{slug}/secrets/{key}":                                  "SetSecret",
