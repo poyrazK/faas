@@ -1261,6 +1261,19 @@
     "kind": "operational"
   },
   {
+    "table": "environment_api_routes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "environment_id",
+      "first_seen",
+      "last_seen",
+      "request_count",
+      "route_template"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_application_standards",
     "columns": [
       "additional_log_destinations",
@@ -3945,8 +3958,10 @@
       "expires_at",
       "org_id",
       "project_ids",
+      "requester_ip",
       "status",
-      "token_hash"
+      "token_hash",
+      "verifier_hash"
     ],
     "kind": "account_identity"
   },
@@ -5906,6 +5921,7 @@
       "app_id",
       "before_checkpoint_hook",
       "build_id",
+      "build_registry_scope",
       "canary_preset",
       "canary_stages",
       "canary_step",
@@ -7648,6 +7664,7 @@
       "account_id",
       "acknowledgment_lease_seconds",
       "app_id",
+      "clone_paused",
       "created_at",
       "deployment_scope",
       "enabled",
@@ -7661,7 +7678,7 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": ["capture", "materialize"],
     "clone": {
       "owner": "app",
       "live": [
@@ -19815,6 +19832,8 @@
       "id",
       "mem_bytes",
       "recovery_generation",
+      "sealed_capture_id",
+      "sealed_key",
       "stale",
       "stale_at",
       "storage_key",
@@ -20287,6 +20306,21 @@
       "revision",
       "status",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "storage_object_deletions",
+    "columns": [
+      "attempts",
+      "decided_at",
+      "last_error",
+      "next_attempt_at",
+      "reason",
+      "requested_at",
+      "requested_by",
+      "state",
+      "storage_key"
     ],
     "kind": "operational"
   },
@@ -21827,6 +21861,17 @@
       "invocation_id",
       "sender_app_id",
       "on_complete_app_id",
+      "created_at",
+      "workflow_run_id",
+      "workflow_op"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_run_starts",
+    "columns": [
+      "run_id",
+      "starter_app_id",
       "created_at"
     ],
     "kind": "operational"

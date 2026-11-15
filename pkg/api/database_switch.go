@@ -9,7 +9,8 @@ import (
 // DatabaseSwitch is a rollback that restores the app's managed PostgreSQL
 // database with the code (ADR-20261023181931): the database is restored to
 // RestorePoint as a new database, and the app moves to it and to the target
-// release while it is fenced.
+// release while it is fenced. A switch that keeps its release (amendment 3)
+// moves the app to the copy without changing its code.
 type DatabaseSwitch struct {
 	ID    string `json:"id"`
 	AppID string `json:"app_id"`
@@ -27,6 +28,11 @@ type DatabaseSwitch struct {
 	// UndoneDeploymentIDs are the deployments whose release commands the
 	// restore undoes; rolling back to them is refused afterwards.
 	UndoneDeploymentIDs []string `json:"undone_deployment_ids"`
+	// KeepsRelease is true for a restore that moves the app to the copy
+	// without changing its code (`gregale postgres restore --switch`): the
+	// target deployment is the one that served when it was requested, and
+	// it undoes no release.
+	KeepsRelease bool `json:"keeps_release,omitempty"`
 	// SourceDatabaseID keeps every write; the app leaves it.
 	SourceDatabaseID   string `json:"source_database_id"`
 	SourceDatabaseName string `json:"source_database_name,omitempty"`
@@ -91,6 +97,30 @@ func (c *Client) GetDatabaseSwitch(ctx context.Context, slug, id string) (Databa
 func (c *Client) CancelDatabaseSwitch(ctx context.Context, slug, id string) (DatabaseSwitch, error) {
 	var out DatabaseSwitch
 	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/database-switches/"+url.PathEscape(id)+"/cancel", nil, &out)
+}
+
+// CreateDatabaseSwitchRequest restores one of the app's managed databases
+// to a point in time and moves the app to the copy without changing its
+// code (POST /v1/apps/{slug}/database-switches).
+type CreateDatabaseSwitchRequest struct {
+	// DatabaseID is the managed database the app's bindings point at.
+	DatabaseID string `json:"database_id"`
+	// Name is the restored copy's name; it becomes the app's database.
+	Name string `json:"name"`
+	// PointInTime is an RFC3339 time inside the database's restore range.
+	// Writes after it stay only in the source database.
+	PointInTime string `json:"point_in_time"`
+	// Scope is the environment whose bindings move; empty is the default
+	// scope.
+	Scope string `json:"scope,omitempty"`
+}
+
+// CreateDatabaseSwitch restores a database and moves the app to the copy,
+// keeping the app's code. The switch runs in the background; follow it
+// with GetDatabaseSwitch.
+func (c *Client) CreateDatabaseSwitch(ctx context.Context, slug string, req CreateDatabaseSwitchRequest) (DatabaseSwitch, error) {
+	var out DatabaseSwitch
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/database-switches", req, &out)
 }
 
 // DatabaseSwitchFinished reports whether a switch phase ends it.

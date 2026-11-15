@@ -64,7 +64,14 @@ func normalizeCloneQueues(definitions ProjectEnvironmentCloneQueueDefinitions) (
 func cloneQueueSettings(definitions ProjectEnvironmentCloneQueueDefinitions) []ProjectEnvironmentQueueDefinition {
 	bindings := make([]ProjectEnvironmentQueueDefinition, 0, len(definitions.Bindings))
 	for _, binding := range definitions.Bindings {
-		bindings = append(bindings, binding.ProjectEnvironmentQueueDefinition)
+		definition := binding.ProjectEnvironmentQueueDefinition
+		// A stage environment has no pull consumer: leases serve production
+		// only. A production pull binding cloned enabled accepted stage sends
+		// nothing could take, so it arrives disabled (ADR-20261113180000, R5-7).
+		if definition.Mode == "pull" {
+			definition.Enabled = false
+		}
+		bindings = append(bindings, definition)
 	}
 	return bindings
 }
@@ -91,6 +98,14 @@ func captureCloneQueuesTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentC
 	definitions, err := normalizeCloneQueues(definitions)
 	if err != nil {
 		return err
+	}
+	if !definitions.EnvironmentOwned {
+		// Production pull bindings arrive disabled (see cloneQueueSettings).
+		for i := range definitions.Bindings {
+			if definitions.Bindings[i].Mode == "pull" {
+				definitions.Bindings[i].Enabled = false
+			}
+		}
 	}
 	if snapshot.Settings.QueueBindings == nil {
 		snapshot.Settings.QueueBindings = &ProjectEnvironmentQueueSettings{Revision: 1, Bindings: cloneQueueSettings(definitions)}

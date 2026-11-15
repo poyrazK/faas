@@ -86,6 +86,11 @@ import (
 //	                                rootfs images and snapshot memory in the
 //	                                extent encoding (ADR-1135). Readers always
 //	                                accept it; enable after every node reads it.
+//	FAAS_STORAGE_DRIVE_DELTA      cache — "1" uploads snapshot drives as
+//	                                deltas against their app layer
+//	                                (ADR-20261115213230). Every cache decodes
+//	                                deltas; enable only after every node runs
+//	                                a release that does. Default off.
 //	FAAS_REQUIRE_SHARED_ARTIFACTS  when "1"/"true", require a remote backend
 //	                                with FAAS_STORAGE_LOCAL_PREFIXES=none.
 //	                                This is the production split-node gate:
@@ -205,6 +210,13 @@ func wrapWithCache(parent StorageBackend, kind string) (StorageBackend, error) {
 	}
 	cache.setMaxBytes(maxBytes)
 	cache.SetMinFreeBytes(minFree)
+	if raw := strings.TrimSpace(os.Getenv("FAAS_STORAGE_DRIVE_DELTA")); raw != "" {
+		on, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("storage: FAAS_STORAGE_DRIVE_DELTA=%q: must be a boolean", raw)
+		}
+		cache.SetDriveDeltas(on)
+	}
 	// The resolved budget decides how much of the artifact set stays
 	// resident, which is the difference between a warm restore and a
 	// remote fetch. An operator diagnosing wake latency should not have to

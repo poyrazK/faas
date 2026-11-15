@@ -115,11 +115,111 @@ func testQueueSuspendedOwnerMessagesDoNotExpire(t *testing.T, store state.Store)
 	if err := store.UpdateAccountStatus(ctx, p.account.ID, state.AccountActive); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := expiry.ExpirePendingQueueMessages(ctx, time.Now().Add(25*time.Hour), 100); err != nil {
+	// adr: 20261113180000 (R5-3) — the hold restarted the wait, so the
+	// reactivated owner's message is not expired by the next sweep.
+	if _, err := expiry.ExpirePendingQueueMessages(ctx, time.Now().Add(26*time.Hour), 100); err != nil {
+		t.Fatal(err)
+	}
+	if got := queueReplayState(t, store, msg.ID); got.State != state.InvocationPending {
+		t.Fatalf("reactivated owner's message is %s at the first sweep; want pending with retention left", got.State)
+	}
+	if _, err := expiry.ExpirePendingQueueMessages(ctx, time.Now().Add(50*time.Hour), 100); err != nil {
 		t.Fatal(err)
 	}
 	if got := queueReplayState(t, store, msg.ID); got.State != state.InvocationDeadLetter {
-		t.Fatalf("reactivated owner's old message is %s; want it expired", got.State)
+		t.Fatalf("reactivated owner's message left a whole retention is %s; want it expired", got.State)
+	}
+}
+
+func TestMemQueueReplayClearsDeadLetterHorizon(t *testing.T) {
+	testQueueReplayClearsDeadLetterHorizon(t, state.NewMemStore())
+}
+
+// adr: 20261113180000 (R6-1, R8-2) — a replay kept the dead letter's
+// retention horizon and outcome code: the reaper deleted the replayed
+// message as soon as it settled again, and a later success reported the old
+// expiry.
+func testQueueReplayClearsDeadLetterHorizon(t *testing.T, store state.Store) {
+	ctx := t.Context()
+	p := seedQueueReviewPull(t, store, api.PlanHobby)
+	msg := p.send(t, store, nil)
+	if _, err := store.(state.QueueMessageExpiryStore).ExpirePendingQueueMessages(ctx, time.Now().Add(25*time.Hour), 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.(state.InvocationDefaultRetentionStore).StampDefaultInvocationRetention(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	if got := queueReplayState(t, store, msg.ID); got.State != state.InvocationDeadLetter || got.ResultRetentionUntil == nil {
+		t.Fatalf("expired message = %s, horizon %v; want a stamped dead letter", got.State, got.ResultRetentionUntil)
+	}
+	if _, err := store.RetryQueueDeadLetter(ctx, p.account.ID, msg.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := queueReplayState(t, store, msg.ID)
+	if got.State != state.InvocationPending || got.ResultRetentionUntil != nil || got.OutcomeCode != "" {
+		t.Fatalf("replayed message = %s, horizon %v, code %q; want pending with neither", got.State, got.ResultRetentionUntil, got.OutcomeCode)
+	}
+}
+
+func TestMemQueueHeldPushMessagesKeepRetention(t *testing.T) {
+	testQueueHeldPushMessagesKeepRetention(t, state.NewMemStore())
+}
+
+// adr: 20261113180000 (R5-5) — a push queue skipped for a spend cap or a
+// compute budget hold spent no attempts, but its messages expired once the
+// hold outlasted the retention. A refresh restarts the wait of messages that
+// have waited the given age, and only theirs.
+func testQueueHeldPushMessagesKeepRetention(t *testing.T, store state.Store) {
+	ctx := t.Context()
+	p := seedQueueReviewPull(t, store, api.PlanHobby)
+	old, fresh := p.send(t, store, nil), p.send(t, store, nil)
+	refresher := store.(state.QueueHoldRefresher)
+	n, err := refresher.RefreshHeldQueueMessages(ctx, p.app.ID, p.binding.ID, p.binding.QueueName, time.Hour, 100)
+	if err != nil || n != 0 {
+		t.Fatalf("refreshed %d fresh messages, %v; want none", n, err)
+	}
+	n, err = refresher.RefreshHeldQueueMessages(ctx, p.app.ID, p.binding.ID, p.binding.QueueName, 0, 100)
+	if err != nil || n != 2 {
+		t.Fatalf("refreshed %d messages, %v; want both", n, err)
+	}
+	for _, id := range []string{old.ID, fresh.ID} {
+		if got := queueReplayState(t, store, id); got.State != state.InvocationPending || got.DueAt.After(time.Now()) {
+			t.Fatalf("refreshed message = %s due %v; want pending and due", got.State, got.DueAt)
+		}
+	}
+}
+
+func TestMemQueueBindingRecreateUnderNewQueueName(t *testing.T) {
+	testQueueBindingRecreateUnderNewQueueName(t, state.NewMemStore())
+}
+
+// adr: 20261113180000 (R5-2) — a retired binding revived only when the
+// create repeated its old queue name too; re-created under a new queue name
+// it was refused and its held messages stranded. The name alone revives it
+// now, and the held messages drain under the new queue name.
+func testQueueBindingRecreateUnderNewQueueName(t *testing.T, store state.Store) {
+	ctx := t.Context()
+	p := seedQueueReviewPull(t, store, api.PlanPro)
+	held := p.send(t, store, nil)
+	consumers := store.(state.QueueBindingConsumerStore)
+	if _, err := consumers.DeleteQueueBindingWithConsumer(ctx, p.account.ID, p.app.ID, p.binding.ID); err != nil {
+		t.Fatal(err)
+	}
+	revived, err := consumers.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: p.account.ID, AppID: p.app.ID,
+		Name: "jobs", QueueName: "work", Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 5})
+	if err != nil {
+		t.Fatalf("re-create under a new queue name: %v", err)
+	}
+	if revived.Binding.ID != p.binding.ID || revived.Binding.QueueName != "work" || revived.Binding.RetiredAt != nil {
+		t.Fatalf("re-created binding = %+v; want %s revived as queue work", revived.Binding, p.binding.ID)
+	}
+	stats, err := store.QueueStateForQueue(ctx, p.app.ID, "work")
+	if err != nil || stats.Depth != 1 {
+		t.Fatalf("state for the new queue name = %+v, %v; want the held message counted (R7-3)", stats, err)
+	}
+	leases := p.lease(t, store, "work", 30)
+	if len(leases) != 1 || leases[0].Invocation.ID != held.ID {
+		t.Fatalf("revived binding leased %d messages; want the held message %s", len(leases), held.ID)
 	}
 }
 

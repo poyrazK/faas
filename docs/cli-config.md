@@ -817,6 +817,39 @@ with `--force`. Interactive confirmation displays a preview before asking for
 approval; JSON mutation calls require an explicit confirmation flag. Already
 confirmed scripted calls keep their existing mutation request/output contract.
 
+## Verify a saved export offline
+
+Save a JSON completion receipt alongside a file export, then check it after
+copying or archiving the data:
+
+```sh
+gregale --json build list --all --output builds.jsonl > builds.receipt.json
+gregale export verify builds.jsonl --receipt builds.receipt.json
+gregale --json export verify builds.jsonl --receipt builds.receipt.json
+```
+
+Verification reads local regular files without login or API requests. It checks
+SHA-256, exact bytes and the number of JSON Lines records. The receipt must name
+format `jsonl`, publication success and nonnegative integer counts. Its optional
+path is ignored; FILE always selects the data. Raw `-` is refused for either
+input; `./-` names a regular file instead. Flags can precede or follow FILE.
+
+Every line must contain one UTF-8 JSON value. Blank/multiline/malformed records
+fail with a line number without echoing their contents. Empty files, CRLF and a
+final record without a newline are accepted, with all exact bytes hashed.
+Records are read one at a time and numeric values are not reserialized.
+
+Exit 0 means all three checks matched. A mismatch exits 1 and prints a comparison
+result; JSON mode (also `FAAS_JSON=1`) emits `schema_version: 1`, `verified`,
+`format`, three Boolean `checks` and `observed` SHA-256/byte/record counts. Zero
+and false values are explicit. Invalid input/read errors use normal stderr
+Problems or human diagnostics and print no result. Output failures can leave
+partial stdout and retain normal error/signal behavior.
+
+The receipt is an integrity reference, not a signature or API snapshot. Page
+count cannot be reconstructed from JSON Lines. Results describe bytes read;
+verification does not lock concurrent writers, repair files or replay exports.
+
 ## List pagination
 
 Deployment and invocation lists use the same pagination controls:
@@ -1138,3 +1171,7 @@ a quoted continuation command with the scope, filters, and page size, even
 when the current page is empty. `--all` follows empty pages with continuation
 and stops without partial output on API errors, repeated cursors, or the
 1,000-page guard. Pages reflect live data rather than a fixed snapshot.
+
+Verification file inputs must name regular files directly; final-component
+symlinks, including dangling links, are refused. Symlinked parent directories
+retain the existing customer-file policy.

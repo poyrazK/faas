@@ -921,6 +921,26 @@ type DevSessionResponse struct {
 	// none. A client that asked for one and finds it missing is talking to an
 	// API that ignores the request field.
 	GoCommand string `json:"go_command,omitempty"`
+	// LivePatches reports whether this control plane delivers ADR-740 live
+	// source patches. Watch mode is only faster than a developer build when
+	// they are delivered, so automatic watch selection falls back without
+	// them. Omitted by servers that predate the field.
+	LivePatches *bool `json:"live_patches,omitempty"`
+}
+
+// DevSessionSummary is one developer environment in GET /v1/dev/sessions.
+// App is the backing dev-* slug, accepted by DELETE /v1/dev/sessions/{project}?app=.
+type DevSessionSummary struct {
+	Project   string    `json:"project"`
+	App       string    `json:"app"`
+	URL       string    `json:"url"`
+	State     string    `json:"state,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// DevSessionListResponse lists the account's developer environments.
+type DevSessionListResponse struct {
+	Sessions []DevSessionSummary `json:"sessions"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
@@ -4920,6 +4940,11 @@ type ResumeEnvironmentAutomationResponse struct {
 	Environment  string   `json:"environment"`
 	CronsResumed int      `json:"crons_resumed"`
 	CronIDs      []string `json:"cron_ids"`
+	// EventSubscriptionsResumed and EventSubscriptionIDs are the event
+	// subscriptions the call enabled (ADR-20261104120000 amendment
+	// 2026-11-14).
+	EventSubscriptionsResumed int      `json:"event_subscriptions_resumed"`
+	EventSubscriptionIDs      []string `json:"event_subscription_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -6131,8 +6156,12 @@ type QueueReceiveResponse struct {
 	ID             string          `json:"id"`
 	Payload        json.RawMessage `json:"payload"`
 	Result         json.RawMessage `json:"result,omitempty"`
-	TraceID        string          `json:"trace_id,omitempty"`
-	Traceparent    string          `json:"traceparent,omitempty"`
+	// State is how the message settled: completed, failed or cancelled.
+	// Receive returned all three alike, so a failure looked processed
+	// (ADR-20261113180000, R6-5).
+	State       string `json:"state,omitempty"`
+	TraceID     string `json:"trace_id,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
 }
 
 // LogQueryEvent is the stable, source-neutral shape emitted by database-backed
@@ -13707,6 +13736,83 @@ type EgressFlowLogEntry struct {
 type EgressFlowLogResponse struct {
 	Flows     []EgressFlowLogEntry `json:"flows"`
 	Truncated bool                 `json:"truncated"`
+}
+
+// AccountRiskResponse is GET /v1/admin/accounts/{id}/risk
+// (ADR-20261115090000): what an operator needs to judge an account's abuse
+// risk. Email, sign-up address and user agent are present only with
+// ?include_pii=1, which is audited.
+type AccountRiskResponse struct {
+	AccountID       string              `json:"account_id"`
+	Email           string              `json:"email,omitempty"`
+	Status          string              `json:"status"`
+	Plan            string              `json:"plan"`
+	CreatedAt       time.Time           `json:"created_at"`
+	AbuseHoldAt     *time.Time          `json:"abuse_hold_at,omitempty"`
+	AbuseHoldReason string              `json:"abuse_hold_reason,omitempty"`
+	Signup          *AccountRiskSignup  `json:"signup,omitempty"`
+	LinksToHeld     []AccountRiskLink   `json:"links_to_held"`
+	LinkedAccounts  []AccountRiskLink   `json:"linked_accounts"`
+	Strikes         []AccountRiskStrike `json:"strikes"`
+	AbuseEvents     []AccountRiskEvent  `json:"abuse_events"`
+}
+
+// AccountRiskSignup is the account's sign-up record (ADR-20261113160000).
+type AccountRiskSignup struct {
+	Method          string     `json:"method"`
+	SignupIP        string     `json:"signup_ip,omitempty"`
+	UserAgent       string     `json:"user_agent,omitempty"`
+	Country         string     `json:"country,omitempty"`
+	ASN             uint32     `json:"asn,omitempty"`
+	ASNOrg          string     `json:"asn_org,omitempty"`
+	EmailDomain     string     `json:"email_domain"`
+	DisposableEmail bool       `json:"disposable_email"`
+	CreatedAt       time.Time  `json:"created_at"`
+	ReducedAt       *time.Time `json:"reduced_at,omitempty"`
+}
+
+// AccountRiskLink is a link between a new account and an abuse-held one
+// (ADR-20261114174600).
+type AccountRiskLink struct {
+	AccountID     string    `json:"account_id"`
+	HeldAccountID string    `json:"held_account_id"`
+	HeldOrgID     string    `json:"held_org_id,omitempty"`
+	HeldReason    string    `json:"held_reason"`
+	Signal        string    `json:"signal"`
+	DetectedAt    time.Time `json:"detected_at"`
+}
+
+// AccountRiskStrike is an abuse recycle inside the hold window.
+type AccountRiskStrike struct {
+	Reason   string    `json:"reason"`
+	AppID    string    `json:"app_id,omitempty"`
+	StruckAt time.Time `json:"struck_at"`
+}
+
+// AccountRiskEvent is an abuse event about the account, one of its apps,
+// deployments or instances.
+type AccountRiskEvent struct {
+	At      time.Time       `json:"at"`
+	Kind    string          `json:"kind"`
+	Actor   string          `json:"actor"`
+	Subject string          `json:"subject"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// HeldLinksResponse is GET /v1/admin/held-links: links detected since a
+// time, newest first, for the daily review.
+type HeldLinksResponse struct {
+	Links     []HeldLinkReview `json:"links"`
+	Truncated bool             `json:"truncated"`
+}
+
+// HeldLinkReview is a link with the new account's sign-up country and email
+// domain.
+type HeldLinkReview struct {
+	AccountRiskLink
+	Country         string `json:"country,omitempty"`
+	EmailDomain     string `json:"email_domain,omitempty"`
+	DisposableEmail bool   `json:"disposable_email"`
 }
 
 // EventReceiptPageMax bounds recipient pages on the event receipt read surface.

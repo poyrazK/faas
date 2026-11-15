@@ -473,7 +473,7 @@ func cmdAddPostgres(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s (%s).\n", database.Name, appName, binding.EnvironmentKey, binding.Scope)
 	if bindingIsNew {
 		printPostgresBindingDelivery(osStdout, appName, binding.EnvironmentKey, binding.Access)
-		printAddPostgresMigrationHint(osStdout, database.Name, appName, binding.Scope, binding.Access)
+		printAddPostgresMigrationHint(osStdout, database.Name, appName, app.Type, binding.Scope, binding.Access)
 	}
 	return 0
 }

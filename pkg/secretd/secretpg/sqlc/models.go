@@ -44,8 +44,9 @@ type CrashCapture struct {
 }
 
 type Deployment struct {
-	ID    pgtype.UUID
-	AppID pgtype.UUID
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	BuildRegistryScope []string
 }
 
 type DeploymentImagePreparation struct {
@@ -144,6 +145,15 @@ type SecretVerificationAudit struct {
 	CutoverID    pgtype.UUID
 	CredentialID pgtype.UUID
 	VerifiedAt   pgtype.Timestamptz
+}
+
+type Snapshot struct {
+	ID              pgtype.UUID
+	DeploymentID    pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	DeletePending   bool
+	SealedKey       []byte
+	SealedCaptureID pgtype.UUID
 }
 
 type Trigger struct {

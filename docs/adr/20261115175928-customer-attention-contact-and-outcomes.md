@@ -1,4 +1,6 @@
-# ADR-20261113180000: Customer attention signals, round 2 — more kinds, contact and outcomes
+# ADR-20261115175928: Customer attention signals, round 2 — more kinds, contact and outcomes
+
+Identifier: Renumbered from ADR-20261113180000 to distinguish this decision from queue review rounds 5–8. The append-only customer-attention migration retains its historical citation.
 
 Status: Accepted
 

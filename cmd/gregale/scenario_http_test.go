@@ -217,8 +217,13 @@ paths:
 `)
 	for _, tc := range []struct {
 		name, specDir, source, want string
+		compose                     string
 		marker                      bool
 	}{
+		{name: "compose root with one public service", specDir: ".", want: "./src/frontend",
+			compose: "services:\n  frontend:\n    build: ./src/frontend\n    ports: [\"8080:8080\"]\n  cart:\n    build: {context: ./src/cart}\n"},
+		{name: "compose root with several public services", specDir: ".", want: ".",
+			compose: "services:\n  web:\n    build: ./web\n    ports: [\"80\"]\n  admin:\n    build: {context: ./admin}\n    ports: [\"81\"]\n"},
 		{name: "document inside a workload", specDir: "services/gateway", marker: true, want: "./services/gateway"},
 		{name: "document outside any workload", specDir: "docs", want: "."},
 		{name: "document beside the manifest", specDir: ".", marker: true, want: "."},
@@ -232,6 +237,11 @@ paths:
 			}
 			if tc.marker {
 				if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.compose != "" {
+				if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(tc.compose), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}

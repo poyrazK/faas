@@ -6028,6 +6028,100 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDatabaseSwitches
+      summary: List rollbacks that restore the database.
+      description: An app's database switches, newest first.
+      responses:
+        '200':
+          description: The app's switches.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitchList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+    post:
+      tags: [deployments]
+      operationId: createDatabaseSwitch
+      summary: Restore a database and move the app to the copy.
+      description: "Restores one of the app's managed PostgreSQL databases to point_in_time as a new database and moves the app's bindings in the scope to it, keeping the live release. The app stops serving from fencing until it resumes on the copy. Writes after point_in_time stay only in the source database, which keeps every write. Needs the postgres:manage scope and a verified email. Follow the returned switch with GET; cancel it before it starts switching."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDatabaseSwitchRequest'}
+            example: {"database_id": "0123456789abcdef0123456789abcdef", "name": "orders-0900", "point_in_time": "2026-10-30T09:00:00Z"}
+      responses:
+        '202':
+          description: The switch was recorded and runs in the background.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Database switch UUID.
+        schema: {type: string, format: uuid}
+    get:
+      tags: [deployments]
+      operationId: getDatabaseSwitch
+      summary: Read a rollback that restores the database.
+      description: The switch's phase, restore point, databases, drain counts and outcome.
+      responses:
+        '200':
+          description: The switch.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: UUID of the database switch to cancel.
+        schema: {type: string, format: uuid}
+    post:
+      tags: [deployments]
+      operationId: cancelDatabaseSwitch
+      summary: Cancel a rollback that restores the database.
+      description: "Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings."
+      responses:
+        '202':
+          description: Cancellation recorded; the worker unwinds the switch.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/rollouts/recover:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -40110,6 +40204,7 @@ components:
           type: array
           items: {type: string, format: uuid}
           description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        keeps_release: {type: boolean, description: "True for a restore that moves the app to the copy without changing its code; the target deployment is the release that served when it was requested."}
         source_database_id: {type: string, format: uuid, description: "The database the app leaves. It keeps every write."}
         source_database_name: {type: string}
         target_database_id: {type: string, format: uuid, description: "The restored copy, once its restore has started."}
@@ -40129,6 +40224,16 @@ components:
         phase_started_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    CreateDatabaseSwitchRequest:
+      description: "Restore a managed database the app binds and move the app to the copy, keeping its code."
+      type: object
+      additionalProperties: false
+      required: [database_id, name, point_in_time]
+      properties:
+        database_id: {type: string, format: uuid, description: "The managed database the app's bindings point at."}
+        name: {type: string, minLength: 1, maxLength: 63, description: "Name of the restored copy; it becomes the app's database."}
+        point_in_time: {type: string, format: date-time, description: "A time inside the database's restore range. Writes after it stay only in the source database."}
+        scope: {type: string, description: "The environment whose bindings move; empty is the default scope."}
     DatabaseSwitchDrain:
       description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
       type: object
@@ -40138,6 +40243,14 @@ components:
         parked: {type: integer, minimum: 0}
         pending: {type: integer, minimum: 0}
         blocked: {type: integer, minimum: 0}
+    DatabaseSwitchList:
+      description: "A page of an app's database switches, newest first."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/DatabaseSwitch'}
     ScheduledRelease:
       description: "A release built ahead of time that starts its rollout at release_at."
       type: object

@@ -21,6 +21,7 @@ from faas_sdk import (
     ProjectWorkflowError,
     ReviewedProjectPlan,
     load_project_application_state,
+    project_verification_target,
 )
 from faas_sdk.preview import FaaSClient as PreviewClient
 
@@ -268,6 +269,9 @@ async def test_shared_project_workflow(tmp_path, factory, case):
                     await client.resume_project_application(restored, options=options)
                 assert recovered.value.code == "acceptance_unknown" and posts == before
         if result:
+            target = project_verification_target(result)
+            assert target.project_slug == "shop"
+            assert [w.deployment_id for w in target.workloads] == [w.deployment_id for w in result.workloads]
             assert result.outcome == case["outcome"] and len(result.workloads) >= 2
             assert result.receipt.attempt_id == result.attempt_id
             if scenario == "unchanged":

@@ -108,6 +108,10 @@ func TestMarkPrimeFailedRefinesTheWatchdogTimeout(t *testing.T) {
 	}{
 		{"watchdog timeout, then vmmd's reason", api.CodeAppStartupTimeout, "cold_boot_timeout: instance=i-1", healthcheck, "last status 503"},
 		{"watchdog timeout, then an untyped error", api.CodeAppStartupTimeout, "cold_boot_timeout: instance=i-1", errors.New("vmm: readiness: context canceled"), "cold_boot_timeout: instance=i-1"},
+		// Production's form of the same cancellation: vmmd's catch-all code
+		// (2026-11-15 agent eval, a Spring app at the 30 s default window).
+		{"watchdog timeout, then vmmd's catch-all", api.CodeAppStartupTimeout, "cold_boot_timeout: instance=i-1",
+			api.NewProblem(500, "internal", "internal", "cold boot: vmm: readiness: context canceled"), "cold_boot_timeout: instance=i-1"},
 		{"another failure is kept", api.CodeDeployFailed, "image scan refused", healthcheck, "image scan refused"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

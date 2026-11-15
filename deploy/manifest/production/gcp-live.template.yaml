@@ -238,6 +238,9 @@ hot_path:
   request_telemetry_minute_collapse: true
   local_vmmd_data_socket: true
   edge_keepalive_per_node: true
+  # ADR-20261110081523: the edge reaches its own node's gatewayd-internal in
+  # binary HTTP. On by hand on fsn-2/fsn-3 since 2026-11-15 with no fallbacks.
+  edge_binary_hop: true
   frozen_tier: true
   frozen_fast_path: true
   owner_cache: true
@@ -253,6 +256,16 @@ log_archive:
   bucket: gregale-prod-280686321025-log-archive
   endpoint: https://storage.googleapis.com
   auth: gcp_metadata
+
+# docs/ops/serving-probe.md: each compute node requests the platform-owned
+# probe function (release-acceptance account) through the public edge every
+# five minutes and posts failures to the chat webhook in
+# /etc/faas/secrets/serving-probe/webhook_url on that node. The
+# post-deployment monitoring gate qualifies releases on these results. Keep
+# cron and synthetic checks off the probe app so it parks between probes.
+serving_probes:
+  urls: ["https://serving-probe.gregale.dev/"]
+  expected_body: gregale-serving-probe-ok
 
 dns:
   apps_domain: gregale.dev

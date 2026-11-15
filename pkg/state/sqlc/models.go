@@ -3088,15 +3088,17 @@ type CiWorkerHealth struct {
 }
 
 type CliAuthCode struct {
-	TokenHash  []byte
-	AccountID  pgtype.UUID
-	Status     string
-	ExpiresAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
-	DeviceHash []byte
-	OrgID      pgtype.UUID
-	ProjectIds []pgtype.UUID
+	TokenHash    []byte
+	AccountID    pgtype.UUID
+	Status       string
+	ExpiresAt    pgtype.Timestamptz
+	ConsumedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	DeviceHash   []byte
+	OrgID        pgtype.UUID
+	ProjectIds   []pgtype.UUID
+	VerifierHash []byte
+	RequesterIp  pgtype.Text
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -4396,6 +4398,7 @@ type Deployment struct {
 	PromotedAt                 pgtype.Timestamptz
 	RollbackReleaseReview      []byte
 	BeforeCheckpointHook       pgtype.Bool
+	BuildRegistryScope         []string
 }
 
 type DeploymentAlias struct {
@@ -5075,6 +5078,16 @@ type EntityOutboxAcceptance struct {
 	AppID       pgtype.UUID
 	Fingerprint string
 	CreatedAt   pgtype.Timestamptz
+}
+
+type EnvironmentApiRoute struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	RouteTemplate string
+	FirstSeen     pgtype.Timestamptz
+	LastSeen      pgtype.Timestamptz
+	RequestCount  int64
 }
 
 type EnvironmentBindingReleaseReceipt struct {
@@ -6113,6 +6126,7 @@ type EventSubscription struct {
 	AcknowledgmentLeaseSeconds int32
 	DeploymentScope            string
 	EnvironmentID              pgtype.UUID
+	ClonePaused                bool
 }
 
 type EventSubscriptionCapacityCommand struct {
@@ -7632,6 +7646,8 @@ type InvocationSend struct {
 	SenderAppID     pgtype.UUID
 	OnCompleteAppID pgtype.UUID
 	CreatedAt       pgtype.Timestamptz
+	WorkflowRunID   pgtype.UUID
+	WorkflowOp      pgtype.Text
 }
 
 type InvocationWorkCancellation struct {
@@ -16163,8 +16179,10 @@ type Snapshot struct {
 	// CPU template of the capturing node; a templated snapshot restores on any node class the template supports.
 	CpuTemplate string
 	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
-	CpuModel string
-	StaleAt  pgtype.Timestamptz
+	CpuModel        string
+	StaleAt         pgtype.Timestamptz
+	SealedKey       []byte
+	SealedCaptureID pgtype.UUID
 }
 
 type SnapshotFanoutEvent struct {
@@ -16305,6 +16323,18 @@ type StatusObservationBucket struct {
 	BucketAt     pgtype.Timestamptz
 	Status       string
 	HasTelemetry bool
+}
+
+type StorageObjectDeletion struct {
+	StorageKey    string
+	Reason        string
+	RequestedBy   string
+	RequestedAt   pgtype.Timestamptz
+	State         string
+	NextAttemptAt pgtype.Timestamptz
+	Attempts      int32
+	LastError     string
+	DecidedAt     pgtype.Timestamptz
 }
 
 type StoredWorkflow struct {
@@ -17200,6 +17230,12 @@ type WorkflowRunResume struct {
 	PreviousError  pgtype.Text
 	ResumedSteps   []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type WorkflowRunStart struct {
+	RunID        pgtype.UUID
+	StarterAppID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
 }
 
 type WorkflowScheduleCursor struct {

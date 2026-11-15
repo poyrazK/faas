@@ -143,6 +143,11 @@ func TestCmdDevBucketStopIgnoresInvalidManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
+	// Not a terminal: --stop does not ask (and so does not read the session).
+	notTTY := false
+	prevTTY := testOnlyTTY
+	testOnlyTTY = &notTTY
+	defer func() { testOnlyTTY = prevTTY }()
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
