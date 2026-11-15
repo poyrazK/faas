@@ -210,7 +210,12 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
-    "pipeline_children_state.py", "pipeline_children.py", "pipeline_state.py", "job_pipelines.py", "job_pipeline_client.py", "pipeline_gates.py",
+    "pipeline_children_state.py",
+    "pipeline_children.py",
+    "pipeline_state.py",
+    "job_pipelines.py",
+    "job_pipeline_client.py",
+    "pipeline_gates.py",
     "live_jobs.py",
     "file_pipelines.py",
     "files.py",
