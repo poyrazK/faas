@@ -108,8 +108,8 @@ func beginDelegatedInvocation(w http.ResponseWriter, r *http.Request, acct state
 		grantRespond(w, nil, state.ErrInvalidArgument)
 		return
 	}
-	if old, err := journal.GetToolInvocation(r.Context(), acct.ID, id); err == nil {
-		old, err = delegatedInvocationRecord(r, acct, store, journal, key, id)
+	if _, err := journal.GetToolInvocation(r.Context(), acct.ID, id); err == nil {
+		old, err := delegatedInvocationRecord(r, acct, store, journal, key, id)
 		if err != nil {
 			grantRespond(w, nil, err)
 			return

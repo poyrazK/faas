@@ -326,6 +326,7 @@ func cmdApp(args []string) int {
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
 	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
 	noHealthPathWakes := fs.Bool("no-health-path-wakes", false, "answer health probes at the edge without waking")
+	settingFlags := registerAppSettingFlags(fs)
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -793,6 +794,9 @@ func cmdApp(args []string) int {
 	if explicit["overflow-node"] {
 		v := *overflowNode
 		req.OverflowNode = &v
+	}
+	if err := settingFlags.apply(explicit, &req); err != nil {
+		return printErr("Invalid flags", err)
 	}
 
 	// Any update flag sets a field of req; none means a read. Listing fields
