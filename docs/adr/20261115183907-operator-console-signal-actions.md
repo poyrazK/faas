@@ -1,4 +1,6 @@
-# ADR-20261115120000: Operator console routes for signal actions, the customer's view and the support inbox
+# ADR-20261115183907: Operator console routes for signal actions, the customer's view and the support inbox
+
+Renumbered from ADR-20261115120000 to resolve a concurrent identifier collision. Historical citations in issued migrations retain the original identifier.
 
 Status: Accepted
 
