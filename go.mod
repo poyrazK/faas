@@ -403,7 +403,7 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20260811152304-ee035b5b010f // indirect
 	golang.org/x/mod v0.42.0
-	golang.org/x/tools v0.51.0 // indirect
+	golang.org/x/tools v0.51.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20261005182115-fad411399dd8 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
