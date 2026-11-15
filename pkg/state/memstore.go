@@ -16403,7 +16403,7 @@ func (m *MemStore) QueueState(ctx context.Context, appID string) (QueueStats, er
 		switch inv.State {
 		case InvocationPending:
 			s.Depth++
-			// Oldest ready message (ADR-20261113180000, R7-3).
+			// Oldest ready message (ADR-20261115183906, R7-3).
 			if !inv.DueAt.After(now) && (s.OldestPendingAt.IsZero() || inv.CreatedAt.Before(s.OldestPendingAt)) {
 				s.OldestPendingAt = inv.CreatedAt
 			}
@@ -16435,7 +16435,7 @@ func (m *MemStore) QueueStateForQueue(ctx context.Context, appID, queueName stri
 		return zero0, err
 	}
 
-	// Mirrors ReadProductionQueueStateLive (ADR-20261113180000, R7-3): the
+	// Mirrors ReadProductionQueueStateLive (ADR-20261115183906, R7-3): the
 	// production binding that reads the name now brings its earlier backlog.
 	bindingID := ""
 	var bindingCreated time.Time

@@ -1,4 +1,4 @@
-# ADR-20261115160000: Owner-approved Task worker retirement
+# ADR-20261115183908: Owner-approved Task worker retirement
 
 Status: accepted
 

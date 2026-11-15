@@ -35,7 +35,7 @@ func QueueCapProblem(err error) *api.Problem {
 
 // QueueBindingRetiredProblem answers a replay refused because the message's
 // queue binding is retired, or nil for any other error. It answered as an
-// internal error before (ADR-20261113180000).
+// internal error before (ADR-20261115183906).
 func QueueBindingRetiredProblem(err error) *api.Problem {
 	if !errors.Is(err, state.ErrQueueBindingRetired) {
 		return nil
