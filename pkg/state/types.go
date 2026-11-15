@@ -585,6 +585,18 @@ func (a Account) Active() bool {
 	return (a.Status == AccountActive || a.Status == AccountPastDue) && !a.AbuseHeld()
 }
 
+// MovedToFreeForNonpayment reports an account the dunning ladder moved to
+// the Free plan for an overdue payment (billing review 2026-11-13, R9-1): it
+// is active, or since stopped by the Free quota, and still carries
+// past_due_at, which marks the unpaid balance until a paid order or an
+// operator clears it. A further payment failure or update on the old
+// subscription must not move it back into past_due or onto its paid plan. An
+// account the retired ladder suspended for non-payment reads the same; the
+// dunning sweep moves it to Free.
+func (a Account) MovedToFreeForNonpayment() bool {
+	return (a.Status == AccountActive || a.Status == AccountSuspended) && a.PastDueAt != nil
+}
+
 // MayDeploy reports whether the account may start new deployments. A
 // past_due account keeps serving during its grace period but cannot deploy
 // (spec §4.7), and a suspended, deleted_pending or abuse-held account

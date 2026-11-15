@@ -2799,7 +2799,6 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 		return false, nil
 	}
 	a.Status = AccountSuspended
-	a.PastDueAt = nil
 	m.storeRouteCheckAccountLocked(id, a)
 	m.freeQuotaSuspended[id] = true
 	m.syncPersonalOrgStatusLocked(id, AccountSuspended)
