@@ -137,6 +137,12 @@ draws from. Every JVM then prints `Picked up JAVA_TOOL_OPTIONS: …` on stderr
 when it starts. Java's default `SecureRandom` reads the kernel and needs
 nothing.
 
+A JVM built with `jlink` cannot load any agent unless it includes the
+`java.instrument` module, and it would not start with one named. When the
+image holds such a JVM, Gregale leaves the agent out, so the app starts but
+its JVMs are not reseeded and Gregale warns on each wake. Add
+`--add-modules java.instrument` to the `jlink` command to keep the reseed.
+
 Go cannot be reseeded from outside the program. Use `crypto/rand` for anything
 that must be unique. To reseed generators your program owns, import
 `github.com/gregale-dev/gregale-go/reseed` and register a callback with
