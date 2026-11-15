@@ -22,7 +22,7 @@ func TestTaskToolPlanReadOnlyProtocols(t *testing.T) {
 			calls := 0
 			executor := func(_ context.Context, args []string, input []byte) (LocalCLIResult, error) {
 				calls++
-				want := []string{"mcp", "tasks", "release", "plan", "--plan", path}
+				want := []string{"mcp", "server", "tasks", "deploy", "plan", "--plan", path}
 				if !reflect.DeepEqual(args, want) || len(input) != 0 {
 					t.Fatalf("review dispatched unexpected execution: %v", args)
 				}

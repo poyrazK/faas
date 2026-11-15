@@ -261,7 +261,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "resume", Short: "resume a healthy failed rollout (recover only)"},
 				{Name: "plan", Short: "native deployment plan JSON", Value: "PATH", Req: true},
 				{Name: "state", Short: "persistent release journal outside source directories; required except for plan", Value: "PATH"},
-			}, Examples: []string{"gregale mcp tasks release plan --plan release.json --json", "gregale mcp server tasks deploy --plan release.json --state ./release-state.json", "gregale mcp server tasks deploy status --plan release.json --state ./release-state.json"}},
+			}, Examples: []string{"gregale mcp server tasks deploy plan --plan release.json --json", "gregale mcp server tasks deploy --plan release.json --state ./release-state.json", "gregale mcp server tasks deploy status --plan release.json --state ./release-state.json"}},
 			{Name: "setup", Short: "Preview or apply the task-backlog scaling policy", Flags: []cliFlag{
 				{Name: "app", Short: "worker app slug (defaults to the linked project app)", Value: "SLUG"},
 				{Name: "min", Short: "minimum replicas (default 1; use 0 with an always-on observer)", Value: "N"},

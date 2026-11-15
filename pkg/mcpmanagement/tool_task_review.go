@@ -53,7 +53,7 @@ func (m *management) planTaskToolDeploy(ctx context.Context, args planTaskToolAr
 	if !filepath.IsAbs(args.PlanPath) {
 		return nil, invalid("invalid_argument", "plan_path must be an absolute native Task release plan path")
 	}
-	body, err := m.runCLI(ctx, []string{"mcp", "tasks", "release", "plan", "--plan", filepath.Clean(args.PlanPath)}, nil)
+	body, err := m.runCLI(ctx, []string{"mcp", "server", "tasks", "deploy", "plan", "--plan", filepath.Clean(args.PlanPath)}, nil)
 	if err != nil {
 		// File parse errors and CLI stderr can contain source or credential data.
 		return nil, invalid("task_plan_failed", "local Task release review failed; inspect the plan with the local CLI")

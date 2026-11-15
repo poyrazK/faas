@@ -940,7 +940,7 @@ connections can call:
 through `gregale_plan_task_tool_deploy`, or use the same review directly:
 
 ```sh
-gregale mcp tasks release plan --plan ./release.json --json
+gregale mcp server tasks deploy plan --plan ./release.json --json
 ```
 
 Source paths resolve relative to the plan file. The existing native plan names

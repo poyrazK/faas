@@ -7,7 +7,7 @@ Amends: ADR-20261112200001
 
 Add `gregale_plan_task_tool_deploy` to the local management MCP `build-tools`
 catalog. It reviews an existing native Task stack release JSON plan through
-`gregale mcp tasks release plan --plan PATH --json`. Reuse the existing native
+`gregale mcp server tasks deploy plan --plan PATH --json`. Reuse the existing native
 plan parser and release fingerprint. The existing automated release flow
 supports Node workers, so this review has the same restriction.
 

@@ -83,7 +83,7 @@ func TestMCPTaskReleasePlanOffline(t *testing.T) {
 	t.Setenv("MCP_READER_TOKEN", "")
 	t.Setenv("MCP_TASK_MIGRATION_DATABASE_URL", "postgres://owner:SECRET_SENTINEL@invalid/db")
 	t.Setenv("PATH", t.TempDir()) // Review must not require Node or another executable.
-	code, output, stderr := runCLI(t, "mcp", "tasks", "release", "plan", "--plan", path, "--json")
+	code, output, stderr := runCLI(t, "mcp", "server", "tasks", "deploy", "plan", "--plan", path, "--json")
 	var review mcphosting.TaskReleaseReview
 	if code != 0 || json.Unmarshal([]byte(output), &review) != nil {
 		t.Fatalf("review: exit=%d output=%s stderr=%s", code, output, stderr)
@@ -123,7 +123,7 @@ func TestMCPTaskReleasePlanRefusesUnsafeInputs(t *testing.T) {
 	for _, scenario := range []string{"journal", "resume", "unknown field", "symbolic source", "oversized source", "missing Node gate", "non-Node source", "Tasks disabled"} {
 		t.Run(scenario, func(t *testing.T) {
 			root, path := taskReviewFixture(t)
-			args := []string{"mcp", "tasks", "release", "plan", "--plan", path, "--json"}
+			args := []string{"mcp", "server", "tasks", "deploy", "plan", "--plan", path, "--json"}
 			switch scenario {
 			case "journal":
 				args = append(args, "--state", filepath.Join(root, "journal.json"))
