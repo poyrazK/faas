@@ -1,4 +1,4 @@
--- filename: 20261115113839815_cli_auth_verifier_hash.sql
+-- filename: 20261115160001100_cli_auth_verifier_hash.sql
 -- migration-compat: expand
 -- Account audit F10-3: a one-click (loopback) login hands its device code to
 -- http://127.0.0.1:<port>/callback through the approving browser, so the code

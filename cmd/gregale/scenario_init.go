@@ -27,7 +27,7 @@ func cmdTestInit(args []string) int {
 	fs := newFlagSet("test init", flag.ContinueOnError)
 	from := fs.String("from", "", "local OpenAPI 3.0 or 3.1 document")
 	project := fs.String("project", "", "Gregale project slug")
-	source := fs.String("source", "", "application source directory, relative to the manifest (default: the workload holding --from, else .)")
+	source := fs.String("source", "", "application source directory, relative to the manifest (default: the workload holding --from; at a Compose root, the one service publishing ports; else .)")
 	scenario := fs.String("scenario", "api-smoke", "scenario name")
 	output := fs.String("output", "gregale-test.yaml", "output manifest path; must not exist")
 	if err := fs.Parse(args); err != nil {
@@ -41,8 +41,9 @@ func cmdTestInit(args []string) int {
 		return printErr("Invalid test scaffold options", errors.New("project, scenario, or output is invalid"))
 	}
 	inferredSource := *source == ""
+	var composeCandidates []string
 	if inferredSource {
-		*source = scaffoldTestSource(*from, *output)
+		*source, composeCandidates = scaffoldTestSource(*from, *output)
 	}
 	data, err := readScaffoldOpenAPIDocument(*from)
 	if err != nil {
@@ -61,6 +62,9 @@ func cmdTestInit(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Created %s with %d public GET smoke checks (%d operations skipped). Add auth, input fixtures, and business assertions for the remaining routes.\n", *output, len(steps), skipped)
 	if inferredSource && *source != "." {
 		_, _ = fmt.Fprintf(osStdout, "Scenario source: %s, the workload holding the OpenAPI document (override with --source).\n", *source)
+	}
+	if inferredSource && len(composeCandidates) > 1 {
+		_, _ = fmt.Fprintf(osStdout, "Several Compose services publish ports (%s); set source: in %s, or rerun with --source, to the one this document describes.\n", strings.Join(composeCandidates, ", "), *output)
 	}
 	return 0
 }
@@ -93,12 +97,23 @@ func readScaffoldOpenAPIDocument(path string) ([]byte, error) {
 // (services/gateway/openapi.json), where "." names a repository root holding
 // several workloads, so `gregale test --validate` failed until the manifest was
 // edited by hand. The path is relative to the manifest, as the runner reads it.
-func scaffoldTestSource(from, output string) string {
+func scaffoldTestSource(from, output string) (string, []string) {
 	dir := filepath.Dir(from)
-	if detectShape(dir) == shapeUnknown {
-		return "."
+	// At a Compose root the document describes the public service: use its
+	// build context when exactly one service publishes ports.
+	candidates := composePublicBuildContexts(dir)
+	if len(candidates) == 1 {
+		dir = filepath.Join(dir, filepath.FromSlash(candidates[0]))
+	} else if detectShape(dir) == shapeUnknown {
+		return ".", candidates
 	}
-	workload, err := filepath.Abs(dir)
+	return relativeTestSource(dir, output), candidates
+}
+
+// relativeTestSource names workload relative to the manifest, as the runner
+// reads it; "." when they are the same directory or the path cannot be made.
+func relativeTestSource(workloadDir, output string) string {
+	workload, err := filepath.Abs(workloadDir)
 	if err != nil {
 		return "."
 	}

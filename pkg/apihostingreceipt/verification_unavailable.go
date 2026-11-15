@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,12 @@ type VerificationUnavailableError struct {
 	Code       string
 	Cause      error
 	StatusCode int
+	// Problem and RequestID name a gateway refusal: its bounded problem code
+	// and the request id its gateway_request log line carries. Without them
+	// a deploy failed with only "HTTP 429" and no way to find which refusal
+	// (prod test 2026-11-15, immediate rollouts after a canary).
+	Problem   string
+	RequestID string
 }
 
 func (e *VerificationUnavailableError) Error() string {
@@ -23,7 +30,7 @@ func (e *VerificationUnavailableError) Error() string {
 		return "candidate verification transport is temporarily unavailable"
 	case SmokeErrorGatewayUnavailable:
 		if e.StatusCode != 0 {
-			return fmt.Sprintf("public route returned HTTP %d without authenticated candidate evidence", e.StatusCode)
+			return fmt.Sprintf("public route returned HTTP %d%s without authenticated candidate evidence", e.StatusCode, e.refusalDetail())
 		}
 		return "public route returned an error without authenticated candidate evidence"
 	case SmokeErrorDeploymentMismatch:
@@ -73,7 +80,31 @@ func WithVerificationRecoveryDeadline(ctx context.Context, deadline time.Time) c
 }
 
 func unavailableSmoke(result SmokeResult, code string, cause error) (SmokeResult, error) {
-	err := &VerificationUnavailableError{Code: code, Cause: cause, StatusCode: result.StatusCode}
+	return unavailableSmokeProblem(result, code, "", cause)
+}
+
+// unavailableSmokeProblem is unavailableSmoke for a gateway answer whose
+// problem code (already bounded by problemCode) and request id are known.
+func unavailableSmokeProblem(result SmokeResult, code, problem string, cause ...error) (SmokeResult, error) {
+	err := &VerificationUnavailableError{Code: code, StatusCode: result.StatusCode, Problem: problem, RequestID: result.RequestID}
+	if len(cause) > 0 {
+		err.Cause = cause[0]
+	}
 	result.Status, result.ErrorCode, result.Error = SmokeSkipped, code, err.Error()
 	return result, err
+}
+
+// refusalDetail is " (code, request id)" for a gateway refusal, or "".
+func (e *VerificationUnavailableError) refusalDetail() string {
+	var parts []string
+	if e.Problem != "" {
+		parts = append(parts, e.Problem)
+	}
+	if e.RequestID != "" {
+		parts = append(parts, "request "+e.RequestID)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }

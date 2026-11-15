@@ -29,6 +29,11 @@ type Supervisor struct {
 	Policy  string                       // restart policy; empty preserves on-failure
 	Start   func() error                 // runs the app to completion; nil = clean exit
 	OnCrash func(attempt int, err error) // optional hook for logging/backoff
+	// OnCleanExit runs when the workload exits 0 on its own and the policy
+	// does not restart it. Its console line is the only evidence the host
+	// has that the customer's process ran and ended, rather than the guest
+	// failing (deploy-path review P4).
+	OnCleanExit func()
 	// stopSignal and stopGrace are the per-workload graceful shutdown
 	// contract. The main workload derives these from its AppManifest;
 	// sidecars use the OCI/PID-1 defaults until their image manifest is
@@ -355,6 +360,9 @@ func (s *Supervisor) Run() error {
 			continue
 		}
 		if !s.shouldRestart(err) {
+			if err == nil && !s.stopRequested.Load() && s.OnCleanExit != nil {
+				s.OnCleanExit()
+			}
 			if err == nil || s.stopRequested.Load() {
 				s.trackExit(0)
 				s.trackRunErr(nil)
