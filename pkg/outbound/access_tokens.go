@@ -139,7 +139,7 @@ func (p *PublicHandler) now() time.Time {
 
 func (p *PublicHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.EscapedPath()
-	if !strings.HasPrefix(path, Prefix) && !strings.HasPrefix(path, RoutePrefix) {
+	if !strings.HasPrefix(path, Prefix) && !strings.HasPrefix(path, RoutePrefix) && !strings.HasPrefix(path, api.OutboundAIPromptPrefix) {
 		writeProblem(w, http.StatusNotFound, "outbound_integration_not_found", "Outbound integration not found", "")
 		return
 	}

@@ -2793,6 +2793,23 @@ const (
 	// OutboundAISemanticCacheIndexBytesMax bounds one outboundd process's
 	// semantic index across every integration.
 	OutboundAISemanticCacheIndexBytesMax = 64 << 20
+	// Managed prompts (ADR 20261114180740): a version's messages, distinct
+	// variables, stop strings and size (messages, defaults and params); the
+	// largest response_format object; description and note lengths; the
+	// versions one prompt keeps; the push body bound; the stats window; and
+	// the variable sets one evaluation takes. Prompts per account are the
+	// plan's OutboundAIPromptsMax.
+	OutboundAIPromptMessagesMax            = 32
+	OutboundAIPromptVariablesMax           = 50
+	OutboundAIPromptStopMax                = 4
+	OutboundAIPromptTemplateMaxBytes       = 64 << 10
+	OutboundAIPromptResponseFormatMaxBytes = 16 << 10
+	OutboundAIPromptDescriptionMaxLen      = 280
+	OutboundAIPromptNoteMaxLen             = 280
+	OutboundAIPromptVersionsMax            = 200
+	OutboundAIPromptPushBodyMaxBytes       = 128 << 10
+	OutboundAIPromptStatsWindowMinutes     = 1_440
+	OutboundAIPromptEvaluationCasesMax     = 50
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
@@ -4834,6 +4851,9 @@ type Limits struct {
 	// OutboundAISemanticCacheAllowed lets an AI integration answer calls
 	// whose wording means the same as a cached one (ADR 20261112194947).
 	OutboundAISemanticCacheAllowed bool
+	// OutboundAIPromptsMax bounds an account's managed AI prompts
+	// (ADR 20261114180740).
+	OutboundAIPromptsMax int
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
@@ -6509,7 +6529,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               1,
 		EnvironmentBranches:       1,
 		OutboundRequestsPerDayMax: 100_000,
-		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, OutboundAIAccountRatePerSecondMax: 20,
+		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, OutboundAIAccountRatePerSecondMax: 20, OutboundAIPromptsMax: 0,
 		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        10,
@@ -6931,7 +6951,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               2,
 		EnvironmentBranches:       2,
 		OutboundRequestsPerDayMax: 1_000_000,
-		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, OutboundAIAccountRatePerSecondMax: 40,
+		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, OutboundAIAccountRatePerSecondMax: 40, OutboundAIPromptsMax: 25,
 		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        50,
@@ -7380,7 +7400,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               5,
 		EnvironmentBranches:       5,
 		OutboundRequestsPerDayMax: 10_000_000,
-		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, OutboundAIAccountRatePerSecondMax: 200, OutboundAISemanticCacheAllowed: true,
+		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, OutboundAIAccountRatePerSecondMax: 200, OutboundAIPromptsMax: 100, OutboundAISemanticCacheAllowed: true,
 		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        250,
@@ -7795,7 +7815,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               20,
 		EnvironmentBranches:       20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
-		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, OutboundAIAccountRatePerSecondMax: 1000, OutboundAISemanticCacheAllowed: true,
+		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, OutboundAIAccountRatePerSecondMax: 1000, OutboundAIPromptsMax: 500, OutboundAISemanticCacheAllowed: true,
 		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        1000,

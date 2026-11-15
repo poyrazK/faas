@@ -9,7 +9,8 @@ management MCP server at one toolset, then checks the result (HTTP response,
 serving release, untouched files, the agent's answer, the apps it created).
 It grades how the agent worked (features used, anti-patterns, traps hit),
 records success, turns, tool calls, tokens, cost and time per run, deletes
-every app and project the run created, and appends one JSON line per run.
+every app and project the run created, and appends one JSON line per run. It
+also reports files the agent wrote outside its run directory.
 
     agent_eval.py list
     agent_eval.py run --agents claude,codex,gemini,cursor --toolsets core,all,none [--tasks ID,...] [--repeat N]
@@ -253,7 +254,7 @@ def _events(lines):
 
 def _metrics(cost) -> dict:
     return {"completed": False, "turns": 0, "cost_usd": cost, "input_tokens": 0, "output_tokens": 0,
-            "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "commands": [], "answer": "", "error": "", "session_id": ""}
+            "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "commands": [], "written_paths": [], "answer": "", "error": "", "session_id": ""}
 
 
 def merge_metrics(first: dict, second: dict) -> dict:
@@ -267,12 +268,17 @@ def merge_metrics(first: dict, second: dict) -> dict:
     for name, count in (second.get("tool_calls") or {}).items():
         merged["tool_calls"][name] = merged["tool_calls"].get(name, 0) + count
     merged["commands"] = list(first.get("commands") or []) + list(second.get("commands") or [])
+    merged["written_paths"] = list(first.get("written_paths") or []) + list(second.get("written_paths") or [])
     merged["first_answer"] = first.get("answer", "")
     return merged
 
 
 def _count(metrics: dict, name: str) -> None:
     metrics["tool_calls"][name] = metrics["tool_calls"].get(name, 0) + 1
+
+
+# Claude tools that write a file; their paths are checked against the run directory.
+FILE_WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 
 
 def parse_claude(lines) -> dict:
@@ -290,6 +296,9 @@ def parse_claude(lines) -> dict:
                     command = (block.get("input") or {}).get("command")
                     if name == "Bash" and command:
                         metrics["commands"].append(command)
+                    path = (block.get("input") or {}).get("file_path") or (block.get("input") or {}).get("notebook_path")
+                    if name in FILE_WRITE_TOOLS and path:
+                        metrics["written_paths"].append(path)
                 elif block.get("type") == "text":
                     metrics["answer"] = block.get("text", "")
         elif kind == "result":
@@ -467,10 +476,12 @@ def _rows(value) -> list:
 class CliGregale(Gregale):
     """The caller's own logged-in CLI profile (`--cli-login`).
 
-    Reads go through `gregale --json` with the caller's credentials; nothing is
-    deleted. The account may hold other apps, so an app is the run's when it is
-    new or got a release after the run started. Apps another session deploys at
-    the same time are attributed to the run too; run when the account is quiet."""
+    Reads go through `gregale --json` with the caller's credentials. The account
+    may hold other apps, so an app is the run's when it is new or got a release
+    after the run started; cleanup deletes only the apps and projects that are
+    new (see deletable), never one that was there before the run. Apps another
+    session creates at the same time are attributed to the run too; run when the
+    account is quiet."""
 
     ROUTES = (
         (re.compile(r"^/v1/apps$"), lambda m: ["app", "list"]),
@@ -514,6 +525,71 @@ class CliGregale(Gregale):
 
 def created_since(before: dict, after: dict) -> dict:
     return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in ("apps", "projects")}
+
+
+def deletable(gregale: "Gregale", before: dict | None, created: dict, slug: str | None) -> tuple[dict, str | None]:
+    """What cleanup may delete. A dedicated eval account loses everything the
+    run touched; the caller's own account (--cli-login) loses only apps and
+    projects that did not exist before the run, never one it redeployed."""
+    if not isinstance(gregale, CliGregale):
+        return created, slug
+    if before is None:
+        return {"apps": [], "projects": []}, None
+    new = created_since(before, gregale.inventory())
+    return new, slug if slug in new["apps"] else None
+
+
+# Paths under HOME that agents, shells and the CLI write on their own; a write
+# there is not the agent's doing. Relative to HOME.
+HOME_WRITE_IGNORE = (".claude", ".claude.json", ".claude.json.backup", "Library", ".cache", ".config/gregale", ".gemini", ".codex",
+                     ".cursor", ".zsh_history", ".bash_history", ".zsh_sessions", ".python_history", ".lesshst", ".viminfo",
+                     ".Trash", ".DS_Store", ".npm", ".gocache-faas", "go", ".local/state")
+
+
+def home_writes(home: Path, since: float, run_dir: Path, max_depth: int = 2, limit: int = 20000) -> list[str]:
+    """Files under HOME modified after since, outside run_dir, at most max_depth
+    levels down (where dotfiles and per-tool config live). Bounded at limit
+    entries so a large home stays cheap. Other processes' writes can show up,
+    so this is a report, not a verdict."""
+    found, seen = [], 0
+    run_dir = run_dir.resolve()
+    stack = [(home, 0)]
+    while stack and seen < limit:
+        directory, depth = stack.pop()
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            continue
+        for entry in entries:
+            seen += 1
+            path = Path(entry.path)
+            rel = path.relative_to(home).as_posix()
+            if rel in HOME_WRITE_IGNORE or any(rel.startswith(i + "/") for i in HOME_WRITE_IGNORE):
+                continue
+            try:
+                resolved = path.resolve()
+                if resolved == run_dir or run_dir in resolved.parents:
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    if depth + 1 < max_depth:
+                        stack.append((path, depth + 1))
+                elif entry.stat(follow_symlinks=False).st_mtime > since:
+                    found.append(rel)
+            except OSError:
+                continue
+    return sorted(found)
+
+
+def writes_outside(paths: list[str], run_dir: Path, project: Path) -> list[str]:
+    """File-tool writes that landed outside the run directory."""
+    run_dir = run_dir.resolve()
+    outside = []
+    for raw in paths:
+        path = Path(raw)
+        path = (path if path.is_absolute() else project / path).resolve()
+        if path != run_dir and run_dir not in path.parents:
+            outside.append(str(path))
+    return sorted(set(outside))
 
 
 def http_check(url: str, check: dict, deadline_s: float = 120, fetch=None) -> tuple[bool, str]:
@@ -684,6 +760,22 @@ def invoke(command: list[str], project: Path, env: dict, timeout: float, record:
         return _text(expired.stdout).splitlines()
 
 
+# The HTTP wait of the check that decides on a follow-up: long enough for a
+# cold wake, short next to the task's own 120 s check.
+FOLLOW_UP_HTTP_DEADLINE_S = 30
+
+
+def needs_follow_up(task: dict, metrics: dict, record: dict, slug: str | None, project: Path, gregale: Gregale, created: dict) -> bool:
+    """Answer the task's follow_up when the agent finished its turn but the task
+    is not done yet. A quick check decides; an empty app left by a refused
+    deploy no longer counts as done (2026-11-14 run)."""
+    if not task.get("follow_up") or not metrics["completed"] or record["timed_out"]:
+        return False
+    checks = run_checks(task, slug, project, metrics["answer"], gregale, http_deadline_s=FOLLOW_UP_HTTP_DEADLINE_S, created=created,
+                        since=record["started_at"])
+    return not all(check["ok"] for check in checks)
+
+
 def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> dict:
     slug = None if task.get("repo") else app_slug(task["id"])
     run_dir = Path(tempfile.mkdtemp(prefix=f"agent-eval-{task['id']}-"))
@@ -720,13 +812,13 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         elif agent == "gemini" and env.get("GEMINI_API_KEY"):
             env["GEMINI_CLI_HOME"] = str(run_dir / "gemini-home")
             record["isolation"] = "fresh-config"
-        started = time.monotonic()
+        started, wall_started = time.monotonic(), time.time()
         lines = invoke(command, project, env, task["timeout_s"], record)
         (run_dir / f"{agent}.jsonl").write_text("\n".join(lines))
         metrics = PARSERS[agent](lines)
         created = gregale.touched_since(before, record["started_at"])
-        if task.get("follow_up") and not created.get("apps") and metrics["completed"] and not record["timed_out"]:
-            # The agent stopped to ask; answer once, as the person would.
+        if needs_follow_up(task, metrics, record, slug, project, gregale, created):
+            # The agent stopped short (often to ask a question); answer once, as the person would.
             if agent in FOLLOW_UP_AGENTS and metrics.get("session_id"):
                 remaining = max(int(task["timeout_s"] - (time.monotonic() - started)), 60)
                 again = claude_command(task["follow_up"], run_dir, gregale.binary, toolset, task["budget_usd"], getattr(options, "claude_model", None),
@@ -745,17 +837,22 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         record["success"] = all(check["ok"] for check in record["checks"])
         record.update(grade_features(task, metrics["commands"], project, created))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
+        record["wrote_outside_run"] = writes_outside(metrics.get("written_paths") or [], run_dir, project)
+        if record["wrote_outside_run"]:
+            record["anti_patterns"].append("wrote_outside_run")
+        record["home_writes"] = home_writes(Path.home(), wall_started, run_dir)
         record["traps"] = [c["detail"] for c in record["checks"] if c["kind"] == "no_traps" and not c["ok"]]
     except (EvalError, subprocess.TimeoutExpired, OSError, ValueError, urllib.error.URLError) as error:
         record.update(success=False, error=str(error))
     finally:
         if not options.keep_apps:
-            if before is not None and not created.get("apps") and not created.get("projects"):
-                try:
+            try:
+                if before is not None and not created.get("apps") and not created.get("projects"):
                     created = gregale.touched_since(before, record["started_at"])
-                except (OSError, ValueError, urllib.error.URLError):
-                    pass
-            record["left_behind"] = cleanup(gregale, created, slug)
+                doomed, doomed_slug = deletable(gregale, before, created, slug)
+                record["left_behind"] = cleanup(gregale, doomed, doomed_slug)
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                record["left_behind"] = [f"cleanup: {error}"]
         if not options.keep_dirs:
             shutil.rmtree(run_dir, ignore_errors=True)
         else:
@@ -818,7 +915,8 @@ def main(argv=None) -> int:
     run.add_argument("--no-mcp-writes", dest="mcp_writes", action="store_false", help="serve MCP without --allow-writes")
     run.add_argument("--keep-apps", action="store_true", help="do not delete the apps and projects the run created")
     run.add_argument("--keep-dirs", action="store_true", help="keep run directories and transcripts")
-    run.add_argument("--cli-login", action="store_true", help="use your own logged-in gregale CLI instead of GREGALE_EVAL_TOKEN; implies --keep-apps")
+    run.add_argument("--cli-login", action="store_true", help="use your own logged-in gregale CLI instead of GREGALE_EVAL_TOKEN; deletes only apps and projects the run created "
+                     "(--keep-apps keeps them)")
     summary = sub.add_parser("summarize", help="print a Markdown summary of a results file")
     summary.add_argument("results")
     options = parser.parse_args(argv)
@@ -835,7 +933,7 @@ def main(argv=None) -> int:
         token = os.environ.get("GREGALE_EVAL_TOKEN", "")
         if not token and not options.cli_login:
             raise EvalError("set GREGALE_EVAL_TOKEN to an API key of a dedicated evaluation account; runs deploy and delete real apps "
-                            "(or pass --cli-login to use your own logged-in CLI, which never deletes)")
+                            "(or pass --cli-login to use your own logged-in CLI, which deletes only what the run created)")
         agents = _csv(options.agents, AGENTS, "agents")
         toolsets = _csv(options.toolsets, TOOLSETS, "toolsets")
         selected = [t for t in tasks if not options.tasks or t["id"] in options.tasks.split(",")]
@@ -849,7 +947,6 @@ def main(argv=None) -> int:
                 raise EvalError(problem)
         if options.cli_login:
             gregale: Gregale = CliGregale(options.gregale)
-            options.keep_apps = True
         else:
             gregale = Gregale(options.gregale, os.environ.get("GREGALE_EVAL_API", DEFAULT_API), token)
         with open(options.out, "a") as out:

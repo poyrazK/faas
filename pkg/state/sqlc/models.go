@@ -11457,11 +11457,107 @@ type OutboundAiPriceList struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type OutboundAiPrompt struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Name                string
+	Description         string
+	LiveVersion         pgtype.Int4
+	PreviousLiveVersion pgtype.Int4
+	LatestVersion       int32
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type OutboundAiPromptCanary struct {
+	PromptID                  pgtype.UUID
+	Version                   int32
+	Percent                   int16
+	MaxErrorRateIncrease      int16
+	MaxLatencyIncreasePercent pgtype.Int4
+	MinCalls                  int32
+	WindowMinutes             int16
+	State                     string
+	Reason                    pgtype.Text
+	StartedAt                 pgtype.Timestamptz
+	DecidedAt                 pgtype.Timestamptz
+}
+
+type OutboundAiPromptEvaluation struct {
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	PromptID                pgtype.UUID
+	BaselineVersion         int32
+	CandidateVersion        int32
+	Cases                   []byte
+	JudgeIntegrationID      pgtype.UUID
+	JudgeModel              string
+	MaxLossRate             int16
+	Canary                  []byte
+	State                   string
+	Verdict                 pgtype.Text
+	ErrorCode               pgtype.Text
+	CaseCount               int32
+	Wins                    int32
+	Ties                    int32
+	Losses                  int32
+	CandidateErrors         int32
+	JudgeErrors             int32
+	BaselineCostMillicents  int64
+	CandidateCostMillicents int64
+	BaselineTtfbMsTotal     int64
+	BaselineTtfbCalls       int32
+	CandidateTtfbMsTotal    int64
+	CandidateTtfbCalls      int32
+	CanaryStarted           bool
+	CreatedAt               pgtype.Timestamptz
+	StartedAt               pgtype.Timestamptz
+	FinishedAt              pgtype.Timestamptz
+}
+
+type OutboundAiPromptEvaluationItem struct {
+	EvaluationID            pgtype.UUID
+	CaseIndex               int16
+	Verdict                 string
+	BaselineStatus          pgtype.Int2
+	CandidateStatus         pgtype.Int2
+	BaselineCostMillicents  int64
+	CandidateCostMillicents int64
+	BaselineTtfbMs          pgtype.Int4
+	CandidateTtfbMs         pgtype.Int4
+	BaselineOutputText      string
+	CandidateOutputText     string
+}
+
 type OutboundAiPromptPrefix struct {
 	IntegrationID  pgtype.UUID
 	PrefixHash     []byte
 	SeenAt         pgtype.Timestamptz
 	PreviousSeenAt pgtype.Timestamptz
+}
+
+type OutboundAiPromptVersion struct {
+	PromptID      pgtype.UUID
+	Version       int32
+	Messages      []byte
+	Defaults      []byte
+	Params        []byte
+	RouteID       pgtype.UUID
+	IntegrationID pgtype.UUID
+	Model         pgtype.Text
+	Note          string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type OutboundAiPromptVersionMinute struct {
+	PromptID       pgtype.UUID
+	Version        int32
+	Minute         pgtype.Timestamptz
+	Calls          int64
+	Errors         int64
+	TtfbCalls      int64
+	TtfbMsTotal    int64
+	CostMillicents int64
 }
 
 type OutboundAiQualityAlert struct {
@@ -11552,6 +11648,8 @@ type OutboundAiRequestLog struct {
 	EvaluationState     pgtype.Text
 	EvaluationClaimedAt pgtype.Timestamptz
 	EvaluationScore     pgtype.Int2
+	PromptID            pgtype.UUID
+	PromptVersion       pgtype.Int4
 }
 
 type OutboundAiRoute struct {
