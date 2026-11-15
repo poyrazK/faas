@@ -22903,7 +22903,17 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 // and applies its counters in the same transaction. The caller may ACK the
 // frame only after this method returns nil.
 func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32) error {
-	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 {
+	return s.AppendGatewayUsageEventWithServiceReply(ctx, nodeID, eventID, instanceID, minute, requests, txBytes, coldBoots, 0)
+}
+
+// AppendGatewayUsageEventWithServiceReply is AppendGatewayUsageEvent that also
+// queues the reply bytes the instance sent to other apps' service calls for
+// subtraction from its billed egress (billing review R8-2 slice 3), in the
+// same transaction as the frame's idempotency row, so a replayed frame queues
+// nothing twice. It queues only for an instance whose node reports internal
+// egress; elsewhere the bytes stay billed.
+func (s *PgStore) AppendGatewayUsageEventWithServiceReply(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32, serviceReplyBytes int64) error {
+	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 || serviceReplyBytes < 0 {
 		return fmt.Errorf("state: invalid gateway usage counters")
 	}
 	node, err := parsePgUUID(nodeID)
@@ -22945,6 +22955,11 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 		if rows != 1 {
 			return fmt.Errorf("state: gateway usage instance %s not found", instanceID)
 		}
+		if serviceReplyBytes > 0 {
+			if _, err := tx.Exec(ctx, serviceReplyQueue, instanceID, serviceReplyBytes); err != nil {
+				return fmt.Errorf("state: queue service reply bytes: %w", err)
+			}
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -22954,17 +22969,35 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 // in the same transaction as usage_minutes, which makes retry after a meterd
 // crash exactly-once for every observed cumulative value.
 func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
+	tx, rx, _, err := s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
+	return tx, rx, err
+}
+
+// AppendNetworkUsageObservationExcludingInternal implements
+// InternalEgressObserver.
+func (s *PgStore) AppendNetworkUsageObservationExcludingInternal(ctx context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internalCumulative int64) (int64, int64, int64, error) {
+	if internalCumulative < 0 {
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
+}
+
+// appendNetworkUsageObservation is AppendNetworkUsageObservation; with a
+// non-nil internal reading the egress it adds leaves out the internal bytes
+// (billing review R8-2). Financial usage evidence is append-only, so billed
+// egress is reduced before it is written, never after.
+func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
-		return 0, 0, fmt.Errorf("network usage counters must be non-negative")
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	subject, err := ownersql.New().UsageSubject(ctx, tx, ownersql.UsageSubjectParams{InstanceID: mustPgUUID(instanceID), Minute: pgtype.Timestamptz{Time: minute.UTC().Truncate(time.Minute), Valid: true}, AppID: mustPgUUID(appID)})
 	if err != nil {
-		return 0, 0, mapErr(err)
+		return 0, 0, 0, mapErr(err)
 	}
 	billingAccountID := pgUUIDString(subject)
 
@@ -22973,17 +23006,19 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		 values ($1, 0, 0, false, false, $2)
 		 on conflict (instance_id) do nothing`, instanceID, minute.UTC())
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	var previousTx, previousRx int64
-	var previousTxValid, previousRxValid bool
+	var previousTx, previousRx, previousInternal, internalPending, serviceReplies int64
+	var previousTxValid, previousRxValid, previousInternalValid bool
 	err = tx.QueryRow(ctx,
-		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid
+		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid,
+		        internal_tx_bytes, internal_tx_valid, internal_tx_pending, service_reply_pending
 		   from meter_network_checkpoints
 		  where instance_id = $1
-		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid)
+		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid,
+		&previousInternal, &previousInternalValid, &internalPending, &serviceReplies)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
@@ -23015,6 +23050,13 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		nextRxValid = true
 	}
 
+	var excluded, nextInternalPending int64
+	if internal != nil {
+		excluded, nextInternalPending = internalEgressStep(previousInternal, previousInternalValid,
+			internalPending, serviceReplies, *internal, netTxDelta)
+		netTxDelta -= excluded
+	}
+
 	command, err := tx.Exec(ctx,
 		`update usage_minutes
 		    set net_tx_bytes = net_tx_bytes + $1,
@@ -23023,10 +23065,10 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		    and account_id = $5 and app_id = $6`,
 		netTxDelta, netRxDelta, instanceID, minute.UTC().Truncate(time.Minute), billingAccountID, appID)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if command.RowsAffected() != 1 {
-		return 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, minute.UTC().Truncate(time.Minute).Format(time.RFC3339))
+		return 0, 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, minute.UTC().Truncate(time.Minute).Format(time.RFC3339))
 	}
 
 	_, err = tx.Exec(ctx,
@@ -23041,12 +23083,17 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		       updated_at = now()`,
 		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC())
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
+	}
+	if internal != nil {
+		if _, err := tx.Exec(ctx, internalEgressCheckpointUpdate, instanceID, *internal, nextInternalPending); err != nil {
+			return 0, 0, 0, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	return netTxDelta, netRxDelta, nil
+	return netTxDelta, netRxDelta, excluded, nil
 }
 
 // InstanceBillingSeconds returns each instance's actual resident seconds in

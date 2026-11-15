@@ -1681,6 +1681,13 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 				row.EgressFloodDropsLimitPerMin = fanout.FloodLimit
 			}
 		}
+		if provider, ok := s.vmm.(interface {
+			InternalEgressBytes(string) (uint64, bool)
+		}); ok {
+			if internal, present := provider.InternalEgressBytes(inst); present {
+				row.InternalTxBytes = wrapperspb.Int64(int64(min(internal, uint64(1<<62))))
+			}
+		}
 		row.OpenConns = openConns[inst]
 		row.EgressCircuitEnforcement = s.egressCircuitEnforcement(inst)
 		row.HttpAdmissionEnforcement = s.httpAdmissionEnforcement(inst)
