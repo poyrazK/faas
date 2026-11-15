@@ -227,7 +227,8 @@ esac
 	run(0, "intent", "prepare", "--id", id, "--plan", plan, "--reason", "Review checkpoint acknowledgement")
 	run(0, "intent", "approve", "--id", id, "--plan", plan, "--intent-sha256", saved.IntentSHA256)
 	run(0, "execution", "authorize", "--id", id, "--operation-id", operation, "--plan", plan, "--bindings-file", bindings, "--intent-sha256", saved.IntentSHA256, "--allow-tool-execution")
-	run(1, "execution", "apply", "--id", id, "--operation-id", operation, "--allow-tool-execution")
+	// HTTP 503 uses the CLI temporary-failure exit code, while retaining the claim.
+	run(3, "execution", "apply", "--id", id, "--operation-id", operation, "--allow-tool-execution")
 	if checkpointAttempts < 1 || claims != 1 || saved.Execution.State != "reconcile_required" {
 		t.Fatal("missing acknowledgement did not retain its original claim", checkpointAttempts, claims, saved.Execution.State)
 	}
