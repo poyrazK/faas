@@ -112,3 +112,13 @@ CREATE TABLE jobs (
     image_materialization_lease_owner text,
     image_materialization_lease_until timestamptz
 );
+
+-- Projection of builds: the node running a build, recorded when it was
+-- claimed (ADR-20261110210000 slice 3j-3).
+CREATE TABLE builds (
+    id                uuid NOT NULL PRIMARY KEY,
+    deployment_id     uuid NOT NULL,
+    status            text NOT NULL,
+    started_at        timestamptz,
+    builder_node_name text
+);
