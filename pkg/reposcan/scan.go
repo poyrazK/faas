@@ -187,6 +187,11 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// Streaming (x-gregale-streaming) and WakeAhead (x-gregale-wake-ahead)
+	// are explicit app settings from Compose. Nil keeps an existing app's
+	// setting and the platform default for a new one.
+	Streaming *bool `json:",omitempty"`
+	WakeAhead *bool `json:",omitempty"`
 	// RenamedFrom is the service's previous name (Compose
 	// x-gregale-renamed-from). A deploy updates that name's app in place
 	// instead of removing it and creating a new one (ADR-20261029090000).

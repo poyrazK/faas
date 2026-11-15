@@ -699,6 +699,46 @@ type AccountHeldLinkStore interface {
 	AccountHeldLinks(ctx context.Context, accountID string) ([]AccountHeldLink, error)
 }
 
+// AccountAbuseStrike is one stored abuse recycle (ADR-20261113133500).
+type AccountAbuseStrike struct {
+	Reason   string
+	AppID    string
+	StruckAt time.Time
+}
+
+// AccountAbuseEvent is an abuse-related event about an account, its apps,
+// deployments or instances (ADR-20261115090000).
+type AccountAbuseEvent struct {
+	At      time.Time
+	Actor   string
+	Kind    string
+	Subject string
+	Data    json.RawMessage
+}
+
+// RecentHeldLink is a held-account link with the new account's sign-up
+// country and email domain, for the daily review list.
+type RecentHeldLink struct {
+	AccountHeldLink
+	Country         string
+	EmailDomain     string
+	DisposableEmail bool
+}
+
+// AccountRiskStore serves the operator account risk view
+// (ADR-20261115090000). Both PgStore and MemStore implement it.
+type AccountRiskStore interface {
+	// AccountAbuseStrikes lists the owner's strikes after since, newest first.
+	AccountAbuseStrikes(ctx context.Context, accountID string, since time.Time) ([]AccountAbuseStrike, error)
+	// HeldLinksToAccount lists the accounts linked to heldAccountID.
+	HeldLinksToAccount(ctx context.Context, heldAccountID string) ([]AccountHeldLink, error)
+	// RecentHeldLinks lists links detected from since on, newest first.
+	RecentHeldLinks(ctx context.Context, since time.Time, limit int) ([]RecentHeldLink, error)
+	// AccountAbuseEvents lists events of the given kinds about the account,
+	// its apps, deployments and instances from since on, newest first.
+	AccountAbuseEvents(ctx context.Context, accountID string, kinds []string, since time.Time, limit int) ([]AccountAbuseEvent, error)
+}
+
 // AccountAbuseStrikeStore records abuse recycles against a resource owner
 // (account or organization) for the account abuse hold escalation
 // (ADR-20261113133500). The count is shared by every schedd and survives
@@ -2240,7 +2280,10 @@ func (m AppManifest) IsZero() bool {
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0 &&
-		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0
+		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0 &&
+		// A function app whose only settings are its callables or input
+		// schema must not be stored as {} (ADR-20261111150000).
+		len(m.FunctionCallables) == 0 && len(m.FunctionInputSchema) == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -3178,6 +3221,12 @@ type Deployment struct {
 	// carries the advertised serving port across imaged -> schedd -> vmmd.
 	// Raw JSON keeps state independent of the framework-profile package shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
+	// BuildRegistryScope (ADR-20261110210000 slice 3j-4) lists the image
+	// repositories ("host/repository") the deployment's Dockerfiles name;
+	// secretd lets its builds pull only those with the app's registry
+	// credential. apid records it at creation and the column never changes;
+	// nil means not recorded. Written only; secretd reads the column.
+	BuildRegistryScope []string `json:"-"`
 	// ReleaseCommand is immutable pre-activation intent captured from the
 	// exact source version (gregale.yaml release.command or Procfile release:).
 	// The orchestrator converts it into the deployment's unique release task;
@@ -5031,6 +5080,11 @@ type Invocation struct {
 	// written to invocation_sends with the row and not read back on it.
 	SentByAppID     string `json:"-"`
 	OnCompleteAppID string `json:"-"`
+	// WorkflowCallRunID and WorkflowCallOp name the code-workflow call
+	// operation an invocation runs for (ADR-20261113120824 §2); its terminal
+	// transition settles that operation. Unrelated to WorkflowRunID.
+	WorkflowCallRunID string `json:"-"`
+	WorkflowCallOp    string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`

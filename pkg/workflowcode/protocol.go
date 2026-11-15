@@ -25,6 +25,9 @@ const (
 	KindSleep  Kind = "sleep"
 	KindEvent  Kind = "event"
 	KindDriver Kind = "driver"
+	// KindCall calls a function the workflow app may call and parks the run
+	// until the call's async invocation finishes (ADR-20261113120824 §2).
+	KindCall Kind = "call"
 )
 
 // Journal entry statuses sent to the SDK.
@@ -39,7 +42,8 @@ const (
 	// the request carries it (Journal.Sent); the journal itself keeps
 	// EntryRetrying, so an SDK that runs the step early is still accepted.
 	EntryScheduled = "scheduled"
-	// EntryWaiting is a sleep or event wait that has not resolved.
+	// EntryWaiting is a sleep, event wait or function call that has not
+	// resolved.
 	EntryWaiting = "waiting"
 )
 
@@ -105,6 +109,10 @@ type Descriptor struct {
 	// Seen is how many operations were resolved when the $driver row's
 	// latest call began; more resolved operations mean the code must run.
 	Seen int `json:"seen,omitempty"`
+	// Function and InvocationID identify a call operation's callee and the
+	// async invocation that runs it; TimeoutMS bounds the wait for it.
+	Function     string `json:"function,omitempty"`
+	InvocationID string `json:"invocation_id,omitempty"`
 }
 
 // Duration is a sleep's length.
@@ -183,6 +191,9 @@ type ReportedOp struct {
 	DurationMS   int64                  `json:"duration_ms,omitempty"`
 	Event        string                 `json:"event,omitempty"`
 	TimeoutMS    int64                  `json:"timeout_ms,omitempty"`
+	// Function and Input are a call operation's callee and request body.
+	Function string          `json:"function,omitempty"`
+	Input    json.RawMessage `json:"input,omitempty"`
 }
 
 // Result is the workflow function's state after an invocation.
@@ -434,6 +445,22 @@ func validateOp(journal Journal, op ReportedOp, limits Limits, next int, seen ma
 		planned.Attempt = 0
 		planned.Descriptor.Event = op.Event
 		planned.Descriptor.TimeoutMS = timeout.Milliseconds()
+	case KindCall:
+		if !planned.New {
+			return PlannedOp{}, fmt.Errorf("%w: call %q re-reported", ErrProtocol, op.Name)
+		}
+		if strings.TrimSpace(op.Function) == "" || len(op.Function) > 128 {
+			return PlannedOp{}, fmt.Errorf("%w: call %q names no function", ErrProtocol, op.Name)
+		}
+		if len(op.Input) > 0 && !json.Valid(op.Input) {
+			return PlannedOp{}, fmt.Errorf("%w: call %q input is not JSON", ErrProtocol, op.Name)
+		}
+		if int64(len(op.Input)) > limits.OutputMaxBytes {
+			return PlannedOp{}, fmt.Errorf("%w: call %q input is %d bytes, limit %d", ErrLimit, op.Name, len(op.Input), limits.OutputMaxBytes)
+		}
+		planned.Attempt = 0
+		planned.Descriptor.Function = op.Function
+		planned.Descriptor.TimeoutMS = limits.MaxWait.Milliseconds()
 	default:
 		return PlannedOp{}, fmt.Errorf("%w: unknown operation kind %q", ErrProtocol, op.Kind)
 	}

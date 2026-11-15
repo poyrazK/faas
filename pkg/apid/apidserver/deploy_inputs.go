@@ -1094,12 +1094,12 @@ func scanDockerfileForStatefulShape(b []byte) string {
 		}
 		upper := strings.ToUpper(line)
 		if strings.HasPrefix(upper, "VOLUME") {
-			// VOLUME ["/data"] or VOLUME /data /var — extract the args.
-			args := strings.Fields(line)
-			if len(args) > 1 {
-				return "VOLUME " + strings.Join(args[1:], " ")
+			// VOLUME ["/data"] or VOLUME /data /var. Scratch paths such as
+			// /tmp keep nothing worth losing, so only the others refuse.
+			if stateful := statelessshape.StatefulVolume(line); len(stateful) > 0 {
+				return "VOLUME " + strings.Join(stateful, " ")
 			}
-			return "VOLUME"
+			continue
 		}
 		if strings.HasPrefix(upper, "RUN") {
 			inRun = strings.HasSuffix(scanner.Text(), `\`)

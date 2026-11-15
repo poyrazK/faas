@@ -56,6 +56,9 @@ type config struct {
 	postgresHMACPath  string
 	appsPerNodeHour   int
 	requireReferences bool
+	// buildRegistryScope (slice 3j-4): how builds' pulls are held to their
+	// deployment's recorded registry scope.
+	buildRegistryScope secretd.BuildRegistryScopeMode
 }
 
 func configFromEnv(getenv func(string) string) (config, error) {
@@ -104,6 +107,9 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		cfg.requireReferences = true
 	default:
 		return config{}, fmt.Errorf("secretd: FAAS_SECRETD_REQUIRE_REFERENCES=%q: want true or false", raw)
+	}
+	if cfg.buildRegistryScope, err = secretd.ParseBuildRegistryScopeMode(getenv("FAAS_SECRETD_BUILD_REGISTRY_SCOPE")); err != nil {
+		return config{}, fmt.Errorf("FAAS_SECRETD_BUILD_REGISTRY_SCOPE: %w", err)
 	}
 	return cfg, nil
 }
@@ -200,6 +206,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log).
 		RequireReferences(cfg.requireReferences).WithMetrics(metrics).WithEdgeIdentities(edgeIdentities).
 		WithDeliveryIdentities(deliveryIdentities).WithBuildIdentities(buildIdentities).
+		WithBuildRegistryScope(cfg.buildRegistryScope).
 		WithPostgresVerification(postgresHMAC, managedpostgres.VerifyCredentialSQL))
 	go func() {
 		<-ctx.Done()

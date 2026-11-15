@@ -2,11 +2,14 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -151,5 +154,57 @@ func TestServicePolicyReliabilityBudgetIncludesSnapshotTime(t *testing.T) {
 	w := serviceSnapshotRequest(proxy)
 	if w.Code != http.StatusGatewayTimeout {
 		t.Fatalf("expired configured call = %d %q", w.Code, w.Body.String())
+	}
+}
+
+// A read that overruns its own budget while the call is live gets one more
+// attempt; a store error is not retried. Each refusal is logged with its cause.
+func TestServicePolicySnapshotRetriesOneStalledRead(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		failures  int
+		storeErr  bool
+		wantCode  int
+		wantReads int32
+		wantLog   bool
+	}{
+		{name: "one stall recovers", failures: 1, wantCode: http.StatusServiceUnavailable + 1, wantReads: 2},
+		{name: "two stalls refuse", failures: 2, wantCode: http.StatusServiceUnavailable, wantReads: 2, wantLog: true},
+		{name: "store error is not retried", failures: 1, storeErr: true, wantCode: http.StatusServiceUnavailable, wantReads: 1, wantLog: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var reads atomic.Int32
+			var logs bytes.Buffer
+			proxy := NewServiceProxy(ServiceProxyConfig{Provider: &serviceProxyProvider{},
+				Log: slog.New(slog.NewTextHandler(&logs, nil)),
+				Policy: func(ctx context.Context, _, _ string, _ bool) (ServicePolicySnapshot, error) {
+					if int(reads.Add(1)) <= tc.failures {
+						if tc.storeErr {
+							return ServicePolicySnapshot{}, errors.New("database offline")
+						}
+						<-ctx.Done()
+						return ServicePolicySnapshot{}, ctx.Err()
+					}
+					return serviceSnapshotFixture(), nil
+				},
+				Wake: func(context.Context, string) error { return nil },
+				Forward: func(Target) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable + 1) })
+				},
+			})
+			w := serviceSnapshotRequest(proxy)
+			if reads.Load() != tc.wantReads {
+				t.Fatalf("policy reads = %d, want %d", reads.Load(), tc.wantReads)
+			}
+			if tc.wantCode == http.StatusServiceUnavailable && w.Code != tc.wantCode {
+				t.Fatalf("code = %d, want 503", w.Code)
+			}
+			if tc.wantCode != http.StatusServiceUnavailable && strings.Contains(w.Body.String(), "service policy snapshot is unavailable") {
+				t.Fatalf("recovered read still refused: %d %s", w.Code, w.Body.String())
+			}
+			if got := strings.Contains(logs.String(), "policy snapshot unavailable"); got != tc.wantLog {
+				t.Fatalf("refusal logged = %v, want %v: %s", got, tc.wantLog, logs.String())
+			}
+		})
 	}
 }
