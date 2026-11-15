@@ -3,6 +3,9 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261113205500: Approved pipeline evolution, Auth memberships and related reads](20261113205500-pipeline-serving-evolution.md) — staging qualification; frozen projection approval, authoritative tenant membership and related reads; expand fences precede capable binaries.
+- [ADR-20261114083000: Scheduled pipeline snapshots, quality checks and work budgets](20261114083000-pipeline-scheduled-imports-quality-and-work-budgets.md) — staging qualification; SELECT-only snapshots, bounded quality checks and work windows; schema precedes activation.
+
 - [ADR-20261114132157: Structured CLI help](20261114132157-cli-json-help.md) — accepted; versioned JSON discovery through existing help, canonical paths, local argument metadata and offline capability visibility.
 
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
