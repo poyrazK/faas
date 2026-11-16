@@ -2152,6 +2152,19 @@ const (
 	PlatformAlertRetention = 30 * 24 * time.Hour
 )
 
+// Default alerts for SLOs and synthetic checks (ADR-20261115194000,
+// amendment 2026-11-16). A check or SLO a customer created alerted nobody
+// unless they also wrote an alert rule with a channel: a store's checkout
+// check failed for hours and its SLO burned at 126x with no one told. With
+// no enabled alert rule naming it, the account is emailed when a check fails
+// its last SyntheticCheckFailingRuns runs, or when an SLO's multi-window
+// burn rate reaches PlatformAlertSLOBurnRate (the fast-burn page threshold,
+// 2% of a 30-day budget in an hour).
+const (
+	SyntheticCheckFailingRuns = 3
+	PlatformAlertSLOBurnRate  = 14.4
+)
+
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
 // decisions (schedule_occurrences) and its manual-run requests
 // (cron_fire_now_requests). It matches the longest plan's invocation result

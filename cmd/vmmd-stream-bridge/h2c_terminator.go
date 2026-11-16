@@ -261,6 +261,7 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 	// transparently by the transport).
 	resp, err := transport.RoundTrip(outboundReq)
 	if err != nil {
+		markGuestTransportError(w, r, ctx)
 		http.Error(w, fmt.Sprintf("guest h2c roundtrip: %v", err), http.StatusBadGateway)
 		return
 	}

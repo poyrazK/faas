@@ -2185,12 +2185,12 @@ var cliCommands = []cliCommand{
 		DocSlug: "release-gates",
 		Short:   "Stop rollouts on SLO, error, metric, check or AI regressions",
 		Examples: []string{
-			"gregale release gate create --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
-			"gregale release gate create --app my-api --name no-new-errors --new-errors --min-events 3",
-			"gregale release gate create --app my-api --name orders --metric orders_per_minute --below 5",
-			"gregale release gate create --app my-api --name orders-drop --metric orders_per_minute --max-drop 30",
-			"gregale release gate create --app my-api --name checkout-probe --check checkout",
-			"gregale release gate create --app my-api --name ai-cost --ai cost_per_call --max-increase 30",
+			"gregale release gate add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
+			"gregale release gate add --app my-api --name no-new-errors --new-errors --min-events 3",
+			"gregale release gate add --app my-api --name orders --metric orders_per_minute --below 5",
+			"gregale release gate add --app my-api --name orders-drop --metric orders_per_minute --max-drop 30",
+			"gregale release gate add --app my-api --name checkout-probe --check checkout",
+			"gregale release gate add --app my-api --name ai-cost --ai cost_per_call --max-increase 30",
 			"gregale release gate list --app my-api",
 		},
 		Subcommands: []cliSub{

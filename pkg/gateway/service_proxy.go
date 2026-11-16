@@ -550,6 +550,10 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 // <service>.internal alias. The service segment is resolved to an app; the
 // remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Outermost: a gRPC caller gets the platform's errors as gRPC statuses;
+	// the trace and dependency-health writers still see the HTTP status.
+	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
+	defer finishGRPC()
 	defer func() { cancelStampedRequestBudget(r.Context()) }() //nolint:contextcheck // release every timer on the final rebound request context.
 	dependencyStarted := p.now()
 	service, targetPath, alias, ok := parseServiceProxyRequest(r)
@@ -2036,11 +2040,33 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
-		forwardReq, buffer.onResponse = p.withServiceRequestObservation(forwardReq, target, caller, endpoint, woken)
+		var observe func(int)
+		forwardReq, observe = p.withServiceRequestObservation(forwardReq, target, caller, endpoint, woken)
+		responded := 0
+		if observe != nil {
+			buffer.onResponse = func(status int) {
+				// A gRPC call's outcome is in its trailers, so it is observed
+				// when the response completes (below). Other responses keep
+				// their evidence at the first header, before a stream ends.
+				if isGRPCContentType(buffer.header.Get("Content-Type")) {
+					responded = status
+					return
+				}
+				observe(status)
+			}
+		}
 		recordTrafficAttempt(ctx)
 		forwardTarget := serviceEndpointTarget(appID, endpoint)
 		oteltrace.SpanFromContext(ctx).SetAttributes(completionTargetAttributes(forwardTarget)...)
 		p.forward(forwardTarget).ServeHTTP(buffer, forwardReq)
+		if responded != 0 {
+			// A failed RPC answered with HTTP 200 is recorded as the failure
+			// its grpc-status trailer says.
+			if mapped, ok := grpcObservedStatus(buffer.header); ok && responded == http.StatusOK {
+				responded = mapped
+			}
+			observe(responded)
+		}
 		if !signal.stale.Load() && p.recordServiceReply != nil {
 			// A stale target's answer came from the bridge, not the guest.
 			p.recordServiceReply(endpoint.InstanceID, buffer.guestBytes)

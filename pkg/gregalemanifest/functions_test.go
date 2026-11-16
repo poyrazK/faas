@@ -90,7 +90,7 @@ func TestFunctionsManifestRejections(t *testing.T) {
 		{"timeout above plan", "functions:\n  - name: a\n    root: f\n    request_timeout_s: 100000\n", api.PlanPro, "request_timeout_s 100000"},
 		{"negative min instances", "functions:\n  - name: a\n    root: f\n    min_instances: -1\n", api.PlanPro, "min_instances -1"},
 		{"concurrency above per-VM bound", "functions:\n  - name: a\n    root: f\n    concurrency: 6\n", api.PlanHobby, "concurrency 6 must be between 1 and 5"},
-		{"bad env key", "functions:\n  - name: a\n    root: f\n    env:\n      lower: x\n", api.PlanPro, "env \"lower\""},
+		{"bad env key", "functions:\n  - name: a\n    root: f\n    env:\n      bad-key: x\n", api.PlanPro, "env \"bad-key\""},
 		{"bad secret name", "functions:\n  - name: a\n    root: f\n    secrets_from_env: [\"api-key\"]\n", api.PlanPro, "secrets_from_env[0]"},
 		{"secret listed twice", "functions:\n  - name: a\n    root: f\n    secrets_from_env: [K, K]\n", api.PlanPro, "listed twice"},
 		{"env and secret", "functions:\n  - name: a\n    root: f\n    env:\n      K: v\n    secrets_from_env: [K]\n", api.PlanPro, "both a plain env value and a secret"},

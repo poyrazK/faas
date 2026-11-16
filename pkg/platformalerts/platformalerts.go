@@ -94,10 +94,18 @@ func (w *Worker) Run(ctx context.Context) {
 // Tick runs the due parts of one iteration.
 func (w *Worker) Tick(ctx context.Context) {
 	now := w.now()
-	if w.Metrics != nil && now.Sub(w.lastDetect) >= detectEvery {
+	if now.Sub(w.lastDetect) >= detectEvery {
 		w.lastDetect = now
-		if err := w.DetectOutages(ctx); err != nil && ctx.Err() == nil {
-			w.log().Warn("platform alerts: outage detection failed", "err", err)
+		if w.Metrics != nil {
+			if err := w.DetectOutages(ctx); err != nil && ctx.Err() == nil {
+				w.log().Warn("platform alerts: outage detection failed", "err", err)
+			}
+			if err := w.DetectBurningSLOs(ctx); err != nil && ctx.Err() == nil {
+				w.log().Warn("platform alerts: SLO burn detection failed", "err", err)
+			}
+		}
+		if err := w.DetectFailingChecks(ctx); err != nil && ctx.Err() == nil {
+			w.log().Warn("platform alerts: failing check detection failed", "err", err)
 		}
 	}
 	if err := w.SendDue(ctx); err != nil && ctx.Err() == nil {
@@ -345,7 +353,7 @@ func message(n state.PlatformAlertNotice, app state.App, dashboardURL string) (s
 			app.Slug, d.ErrorRatePct, d.Requests, d.Window)
 		b.WriteString("Find out why:\n")
 		fmt.Fprintf(&b, "  gregale debug status %s\n  gregale logs %s --since 30m\n\n", app.Slug, app.Slug)
-		fmt.Fprintf(&b, "Gregale sends this at most once a day per app, and not for an app with its own error-rate alert:\n  gregale alert create --app %s --metric error_rate_pct ...\n", app.Slug)
+		fmt.Fprintf(&b, "Gregale sends this at most once a day per app, and not for an app with its own error-rate alert:\n  gregale alert add --app %s --metric error_rate_pct ...\n", app.Slug)
 	case state.PlatformAlertCronFailingPaused:
 		var d cronFailingDetail
 		_ = json.Unmarshal(n.Detail, &d)
@@ -356,6 +364,25 @@ func message(n state.PlatformAlertNotice, app state.App, dashboardURL string) (s
 			fmt.Fprintf(&b, "Last error: %s\n\n", d.LastError)
 		}
 		fmt.Fprintf(&b, "See the runs:\n  gregale cron runs %s\n\nFix the app, then resume the cron (deploying the app also resumes it):\n  gregale crons update %s --enable\n", n.SubjectID, n.SubjectID)
+	case state.PlatformAlertCheckFailing:
+		var d checkFailingDetail
+		_ = json.Unmarshal(n.Detail, &d)
+		subject = fmt.Sprintf("Gregale: check %s on %s is failing", d.Name, app.Slug)
+		fmt.Fprintf(&b, "The synthetic check %s (%s %s) on %s failed its last %d runs, since %s.\n",
+			d.Name, d.Method, d.Path, app.Slug, d.FailedRuns, d.Since.UTC().Format("2006-01-02 15:04 MST"))
+		if d.LastStatus != 0 || d.LastError != "" {
+			fmt.Fprintf(&b, "Last run: status %d %s\n", d.LastStatus, d.LastError)
+		}
+		fmt.Fprintf(&b, "\nFind out why:\n  gregale debug status %s\n  gregale logs %s --since 30m\n\n", app.Slug, app.Slug)
+		fmt.Fprintf(&b, "Gregale sends this at most once a day per check, and not for a check with its own alert rule:\n  gregale alert add --app %s --metric synthetic_check_consecutive_failures --synthetic-check %s ...\n", app.Slug, n.SubjectID)
+	case state.PlatformAlertSLOBurn:
+		var d sloBurnDetail
+		_ = json.Unmarshal(n.Detail, &d)
+		subject = fmt.Sprintf("Gregale: SLO %s on %s is burning its error budget %.0fx too fast", d.Name, app.Slug, d.BurnRate)
+		fmt.Fprintf(&b, "The SLO %s (objective %.2f%%) on %s is spending its error budget %.1f times faster than it can sustain. At this rate a 30-day budget is gone in about %s.\n\n",
+			d.Name, d.Objective, app.Slug, d.BurnRate, budgetLeft(d.BurnRate))
+		fmt.Fprintf(&b, "Find out why:\n  gregale debug status %s\n  gregale logs %s --since 1h --level error\n\n", app.Slug, app.Slug)
+		fmt.Fprintf(&b, "Gregale sends this at most once a day per SLO, and not for an SLO with its own alert rule:\n  gregale alert add --app %s --metric slo_budget_burn --slo %s ...\n", app.Slug, n.SubjectID)
 	default:
 		return "", "", false
 	}
