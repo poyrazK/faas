@@ -1026,6 +1026,9 @@ type Manager struct {
 	// anchorNetns re-creates an adopted guest's netns binding; tests replace
 	// it. nil uses anchorAdoptedNetns.
 	anchorNetns func(name string, pid int, want resourceFileIdentity) (*resourceAsset, error)
+	// killRefused ends a proven guest that adoption refused
+	// (killRefusedSurvivor); nil uses killProvenGuest. Tests replace it.
+	killRefused func(resourceProcessIdentity) error
 	// adoption writes version-7 adoption blocks once EnableAdoptionRecords
 	// is called; nil writes none. Atomic so state changes can mark an
 	// instance whether or not they hold mu.
