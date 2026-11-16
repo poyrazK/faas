@@ -713,7 +713,9 @@ func (r *startRunner) finish() {
 	}
 	cli, source, app := recoveryCLI(), recoveryArgument(r.session.SourcePath), recoveryArgument(r.session.AppSlug)
 	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Update: %s deploy --path %s --source=worktree --name %s --environment=%s\n  Logs:   %s logs %s --deployment %s --follow\n", cli, source, app, recoveryArgument(r.session.Environment), cli, app, recoveryArgument(r.session.DeploymentID))
-	if r.session.Environment == "" {
+	if r.lastRequest != nil && r.lastRequest.private {
+		_, _ = fmt.Fprintf(osStdout, "  Test:   %s\n", deploymentResponseCheckCommand(r.session.AppSlug, r.session.DeploymentID, r.lastRequest.path, r.session.ProjectID, r.session.EnvironmentID))
+	} else if r.session.Environment == "" {
 		_, _ = fmt.Fprintf(osStdout, "  Open:   %s open %s\n", cli, app)
 	} else if r.lastRequest != nil && r.lastRequest.httpStatus != 0 && !r.lastRequest.private {
 		_, _ = fmt.Fprintf(osStdout, "  Open URL: %s\n", startResponseText(r.lastRequest.appURL))

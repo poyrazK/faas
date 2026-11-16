@@ -382,6 +382,7 @@ Put the global `--non-interactive` and `--json` options before the command:
 gregale --non-interactive --json whoami
 gregale --non-interactive --json capabilities
 gregale --non-interactive --json deploy --name my-api
+gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api --path /
 gregale --non-interactive --json logs my-api --since 15m --level error
 gregale --non-interactive --json rollback my-api --to v41
 ```
@@ -401,6 +402,14 @@ credentials are redacted from both.
 | `5` | `conflict` | Read the current state before retrying |
 | `6` | `permission_denied` | The key lacks a scope or the plan lacks the feature |
 | `130` | `cancelled` | The command was interrupted or declined |
+
+A ready deployment and a verified application response are separate results.
+Use `release verify` with the exact accepted deployment UUID to test an
+application GET on any plan, including private and internal apps. Only the inner
+application 2xx sets `verified: true`; `public_access_verified` remains false for
+this owner-authorized check. A non-2xx exits 1. Account credentials are not
+forwarded to the app, and its own authentication still applies. Named scopes
+require `--project-id` and `--environment-id` from the project catalog.
 
 A deploy writes a receipt with the deployment `id`, its `status` and the
 `app_url`. If `timed_out` is true, run the receipt's `resume_command` instead

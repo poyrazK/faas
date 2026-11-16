@@ -24,6 +24,7 @@ type startRequestResult struct {
 	httpStatus                           int
 	elapsed                              time.Duration
 	private, bodyTruncated               bool
+	internal                             bool
 	edgeHealth                           bool
 	publicDeploymentCheck                bool
 }
@@ -114,6 +115,7 @@ func (r *startRunner) sendTestRequest(path, expectedGreeting string) int {
 		}
 		return printErr("Test request failed", err)
 	}
+	result.internal = api.NormalizeAppVisibility(api.AppVisibility(app.Visibility)) == api.AppVisibilityInternal
 	return r.verifyRequest(result, expectedGreeting)
 }
 
@@ -234,6 +236,7 @@ func (r *startRunner) verifyRequest(result startRequestResult, expectedGreeting 
 func (r *startRunner) renderRequestSuccess(result startRequestResult) {
 	_, _ = fmt.Fprintln(osStdout)
 	PrintOK(osStdout, "Your app answered. Keep building.")
+	PrintProgress(osStdout, "Application response verified")
 	r.renderRequestDetails(result, true)
 	if !r.startedAt.IsZero() {
 		_, _ = fmt.Fprintf(osStdout, "  Session       %s elapsed\n", time.Since(r.startedAt).Round(time.Second))
@@ -243,16 +246,27 @@ func (r *startRunner) renderRequestSuccess(result startRequestResult) {
 func (r *startRunner) renderRequestDetails(result startRequestResult, verified bool) {
 	if result.private {
 		label := "Private app"
-		if result.publicDeploymentCheck {
+		if result.internal {
+			label = "Internal app"
+		} else if result.publicDeploymentCheck {
 			label = "App"
 		}
 		_, _ = fmt.Fprintf(osStdout, "  %-13s %s\n  Deployment    %s\n  Request       GET %s · HTTP %d · %s · owner-authorized check\n", label, startResponseText(result.appURL), result.servedDeployment, result.path, result.httpStatus, result.elapsed.Round(time.Millisecond))
+		PrintProgress(osStdout, "Public access has not been verified. Account credentials were not forwarded to the app.")
+		if result.internal {
+			PrintProgress(osStdout, "Internal apps have no public endpoint. This check uses your Gregale account.")
+		} else if !result.publicDeploymentCheck {
+			PrintProgress(osStdout, "A private endpoint may return 401 in a browser without its required credentials. Application-owned authentication still applies.")
+		}
 	} else {
 		label := "Request URL"
 		if verified {
 			label = "Verified URL"
 		}
 		_, _ = fmt.Fprintf(osStdout, "  %s  %s\n  Request       GET %s · HTTP %d · %s\n", label, startResponseText(result.appURL), result.path, result.httpStatus, result.elapsed.Round(time.Millisecond))
+		if verified {
+			PrintProgress(osStdout, "Public access verified for this deployment and request path.")
+		}
 	}
 	body := strings.TrimSpace(startResponseText(result.body))
 	if body == "" {

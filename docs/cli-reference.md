@@ -1239,6 +1239,28 @@ gregale release wait 00000000000000000000000000000001
 gregale release wait 00000000000000000000000000000001 --rollout --progress
 ```
 
+### release verify
+
+Verify an application response from an exact live deployment
+
+`gregale release verify --app <SLUG> [--path <PATH>] [--project-id <UUID>] [--environment-id <UUID>] <deployment-uuid>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--path <PATH>` | app-relative GET path (default /) |  |
+| `--project-id <UUID>` | project identity for a named environment |  |
+| `--environment-id <UUID>` | environment identity for a named environment |  |
+
+Examples:
+
+```sh
+gregale release verify DEPLOYMENT_UUID --app my-api --path /
+gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api
+```
+
+Available on every plan with deployment-write access. Sends an owner-authorized GET; public access is not verified.
+
 ### release cancel
 
 Cancel one pending deployment

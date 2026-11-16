@@ -5,6 +5,28 @@ binary itself. No checked-in copies in `contrib/completion/`; the
 binary is the source of truth. This doc covers the install path for
 each shell, plus the man-page install for offline / CI use.
 
+## Verify a deployed application
+
+The guided first-deploy path is `gregale start [path]`; see the
+[quickstart](quickstart.md). Deployment readiness, a verified application response,
+and public access are separate results.
+
+To test the exact deployment from your launch receipt, including a private or
+internal app, use your Gregale account:
+
+```bash
+gregale release verify DEPLOYMENT_UUID --app my-api --path /
+```
+
+The check is available on every plan with deployment-write access. It reports
+the actual application HTTP status and verifies only a 2xx response. Account
+credentials are not forwarded to the app. A private endpoint may return 401 in
+a browser without its required credentials after a successful deploy; you can
+verify it without making it public. Application-owned authentication still
+applies. An owner-authorized check does not establish anonymous public access.
+In the dashboard, the equivalent action is **Verify response**.
+
+
 ## Choosing a task
 
 Use `logs views delete NAME --dry-run` to check preferred-view impact before

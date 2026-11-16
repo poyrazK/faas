@@ -416,6 +416,8 @@ func cmdDeployment(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "verify":
+		return cmdDeploymentCheckResponse(args[1:])
 	case "retry-hold":
 		return cmdDeploymentRetryHold(args[1:])
 	case "runtime":
