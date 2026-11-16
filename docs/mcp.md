@@ -1219,7 +1219,7 @@ handover, a local agent connection with `build-tools` and write consent can call
 `qualification_sha256` and `allow_tool_execution=true`. The CLI equivalent is:
 
 ```sh
-gregale mcp server tasks execution restore \
+gregale mcp server tasks run restore \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --qualification-sha256 "$QUALIFICATION_SHA256" \
   --allow-tool-execution
@@ -6715,11 +6715,11 @@ After the one-time agent restore has a native result, an owner can separately
 qualify and approve quarantine of the original checkpoint's candidate worker IDs:
 
 ```sh
-gregale mcp server tasks execution quarantine-qualify \
+gregale mcp server tasks run quarantine-qualify \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --allow-local-checks
 # Review the returned qualification_sha256 before issuing the owner verdict.
-gregale mcp server tasks execution quarantine-approve \
+gregale mcp server tasks run quarantine-approve \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --qualification-sha256 "$QUARANTINE_SHA256"
 ```
@@ -6738,7 +6738,7 @@ can call `gregale_apply_task_tool_quarantine` with `intent_id`, `operation_id`,
 The CLI equivalent is:
 
 ```sh
-gregale mcp server tasks execution quarantine \
+gregale mcp server tasks run quarantine \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --qualification-sha256 "$QUARANTINE_SHA256" \
   --allow-tool-execution
