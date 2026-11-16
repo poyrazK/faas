@@ -186,3 +186,28 @@ ON CONFLICT(account_id,connection_id) DO UPDATE SET phase=EXCLUDED.phase,flow_ci
 
 -- name: CancelToolOAuthAuthorization :exec
 UPDATE tool_oauth_authorizations SET phase='failed',flow_ciphertext=NULL WHERE account_id=$1 AND connection_id=$2;
+
+-- name: LockTaskRecoveryInstances :many
+SELECT id::text AS id, app_id::text AS app_id, COALESCE(deployment_id::text,'')::text AS deployment_id, state::text AS state
+FROM instances WHERE app_id=$1 ORDER BY id FOR SHARE;
+
+-- name: LockTaskRecoveryHeartbeat :one
+SELECT value,observed_at FROM app_custom_metrics WHERE app_id=$1 AND name='mcp_tasks_observer_heartbeat' FOR SHARE;
+
+-- name: CompleteTaskRecoveryTraffic :execrows
+UPDATE task_tool_release_intents AS intent SET payload=sqlc.arg(payload)
+WHERE intent.account_id=sqlc.arg(account_id) AND intent.id=sqlc.arg(id)
+AND intent.payload->'execution'->'recovery'->>'decision'='approved'
+AND intent.payload->'execution'->'recovery'->'result' IS NULL
+AND (intent.payload->'execution'->'recovery'->'qualification'->>'expires_at')::timestamptz>clock_timestamp()
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(owner_key_id)::uuid AND k.account_id=sqlc.arg(account_id)
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(requester_key_id)::uuid AND k.account_id=sqlc.arg(account_id)
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM app_custom_metrics m WHERE m.app_id=sqlc.arg(metric_app_id)::uuid AND m.name='mcp_tasks_observer_heartbeat'
+ AND m.value=1 AND m.observed_at<=clock_timestamp() AND m.observed_at>=clock_timestamp()-sqlc.arg(freshness_seconds)::integer*interval '1 second');
+
+-- Block new instance FK admissions while recovery compares the complete VM set.
+-- NOWAIT avoids a lock cycle with native traffic/admission transactions.
+-- name: LockTaskRecoveryApp :one
+SELECT id FROM apps WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT;

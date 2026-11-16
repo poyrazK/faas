@@ -9066,6 +9066,11 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: begin update traffic tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	recovery, err := s.lockTaskRecoveryTraffic(ctx, tx, id, newPercent, expectedServingID)
+	if err != nil {
+		return Deployment{}, err
+	}
 	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
 	defer s.finishMCPAdmission(ctx, tx, admission, &resultErr)
 
@@ -9317,6 +9322,10 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	sort.SliceStable(stamps, func(a, b int) bool {
 		return stamps[a].next-stamps[a].prior < stamps[b].next-stamps[b].prior
 	})
+	recovery, err = s.prepareTaskRecoveryTraffic(ctx, tx, recovery)
+	if err != nil {
+		return Deployment{}, err
+	}
 	for _, stamp := range stamps {
 		if _, err := tx.Exec(ctx,
 			`update deployments
@@ -9361,6 +9370,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
 	}
 	if err := insertPromotionReceipt(ctx, tx, promotionReceipt); err != nil {
+		return Deployment{}, err
+	}
+	if err := completeTaskRecoveryTraffic(ctx, tx, recovery); err != nil {
 		return Deployment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

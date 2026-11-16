@@ -1494,6 +1494,7 @@ export type { ManagedRealtimeSlugPath } from './models/ManagedRealtimeSlugPath.j
 export type { ManagedRealtimeStatusQuery } from './models/ManagedRealtimeStatusQuery.js';
 export type { ManagedRealtimeVersionPath } from './models/ManagedRealtimeVersionPath.js';
 export type { ManagedServiceProbeSpec } from './models/ManagedServiceProbeSpec.js';
+export type { MCPAccessPolicyExpectation } from './models/MCPAccessPolicyExpectation.js';
 export type { MCPAdmissionEvidence } from './models/MCPAdmissionEvidence.js';
 export type { MCPAdmissionGateway } from './models/MCPAdmissionGateway.js';
 export type { MCPAdmissionHistoryResponse } from './models/MCPAdmissionHistoryResponse.js';
@@ -3238,6 +3239,8 @@ export type { SyntheticCheckRun } from './models/SyntheticCheckRun.js';
 export type { TaskToolRecoveryHandover } from './models/TaskToolRecoveryHandover.js';
 export type { TaskToolRecoveryQualification } from './models/TaskToolRecoveryQualification.js';
 export type { TaskToolRecoveryRequest } from './models/TaskToolRecoveryRequest.js';
+export type { TaskToolRecoveryRestoreRequest } from './models/TaskToolRecoveryRestoreRequest.js';
+export type { TaskToolRecoveryResult } from './models/TaskToolRecoveryResult.js';
 export type { TaskToolReleaseApp } from './models/TaskToolReleaseApp.js';
 export type { TaskToolReleaseExecution } from './models/TaskToolReleaseExecution.js';
 export type { TaskToolReleaseExecutionRequest } from './models/TaskToolReleaseExecutionRequest.js';

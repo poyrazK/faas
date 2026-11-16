@@ -560,6 +560,7 @@ gregale mcp serve --transport stdio --tools core,build-tools --allow-writes
 | `gregale_get_task_tool_deploy` | Read a retained Task review and its last observed approval status after reconnect. |
 | `gregale_check_task_tool_deploy` | Re-review source and native app/key snapshots. Observed drift permanently invalidates approval. Requires write consent for journal updates. |
 | `gregale_apply_task_tool_deploy` | Start one separately owner-authorized local Node Task release with explicit execution consent. Uses the owner's private binding profile and preserves native release gates; duplicates never restart a claimed operation. |
+| `gregale_apply_task_tool_restore` | Restore the captured web deployment once using a settled, separately owner-approved recovery. Resolves credentials locally, rechecks live gates and atomically consumes approval with traffic CAS; poll the native operation after uncertain replies. |
 | `gregale_get_task_tool_operation` | Inspect the retained execution state and last guarded stage after reconnect, without paths or credentials. Interrupted claims require owner reconciliation. |
 | `gregale_inspect_task_tool_recovery` | Compare durable Task checkpoints with fresh native deployment, serving, instance and observer observations. GET only; needs no local files, bindings or executable CLI. |
 | `gregale_plan_task_tool_recovery` | Produce a hashed, expiring read-only plan listing blockers and required owner checks for resume, restore and candidate retirement. Grants no recovery execution or claim takeover. |
@@ -1203,10 +1204,56 @@ a future reconciliation milestone, rather than a replacement identity or lease.
 Use `recovery-revoke` with the same identity, revision and qualification digest to
 revoke the recovery decision, including after app drift or expiry. Current owner
 authority is required for these decisions. Root `ready_to_apply` and
-`bindings_verified` remain false. There is no recovery apply command, endpoint or
-MCP tool in this milestone. One-time guarded restoration, resume and candidate
-retirement are subsequent milestones. See
+`bindings_verified` remain false. A settled approved handover can now be consumed
+by the one-time restore flow below. Resume and candidate retirement remain
+separate milestones. See
 [ADR 20261115123000](adr/20261115123000-task-recovery-handover-owner-qualification.md).
+
+
+### Apply an owner-approved Task web restore once
+
+After the owner has stopped, qualified and separately approved a settled
+handover, a local agent connection with `build-tools` and write consent can call
+`gregale_apply_task_tool_restore` with `intent_id`, `operation_id`, `handover_id`,
+`qualification_sha256` and `allow_tool_execution=true`. The CLI equivalent is:
+
+```sh
+gregale mcp server tasks execution restore \
+  --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
+  --handover-id "$HANDOVER_ID" --qualification-sha256 "$QUALIFICATION_SHA256" \
+  --allow-tool-execution
+```
+
+Credentials and paths are resolved from the original private owner profile.
+Before the first write, the CLI rechecks source/dependency identity, database
+role separation, retained Task compatibility, worker/observer readiness and the
+exact captured web artifact's MCP catalog, roles and access audit. The Task
+release advisory lock remains held through the native write. Every restore binds
+a native access-policy fingerprint. Open endpoints are checked for covering JWT
+rules before and after readiness probes; protected access requires a current
+native access-policy audit expectation. Task worker IDs and
+native VM instance IDs are checked independently.
+
+The native transaction validates the current owner grant and caller, fixed
+qualification deadline, exact app/deployment snapshots, native VM snapshot and
+observer heartbeat. It restores the captured deployment only if traffic still
+belongs entirely to the approved candidate. Existing traffic approval, binding,
+canary, lifecycle, policy and readiness gates also apply. Approval consumption
+and traffic commit together. A failed gate leaves both unchanged.
+
+Poll `gregale_get_task_tool_operation` (or `execution get --id`) for
+`execution.recovery.result`. That receipt records the exact historical traffic
+commit; root `ready_to_apply` and `bindings_verified` stay false. Use recovery
+inspection for current traffic and health. An uncertain reply never triggers an
+automatic POST retry. Exact repeated apply calls return the retained result,
+even after approval expiry/revocation or loss of local files, and leave newer
+traffic decisions intact.
+
+The tool is unavailable to read-only, hosted, organization, app or environment
+connections. It restores web traffic only; resume and candidate-worker retirement
+remain separate owner-controlled work. The internal `restore-hook` requires the
+active parent journal handoff and is not an agent tool. See
+[ADR 20261115132027](adr/20261115132027-one-time-owner-approved-task-web-restore.md).
 
 
 ## Hosted tool publishing (preview)

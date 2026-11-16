@@ -446,6 +446,34 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/TaskToolReleaseIntentCheck'
+  /v1/task-tool-release-intents/{id}/recovery/restore:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Original Task intent containing the settled owner-approved recovery
+      schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+    post:
+      operationId: restoreTaskToolRecovery
+      summary: Restore the exact owner-approved web deployment once; requires the requesting key and MFA policy
+      description: The trusted local CLI checks retained Task compatibility under the release advisory lock and submits private claim possession plus fresh evidence. Native storage locks the recovery approval, credentials, app snapshots, running generations and observer heartbeat. The ordinary traffic endpoint's approval, policy, readiness, canary, binding, lifecycle and serving-CAS gates remain mandatory. Traffic and approval consumption commit in the same transaction. Exact repeats return the retained commit receipt after expiry or revocation without replaying traffic. A receipt records a historical traffic commit, not current runtime health. No migration, worker retirement or automatic claim takeover is performed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskToolRecoveryRestoreRequest' }
+      responses:
+        '200':
+          description: Native operation including its retained atomic restore receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskToolReleaseIntentRecord' }
+        '400': { description: Invalid recovery request }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Caller is not the current requesting publisher or lacks traffic authority }
+        '404': { description: No matching recovery is available to this caller }
+        '409': { description: 'Approval, evidence, native generation, runtime, policy or traffic changed' }
+        '422': { description: The ordinary native traffic gate refused this change }
   /v1/task-tool-release-intents/{id}/decision:
     parameters:
     - name: id
@@ -74451,6 +74479,8 @@ components:
       additionalProperties: false
       required: [id, operation_id, revision, state, requested_at]
       properties:
+        result:
+          $ref: '#/components/schemas/TaskToolRecoveryResult'
         id: { type: string, pattern: '^[0-9a-f]{64}$' }
         operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
         revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
@@ -74483,6 +74513,57 @@ components:
           items: { $ref: '#/components/schemas/TaskToolReleaseApp' }
         observed_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
+    MCPAccessPolicyExpectation:
+      description: Native stored-policy concurrency condition for the exact canonical MCP resource, optionally including the converged account revision. It does not replace runtime authorization checks.
+      type: object
+      additionalProperties: false
+      required: [resource, fingerprint]
+      properties:
+        resource: { type: string, format: uri }
+        fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
+        account_revision: { type: integer, format: int64, minimum: 1 }
+    TaskToolRecoveryRestoreRequest:
+      description: Trusted local CLI request for the exact separately owner-approved restore. Agent tools accept public identities only; private claim material and binding/evidence details are resolved locally. No automatic retry or deadline renewal.
+      type: object
+      additionalProperties: false
+      required: [operation_id, handover_id, qualification_sha256]
+      properties:
+        expected_instance_ids:
+          type: object
+          maxProperties: 35
+          description: Fresh native VM IDs by approved app ID; Task worker IDs are checked separately by the trusted CLI.
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 1024
+            uniqueItems: true
+            items: { type: string, format: uuid }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        claim_token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        checked_at: { type: string, format: date-time }
+        expected_mcp_access_policy:
+          $ref: '#/components/schemas/MCPAccessPolicyExpectation'
+    TaskToolRecoveryResult:
+      description: Durable atomic traffic-commit receipt. It binds the consumed owner approval to the exact deployments and evidence, and remains inspectable after deadline expiry or revocation. It never authorizes another write or certifies current health.
+      type: object
+      additionalProperties: false
+      required: [intent_id, operation_id, handover_id, qualification_sha256, revision, action, target_deployment_id, previous_serving_deployment_id, evidence_sha256, checked_at, committed_at]
+      properties:
+        intent_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        action: { type: string, enum: [restore] }
+        target_deployment_id: { type: string, format: uuid }
+        previous_serving_deployment_id: { type: string, format: uuid }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        checked_at: { type: string, format: date-time }
+        committed_at: { type: string, format: date-time }
     TaskToolRecoveryRequest:
       description: Owner-only handover or qualification verdict on the existing decision route. The authenticated native handler supplies the owner identity; agent inputs cannot supply it.
       type: object
