@@ -627,18 +627,18 @@ regress. Release gates add the signals only your app knows about:
 
 ```bash
 # Abort or roll back when the release burns the checkout SLO 10x too fast.
-gregale release gate add --name checkout-slo --slo checkout --max-burn-rate 10
+gregale release gate create --name checkout-slo --slo checkout --max-burn-rate 10
 # ...when it introduces a new error group with 3 or more events.
-gregale release gate add --name no-new-errors --new-errors --min-events 3
+gregale release gate create --name no-new-errors --new-errors --min-events 3
 # ...when orders per minute average below 5.
-gregale release gate add --name orders --metric orders_per_minute --below 5
+gregale release gate create --name orders --metric orders_per_minute --below 5
 # ...when orders per minute drop more than 30% from before the rollout.
-gregale release gate add --name orders-drop --metric orders_per_minute --max-drop 30
+gregale release gate create --name orders-drop --metric orders_per_minute --max-drop 30
 # ...when the canary fails the "checkout" synthetic check more than the
 # release it replaces (and more than 10% of the time).
-gregale release gate add --name checkout-probe --check checkout
+gregale release gate create --name checkout-probe --check checkout
 # ...when its AI gateway calls cost 30% more each than the previous release's.
-gregale release gate add --name ai-cost --ai cost_per_call --max-increase 30
+gregale release gate create --name ai-cost --ai cost_per_call --max-increase 30
 
 gregale release gate list
 gregale release-gates rm orders

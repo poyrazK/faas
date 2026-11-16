@@ -4438,7 +4438,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		managedCircuitWired = serviceProxyConfig.Breaker != nil
 		controlServices := gateway.NewServiceProxy(serviceProxyConfig)
-		controlMux.Handle("/v1/internal/services/", controlServices)
+		// This proxy is built before the guest listener's caller resolver is
+		// configured, so it trusts X-Faas-Caller-App. Serve it only when the
+		// e2e harness asks; the debug tunnel below uses WakeTarget, not HTTP.
+		if cfg.ControlServiceProxy {
+			controlMux.Handle("/v1/internal/services/", controlServices)
+		}
 		if debugTunnel != nil {
 			debugTunnel.setTargets(controlServices)
 		}

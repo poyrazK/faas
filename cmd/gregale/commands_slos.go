@@ -133,7 +133,7 @@ func cmdSLOsCreate(args []string) int {
 		return jsonOut(writeJSON(slo))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created SLO %s (%s): %s over %d days\n", slo.Name, slo.ID, describeSLOObjective(slo), slo.WindowDays)
-	_, _ = fmt.Fprintf(osStdout, "If it burns its budget %.1fx too fast, Gregale emails the app's owner (at most daily). To route it yourself instead:\n  gregale alert add --app %s --metric %s --slo %s ...\n",
+	_, _ = fmt.Fprintf(osStdout, "If it burns its budget %.1fx too fast, Gregale emails the app's owner (at most daily). To route it yourself instead:\n  gregale alert create --app %s --metric %s --slo %s ...\n",
 		api.PlatformAlertSLOBurnRate, *slug, api.AlertRuleMetricSLOBudgetBurn, slo.ID)
 	return 0
 }

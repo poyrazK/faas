@@ -13,8 +13,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const appRestartUsage = "usage: gregale app <slug> restart [--fresh [--wait]] [--timeout 10m] [--poll-interval 2s] [--json]"
-const appRestartStatusUsage = "usage: gregale app <slug> restart status --wake-id UUID [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+const appRestartUsage = "usage: gregale app restart <slug> [--fresh [--wait]] [--timeout 10m] [--poll-interval 2s] [--json]"
+const appRestartStatusUsage = "usage: gregale app restart status <slug> --wake-id UUID [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 type restartStatusClient interface {
 	GetRuntimeConfigRestartStatus(context.Context, string, string) (api.RuntimeConfigRestartStatusResponse, error)
@@ -131,7 +131,7 @@ func submitAppRestart(ctx, signalCtx context.Context, client appRestartClient, s
 }
 
 func restartStatusCommand(slug, wakeID string) string {
-	return "gregale app " + slug + " restart status --wake-id " + wakeID + " --wait"
+	return "gregale app restart status " + slug + " --wake-id " + wakeID + " --wait"
 }
 
 func followAppRestart(ctx, signalCtx context.Context, client restartStatusClient, slug string, options appRestartOptions, accepted bool) int {

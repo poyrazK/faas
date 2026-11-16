@@ -42,6 +42,18 @@ func renderGatewaydTemplate(t *testing.T) string {
 	return strings.Join(out, "\n")
 }
 
+// The production template must never mount the header-trusting loopback
+// service proxy (Codex finding, 2026-11-16).
+func TestGatewaydTemplateLeavesControlServiceProxyOff(t *testing.T) {
+	var cfg Config
+	if _, err := toml.Decode(renderGatewaydTemplate(t), &cfg); err != nil {
+		t.Fatalf("decode rendered template: %v", err)
+	}
+	if cfg.ControlServiceProxy {
+		t.Fatal("gatewayd.toml.j2 enables control_service_proxy; it is e2e-only")
+	}
+}
+
 // The [ratelimit] header once sat above apid_loopback, so TOML scoped
 // apid_loopback and every schedd/vmmd/egress/app_errors mTLS path into the
 // ratelimit table. LoadConfig ignores unknown keys, so a host rendered from

@@ -1156,7 +1156,9 @@ metrics_addr = %q
 // extraEnv is appended last so a test can inject extra knobs (none
 // today; mirrors startMeterd's signature).
 func gatewaydConfig(addr, controlAddr, apidLoopback string, guestDNS bool) string {
-	config := fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\n", addr, controlAddr, apidLoopback)
+	// control_service_proxy: service e2e tests call /v1/internal/services/
+	// on the loopback control listener with a chosen caller app. Test-only.
+	config := fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\ncontrol_service_proxy=true\n", addr, controlAddr, apidLoopback)
 	if guestDNS {
 		// Keep the single-host acceptance bridge aligned with VMMD's default.
 		// This listener also enables the production DNS server on port 53.
@@ -1311,7 +1313,7 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 		t.Fatalf("e2etest: create additional gateway socket dir: %v", err)
 	}
 	configPath := filepath.Join(dir, "gatewayd.toml")
-	config := fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\n", publicAddr, controlAddr, h.APIDURL)
+	config := fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\ncontrol_service_proxy=true\n", publicAddr, controlAddr, h.APIDURL)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("e2etest: write additional gateway config: %v", err)
 	}
