@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-20261116170000 A2: a rollout parks the guests a candidate vmmd refused
+// ADR-20261116191802 A2: a rollout parks the guests a candidate vmmd refused
 // through the operator recovery intent the owning schedd executes, written
 // from the control plane under the node-rollout actor.
 func TestInstancesForceParkBreakGlassDBSubmitsAndWaits(t *testing.T) {

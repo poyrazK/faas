@@ -2910,6 +2910,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	if srv.privateTools != nil {
+		srv.privateTools.StartSourceRetentionCleanup()
+	}
 	privateStop := context.AfterFunc(ctx, srv.stopPrivateTools)
 	defer func() { privateStop(); srv.stopPrivateTools() }()
 	defer srv.startInternalCIWorker(ctx, log)()

@@ -22,6 +22,23 @@ import (
 	"time"
 )
 
+// Short-lived authored-source retention preview; these are storage/admission
+// ceilings, not build limits. Expired identities remain immutable tombstones.
+const (
+	MCPInlineSourceMaxBytes                   = 96 << 10
+	HostedTaskSourceCleanupTimeout            = 5 * time.Second
+	HostedTaskSourceRoleMaxBytes              = 2 << 20
+	HostedTaskSourceRoleMaxEntries            = 1024
+	HostedTaskSourceRequestMaxBytes           = 8 << 20
+	HostedTaskSourceCiphertextMaxBytes        = 8 << 20
+	HostedTaskSourceAccountCiphertextMaxBytes = 16 << 20
+	HostedTaskSourceActivePerAccount          = 2
+	HostedTaskSourceRecordsPerAccount         = 256
+	HostedTaskSourceRetention                 = 15 * time.Minute
+	HostedTaskSourceSweepInterval             = time.Minute
+	HostedTaskSourceSweepBatch                = 128
+)
+
 // OpenAPI tool generation is offline and bounded independently of deployment
 // quotas. Generated adapters use the normal application egress and MCP limits.
 const (
@@ -8413,7 +8430,7 @@ const (
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
 	// AppVMHeadroomMB is how far an app or job VM's cgroup memory.max sits
-	// above BillableRAMMB (ADR-20261116170000). A cold-booting guest touches
+	// above BillableRAMMB (ADR-20261116191801). A cold-booting guest touches
 	// all of its RAM, and Firecracker's own mapped pages (~16 MB) did not fit
 	// in PerVMOverheadMB: every 128 MB app OOM-killed on cold boot on prod
 	// (2026-11-15/16). Admission, billing and invariant 2 stay at
@@ -14076,7 +14093,7 @@ func BillableRAMMB(ramMB int) int {
 
 // AppVMMemoryMaxMB is the per-instance cgroup memory.max of an app or job VM:
 // its billable RAM plus AppVMHeadroomMB for Firecracker's own pages
-// (ADR-20261116170000). Never use it for admission or billing.
+// (ADR-20261116191801). Never use it for admission or billing.
 func AppVMMemoryMaxMB(ramMB int) int {
 	return BillableRAMMB(ramMB) + AppVMHeadroomMB
 }

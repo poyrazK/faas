@@ -42,6 +42,8 @@ servers:
         default: api.gregale.dev
         description: API hostname.
 tags:
+  - name: mcp-management
+    description: Preview management MCP source intents; no owner or execution authority.
   - name: support
     description: Gregale customer assistance, public conversations and resolution episodes.
   - name: operations

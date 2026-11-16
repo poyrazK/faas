@@ -628,6 +628,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/tool-publications/{id}":                           "GetToolPublication",
 	"POST /v1/task-tool-release-intents/{id}/recovery/retire":  "ParkTaskToolRetirement",
 	"POST /v1/task-tool-release-intents/{id}/recovery/restore": "RestoreTaskToolRecovery",
+	"GET /v1/task-tool-source-intents/{id}":                    "GetHostedTaskSourceIntent",
+	"PUT /v1/task-tool-source-intents/{id}":                    "PrepareHostedTaskSourceIntent",
 	"GET /v1/task-tool-release-intents/{id}":                   "GetTaskToolReleaseIntent",
 	"PUT /v1/task-tool-release-intents/{id}":                   "PrepareTaskToolReleaseIntent",
 	"POST /v1/task-tool-release-intents/{id}/check":            "CheckTaskToolReleaseIntent",

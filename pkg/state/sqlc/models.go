@@ -6954,6 +6954,14 @@ type Honeytoken struct {
 	RetiredAt   pgtype.Timestamptz
 }
 
+type HostedTaskSourceIntent struct {
+	AccountID  pgtype.UUID
+	ID         string
+	Payload    []byte
+	Ciphertext []byte
+	ExpiresAt  pgtype.Timestamptz
+}
+
 type HostingAutomationCredential struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID

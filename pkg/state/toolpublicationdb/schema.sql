@@ -69,3 +69,5 @@ CREATE TABLE tool_oauth_authorizations (
 -- Read-only recovery subjects; schedd remains the only instance writer.
 CREATE TABLE instances (id uuid PRIMARY KEY, app_id uuid NOT NULL, deployment_id uuid, state text NOT NULL);
 CREATE TABLE app_custom_metrics (app_id uuid NOT NULL, name text NOT NULL, value double precision NOT NULL, observed_at timestamptz NOT NULL, PRIMARY KEY(app_id,name));
+
+CREATE TABLE hosted_task_source_intents(account_id uuid NOT NULL REFERENCES accounts(id),id text NOT NULL,payload jsonb NOT NULL,ciphertext bytea,expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));

@@ -416,7 +416,7 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), "mem") })
 
-	// The fence must equal api.AppVMMemoryMaxMB(plan_mb) << 20 (ADR-20261116170000).
+	// The fence must equal api.AppVMMemoryMaxMB(plan_mb) << 20 (ADR-20261116191801).
 	wantBytes := api.AppVMMemoryMaxMB(memMB) << 20
 	body, err := os.ReadFile(filepath.Join(scopeBase, "memory.max"))
 	if err != nil {

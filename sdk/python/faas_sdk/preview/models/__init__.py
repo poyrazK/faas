@@ -2380,6 +2380,16 @@ from .guarded_debug_regression_action_request import GuardedDebugRegressionActio
 from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
 from .held_link_review import HeldLinkReview
 from .held_links_response import HeldLinksResponse
+from .hosted_task_source_entry import HostedTaskSourceEntry
+from .hosted_task_source_entry_mode import HostedTaskSourceEntryMode
+from .hosted_task_source_intent import HostedTaskSourceIntent
+from .hosted_task_source_intent_source_state import HostedTaskSourceIntentSourceState
+from .hosted_task_source_intent_version import HostedTaskSourceIntentVersion
+from .hosted_task_source_prepare import HostedTaskSourcePrepare
+from .hosted_task_source_prepare_sources import HostedTaskSourcePrepareSources
+from .hosted_task_source_review import HostedTaskSourceReview
+from .hosted_task_source_review_kind import HostedTaskSourceReviewKind
+from .hosted_task_source_review_source_sha_256 import HostedTaskSourceReviewSourceSha256
 from .hosting_route_check_result import HostingRouteCheckResult
 from .hosting_route_check_result_status import HostingRouteCheckResultStatus
 from .hosting_route_check_set import HostingRouteCheckSet
@@ -6168,6 +6178,12 @@ from .synthetic_check_response_method import SyntheticCheckResponseMethod
 from .synthetic_check_results import SyntheticCheckResults
 from .synthetic_check_run import SyntheticCheckRun
 from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
+from .task_release_review import TaskReleaseReview
+from .task_release_review_status import TaskReleaseReviewStatus
+from .task_release_review_tool_scopes import TaskReleaseReviewToolScopes
+from .task_release_review_version import TaskReleaseReviewVersion
+from .task_release_review_worker_runtime import TaskReleaseReviewWorkerRuntime
+from .task_review_limits import TaskReviewLimits
 from .task_tool_quarantine import TaskToolQuarantine
 from .task_tool_quarantine_decision import TaskToolQuarantineDecision
 from .task_tool_quarantine_request import TaskToolQuarantineRequest
@@ -9063,6 +9079,16 @@ __all__ = (
     "GuardedDebugRegressionActionRequestAction",
     "HeldLinkReview",
     "HeldLinksResponse",
+    "HostedTaskSourceEntry",
+    "HostedTaskSourceEntryMode",
+    "HostedTaskSourceIntent",
+    "HostedTaskSourceIntentSourceState",
+    "HostedTaskSourceIntentVersion",
+    "HostedTaskSourcePrepare",
+    "HostedTaskSourcePrepareSources",
+    "HostedTaskSourceReview",
+    "HostedTaskSourceReviewKind",
+    "HostedTaskSourceReviewSourceSha256",
     "HostingRouteCheckResult",
     "HostingRouteCheckResultStatus",
     "HostingRouteCheckSet",
@@ -12591,6 +12617,12 @@ __all__ = (
     "SyntheticCheckResults",
     "SyntheticCheckRun",
     "SyntheticCheckRunErrorClass",
+    "TaskReleaseReview",
+    "TaskReleaseReviewStatus",
+    "TaskReleaseReviewToolScopes",
+    "TaskReleaseReviewVersion",
+    "TaskReleaseReviewWorkerRuntime",
+    "TaskReviewLimits",
     "TaskToolQuarantine",
     "TaskToolQuarantineDecision",
     "TaskToolQuarantineRequest",

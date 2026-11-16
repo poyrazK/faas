@@ -2,7 +2,7 @@
 - [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
 - [ADR-20261115210000: Typed file-triggered jobs](20261115210000-sdk-file-triggered-jobs.md) — accepted; SDK preview
 - [ADR-20261115223000: Typed live views of Jobs and file pipelines](20261115223000-sdk-live-job-views.md) — accepted; SDK preview
-- [ADR-20261116170000: App VM memory headroom above the billable fence](20261116170000-app-vm-memory-headroom.md) — accepted; app/job VM `memory.max` = ram_mb + 8 + 24 MB so cold boots of small guests are not OOM-killed; admission and billing stay at ram_mb + 8 (amends spec §11)
+- [ADR-20261116191801: App VM memory headroom above the billable fence](20261116191801-app-vm-memory-headroom.md) — accepted; app/job VM `memory.max` = ram_mb + 8 + 24 MB so cold boots of small guests are not OOM-killed; admission and billing stay at ram_mb + 8 (amends spec §11)
 - [ADR-20261116010000: Typed durable job pipelines](20261116010000-sdk-durable-job-pipelines.md) — accepted; SDK preview
 - [ADR-20261115162700: Typed pipeline approval and input gates](20261115162700-sdk-pipeline-gates.md) — accepted; SDK preview
 - [ADR-20261115172526: Typed child pipeline composition](20261115172526-sdk-pipeline-composition.md) — accepted; SDK preview
@@ -2444,3 +2444,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261115194000: Platform alerts for outages and failing crons](20261115194000-platform-alerts.md) — accepted; schedd pauses an HTTP cron after 10 failed runs over 24 h and meterd emails accounts about it and about apps at ≥90% 5xx, unless they have their own error-rate rule
 
 - [ADR-20261116163708: Hosted read-only Task recovery inspection](20261116163708-hosted-task-recovery-inspection.md) — accepted; opt-in original-requester agent keys inspect native Task checkpoints and recovery guidance without local files, cross-key delegation or execution authority.
+
+- [ADR-20261116183545: Durable hosted Task source intents](20261116183545-hosted-task-source-intents.md)
