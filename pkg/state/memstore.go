@@ -173,10 +173,12 @@ type MemStore struct {
 	platformAlertMeta    map[string]platformAlertNoticeMeta
 	// appProtection and appProtectionObjects mirror app_protection and
 	// app_protection_objects (ADR-20261116120000); allocated on first use.
-	appProtection               map[string]AppProtection
-	appProtectionObjects        map[string]map[AppProtectionItem]AppProtectionObject
-	appProtectionLeases         map[string]appProtectionLease
-	appProtectionHealthProbeAt  map[string]time.Time
+	appProtection              map[string]AppProtection
+	appProtectionObjects       map[string]map[AppProtectionItem]AppProtectionObject
+	appProtectionLeases        map[string]appProtectionLease
+	appProtectionHealthProbeAt map[string]time.Time
+	// platformProbeWakes mirror platform_probe_wakes (ADR-20261116120000).
+	platformProbeWakes          []PlatformProbeWake
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner

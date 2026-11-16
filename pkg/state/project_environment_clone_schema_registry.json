@@ -22001,5 +22001,16 @@
       "written"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "platform_probe_wakes",
+    "columns": [
+      "app_id",
+      "created_at",
+      "instance_id",
+      "probe_done_at",
+      "woke_at"
+    ],
+    "kind": "operational"
   }
 ]

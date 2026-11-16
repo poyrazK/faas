@@ -181,6 +181,71 @@ func testProtectionHealthProbeClaims(t *testing.T, fx *Fixture) {
 	}
 }
 
+// testPlatformProbeWakeLedger pins ADR-20261116120000 §3: a probe wake is
+// recorded once; recent wakes report each instance's latest probe end;
+// unbilled seconds are each instance's overlap of [woke_at, done+tail] with
+// the window, overlapping wakes counted once; old wakes are deleted.
+func testPlatformProbeWakeLedger(t *testing.T, fx *Fixture) {
+	store, ok := fx.Store.(state.PlatformProbeWakeStore)
+	if !ok {
+		t.Skip("store has no platform probe wakes")
+	}
+	base := time.Now().UTC().Truncate(time.Minute).Add(-time.Hour)
+	wake := func(instance string, woke, done time.Duration) state.PlatformProbeWake {
+		return state.PlatformProbeWake{InstanceID: instance, AppID: fx.App.ID, WokeAt: base.Add(woke), ProbeDoneAt: base.Add(done)}
+	}
+	for _, w := range []state.PlatformProbeWake{
+		wake("i-1", 10*time.Second, 14*time.Second),
+		wake("i-1", 10*time.Second, 14*time.Second), // repeat ignored
+		wake("i-1", 20*time.Second, 22*time.Second), // overlaps the first's tail
+		wake("i-2", 50*time.Second, 55*time.Second), // runs into the next minute
+	} {
+		if err := store.RecordPlatformProbeWake(fx.Ctx, w); err != nil {
+			t.Fatalf("RecordPlatformProbeWake(%+v): %v", w, err)
+		}
+	}
+	for _, bad := range []state.PlatformProbeWake{
+		{AppID: fx.App.ID, WokeAt: base, ProbeDoneAt: base},
+		wake("i-3", 10*time.Second, 5*time.Second),
+	} {
+		if err := store.RecordPlatformProbeWake(fx.Ctx, bad); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Fatalf("RecordPlatformProbeWake(%+v) = %v; want ErrInvalidArgument", bad, err)
+		}
+	}
+	if err := store.RecordPlatformProbeWake(fx.Ctx, state.PlatformProbeWake{InstanceID: "i-4", AppID: uuid.NewString(),
+		WokeAt: base, ProbeDoneAt: base}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("RecordPlatformProbeWake(unknown app) = %v; want ErrNotFound", err)
+	}
+
+	recent, err := store.RecentPlatformProbeWakes(fx.Ctx, base)
+	if err != nil || !recent["i-1"].Equal(base.Add(22*time.Second)) || !recent["i-2"].Equal(base.Add(55*time.Second)) {
+		t.Fatalf("RecentPlatformProbeWakes = %v, %v", recent, err)
+	}
+	if later, _ := store.RecentPlatformProbeWakes(fx.Ctx, base.Add(30*time.Second)); len(later) != 1 {
+		t.Fatalf("RecentPlatformProbeWakes(after i-1) = %v; want only i-2", later)
+	}
+
+	tail := 10 * time.Second
+	first, err := store.PlatformProbeUnbilledSeconds(fx.Ctx, base, base.Add(time.Minute), tail)
+	// i-1: [10s, 24s] ∪ [20s, 32s] = [10s, 32s] → 22 s; i-2: [50s, 60s) → 10 s.
+	if err != nil || first["i-1"] != 22 || first["i-2"] != 10 {
+		t.Fatalf("unbilled seconds, first minute = %v, %v; want i-1 22, i-2 10", first, err)
+	}
+	second, err := store.PlatformProbeUnbilledSeconds(fx.Ctx, base.Add(time.Minute), base.Add(2*time.Minute), tail)
+	// i-2's window ends at 65 s → 5 s of the second minute.
+	if err != nil || second["i-2"] != 5 || second["i-1"] != 0 {
+		t.Fatalf("unbilled seconds, second minute = %v, %v; want i-2 5", second, err)
+	}
+
+	n, err := store.DeletePlatformProbeWakesBefore(fx.Ctx, base.Add(30*time.Second), 100)
+	if err != nil || n != 2 {
+		t.Fatalf("DeletePlatformProbeWakesBefore = %d, %v; want the two i-1 wakes", n, err)
+	}
+	if left, _ := store.RecentPlatformProbeWakes(fx.Ctx, base); len(left) != 1 || left["i-2"].IsZero() {
+		t.Fatalf("after delete = %v; want only i-2", left)
+	}
+}
+
 // testAppProtectionReconcileClaims pins the reconciler schedule: only
 // enrolled ('on') apps that are due are claimed; a claim leases the app
 // until it is finished or the lease runs out; finishing schedules the next

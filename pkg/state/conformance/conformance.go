@@ -101,6 +101,7 @@ func Run(t *testing.T, open Open) {
 		{"app_protection_enrollment_and_objects", testAppProtectionEnrollmentAndObjects},
 		{"app_protection_reconcile_claims", testAppProtectionReconcileClaims},
 		{"protection_health_probe_claims", testProtectionHealthProbeClaims},
+		{"platform_probe_wake_ledger", testPlatformProbeWakeLedger},
 		{"cli_auth_loopback_claim_rebinds_device", testCliAuthLoopbackClaimRebindsDevice},
 		{"cli_auth_device_code_needs_its_verifier", testCliAuthDeviceCodeNeedsItsVerifier},
 		{"cli_auth_requester_is_recorded_until_approval", testCliAuthRequesterIsRecordedUntilApproval},

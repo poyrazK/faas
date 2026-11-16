@@ -56,8 +56,29 @@ CREATE TABLE IF NOT EXISTS app_protection_objects (
         OR (status = 'skipped' AND object_id = '' AND reason <> ''))
 );
 
+-- platform_probe_wakes records a wake caused only by a baseline health
+-- probe (ADR-20261116120000 §3): the gateway that admitted the wake writes
+-- the instance, when the wake started and when the probe's response ended.
+-- meterd does not bill the instance's seconds in [woke_at, probe_done_at +
+-- the park grace]; schedd parks an instance that served nothing after the
+-- probe without waiting out its idle timeout. Rows are kept 7 days.
+CREATE TABLE IF NOT EXISTS platform_probe_wakes (
+    instance_id text NOT NULL CHECK (instance_id <> '' AND length(instance_id) <= 128),
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    woke_at timestamptz NOT NULL,
+    probe_done_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (instance_id, woke_at),
+    CONSTRAINT platform_probe_wakes_order_chk CHECK (probe_done_at >= woke_at)
+);
+
+CREATE INDEX IF NOT EXISTS platform_probe_wakes_done_idx
+    ON platform_probe_wakes (probe_done_at);
+
 -- +goose Down
 SET lock_timeout = '5s';
+
+DROP TABLE IF EXISTS platform_probe_wakes;
 
 DROP TABLE IF EXISTS app_protection_objects;
 
