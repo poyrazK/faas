@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "7b5c2f9a7eabdbaa25855d558e27680738d1205dae85a640bfbe6998dd5631b5",
+      "revision": "47248359998870822dc494481fd997a38f71a9d6803fb41ff2e49cd716726ad1",
       "files": [
         "faas.rules.yml"
       ],
@@ -1185,11 +1185,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasLvFcUsageHighWarn",
           "definition": {
-            "expression_hash": "ed739e0bb5bf54dbbd7315ca15167202eb05ff59e594aa6aeb8cb681f50456f4",
+            "expression_hash": "9435028d8ebfaa94640bec6d92b3cb9cd868e94b55dc7710f720af239fac8776",
             "labels_hash": "c9f2e3ac8226dd1f591c551a024754c67432ab7770536acf047ef03c6c52c835",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "31f21d8ca2755f9142894319a26960dd63e206d59ed972cd6a5e6f31c864d89b"
+            "fingerprint": "2ea07138958369cd3c24ae9f66889f233b9fa730bbb5939ad9aae390eda7aa22"
           }
         },
         {
@@ -7410,7 +7410,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "652f3bb1302950df58687e66a1593e65e99791523b49da7d47a32977360ac60a",
+      "revision": "cbb39377f196a6f8c186a6201514fff70d7ab8deff999820a9eedcf74bb4757f",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8673,11 +8673,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasLvFcUsageHighWarn",
           "definition": {
-            "expression_hash": "ed739e0bb5bf54dbbd7315ca15167202eb05ff59e594aa6aeb8cb681f50456f4",
+            "expression_hash": "9435028d8ebfaa94640bec6d92b3cb9cd868e94b55dc7710f720af239fac8776",
             "labels_hash": "c9f2e3ac8226dd1f591c551a024754c67432ab7770536acf047ef03c6c52c835",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "31f21d8ca2755f9142894319a26960dd63e206d59ed972cd6a5e6f31c864d89b"
+            "fingerprint": "2ea07138958369cd3c24ae9f66889f233b9fa730bbb5939ad9aae390eda7aa22"
           }
         },
         {
