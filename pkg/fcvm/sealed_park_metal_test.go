@@ -54,6 +54,7 @@ func TestMetalWakeFromSealedParkSnapshot(t *testing.T) {
 	}
 	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 30*time.Second).WithStorage(cache),
 		Paths{Kernel: kernel}, fcVersion, nil, nil)
+	m.WithStorage(cache) // as vmmd wires it: SealCaptureStorage wraps the manager's store
 	m.SetHostIdentities([]*age.X25519Identity{fleet})
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
