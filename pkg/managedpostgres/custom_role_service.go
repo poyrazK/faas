@@ -57,9 +57,9 @@ func (s *CustomRoleService) List(ctx context.Context, accountID, databaseID stri
 	return s.store.ListCustomRoles(ctx, accountID, databaseID)
 }
 
-// Save declares or replaces a role and applies the declaration. The returned
-// role is pending when the apply has not finished; the error then reports
-// why, and the reconciler retries.
+// Save declares or replaces a role and applies the declaration. A refusal
+// returns an error. When the apply could not finish the role is returned
+// pending with LastError set, and the reconciler retries it.
 func (s *CustomRoleService) Save(ctx context.Context, request SaveCustomRoleRequest) (CustomRole, error) {
 	if err := ValidateCustomRoleName(request.Name); err != nil {
 		return CustomRole{}, err
@@ -207,7 +207,8 @@ func (s *CustomRoleService) apply(ctx context.Context, database Database, backen
 		if errors.Is(applyErr, ErrBypassRLSConflict) || errors.Is(applyErr, ErrBypassRLSUnavailable) {
 			return applyErr
 		}
-		return normalizeProviderError(applyErr)
+		// Anything else is retried by the reconciler; the rows say why.
+		return nil
 	}
 	return s.store.FinishCustomRoleApply(context.WithoutCancel(ctx), database.AccountID, database.ID, applied, now)
 }
@@ -227,4 +228,13 @@ func customRoleGrants(ctx context.Context, databases Store, database Database, a
 		return nil, err
 	}
 	return CustomRoleGrantsFor(roles, access), nil
+}
+
+// CustomRoles returns a custom-role service over the binding service's
+// registry and database store (ADR-20261116213000).
+func (s *BindingService) CustomRoles() (*CustomRoleService, error) {
+	if s == nil {
+		return nil, ErrUnavailable
+	}
+	return NewCustomRoleService(s.registry, s.databases, CustomRoleServiceOptions{ProviderTimeout: s.providerTimeout})
 }

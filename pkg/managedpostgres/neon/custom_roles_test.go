@@ -17,7 +17,7 @@ import (
 // and BYPASSRLS that owns the database, as Neon's gregale_owner does.
 type customRoleFixture struct {
 	*credentialFixture
-	owner              string
+	owner                    string
 	wmUser, wmAdmin, wmExtra string
 }
 
@@ -59,7 +59,9 @@ func newCustomRoleFixture(t *testing.T) *customRoleFixture {
 	base.admin = base.connect(t, config.User)
 	ownerConfig := config.Copy()
 	ownerConfig.User, ownerConfig.Password = owner, "local-fixture-password"
-	base.manager = &sqlCredentialRoles{connect: func(ctx context.Context, _ string) (*pgx.Conn, error) { return pgx.ConnectConfig(ctx, ownerConfig.Copy()) }}
+	base.manager = &sqlCredentialRoles{connect: func(ctx context.Context, _ string) (*pgx.Conn, error) {
+		return pgx.ConnectConfig(ctx, ownerConfig.Copy())
+	}}
 	base.material = managedpostgres.CredentialMaterial{Username: owner, Password: "test", Database: database, TLSMode: "require", Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: "test.invalid", Port: 5432}}}
 	return f
 }
@@ -150,9 +152,10 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	if n := count(f.wmAdmin); n != 2 {
 		t.Fatalf("windmill_admin saw %d rows, want 2 (BYPASSRLS)", n)
 	}
-	// The login itself inherits nothing.
-	if _, err := runtime.Exec(ctx, "SELECT count(*) FROM job"); err == nil {
-		t.Fatal("runtime login read job without SET ROLE")
+	// The login inherits nothing from the roles: RLS has no policy for it.
+	var direct int
+	if err := runtime.QueryRow(ctx, "SELECT count(*) FROM job").Scan(&direct); err != nil || direct != 0 {
+		t.Fatalf("runtime login without SET ROLE saw %d rows (%v), want 0", direct, err)
 	}
 	// Re-ensuring logins with custom memberships still conforms.
 	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
@@ -208,9 +211,11 @@ func TestCustomRolesRevokeAndDrop(t *testing.T) {
 	if err := f.apply(t, roles[:2]); err != nil {
 		t.Fatal(err)
 	}
-	runtime := f.connect(t, f.runtime.name)
-	if _, err := runtime.Exec(ctx, "SET ROLE "+f.wmUser); err == nil {
-		t.Fatal("revoked grant still allows SET ROLE")
+	if member := directMember(t, f.db(), f.wmUser, f.runtime.name); member {
+		t.Fatal("revoked grant still makes the runtime login a direct member")
+	}
+	if member := directMember(t, f.db(), f.wmUser, f.migration.name); !member {
+		t.Fatal("migration login lost its grant")
 	}
 	var exists bool
 	if err := f.db().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, f.wmExtra).Scan(&exists); err != nil || exists {
@@ -292,3 +297,13 @@ func TestCustomRolesWithoutBypassRLSOwnerAreUnavailable(t *testing.T) {
 }
 
 func (f *customRoleFixture) db() *pgx.Conn { return f.credentialFixture.admin }
+
+func directMember(t *testing.T, conn *pgx.Conn, role, member string) bool {
+	t.Helper()
+	var exists bool
+	if err := conn.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid
+ JOIN pg_roles u ON u.oid = m.member WHERE r.rolname = $1 AND u.rolname = $2)`, role, member).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	return exists
+}

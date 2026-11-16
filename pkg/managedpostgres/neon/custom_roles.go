@@ -345,17 +345,13 @@ func (m *sqlCredentialRoles) ApplyCustomRoles(ctx context.Context, material mana
 // caller's own, even an unchanged one, so only differences are altered. The
 // powers the owner itself lacks can only be set by someone else: refuse.
 func correctCustomRole(ctx context.Context, tx pgx.Tx, spec managedpostgres.CustomRoleSpec) error {
-	var login, superuser, createDB, createRole, replication, bypass, inherit, hasPassword bool
-	var limit int
-	var settings int
+	// A NOLOGIN role's password is unusable, so only attributes are compared
+	// (pg_authid, which shows it, is superuser-only).
+	var login, superuser, createDB, createRole, replication, bypass, inherit bool
+	var limit, settings int
 	if err := tx.QueryRow(ctx, `SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit,
- rolconnlimit, rolpassword IS NOT NULL, cardinality(COALESCE(rolconfig, ARRAY[]::text[]))
- FROM pg_authid WHERE rolname = $1`, spec.Name).Scan(&login, &superuser, &createDB, &createRole, &replication, &bypass, &inherit, &limit, &hasPassword, &settings); err != nil {
-		// pg_authid is superuser-only; fall back to pg_roles without the password.
-		if err := tx.QueryRow(ctx, `SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit,
- rolconnlimit, false, cardinality(COALESCE(rolconfig, ARRAY[]::text[])) FROM pg_roles WHERE rolname = $1`, spec.Name).Scan(&login, &superuser, &createDB, &createRole, &replication, &bypass, &inherit, &limit, &hasPassword, &settings); err != nil {
-			return err
-		}
+ rolconnlimit, cardinality(COALESCE(rolconfig, ARRAY[]::text[])) FROM pg_roles WHERE rolname = $1`, spec.Name).Scan(&login, &superuser, &createDB, &createRole, &replication, &bypass, &inherit, &limit, &settings); err != nil {
+		return err
 	}
 	if superuser || createDB || createRole || replication {
 		return managedpostgres.ErrConflict
@@ -377,9 +373,6 @@ func correctCustomRole(ctx context.Context, tx pgx.Tx, spec managedpostgres.Cust
 	}
 	if limit != -1 {
 		changes = append(changes, "CONNECTION LIMIT -1")
-	}
-	if hasPassword {
-		changes = append(changes, "PASSWORD NULL")
 	}
 	if len(changes) > 0 {
 		if _, err := tx.Exec(ctx, "ALTER ROLE "+name+" "+strings.Join(changes, " ")); err != nil {
