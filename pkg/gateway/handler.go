@@ -6314,6 +6314,10 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Outermost: a gRPC caller gets the platform's errors as gRPC statuses;
+	// the recorders below still see the HTTP status (grpc_platform_error.go).
+	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
+	defer finishGRPC()
 	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a

@@ -550,6 +550,10 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 // <service>.internal alias. The service segment is resolved to an app; the
 // remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Outermost: a gRPC caller gets the platform's errors as gRPC statuses;
+	// the trace and dependency-health writers still see the HTTP status.
+	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
+	defer finishGRPC()
 	defer func() { cancelStampedRequestBudget(r.Context()) }() //nolint:contextcheck // release every timer on the final rebound request context.
 	dependencyStarted := p.now()
 	service, targetPath, alias, ok := parseServiceProxyRequest(r)
