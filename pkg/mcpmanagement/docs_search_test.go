@@ -175,7 +175,7 @@ func TestDocsPageReadsPagesAndSections(t *testing.T) {
 	}{
 		{"h2 keeps its h3", "rollouts", "canary-presets", "canary-presets", "### Abort a canary", "## Watch a rollout"},
 		{"heading text", "rollouts", "Watch a rollout", "watch-a-rollout", "follow progress", "Canary presets"},
-		{"url with anchor", "https://gregale.dev/docs/rollouts.md#abort-a-canary", "", "abort-a-canary", "gregale rollout abort", "Watch"},
+		{"url with anchor", docsSiteURL + "/docs/rollouts.md#abort-a-canary", "", "abort-a-canary", "gregale rollout abort", "Watch"},
 		{"code in heading", "/docs/releases", "use-gregale-rollback", "use-gregale-rollback", "## Use `gregale rollback`", "Every deploy"},
 	}
 	for _, tc := range cases {
