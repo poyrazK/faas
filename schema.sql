@@ -32588,7 +32588,7 @@ CREATE TABLE public.app_config_revisions (
     CONSTRAINT app_config_revisions_batch_key_chk CHECK (((source = ANY (ARRAY['baseline'::text, 'env.batch'::text, 'config.rollback'::text, 'config.guard_restore'::text])) = (config_key = ''::text))),
     CONSTRAINT app_config_revisions_batch_source_chk CHECK ((source = ANY (ARRAY['baseline'::text, 'env.set'::text, 'env.delete'::text, 'env.batch'::text, 'secret.set'::text, 'secret.delete'::text, 'secret.rotate'::text, 'config.rollback'::text, 'config.guard_restore'::text]))),
     CONSTRAINT app_config_revisions_check1 CHECK (((source = ANY (ARRAY['config.rollback'::text, 'config.guard_restore'::text])) = (restored_revision IS NOT NULL))),
-    CONSTRAINT app_config_revisions_config_key_v2_check CHECK (((config_key = ''::text) OR ((config_key ~ '^[A-Za-z_][A-Za-z0-9_]*$'::text) AND (length(config_key) <= 128)))),
+    CONSTRAINT app_config_revisions_config_key_v2_check CHECK (((config_key = ''::text) OR ((config_key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (length(config_key) <= 128)))),
     CONSTRAINT app_config_revisions_restored_revision_check CHECK (((restored_revision IS NULL) OR (restored_revision >= 1))),
     CONSTRAINT app_config_revisions_revision_check CHECK ((revision >= 1)),
     CONSTRAINT app_config_revisions_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
@@ -32744,7 +32744,7 @@ CREATE TABLE public.app_environment_secret_ref_suppressions (
     scope text NOT NULL,
     key text NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT app_environment_secret_ref_suppressions_key_v2_check CHECK (((key ~ '^[A-Za-z_][A-Za-z0-9_]*$'::text) AND (octet_length(key) <= 128))),
+    CONSTRAINT app_environment_secret_ref_suppressions_key_v2_check CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (octet_length(key) <= 128))),
     CONSTRAINT app_environment_secret_ref_suppressions_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
 );
 
@@ -32762,7 +32762,7 @@ CREATE TABLE public.app_environment_secret_refs (
     key text NOT NULL,
     secret_name text NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT app_environment_secret_refs_key_v2_check CHECK (((key ~ '^[A-Za-z_][A-Za-z0-9_]*$'::text) AND (octet_length(key) <= 128))),
+    CONSTRAINT app_environment_secret_refs_key_v2_check CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (octet_length(key) <= 128))),
     CONSTRAINT app_environment_secret_refs_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text)),
     CONSTRAINT app_environment_secret_refs_secret_name_check CHECK (((secret_name ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(secret_name) <= 128)))
 );
@@ -32808,7 +32808,7 @@ CREATE TABLE public.app_envs (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
     scope text DEFAULT 'default'::text NOT NULL,
-    CONSTRAINT app_envs_key_shape_v2 CHECK (((key ~ '^[A-Za-z_][A-Za-z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT app_envs_key_shape_v2 CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (length(key) <= 128))),
     CONSTRAINT app_envs_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))
 );
 
@@ -52329,7 +52329,7 @@ CREATE TABLE public.platform_alert_notices (
     last_error text DEFAULT ''::text NOT NULL,
     CONSTRAINT platform_alert_notices_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT platform_alert_notices_detail_check CHECK ((jsonb_typeof(detail) = 'object'::text)),
-    CONSTRAINT platform_alert_notices_kind_check CHECK ((kind = ANY (ARRAY['app_outage'::text, 'cron_failing_paused'::text]))),
+    CONSTRAINT platform_alert_notices_kind_v2_check CHECK ((kind = ANY (ARRAY['app_outage'::text, 'cron_failing_paused'::text, 'check_failing'::text, 'slo_burn'::text]))),
     CONSTRAINT platform_alert_notices_last_error_check CHECK ((length(last_error) <= 512)),
     CONSTRAINT platform_alert_notices_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'skipped'::text, 'failed'::text]))),
     CONSTRAINT platform_alert_notices_subject_id_check CHECK (((subject_id <> ''::text) AND (length(subject_id) <= 128)))
