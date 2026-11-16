@@ -73,12 +73,13 @@ func TestPlacementOnAnUnreportedNodeUsesItsMeasurement(t *testing.T) {
 	e.Ledger().EnableMeasuredAdmission(func(nodeID string) (int, time.Time, bool) {
 		return 2000, asOf, nodeID == "peer"
 	})
-	// 9000 MB booked is 1000 MB of the 8000 MB overcommit allowance.
+	// 9000 MB booked is 1000 MB into the overcommit allowance.
 	if got := e.UnreportedNodeUsedMB(node, 9000); got != 2000 {
 		t.Fatalf("measured used = %d, want the 2000 MB measurement", got)
 	}
-	// 15000 MB booked leaves 7000 MB under the 200% cap: the cap binds.
-	if got := e.UnreportedNodeUsedMB(node, 15000); got != 7000 {
+	// 7000 MB short of the overcommit cap: the cap binds.
+	allowance := int64(8000 * (api.MeasuredAdmissionMaxOvercommitPercent - 100) / 100)
+	if got := e.UnreportedNodeUsedMB(node, allowance+7000); got != 7000 {
 		t.Fatalf("near the cap used = %d, want 7000", got)
 	}
 }

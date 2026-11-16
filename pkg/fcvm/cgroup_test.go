@@ -39,8 +39,8 @@ func TestWriteMemoryMaxWritesBytesPlusOverhead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	// 128 plan MB + 8 MB PerVMOverheadMB = 136 MiB = 136 << 20 bytes.
-	const want = (128 + 8) << 20
+	// 128 plan MB + 8 MB PerVMOverheadMB + 24 MB AppVMHeadroomMB = 160 MiB.
+	const want = (128 + 8 + 24) << 20
 	got := strings.TrimSpace(string(body))
 	if got != itoa(want) {
 		t.Errorf("memory.max = %q, want %d", got, want)
@@ -362,7 +362,7 @@ func TestWidenSnapshotMemoryCgroupRestoresOrdinaryFence(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 	l := Lease{Instance: inst, Plan: api.PlanScale, MemoryMaxMiB: 1024}
-	if err := writeMemoryMaxAt(scope, api.BillableRAMMB(l.MemoryMaxMiB)); err != nil {
+	if err := writeMemoryMaxAt(scope, api.AppVMMemoryMaxMB(l.MemoryMaxMiB)); err != nil {
 		t.Fatalf("write ordinary fence: %v", err)
 	}
 
@@ -384,7 +384,7 @@ func TestWidenSnapshotMemoryCgroupRestoresOrdinaryFence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read restored fence: %v", err)
 	}
-	if got, want := strings.TrimSpace(string(body)), itoa(api.BillableRAMMB(l.MemoryMaxMiB)<<20); got != want {
+	if got, want := strings.TrimSpace(string(body)), itoa(api.AppVMMemoryMaxMB(l.MemoryMaxMiB)<<20); got != want {
 		t.Errorf("restored memory.max = %q, want %s", got, want)
 	}
 }

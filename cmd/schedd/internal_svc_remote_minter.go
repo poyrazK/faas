@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 
 	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
+	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/sched"
 )
 
@@ -47,6 +48,7 @@ func internalSvcMinterFromEnv(getenv func(string) string, haveSecretd bool) (boo
 
 type internalSvcTokenRPC interface {
 	MintInternalServiceToken(ctx context.Context, in *secretdpb.MintInternalServiceTokenRequest, opts ...grpc.CallOption) (*secretdpb.MintInternalServiceTokenResponse, error)
+	MintWorkflowIdentity(ctx context.Context, in *secretdpb.MintWorkflowIdentityRequest, opts ...grpc.CallOption) (*secretdpb.MintWorkflowIdentityResponse, error)
 }
 
 type cachedInternalSvcToken struct {
@@ -102,6 +104,27 @@ func (m *remoteInternalSvcMinter) Mint(appID string) (string, error) {
 		}
 	}
 	m.cache[appID] = cachedInternalSvcToken{token: resp.GetToken(), expires: expires}
+	return resp.GetToken(), nil
+}
+
+// MintWorkflow implements sched.WorkflowOutboundMinter through secretd
+// (slice 3k-2). Only the body's hash leaves the node; each token binds one
+// attempt, so nothing is cached.
+func (m *remoteInternalSvcMinter) MintWorkflow(identity outbound.WorkflowIdentity, request outbound.WorkflowOutboundRequest, body []byte) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), remoteMintTimeout)
+	defer cancel()
+	resp, err := m.rpc.MintWorkflowIdentity(ctx, &secretdpb.MintWorkflowIdentityRequest{
+		AccountId: identity.AccountID, AppId: identity.AppID, PlatformTenantId: identity.PlatformTenantID,
+		RunId: identity.RunID, StepName: identity.StepName, Attempt: int32(identity.Attempt), AttemptToken: identity.AttemptToken,
+		IntegrationId: request.IntegrationID, Method: request.Method, Path: request.Path, RawQuery: request.RawQuery,
+		PathTemplate: request.PathTemplate, QueryTemplate: request.QueryTemplate, BodySha256: outbound.WorkflowBodySHA256(body),
+	})
+	if err != nil {
+		return "", fmt.Errorf("secretd: mint workflow identity: %w", err)
+	}
+	if resp.GetToken() == "" {
+		return "", errors.New("secretd: empty workflow identity token")
+	}
 	return resp.GetToken(), nil
 }
 
