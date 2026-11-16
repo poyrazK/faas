@@ -13,6 +13,13 @@ https://api.gregale.dev/mcp
 - **ChatGPT:** add it as a connector.
 - **Claude Code:** `claude mcp add --transport http gregale https://api.gregale.dev/mcp`.
 
+For **Antigravity**, add a remote server named `gregale` with
+`"serverUrl": "https://api.gregale.dev/mcp"` to its MCP configuration. In
+Customizations → Installed → MCP Servers, choose Authenticate. Sign in to
+Gregale, review the account and apps, and connect. Antigravity's callback
+displays an authorization code: copy it into Antigravity's authorization-code
+field and submit it to finish connecting.
+
 The client opens a Gregale page to connect:
 1. Choose what the agent may do. Inspection is always included. With write
    access you can also allow it to:
