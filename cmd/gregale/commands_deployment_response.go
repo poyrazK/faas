@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -36,12 +37,16 @@ func cmdDeploymentCheckResponse(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	interruptCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(interruptCtx, 30*time.Second)
 	defer cancel()
 	result, err := deploymentResponseCheck(ctx, client, *app, fs.Arg(0), request)
 	if err != nil {
+		if interruptCtx.Err() != nil {
+			fmt.Fprintln(osStderr, "Interrupted; the deployment is unchanged.")
+			return 130
+		}
 		return printErr("Could not verify application response", err)
 	}
 	return printDeploymentResponseCheck(result, *path)
@@ -70,9 +75,14 @@ func deploymentResponseCheck(ctx context.Context, client *Client, slug, deployme
 	if err != nil {
 		return empty, fmt.Errorf("read deployment: %w", err)
 	}
-	if deployment.ID != deploymentID || deployment.Status != statusLive {
+	if !sameDeploymentID(deployment.ID, deploymentID) {
+		return empty, errors.New("the API returned a different deployment than the one requested; the deployment is unchanged")
+	}
+	if deployment.Status != statusLive {
 		return empty, errors.New("the selected deployment is not live; inspect it with gregale release get before checking its response")
 	}
+	// Use the API's canonical ID form so later identity checks compare like with like.
+	deploymentID = deployment.ID
 	request.AppID, request.Scope = deployment.AppID, scopeOrDefault(deployment.Scope)
 	if err := request.Validate(); err != nil {
 		return empty, err
@@ -130,4 +140,11 @@ func deploymentResponseCheckCommand(slug, deploymentID, path, projectID, environ
 		command += " --project-id " + recoveryArgument(projectID) + " --environment-id " + recoveryArgument(environmentID)
 	}
 	return command
+}
+
+// sameDeploymentID compares deployment UUIDs ignoring case and dashes, so the
+// 36-character form a user pastes matches the 32-character form the API returns.
+func sameDeploymentID(a, b string) bool {
+	norm := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, "-", "")) }
+	return a != "" && norm(a) == norm(b)
 }
