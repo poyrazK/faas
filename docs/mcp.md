@@ -346,7 +346,7 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
 | `operate` | Configuration metadata/history/rollback, restart status, scaling, plan receipts and app costs |
 | `execute` | Local account connections only: existing jobs, run/task status, bounded logs, artifact metadata/downloads and opt-in dispatch/cancellation |
-| `build-tools` | Local authoring and opt-in hosted Node, Go and Python publication: starter files, reviewed fixtures and verified publication |
+| `build-tools` | Local authoring, opt-in hosted Node/Go/Python publication and original-key read-only Task recovery inspection |
 | `registry` | Search durable published versions and describe exact tools; personal hosted connections require exact owner-created tool grants |
 | `invoke` | Invoke exact registered versions, read durable status/results and request cancellation; hosted calls require separate invocation consent and exact owner grants |
 | `all` | Every tool allowed by the server operator (explicit opt-in) |
@@ -1175,6 +1175,39 @@ these bound journal size and do not change deployment quotas. Recovery history
 inspection is bounded to ten pages of up to 200 deployments per candidate role.
 See [ADR 20261115105244](adr/20261115105244-task-execution-evidence-recovery-plans.md).
 
+
+### Hosted read-only Task inspection
+
+Operators can enable `mcp-bridged --allow-task-inspection` independently of
+hosted publishing, invocation and connection writes. It defaults off. Select
+`build-tools` for the headless agent connection, using
+`Gregale-MCP-Toolsets: build-tools` on a bridge with catalog selection enabled.
+
+Use the same personal-account agent key that prepared the local release intent.
+It must retain `agent,apps:read,deploy:write`: the native journal still requires
+its original publication authority, even on a read-only MCP connection. A new,
+rotated or different key cannot inspect another requester's intent. Key expiry,
+revocation and project restrictions are rechecked natively. Browser OAuth,
+organization, project-limited and app-bound connections are excluded.
+
+Call `gregale_inspect_task_tool_recovery` or
+`gregale_plan_task_tool_recovery` with the retained identity:
+
+```json
+{"intent_id":"<64-character lowercase hex intent ID>"}
+```
+
+Both tools read native journal/deployment/serving/worker/observer evidence and
+return bounded checkpoints, observed release state, recovery blockers and next
+steps. No local CLI, source, binding profile or upload is needed. Reconnecting
+reads the same retained operation and fresh observations; it never restarts it.
+Unavailable or changing facts remain unknown. Reports omit claim/binding hashes,
+owner qualification records, credentials and paths; raw intent/operation tools
+remain local-only. `read_only` stays true, `ready_to_apply` false and
+`owner_authorization_required` true. Recovery plans cannot authorize mutations.
+Owner approval, execution, handover and recovery apply still require their
+existing local workflows and separate authority. See
+[ADR 20261116163708](adr/20261116163708-hosted-task-recovery-inspection.md).
 
 ### Owner recovery handover and qualification
 

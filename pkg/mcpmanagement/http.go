@@ -40,6 +40,7 @@ type HTTPOptions struct {
 	AllowToolInvocation        bool
 	AllowPrivateToolInvocation bool
 	AllowToolPublishing        bool
+	AllowTaskInspection        bool
 	// Toolsets limits the tools every grant lists; nil lists all.
 	Toolsets []string
 	// Onboarding is browser (default) or the explicit api-key fallback.
