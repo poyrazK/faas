@@ -83,7 +83,10 @@ func cmdInvocationsWait(args []string) int {
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || fs.NArg() != 0 || validateInvocationWaitDurations(*timeout, *interval) != nil {
+	if rejectArgumentCount(fs.Name(), invocationWaitCmdUsage, invocationCmdDocsTopic, len(positional), 1, 1, "ID") {
+		return 1
+	}
+	if fs.NArg() != 0 || validateInvocationWaitDurations(*timeout, *interval) != nil {
 		PrintUsage(os.Stderr, invocationWaitCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -341,7 +344,10 @@ func cmdInvocationsGet(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *replay && *replayKeyed {
+	if rejectArgumentCount(fs.Name(), invocationGetCmdUsage, invocationCmdDocsTopic, fs.NArg(), 1, 1, "ID") {
+		return 1
+	}
+	if *replay && *replayKeyed {
 		PrintUsage(os.Stderr, invocationGetCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -354,7 +360,7 @@ func cmdInvocationsGet(args []string) int {
 	inv, err := client.GetInvocation(ctx, id)
 	if err != nil {
 		var ae *APIError
-		if errors.As(err, &ae) {
+		if !jsonOutput && errors.As(err, &ae) {
 			renderAPIError(os.Stderr, ae)
 			return exitCodeForStatus(ae.Problem.Status)
 		}
@@ -369,7 +375,7 @@ func cmdInvocationsGet(args []string) int {
 		}
 		if err != nil {
 			var ae *APIError
-			if errors.As(err, &ae) {
+			if !jsonOutput && errors.As(err, &ae) {
 				renderAPIError(os.Stderr, ae)
 				return exitCodeForStatus(ae.Problem.Status)
 			}

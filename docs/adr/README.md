@@ -65,6 +65,7 @@
 - [ADR-20261115082128: Structured corrections for CLI flag errors](20261115082128-cli-structured-flag-corrections.md)
 - [ADR-20261115085307: Structured JSON input locations in CLI errors](20261115085307-cli-json-input-locations.md) — accepted; typed input origins and positions, with safe paths and unchanged human diagnostics.
 - [ADR-20261115100510: Structured corrections for unknown CLI commands](20261115100510-cli-structured-command-corrections.md)
+- [ADR-20261115103154: Structured CLI argument-count diagnostics](20261115103154-cli-argument-count-diagnostics.md)
 - [ADR-20261114143410: Structured recovery for CLI Job waits](20261114143410-cli-job-wait-recovery.md) — accepted; Problem diagnostics on stderr, compatible stdout receipts and exact-run, profile-preserving recovery.
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261114181406: Resumable SDK source uploads and acceptance recovery](20261114181406-sdk-resumable-source-uploads.md) — accepted; bounded Node/Python archive streaming, durable portable checkpoints, offset reconciliation, and receipt-only recovery after uncertain deployment submission.
