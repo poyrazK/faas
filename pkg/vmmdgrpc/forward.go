@@ -1879,6 +1879,22 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 			"instance", reqInit.GetInstance(), "limit", api.TrafficBridgeCompletionMaxEntries)
 		return instanceBusy(api.TrafficBridgeCompletionMaxEntries, api.TrafficBridgeCompletionMaxEntries+1)
 	}
+	if persistent {
+		guestErr := slices.Contains(httpResp.Header.Values(bridgecompletion.GuestErrorHeader), exchange)
+		if streak, fence := s.streamBridges.noteGuestTransport(bridgeLease, guestErr); guestErr {
+			// The bridge, not the guest, answered this 502: its connection to
+			// the guest failed. Nothing else records it.
+			s.log.Warn("vmmd: stream bridge could not reach the guest",
+				"instance", reqInit.GetInstance(), "guest_port", dialPort,
+				"protocol", requestBridgeProtocol, "streak", streak)
+			if fence {
+				s.log.Warn("vmmd: replacing stream bridge after repeated guest connection failures",
+					"instance", reqInit.GetInstance(), "failures", streak)
+				// After the 502 is relayed; this exchange then needs no completion wait.
+				defer s.streamBridges.invalidate(context.WithoutCancel(ctx), bridgeLease)
+			}
+		}
+	}
 
 	// 8. Mirror guest response headers into the gRPC init frame.
 	initHeaders := make([]*vmmdpb.Header, 0, len(httpResp.Header))
@@ -1888,7 +1904,8 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		// can compute match/mismatch for vmmd_bridge_framing_total.
 		// Stripped from the gRPC init frame — this is a vmmd↔bridge
 		// signal, not a guest response header.
-		if strings.EqualFold(k, "X-Faas-Bridge-Framing") || strings.EqualFold(k, bridgecompletion.RetainedHeader) || strings.EqualFold(k, bridgecompletion.RefusedHeader) {
+		if strings.EqualFold(k, "X-Faas-Bridge-Framing") || strings.EqualFold(k, bridgecompletion.RetainedHeader) || strings.EqualFold(k, bridgecompletion.RefusedHeader) ||
+			strings.EqualFold(k, bridgecompletion.GuestErrorHeader) {
 			continue
 		}
 		if strings.EqualFold(k, "Transfer-Encoding") {

@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/http2"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/bridgecompletion"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -462,4 +463,18 @@ func guestDialTimeout() time.Duration {
 		return guestHeadroomDialTimeout
 	}
 	return dialTimeout
+}
+
+// markGuestTransportError tags the bridge's own 502 for a failed guest
+// connection with the exchange ID, so vmmd can tell it from a 502 the guest
+// returned, log it, and replace a bridge whose guest connection keeps
+// failing. A request that ran out of its own time (ctx done) is not a
+// transport fault and stays untagged: a slow app must not cost the bridge.
+func markGuestTransportError(w http.ResponseWriter, r *http.Request, ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	if id := r.Header.Get(bridgecompletion.ExchangeHeader); id != "" {
+		w.Header().Set(bridgecompletion.GuestErrorHeader, id)
+	}
 }

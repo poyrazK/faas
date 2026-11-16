@@ -55,6 +55,10 @@ type streamBridgeEntry struct {
 	waitMu    sync.Mutex
 	waitErr   error
 
+	// guestErrors counts consecutive responses the bridge answered itself
+	// because its guest connection failed (bridgecompletion.GuestErrorHeader).
+	guestErrors int
+
 	ready    chan struct{}
 	starting bool
 	startErr error
@@ -599,6 +603,33 @@ func (m *streamBridgeManager) release(entry *streamBridgeEntry) {
 		entry.active--
 	}
 	entry.lastUsed = m.now()
+}
+
+// streamBridgeGuestErrorFence is how many consecutive guest-connection
+// failures retire a bridge. A bridge unit lives as long as its instance and is
+// never idle-reaped, so a guest connection stuck in a failed state inside it
+// otherwise fails every request until the instance goes away (2026-11-16: a
+// restored gRPC instance answered 502 for nine hours). A fresh bridge starts
+// with fresh guest connections; one failure alone (an app restarting its
+// listener) does not cost the requests the bridge carries.
+const streamBridgeGuestErrorFence = 3
+
+// noteGuestTransport records whether the bridge answered this exchange itself
+// because its guest connection failed. It returns the failure streak and
+// whether that streak just reached the fence; the caller then invalidates
+// the lease once the response has been relayed.
+func (m *streamBridgeManager) noteGuestTransport(lease *streamBridgeLease, failed bool) (streak int, fence bool) {
+	if m == nil || lease == nil || lease.entry == nil {
+		return 0, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !failed {
+		lease.entry.guestErrors = 0
+		return 0, false
+	}
+	lease.entry.guestErrors++
+	return lease.entry.guestErrors, lease.entry.guestErrors == streamBridgeGuestErrorFence
 }
 
 func (m *streamBridgeManager) invalidate(ctx context.Context, lease *streamBridgeLease) {
