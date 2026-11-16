@@ -6214,7 +6214,7 @@ var cliCommands = []cliCommand{
 					"copy: each PR preview environment gets a copy of the database as of its setup, kept across pushes. Code under review can read it; it needs the database's restore window.",
 					"off: previews get no database; existing preview databases go with their pull requests."},
 				Examples: []string{"gregale postgres previews set orders empty", "gregale postgres previews set orders copy"}},
-			{Name: "roles", Short: "Manage custom group roles your database's logins can SET ROLE to (preview)", Subcommands: []cliSub{
+			{Name: "roles", Short: "Manage custom roles your logins can SET ROLE to (preview)", Subcommands: []cliSub{
 				{Name: "list", Short: "List a database's custom roles", Positionals: []string{"<database>"}},
 				{Name: "create", Short: "Create or replace a NOLOGIN custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
 					{Name: "bypass-rls", Short: "the role bypasses row-level security (refused with Data API or Auth)"},
