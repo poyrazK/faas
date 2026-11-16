@@ -1,18 +1,19 @@
-# ADR-20261116192126: Managed Redis-compatible cache on self-hosted Valkey
+# ADR-20261116192126: Managed Redis-compatible cache on compute nodes, with scale to zero
 
-- **Status:** proposed. Owner decisions, 2026-11-16 ("How can we provide
-  redis to our users?"): self-host Valkey, **cache-only** durability,
-  Hobby and up. Nothing is built yet.
+- **Status:** proposed. Owner decisions, 2026-11-16: self-host **Valkey**,
+  **cache-only** durability, **Hobby and up**; then "Redis should work on
+  compute nodes, max 512mb (can change later), and how the scale to zero
+  would work?". Nothing is built yet.
 - **Date:** 2026-11-16
-- **Owner:** apid, schedd and database-node maintainers
-- **Amends:**
-  - [ADR-1027](1027-native-managed-postgres-on-firecracker-database-nodes.md):
-    database nodes also run cache VMs, and the one public listener on a
-    database node also serves the Redis protocol.
-  - The stateless-only rule (ADR-066 as ADR-1027 amends it;
-    [ADR-047](047-stateless-runtime-advisory.md)) is unchanged: customers still
-    cannot deploy `redis`/`valkey` images as apps (`stateless_only_violation`).
-    Cache VMs are a platform-operated workload like database VMs.
+- **Owner:** apid, schedd, vmmd and gatewayd-internal maintainers
+- **Builds on:** [ADR-576](576-private-tcp-service-addressing.md) (private
+  TCP service addresses), [ADR-1134](1134-wake-ahead-learns-private-tcp.md)
+  (wake-ahead over private TCP), ADR-155 bindings, the plan entitlements of
+  [ADR-1430](1430-plan-entitlements-from-october-2026-cogs-report.md).
+- **Leaves unchanged:** the stateless-only rule
+  ([ADR-047](047-stateless-runtime-advisory.md)). Customers still cannot
+  deploy `redis`/`valkey` images as apps (`stateless_only_violation`). A
+  managed cache runs a platform-built image with platform-owned config.
 
 This record has a date-and-time identifier because numbered ADRs collide
 when parallel changes pick the next number.
@@ -21,218 +22,240 @@ when parallel changes pick the next number.
 
 - **Customers ask for Redis and there is none.** `docs/storage.md` sends them
   to Upstash. The microservices-demo run (2026-11-15) could not run its
-  `cartservice` because Compose `redis` image services are skipped, and the
+  `cartservice`: Compose `redis` image services are skipped and the
   `REDIS_ADDR=redis:6379` import is dropped as a service address
-  (`projectsetup.EnvSkipServiceAddress`). Sessions, rate limits, caches and
-  job locks are what most web stacks keep in Redis.
-- **Apps cannot hold it themselves.** Instances park and wake, `/tmp` is a
-  tmpfs, there are no durable volumes, and the stateful base-image deny-list
-  rejects `redis:7`. A Redis inside an app image is per-instance and lost at
-  park.
-- **The platform already has the pieces.** ADR-1027 built database nodes:
-  one Firecracker microVM per tenant, vsock-only guests, `vmmd` VMs that
-  outlive vmmd restarts, a schedd scheduler (`pkg/dbsched`) with node
-  admission and wake storms handled, and `pgproxyd` as the TLS front door.
-  Managed PostgreSQL (ADR-155, GA ADR-20261031091607) built the account
-  resource, bindings into the encrypted app-secret store, plan entitlements,
-  metering and the past-plan lifecycle.
-- **Licensing.** Redis 8 is RSALv2/SSPLv1/AGPLv3. Valkey (Linux Foundation
-  fork of Redis 7.2) is BSD-3-Clause and speaks the same RESP2/RESP3
-  protocol, so every Redis client library and `redis-cli` work unchanged.
+  (`projectsetup.EnvSkipServiceAddress`).
+- **Apps cannot hold it themselves.** An instance's memory is per-replica,
+  `/tmp` is a tmpfs and there are no durable volumes.
+- **Compute nodes already do almost everything a cache needs.** One
+  Firecracker VM per workload, park to a memory snapshot and restore on
+  demand, and since ADR-576 `<name>.svc.gregale:<port>` addresses for raw
+  TCP. Their proxy authorizes the caller, wakes a parked target and holds the
+  session until it is up.
+- **What is missing is idleness.** vmmd counts an open stream as activity
+  (ADR-576), and Redis clients keep pooled connections open and `PING` them.
+  A cache behind today's TCP proxy would park only after the plan's session
+  idle timeout cuts every connection, and the clients would see the cut.
+- **Licensing.** Redis 8 is RSALv2/SSPLv1/AGPLv3. Valkey is BSD-3-Clause,
+  speaks RESP2/RESP3, and every Redis client works with it unchanged.
 
 ## Decision
 
-Offer an account-scoped, **Redis-compatible cache** backed by **Valkey**,
-running as **one Firecracker microVM per cache on database nodes**. It is
-**cache-only**: data lives in memory and is lost on restart, node failure,
-release roll or plan suspension. There is no persistence tier.
+A managed cache is a **platform-owned, single-instance app on compute
+nodes** running Valkey, reached at a private service address. It scales to
+zero by parking to a memory snapshot, so **its data survives park and wake**.
+It is still cache-only: no AOF, no replica, no backup. Data is lost when the
+snapshot is lost or the cache restarts.
 
-### Resource and API
+### Resource, API and CLI
 
-- `Cache` is an account resource (organization-owned like managed Postgres,
-  ADR-202610171906), with a name, region, memory size, eviction policy and
-  state (`provisioning`, `running`, `restarting`, `suspended`, `deleting`).
-- API `/v1/redis/*`: create, list, get, resize, update eviction policy,
-  restart, delete, rotate credentials, bindings, and `info` (used memory,
-  keys, hit/miss, evictions, connections, ops/s).
-- CLI `gregale redis create|list|info|resize|delete|bind|unbind|connect|rotate`.
-  `gregale redis connect` opens `redis-cli` (or prints the URL) with a
-  short-lived credential.
-- Bindings follow ADR-155: a binding names the app, environment scope and
-  env key (default `REDIS_URL`, value `rediss://default:<token>@<id>.redis.<domain>:6379`).
-  The credential lives only in the encrypted secret store; catalog rows hold
-  an opaque reference.
-- Behind the `managed_redis` capability flag until the GA gate below.
+- `Cache` is an account resource (organization-owned as in
+  ADR-202610171906): name, size, eviction policy, idle policy, state
+  (`provisioning`, `running`, `parked`, `restarting`, `suspended`,
+  `deleting`).
+- API `/v1/redis/*`: create, list, get, resize, update, restart, flush,
+  delete, bindings and `info` (used memory, keys, hit/miss, evictions,
+  connections, ops/s, last park and wake).
+- CLI `gregale redis create|list|info|resize|update|restart|delete|bind|unbind|connect`.
+- Behind the `managed_redis` capability flag until the GA gate.
+- Internally apid creates a hidden app (`kind=cache`) per cache, with
+  `min_instances=0`, `max_instances=1` and a platform image. Customers see
+  only the cache: it is not listed, deployed, scaled or exec'd as an app.
+  That gives it scheduling, placement, park/wake, billing, usage and
+  deletion from the app machinery with no new node role.
 
-### Cache VM
+### Size: at most 512 MB
 
-- New guest boot mode in `guest-init`: start `valkey-server` directly,
-  listen on a unix socket, bridge one vsock port to it. **No network
-  interface, no drive1 volume.** drive0 is a shared read-only base holding
-  the Valkey binary (one base per Valkey minor, as one per PG major).
-- Valkey config is fixed by the platform: `save ""`, `appendonly no`,
-  `maxmemory` = the cache's size, `maxmemory-policy` from the resource
-  (default `allkeys-lru`; also `allkeys-lfu`, `volatile-lru`,
-  `volatile-lfu`, `volatile-ttl`, `noeviction`), `databases 16`.
-- VM RAM = `maxmemory` + fixed overhead (`api.CacheVMOverheadMB`, measured
-  in slice 1; target ≤ 40 MB for kernel, guest-init and Valkey's
-  fragmentation headroom). The cgroup keeps the §11 cap (RAM + 8 MB); there
-  is no writeback burst because there is no volume.
-- Customer ACL user `default` gets `+@all` minus `@admin`, `CONFIG`,
-  `DEBUG`, `MODULE`, `SHUTDOWN`, `SAVE`, `BGSAVE`, `BGREWRITEAOF`,
-  `REPLICAOF`/`SLAVEOF`, `FAILOVER`, `CLUSTER`, `MONITOR` and `ACL`.
-  `FLUSHALL`, Lua scripts (`EVAL`, Functions), pub/sub, streams and
-  transactions are allowed: they act only inside the tenant's VM.
-- **Never memory-snapshotted, never parked for idleness.** Redis clients hold
-  pooled connections and ping, so idleness is not observable, and a cache
-  emptied after an idle timeout would surprise. A cache runs while its
-  account is in good standing. That is affordable because caches are small
-  and the VM has no disk.
+- `api.ManagedRedisMaxMemoryMB = 512`, one constant, so raising it later is
+  a one-line change plus a qualification run. Sizes: 32, 64, 128, 256, 512 MB.
+- The size is Valkey's `maxmemory`. The VM gets size + `api.CacheVMOverheadMB`
+  (guest kernel, guest-init, Valkey buffers and fragmentation; measured in
+  slice 1, expected ~48 MB). That VM RAM is what admission charges and what
+  is billed, like any app.
+- Memory is a hard cap: Valkey evicts by policy (default `allkeys-lru`; also
+  `allkeys-lfu`, `volatile-lru`, `volatile-lfu`, `volatile-ttl`,
+  `noeviction`, which refuses writes with `OOM`).
 
-### Scheduling
+### Valkey in the VM
 
-- schedd gains cache VMs in `pkg/dbsched` (same `database_nodes`
-  inventory, a `cache_vms` table, the same node-row-locked admission). Placement
-  charges RAM only; a node's `cache_ram_ceiling_mb` bounds cache VMs so they
-  cannot starve database wakes. Boot slots are shared with databases.
-- vmmd gains `StartCache` / `StopCache` / `CacheControl`, with the same
-  jail record and adoption on vmmd restart (ADR-1027 "vmmd restarts keep
-  databases running"), so routine vmmd releases do not empty caches.
-- **Node failure:** schedd re-places every cache from a dead node on another
-  node within its usual node-loss detection, empty, same hostname. Target:
-  serving again in under 60 s.
-- **Valkey minor or guest-init change:** caches turn `stale` as databases
-  do. A stale cache restarts (empties) only inside the account's
-  maintenance window, at most once a week unless a security fix needs it,
-  and the restart is posted as a `redis.restarted` event and in
-  `gregale redis info`. A security release may restart immediately; the
-  incident runbook names that.
+- Platform image: a Valkey release plus guest-init's cache boot mode. Fixed
+  config: `save ""`, `appendonly no`, `maxmemory` and policy from the
+  resource, `protected-mode no` on the guest interface only, `requirepass`
+  set to a per-cache internal secret that never leaves the platform.
+- Commands blocked for clients: `CONFIG`, `DEBUG`, `MODULE`, `SHUTDOWN`,
+  `SAVE`, `BGSAVE`, `BGREWRITEAOF`, `REPLICAOF`/`SLAVEOF`, `FAILOVER`,
+  `CLUSTER`, `ACL`, `MONITOR`. `FLUSHALL`, Lua (`EVAL`, Functions), pub/sub,
+  streams and transactions are allowed: they act only inside the tenant's VM.
+- **Never more than one replica, never a clone.** Two instances would be two
+  different caches, and restoring one snapshot twice would duplicate
+  Valkey's random state (the reseed concern of
+  [ADR-022](022-vsock-resume-hook.md)). The cache app is excluded from scale-out,
+  warm pools and snapshot sharing.
 
-### Connection proxy
+### Addressing and auth
 
-`pgproxyd` becomes the database node's protocol-aware front door for both
-protocols (one public listener per node role stays true). On the Redis port
-(6379, TLS 1.3 only) it:
+- The cache gets an ADR-576 service address. Authorized apps in the account
+  connect to `redis://<name>.svc.gregale:6379`. The ADR-576 authorizer
+  (account, declared bindings, allowed callers, previews) decides who may
+  connect.
+- The service TCP proxy, which already terminates each session, **sends
+  `AUTH` to Valkey on the caller's behalf**. Apps need no password; a
+  client's own `AUTH`/`HELLO … AUTH` is accepted and replaced. So
+  `REDIS_URL=redis://<name>.svc.gregale:6379` is the whole binding, and the
+  internal secret is never in app env.
+- Compose: `REDIS_ADDR=redis:6379` resolves through the existing project
+  sibling-name import (`host:port` of a sibling service) once the `redis`
+  service exists as a cache. No forwarder inside the app VM is needed.
+- Public access from outside Gregale (`redis-cli` on a laptop) is a later
+  slice through raw TCP ingress (ADR-183) with TLS and a per-cache token.
+  `gregale redis connect` goes through the authenticated CLI tunnel instead.
 
-1. routes by SNI `<cache>.redis.<domain>` (all mainstream clients send SNI
-   with `rediss://`);
-2. reads the client's first command and requires `AUTH` or `HELLO … AUTH`;
-   it verifies the token against a stored SHA-256 of a 256-bit random token
-   (not a password, so no slow hash is needed), and refuses everything else
-   before touching the guest;
-3. splices the session to the guest over vsock, having authenticated to
-   Valkey with the guest's internal password (never leaves the platform).
+### Scale to zero
 
-So rotation and revocation are proxy-only; the guest's credential never
-changes. The proxy enforces per-cache connection caps and per-source
-connection-rate limits, and counts bytes. `CLIENT LIST`/`CLIENT KILL`
-inside the guest see only the proxy's connections; that is acceptable.
+The service TCP proxy becomes **RESP-aware for `kind=cache` targets**. It
+parses the request stream (framing only, no values kept) and does three
+things.
 
-### Apps that speak plain `host:6379`
+**1. It decides when the cache is idle.** A cache is idle when, for its idle
+timeout, no session has sent a *data command* and no session is in a
+*pinned state*:
 
-Many stacks (the microservices-demo `cartservice`, Sidekiq/Celery defaults)
-use `REDIS_ADDR=redis:6379` with no TLS and no password. For a bound cache,
-the app VM's outbound path (`outboundd` / the guest TCP bridge) offers a
-**plaintext loopback endpoint**: the binding may set a host alias
-(`redis`, the Compose service name) that resolves inside the app VM to a
-local forwarder which opens TLS to the proxy and sends `AUTH` with the bound
-token before splicing. The app needs no code change; the credential never
-enters app env when only the alias is used.
+- Not data commands (they never keep a cache awake): `PING`, `ECHO`,
+  `HELLO`, `AUTH`, `SELECT`, `CLIENT SETNAME|SETINFO|GETNAME|ID`, `QUIT`,
+  `RESET`, `INFO`, `COMMAND`, `READONLY`/`READWRITE`.
+- Pinned states (keep it awake while held): `SUBSCRIBE`/`PSUBSCRIBE`/
+  `SSUBSCRIBE`, a blocking command in flight (`BLPOP`, `BRPOP`, `BLMOVE`,
+  `BZPOPMIN`, `XREAD … BLOCK`, `WAIT`, …), an open `MULTI` or `WATCH`,
+  `CLIENT TRACKING on`.
+- The proxy reports activity to vmmd instead of vmmd treating every open
+  stream as activity. For cache instances, vmmd's idle reaper uses only
+  that signal.
+- Idle timeout: default 15 minutes; settable from 5 minutes to 24 hours, or
+  `never` (always on, billed as such). Plan idle timeouts for apps do not
+  apply.
+
+**2. It parks without dropping clients.** At idle the cache parks like an
+app: Valkey pauses, Firecracker writes the memory snapshot, the VM stops.
+Every client session to the proxy **stays open**. Only the proxy's vsock
+streams to the guest close. The proxy keeps, per session, the state it must
+replay: protocol (`HELLO 2|3`), selected DB, client name/info. Sessions in a
+pinned state block the park, so nothing else is lost.
+
+**3. It wakes on the next real command.** When a held session sends a
+command, the proxy wakes the cache through the ADR-196 waker (trigger
+`service.mesh`, coalesced with other wakers), re-dials the guest, replays
+`AUTH` and the session state, then forwards the buffered command. The
+client sees one slow reply, not a reset. A new connection to a parked cache
+wakes it the same way, as ADR-576 already does. Wake-ahead (ADR-1134) learns
+"app → cache" edges, so a cold app restores its cache alongside itself.
+
+What survives:
+
+| Event | Data | Client connections |
+| --- | --- | --- |
+| Idle park, then wake | kept (memory snapshot) | kept (held by proxy) |
+| Caller app parks | kept | the caller's own sockets drop with it, as today |
+| Resize, Valkey upgrade, restart | **lost** (cold boot) | reset; clients reconnect |
+| Node loss while running | **lost**; re-placed empty in < 60 s | reset |
+| Node loss while parked | kept if the park snapshot is stored off-node like app snapshots, else lost | reset |
+| Snapshot evicted or expired | **lost**; next wake is a cold boot | kept |
+
+- **Snapshot lifetime.** A parked cache's snapshot is kept for 7 days without
+  a wake. After that it is dropped and the next wake cold-boots empty. That
+  bounds disk for abandoned caches. `gregale redis info` shows `data:
+  dropped after 7 days parked`.
+- **Clock and TTLs.** The guest wall clock is corrected on restore as for
+  apps. Valkey expires keys by wall clock, so keys whose TTL passed while
+  parked are expired on access and by the active expire cycle right after
+  wake. Parking does not stretch TTLs.
+- **Wake time.** Same restore path as apps. A 512 MB cache restores lazily,
+  so the first commands may fault pages in. Target, measured in slice 1:
+  p95 first reply after wake under 500 ms at 64 MB and under 1.5 s at 512 MB.
+
+### Upgrades
+
+A new Valkey minor or guest-init makes caches `stale`. Parked caches pick
+it up at their next wake **only if** their snapshot is gone. Otherwise
+restoring the old snapshot keeps the old image, and the upgrade waits for
+the next cold boot. Running stale caches restart (empty) only in the
+account's maintenance window, at most weekly. A security fix may restart at
+once, announced as a `redis.restarted` event. Target: patched Valkey across
+the fleet within 72 h of an upstream security release.
+
+### Plans and billing
+
+| Plan | Caches | Max size per cache |
+| --- | ---: | ---: |
+| Free | — | — |
+| Hobby | 1 | 512 MB |
+| Pro | 3 | 512 MB |
+| Scale | 10 | 512 MB |
+
+- Free answers `403 managed_redis_not_in_plan` (as ADR-20261110184700 for
+  Postgres). A Compose `redis` on Free is not provisioned, and the deploy
+  names the plan as the reason.
+- **Running** caches are billed like apps: VM RAM per running second against
+  the plan's compute allowance and overage. **Parked** caches cost snapshot
+  storage only, counted in the existing snapshot storage allowance. No new
+  meter.
+- Counts are provisional, to be checked against the COGS model.
+- An account that falls below its plan has its extra caches stopped
+  (snapshot dropped) and deleted after 30 days through the delete grace
+  period. CPU-abuse rules apply to cache VMs as to apps.
 
 ### Compose and `gregale dev`
 
 - A Compose service whose image is `redis`, `valkey/valkey`,
-  `redis/redis-stack-server` or `bitnami/redis` is provisioned as a managed
-  cache on Hobby and up (as Compose `postgres` is), sized from
-  `--maxmemory` in its `command:` if present, else the plan default. Every
-  service referencing it by name gets the plaintext alias above, and
-  `REDIS_URL` if it reads that key. On Free, the deploy names the plan as the
-  reason (as for Postgres).
-- `gregale dev --redis` starts a local Valkey container or uses the remote
-  cache through `gregale redis connect`; `--service-override-file` already
-  accepts `REDIS_URL`.
-
-### Plans and metering
-
-Provisional numbers, to be confirmed against the COGS model (ADR-1430):
-
-| Plan | Caches | Pooled memory | Max per cache | Connections per cache |
-| --- | ---: | ---: | ---: | ---: |
-| Free | — | — | — | — |
-| Hobby | 1 | 50 MB | 50 MB | 100 |
-| Pro | 3 | 512 MB | 256 MB | 500 |
-| Scale | 10 | 4 GB | 2 GB | 2,000 |
-
-- Free gets `403 managed_redis_not_in_plan`, matching
-  ADR-20261110184700.
-- Memory is a hard cap, not an overage: Valkey evicts by policy (or refuses
-  writes with `OOM` under `noeviction`). No overage billing in v1.
-- Meter `memory_byte_seconds` (allocated `maxmemory` per running second,
-  like app RAM billing) and proxy `egress_bytes` for traffic to clients
-  outside Gregale; traffic from Gregale apps is not egress.
-- An account that falls below its plan has its caches **stopped at once**
-  (nothing to keep) and their records deleted after 30 days, reusing the
-  delete grace period. Free and unverified accounts never reach database
-  nodes; abuse rules (CPU mining, ADR on CPU abuse) apply to cache VMs too.
-
-### Security notes
-
-- A Valkey/Lua remote-code bug (2025 had several, e.g. Lua use-after-free)
-  reaches only the tenant's own VM: no NIC, jailer uid, seccomp, cgroup.
-  The stale-roll path above is the patch path; target: patched Valkey on
-  every node within 72 h of an upstream security release.
-- Public reachability is the same as managed Postgres: TLS-only, auth
-  before splice, rate-limited. An `--allow-from` IP list per cache is a
-  follow-up.
+  `redis/redis-stack-server` or `bitnami/redis` becomes a managed cache
+  named after the service, sized from `--maxmemory` in its `command:` if
+  present (capped at 512 MB), else 128 MB. Sibling services reach it by the
+  Compose name.
+- `gregale dev --redis` runs a local Valkey container. `--service-override-file`
+  already accepts `REDIS_URL`.
 
 ## Phasing
 
-1. **Guest and vmmd.** Valkey base image, cache boot mode, `StartCache`/
-   `StopCache`, adoption on vmmd restart; metal test measures overhead MB,
-   cold boot time and density per node.
-2. **schedd and proxy.** `cache_vms`, placement/admission, node-loss
-   re-placement, stale roll in maintenance windows; RESP auth-before-splice
-   in `pgproxyd`.
-3. **apid and CLI.** `/v1/redis/*`, catalog, bindings, plan entitlements,
-   metering, past-plan lifecycle, `gregale redis …`, flag `managed_redis`
-   (dark).
-4. **Compose and plaintext alias.** Compose provisioning, outbound
-   forwarder, `gregale dev --redis`, microservices-demo `cartservice`
-   unchanged as the acceptance test.
-5. **GA gate.** Docs (`docs/redis.md`, `docs/storage.md` table), capability
-   row, runbook (node loss, security roll), journey in the full prod run,
-   owner approval to release the flag.
-
-Depends on database nodes being in production (ADR-1027 is still behind its
-qualification gate; production managed Postgres runs on Neon). Slices 1–3
-can land and be qualified on staging metal before that.
+1. **Image and VM.** Valkey image and cache boot mode. On metal: measure
+   overhead MB, cold boot and park/restore at 32–512 MB, and check that keys,
+   TTLs and Valkey's state are right after restore.
+2. **RESP-aware proxy.** Data-command classification, pinned states,
+   activity reporting to vmmd, held sessions with state replay, proxy-side
+   `AUTH`. Unit tests on a recorded corpus from go-redis, redis-py, ioredis,
+   Jedis/Lettuce and Sidekiq.
+3. **apid and CLI.** `/v1/redis/*`, hidden `kind=cache` app, bindings,
+   entitlements, 7-day snapshot lifetime, past-plan lifecycle,
+   `gregale redis …`, flag `managed_redis` (dark).
+4. **Compose.** Provisioning from Compose, sibling-name resolution, and the
+   microservices-demo `cartservice` unchanged as the acceptance test.
+5. **GA gate.** `docs/redis.md` and the `docs/storage.md` table, capability
+   row, runbook (node loss, security roll), a journey in the full prod run
+   covering park → held session → wake, then owner approval to release the
+   flag.
 
 ## Rejected alternatives
 
-- **Provider adapter (Upstash/Redis Cloud).** Fastest, but cross-provider
-  latency (~34 ms per round trip measured to Neon) defeats a cache, margins
-  are thin, and data sits with a subprocessor. Owner chose self-host.
-- **Gregale-native KV over HTTP.** Not Redis-compatible; existing apps and
-  Compose stacks would not run unchanged.
-- **Persistent tier (AOF + replica + backups).** Owner chose cache-only.
-  Customers who need durable state use managed Postgres or object storage.
-  A persistent tier would need drive1 volumes and a standby, as ADR-1027
-  does for Postgres; it can be added later behind the same API.
-- **Shared multi-tenant Valkey with ACL users per tenant.** Cheaper per
-  cache, but one tenant's `KEYS *`, big Lua script or memory pressure hits
-  every tenant, and one Valkey bug crosses tenants. ADR-1027's no shared
-  processes rule holds.
-- **Redis 8, Dragonfly, KeyDB.** Redis 8's licences and Dragonfly's BSL
-  restrict hosting; KeyDB is barely maintained. Valkey is BSD and is what
-  the large clouds now run.
-- **Idle park.** See "Cache VM": idleness is not observable through pooled
-  connections, and a silently emptied cache is a worse surprise than the
-  small always-on cost.
+- **Database nodes (first draft of this ADR).** Owner chose compute nodes.
+  They already have scale to zero, placement, billing and private TCP, and
+  a cache needs no volume.
+- **Close connections at park and let clients reconnect.** Simpler, but
+  many clients surface the first failed command as an error (Jedis without
+  pool validation, redis-py without `retry_on_error`). Holding sessions in
+  the proxy costs one per-session state record.
+- **Treat any byte as activity (today's ADR-576 rule).** A pooled client's
+  `PING`s would keep every cache awake forever, so it would never scale to
+  zero.
+- **Cold-boot on wake (no memory snapshot).** Wake would empty the cache
+  every time, so an idle cache would be worthless.
+- **Provider adapter (Upstash), native KV over HTTP, shared multi-tenant
+  Valkey.** Rejected earlier for latency and margin, incompatibility, and
+  cross-tenant blast radius.
+- **Redis 8, Dragonfly, KeyDB.** Licences (RSAL/SSPL/AGPL, BSL) or
+  maintenance. Valkey is BSD.
 
 ## Open questions
 
 - Product name: the CLI noun `redis` and "Redis-compatible" wording are
-  descriptive use; legal should confirm, or rename the noun to `kv`/`cache`.
-- Plan numbers above are provisional.
-- Whether Hobby caches share database nodes with paying Postgres or get
-  their own pool.
+  descriptive use. Legal should confirm, or rename the noun to `kv`/`cache`.
+- Plan cache counts and the 7-day parked snapshot lifetime are provisional.
+- Whether park snapshots of caches are stored off-node (survive node loss)
+  depends on the snapshot store in use when this ships.

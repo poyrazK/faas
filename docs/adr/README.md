@@ -1,4 +1,4 @@
-- [ADR-20261116192126: Managed Redis-compatible cache on self-hosted Valkey](20261116192126-managed-redis-valkey-cache.md) — proposed; cache-only, Hobby and up
+- [ADR-20261116192126: Managed Redis-compatible cache on compute nodes, with scale to zero](20261116192126-managed-redis-valkey-cache.md) — proposed; Valkey, cache-only, ≤ 512 MB, Hobby and up
 - [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
 - [ADR-20261115210000: Typed file-triggered jobs](20261115210000-sdk-file-triggered-jobs.md) — accepted; SDK preview
 - [ADR-20261115223000: Typed live views of Jobs and file pipelines](20261115223000-sdk-live-job-views.md) — accepted; SDK preview
