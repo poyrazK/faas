@@ -1010,7 +1010,7 @@ func cmdApp(args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
-		return printErr("Could not update app", err)
+		return printErr("Could not update app", explainPerInstanceConcurrencyRefusal(err, explicit["per-instance-concurrency"]))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -1686,6 +1686,17 @@ func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
 // plan's concurrency per VM, which the API enforces.
 func errNegativePerInstanceConcurrency(value int) error {
 	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the plan's concurrency per VM); got %d", value)
+}
+
+// explainPerInstanceConcurrencyRefusal turns the API's dark-launch refusal of
+// per_instance_concurrency, which answers like an unknown field so an N-1
+// apid and this one agree (ADR-20261022203523), into what it means for the
+// caller: the setting is not enabled for this account yet.
+func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
+	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
+		return fmt.Errorf("--per-instance-concurrency is in early access and not enabled for this account; leave it unset to use the plan's concurrency per VM (%w)", err)
+	}
+	return err
 }
 
 const manifestTriggerCleanupTimeout = 10 * time.Second

@@ -2956,3 +2956,5 @@ func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretCl
 	report, err := s.syncPairs(ctx, client, app, path, list, fp, "developer config")
 	return report.Written, err
 }
+
+var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal
