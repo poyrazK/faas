@@ -14,6 +14,12 @@ export default {
       return relay(await fetch(api() + "/" + id + "/events", { method: "POST", headers: json,
         body: JSON.stringify({ event: "approved", payload: { ok: true } }) }));
     }
-    return relay(await fetch(api() + "/" + id + "?wait=20"));
+    if (url.pathname === "/wait") {
+      return relay(await fetch(api() + "/" + id + "?wait=20"));
+    }
+    // Anything else, the deploy's post-readiness health probe included, is a
+    // plain 200: relaying a run read without an id answered it 500 and failed
+    // the deploy (journeys 2026-11-16).
+    return Response.json({ ok: true, probe: "gregale-e2e-workflow-web" });
   },
 };

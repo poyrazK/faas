@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -17,6 +18,12 @@ import (
 const outboundRelayServerName = "outboundd.faas"
 
 const outboundRelayDialTimeout = 5 * time.Second
+
+// errOutboundRelayNoClientTLS reports a TCP relay target without vmmd's
+// outbound client mTLS material: the expected state until the
+// outboundd-client leaf is issued (faas_vmmd_outbound_relay_tls_managed
+// off), so vmmd logs it as a warning, not an error.
+var errOutboundRelayNoClientTLS = errors.New("requires vmmd outbound client mTLS")
 
 // outboundRelayDialer opens one connection to outboundd's relay listener.
 type outboundRelayDialer func(context.Context) (net.Conn, error)
@@ -51,7 +58,7 @@ func outboundRelayTarget(getenv func(string) string) (outboundRelayDialer, error
 			return nil, fmt.Errorf("outbound relay client TLS: %w", err)
 		}
 		if tlsCfg == nil {
-			return nil, fmt.Errorf("outbound relay: tcp target %q requires vmmd outbound client mTLS", target)
+			return nil, fmt.Errorf("outbound relay: tcp target %q %w", target, errOutboundRelayNoClientTLS)
 		}
 		tlsCfg.ServerName = outboundRelayServerName
 		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: tlsCfg}
@@ -59,4 +66,15 @@ func outboundRelayTarget(getenv func(string) string) (outboundRelayDialer, error
 	default:
 		return nil, fmt.Errorf("outbound relay: target %q must start with unix:// or tcp://", target)
 	}
+}
+
+// logOutboundRelayDisabled reports a relay vmmd leaves closed. Missing client
+// mTLS is the expected state before the leaf is issued; logged at ERROR it
+// was the only error line after every rollout (prod check 2026-11-16).
+func logOutboundRelayDisabled(log *slog.Logger, err error) {
+	level := slog.LevelError
+	if errors.Is(err, errOutboundRelayNoClientTLS) {
+		level = slog.LevelWarn
+	}
+	log.Log(context.Background(), level, "vmmd: outbound relay disabled", "err", err)
 }

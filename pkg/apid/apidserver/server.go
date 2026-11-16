@@ -739,6 +739,13 @@ type server struct {
 	// crashSnapshotsEnabled is the fail-closed gate for ADR-733 crash
 	// snapshots (FAAS_CRASH_SNAPSHOTS).
 	crashSnapshotsEnabled bool
+	// tcpListenersEnabled and udpListenersEnabled say whether the edge
+	// runs tcpd/udpd (FAAS_TCP_LISTENERS_ENABLED, FAAS_UDP_LISTENERS_ENABLED,
+	// rendered from faas_tcpd_enabled/faas_udpd_enabled). Without them a
+	// listener gets a public port nothing serves, so the capability list
+	// must not call them available (prod findings 2026-11-15 #25).
+	tcpListenersEnabled bool
+	udpListenersEnabled bool
 	// interactiveImageRunsEnabled admits `interactive: true` image runs
 	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
 	interactiveImageRunsEnabled bool
@@ -1217,6 +1224,13 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 // admission. Scheduler dispatch remains independently gated.
 func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	s.appTaskAPIEnabled = enabled
+	return s
+}
+
+// WithListenersEnabled records whether the edge serves TCP and UDP
+// listeners, for the capability list.
+func (s *server) WithListenersEnabled(tcp, udp bool) *server {
+	s.tcpListenersEnabled, s.udpListenersEnabled = tcp, udp
 	return s
 }
 

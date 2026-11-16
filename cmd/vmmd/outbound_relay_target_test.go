@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -86,4 +87,23 @@ func TestOutboundRelayUnixTargetDialsTheSocket(t *testing.T) {
 	}
 	_ = conn.Close()
 	<-accepted
+}
+
+func TestLogOutboundRelayDisabledLevel(t *testing.T) {
+	for target, want := range map[string]string{
+		"tcp://outboundd.faas:8096":  "WARN", // client mTLS not issued yet
+		"http://outboundd.faas:8096": "ERROR",
+	} {
+		_, err := outboundRelayTarget(func(name string) string {
+			if name == "FAAS_VMMD_OUTBOUND_RELAY_TARGET" {
+				return target
+			}
+			return ""
+		})
+		var buf strings.Builder
+		logOutboundRelayDisabled(slog.New(slog.NewTextHandler(&buf, nil)), err)
+		if !strings.Contains(buf.String(), "level="+want) {
+			t.Errorf("%s: log = %q, want level %s", target, buf.String(), want)
+		}
+	}
 }

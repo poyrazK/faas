@@ -1,0 +1,7 @@
+# Managed by Ansible (control_plane_service). Local edits are overwritten.
+[Service]
+# Whether the edge runs tcpd/udpd, so apid lists TCP and UDP listeners as
+# available only where a public listener serves them (prod findings
+# 2026-11-15 #25). Same variables the gatewayd_public_service role reads.
+Environment=FAAS_TCP_LISTENERS_ENABLED={{ (faas_tcpd_enabled | default(false) | bool) | ternary('1', '0') }}
+Environment=FAAS_UDP_LISTENERS_ENABLED={{ (faas_udpd_enabled | default(false) | bool) | ternary('1', '0') }}
