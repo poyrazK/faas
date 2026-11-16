@@ -8,15 +8,16 @@ import (
 // cliFlagDiagnostic is CLI-local correction metadata, never an API/SDK wire
 // contract. Its values come from registered flags and the visible manifest.
 type cliFlagDiagnostic struct {
-	Kind              string     `json:"kind"`
-	Flag              string     `json:"flag,omitempty"`
-	SuggestedFlags    []string   `json:"suggested_flags,omitempty"`
-	SuggestedCommands [][]string `json:"suggested_commands,omitempty"`
-	ExpectedType      string     `json:"expected_type,omitempty"`
-	ValueMarker       string     `json:"value_marker,omitempty"`
-	AllowedValues     []string   `json:"allowed_values,omitempty"`
-	Placement         string     `json:"placement,omitempty"`
-	HelpArgv          []string   `json:"help_argv"`
+	Kind              string            `json:"kind"`
+	Flag              string            `json:"flag,omitempty"`
+	SuggestedFlags    []string          `json:"suggested_flags,omitempty"`
+	SuggestedCommands [][]string        `json:"suggested_commands,omitempty"`
+	ExpectedType      string            `json:"expected_type,omitempty"`
+	ValueMarker       string            `json:"value_marker,omitempty"`
+	AllowedValues     []string          `json:"allowed_values,omitempty"`
+	Placement         string            `json:"placement,omitempty"`
+	HelpArgv          []string          `json:"help_argv"`
+	Location          *cliInputLocation `json:"location,omitempty"`
 }
 
 func flagDiagnosticPath(name string) string {

@@ -703,7 +703,7 @@ array to discover the flag; the CLI never applies or executes the suggestion.
 Ambiguous typos have no suggestion. `help_argv` uses a validated visible command
 or falls back to root JSON help, without API requests. Prefix-only globals use
 `placement: "before_command"`; a command-local resource `--profile` retains its
-local meaning. Other validation and API errors omit `cli`. Human diagnostics,
+local meaning. Errors outside these flag-parser and JSON-input syntax paths omit `cli`. Human diagnostics,
 Problem codes, exit codes and stdout/stderr routing stay unchanged.
 
 Unknown commands at the root, in the shared nested-command renderer and in
@@ -742,6 +742,22 @@ columns count Unicode characters, and a tab counts as one character. LF and
 CRLF files are supported. Truncated JSON points at the end of the input.
 The same location appears in JSON error details. Diagnostics omit payload
 contents, and valid input keeps its original bytes and numeric precision.
+
+With `--json`, these shared-reader syntax failures additionally expose
+`cli.kind: "invalid_json"`, `cli.flag` and `cli.location`. Location contains
+`source` (`inline`, `file` or `stdin`), one-based `line` and `column`, plus
+`path` for a file. Paths retain their supplied spelling; a file called
+`stdin` or `inline` is explicitly a file. Known credential-bearing paths
+and filenames that are not valid UTF-8 omit `path`; an omitted path is not
+an instruction to open a redacted filename. Filename control characters
+remain escaped in the JSON document.
+
+For `gregale --json invocation run demo --payload @request.json`, a syntax
+failure can include `"cli":{"kind":"invalid_json","flag":"--payload",
+"location":{"source":"file","path":"request.json","line":12,"column":9}}`
+alongside its existing `help_argv`. Wrapped errors retain the location.
+Read/permission failures and API errors do not get a syntax location. No
+payload excerpt is included, and invalid input fails before submission.
 
 Shared command errors use these exit codes. JSON error objects on stderr
 include `category` and `exit_code` alongside the server's unchanged `code`:

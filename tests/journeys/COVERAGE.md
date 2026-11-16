@@ -104,6 +104,10 @@ input refusal without API access or row-body leakage.
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
+`TestJSONInputLocationsIsolatedCLI` extends row 156: malformed file input
+returns a typed source/line/column, then returned offline help is followed,
+with zero API requests and no invocation submission.
+
 `TestCLICommandCorrectionsIsolatedCLI` extends row 156: misspelled invocation
 commands and help topics return canonical argument arrays; following help makes
 zero requests and never replays the failed invocation.
