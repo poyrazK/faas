@@ -83,7 +83,8 @@ docs/adr/
    (ADR-20261031105227). Steady state is still `max_concurrency`.
 2. Σ(ram_mb + 8) over live instances ≤ 47,600 MB (85% of 56 GB tenant budget).
    Under measured admission (ADR-909, schedd's default) a node's measured memory
-   ≤ 47,600 MB and Σ(ram_mb + 8) ≤ 2× that, with eviction above the ceiling.
+   ≤ 47,600 MB and Σ(ram_mb + 8) ≤ 2.5× that (ADR-909 amendment 3), with
+   eviction above the ceiling.
 3. An app always has a live snapshot OR a cold-bootable rootfs — never neither.
 4. A parked app consumes zero resident RAM (its cgroup must be gone).
 5. Two instances restored from one snapshot never share IP, netns, jail uid, or RNG stream.

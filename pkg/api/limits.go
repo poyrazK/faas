@@ -8449,7 +8449,7 @@ const (
 	// holds at the idle ladder's freeze level (ADR-20261107122928): at most
 	// this percent of the node's admission ceiling. With the ADR-909 cap of
 	// MeasuredAdmissionMaxOvercommitPercent, reservations including those
-	// instances reach at most 400% of the ceiling; the measured figure still
+	// instances reach at most 450% of the ceiling; the measured figure still
 	// bounds what the node holds.
 	IdleLadderReservationDiscountMaxPercent = 200
 	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
@@ -8496,9 +8496,12 @@ const (
 	// MeasuredAdmissionMaxOvercommitPercent caps reservations on a node
 	// under measured admission (ADR-909): Σ(ram_mb + 8) may reach this
 	// share of the admission ceiling while measured charges stay under the
-	// ceiling itself. MeasuredAdmissionSampleMaxAgeMillis is how old a node's
-	// measurement may be before admission falls back to reservations.
-	MeasuredAdmissionMaxOvercommitPercent = 200
+	// ceiling itself. 250 since ADR-909 amendment 3 (production-us measured
+	// at most 26–40% of bookings while the 200% cap refused placements); the
+	// durable node guard (admission_reserve_node) clamps at the same value.
+	// MeasuredAdmissionSampleMaxAgeMillis is how old a node's measurement may
+	// be before admission falls back to reservations.
+	MeasuredAdmissionMaxOvercommitPercent = 250
 	MeasuredAdmissionSampleMaxAgeMillis   = 2000
 	// MeasuredEvictionTargetPercent: under measured admission, when a node's
 	// measured memory exceeds its admission ceiling, schedd evicts until it
