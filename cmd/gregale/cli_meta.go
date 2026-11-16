@@ -7364,11 +7364,16 @@ var cliCommands = []cliCommand{
 	},
 
 	{
-		Name: "export", DocSlug: "cli-config", Short: "Verify saved JSON Lines exports offline",
+		Name: "export", DocSlug: "cli-config", Short: "Verify and compare saved JSON Lines exports offline",
 		Subcommands: []cliSub{{Name: "verify", Short: "Check a file against its saved completion receipt", Positionals: []string{"<FILE>"},
 			Flags:    []cliFlag{{Name: "receipt", Value: "RECEIPT", Req: true, Short: "saved JSON completion receipt"}},
 			Examples: []string{"gregale export verify builds.jsonl --receipt builds.receipt.json", "gregale --json export verify invocations.jsonl --receipt invocations.receipt.json"},
-			Notes:    []string{"Runs offline without login. Compares SHA-256, exact bytes and JSON Lines record count; the receipt path is ignored.", "Exit 0 means all three checks matched; exit 1 means mismatch or invalid input. A valid comparison prints verified true or false; invalid input reports an error without a result.", "A receipt is an integrity reference, not a signature or a point-in-time API snapshot."}}},
+			Notes:    []string{"Runs offline without login. Compares SHA-256, exact bytes and JSON Lines record count; the receipt path is ignored.", "Exit 0 means all three checks matched; exit 1 means mismatch or invalid input. A valid comparison prints verified true or false; invalid input reports an error without a result.", "A receipt is an integrity reference, not a signature or a point-in-time API snapshot."}},
+			{Name: "diff", Short: "Compare saved JSON Lines records by a unique key", Positionals: []string{"<BEFORE>", "<AFTER>"},
+				Flags:    []cliFlag{{Name: "key", Value: "FIELD", Short: "unique top-level string or number field (default id)"}, {Name: "fail-on-change", Bool: true, Short: "exit 1 when added, removed or changed records exist"}},
+				Examples: []string{"gregale export diff before.jsonl after.jsonl", "gregale --json export diff before.jsonl after.jsonl --key id --fail-on-change"},
+				Notes:    []string{"Runs offline. Reports sorted added, removed and changed IDs and counts without row bodies. Duplicate record keys or object fields fail before output.", "Row and object-field order are ignored; array order is preserved. Numbers compare as exact decimal values without floating-point conversion.", "Comparisons exit 0 unless --fail-on-change is enabled and changes exist, then exit 1 with a result. Invalid input reports an error without a result."}},
+		},
 	},
 
 	// Tier A8 surface — the two new commands this PR lands.

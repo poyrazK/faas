@@ -92,6 +92,7 @@ func TestNativeInitialCopyStallPersistsAndRecovers(t *testing.T) {
 	if err = f.target.QueryRow(t.Context(), `SELECT NOT readable AND schema_phase='verifying' AND schema_change=$2 AND (source_slot->>'Pending')::boolean FROM gregale_pipeline.mirrors WHERE pipeline_id=$1`, f.pipeline.ID, sourceContinuityFence(f.pipeline)).Scan(&gated); err != nil || !gated {
 		t.Fatal("initial copy bypassed stream qualification", gated, err)
 	}
+	traceNativeRecoveryTarget(t, f)
 	f.engine.pinSource = original
 	f.await(t, "live")
 	if f.pipeline.Reason != "" {

@@ -97,6 +97,10 @@ API failures with progress/correlation, and SIGINT cancelling the active read.
 export receipts are verified offline by a built CLI; tampered files and malformed
 inputs fail without extra API requests or content leakage.
 
+`TestExportDiffIsolatedCLI` extends row 156: offline keyed inventory comparison,
+exact numeric changes, deterministic reports, opt-in CI failure and malformed
+input refusal without API access or row-body leakage.
+
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
