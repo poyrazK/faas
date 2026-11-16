@@ -84,12 +84,15 @@ func (s *server) protectionHealthProbeSweep(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// Unbilled: a wake this probe alone causes is not billed and parks
+		// once the probe is done (§3).
 		payload, _ := json.Marshal(struct {
 			AppID        string    `json:"app_id"`
 			DeploymentID string    `json:"deployment_id"`
 			Token        string    `json:"token"`
 			ExpiresAt    time.Time `json:"expires_at"`
-		}{p.AppID, target.deploymentID, token, time.Now().UTC().Add(api.RouteHealthProbeChallengeTTL)})
+			Unbilled     bool      `json:"unbilled"`
+		}{p.AppID, target.deploymentID, token, time.Now().UTC().Add(api.RouteHealthProbeChallengeTTL), true})
 		if err := s.notif.Notify(ctx, db.NotifyRouteProbeChallenge, string(payload)); err != nil {
 			return err
 		}

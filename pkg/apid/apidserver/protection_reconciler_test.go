@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 	"testing"
@@ -32,9 +33,13 @@ func (f *healthProbeFake) Notify(_ context.Context, channel, payload string) err
 	var p struct {
 		DeploymentID string `json:"deployment_id"`
 		Token        string `json:"token"`
+		Unbilled     bool   `json:"unbilled"`
 	}
 	if err := json.Unmarshal([]byte(payload), &p); err != nil {
 		return err
+	}
+	if !p.Unbilled {
+		return errors.New("baseline health probe challenge not marked unbilled")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

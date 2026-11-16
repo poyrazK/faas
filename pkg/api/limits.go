@@ -18195,6 +18195,22 @@ const (
 	ProtectionBaselineHealthWindow     = "1h"
 )
 
+// Unbilled probe wakes (ADR-20261116120000 §3). schedd parks an instance a
+// baseline health probe alone woke once ProtectionProbeParkGrace has passed
+// since the probe with nothing in flight and no request later than the
+// probe's end plus ProtectionProbeActivitySlack; it reads wakes from the
+// last ProtectionProbeWakeLookback. meterd leaves [woke_at, probe_done_at +
+// ProtectionProbeUnbilledTail] unbilled: the grace, one 10 s reaper tick and
+// the park itself. Wakes are kept PlatformProbeWakeRetention.
+const (
+	ProtectionProbeParkGrace     = 5 * time.Second
+	ProtectionProbeActivitySlack = 2 * time.Second
+	ProtectionProbeWakeLookback  = 10 * time.Minute
+	ProtectionProbeUnbilledTail  = 30 * time.Second
+	PlatformProbeWakeRetention   = 7 * 24 * time.Hour
+	PlatformProbeWakeDeleteBatch = 1000
+)
+
 // Event substrate benchmark workload (spec Appendix D V12,
 // docs/ops/event-substrate-benchmark.md): disposable-database bench sizes,
 // never customer quotas. Events spread over accounts so each subscription

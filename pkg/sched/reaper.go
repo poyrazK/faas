@@ -47,6 +47,10 @@ type InstanceInfo struct {
 	SidecarMBs  []int
 	LastRequest time.Time
 	Started     time.Time
+	// ProbeWakeDoneAt is when the unbilled baseline health probe that woke
+	// this instance finished (ADR-20261116120000 §3); zero when no recent
+	// probe woke it. See probe_wake_park.go.
+	ProbeWakeDoneAt time.Time
 	// EvictionPriority (issue #475) is the per-app tier, sourced from
 	// apps.eviction_priority at the loop tick. 'best_effort' (default
 	// for every pre-#475 row) keeps the pre-#475 LRU-by-last_request_at
@@ -455,9 +459,14 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		if in.InflightRequests > 0 {
 			continue
 		}
+		// An instance only a baseline health probe woke parks once the
+		// probe is done (ADR-20261116120000 §3). Its open flows are the
+		// gateway's keep-alive connections, not customer work: a customer
+		// request would have moved its last request past the probe.
+		probeIdle := in.probeOnlyIdle(now)
 		// G7: an app with open TCP flows is active. Wins over stale
 		// LastRequest so a parked app mid-WebSocket isn't reaped.
-		if in.OpenConns > 0 {
+		if in.OpenConns > 0 && !probeIdle {
 			continue
 		}
 		// Issue #667 / ADR-078: an instance with active waitUntil
@@ -478,7 +487,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 			continue
 		}
 		// ADR-20261107122928: an instance the ladder holds parks at L5.
-		if now.Sub(lastActivity) > in.idleTimeout() {
+		if now.Sub(lastActivity) > in.idleTimeout() || probeIdle {
 			if in.State == state.StateWarm {
 				g.warmCands = append(g.warmCands, in)
 			} else {

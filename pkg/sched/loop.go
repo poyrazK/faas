@@ -2911,6 +2911,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	liveByApp := l.reaperLiveInstances(ctx, store, apps)
+	probeWakes := l.recentPlatformProbeWakes(ctx, now)
 	for _, a := range apps {
 		plan := api.Plan("")
 		ladderHold := false
@@ -2979,13 +2980,14 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// ADR-072: carrier for the post-snapshot
 				// app-wide max floor enrichment. Empty on legacy
 				// rows that pre-date the per-deployment column.
-				DeploymentID: ins.DeploymentID,
-				RAMMB:        ins.RAMMB,
-				LastRequest:  lastRequest,
-				Started:      ins.StartedAt,
-				IdleTimeoutS: a.IdleTimeoutS,
-				AppType:      string(a.Type),
-				NodeID:       ins.NodeID,
+				DeploymentID:    ins.DeploymentID,
+				RAMMB:           ins.RAMMB,
+				LastRequest:     lastRequest,
+				Started:         ins.StartedAt,
+				ProbeWakeDoneAt: probeWakes[ins.ID],
+				IdleTimeoutS:    a.IdleTimeoutS,
+				AppType:         string(a.Type),
+				NodeID:          ins.NodeID,
 				// Filled with the pinned environment policy below.
 				MinInstances:           planCappedFloor(plan, a.EffectiveMinInstances()),
 				WarmPoolSize:           a.WarmPoolSize,
@@ -3219,12 +3221,35 @@ func (l *Loop) dispatchReaper(ctx context.Context) {
 func (l *Loop) parkFromReaper(ctx context.Context, info InstanceInfo, allowNewRequests bool) error {
 	parkCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
 	defer cancel()
+	guest := l.freshGuestActivity(info.Instance)
+	if info.probeOnly() {
+		// A probe-only instance's open flows are the gateway's keep-alive
+		// connections (ADR-20261116120000 §3); only work in flight or a
+		// new request keeps it.
+		guest = l.requestsInFlight(info.Instance)
+	}
 	return l.engine.ParkIdle(parkCtx, info.Instance, IdleParkCheck{
 		LastRequest:      info.LastRequest,
 		RequestCount:     info.RequestCount,
 		AllowNewRequests: allowNewRequests,
-		Guest:            l.freshGuestActivity(info.Instance),
+		Guest:            guest,
 	})
+}
+
+// recentPlatformProbeWakes reads the probe wake ledger for the reaper tick:
+// each instance's latest unbilled health probe end. A store without the
+// ledger, or a failed read, leaves every instance on its idle timeout.
+func (l *Loop) recentPlatformProbeWakes(ctx context.Context, now time.Time) map[string]time.Time {
+	ledger, ok := l.engine.store.(state.PlatformProbeWakeStore)
+	if !ok {
+		return nil
+	}
+	wakes, err := ledger.RecentPlatformProbeWakes(ctx, now.Add(-api.ProtectionProbeWakeLookback))
+	if err != nil {
+		l.log.Warn("reaper: platform probe wakes", "err", err)
+		return nil
+	}
+	return wakes
 }
 
 // supersededDrainPoll is how often a superseded release's busy instances are
