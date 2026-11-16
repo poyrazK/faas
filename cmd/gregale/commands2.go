@@ -4360,6 +4360,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestLabels(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest labels failed", err)
 	}
+	if err := deployManifestProtection(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest protection failed", err)
+	}
 
 	recordQueued := func(dep api.DeploymentResponse) int {
 		realtimeTriggers.commit()

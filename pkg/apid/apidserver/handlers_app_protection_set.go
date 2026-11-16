@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,21 +37,11 @@ func (s *server) setAppProtection(w http.ResponseWriter, r *http.Request, acct s
 	if !ok {
 		return
 	}
-	enrollment, err := store.SetAppProtection(r.Context(), app.ID, acct.ID, req.State)
+	enrollment, err := s.changeAppProtection(r.Context(), store, acct, app, req.State, "api")
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update app protection"))
 		return
 	}
-	removed := []string{}
-	if req.State == api.AppProtectionStateOff {
-		if removed, err = s.removeProtectionObjects(r.Context(), store, enrollment, app); err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not remove the protection objects"))
-			return
-		}
-	}
-	s.audit.Emit(r.Context(), "protection."+req.State, &acct.ID, map[string]any{
-		"app_id": app.ID, "removed": removed,
-	})
 	records, err := store.ListAppProtectionObjects(r.Context(), app.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read app protection"))
@@ -62,6 +53,52 @@ func (s *server) setAppProtection(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	writeJSON(w, http.StatusOK, appProtectionResponse(enrollment, true, records, gone))
+}
+
+// changeAppProtection records the on or off choice and, for off, deletes
+// the unchanged baseline objects. source is api or manifest, for the audit
+// event.
+func (s *server) changeAppProtection(ctx context.Context, store state.AppProtectionStore, acct state.Account, app state.App, want, source string) (state.AppProtection, error) {
+	enrollment, err := store.SetAppProtection(ctx, app.ID, acct.ID, want)
+	if err != nil {
+		return enrollment, err
+	}
+	removed := []string{}
+	if want == api.AppProtectionStateOff {
+		if removed, err = s.removeProtectionObjects(ctx, store, enrollment, app); err != nil {
+			return enrollment, err
+		}
+	}
+	s.audit.Emit(ctx, "protection."+want, &acct.ID, map[string]any{
+		"app_id": app.ID, "removed": removed, "source": source,
+	})
+	return enrollment, nil
+}
+
+// applyManifestProtection turns protection on or off as a source deploy's
+// manifest says (ADR-20261116120000 §5). It does nothing when the key is
+// absent, the app is already in that state, or the capability is off for
+// the account.
+func (s *server) applyManifestProtection(ctx context.Context, acct state.Account, app state.App, want string) *api.Problem {
+	if want == "" || !s.platformFlagFor(platformflags.CapabilityFlagKey(protectionBaselineCapability), appFlagSubject(acct, app)) {
+		return nil
+	}
+	store, ok := s.store.(state.AppProtectionStore)
+	if !ok {
+		return nil
+	}
+	current, found, err := store.GetAppProtection(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not read app protection")
+	}
+	if found && current.State == want {
+		return nil
+	}
+	if _, err := s.changeAppProtection(ctx, store, acct, app, want, "manifest"); err != nil {
+		s.log.ErrorContext(ctx, "apply manifest protection", "app_id", app.ID, "err", err)
+		return api.ErrCapacity("could not apply the manifest's protection key")
+	}
+	return nil
 }
 
 // protectionRemoveOrder deletes dependents first: the alerts and the gate
