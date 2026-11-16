@@ -105,7 +105,7 @@ func debugUsage(help bool) string {
 	return strings.Join(lines, "\n")
 }
 
-const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|trace|inspect|replay> ..."
+const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|trace|inspect|replay> ... (a bare `debug requests <slug>` lists)"
 
 // debugCmdDocsTopic is the docs topic slug for the debug
 // namespace. Resolves to cli_meta.go's "debug" cliCommand entry;
@@ -241,6 +241,9 @@ func cmdDebugRequests(args []string) int {
 		return cmdDebugRequestsInspect(args[1:])
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
+	}
+	if debugRequestsImpliesList(args) {
+		return cmdDebugRequestsList(args)
 	}
 	return printUnknownSubcommand(os.Stderr, "debug requests", cliCommand{Name: "debug", Subcommands: debugRequestsCLISubcommand().Subcommands}, args[0])
 }
@@ -1306,4 +1309,19 @@ func requestLine(method, route string) string {
 		return route
 	}
 	return method + " " + route
+}
+
+// debugRequestsImpliesList reports whether `debug requests` got an app and
+// flags but no subcommand (`debug requests frontend --status 500`): that is
+// `debug requests list`, the command people reach for first (microservices-demo
+// feedback 2026-11-16). A word followed by another positional is still an
+// unknown subcommand, so a typo such as `lst frontend` is reported, not run.
+func debugRequestsImpliesList(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return true
+	}
+	return len(args) == 1 || strings.HasPrefix(args[1], "-")
 }
