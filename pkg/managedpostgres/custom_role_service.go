@@ -167,7 +167,7 @@ func (s *CustomRoleService) find(ctx context.Context, accountID, databaseID, nam
 		}
 	}
 	// A settled delete removes the row.
-	fallback.State = CustomRoleDeleting
+	fallback.State, fallback.LastError = CustomRoleDeleted, ""
 	return fallback, nil
 }
 

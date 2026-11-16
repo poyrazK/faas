@@ -29,6 +29,9 @@ const (
 	// CustomRoleDeleting is removed from the declaration; the row goes away
 	// once the role has been dropped from the database.
 	CustomRoleDeleting CustomRoleState = "deleting"
+	// CustomRoleDeleted is never stored: a delete reports it once the role
+	// has been dropped and its row removed.
+	CustomRoleDeleted CustomRoleState = "deleted"
 )
 
 // CustomRolesMax bounds the declared roles of one database.

@@ -51,6 +51,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresUndelete(args[1:])
 	case "previews":
 		return cmdPostgresPreviews(args[1:])
+	case "roles":
+		return cmdPostgresRoles(args[1:])
 	case "compute-policy":
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":
