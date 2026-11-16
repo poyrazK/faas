@@ -78,7 +78,7 @@ func TestPlacementOnAnUnreportedNodeUsesItsMeasurement(t *testing.T) {
 		t.Fatalf("measured used = %d, want the 2000 MB measurement", got)
 	}
 	// 7000 MB short of the overcommit cap: the cap binds.
-	allowance := 8000 * (api.MeasuredAdmissionMaxOvercommitPercent - 100) / 100
+	allowance := int64(8000 * (api.MeasuredAdmissionMaxOvercommitPercent - 100) / 100)
 	if got := e.UnreportedNodeUsedMB(node, allowance+7000); got != 7000 {
 		t.Fatalf("near the cap used = %d, want 7000", got)
 	}

@@ -74,7 +74,8 @@ func TestIdleLadderDiscountRules(t *testing.T) {
 	admitted, _ := admitUntilRefused(t, l, clock, refresh)
 	ladder := &fakeLadderFrozen{ids: ladderIDs(admitted), asOf: clock.now(), ok: true}
 	l.EnableIdleLadderAdmission(ladder.read)
-	if got, want := l.ReservationDiscountMB("n1"), admitted*api.BillableRAMMB(1024); got != want {
+	bound := measuredCeilingMB * api.IdleLadderReservationDiscountMaxPercent / 100
+	if got, want := l.ReservationDiscountMB("n1"), min(admitted*api.BillableRAMMB(1024), bound); got != want {
 		t.Fatalf("discount for %d VMs = %d MB, want %d", admitted, got, want)
 	}
 	// With all of them left out the node takes more, and once those reach the
@@ -89,7 +90,7 @@ func TestIdleLadderDiscountRules(t *testing.T) {
 		}
 	}
 	ladder.ids, ladder.asOf = ladderIDs(admitted), clock.now()
-	if got, want := l.ReservationDiscountMB("n1"), measuredCeilingMB*api.IdleLadderReservationDiscountMaxPercent/100; got != want {
+	if got, want := l.ReservationDiscountMB("n1"), bound; got != want {
 		t.Fatalf("discount for %d VMs = %d MB, want the %d MB bound", admitted, got, want)
 	}
 	ladder.asOf = clock.now().Add(-time.Hour)
