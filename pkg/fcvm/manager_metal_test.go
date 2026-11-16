@@ -50,14 +50,21 @@ func newMetalManager(t *testing.T, kernel string) *Manager {
 
 func newMetalManagerWithReadyTimeout(t *testing.T, kernel string, readyTimeout time.Duration) *Manager {
 	t.Helper()
-	return NewManager(
+	return withMetalFlatTenantCgroups(NewManager(
 		wire.ExecRunner{},
 		newMetalVMM(t, readyTimeout),
 		Paths{Kernel: kernel},
 		os.Getenv("FAAS_TEST_FC_VERSION"),
 		nil,
 		nil,
-	)
+	))
+}
+
+// withMetalFlatTenantCgroups turns on flat_tenant_cgroups (ADR-20261109172421
+// step 6.5) when FAAS_TEST_FLAT_TENANT_CGROUPS=1, so the metal suite can run
+// with new VMs launched directly under faas-tenant.slice.
+func withMetalFlatTenantCgroups(m *Manager) *Manager {
+	return m.WithFlatTenantCgroups(os.Getenv("FAAS_TEST_FLAT_TENANT_CGROUPS") == "1")
 }
 
 // withCgroupRootAt points cgroupRoot at the real /sys/fs/cgroup for the
