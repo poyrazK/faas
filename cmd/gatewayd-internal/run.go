@@ -1875,6 +1875,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
 		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
 		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).
+		// ADR-20261116120000 §3: a wake a baseline health probe alone causes
+		// is recorded so meterd leaves it unbilled and schedd parks it early.
+		WithPlatformProbeWakeRecorder(platformProbeWakeRecorder(pgStore, log)).
 		// ADR-732: route a fork request only when the fork, its token and
 		// its instance all check out (gateway.ForkTargetFromState), and the
 		// fork's creator still holds the app (forkTargetLoader).
