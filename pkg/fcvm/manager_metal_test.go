@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -415,8 +416,8 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), "mem") })
 
-	// The fence must equal (plan_mb + PerVMOverheadMB) << 20.
-	wantBytes := (memMB + 8) << 20 // 8 = pkg/api.PerVMOverheadMB
+	// The fence must equal api.AppVMMemoryMaxMB(plan_mb) << 20 (ADR-20261116170000).
+	wantBytes := api.AppVMMemoryMaxMB(memMB) << 20
 	body, err := os.ReadFile(filepath.Join(scopeBase, "memory.max"))
 	if err != nil {
 		t.Fatalf("read %s/memory.max: %v", scopeBase, err)
@@ -426,8 +427,8 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 		t.Fatalf("parse memory.max %q: %v", body, err)
 	}
 	if got != int64(wantBytes) {
-		t.Errorf("memory.max = %d, want %d (=%d MiB plan + %d MiB overhead)",
-			got, wantBytes, memMB, 8)
+		t.Errorf("memory.max = %d, want %d (=%d MiB plan + %d MiB overhead + %d MiB headroom)",
+			got, wantBytes, memMB, api.PerVMOverheadMB, api.AppVMHeadroomMB)
 	}
 
 	if err := m.Destroy(ctx, "mem"); err != nil {

@@ -3754,6 +3754,15 @@ var cliCommands = []cliCommand{
 			{Name: "set", Short: "Change a flag's default, description, owner or expiry", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "default", Short: "default value", Value: "value"}, {Name: "description", Short: "flag description", Value: "TEXT"}, {Name: "owner", Short: "who decides about the flag: a team or an email", Value: "TEXT"}, {Name: "expires", Short: "expiry date, or never to clear", Value: "YYYY-MM-DD"}}},
 			{Name: "on", Short: "Enable a flag", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 			{Name: "off", Short: "Disable a flag (a boolean flag's default becomes false)", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "experiments", Short: "Compare the variants of a weighted rule by customer conversion", Subcommands: []cliSub{
+				{Name: "list", Short: "List the environment's experiments", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+				{Name: "create", Short: "Create an experiment on a variant flag's weighted rule", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "flag", Short: "the variant flag", Value: "KEY", Req: true}, {Name: "rule", Short: "the flag's weighted rule ID", Value: "ID", Req: true}, {Name: "control", Short: "the baseline variant", Value: "VARIANT", Req: true}, {Name: "metric", Short: "the conversion event name", Value: "EVENT", Req: true}, {Name: "mixing-lift", Short: "sequential test mixing lift, absolute (default 0.02)", Value: "N"}, {Name: "start", Short: "start at once"}}},
+				{Name: "get", Short: "Show one experiment", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+				{Name: "start", Short: "Start a draft experiment", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+				{Name: "stop", Short: "Stop a running experiment and freeze its results", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+				{Name: "delete", Short: "Delete an experiment that is not running", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+				{Name: "results", Short: "Show each variant's conversion, lift and significance", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			}},
 			{Name: "stale", Short: "List flags that are expired, stale, unused or without an owner", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "all", Short: "list every flag"}}},
 			{Name: "kill", Short: "Serve the code fallback for a flag from the next request", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 			{Name: "unkill", Short: "Revive a killed flag", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
@@ -6205,6 +6214,25 @@ var cliCommands = []cliCommand{
 					"copy: each PR preview environment gets a copy of the database as of its setup, kept across pushes. Code under review can read it; it needs the database's restore window.",
 					"off: previews get no database; existing preview databases go with their pull requests."},
 				Examples: []string{"gregale postgres previews set orders empty", "gregale postgres previews set orders copy"}},
+			{Name: "roles", Short: "Manage custom roles your logins can SET ROLE to (preview)", Subcommands: []cliSub{
+				{Name: "list", Short: "List a database's custom roles", Positionals: []string{"<database>"}},
+				{Name: "create", Short: "Create or replace a NOLOGIN custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
+					{Name: "bypass-rls", Short: "the role bypasses row-level security (refused with Data API or Auth)"},
+					{Name: "grant-to", Short: "access modes whose logins may SET ROLE to it (default migration,read_write)", Value: "MODES"},
+					{Name: "member-of", Short: "custom roles of the database it is a member of", Value: "ROLES"},
+				}, Notes: []string{"Gregale creates the role; no login gets admin rights. Logins switch to it with SET ROLE, which is how tools such as Windmill use their roles.",
+					"Names are lowercase letters, digits and underscores; names starting with gregale, pg_, neon and other provider prefixes are reserved. A database holds at most 16 custom roles; Hobby and above."},
+					Examples: []string{"gregale postgres roles create windmill-db windmill_user", "gregale postgres roles create windmill-db windmill_admin --bypass-rls --member-of windmill_user"}},
+				{Name: "grant", Short: "Let more logins SET ROLE to a custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
+					{Name: "to", Short: "access modes: migration, read_write, read_only", Req: true, Value: "MODES"},
+				}, Examples: []string{"gregale postgres roles grant windmill-db windmill_user --to read_only"}},
+				{Name: "revoke", Short: "Stop logins of access modes from using a custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
+					{Name: "from", Short: "access modes: migration, read_write, read_only", Req: true, Value: "MODES"},
+				}},
+				{Name: "delete", Short: "Drop a custom role; what it owns goes to the schema owner", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
+					{Name: "yes", Short: "skip the typed confirmation"},
+				}},
+			}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
@@ -6821,6 +6849,10 @@ var cliCommands = []cliCommand{
 				{Name: "acknowledge-releases", Short: "accept rolling back across release commands", Bool: true},
 				{Name: "timeout", Short: "wait per service (default 10m)", Value: "DURATION"},
 			}},
+			{Name: "export", Short: "Write the project's services as a plain Compose file", Positionals: []string{"<project>"}, Notes: []string{"Env values stay sealed: each variable is referenced by name, as ${NAME}.", "Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back."}, Flags: []cliFlag{
+				{Name: "format", Short: "output format (compose)", Value: "FORMAT"},
+				{Name: "out", Short: "write to PATH instead of stdout", Value: "PATH"},
+			}, Examples: []string{"gregale project export shop --out compose.yaml"}},
 			{Name: "preview-secrets", Short: "Set or remove a pull request preview value on every service", Notes: []string{"Values are write-only; previews receive them at their next deploy."}, Subcommands: []cliSub{
 				{Name: "set", Short: "Set KEY=VALUE pairs in every service's pr-preview scope", Positionals: []string{"<project>", "[KEY=VALUE...]"}, Flags: []cliFlag{{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin", Bool: true}}},
 				{Name: "unset", Short: "Remove keys from every service's pr-preview scope", Positionals: []string{"<project>", "<KEY...>"}},

@@ -984,6 +984,57 @@ still rejects Task-enabled projects. Hosted, organization and app-scoped
 connections cannot inspect local Task plan paths. See
 [ADR 20261115072125](adr/20261115072125-agent-task-release-review.md).
 
+### Hosted Task release planning from uploads
+
+With `--allow-tool-publishing` and `build-tools`, an unscoped personal hosted
+publishing connection can call `gregale_plan_uploaded_task_tool_deploy`.
+Existing browser publishing/write consent or the personal agent key's native
+deployment authority is required to stage source. Organization, project/app and
+named-environment grants remain excluded. This planning slice supports existing
+default-environment apps and Node web/worker source with Tasks enabled; the
+worker includes `tasks-release.js`. It executes no CLI or customer code.
+
+Create one source upload per app using `gregale_create_source_upload`, upload
+the web and candidate-worker archives, then review:
+
+```json
+{
+  "web": {"app":"reports-web", "upload_id":"<web upload ID>"},
+  "worker": {"app":"reports-candidate", "upload_id":"<worker upload ID>"},
+  "observer_app":"reports-observer",
+  "observer_metric_app":"reports-candidate",
+  "previous_worker_apps":["reports-current"],
+  "release_timeout_seconds":300
+}
+```
+
+Each source can instead supply `files` using the existing bounded inline format.
+Never pass host paths or credentials. The release deadline defaults to 300
+seconds and accepts the native 1–600 second range; no release is started.
+
+The `hosted_task_source_review` response includes separate `source_sha256.web`
+and `.worker`, current `apps` identities/configuration/latest-and-serving
+baselines, web tool permissions, configured Task limits and required owner setup.
+Its `release_fingerprint` covers those facts and is independent of temporary
+upload paths. Optional `expected_source_sha256` on either source refuses changed
+content or modes compared with an earlier hosted review. A native baseline or
+reviewed policy change produces a new fingerprint. Missing or changing source
+fails before a review is returned; native reads cannot certify deployed health.
+
+Uploads are one-time, connection/account/app-bound and retain their existing
+expiry and extraction limits. Staged files are removed after review, including
+on failure. If a reply is lost, re-upload matching source or resubmit inline
+files; do not reuse a consumed archive ID. A disconnect/review retry creates no
+release effects. The tool's idempotent hint is false for this upload lifecycle.
+
+The result is `review_only`, with `ready_to_apply=false` and
+`bindings_verified=false`. Its hosted fingerprint is not a local execution
+fingerprint or an executable publication plan ID. It creates no durable intent,
+approval or invocation grant. Custom readiness-role release policies, database
+bindings, initialized schemas, retained keys and all live readiness checks still
+use their existing owner workflows. Hosted execution remains separate. See
+[ADR 20261116172002](adr/20261116172002-hosted-task-source-review.md).
+
 ### Durable Task release intents
 
 Local `build-tools` connections can save the reviewed Task stack before an owner

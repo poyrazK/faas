@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -108,5 +109,22 @@ func TestRequestHealthSeverity(t *testing.T) {
 				t.Fatalf("%+v", check)
 			}
 		})
+	}
+}
+
+// A release nobody has called since its deploy has no request series; with
+// the gateway's series present for other apps that reads as unexercised, not
+// as unreadable telemetry (prod 2026-11-16: an idle gRPC service read unknown).
+func TestRequestsUnobservedIsUnexercisedNotUnknown(t *testing.T) {
+	e := healthEvidence()
+	e.Metrics = appmetrics.RequestHealth{Source: appmetrics.SourceDegraded, Reason: appmetrics.RequestsUnobservedReason}
+	out := Evaluate(e)
+	check := out.Checks[len(out.Checks)-1]
+	if out.Status != Healthy || check.Reason != appmetrics.RequestsUnobservedReason || check.Status != NotApplicable {
+		t.Fatalf("status=%s check=%+v", out.Status, check)
+	}
+	e.Metrics.Reason = "request_evidence_unavailable"
+	if out := Evaluate(e); out.Status != Unknown {
+		t.Fatalf("missing telemetry must stay unknown: %s", out.Status)
 	}
 }

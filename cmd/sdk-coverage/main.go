@@ -266,6 +266,11 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases, behind the preview-databases
 	// capability until launch.
 	"PUT /v1/postgres/databases/{id}/previews": true,
+	// ADR-20261116213000 custom Postgres roles, behind the
+	// postgres_custom_roles flag until launch.
+	"GET /v1/postgres/databases/{id}/roles":           true,
+	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
+	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -1104,6 +1109,13 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/projects/{slug}/environments/{environment}/flags":                        "PublishProjectFlags",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":               "ProjectFlagVersions",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle":              "ProjectFlagLifecycle",
+	"GET /v1/projects/{slug}/environments/{environment}/experiments":                  "ListProjectFlagExperiments",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments":                 "CreateProjectFlagExperiment",
+	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}":            "GetProjectFlagExperiment",
+	"DELETE /v1/projects/{slug}/environments/{environment}/experiments/{key}":         "DeleteProjectFlagExperiment",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start":     "StartProjectFlagExperiment",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop":      "StopProjectFlagExperiment",
+	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results":    "ProjectFlagExperimentResults",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":              "RollbackProjectFlags",
 	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":           "ResumeEnvironmentAutomation",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":         "InspectProjectFlag",
@@ -1111,6 +1123,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":         "ProjectFlagOutcomes",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote": "PromoteProjectFlagRollout",
 	"GET /v1/runtime/flags":                                                           "RuntimeFlags",
+	"POST /v1/runtime/flags/events":                                                   "RuntimeFlagEvents",
 	"GET /v1/previews":                                                                "ListPreviews",
 	"PUT /v1/previews/{key}":                                                          "JoinPreview",
 	"DELETE /v1/previews/{key}":                                                       "LeavePreview",

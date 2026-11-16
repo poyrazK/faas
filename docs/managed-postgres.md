@@ -434,7 +434,10 @@ the binding reconciler revokes that identity with retry-safe cleanup. The
 response sets `rotation_pending` while the previous identity is still retained;
 retries during that interval reuse the same generation and wake ID. If the app
 has no live deployment or resident instances, the previous identity is queued
-for cleanup immediately.
+for cleanup immediately. The refresh's outbox row stays closed to replay for
+`api.ManagedPostgresRotationRefreshWakeDelay` (5 s), like every other runtime
+restart, so the app's owning scheduler claims the live notification before a
+peer scheduler's replay worker can take it.
 
 ## Neon backend configuration
 

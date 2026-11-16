@@ -15492,6 +15492,12 @@ WHERE id=sqlc.arg(binding_id)::uuid AND state='ready' AND rotation_previous_gene
 
 -- App and binding locks serialize publication, retries and old-worker repair.
 -- Replay terminal handoffs under the same wake ID until retirement is proven.
+-- Like every runtime_config_restart, the row opens to replay only after the
+-- wake delay: every schedd's replay worker polls the outbox, and a row that
+-- opened at once could be claimed by a peer before the app's owner claimed the
+-- live notification. The owner's claim then found the row leased, and the
+-- peer's deferral returned it to a replay the owner never won (production
+-- 2026-11-16: a credential rotation's restart stayed pending for hours).
 -- name: QueueManagedPostgresRotationRefresh :exec
 WITH previous AS (
  SELECT id FROM notification_outbox WHERE channel='runtime_config_restart'
@@ -15499,12 +15505,13 @@ WITH previous AS (
  AND payload::jsonb->>'wake_id'=sqlc.arg(wake_id)::text
  ORDER BY (state IN ('pending','processing')) DESC,id DESC LIMIT 1 FOR UPDATE
 ), retried AS (
- UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp(),
+ UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp()+make_interval(secs=>sqlc.arg(wake_delay_seconds)::double precision),
  claimed_by=NULL,claimed_at=NULL,lease_until=NULL,delivered_at=NULL,last_error=NULL
  WHERE id IN (SELECT id FROM previous) AND state IN ('delivered','dead_letter') RETURNING id,payload
 ), inserted AS (
- INSERT INTO notification_outbox(channel,payload)
- SELECT 'runtime_config_restart',json_build_object('app_id',sqlc.arg(app_id)::text,'wake_id',sqlc.arg(wake_id)::text)::text
+ INSERT INTO notification_outbox(channel,payload,available_at)
+ SELECT 'runtime_config_restart',json_build_object('app_id',sqlc.arg(app_id)::text,'wake_id',sqlc.arg(wake_id)::text)::text,
+ clock_timestamp()+make_interval(secs=>sqlc.arg(wake_delay_seconds)::double precision)
  WHERE NOT EXISTS (SELECT 1 FROM previous) RETURNING id,payload
 )
 SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbox_id',id,'_notification_payload',payload)::text)
@@ -29056,6 +29063,31 @@ JOIN app_tasks t ON t.app_id = target.app_id
 JOIN deployments d ON d.id = t.deployment_id
 WHERE target.id = sqlc.arg(target_id)::text::uuid AND target.app_id = sqlc.arg(app_id)::text::uuid
 ORDER BY t.started_at, t.id;
+
+-- name: ReleaseRunReplacing :many
+-- ADR-20261023181931 amendment: the release task of the deployment that
+-- replaced a rollback target, which ADR-1448 does not count as crossed
+-- because it started while the target served. It is the newest started
+-- release task of another deployment in the target's scope between the
+-- target's creation and the moment it last stopped serving, whose deployment
+-- still served at that moment: it is live, or it stopped serving no earlier
+-- than the target did. A release that served and was rolled back to the
+-- target before then stopped serving earlier, so it is not it.
+SELECT t.deployment_id::text AS deployment_id, d.revision, t.status, t.started_at::timestamptz AS started_at
+FROM deployments target
+JOIN app_tasks t ON t.app_id = target.app_id
+  AND t.kind = 'release'
+  AND t.started_at IS NOT NULL
+  AND t.deployment_id <> target.id
+  AND coalesce(nullif(t.deployment_scope, ''), 'default') = coalesce(nullif(target.scope, ''), 'default')
+  AND t.started_at > target.created_at
+  AND t.started_at <= target.serving_ended_at
+JOIN deployments d ON d.id = t.deployment_id
+  AND (d.status = 'live' OR d.serving_ended_at >= target.serving_ended_at)
+WHERE target.id = sqlc.arg(target_id)::text::uuid AND target.app_id = sqlc.arg(app_id)::text::uuid
+  AND target.serving_ended_at IS NOT NULL
+ORDER BY t.started_at DESC, t.id DESC
+LIMIT 1;
 
 -- name: UncertainReleaseTask :one
 -- ADR-1448 amendment 1: the newest release command of the app scope that

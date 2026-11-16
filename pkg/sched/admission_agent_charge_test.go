@@ -202,8 +202,8 @@ func TestPropertyAgentMeasuredChargeBounds(t *testing.T) {
 					samples.mb[id] = float64(r.Intn(ram + 1))
 				}
 			}
-			if booked := l.ResidentRAMForNode("n1"); booked > 2*measuredCeilingMB {
-				t.Fatalf("trial %d: %d MB booked over twice the ceiling", trial, booked)
+			if booked := l.ResidentRAMForNode("n1"); booked > measuredCeilingMB*api.MeasuredAdmissionMaxOvercommitPercent/100 {
+				t.Fatalf("trial %d: %d MB booked over the overcommit bound", trial, booked)
 			}
 		}
 	}

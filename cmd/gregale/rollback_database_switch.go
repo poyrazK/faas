@@ -71,7 +71,7 @@ func cmdRollbackRestoreDatabases(slug, to string, acknowledge, noWait bool, time
 // releases it undoes, the restore, the writes left in the source database and
 // the downtime.
 func writeDatabaseSwitchPlan(w io.Writer, slug string, p api.Problem) {
-	_, _ = fmt.Fprintln(w, "This rollback undoes release commands that ran after its target last served:")
+	_, _ = fmt.Fprintln(w, "This rollback undoes the release commands that ran since its target's schema:")
 	for _, r := range p.CrossedReleases {
 		ref := r.DeploymentID
 		if r.Revision > 0 {

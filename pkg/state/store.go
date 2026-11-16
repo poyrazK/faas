@@ -2206,6 +2206,10 @@ type Store interface {
 	// ownership-scoped query can otherwise miss a still-running VM on the
 	// node being drained.
 	ListInstancesOnNodeID(ctx context.Context, nodeID string) ([]Instance, error)
+	// ListResidentInstancesOnNodeID is ListInstancesOnNodeID limited to the
+	// instances that hold a VM on the node (ResidentStates), without the
+	// node's parked and terminal history. The operator node detail reads it.
+	ListResidentInstancesOnNodeID(ctx context.Context, nodeID string) ([]Instance, error)
 	// ListInstancesForLifecycleReconciliation returns live instances whose
 	// parent app or account is in a deletion state. It is the durable fallback
 	// for pg_notify: schedd uses it to destroy VMs after a missed notification
