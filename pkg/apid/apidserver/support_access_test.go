@@ -101,8 +101,36 @@ func TestSupportGrantAdmitsOperatorToCoveredRoutesOnly(t *testing.T) {
 	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/rollback", map[string]any{"restore_databases": true}); code != http.StatusForbidden || !strings.Contains(body, "restore_databases") {
 		t.Fatalf("support rollback restoring databases = %d %s, want 403", code, body)
 	}
-	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/deployments/source-ref", map[string]any{"repo": "evil/repo", "ref": "main"}); code != http.StatusForbidden || !strings.Contains(body, "connected repository") {
-		t.Fatalf("support deploy of a foreign repo = %d %s, want 403", code, body)
+	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/deployments/source-ref", map[string]any{"repo": "acme/shop", "ref": "main"}); code != http.StatusForbidden || !strings.Contains(body, "No connected repository") {
+		t.Fatalf("support deploy of an unconnected app = %d %s, want 403", code, body)
+	}
+	if err := f.store.UpsertGithubInstallBinding(t.Context(), state.GitHubBinding{AppID: f.shop.ID, AccountID: f.owner.ID, InstallID: 7, RepoFullName: "acme/shop", ProductionBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	// Only the connected repository at its production branch: a SHA or a
+	// pull-request ref could be a fork commit support wrote itself.
+	for _, tc := range []struct {
+		body map[string]any
+		want string
+	}{
+		{map[string]any{"repo": "evil/repo", "ref": "main"}, "connected repository"},
+		{map[string]any{"repo": "acme/shop", "ref": "refs/pull/1/head"}, "production branch"},
+		{map[string]any{"repo": "acme/shop", "ref": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"}, "production branch"},
+		{map[string]any{"repo": "acme/shop", "ref": "main", "rollback_on_5xx": false}, "rollback_on_5xx"},
+		{map[string]any{"repo": "acme/shop", "ref": "main", "environment": "staging"}, "environment"},
+	} {
+		if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/deployments/source-ref", tc.body); code != http.StatusForbidden || !strings.Contains(body, tc.want) {
+			t.Fatalf("support deploy %v = %d %s, want 403 %q", tc.body, code, body, tc.want)
+		}
+	}
+	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/deployments/source-ref", map[string]any{"repo": "acme/shop", "ref": "refs/heads/main"}); code == http.StatusForbidden || code == http.StatusNotFound {
+		t.Fatalf("support deploy of the production branch = %d %s, want it admitted", code, body)
+	}
+	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/rollback", map[string]any{"alert_rule_id": "x"}); code != http.StatusForbidden || !strings.Contains(body, "alert_rule_id") {
+		t.Fatalf("support rollback with alert attribution = %d %s, want 403", code, body)
+	}
+	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/restart", map[string]any{"replicas": 3}); code != http.StatusForbidden {
+		t.Fatalf("support restart with a body = %d %s, want 403", code, body)
 	}
 	code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/restart", nil)
 	if code == http.StatusForbidden || code == http.StatusNotFound || code == http.StatusUnauthorized {
@@ -238,6 +266,15 @@ func TestSupportAccessDashboardPage(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("page lacks %q", want)
 		}
+	}
+	// A link cannot put its own words in a first-party banner.
+	rec = f.env.DoSession(t, f.owner.ID, http.MethodGet, "/dashboard/support-access?error=Email+your+codes+to+evil&done=Hacked", nil, nil)
+	if strings.Contains(rec.Body.String(), "evil") || strings.Contains(rec.Body.String(), "Hacked") {
+		t.Fatalf("page echoes query text: %s", rec.Body.String())
+	}
+	rec = f.env.DoSession(t, f.owner.ID, http.MethodGet, "/dashboard/support-access?done=revoked", nil, nil)
+	if !strings.Contains(rec.Body.String(), "Support access revoked.") {
+		t.Fatal("page lacks the fixed revoked message")
 	}
 	rec = f.env.DoSession(t, f.developer.ID, http.MethodGet, "/dashboard/support-access", nil, nil)
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "stuck deploy") {

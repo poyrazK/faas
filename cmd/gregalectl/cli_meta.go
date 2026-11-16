@@ -137,9 +137,9 @@ var cliCommands = []cliCommand{
 			{Name: "status", Short: "Show an app's latest deployment under a grant", Flags: []cliFlag{
 				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
 			}},
-			{Name: "deploy", Short: "Build and deploy the app's connected repository at a ref", Flags: []cliFlag{
+			{Name: "deploy", Short: "Build and deploy the app's connected repository at its production branch", Flags: []cliFlag{
 				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
-				{Name: "repo", Short: "connected GitHub repository (owner/name)", Req: true}, {Name: "ref", Short: "commit, branch or tag", Req: true},
+				{Name: "repo", Short: "connected GitHub repository (owner/name)", Req: true}, {Name: "ref", Short: "the app's production branch", Req: true},
 				{Name: "reason", Short: "reason recorded on the deployment"},
 			}},
 			{Name: "retry", Short: "Retry a deployment from a stage", Flags: []cliFlag{

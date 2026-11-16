@@ -26,13 +26,20 @@ WHERE g.id = sqlc.arg(id)::uuid AND g.revoked_at IS NULL AND g.expires_at > now(
                  AND m.removed_at IS NULL AND m.role IN ('owner', 'admin'))
        OR (o.personal_org AND o.personal_owner_account_id = g.created_by_account_id));
 
+-- Every live grant of the organization, then its most recent ended ones, so
+-- a long-lived grant never drops out of view behind newer history.
 -- name: ListGrants :many
-SELECT g.id, g.org_id, g.app_ids, g.created_by_account_id, g.request_id, g.reason, g.created_at, g.expires_at,
-       g.revoked_at, g.revoked_by_account_id, o.slug AS org_slug
-FROM support_grants g JOIN orgs o ON o.id = g.org_id
-WHERE g.org_id = sqlc.arg(org_id)::uuid
-ORDER BY g.created_at DESC
-LIMIT 50;
+(SELECT g.id, g.org_id, g.app_ids, g.created_by_account_id, g.request_id, g.reason, g.created_at, g.expires_at,
+        g.revoked_at, g.revoked_by_account_id, o.slug AS org_slug
+ FROM support_grants g JOIN orgs o ON o.id = g.org_id
+ WHERE g.org_id = sqlc.arg(org_id)::uuid AND g.revoked_at IS NULL AND g.expires_at > now())
+UNION ALL
+(SELECT g.id, g.org_id, g.app_ids, g.created_by_account_id, g.request_id, g.reason, g.created_at, g.expires_at,
+        g.revoked_at, g.revoked_by_account_id, o.slug AS org_slug
+ FROM support_grants g JOIN orgs o ON o.id = g.org_id
+ WHERE g.org_id = sqlc.arg(org_id)::uuid AND (g.revoked_at IS NOT NULL OR g.expires_at <= now())
+ ORDER BY g.created_at DESC
+ LIMIT sqlc.arg(history_limit)::int);
 
 -- name: ListLiveGrants :many
 SELECT g.id, g.org_id, g.app_ids, g.created_by_account_id, g.request_id, g.reason, g.created_at, g.expires_at,
@@ -48,12 +55,19 @@ SET revoked_at = clock_timestamp(), revoked_by_account_id = sqlc.arg(revoked_by)
 WHERE id = sqlc.arg(id)::uuid AND org_id = sqlc.arg(org_id)::uuid
   AND revoked_at IS NULL AND expires_at > now();
 
--- At most three open, unexpired requests per organization.
+-- LockOrgRequests serializes request creation per organization, so the open
+-- request cap holds under concurrent requests.
+-- name: LockOrgRequests :exec
+SELECT pg_advisory_xact_lock(hashtextextended('support_grant_requests:' || sqlc.arg(org_id)::uuid::text, 0));
+
+-- At most max_open open, unexpired requests per organization; run under
+-- LockOrgRequests in the same transaction.
 -- name: InsertRequest :one
 INSERT INTO support_grant_requests (org_id, operator_account_id, reason, expires_at)
-SELECT sqlc.arg(org_id)::uuid, sqlc.arg(operator_id)::uuid, sqlc.arg(reason)::text, clock_timestamp() + interval '24 hours'
+SELECT sqlc.arg(org_id)::uuid, sqlc.arg(operator_id)::uuid, sqlc.arg(reason)::text,
+       clock_timestamp() + make_interval(secs => sqlc.arg(ttl_seconds)::double precision)
 WHERE (SELECT count(*) FROM support_grant_requests r
-       WHERE r.org_id = sqlc.arg(org_id)::uuid AND r.status = 'open' AND r.expires_at > now()) < 3
+       WHERE r.org_id = sqlc.arg(org_id)::uuid AND r.status = 'open' AND r.expires_at > now()) < sqlc.arg(max_open)::int
 RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id;
 
 -- name: ListRequests :many

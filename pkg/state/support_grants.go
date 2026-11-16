@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -111,9 +112,16 @@ var (
 	_ SupportGrantStore = (*PgStore)(nil)
 )
 
+// ValidSupportReason reports whether reason has an allowed length in
+// characters, the unit of the tables' char_length CHECKs.
+func ValidSupportReason(reason string) bool {
+	n := utf8.RuneCountInString(reason)
+	return n >= api.SupportReasonMinChars && n <= api.SupportReasonMaxChars
+}
+
 // ValidSupportGrant checks a grant before it is stored.
 func ValidSupportGrant(g NewSupportGrant) error {
-	if g.OrgID == "" || g.CreatedBy == "" || len(g.Reason) < 3 || len(g.Reason) > 400 ||
+	if g.OrgID == "" || g.CreatedBy == "" || !ValidSupportReason(g.Reason) ||
 		g.TTL <= 0 || g.TTL > SupportGrantMaxTTL || len(g.AppIDs) > SupportGrantMaxApps {
 		return ErrInvalidArgument
 	}
@@ -123,10 +131,6 @@ func ValidSupportGrant(g NewSupportGrant) error {
 		}
 	}
 	return nil
-}
-
-func validSupportRequestReason(reason string) bool {
-	return len(reason) >= 3 && len(reason) <= 400
 }
 
 // ---- MemStore ----
@@ -204,10 +208,18 @@ func (m *MemStore) supportGrantUsableLocked(grant SupportGrant) bool {
 	return ok && mem.RemovedAt == nil && (mem.Role == OrgRoleOwner || mem.Role == OrgRoleAdmin)
 }
 
+// ListSupportGrants lists every live grant of the organization, then its
+// most recent ended ones, as the ListGrants query does.
 func (m *MemStore) ListSupportGrants(_ context.Context, orgID string) ([]SupportGrant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.listSupportGrantsLocked(func(g SupportGrant) bool { return g.OrgID == orgID }, false), nil
+	now := time.Now()
+	out := m.listSupportGrantsLocked(func(g SupportGrant) bool { return g.OrgID == orgID && g.Live(now) }, false)
+	ended := m.listSupportGrantsLocked(func(g SupportGrant) bool { return g.OrgID == orgID && !g.Live(now) }, false)
+	if len(ended) > api.SupportGrantHistoryLimit {
+		ended = ended[:api.SupportGrantHistoryLimit]
+	}
+	return append(out, ended...), nil
 }
 
 func (m *MemStore) ListLiveSupportGrants(context.Context) ([]SupportGrant, error) {
@@ -250,7 +262,7 @@ func (m *MemStore) RevokeSupportGrant(_ context.Context, orgID, id, revokedBy st
 func (m *MemStore) CreateSupportGrantRequest(_ context.Context, orgID, operatorID, reason string) (SupportGrantRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !validSupportRequestReason(reason) || operatorID == "" {
+	if !ValidSupportReason(reason) || operatorID == "" {
 		return SupportGrantRequest{}, ErrInvalidArgument
 	}
 	if _, ok := m.orgs[orgID]; !ok {
@@ -413,7 +425,7 @@ func (s *PgStore) ListSupportGrants(ctx context.Context, orgID string) ([]Suppor
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	rows, err := grantsql.New().ListGrants(ctx, s.pool, org)
+	rows, err := grantsql.New().ListGrants(ctx, s.pool, grantsql.ListGrantsParams{OrgID: org, HistoryLimit: api.SupportGrantHistoryLimit})
 	if err != nil {
 		return nil, fmt.Errorf("state: list support grants: %w", mapErr(err))
 	}
@@ -454,7 +466,7 @@ func (s *PgStore) RevokeSupportGrant(ctx context.Context, orgID, id, revokedBy s
 }
 
 func (s *PgStore) CreateSupportGrantRequest(ctx context.Context, orgID, operatorID, reason string) (SupportGrantRequest, error) {
-	if !validSupportRequestReason(reason) {
+	if !ValidSupportReason(reason) {
 		return SupportGrantRequest{}, ErrInvalidArgument
 	}
 	org, err1 := parsePgUUID(orgID)
@@ -462,7 +474,19 @@ func (s *PgStore) CreateSupportGrantRequest(ctx context.Context, orgID, operator
 	if err1 != nil || err2 != nil {
 		return SupportGrantRequest{}, ErrInvalidArgument
 	}
-	row, err := grantsql.New().InsertRequest(ctx, s.pool, grantsql.InsertRequestParams{OrgID: org, OperatorID: operator, Reason: reason})
+	var row grantsql.SupportGrantRequest
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := grantsql.New()
+		if err := q.LockOrgRequests(ctx, tx, org); err != nil {
+			return err
+		}
+		var err error
+		row, err = q.InsertRequest(ctx, tx, grantsql.InsertRequestParams{
+			OrgID: org, OperatorID: operator, Reason: reason,
+			TtlSeconds: SupportGrantRequestTTL.Seconds(), MaxOpen: SupportGrantMaxOpenRequests,
+		})
+		return err
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SupportGrantRequest{}, ErrSupportRequestLimit
 	}

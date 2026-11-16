@@ -105,7 +105,7 @@ func cmdSupportAccessAct(action string, args []string) int {
 	fs.StringVar(&f.grant, "grant", "", "support grant id (gregalectl support-access grants)")
 	fs.StringVar(&f.app, "app", "", "app slug")
 	fs.StringVar(&f.repo, "repo", "", "deploy: the app's connected GitHub repository (owner/name)")
-	fs.StringVar(&f.ref, "ref", "", "deploy: commit SHA, branch or tag")
+	fs.StringVar(&f.ref, "ref", "", "deploy: the app's production branch (the only ref a grant allows)")
 	fs.StringVar(&f.deployment, "deployment", "", "retry/cancel: deployment id")
 	fs.StringVar(&f.fromStage, "from-stage", "build", "retry: stage to retry from")
 	fs.StringVar(&f.to, "to", "", "rollback: target deployment id (default: the previous one)")

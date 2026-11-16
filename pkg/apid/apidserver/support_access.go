@@ -173,26 +173,50 @@ func (s *server) verifySupportRequest(r *http.Request, grantID string) (state.Ac
 // supportBodyLimit bounds the bodies the gate reads before the handler.
 const supportBodyLimit = 1 << 20
 
-// checkSupportRequestBody refuses deploy and rollback fields that would
-// weaken a customer control or reach beyond the app's own code: another
-// repository, a freeze override, release notifications to other addresses,
-// a task migration override, or restoring databases on rollback.
+// supportBodyFields is the closed set of JSON fields each support write may
+// send. Anything else, including a field added to the request later, is
+// refused until it is reviewed: a support grant never turns off a customer
+// control (health checks, rollback on 5xx, canaries, freezes, triggers),
+// picks another environment, notifies other addresses, restores databases or
+// attributes the change to someone else.
+var supportBodyFields = map[string]map[string]bool{
+	"POST /v1/apps/{slug}/deployments/source-ref":  {"repo": true, "ref": true, "reason": true},
+	"POST /v1/apps/{slug}/rollback":                {"target_deployment_id": true, "expected_current_deployment_id": true, "reason": true},
+	"POST /v1/deployments/{id}/retry":              {"from_stage": true},
+	"POST /v1/apps/{slug}/deployments/{id}/cancel": {},
+	"POST /v1/apps/{slug}/restart":                 {},
+}
+
+// checkSupportRequestBody applies supportBodyFields, and limits a source
+// deploy to the app's connected repository at its production branch.
 func (s *server) checkSupportRequestBody(r *http.Request, _ state.Account) *api.Problem {
-	var check func([]byte) *api.Problem
-	switch r.Pattern {
-	case "POST /v1/apps/{slug}/deployments/source-ref":
-		check = func(body []byte) *api.Problem { return s.checkSupportSourceRef(r, body) }
-	case "POST /v1/apps/{slug}/rollback":
-		check = checkSupportRollback
-	default:
-		return nil
+	allowed, ok := supportBodyFields[r.Pattern]
+	if !ok {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			return nil
+		}
+		return supportRefusal(r.Pattern)
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, supportBodyLimit+1))
 	if err != nil || len(body) > supportBodyLimit {
 		return api.ErrValidation("request body unreadable or too large")
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	return check(body)
+	fields := map[string]json.RawMessage{}
+	if len(bytes.TrimSpace(body)) > 0 {
+		if err := json.Unmarshal(body, &fields); err != nil {
+			return api.ErrValidation("invalid JSON body")
+		}
+	}
+	for name := range fields {
+		if !allowed[name] {
+			return supportRefusal(name)
+		}
+	}
+	if r.Pattern == "POST /v1/apps/{slug}/deployments/source-ref" {
+		return s.checkSupportSourceRef(r, body)
+	}
+	return nil
 }
 
 func supportRefusal(field string) *api.Problem {
@@ -200,43 +224,31 @@ func supportRefusal(field string) *api.Problem {
 		field+" cannot be used under a support grant; ask the customer to do it")
 }
 
+// checkSupportSourceRef admits a source deploy only of the app's connected
+// repository at its production branch. A commit SHA or another ref could
+// name code support wrote itself: GitHub serves a fork's pull-request
+// commits through the base repository.
 func (s *server) checkSupportSourceRef(r *http.Request, body []byte) *api.Problem {
 	var req api.SourceRefDeployRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return api.ErrValidation("invalid JSON body")
-	}
-	switch {
-	case req.OverrideFreeze != "":
-		return supportRefusal("override_freeze")
-	case req.MCPTaskMigrationOverride:
-		return supportRefusal("mcp_task_migration_override")
-	case len(req.ReleaseNotify) > 0:
-		return supportRefusal("release_notify")
-	case req.DeployedBy != "":
-		return supportRefusal("deployed_by")
 	}
 	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
 	if err != nil {
 		return nil // the app lookup answers not-found next
 	}
 	binding, err := s.store.GitHubBindingForApp(r.Context(), app.ID)
-	if err != nil || binding.RepoFullName == "" || !strings.EqualFold(binding.RepoFullName, strings.TrimSpace(req.Repo)) {
+	if err != nil || binding.RepoFullName == "" || binding.ProductionBranch == "" {
+		return api.NewProblem(http.StatusForbidden, api.CodeForbidden, "No connected repository",
+			"under a support grant, source deploys build the app's connected GitHub repository at its production branch; this app has none")
+	}
+	if !strings.EqualFold(binding.RepoFullName, strings.TrimSpace(req.Repo)) {
 		return api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Only the connected repository",
 			"under a support grant, source deploys build the app's connected GitHub repository only")
 	}
-	return nil
-}
-
-func checkSupportRollback(body []byte) *api.Problem {
-	if len(bytes.TrimSpace(body)) == 0 {
-		return nil
-	}
-	var req api.RollbackRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return api.ErrValidation("invalid JSON body")
-	}
-	if req.RestoreDatabases {
-		return supportRefusal("restore_databases")
+	if ref := strings.TrimPrefix(strings.TrimSpace(req.Ref), "refs/heads/"); ref != binding.ProductionBranch {
+		return api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Only the production branch",
+			"under a support grant, source deploys build the production branch "+binding.ProductionBranch+" only; a commit or another ref needs the customer")
 	}
 	return nil
 }

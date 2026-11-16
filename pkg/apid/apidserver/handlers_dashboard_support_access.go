@@ -5,7 +5,6 @@ package apidserver
 
 import (
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -55,7 +54,7 @@ func (s *server) renderSupportAccessDashboard(w http.ResponseWriter, r *http.Req
 		return
 	}
 	actor := actorAccount(r, acct)
-	data := dashboard.SupportAccessData{Flash: r.URL.Query().Get("done"), Error: r.URL.Query().Get("error")}
+	data := dashboard.SupportAccessData{Flash: supportAccessDone[r.URL.Query().Get("done")], Error: supportAccessErrors[r.URL.Query().Get("error")]}
 	for _, org := range s.supportManagedOrgs(r, actor) {
 		access, err := svc.Overview(r.Context(), org)
 		if err != nil {
@@ -105,11 +104,43 @@ func (s *server) dashboardSupportAccessPost(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	prob, done := s.applySupportAccessForm(r, actor, org)
-	target := "/dashboard/support-access?done=" + url.QueryEscape(done)
+	target := "/dashboard/support-access?done=" + done
 	if prob != nil {
-		target = "/dashboard/support-access?error=" + url.QueryEscape(prob.Detail)
+		target = "/dashboard/support-access?error=" + supportAccessErrorKey(prob)
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// The page shows only these fixed messages: a link cannot put its own text
+// in a first-party banner.
+var supportAccessDone = map[string]string{
+	"granted":  "Support access granted.",
+	"approved": "Request approved. Gregale support has access until the time shown.",
+	"revoked":  "Support access revoked.",
+	"declined": "Request declined.",
+}
+
+var supportAccessErrors = map[string]string{
+	"invalid":   "That did not work: check the app slugs, the duration and the reason.",
+	"forbidden": "That did not work: support access is not available, or you cannot change it.",
+	"not_found": "That grant or request no longer exists, or has already ended or been decided.",
+	"conflict":  "That did not work: the request limit was reached.",
+	"failed":    "That did not work. Try again in a moment.",
+}
+
+func supportAccessErrorKey(prob *api.Problem) string {
+	switch prob.Status {
+	case http.StatusBadRequest:
+		return "invalid"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusConflict:
+		return "conflict"
+	default:
+		return "failed"
+	}
 }
 
 func (s *server) applySupportAccessForm(r *http.Request, actor state.Account, org state.Org) (*api.Problem, string) {
@@ -118,15 +149,15 @@ func (s *server) applySupportAccessForm(r *http.Request, actor state.Account, or
 	id := r.PathValue("id")
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/revoke"):
-		return svc.Revoke(ctx, actor, org, id), "Support access revoked."
+		return svc.Revoke(ctx, actor, org, id), "revoked"
 	case strings.HasSuffix(r.URL.Path, "/decline"):
-		return svc.Decline(ctx, actor, org, id), "Request declined."
+		return svc.Decline(ctx, actor, org, id), "declined"
 	case strings.HasSuffix(r.URL.Path, "/approve"):
 		_, prob := svc.Approve(ctx, actor, org, id, supportGrantForm(r))
-		return prob, "Request approved. Gregale support has access until the time shown."
+		return prob, "approved"
 	default:
 		_, prob := svc.Grant(ctx, actor, org, supportGrantForm(r))
-		return prob, "Support access granted."
+		return prob, "granted"
 	}
 }
 

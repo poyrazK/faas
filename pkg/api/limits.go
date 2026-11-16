@@ -312,6 +312,13 @@ const (
 	SupportGrantRequestTTL      = 24 * time.Hour
 	SupportGrantMaxOpenRequests = 3
 	SupportActionMailInterval   = 10 * time.Minute
+	// SupportGrantHistoryLimit is how many ended grants an organization's
+	// support-access view lists after every live one.
+	SupportGrantHistoryLimit = 50
+	// SupportReasonMinChars and SupportReasonMaxChars bound a grant's or a
+	// request's reason, in characters.
+	SupportReasonMinChars = 3
+	SupportReasonMaxChars = 400
 )
 
 // EmailChangeRevertWindow is how long after a confirmed sign-in email

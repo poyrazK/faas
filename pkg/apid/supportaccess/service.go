@@ -7,6 +7,7 @@ package supportaccess
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -48,6 +49,8 @@ type Service struct{ d Deps }
 func New(d Deps) *Service { return &Service{d: d} }
 
 func (s *Service) enabled(orgID string) bool { return s.d.Enabled != nil && s.d.Enabled(orgID) }
+
+var reasonRule = fmt.Sprintf("reason must be %d to %d characters", api.SupportReasonMinChars, api.SupportReasonMaxChars)
 
 var errDisabled = api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Support access is not available",
 	"support access grants are not enabled for this organization")
@@ -118,8 +121,8 @@ func (s *Service) Request(ctx context.Context, operator state.Account, orgSlug, 
 		return api.SupportAccessRequest{}, errDisabled
 	}
 	reason = strings.TrimSpace(reason)
-	if len(reason) < 3 || len(reason) > 400 {
-		return api.SupportAccessRequest{}, api.ErrValidation("reason must be 3 to 400 characters; the customer reads it")
+	if !state.ValidSupportReason(reason) {
+		return api.SupportAccessRequest{}, api.ErrValidation(reasonRule + "; the customer reads it")
 	}
 	req, err := s.d.Store.CreateSupportGrantRequest(ctx, org.ID, operator.ID, reason)
 	if err != nil {
@@ -181,17 +184,17 @@ func (s *Service) newGrant(ctx context.Context, actor state.Account, org state.O
 		ttl = time.Duration(in.TTLHours) * time.Hour
 	}
 	if ttl <= 0 || ttl > api.SupportGrantMaxTTL {
-		return state.NewSupportGrant{}, api.ErrValidation("ttl_hours must be 1 to 168 (7 days)")
+		return state.NewSupportGrant{}, api.ErrValidation(fmt.Sprintf("ttl_hours must be 1 to %d", int(api.SupportGrantMaxTTL/time.Hour)))
 	}
 	reason := strings.TrimSpace(in.Reason)
 	if reason == "" {
 		reason = "Granted by " + accountLabel(actor)
 	}
-	if len(reason) < 3 || len(reason) > 400 {
-		return state.NewSupportGrant{}, api.ErrValidation("reason must be 3 to 400 characters")
+	if !state.ValidSupportReason(reason) {
+		return state.NewSupportGrant{}, api.ErrValidation(reasonRule)
 	}
 	if len(in.Apps) > api.SupportGrantMaxApps {
-		return state.NewSupportGrant{}, api.ErrValidation("a grant names at most 100 apps; leave apps empty to cover every app")
+		return state.NewSupportGrant{}, api.ErrValidation(fmt.Sprintf("a grant names at most %d apps; leave apps empty to cover every app", api.SupportGrantMaxApps))
 	}
 	grant := state.NewSupportGrant{OrgID: org.ID, CreatedBy: actor.ID, RequestID: requestID, Reason: reason, TTL: ttl}
 	for _, slug := range in.Apps {
@@ -287,7 +290,7 @@ func storeProblem(err error, what string) *api.Problem {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such open grant or request in this organization")
 	case errors.Is(err, state.ErrSupportRequestLimit):
 		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Too many open requests",
-			"this organization already has 3 open support access requests; wait for a decision")
+			fmt.Sprintf("this organization already has %d open support access requests; wait for a decision", api.SupportGrantMaxOpenRequests))
 	case errors.Is(err, state.ErrInvalidArgument):
 		return api.ErrValidation(what + ": invalid grant")
 	default:

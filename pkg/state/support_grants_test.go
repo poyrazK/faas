@@ -3,6 +3,8 @@ package state_test
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,6 +128,47 @@ func supportGrantLifecycle(t *testing.T, store state.Store) {
 	}
 	if !found {
 		t.Fatal("the approved grant is not listed as live")
+	}
+
+	// Concurrent requests never pass the open-request cap.
+	busy, err := store.CreateOrg(ctx, state.Org{Slug: "support-busy", Name: "Busy", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	created := 0
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := grants.CreateSupportGrantRequest(ctx, busy.ID, operator.Account.ID, "concurrent ask"); err == nil {
+				mu.Lock()
+				created++
+				mu.Unlock()
+			} else if !errors.Is(err, state.ErrSupportRequestLimit) {
+				t.Errorf("concurrent request = %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if created != api.SupportGrantMaxOpenRequests {
+		t.Fatalf("concurrent requests created %d, want %d", created, api.SupportGrantMaxOpenRequests)
+	}
+}
+
+// Reasons are measured in characters, like the tables' char_length CHECKs.
+func TestValidSupportReasonCountsCharacters(t *testing.T) {
+	for reason, want := range map[string]bool{
+		"ab":                     false,
+		"修复":                     false, // 6 bytes, 2 characters
+		"修复了":                    true,
+		strings.Repeat("修", 400): true, // 1200 bytes
+		strings.Repeat("a", 401): false,
+	} {
+		if got := state.ValidSupportReason(reason); got != want {
+			t.Errorf("ValidSupportReason(%d chars) = %v, want %v", len([]rune(reason)), got, want)
+		}
 	}
 }
 

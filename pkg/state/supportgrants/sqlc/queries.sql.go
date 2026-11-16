@@ -132,9 +132,10 @@ func (q *Queries) InsertGrant(ctx context.Context, db DBTX, arg InsertGrantParam
 
 const insertRequest = `-- name: InsertRequest :one
 INSERT INTO support_grant_requests (org_id, operator_account_id, reason, expires_at)
-SELECT $1::uuid, $2::uuid, $3::text, clock_timestamp() + interval '24 hours'
+SELECT $1::uuid, $2::uuid, $3::text,
+       clock_timestamp() + make_interval(secs => $4::double precision)
 WHERE (SELECT count(*) FROM support_grant_requests r
-       WHERE r.org_id = $1::uuid AND r.status = 'open' AND r.expires_at > now()) < 3
+       WHERE r.org_id = $1::uuid AND r.status = 'open' AND r.expires_at > now()) < $5::int
 RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id
 `
 
@@ -142,11 +143,20 @@ type InsertRequestParams struct {
 	OrgID      pgtype.UUID
 	OperatorID pgtype.UUID
 	Reason     string
+	TtlSeconds float64
+	MaxOpen    int32
 }
 
-// At most three open, unexpired requests per organization.
+// At most max_open open, unexpired requests per organization; run under
+// LockOrgRequests in the same transaction.
 func (q *Queries) InsertRequest(ctx context.Context, db DBTX, arg InsertRequestParams) (SupportGrantRequest, error) {
-	row := db.QueryRow(ctx, insertRequest, arg.OrgID, arg.OperatorID, arg.Reason)
+	row := db.QueryRow(ctx, insertRequest,
+		arg.OrgID,
+		arg.OperatorID,
+		arg.Reason,
+		arg.TtlSeconds,
+		arg.MaxOpen,
+	)
 	var i SupportGrantRequest
 	err := row.Scan(
 		&i.ID,
@@ -163,13 +173,23 @@ func (q *Queries) InsertRequest(ctx context.Context, db DBTX, arg InsertRequestP
 }
 
 const listGrants = `-- name: ListGrants :many
-SELECT g.id, g.org_id, g.app_ids, g.created_by_account_id, g.request_id, g.reason, g.created_at, g.expires_at,
-       g.revoked_at, g.revoked_by_account_id, o.slug AS org_slug
-FROM support_grants g JOIN orgs o ON o.id = g.org_id
-WHERE g.org_id = $1::uuid
-ORDER BY g.created_at DESC
-LIMIT 50
+(SELECT g.id, g.org_id, g.app_ids, g.created_by_account_id, g.request_id, g.reason, g.created_at, g.expires_at,
+        g.revoked_at, g.revoked_by_account_id, o.slug AS org_slug
+ FROM support_grants g JOIN orgs o ON o.id = g.org_id
+ WHERE g.org_id = $1::uuid AND g.revoked_at IS NULL AND g.expires_at > now())
+UNION ALL
+(SELECT g.id, g.org_id, g.app_ids, g.created_by_account_id, g.request_id, g.reason, g.created_at, g.expires_at,
+        g.revoked_at, g.revoked_by_account_id, o.slug AS org_slug
+ FROM support_grants g JOIN orgs o ON o.id = g.org_id
+ WHERE g.org_id = $1::uuid AND (g.revoked_at IS NOT NULL OR g.expires_at <= now())
+ ORDER BY g.created_at DESC
+ LIMIT $2::int)
 `
+
+type ListGrantsParams struct {
+	OrgID        pgtype.UUID
+	HistoryLimit int32
+}
 
 type ListGrantsRow struct {
 	ID                 pgtype.UUID
@@ -185,8 +205,10 @@ type ListGrantsRow struct {
 	OrgSlug            string
 }
 
-func (q *Queries) ListGrants(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListGrantsRow, error) {
-	rows, err := db.Query(ctx, listGrants, orgID)
+// Every live grant of the organization, then its most recent ended ones, so
+// a long-lived grant never drops out of view behind newer history.
+func (q *Queries) ListGrants(ctx context.Context, db DBTX, arg ListGrantsParams) ([]ListGrantsRow, error) {
+	rows, err := db.Query(ctx, listGrants, arg.OrgID, arg.HistoryLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -308,6 +330,17 @@ func (q *Queries) ListRequests(ctx context.Context, db DBTX, orgID pgtype.UUID) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockOrgRequests = `-- name: LockOrgRequests :exec
+SELECT pg_advisory_xact_lock(hashtextextended('support_grant_requests:' || $1::uuid::text, 0))
+`
+
+// LockOrgRequests serializes request creation per organization, so the open
+// request cap holds under concurrent requests.
+func (q *Queries) LockOrgRequests(ctx context.Context, db DBTX, orgID pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockOrgRequests, orgID)
+	return err
 }
 
 const revokeGrant = `-- name: RevokeGrant :execrows
