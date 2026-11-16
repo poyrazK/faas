@@ -41,6 +41,10 @@ type ServiceTCPTarget struct {
 	// IdleTimeout ends a quiet session, so an idle pooled connection keeps
 	// the target awake no longer than an idle HTTP app would stay up.
 	IdleTimeout time.Duration
+	// Redis marks a managed Redis cache (ADR-20261116192126). Its sessions
+	// go through redisSession, which decides idleness from Redis commands
+	// and holds the client connection while the cache parks.
+	Redis bool
 }
 
 // ServiceTCPTargetResolver maps a caller and the service address it dialed
@@ -267,6 +271,10 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 				return "error", "", chaos.ErrTCPConnectTimeout
 			}
 		}
+	}
+	if target.Redis {
+		outcome, reason, woke, err = p.serveRedis(ctx, conn, caller, target, deploymentID, int(dst.Port()))
+		return outcome, reason, err
 	}
 	outcome, reason, woke, err = p.forward(ctx, conn, caller, target, deploymentID, int(dst.Port()))
 	return outcome, reason, err
