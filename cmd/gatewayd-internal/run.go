@@ -510,6 +510,9 @@ type synthAdapter struct {
 	// waking an instance without delivering the envelope leaves the row
 	// looking completed while the guest never sees a request.
 	forward func(gateway.Target) http.Handler
+	// requestObserver records each delivered invocation in request metrics
+	// and telemetry (invocation_telemetry.go); nil records nothing.
+	requestObserver *invocationRequestObserver
 }
 
 func (a *synthAdapter) Wake(ctx context.Context, appID string) error { return a.wake(ctx, appID) }
@@ -1073,12 +1076,17 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	req = req.WithContext(gateway.WithEdgeJWTIdentity(req.Context(), gateway.EdgeJWTIdentity{Issuer: inv.EdgeJWTIssuer, Subject: inv.EdgeJWTSubject}))
 
 	rec := httptest.NewRecorder()
+	started := time.Now()
 	if err := serveSyntheticForward(ctx, a.forward(target), rec, req); err != nil {
 		inv.Result = nil
 		return inv, 0, nil, err
 	}
 	if rec.Code == 0 {
 		rec.Code = http.StatusOK
+	}
+	if publish {
+		// A debug mirror replay (publish=false) is a copy, not a delivery.
+		a.observeInvocation(req, target, inv, started, rec.Code)
 	}
 	inv.OutcomeCode = scheduledInvocationOutcomeCode(rec.Header())
 	inv.ResponseRetryAfter = ""
@@ -1189,6 +1197,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// invocationObserver connects the synth adapter's delivered invocations
+	// to the public handler's request recorder once runWithDeps builds it
+	// (invocation_telemetry.go). Nil records nothing.
+	invocationObserver *invocationRequestObserver
 	// credentialMatcher checks consumer keys and fork tokens against their
 	// stored hashes through apid (ADR 20261029202403). Nil compares plain
 	// hashes locally (unit tests).
@@ -1983,10 +1995,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// calls resolve the owner schedd per app via the router — they no
 	// longer dial the legacy single schedd.
 	var synth *synthAdapter
+	deps.invocationObserver = &invocationRequestObserver{}
 	synth = &synthAdapter{
-		backend: backend,
-		store:   pgStore,
-		log:     log,
+		backend:         backend,
+		store:           pgStore,
+		log:             log,
+		requestObserver: deps.invocationObserver,
 		wake: func(ctx context.Context, appID string) error {
 			// wake_id is discarded on the synth path (gaps analysis
 			// 2026-07-23): synthesized requests don't return a
@@ -2941,6 +2955,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// Service calls record request metrics under the target's plan.
 		handler = handler.WithAppPlanResolver(newAppPlanResolver(deps.pgStore))
 	}
+	// Scheduled and queued deliveries record like service calls.
+	deps.invocationObserver.set(handler.RecordServiceRequest)
 	if deps.financialBudgetAdmission == nil && deps.pgStore != nil {
 		deps.financialBudgetAdmission = newFinancialBudgetAdmission(deps.pgStore)
 	}
