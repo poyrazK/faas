@@ -227,6 +227,98 @@ func TestMetalAdoptionRestartKeepsAGuestWhoseSourceWasEvicted(t *testing.T) {
 	adoptionRestartKeepsTheGuest(t, true)
 }
 
+// TestMetalAdoptionRestartKillsARefusedGuest: a guest that passes the
+// adoption proof but that the successor then refuses is killed through its
+// pidfd instead of running on unowned (production fsn-2, 2026-11-12). The
+// refusal stays in the report.
+func TestMetalAdoptionRestartKillsARefusedGuest(t *testing.T) {
+	if os.Getenv("FAAS_ADOPTION_EXPERIMENTS") != "1" {
+		t.Skip("set FAAS_ADOPTION_EXPERIMENTS=1 on a dedicated acceptance host")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("requires root and dedicated Linux KVM")
+	}
+	metalImages(t)
+	dir, err := os.MkdirTemp("/var/tmp", "faas-adoption-restart-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	instance := uuid.NewString()
+	bootUnit, _ := runAdoptionExperimentUnit(t, dir, "boot", instance, false)
+	var guest adoptionExperimentGuest
+	if err := json.Unmarshal(waitAdoptionExperimentFile(t, filepath.Join(dir, "guest.json"), 2*time.Minute), &guest); err != nil {
+		t.Fatal(err)
+	}
+	pidfd, err := unix.PidfdOpen(guest.PID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		adoptionExperimentCleanup(t, guest, pidfd)
+		_ = unix.Close(pidfd)
+		leakcheck.AssertZero(t)
+	})
+	pinned := pinUnitMountNamespace(t, bootUnit)
+	defer func() { _ = pinned.Close() }()
+	if out, err := exec.Command("systemctl", "kill", "--signal=SIGKILL", bootUnit).CombinedOutput(); err != nil {
+		t.Fatalf("crash the old vmmd: %v: %s", err, out)
+	}
+	for i := 0; i < 100 && exec.Command("systemctl", "is-active", "--quiet", bootUnit).Run() == nil; i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	markAdoptionExperimentEgressCircuits(t, dir, instance)
+	_, out := runAdoptionExperimentUnit(t, dir, "adopt", instance, true)
+	t.Logf("successor output:\n%s", out)
+	var result map[string]any
+	if err := json.Unmarshal(waitAdoptionExperimentFile(t, filepath.Join(dir, "adopt.json"), 10*time.Second), &result); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("successor result: %v", result)
+	if result["adopted"] == true || result["refused_reason"] != adoptionRefusedEgressCircuit {
+		t.Fatalf("want the guest refused with %s: %v", adoptionRefusedEgressCircuit, result)
+	}
+	if detail, _ := result["refused_detail"].(string); !strings.Contains(detail, "killed through its pidfd") {
+		t.Fatalf("refusal does not say the guest was killed: %v", result)
+	}
+	if unix.PidfdSendSignal(pidfd, 0, nil, 0) == nil {
+		t.Fatal("the refused guest is still running")
+	}
+}
+
+// markAdoptionExperimentEgressCircuits rewrites the crashed vmmd's record as
+// if the guest had registered egress circuits, which adoption does not
+// rebuild. The guest still passes the proof, so the successor refuses it only
+// after: the same refusal path a guest whose staged files changed takes, on a
+// host whose layer filesystem cannot reflink and so stages no such file.
+func markAdoptionExperimentEgressCircuits(t *testing.T, dir, instance string) {
+	t.Helper()
+	path := filepath.Join(dir, "journal", resourceRecordName(instance))
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r resourceJournalRecord
+	if err := json.Unmarshal(b, &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Adoption == nil || r.Process == nil {
+		t.Fatalf("the record carries no adoption block or process: %s", b)
+	}
+	r.Adoption.Network.EgressCircuits = true
+	if b, err = json.Marshal(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".edit", b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".edit", path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func adoptionRestartKeepsTheGuest(t *testing.T, evictBase bool) {
 	if os.Getenv("FAAS_ADOPTION_EXPERIMENTS") != "1" {
 		t.Skip("set FAAS_ADOPTION_EXPERIMENTS=1 on a dedicated acceptance host")
@@ -350,6 +442,11 @@ func adoptionExperimentAdoptRole(t *testing.T, dir string) {
 	if err != nil {
 		res["error"] = "adopt: " + err.Error()
 		return
+	}
+	for _, v := range rep.Verdicts {
+		if v.Instance == g.Instance && !v.Adoptable {
+			res["refused_reason"], res["refused_detail"] = v.Reason, v.Detail
+		}
 	}
 	res["adopted"] = rep.Adopted == 1 && m.HasInstanceOwnership(g.Instance)
 	pid, ok := m.InstancePID(g.Instance)

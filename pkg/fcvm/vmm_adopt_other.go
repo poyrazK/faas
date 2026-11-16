@@ -11,3 +11,7 @@ import (
 func openAdoptedProcess(resourceProcessIdentity) (*os.Process, func(), error) {
 	return nil, nil, errors.New("adoption is supported only on linux")
 }
+
+func killProvenGuest(resourceProcessIdentity) error {
+	return errors.New("adoption is supported only on linux")
+}
