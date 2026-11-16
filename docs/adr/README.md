@@ -65,6 +65,7 @@
 - [ADR-20261115082128: Structured corrections for CLI flag errors](20261115082128-cli-structured-flag-corrections.md)
 - [ADR-20261115085307: Structured JSON input locations in CLI errors](20261115085307-cli-json-input-locations.md) — accepted; typed input origins and positions, with safe paths and unchanged human diagnostics.
 - [ADR-20261115100510: Structured corrections for unknown CLI commands](20261115100510-cli-structured-command-corrections.md)
+- [ADR-20261115103154: Structured CLI argument-count diagnostics](20261115103154-cli-argument-count-diagnostics.md)
 - [ADR-20261114143410: Structured recovery for CLI Job waits](20261114143410-cli-job-wait-recovery.md) — accepted; Problem diagnostics on stderr, compatible stdout receipts and exact-run, profile-preserving recovery.
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261114181406: Resumable SDK source uploads and acceptance recovery](20261114181406-sdk-resumable-source-uploads.md) — accepted; bounded Node/Python archive streaming, durable portable checkpoints, offset reconciliation, and receipt-only recovery after uncertain deployment submission.
@@ -2439,3 +2440,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)
 - [ADR-20261115194000: Platform alerts for outages and failing crons](20261115194000-platform-alerts.md) — accepted; schedd pauses an HTTP cron after 10 failed runs over 24 h and meterd emails accounts about it and about apps at ≥90% 5xx, unless they have their own error-rate rule
 - [ADR-20261116163508: Customer-granted support access](20261116163508-customer-granted-support-access.md) — accepted, dark behind support_grants; owners/admins grant support deploy, rollback and restart on chosen apps for 24 h (max 7 d), support may request; the operator acts as itself under a fenced, audited, revocable grant.
+
+- [ADR-20261116163708: Hosted read-only Task recovery inspection](20261116163708-hosted-task-recovery-inspection.md) — accepted; opt-in original-requester agent keys inspect native Task checkpoints and recovery guidance without local files, cross-key delegation or execution authority.

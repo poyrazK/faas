@@ -108,6 +108,9 @@ inbox and a browser. The "Not covered" column lists the remaining gaps.
 returns a typed source/line/column, then returned offline help is followed,
 with zero API requests and no invocation submission.
 
+`TestCLIArgumentCountsIsolatedCLI` extends row 156: missing invocation IDs and
+extra flag-only positionals expose counts and offline help without API requests.
+
 `TestCLICommandCorrectionsIsolatedCLI` extends row 156: misspelled invocation
 commands and help topics return canonical argument arrays; following help makes
 zero requests and never replays the failed invocation.

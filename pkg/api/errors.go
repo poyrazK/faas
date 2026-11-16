@@ -3393,7 +3393,7 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		"Too many failed authentication attempts",
 		fmt.Sprintf("The failed-authentication limit was reached. Retry after %d seconds with valid credentials.", retryAfterS)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithHint("Wait for the retry window, then sign in again with valid credentials.").
+		WithHint(fmt.Sprintf("Try again in %d seconds, then sign in with valid credentials.", retryAfterS)).
 		WithDocs(docsBase + "/auth")
 }
 
