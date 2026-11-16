@@ -213,7 +213,7 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 			name: "env-key-violates-grammar",
 			overrides: &CreateDeploymentOverrides{
 				Env: map[string]string{
-					"lower_case": "value",
+					"9-starts-with-digit": "value",
 				},
 			},
 			wantStatus: http.StatusBadRequest,

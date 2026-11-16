@@ -1057,7 +1057,7 @@ func scanStatelessShape(path string) []string {
 			defer func() { _ = f.Close() }() //nolint:errcheck // read-only scan; close is best-effort
 			scanner := bufio.NewScanner(f)
 			for scanner.Scan() {
-				if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(scanner.Text())), "VOLUME ") {
+				if len(statelessshape.StatefulVolume(scanner.Text())) > 0 {
 					out = append(out, p)
 					break
 				}

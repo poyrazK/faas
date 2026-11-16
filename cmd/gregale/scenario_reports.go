@@ -156,7 +156,7 @@ func collectTestValidationForEngine(scenarios map[string]testScenario, manifestD
 					return nil, fmt.Errorf("scenario %q: %w", name, err)
 				}
 			} else if len(scenario.Simulation) == 0 {
-				return nil, fmt.Errorf("scenario %q has no simulation command", name)
+				return nil, errNoSimulationCommand(name)
 			}
 			if _, err := resolveDeploySourceDir(manifestDir, source); err != nil {
 				return nil, fmt.Errorf("scenario %q: %w", name, err)

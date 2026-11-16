@@ -37,6 +37,7 @@ func main() {
 	runtime := flag.String("runtime", "python313", "runtime id (informational)")
 	handlerPath := flag.String("handler", "/app/handler.py", "path to customer handler")
 	flag.Parse()
+	internal.RegisterStatelessRunner("python313-runner")
 	if *runtime != "python313" {
 		log.Printf("warning: --runtime=%s ignored; only python313 is supported by this binary", *runtime)
 	}

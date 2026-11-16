@@ -116,10 +116,12 @@ func run(args []string) (status int) {
 	}()
 	resetCapabilityView()
 	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
+	previousFlagHelpPath := invokedFlagHelpPath
 	defer func() {
 		jsonOutput = previousJSON
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
+		invokedFlagHelpPath = previousFlagHelpPath
 	}()
 	previousRetries := httpReadRetries
 	httpReadRetries = 0
@@ -235,6 +237,10 @@ func run(args []string) (status int) {
 	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
+	invokedFlagHelpPath = ""
+	if jsonOutput {
+		invokedFlagHelpPath = flagDiagnosticInvocationPath(typed)
+	}
 	previousHelpPrinted, previousHelpPath := flagHelpPrinted, helpRequestPath
 	flagHelpPrinted, helpRequestPath = false, ""
 	if jsonUsageHelp {
@@ -326,6 +332,9 @@ func run(args []string) (status int) {
 		// Updating the CLI must work when saved configuration is broken:
 		// a newer CLI may be the fix.
 		return cmdUpdate(args[1:])
+	case "export":
+		// Local integrity checks work without a usable connection profile.
+		return cmdExport(args[1:])
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
 		// via cmdCompletion; the dispatcher is in completion.go. Like help,

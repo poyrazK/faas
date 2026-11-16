@@ -28,6 +28,17 @@ CREATE TABLE crash_captures (
     sealed_key bytea
 );
 
+-- Projection of snapshots, read by OpenCaptureKey for sealed park and warm
+-- snapshots (ADR-20261110210000 slice 3d-3): only the columns secretd reads.
+CREATE TABLE snapshots (
+    id                uuid        NOT NULL PRIMARY KEY,
+    deployment_id     uuid        NOT NULL,
+    created_at        timestamptz NOT NULL,
+    delete_pending    boolean     NOT NULL,
+    sealed_key        bytea,
+    sealed_capture_id uuid
+);
+
 -- Projection of app_secrets: the key and ciphertext OpenAppSecrets reads by
 -- reference (ADR-20261110210000 slice 3d-4).
 CREATE TABLE app_secrets (
@@ -91,10 +102,12 @@ CREATE TABLE deployment_image_preparations (
 );
 
 -- Projection of deployments: which app a deployment belongs to
--- (ADR-20261110210000 slice 3j-2).
+-- (ADR-20261110210000 slice 3j-2), and the registry repositories its builds
+-- may pull (slice 3j-4).
 CREATE TABLE deployments (
-    id     uuid NOT NULL PRIMARY KEY,
-    app_id uuid NOT NULL
+    id                   uuid NOT NULL PRIMARY KEY,
+    app_id               uuid NOT NULL,
+    build_registry_scope text[]
 );
 
 -- Projections of job_registry_credentials and jobs: a job's registry

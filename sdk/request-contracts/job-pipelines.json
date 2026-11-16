@@ -1,0 +1,226 @@
+{
+  "scope": {
+    "base_url": "https://pipeline.test",
+    "account_id": "11111111-1111-4111-8111-111111111111",
+    "app_id": "22222222-2222-4222-8222-222222222222",
+    "app_slug": "imports"
+  },
+  "workflow_run_id": "33333333-3333-4333-8333-333333333333",
+  "root_contract": {
+    "version": 1,
+    "name": "csv-pipeline",
+    "input": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "job_contracts": {
+    "validate": {
+      "version": 1,
+      "name": "csv-validate",
+      "input": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "import": {
+      "version": 1,
+      "name": "csv-import",
+      "input": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "report": {
+      "version": 1,
+      "name": "csv-report",
+      "input": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "job_id": "44444444-4444-4444-8444-444444444444",
+  "job_run_ids": [
+    "55555555-5555-4555-8555-555555555555",
+    "66666666-6666-4666-8666-666666666666",
+    "77777777-7777-4777-8777-777777777777"
+  ],
+  "input": {
+    "n": 2
+  },
+  "output": {
+    "n": 5
+  },
+  "validate_receipt": {
+    "intent": {
+      "version": 1,
+      "identity": "8c2c56409f8672ee383d8a8a5d5430492ff6a7d332f521f18db7128962730202",
+      "scope": {
+        "base_url": "https://pipeline.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "workflow_run_id": "33333333-3333-4333-8333-333333333333",
+      "step": "validate",
+      "owner_id": "alice",
+      "pipeline_sha256": "a119d556dd0d30edc13fa16508af2872ddf27f49f34cc256e2ea2e9baea62ee0",
+      "contract_sha256": "72188dfce8aaa9f8ba816d19684b93737a4c3888e63ddd72f40907359e5aecf2",
+      "job_name": "csv-validate",
+      "values_sha256": "e01a95faf75dc761ed1b327d413c9bf404a4d3525b3e898219ed7c8a2ff05bf7",
+      "input_digest": "7cc8ead057d1c5180666d3970b4cb8cdd2159d78ca51cc8c23073acdb2031dfd",
+      "idempotency_key": "pipeline-job:8c2c56409f8672ee383d8a8a5d5430492ff6a7d332f521f18db7128962730202",
+      "inputs": [
+        {
+          "input_id": "one",
+          "binding_sha256": "18c7780f7f5a6d2f29e36bc9d7f0480247f6f753973083ac2f99e958b4b9fdb5",
+          "source_task_index": null
+        }
+      ]
+    },
+    "checkpoint": {
+      "version": 1,
+      "base_url": "https://pipeline.test",
+      "account_id": "11111111-1111-4111-8111-111111111111",
+      "job_id": "44444444-4444-4444-8444-444444444444",
+      "job_name": "csv-validate",
+      "run_id": "55555555-5555-4555-8555-555555555555",
+      "contract_sha256": "72188dfce8aaa9f8ba816d19684b93737a4c3888e63ddd72f40907359e5aecf2",
+      "input_digest": "7cc8ead057d1c5180666d3970b4cb8cdd2159d78ca51cc8c23073acdb2031dfd",
+      "source_run_id": null,
+      "inputs": [
+        {
+          "input_id": "one",
+          "binding_sha256": "18c7780f7f5a6d2f29e36bc9d7f0480247f6f753973083ac2f99e958b4b9fdb5",
+          "source_task_index": null
+        }
+      ]
+    }
+  },
+  "validate_journal": [
+    {
+      "seq": 0,
+      "name": "pipeline/validate/submit",
+      "kind": "step",
+      "status": "succeeded",
+      "attempt": 1,
+      "output": {
+        "identity": "8c2c56409f8672ee383d8a8a5d5430492ff6a7d332f521f18db7128962730202",
+        "values_sha256": "e01a95faf75dc761ed1b327d413c9bf404a4d3525b3e898219ed7c8a2ff05bf7",
+        "contract_sha256": "72188dfce8aaa9f8ba816d19684b93737a4c3888e63ddd72f40907359e5aecf2"
+      }
+    },
+    {
+      "seq": 1,
+      "name": "pipeline/validate/observe",
+      "kind": "step",
+      "status": "succeeded",
+      "attempt": 1,
+      "output": {
+        "state": "succeeded",
+        "result": {
+          "run_id": "55555555-5555-4555-8555-555555555555",
+          "results": [
+            {
+              "input_id": "one",
+              "index": 0,
+              "attempt": 1,
+              "result": {
+                "n": 3
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

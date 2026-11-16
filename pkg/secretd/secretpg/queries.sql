@@ -27,6 +27,13 @@ VALUES (sqlc.arg(node_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(via)::text, sq
 SELECT app_id, sealed_key FROM crash_captures
  WHERE id = sqlc.arg(id)::uuid AND status <> 'expired' AND sealed_key IS NOT NULL;
 
+-- name: SnapshotSealedKey :one
+-- A sealed park or warm snapshot's app and key (ADR-20261110210000 slice
+-- 3d-3), through its deployment.
+SELECT d.app_id, s.sealed_key FROM snapshots s JOIN deployments d ON d.id = s.deployment_id
+ WHERE s.sealed_capture_id = sqlc.arg(id)::uuid AND s.sealed_key IS NOT NULL AND NOT s.delete_pending
+ ORDER BY s.created_at DESC LIMIT 1;
+
 -- name: AppSecretCiphertext :one
 -- The app's own row (ADR-20261110210000 slice 3d-4).
 SELECT ciphertext FROM app_secrets
@@ -76,9 +83,13 @@ SELECT coalesce(image_materialization_lease_owner, '')::text AS owner,
   FROM jobs WHERE id = sqlc.arg(id)::uuid;
 
 -- name: BuildRunner :one
--- The build's app, status, start and claiming node (slice 3j-3).
+-- The build's app, status, start and claiming node (slice 3j-3), and the
+-- registry repositories its deployment may pull (slice 3j-4; not recorded
+-- when NULL).
 SELECT d.app_id, b.status, coalesce(b.started_at, '-infinity'::timestamptz)::timestamptz AS started_at,
-       coalesce(b.builder_node_name, '')::text AS builder_node_name
+       coalesce(b.builder_node_name, '')::text AS builder_node_name,
+       (d.build_registry_scope IS NOT NULL)::boolean AS scope_recorded,
+       coalesce(d.build_registry_scope, '{}'::text[])::text[] AS build_registry_scope
   FROM builds b JOIN deployments d ON d.id = b.deployment_id
  WHERE b.id = sqlc.arg(id)::uuid;
 

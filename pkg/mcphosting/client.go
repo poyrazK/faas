@@ -320,10 +320,25 @@ func (c *Client) Initialize(ctx context.Context) error {
 	return c.InitializeStateless(ctx)
 }
 
-// InitializeStateless performs the MCP initialize handshake for either
-// supported protocol version, sends notifications/initialized, and rejects
-// servers that create a stateful session. It is useful for hosting
-// qualification, where initialization itself is part of the contract.
+// OpenStateless performs the opening exchange of the client's protocol and
+// rejects servers that create a stateful session. Revision 2026-07-28 has no
+// initialize handshake: a server advertises itself with server/discover, and
+// a conforming one refuses initialize (the mcp-node starter answers -32020).
+// Hosting qualification sent initialize on every protocol, so the official
+// starter never passed readiness and never took traffic (prod CLI e2e
+// 2026-11-14). The legacy protocol keeps InitializeStateless.
+func (c *Client) OpenStateless(ctx context.Context) error {
+	if c.Version == ProtocolVersion {
+		_, _, err := c.Discover(ctx)
+		return err
+	}
+	return c.InitializeStateless(ctx)
+}
+
+// InitializeStateless performs the MCP initialize handshake, sends
+// notifications/initialized, and rejects servers that create a stateful
+// session. Only the legacy protocol defines initialize; callers qualifying a
+// server of either version use OpenStateless.
 func (c *Client) InitializeStateless(ctx context.Context) error {
 	if c.Version != ProtocolVersion && c.Version != LegacyProtocolVersion {
 		return fmt.Errorf("unsupported diagnostic protocol version %q", c.Version)

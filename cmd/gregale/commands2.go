@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
@@ -326,6 +327,7 @@ func cmdApp(args []string) int {
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
 	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
 	noHealthPathWakes := fs.Bool("no-health-path-wakes", false, "answer health probes at the edge without waking")
+	settingFlags := registerAppSettingFlags(fs)
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -794,6 +796,9 @@ func cmdApp(args []string) int {
 		v := *overflowNode
 		req.OverflowNode = &v
 	}
+	if err := settingFlags.apply(explicit, &req); err != nil {
+		return printErr("Invalid flags", err)
+	}
 
 	// Any update flag sets a field of req; none means a read. Listing fields
 	// by hand here missed --release-policy and --release-probe-paths, which
@@ -1005,7 +1010,7 @@ func cmdApp(args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
-		return printErr("Could not update app", err)
+		return printErr("Could not update app", explainPerInstanceConcurrencyRefusal(err, explicit["per-instance-concurrency"]))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -1681,6 +1686,17 @@ func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
 // plan's concurrency per VM, which the API enforces.
 func errNegativePerInstanceConcurrency(value int) error {
 	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the plan's concurrency per VM); got %d", value)
+}
+
+// explainPerInstanceConcurrencyRefusal turns the API's dark-launch refusal of
+// per_instance_concurrency, which answers like an unknown field so an N-1
+// apid and this one agree (ADR-20261022203523), into what it means for the
+// caller: the setting is not enabled for this account yet.
+func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
+	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
+		return fmt.Errorf("--per-instance-concurrency is in early access and not enabled for this account; leave it unset to use the plan's concurrency per VM (%w)", err)
+	}
+	return err
 }
 
 const manifestTriggerCleanupTimeout = 10 * time.Second
@@ -2608,7 +2624,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if explicit["preview"] {
 			planFlag = "--preview"
 		}
-		if *diff || *dryRun || *serverDiff || *createOnly || *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+		if *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+			return printErr("Invalid flags", errors.New(planFlag+" previews a single app; for a project run: gregale deploy --project --dry-run"))
+		}
+		if *diff || *dryRun || *serverDiff || *createOnly {
 			return printErr("Invalid flags", errors.New(planFlag+" cannot be combined with deploy mutation or project preview flags"))
 		}
 		if *tarball != "" || *templateName != "" || *repo != "" || *githubSnippet {
@@ -3897,6 +3916,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if workflowErr != nil {
 			return printErr("Workflow manifest validation failed", workflowErr)
 		}
+		previewWorkflows = memberWorkflows(ctx, slug, previewWorkflows)
 		// Project deploys have a different preview contract from a
 		// single-app diff: the apply path is driven by ScanProject, so
 		// preview must use that same planner and render the complete
@@ -3916,6 +3936,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
 		opts.Preview = newCLIPreview("remote comparison", slug, "", source, changes, "Compares current remote settings; build execution and readiness are not verified. State can change before deployment.")
 		deploymentPreviewTargetSources(opts.Preview, contextDir, *name != "", explicit["environment"])
+		opts.TargetLinked = sourceLinkedTo(contextDir, slug)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec
@@ -4108,6 +4129,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err != nil {
 			return printErr("Workflow manifest validation failed", err)
 		}
+		workflowDefs = memberWorkflows(ctx, slug, workflowDefs)
 		sidecarDefs, err = loadExtensionSidecarsManifestForDeploy(ctx, client, sourceDir)
 		if err != nil {
 			return printErr("Extension manifest validation failed", err)
@@ -4117,14 +4139,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Manifest resource scope resolution failed", err)
 	}
-	if existingApp && !projectRequested && !*createOnly {
-		warnMissingRequiredSecrets(ctx, client, slug, manifestScope)
-	}
 	// The deploy session is written after the app is created or updated;
 	// prove it can be before changing anything remotely (#6625).
 	if !*createOnly {
 		if err := preflightDeploySessionStorage(client); err != nil {
 			return printErr("Could not save deploy session", err)
+		}
+	}
+	// A datastore image is refused after the app exists, which left an
+	// empty app counting toward the app quota (prod 2026-11-15: --image
+	// redis). Refuse it here, before anything is created.
+	if *image != "" {
+		if hint, denied := statefuldenylist.Match(*image); denied {
+			return printErr("Stateless-only platform", fmt.Errorf("image %s runs a datastore, which loses its data when the app parks; %s. Nothing was created or deployed", *image, hint))
 		}
 	}
 	resolvedApp := api.AppResponse{}
@@ -4163,6 +4190,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			existingReq := createReq
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
+			}
+			if !*createOnly {
+				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
+					return code
+				}
 			}
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 		}
@@ -4219,6 +4251,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !jsonOutput {
 			PrintOK(osStdout, "Configured %d secret(s) before deployment", len(deploySecrets))
 		}
+	}
+	// After the app exists and --secrets-file values are sealed, so a first
+	// deploy is checked and the file's names count (deploy-path review P10).
+	if !projectRequested {
+		warnMissingRequiredSecrets(ctx, client, slug, manifestScope, sourceDir)
 	}
 
 	// Issue #791 PR-C / ADR-090: gregale.yaml triggers are staged after

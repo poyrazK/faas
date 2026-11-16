@@ -14,10 +14,40 @@ import (
 
 type recordedEgress struct {
 	fanout, flood map[string][]int64
+	internal      map[string]uint64
 }
 
 func newRecordedEgress() *recordedEgress {
-	return &recordedEgress{fanout: map[string][]int64{}, flood: map[string][]int64{}}
+	return &recordedEgress{fanout: map[string][]int64{}, flood: map[string][]int64{}, internal: map[string]uint64{}}
+}
+
+func (r *recordedEgress) RecordInternalEgress(instance string, delta uint64) {
+	r.internal[instance] += delta
+}
+
+// R8-2: the per-namespace poll accumulates the bytes the guest sent to
+// internal destinations, in veth terms, across a counter reset; the first
+// reading is only a baseline.
+func TestEgressNetnsPollerAccumulatesInternalEgress(t *testing.T) {
+	bytesKey := netns.EgressInternalTxCounter + netns.CounterBytesSuffix
+	readings := []map[string]uint64{
+		{netns.EgressInternalTxCounter: 2, bytesKey: 1000}, // baseline
+		{netns.EgressInternalTxCounter: 5, bytesKey: 4000}, // +3000 bytes, +3 packets
+		{netns.EgressInternalTxCounter: 5, bytesKey: 4000}, // +0
+		{netns.EgressInternalTxCounter: 1, bytesKey: 500},  // reset: all new
+	}
+	tick := 0
+	pop := func(context.Context, string) (map[string]uint64, error) { return readings[tick], nil }
+	sink := newRecordedEgress()
+	p := newEgressNetnsPoller(sink, wire.NewOpsMetrics("vmmd"), pop, nil)
+	live := map[string]fcvm.LiveEgressInstance{"i-1": {AppID: "app-1", Netns: "fc-i-1"}}
+	for tick = range readings {
+		p.tick(context.Background(), time.Unix(1_700_000_000+int64(tick)*15, 0), live)
+	}
+	want := uint64(3000+3*netns.EthernetHeaderBytes) + uint64(500+1*netns.EthernetHeaderBytes)
+	if got := sink.internal["i-1"]; got != want {
+		t.Fatalf("internal egress = %d, want %d", got, want)
+	}
 }
 
 func (r *recordedEgress) RecordEgressFanout(instance string, perMinute int64) {

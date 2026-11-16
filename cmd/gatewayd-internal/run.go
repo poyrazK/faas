@@ -1870,6 +1870,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 			return router.toApp(ctx, app)
 		}).
 		WithDeploymentSmokeTargetLoader(newDeploymentSmokeTargetLoader(pgStore)).
+		// ADR 20261114150000 §3: stamp each deployment's killed flags.
+		WithFlagKillLoader(pgStore.FeatureFlagKillsForDeployment).
 		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
 		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
 		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).
@@ -2935,6 +2937,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
 		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations).
 		WithSelectorSuffixes(appsSuffix(deps.domains.Apps), hostidentity.DeploySuffix())
+	if deps.pgStore != nil {
+		// Service calls record request metrics under the target's plan.
+		handler = handler.WithAppPlanResolver(newAppPlanResolver(deps.pgStore))
+	}
 	if deps.financialBudgetAdmission == nil && deps.pgStore != nil {
 		deps.financialBudgetAdmission = newFinancialBudgetAdmission(deps.pgStore)
 	}
@@ -4394,6 +4400,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ObserveTCPAttempt:     chaosMatchRecorder.ObserveTCPAttempt,
 			Forward:               deps.nodeCache.Forwarding(),
 			RawForward:            deps.nodeCache.RawForwarding(),
+			RecordServiceReply:    serviceReplyRecorder(egressSink),
 			ObserveRequest:        handler.RecordServiceRequest,
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
@@ -4431,7 +4438,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		managedCircuitWired = serviceProxyConfig.Breaker != nil
 		controlServices := gateway.NewServiceProxy(serviceProxyConfig)
-		controlMux.Handle("/v1/internal/services/", controlServices)
+		// This proxy is built before the guest listener's caller resolver is
+		// configured, so it trusts X-Faas-Caller-App. Serve it only when the
+		// e2e harness asks; the debug tunnel below uses WakeTarget, not HTTP.
+		if cfg.ControlServiceProxy {
+			controlMux.Handle("/v1/internal/services/", controlServices)
+		}
 		if debugTunnel != nil {
 			debugTunnel.setTargets(controlServices)
 		}
@@ -4484,6 +4496,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
 				return appID, err
 			}, pgStore)
+			// ADR-20261113120824 §3: a function starts the workflow functions
+			// it may call, and reads and signals the runs it started, at
+			// api.svc.gregale/v1/workflow-runs.
+			guestServiceProxy = gateway.WithFunctionWorkflowRunAPI(guestServiceProxy, serviceProxyConfig.ResolveCallerIdentity, pgStore)
 		}
 	}
 

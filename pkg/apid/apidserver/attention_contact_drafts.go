@@ -7,7 +7,7 @@ import (
 )
 
 // attentionDraft is the prefilled contact message for one signal
-// (ADR-20261113180000). Staff edit it before sending; it names only what
+// (ADR-20261115175928). Staff edit it before sending; it names only what
 // the customer can already see in their own dashboard.
 type attentionDraft struct {
 	Subject, Category, Body string
@@ -22,6 +22,8 @@ var attentionDrafts = map[string]attentionDraft{
 		"We noticed that {subject} failed to start several times recently ({detail}). Reply here and we will help you find out why."},
 	api.AttentionKindJobsFailing: {"Scheduled runs of {subject} are failing", "deployment",
 		"The recent scheduled runs of the job {subject} did not succeed ({detail}). Reply here if you would like us to look at the run logs with you."},
+	api.AttentionKindCronsFailing: {"A cron on {subject} keeps failing", "deployment",
+		"The recent runs of the cron {subject} did not succeed ({detail}), and each one still wakes the app. Reply here if you would like us to look at it with you."},
 	api.AttentionKindDomainStuck: {"Your domain {subject} is not serving yet", "deployment",
 		"Your custom domain {subject} is not serving traffic yet ({detail}). Reply here and we will help you check the DNS records and the certificate."},
 	api.AttentionKindRefusedBurst: {"Requests are being refused ({subject})", "other",

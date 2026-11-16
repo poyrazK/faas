@@ -53,6 +53,9 @@ type SyntheticCheckResponse struct {
 	IntervalSeconds int    `json:"interval_seconds"`
 	Enabled         bool   `json:"enabled"`
 	CreatedAt       string `json:"created_at"`
+	// Warning explains why the check cannot pass as configured, e.g. the
+	// app's platform auth refuses the probe, which sends no credential.
+	Warning string `json:"warning,omitempty"`
 	// Results is present on GET /v1/apps/{slug}/synthetics/{id} only.
 	Results *SyntheticCheckResults `json:"results,omitempty"`
 }
@@ -105,7 +108,7 @@ func NormalizeCreateSyntheticCheck(req CreateSyntheticCheckRequest) (CreateSynth
 	case req.TimeoutMS < SyntheticCheckTimeoutMinMS || req.TimeoutMS > SyntheticCheckTimeoutMaxMS:
 		return req, ErrSyntheticCheckInvalid(fmt.Sprintf("timeout_ms must be between %d and %d", SyntheticCheckTimeoutMinMS, SyntheticCheckTimeoutMaxMS))
 	case !slices.Contains(SyntheticCheckIntervalsSeconds, req.IntervalSeconds):
-		return req, ErrSyntheticCheckInvalid(fmt.Sprintf("interval_seconds must be one of %v; shorter intervals would keep the app permanently awake", SyntheticCheckIntervalsSeconds))
+		return req, ErrSyntheticCheckInvalid(fmt.Sprintf("interval_seconds must be one of %v; each probe resets the app's idle timer, so any interval at or under its idle timeout keeps it awake", SyntheticCheckIntervalsSeconds))
 	}
 	return req, nil
 }

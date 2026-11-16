@@ -18,7 +18,7 @@ import re
 import time
 from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -27,11 +27,21 @@ import httpx
 GREGALE_FLAG_EVIDENCE_HEADER = "X-Faas-Flag-Evidence"
 GREGALE_FLAG_CONTEXT_HEADER = "X-Faas-Platform-Tenant-Id"
 GREGALE_FLAG_PROPAGATION_HEADER = "X-Faas-Flag-Context"
+GREGALE_CLIENT_COUNTRY_HEADER = "X-Faas-Client-Country"
+GREGALE_CLIENT_UA_FAMILY_HEADER = "X-Faas-Client-Ua-Family"
+_FLAG_CAPABILITIES = "subject-targeting-v1, attribute-targeting-v1, kill-v1"
+GREGALE_FLAG_KILLS_HEADER = "X-Faas-Flag-Kills"
+_APP_ATTRIBUTE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+_ATTRIBUTE_NAME = re.compile(r"^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$")
+_COUNTRY = re.compile(r"^[A-Z]{2}$")
+_MAX_APP_ATTRIBUTES = 16
+_MAX_CONDITIONS = 8
+_MAX_CONDITION_VALUES = 100
 
 _CUSTOMER_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 _FLAG_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-_FALLBACK_REASONS = {"flag_missing", "configuration_stale", "type_mismatch"}
+_FALLBACK_REASONS = {"flag_missing", "configuration_stale", "type_mismatch", "killed"}
 _DECISION_REASONS = _FALLBACK_REASONS | {"default", "disabled", "customer_missing", "subject_missing", "rule_match"}
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
 _MAX_FLAGS = 100
@@ -92,6 +102,8 @@ class _RequestState:
     evidence: dict[str, dict[str, Any]]
     inherited: dict[str, tuple[dict[str, Any], dict[str, str]]]
     subject: str | None = None
+    attributes: dict[str, str] = field(default_factory=dict)
+    kills: frozenset[str] = frozenset()
 
 
 def flag_bucket(seed: str, key: str, customer: str) -> int:
@@ -127,14 +139,84 @@ def _valid_subject_id(value: Any) -> bool:
     )
 
 
+def parse_kills(value: str | None) -> frozenset[str]:
+    """Parse the gateway's X-Faas-Flag-Kills header: valid keys, at most 100."""
+    keys: list[str] = []
+    for part in (value or "").split(","):
+        key = part.strip()
+        if _FLAG_KEY.fullmatch(key) is not None and key not in keys:
+            keys.append(key)
+            if len(keys) >= _MAX_FLAGS:
+                break
+    return frozenset(keys)
+
+
+def _killed(key: str, flag: Mapping[str, Any] | None, kills: Any) -> bool:
+    return (flag is not None and flag.get("killed") is True) or key in (kills or ())
+
+
+def _valid_attribute_value(value: Any) -> bool:
+    return isinstance(value, str) and 1 <= len(value) <= 128 and all(0x20 <= ord(char) <= 0x7E for char in value)
+
+
+def match_conditions(conditions: Any, attributes: Mapping[str, str] | None) -> bool:
+    """Every condition must hold; a missing or invalid attribute never matches."""
+    for condition in conditions or []:
+        value = (attributes or {}).get(condition.get("attribute"))
+        if not _valid_attribute_value(value):
+            return False
+        op, values = condition.get("op"), condition.get("values", [])
+        if op == "in":
+            if value not in values:
+                return False
+        elif op == "not_in":
+            if value in values:
+                return False
+        elif op == "ends_with":
+            if not any(value.endswith(suffix) for suffix in values):
+                return False
+        else:
+            return False
+    return True
+
+
+def _valid_conditions(conditions: Any) -> bool:
+    if not isinstance(conditions, list) or not 1 <= len(conditions) <= _MAX_CONDITIONS:
+        return False
+    for condition in conditions:
+        if not isinstance(condition, Mapping):
+            return False
+        attribute, op, values = condition.get("attribute"), condition.get("op"), condition.get("values")
+        if (
+            not isinstance(attribute, str)
+            or _ATTRIBUTE_NAME.fullmatch(attribute) is None
+            or op not in ("in", "not_in", "ends_with")
+            or (op == "ends_with" and not attribute.startswith("app."))
+            or not isinstance(values, list)
+            or not 1 <= len(values) <= _MAX_CONDITION_VALUES
+            or not all(_valid_attribute_value(value) for value in values)
+            or len(set(values)) != len(values)
+        ):
+            return False
+    return True
+
+
 def evaluate_flag(
-    bundle: Mapping[str, Any], key: str, customer: str | None, fallback: bool, subject: str | None = None
+    bundle: Mapping[str, Any],
+    key: str,
+    customer: str | None,
+    fallback: bool,
+    subject: str | None = None,
+    attributes: Mapping[str, str] | None = None,
+    kills: Any = None,
 ) -> FlagDecision:
     """Evaluate a boolean flag without I/O using trusted customer identity."""
     version = _bundle_version(bundle)
     if not isinstance(fallback, bool):
         return FlagDecision(key, fallback, version, "type_mismatch", "fallback")
     flag = _find_flag(bundle, key)
+    if _killed(key, flag, kills):
+        return FlagDecision(key, fallback, version, "killed", "fallback")
     if flag is None:
         return FlagDecision(key, fallback, version, "flag_missing", "fallback")
     if flag.get("type") not in (None, "boolean"):
@@ -159,6 +241,8 @@ def evaluate_flag(
             continue
         group = rule.get("group")
         if group and customer not in groups.get(group, []):
+            continue
+        if rule.get("attributes") and not match_conditions(rule["attributes"], attributes):
             continue
         subject_scoped = bool(rule.get("subjects")) or rule.get("rollout_unit") == "subject"
         if subject_scoped and subject is None:
@@ -190,13 +274,21 @@ def evaluate_flag(
 
 
 def evaluate_variant(
-    bundle: Mapping[str, Any], key: str, customer: str | None, fallback: str, subject: str | None = None
+    bundle: Mapping[str, Any],
+    key: str,
+    customer: str | None,
+    fallback: str,
+    subject: str | None = None,
+    attributes: Mapping[str, str] | None = None,
+    kills: Any = None,
 ) -> FlagDecision:
     """Evaluate a named variant with independent rollout and weight buckets."""
     version = _bundle_version(bundle)
     if not isinstance(fallback, str):
         return FlagDecision(key, fallback, version, "type_mismatch", "fallback", type_="variant")
     flag = _find_flag(bundle, key)
+    if _killed(key, flag, kills):
+        return FlagDecision(key, fallback, version, "killed", "fallback", type_="variant")
     if flag is None:
         return FlagDecision(key, fallback, version, "flag_missing", "fallback", type_="variant")
     if flag.get("type") != "variant":
@@ -221,6 +313,8 @@ def evaluate_variant(
             continue
         group = rule.get("group")
         if group and customer not in groups.get(group, []):
+            continue
+        if rule.get("attributes") and not match_conditions(rule["attributes"], attributes):
             continue
         subject_scoped = bool(rule.get("subjects")) or rule.get("rollout_unit") == "subject"
         if subject_scoped and subject is None:
@@ -357,6 +451,7 @@ def validate_bundle(raw: Any) -> dict[str, Any]:
             or key in keys
             or ("type" in flag and flag_type not in ("boolean", "variant"))
             or not isinstance(flag.get("enabled"), bool)
+            or ("killed" in flag and not isinstance(flag.get("killed"), bool))
             or (not isinstance(default, str) if is_variant else not isinstance(default, bool))
             or not isinstance(seed, str)
             or not seed
@@ -403,6 +498,7 @@ def validate_bundle(raw: Any) -> dict[str, Any]:
             subjects = rule.get("subjects")
             rollout = rule.get("rollout")
             rollout_unit = rule.get("rollout_unit")
+            conditions = rule.get("attributes")
             value = rule.get("value")
             subject_scope = bool(subjects) or rollout_unit == "subject"
             valid_rule_value = (
@@ -427,8 +523,9 @@ def validate_bundle(raw: Any) -> dict[str, Any]:
                 )
                 or ("rollout" in rule and (not _is_int(rollout) or not 0 <= rollout <= 10_000))
                 or ("rollout_unit" in rule and (rollout_unit not in ("customer", "subject") or rollout is None))
+                or ("attributes" in rule and not _valid_conditions(conditions))
                 or (subject_scope and (not customers and not group))
-                or (not customers and not group and rollout is None)
+                or (not customers and not group and not conditions and rollout is None)
             ):
                 raise ValueError("Invalid Flags rule")
             rule_ids.add(rule_id)
@@ -728,7 +825,7 @@ class GregaleFlags:
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/json",
                 "Cache-Control": "no-store",
-                "X-Faas-Flags-Capabilities": "subject-targeting-v1",
+                "X-Faas-Flags-Capabilities": _FLAG_CAPABILITIES,
             },
         )
         bundle = validate_bundle(raw_bundle)
@@ -765,7 +862,16 @@ class GregaleFlags:
             if _CUSTOMER_ID.fullmatch(raw_customer) is not None
             else None
         )
+        attributes: dict[str, str] = {}
+        country = _single_header(headers, GREGALE_CLIENT_COUNTRY_HEADER)
+        if _COUNTRY.fullmatch(country) is not None:
+            attributes["gregale.country"] = country
+        ua_family = _single_header(headers, GREGALE_CLIENT_UA_FAMILY_HEADER)
+        if _FLAG_KEY.fullmatch(ua_family) is not None:
+            attributes["gregale.ua_family"] = ua_family
         request = _RequestState(
+            attributes=attributes,
+            kills=parse_kills(_single_header(headers, GREGALE_FLAG_KILLS_HEADER)),
             customer=customer,
             bundle=self._bundle,
             fresh=fresh,
@@ -790,6 +896,29 @@ class GregaleFlags:
         finally:
             self._request.reset(token)
 
+    @asynccontextmanager
+    async def for_attributes(self, attributes: Mapping[str, str]) -> AsyncIterator[GregaleFlags]:
+        """Scope checks to application attributes (app.<name>) after authentication.
+
+        Names are lowercase identifiers; an invalid value is dropped and reads as missing.
+        """
+        request = self._current_request()
+        merged = dict(request.attributes)
+        for name, value in attributes.items():
+            if not isinstance(name, str) or _APP_ATTRIBUTE_NAME.fullmatch(name) is None:
+                raise ValueError(f"Invalid flag attribute name {name!r}")
+            if _valid_attribute_value(value):
+                merged[f"app.{name}"] = value
+            else:
+                merged.pop(f"app.{name}", None)
+        if sum(1 for name in merged if name.startswith("app.")) > _MAX_APP_ATTRIBUTES:
+            raise ValueError(f"At most {_MAX_APP_ATTRIBUTES} application attributes per request")
+        token = self._request.set(replace(request, attributes=merged))
+        try:
+            yield self
+        finally:
+            self._request.reset(token)
+
     def boolean(self, key: str, fallback: bool) -> FlagDecision:
         """Evaluate a boolean flag inside run_request."""
         request = self._current_request()
@@ -799,6 +928,10 @@ class GregaleFlags:
                 return _decision_from_dict(prior)
             return FlagDecision(key, fallback, prior["config_version"], "type_mismatch", "fallback")
 
+        if self._request_killed(request, key):
+            decision = FlagDecision(key, fallback, _bundle_version(request.bundle or {}), "killed", "fallback")
+            self._record_decision(request, decision)
+            return decision
         inherited = request.inherited.get(key)
         if inherited is not None:
             wire, origin = inherited
@@ -809,7 +942,9 @@ class GregaleFlags:
                 decision = FlagDecision(key, fallback, version, "type_mismatch", "fallback")
         else:
             decision = (
-                evaluate_flag(request.bundle, key, request.customer, fallback, request.subject)
+                evaluate_flag(
+                    request.bundle, key, request.customer, fallback, request.subject, request.attributes, request.kills
+                )
                 if request.fresh and request.bundle is not None
                 else FlagDecision(
                     key,
@@ -838,6 +973,12 @@ class GregaleFlags:
                 type_="variant",
             )
 
+        if self._request_killed(request, key):
+            decision = FlagDecision(
+                key, fallback, _bundle_version(request.bundle or {}), "killed", "fallback", type_="variant"
+            )
+            self._record_decision(request, decision)
+            return decision
         inherited = request.inherited.get(key)
         if inherited is not None:
             wire, origin = inherited
@@ -851,7 +992,9 @@ class GregaleFlags:
                 decision = FlagDecision(key, fallback, version, "type_mismatch", "fallback", type_="variant")
         else:
             decision = (
-                evaluate_variant(request.bundle, key, request.customer, fallback, request.subject)
+                evaluate_variant(
+                    request.bundle, key, request.customer, fallback, request.subject, request.attributes, request.kills
+                )
                 if request.fresh and request.bundle is not None
                 else FlagDecision(
                     key,
@@ -864,6 +1007,11 @@ class GregaleFlags:
             )
         self._record_decision(request, decision)
         return decision
+
+    @staticmethod
+    def _request_killed(request: _RequestState, key: str) -> bool:
+        flag = _find_flag(request.bundle, key) if request.fresh and request.bundle is not None else None
+        return _killed(key, flag, request.kills)
 
     def _current_request(self) -> _RequestState:
         request = self._request.get()
@@ -1011,6 +1159,9 @@ __all__ = [
     "GREGALE_FLAG_CONTEXT_HEADER",
     "GREGALE_FLAG_EVIDENCE_HEADER",
     "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GREGALE_CLIENT_COUNTRY_HEADER",
+    "GREGALE_CLIENT_UA_FAMILY_HEADER",
+    "GREGALE_FLAG_KILLS_HEADER",
     "AsyncGregaleFlagsTransport",
     "FlagDecision",
     "GregaleFlags",
@@ -1019,5 +1170,7 @@ __all__ = [
     "evaluate_variant",
     "flag_bucket",
     "flag_variant_bucket",
+    "match_conditions",
+    "parse_kills",
     "validate_bundle",
 ]

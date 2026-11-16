@@ -239,8 +239,15 @@ func (f *registryFetcher) authorize(ctx context.Context, challenge string, auth 
 		return "", 0, errors.New("registry asked for credentials without a bearer realm")
 	}
 	realm, err := url.Parse(ch.Realm())
-	if err != nil || realm.Scheme != "https" && realm.Scheme != "http" {
+	if err != nil || realm.Host == "" {
 		return "", 0, errors.New("registry token realm is not a url")
+	}
+	// The registry picks the realm, and the token request carries the app's
+	// reusable Basic credential: never let it downgrade that to cleartext.
+	// secretd always answers with a credential, so there is no anonymous
+	// http case to allow (oci.RegistryClient enforces the same rule).
+	if !strings.EqualFold(realm.Scheme, "https") {
+		return "", 0, errors.New("registry token realm must use https to receive credentials")
 	}
 	tok, err := oci.FetchToken(ctx, f.hc, registryUserAgent, ch, auth)
 	if err != nil {
@@ -297,7 +304,7 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 		if subject.buildID != "" {
 			// The build pulls with its app's credential; from here on the
 			// subject is that app (caches, budget, audit).
-			if name, nodeID, via, subject.appID, err = s.authorizeBuildRegistryFetch(ctx, subject.buildID); err != nil {
+			if name, nodeID, via, subject.appID, err = s.authorizeBuildRegistryFetch(ctx, subject.buildID, target); err != nil {
 				return err
 			}
 		} else if name, nodeID, via, err = s.authorizeRegistryFetch(ctx, subject.appID); err != nil {
@@ -421,10 +428,11 @@ const buildRunWindow = 2*time.Duration(api.BuildTimeoutSeconds)*time.Second + 10
 // authorizeBuildRegistryFetch admits the node that claimed a running build
 // (builds.builder_node_name, recorded at the claim; slice 3j-3) while the
 // build is within buildRunWindow of its start, within the node's
-// distinct-app budget. It returns the build's app, whose credential the
-// pull uses. The builder VM's mirror is the caller; the password never
-// leaves secretd.
-func (s *Server) authorizeBuildRegistryFetch(ctx context.Context, buildID string) (name, nodeID, via, appID string, err error) {
+// distinct-app budget, for a repository its deployment's Dockerfiles name
+// (slice 3j-4, per the build registry scope mode). It returns the build's
+// app, whose credential the pull uses. The builder VM's mirror is the
+// caller; the password never leaves secretd.
+func (s *Server) authorizeBuildRegistryFetch(ctx context.Context, buildID string, target registryTarget) (name, nodeID, via, appID string, err error) {
 	name, nodeID, err = s.caller(ctx, rpcRegistryFetch)
 	if err != nil {
 		return "", "", "", "", err
@@ -442,6 +450,9 @@ func (s *Server) authorizeBuildRegistryFetch(ctx context.Context, buildID string
 			"running", run.Running, "claimed_by", logsanitize.Field(run.Node))
 		s.metrics.refuse(rpcRegistryFetch, ReasonNotAuthorized)
 		return "", "", "", "", rpcErr(codes.PermissionDenied, "secretd refused: the caller is not running that build")
+	}
+	if err := s.checkBuildRegistryScope(buildID, name, run, target); err != nil {
+		return "", "", "", "", err
 	}
 	if !s.budget.allow(nodeID, run.AppID, s.now()) {
 		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "build_id", logsanitize.Field(buildID))

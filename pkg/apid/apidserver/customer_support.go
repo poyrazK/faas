@@ -78,23 +78,45 @@ func (s *server) registerCustomerSupportRoutes(mux *http.ServeMux) {
 	s.registerSupportStaffRoutes(mux)
 	s.registerSupportPortalRoutes(mux)
 }
+
+// registerSupportStaffRoutes spells every route out so route tables, the
+// read-policy test and the operator console's contract check can read them.
+// Reads need an MFA-completed staff session on the support roster (checked by
+// the staff-mode handler); writes also need fresh step-up and the trusted
+// origin.
 func (s *server) registerSupportStaffRoutes(mux *http.ServeMux) {
-	for _, route := range []struct{ method, path, endpoint string }{
-		{"GET", "/tickets", "list"}, {"GET", "/tickets/{ticket}", "get"}, {"GET", "/tickets/{ticket}/messages", "messages"},
-		{"POST", "/tickets/{ticket}/messages", "reply"}, {"POST", "/tickets/{ticket}/notes", "note"}, {"GET", "/tickets/{ticket}/events", "events"},
-		{"POST", "/tickets/{ticket}/close", "close"}, {"POST", "/tickets/{ticket}/reopen", "reopen"}, {"POST", "/tickets/{ticket}/pause", "pause"}, {"POST", "/tickets/{ticket}/resume", "resume"}, {"POST", "/tickets/{ticket}/triage", "triage"},
-		{"POST", "/availability", "availability"}, {"GET", "/policies", "policies"}, {"POST", "/policies", "policy_save"}, {"GET", "/teams", "teams"}, {"POST", "/teams", "team_save"}, {"GET", "/staff", "staff"}, {"POST", "/staff", "staff_save"},
-		{"GET", "/events", "config_events"}, {"GET", "/report", "report"},
-		{"GET", "/tickets/{ticket}/engineering", "engineering"}, {"POST", "/tickets/{ticket}/engineering", "engineering_save"},
-		{"POST", "/tickets/{ticket}/engineering/preview", "engineering_preview"}, {"POST", "/tickets/{ticket}/engineering/publish", "engineering_publish"},
-		{"POST", "/tickets/{ticket}/redactions/preview", "redaction_preview"}, {"POST", "/tickets/{ticket}/redactions/apply", "redaction_apply"},
-	} {
-		h := s.customerSupportHandler(route.endpoint, true)
-		if route.method == "POST" {
-			h = s.requireSameOrigin(s.requireStepUpStrict(5 * time.Minute)(h))
-		}
-		mux.HandleFunc(route.method+" /v1/admin/support"+route.path, s.authLimited(s.requireSessionPrincipal(h)))
+	write := func(endpoint string) http.HandlerFunc {
+		h := s.requireSameOrigin(s.requireStepUpStrict(5 * time.Minute)(s.customerSupportHandler(endpoint, true)))
+		return s.authLimited(s.requireSessionPrincipal(h))
 	}
+	mux.HandleFunc("GET /v1/admin/support/tickets", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("list", true))))
+	mux.HandleFunc("GET /v1/admin/support/tickets/{ticket}", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("get", true))))
+	mux.HandleFunc("GET /v1/admin/support/tickets/{ticket}/messages", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("messages", true))))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/messages", write("reply"))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/notes", write("note"))
+	mux.HandleFunc("GET /v1/admin/support/tickets/{ticket}/events", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("events", true))))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/close", write("close"))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/reopen", write("reopen"))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/pause", write("pause"))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/resume", write("resume"))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/triage", write("triage"))
+	mux.HandleFunc("POST /v1/admin/support/availability", write("availability"))
+	mux.HandleFunc("GET /v1/admin/support/policies", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("policies", true))))
+	mux.HandleFunc("POST /v1/admin/support/policies", write("policy_save"))
+	mux.HandleFunc("GET /v1/admin/support/teams", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("teams", true))))
+	mux.HandleFunc("POST /v1/admin/support/teams", write("team_save"))
+	mux.HandleFunc("GET /v1/admin/support/staff", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("staff", true))))
+	mux.HandleFunc("POST /v1/admin/support/staff", write("staff_save"))
+	mux.HandleFunc("GET /v1/admin/support/events", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("config_events", true))))
+	mux.HandleFunc("GET /v1/admin/support/report", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("report", true))))
+	mux.HandleFunc("GET /v1/admin/support/tickets/{ticket}/engineering", s.authLimited(s.requireSessionPrincipal(s.customerSupportHandler("engineering", true))))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/engineering", write("engineering_save"))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/engineering/preview", write("engineering_preview"))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/engineering/publish", write("engineering_publish"))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/redactions/preview", write("redaction_preview"))
+	mux.HandleFunc("POST /v1/admin/support/tickets/{ticket}/redactions/apply", write("redaction_apply"))
+	// ADR-20261115175927: the ticket's account panel for the operator console.
+	mux.HandleFunc("GET /v1/admin/support/tickets/{ticket}/customer", s.authLimited(s.requireSessionPrincipal(s.supportTicketCustomer)))
 }
 
 // supportBootstrapManager receives the current database email only after the

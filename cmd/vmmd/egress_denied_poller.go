@@ -54,6 +54,9 @@ func runEgressDeniedPoll(
 // *fcvm.Manager implements it; Stats serves the stored values to schedd.
 type egressFanoutSink interface {
 	RecordEgressFanout(instance string, perMinute int64)
+	// RecordInternalEgress adds the bytes the instance sent to internal
+	// destinations since the last poll (billing review R8-2).
+	RecordInternalEgress(instance string, delta uint64)
 	RecordEgressFlood(instance string, dropsPerMinute int64)
 }
 
@@ -130,8 +133,12 @@ func (p *egressNetnsPoller) tick(ctx context.Context, now time.Time, live map[st
 		prev, ok := p.lastSeen[instance]
 		if !ok {
 			p.lastSeen[instance] = p.baseline(values)
+			// The first observation marks the total observed at zero; the
+			// bytes before it are not this vmmd's to attribute.
+			p.sink.RecordInternalEgress(instance, 0)
 			continue
 		}
+		p.sink.RecordInternalEgress(instance, internalEgressDelta(prev, values))
 		deltas := make(map[netns.EgressDenyClass]uint64, 6)
 		for _, entry := range p.catalog {
 			if delta, changed := observeCounter(prev, values, entry.CounterName); changed {
@@ -178,7 +185,28 @@ func (p *egressNetnsPoller) baseline(values map[string]uint64) map[string]uint64
 		baseline[agg.name] = values[agg.name]
 	}
 	baseline[netns.EgressNewDstCounter] = values[netns.EgressNewDstCounter]
+	for _, key := range internalEgressKeys {
+		baseline[key] = values[key]
+	}
 	return baseline
+}
+
+// internalEgressKeys are the parsed-counter keys InternalEgressBytes reads:
+// the internal counter's packets and bytes (billing review R8-2).
+var internalEgressKeys = []string{netns.EgressInternalTxCounter, netns.EgressInternalTxCounter + netns.CounterBytesSuffix}
+
+// internalEgressDelta is the internal egress bytes since prev, and stores
+// the new readings in prev. A lower reading is a counter reset (the netns
+// was rebuilt): the new reading is all new traffic.
+func internalEgressDelta(prev, values map[string]uint64) uint64 {
+	before, after := netns.InternalEgressBytes(prev), netns.InternalEgressBytes(values)
+	for _, key := range internalEgressKeys {
+		prev[key] = values[key]
+	}
+	if after < before {
+		return after
+	}
+	return after - before
 }
 
 // observeWindow appends one tick's count for instance and returns the sum

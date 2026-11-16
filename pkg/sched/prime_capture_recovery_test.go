@@ -83,9 +83,11 @@ func TestPrimeRecoveryResumesRunningCapture(t *testing.T) {
 								return
 							}
 							if change == "capture-failure" {
+								// Deploy-path review P13 (ADR-005): a healthy boot whose
+								// capture failed goes live without a snapshot.
 								got, err := s.DeploymentByID(ctx, d.ID)
-								if err != nil || got.Status != state.DeployFailed || current.State != "stopped" || v.boots != 1 || v.captures != 1 || n.snapshots != 0 {
-									t.Fatalf("capture failure lost normal prime failure semantics: deployment=%s instance=%s boots=%d captures=%d messages=%d err=%v", got.Status, current.State, v.boots, v.captures, n.snapshots, err)
+								if err != nil || got.Status == state.DeployFailed || current.State != "stopped" || v.boots != 1 || v.captures != 1 || n.snapshots != 0 || n.ready == 0 {
+									t.Fatalf("capture failure did not activate without a snapshot: deployment=%s instance=%s boots=%d captures=%d snapshots=%d ready=%d err=%v", got.Status, current.State, v.boots, v.captures, n.snapshots, n.ready, err)
 								}
 								return
 							}

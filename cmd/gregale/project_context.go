@@ -457,3 +457,14 @@ func resolveSecretApp(explicit string) (string, error) {
 	}
 	return app, nil
 }
+
+// fillLinkedApp defaults an empty --app to the app linked in this checkout,
+// leaving it empty when there is none so the caller's usage error still fires.
+func fillLinkedApp(slug *string) {
+	if slug == nil || *slug != "" {
+		return
+	}
+	if linked, err := resolveAppFlagOrContext(""); err == nil {
+		*slug = linked
+	}
+}

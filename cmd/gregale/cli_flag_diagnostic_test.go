@@ -42,7 +42,9 @@ func TestCLIFlagDiagnosticsJSONContracts(t *testing.T) {
 		{"missing", []string{"invocation", "list", "--limit"}, cliDiagnosticView{Kind: "missing_value", Flag: "--limit", ExpectedType: "integer", ValueMarker: "N", HelpArgv: []string{"gregale", "--json", "help", "invocation", "list"}}},
 		{"duration", []string{"invocation", "wait", "--timeout", "private-value"}, cliDiagnosticView{Kind: "invalid_value", Flag: "--timeout", ExpectedType: "duration", ValueMarker: "D", HelpArgv: []string{"gregale", "--json", "help", "invocation", "wait"}}},
 		{"boolean", []string{"logs", "--follow=private-value"}, cliDiagnosticView{Kind: "invalid_value", Flag: "--follow", ExpectedType: "boolean", HelpArgv: []string{"gregale", "--json", "help", "logs"}}},
-		{"choices", []string{"app", "update", "--visibility"}, cliDiagnosticView{Kind: "missing_value", Flag: "--visibility", ExpectedType: "enum", ValueMarker: "public|internal", AllowedValues: []string{"public", "internal"}, HelpArgv: []string{"gregale", "--json", "help", "app", "update"}}},
+		{"choices", []string{"app", "update", "demo", "--visibility"}, cliDiagnosticView{Kind: "missing_value", Flag: "--visibility", ExpectedType: "enum", ValueMarker: "public|internal", AllowedValues: []string{"public", "internal"}, HelpArgv: []string{"gregale", "--json", "help", "app", "update"}}},
+		{"choices-selector", []string{"app", "update", "--app", "private-value", "--visibility"}, cliDiagnosticView{Kind: "missing_value", Flag: "--visibility", ExpectedType: "enum", ValueMarker: "public|internal", AllowedValues: []string{"public", "internal"}, HelpArgv: []string{"gregale", "--json", "help", "app", "update"}}},
+		{"legacy-choices", []string{"app", "private-value", "--visibility"}, cliDiagnosticView{Kind: "missing_value", Flag: "--visibility", ExpectedType: "enum", ValueMarker: "public|internal", AllowedValues: []string{"public", "internal"}, HelpArgv: []string{"gregale", "--json", "help", "app"}}},
 		{"placement", []string{"deploy", "--non-interactive"}, cliDiagnosticView{Kind: "misplaced_global_flag", Flag: "--non-interactive", Placement: "before_command", HelpArgv: []string{"gregale", "--json", "help", "deploy"}}},
 		{"org-placement", []string{"logs", "--org", "private-value"}, cliDiagnosticView{Kind: "misplaced_global_flag", Flag: "--org", Placement: "before_command", HelpArgv: []string{"gregale", "--json", "help", "logs"}}},
 		{"local-profile", []string{"deploy", "--profile"}, cliDiagnosticView{Kind: "missing_value", Flag: "--profile", ExpectedType: "value", ValueMarker: "SIZE", HelpArgv: []string{"gregale", "--json", "help", "deploy"}}},
@@ -120,5 +122,26 @@ func TestCLIFlagDiagnosticsStayOutOfAPIErrors(t *testing.T) {
 	var p map[string]json.RawMessage
 	if code != 3 || out.Len() != 0 || json.Unmarshal([]byte(text), &p) != nil || p["cli"] != nil || string(p["code"]) != `"service_unavailable"` || string(p["request_id"]) != `"`+errorCorrelationID+`"` {
 		t.Fatalf("API Problem changed: exit=%d stdout=%s stderr=%s", code, out, text)
+	}
+}
+
+func TestCLIFlagDiagnosticsTypedHelpFromEnvironment(t *testing.T) {
+	setupJSONHelp(t)
+	t.Setenv("FAAS_JSON", "1")
+	out, stderr, restore := main.SwapIO(t)
+	code := main.Run([]string{"app", "update", "private-value", "--visibility"})
+	text := stderr()
+	restore()
+	var problem struct{ CLI *cliDiagnosticView }
+	if code != 1 || out.Len() != 0 || json.Unmarshal([]byte(text), &problem) != nil || problem.CLI == nil || !reflect.DeepEqual(problem.CLI.HelpArgv, []string{"gregale", "--json", "help", "app", "update"}) {
+		t.Fatalf("typed help: exit=%d stdout=%s stderr=%s", code, out, text)
+	}
+	// The next run must not inherit app's typed path.
+	out, stderr, restore = main.SwapIO(t)
+	code = main.Run([]string{"invocation", "list", "--limit"})
+	text = stderr()
+	restore()
+	if code != 1 || out.Len() != 0 || json.Unmarshal([]byte(text), &problem) != nil || problem.CLI == nil || !reflect.DeepEqual(problem.CLI.HelpArgv, []string{"gregale", "--json", "help", "invocation", "list"}) {
+		t.Fatalf("typed help leaked between runs: exit=%d stdout=%s stderr=%s", code, out, text)
 	}
 }

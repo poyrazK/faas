@@ -1965,7 +1965,7 @@ test('release CLI executes bounded adapters without migration credentials', post
   await writeFile(join(fixture, 'plan.json'), JSON.stringify({ timeoutMs: 1000, start: [process.execPath, '-e', "console.log('private-hook-output'); setInterval(() => {}, 1000)"], drain: [process.execPath, '-e', "throw new Error('must not drain')"] }));
   await assert.rejects(promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace, MCP_TASK_MIGRATION_DATABASE_URL: url.href } }), error => {
     assert.equal(error.code, 1);
-    assert.deepEqual(JSON.parse(error.stdout), { ok: false, stage: 'start_replacements' });
+    assert.deepEqual(JSON.parse(error.stdout), { ok: false, stage: 'start_replacements', executorSettled: true });
     assert.equal(error.stdout.includes('private-hook-output'), false);
     return true;
   });

@@ -177,7 +177,7 @@ func TestCustomDomainBinding(t *testing.T) {
 	t.Parallel()
 	slug, _ := tg.deployProbe(t, "domain")
 	domain := slug + ".example.com"
-	t.Cleanup(func() { tg.run(t, time.Minute, "domain", "delete", domain) })
+	t.Cleanup(func() { tg.run(t, time.Minute, "domain", "delete", domain, "--yes") })
 	s := newStory(t)
 
 	s.step("add", func(t *testing.T) {
@@ -212,7 +212,8 @@ func TestCustomDomainBinding(t *testing.T) {
 		if res := tg.ok(t, time.Minute, "domain", "list"); !strings.Contains(string(res.stdout), domain) {
 			t.Errorf("domains list does not show %s", domain)
 		}
-		tg.ok(t, time.Minute, "domain", "delete", domain)
+		// Non-interactive deletes need explicit approval.
+		tg.ok(t, time.Minute, "domain", "delete", domain, "--yes")
 		if res := tg.ok(t, time.Minute, "domain", "list"); strings.Contains(string(res.stdout), domain) {
 			t.Errorf("%s is still listed after domains rm", domain)
 		}

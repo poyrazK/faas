@@ -109,6 +109,9 @@ type Loop struct {
 	// queuePushLanes holds each push-queue trigger's lane allowance
 	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance
+	// queueHoldRefreshed is when each held push-queue trigger last refreshed
+	// its messages' retention (trigger ID → time.Time; ADR-20261113180000).
+	queueHoldRefreshed sync.Map
 	// brokerLanes tracks broker trigger lanes and app owners (ADR-20261027162741).
 	brokerLanes brokerLanes
 	// triggerSecretIdentities opens Kafka credentials only in the
@@ -1000,6 +1003,8 @@ func (l *Loop) Run(ctx context.Context) error {
 
 	reaperT := time.NewTicker(10 * time.Second)
 	defer reaperT.Stop()
+	reservationAuditT := time.NewTicker(reservationAuditInterval)
+	defer reservationAuditT.Stop()
 	cronTicks := minuteTicks(ctx, time.Now)
 	// Fire-now safety ticker (PR-D / issue #791). 60s cadence
 	// mirrors pkg/sched/fire_now.go::fireNowSafetyTick: when a
@@ -1379,6 +1384,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-reaperT.C:
 			l.dispatchReaper(ctx)
+		case <-reservationAuditT.C:
+			l.submitWork(workReservationAudit, "tick", func() { l.engine.ReleaseStaleReservations(ctx) })
 		case <-cronTicks:
 			l.submitWork(workCronSweep, "sweep", func() { l.runCronTick(ctx) })
 		case <-l.cronResume:
@@ -3246,6 +3253,10 @@ func (l *Loop) drainSupersededDeployment(ctx context.Context, deploymentID strin
 // instances that serve nothing now and reports how many still have requests
 // in flight. It reports none, so the caller drains at once, when the app is
 // at its concurrency cap: waiting would refuse the new release's wakes.
+// The cap includes the rollout overlap (ADR-199): the superseded release
+// draining beside the new one is that overlap, and without it an app at the
+// default max_concurrency of 1 (old + new = 2) never got the grace, so every
+// deploy still cut its in-flight requests (prod test 2026-11-15).
 func (l *Loop) parkIdleSupersededInstances(ctx context.Context, deploymentID string) int {
 	e := l.engine
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
@@ -3253,7 +3264,13 @@ func (l *Loop) parkIdleSupersededInstances(ctx context.Context, deploymentID str
 		return 0
 	}
 	app, err := e.store.AppByID(ctx, dep.AppID)
-	if err != nil || e.ledger.Concurrency(app.ID) >= max(app.MaxConcurrency, 1) {
+	// Only the app's owner scheduler parks its instances, as
+	// drainDeploymentInstances requires. Every schedd receives
+	// deployment_changed; a non-owner that parked the instance first left the
+	// owner's park a no-op, so the owner's reservation was never released and
+	// later explicit admissions were refused at the cap (prod test
+	// 2026-11-15: immediate-rollout verification 429s after canaries).
+	if err != nil || !e.ownsApp(app) || e.ledger.Concurrency(app.ID) >= max(app.MaxConcurrency, 1)+api.RolloutConcurrencyGrant {
 		return 0
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
@@ -4270,7 +4287,13 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 		// An ordinary 5xx is retryable under the durable invocation contract.
 		// Runner-caught exceptions are marked InvocationFailed above and take
 		// the permanent branch instead.
-		err = appAnsweredError{err: fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)}
+		// Keep what the app said: without it a dead-lettered invocation's
+		// error_detail read only "retryable HTTP 500" (prod 2026-11-15).
+		msg := fmt.Sprintf("application or gateway returned retryable HTTP %d", statusCode)
+		if detail := safetext.Ellipsis(strings.TrimSpace(string(out.Result)), invocationFailureDetailMaxBytes); detail != "" {
+			msg += ": " + detail
+		}
+		err = appAnsweredError{err: errors.New(msg)}
 	}
 	return out, err
 }
@@ -5100,6 +5123,9 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 			l.cronMetrics.decision("not_due")
 		}
 		// Already fired in the current window.
+		return
+	}
+	if len(c.Command) == 0 && l.pauseFailingCron(ctx, c) {
 		return
 	}
 	if len(c.Command) > 0 || c.SchedulePolicy != nil {

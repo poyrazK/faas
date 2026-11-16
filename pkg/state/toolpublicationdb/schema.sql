@@ -1,6 +1,13 @@
 CREATE TABLE accounts (id uuid PRIMARY KEY, status text NOT NULL);
+CREATE TABLE task_tool_release_intents (
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    id text NOT NULL,
+    status text NOT NULL,
+    payload jsonb NOT NULL,
+    PRIMARY KEY(account_id,id)
+);
 CREATE TABLE api_keys (id uuid PRIMARY KEY, account_id uuid NOT NULL, status text NOT NULL, expires_at timestamptz, scopes text[] NOT NULL, label text NOT NULL, org_id uuid);
-CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL, project_id uuid, org_id uuid, slug text NOT NULL);
+CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL, project_id uuid, org_id uuid, slug text NOT NULL, status text NOT NULL);
 CREATE TABLE orgs (id uuid PRIMARY KEY, personal_org boolean NOT NULL, personal_owner_account_id uuid);
 CREATE TABLE api_key_project_limits (key_id uuid PRIMARY KEY, project_ids uuid[] NOT NULL);
 CREATE TABLE deployments (id uuid PRIMARY KEY, app_id uuid NOT NULL, source_sha256 text, scope text, status text NOT NULL, traffic_percent integer NOT NULL);
@@ -58,3 +65,7 @@ CREATE TABLE tool_oauth_authorizations (
     PRIMARY KEY(account_id,connection_id),
     FOREIGN KEY(account_id,connection_id) REFERENCES tool_oauth_connections(account_id,id) ON DELETE CASCADE
 );
+
+-- Read-only recovery subjects; schedd remains the only instance writer.
+CREATE TABLE instances (id uuid PRIMARY KEY, app_id uuid NOT NULL, deployment_id uuid, state text NOT NULL);
+CREATE TABLE app_custom_metrics (app_id uuid NOT NULL, name text NOT NULL, value double precision NOT NULL, observed_at timestamptz NOT NULL, PRIMARY KEY(app_id,name));

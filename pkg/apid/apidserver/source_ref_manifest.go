@@ -251,7 +251,9 @@ func functionReleaseCommandProblem() *api.Problem {
 	return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Release commands need an app",
 		"This function app declares a release command (gregale.yaml release.command, a Procfile release: process, or its project's Compose file). "+
 			"Release commands run in an app's container image, which a function deployment does not have. "+
-			"Remove the declaration, or run the command from an app (type: app) in the same project or from a machine you control.")
+			"Remove the declaration and run it from an app (type: app) in the same project: give that app a migration binding "+
+			"(gregale postgres attach <database> <app> --access migration) and declare release.command there, "+
+			"or open psql through it with gregale postgres connect <database> --app <app> --access migration.")
 }
 
 func declaredSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
