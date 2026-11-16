@@ -425,6 +425,7 @@ from ._event_deadline_policy import (
     EventDeadlineTarget,
 )
 from ._event_outbox_protocol import EVENT_OUTBOX_SCHEMA
+from ._stripe_webhook_protocol import STRIPE_WEBHOOK_SCHEMA
 from ._wrapper import FaaSClient as FaaSClient
 from .ai_gateway import (
     AI_CALL_HEADER,
@@ -910,8 +911,37 @@ from .realtime_workers import (
     consume_realtime_consumer_group,
     consume_realtime_consumer_group_with_credential,
 )
+from .stripe_webhook_state import (
+    StripeDeliveryContext,
+    StripeWebhookDecision,
+    StripeWebhookDelivery,
+    StripeWebhookError,
+    StripeWebhookEvent,
+    StripeWebhookIgnore,
+    StripeWebhookIgnoreReason,
+    StripeWebhookOutcome,
+    StripeWebhookReceipt,
+    StripeWebhookStage,
+    stripe_delivery_context_from_headers,
+)
+from .stripe_webhooks import StripeWebhookAction, StripeWebhookAdapter
 
 __all__ = (
+    "StripeWebhookAdapter",
+    "StripeWebhookAction",
+    "StripeWebhookDelivery",
+    "StripeDeliveryContext",
+    "StripeWebhookEvent",
+    "StripeWebhookDecision",
+    "StripeWebhookStage",
+    "StripeWebhookIgnore",
+    "StripeWebhookIgnoreReason",
+    "StripeWebhookReceipt",
+    "StripeWebhookOutcome",
+    "StripeWebhookError",
+    "stripe_delivery_context_from_headers",
+    "STRIPE_WEBHOOK_SCHEMA",
+
     "PipelineScheduleClient",
     "PipelineScheduleAction",
     "ScheduledPipelineRun",

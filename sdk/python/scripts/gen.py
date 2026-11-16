@@ -210,6 +210,9 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "_stripe_webhook_protocol.py",
+    "stripe_webhook_state.py",
+    "stripe_webhooks.py",
     "pipeline_schedules.py",
     "pipeline_schedule_state.py",
     "_event_outbox_protocol.py",
@@ -1303,6 +1306,9 @@ elsewhere its calls answer 404 no such API route.
 # ruff: noqa: F401
 from .pipeline_schedules import PipelineScheduleClient, PipelineScheduleAction, ScheduledPipelineRun
 from .pipeline_schedule_state import PipelineSchedule, PipelineScheduleError, PipelineScheduleInfo, PipelineScheduleHistory, PipelineScheduleInspection, PipelineSchedulePreview, PipelineScheduleOccurrence, PipelineScheduleReplayOutcome, PipelineScheduleFire, PipelineScheduleDST, PipelineScheduleCatchUp
+from .stripe_webhooks import StripeWebhookAdapter, StripeWebhookAction
+from .stripe_webhook_state import StripeWebhookDelivery, StripeDeliveryContext, StripeWebhookEvent, StripeWebhookDecision, StripeWebhookStage, StripeWebhookIgnore, StripeWebhookIgnoreReason, StripeWebhookReceipt, StripeWebhookOutcome, StripeWebhookError, stripe_delivery_context_from_headers
+from ._stripe_webhook_protocol import STRIPE_WEBHOOK_SCHEMA
 from .pipeline_state import PipelineFailure, pipeline_failure, PIPELINE_JOB_SCHEMA, PipelineError, PipelineJobReceipt, PipelineJobStore, PipelineScope, PostgresPipelineJobStore, pipeline_job_identity, read_pipeline_artifact
 from .event_contract import EventContract
 from .event_outbox import EventPublisher, EventOutbox, EventOutboxRecoveryOptions, EventOutboxReconciliation
@@ -1845,6 +1851,21 @@ from .event_acknowledgment_intent_recovery_pass import (
 )
 
 __all__ = (
+    "StripeWebhookAdapter",
+    "StripeWebhookAction",
+    "StripeWebhookDelivery",
+    "StripeDeliveryContext",
+    "StripeWebhookEvent",
+    "StripeWebhookDecision",
+    "StripeWebhookStage",
+    "StripeWebhookIgnore",
+    "StripeWebhookIgnoreReason",
+    "StripeWebhookReceipt",
+    "StripeWebhookOutcome",
+    "StripeWebhookError",
+    "stripe_delivery_context_from_headers",
+    "STRIPE_WEBHOOK_SCHEMA",
+
     "PipelineScheduleClient",
     "PipelineScheduleAction",
     "ScheduledPipelineRun",

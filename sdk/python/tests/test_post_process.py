@@ -178,6 +178,9 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/preview/event_publication.py": b"# uncommitted outbox runtime\n",
         "faas_sdk/preview/pipeline_schedules.py": b"# uncommitted schedules\n",
         "faas_sdk/preview/pipeline_schedule_state.py": b"# uncommitted schedule metadata\n",
+        "faas_sdk/preview/_stripe_webhook_protocol.py": b"# uncommitted Stripe adapter\n",
+        "faas_sdk/preview/stripe_webhook_state.py": b"# uncommitted Stripe adapter\n",
+        "faas_sdk/preview/stripe_webhooks.py": b"# uncommitted Stripe adapter\n",
         "faas_sdk/preview/event_pipelines.py": b"# uncommitted event adapters\n",
         "faas_sdk/preview/pipeline_children.py": b"# uncommitted child runtime\n",
         "faas_sdk/preview/pipeline_children_state.py": b"# uncommitted child receipts\n",
@@ -424,6 +427,16 @@ def test_regenerated_preview_preserves_typed_schedules(tmp_path, monkeypatch):
     for module in ("pipeline_schedules.py", "pipeline_schedule_state.py"):
         assert module in generator.PREVIEW_WRAPPER_MODULES
     for name in ("PipelineSchedule", "PipelineScheduleClient", "ScheduledPipelineRun", "PipelineSchedulePreview"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_stripe_webhooks(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_stripe_webhook_protocol.py", "stripe_webhook_state.py", "stripe_webhooks.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("StripeWebhookAdapter", "StripeWebhookStage", "StripeWebhookReceipt", "STRIPE_WEBHOOK_SCHEMA"):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")

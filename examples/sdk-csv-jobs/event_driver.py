@@ -15,6 +15,7 @@ import psycopg
 from event_pipeline import ImportRecord, csv_event_pipeline
 from faas_sdk.preview import (
     EventOutboxError,
+    StripeWebhookError,
     EventPipelineDelivery,
     EventPipelineError,
     EventPipelineOutcome,
@@ -32,6 +33,9 @@ async def execute(request: dict[str, Any]) -> dict[str, Any] | None:
     if request["action"].startswith("outbox-"):
         from outbox_driver import execute as outbox_execute
         return await outbox_execute(request)
+    if request["action"].startswith("stripe-"):
+        from stripe_driver import execute as stripe_execute
+        return await stripe_execute(request)
     scope = PipelineScope.from_dict(json.loads(os.environ["GREGALE_PIPELINE_SCOPE"]))
     async with await psycopg.AsyncConnection.connect(
         os.environ["DATABASE_URL"],
@@ -122,7 +126,7 @@ async def main() -> None:
         request = json.loads(line)
         try:
             result = await execute(request)
-        except (EventPipelineError, EventOutboxError) as error:
+        except (EventPipelineError, EventOutboxError, StripeWebhookError) as error:
             result = {"code": error.code}
         print(
             json.dumps({"request_id": request["request_id"], "result": result}),
@@ -133,6 +137,6 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except (EventPipelineError, EventOutboxError) as error:
+    except (EventPipelineError, EventOutboxError, StripeWebhookError) as error:
         print(json.dumps({"code": error.code}))
         raise SystemExit(2) from None

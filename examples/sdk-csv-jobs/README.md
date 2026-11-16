@@ -533,3 +533,38 @@ realtime fixtures do not establish deployed scheduler acceptance.
 
 See [the SDK guide](../../docs/sdk-pipeline-schedules.md) for DST/catch-up preview,
 scoped history, explicit replay, unknown replies, deadlines and cancellation.
+
+## Stripe-paid reviewed imports
+
+A verified `payment_intent.succeeded` can stage the existing `import.requested`
+event, then run validation, private review, import and verified reporting.
+[paid-producer.mjs](paid-producer.mjs) and [paid_producer.py](paid_producer.py)
+lock an application payment row, derive its current owner/customer and verify
+integer-cent price/currency. Provider `metadata.owner_id` grants no access.
+The immutable uploaded source comes from trusted business data.
+
+Apply [paid-schema.sql](paid-schema.sql), the exported Stripe handoff schema,
+and the event pipeline/outbox migrations as the application migration role.
+Use the same primary database for business and SDK tables. Configure a native
+Stripe app-delivery endpoint at `/webhooks/stripe`, pin its API version and mode,
+and authenticate the platform boundary before reading its protected headers.
+The example's private test pipe and fixture gateway credential demonstrate that
+boundary; they are not public HTTP handlers or production authentication.
+See [adapter setup and recovery](../../docs/sdk-stripe-webhooks.md).
+
+From the repository root, after building the Node SDK and installing the Python
+SDK with `psycopg[binary]`, run:
+
+```sh
+GREGALE_CSV_STRIPE_PIPELINE=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+This adds real PostgreSQL receipt and payment tables to the existing acceptance
+flow. Native ingress fixtures validate Stripe-style raw-byte HMAC signatures
+and overlapping rotation keys. A dropped ingress reply is retried against the
+same native UUIDv5 receipt. Concurrent Node/Python adapters commit one business
+update and one outbox intent; different provider IDs and an older failure cannot
+repeat the payment effect. Forged delivery, another user and revoked access fail.
+The test then recovers lost publication/start replies and completes the full
+mixed-worker reviewed report flow with Chrome. Native APIs, ingress and event
+transport are fixtures; a deployed Stripe/broker integration is not exercised.

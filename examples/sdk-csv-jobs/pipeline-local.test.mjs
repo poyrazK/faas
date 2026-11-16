@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {createInterface} from 'node:readline';
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHmac,timingSafeEqual} from 'node:crypto';
 import {mkdtemp,cp,symlink,readFile,writeFile,rm,access} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -15,6 +15,7 @@ import {liveFixture} from './live-fixture.mjs';
 import {createPipelineReviewServer} from './pipeline-review-api.mjs';
 import {csvEventPipeline} from './pipeline-events.mjs';
 import {stageCsvImport} from './pipeline-producer.mjs';
+import {paidCsvAdapter} from './paid-producer.mjs';
 import {csvPipelineSchedule} from './pipeline-schedule.mjs';
 
 const exec=promisify(execFile),here=fileURLToPath(new URL('.',import.meta.url)),root=resolve(here,'../..');
@@ -23,8 +24,9 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<1000;i++){try{if(await fn())return;}catch{}await pause(20);}throw new Error('Fixture did not become ready');}
 async function stop(child){if(child.exitCode!==null)return;const done=new Promise(r=>child.once('exit',r));child.kill('SIGTERM');await done;}
 
-const eventTriggered=process.env.GREGALE_CSV_EVENT_PIPELINE==='1',scheduled=process.env.GREGALE_CSV_SCHEDULED_PIPELINE==='1';
-for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${eventTriggered?'event-triggered ':scheduled?'scheduled ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered||scheduled?600000:240000},async t=>{
+const paid=process.env.GREGALE_CSV_STRIPE_PIPELINE==='1';
+const eventTriggered=paid||process.env.GREGALE_CSV_EVENT_PIPELINE==='1',scheduled=process.env.GREGALE_CSV_SCHEDULED_PIPELINE==='1';
+for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${paid?'Stripe-paid ':eventTriggered?'event-triggered ':scheduled?'scheduled ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered||scheduled?600000:240000},async t=>{
   try{await access(python);await access(join(pgBin,'initdb'));}catch{t.skip('Set GREGALE_LOCAL_PYTHON and GREGALE_LOCAL_PG_BIN');return;}
   const home=await mkdtemp(join(tmpdir(),'gregale-csv-pipeline-')),cleanup=[];t.after(async()=>{try{for(const close of cleanup.reverse())await close();}finally{await rm(home,{recursive:true,force:true});}});
   await cp(here,join(home,'app'),{recursive:true,filter:p=>!p.includes('node_modules')});await symlink(join(root,'sdk/node/node_modules'),join(home,'app/node_modules'));
@@ -41,6 +43,8 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
   for(const [stage,file]of [['validate','validate-contract.json'],['import','contract.json'],['report','report-contract.json']]){const spec=JSON.parse(await readFile(new URL(file,import.meta.url),'utf8'));templates.set(spec.name,{stage,spec,id:randomUUID()});}
   const storage=fileStorageFixture(()=>env.FAAS_API,{accountId});
   const native=run=>{const total=run.tasks.length,count=status=>run.tasks.filter(t=>t.status===status).length,finished=count('succeeded')+count('failed')+count('cancelled');return {id:run.id,job_id:run.template.id,account_id:accountId,tasks:total,input_manifest_version:1,input_digest:runtime.jobHash(Buffer.from(JSON.stringify(run.tasks.map(t=>({input_id:t.input_id,input_ref:t.input_ref}))))),aggregate_status:finished<total?'running':count('failed')?'failed':count('cancelled')?'cancelled':'succeeded',tasks_succeeded:count('succeeded'),tasks_failed:count('failed'),tasks_cancelled:count('cancelled'),tasks_running:count('claimed')};};
+  const stripeEndpoint=randomUUID(),stripeKey=randomUUID(),stripeSecrets=[randomUUID(),randomUUID()],stripeInvocations=new Map();
+  if(paid){await pool.query(sdk.stripeWebhookSchema);await pool.query(await readFile(new URL('paid-schema.sql',import.meta.url),'utf8'));}
   const publications=new Map();let publishPosts=0,scheduleDefinition;const scheduledDeployment=randomUUID();
   if(scheduled)await pool.query('CREATE TABLE sdk_csv_schedule_occurrences (id uuid PRIMARY KEY, scheduled_for timestamptz UNIQUE, record jsonb NOT NULL)');
   let workerCount=0,jobPosts=0,scope,eventPosts=0,dropWakeReplies=true;
@@ -57,6 +61,20 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
     try{
       const u=new URL(req.url,'http://localhost'),parts=u.pathname.split('/');
       if(u.pathname==='/v1/account'){send(200,{id:req.headers.authorization==='Bearer fixture-other'?randomUUID():accountId});return;}
+      if(paid&&u.pathname==='/v1/hooks/fixture-stripe'){
+        // Native ingress contract fixture: exact bytes, overlap keys, deterministic receipt.
+        const chunks=[];for await(const chunk of req)chunks.push(chunk);const body=Buffer.concat(chunks),signature=String(req.headers['stripe-signature']??''),timestamp=signature.match(/(?:^|,)t=(\d+)(?:,|$)/)?.[1],supplied=signature.match(/(?:^|,)v1=([0-9a-f]{64})(?:,|$)/)?.[1];
+        if(!timestamp||!supplied||Math.abs(Date.now()/1000-Number(timestamp))>300||!stripeSecrets.some(secret=>timingSafeEqual(Buffer.from(supplied,'hex'),createHmac('sha256',secret).update(timestamp+'.').update(body).digest()))){send(400,{code:'signature'});return;}
+        const event=JSON.parse(body),hash=runtime.jobHash(body),old=stripeInvocations.get(event.id);
+        if(old&&old.hash!==hash){send(409,{code:'receipt_conflict'});return;}
+        const receipt_id=sdk.stripeReceiptId(stripeEndpoint,event.id);
+        if(!old)stripeInvocations.set(event.id,{hash,delivery:{method:'POST',path:'/webhooks/stripe',body,headers:{authorization:'Bearer '+stripeKey,'x-faas-invocation-source':'inbound_webhook','x-faas-invocation-id':receipt_id,'x-gregale-webhook-endpoint-id':stripeEndpoint,'x-gregale-webhook-event-id':event.id,'x-gregale-webhook-event-type':event.type,'x-gregale-webhook-provider':'stripe','x-gregale-webhook-body-sha256':hash}}});
+        if(!old){res.destroy();return;}send(200,{receipt_id,duplicate:true,status:'accepted'});return;
+      }
+      if(paid&&u.pathname.endsWith('/inbound-webhooks/'+stripeEndpoint)){
+        if(req.headers.authorization!=='Bearer fixture-owner'){send(403,{});return;}
+        send(200,{id:stripeEndpoint,account_id:accountId,app_id:storage.app,provider:'stripe',delivery_path:'/webhooks/stripe',enabled:true});return;
+      }
       if(eventTriggered&&(u.pathname.endsWith('/events:publish')||u.pathname.endsWith('/events/verify-publication'))){
         if(req.headers.authorization!=='Bearer fixture-owner'){send(403,{});return;}
         const chunks=[];for await(const chunk of req)chunks.push(chunk);const input=JSON.parse(Buffer.concat(chunks).toString());
@@ -123,10 +141,45 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
   const gateStore=sdk.postgresPipelineGateStore((sql,values)=>pool.query(sql,values));
   const {contract,pipeline,reviewContract}=await csvPipeline({sdk,client,scope,reviewed,gateStore,store:sdk.postgresPipelineJobStore((sql,values)=>pool.query(sql,values)),jobStore:await files.jobStore({timeoutMs:10000})});
   const typed=sdk.createJobPipelineClient({baseURL:env.FAAS_API,token:'fixture-owner',scope,ownerId:'alice',contract});
-  let run;
+  let run,outboxKey='csv-import:'+importId;
   if(eventTriggered){
     // The authenticated producer names an immutable business record, not an owner/file supplied by the event.
-    await stageCsvImport({sdk,pool,scope,importId,ownerId:'alice',input:{import_id:importId,source}});
+    if(paid){
+      env.GREGALE_CSV_STRIPE_KEY=stripeKey;
+      await pool.query('INSERT INTO sdk_csv_payments (payment_id,import_id,owner_id,customer_id,amount_cents,currency,input) VALUES ($1,$2,$3,$4,$5,$6,$7)',['pi_csv',importId,'alice','cus_alice',1000,'usd',{import_id:importId,source}]);
+      const adapter=await paidCsvAdapter({sdk,pool,scope,endpointId:stripeEndpoint,verify:async d=>{
+        const supplied=Buffer.from(String(d.headers.authorization??'')),expected=Buffer.from('Bearer '+stripeKey);
+        if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected))throw Error('unauthorized');
+        return sdk.stripeDeliveryContextFromHeaders(d.headers,d.body,accountId,scope.app_id);
+      }});
+      const event={id:'evt_csv_paid',object:'event',api_version:'2024-06-20',livemode:false,created:1794844800,type:'payment_intent.succeeded',data:{object:{id:'pi_csv',object:'payment_intent',customer:'cus_alice',amount_received:1000,currency:'usd',status:'succeeded',metadata:{owner_id:'bob'}}}};
+      const ingress=async(value,secret=stripeSecrets[0])=>{const body=JSON.stringify(value),timestamp=Math.floor(Date.now()/1000),v1=createHmac('sha256',secret).update(timestamp+'.'+body).digest('hex');return fetch(env.FAAS_API+'/v1/hooks/fixture-stripe',{method:'POST',headers:{'stripe-signature':`t=${timestamp},v1=${v1}`},body});};
+      assert.equal((await ingress(event,'wrong-secret')).status,400);
+      await assert.rejects(ingress(event)); // Native receipt survived a dropped acknowledgement.
+      assert.equal((await (await ingress(event,stripeSecrets[1])).json()).duplicate,true);
+      assert.equal((await ingress({...event,created:event.created+1})).status,409);
+      const delivery=stripeInvocations.get(event.id).delivery;
+      await assert.rejects(adapter.handle({...delivery,headers:{...delivery.headers,authorization:'Bearer forged'}},'alice',{timeoutMs:10000}),{code:'unauthorized'});
+      await assert.rejects(adapter.handle(delivery,'bob',{timeoutMs:10000}),{code:'unauthorized'});
+      const worker=spawn(python,[join(home,'app/event_driver.py'),'--stdio'],{env,stdio:['pipe','pipe','pipe']});children.add(worker);
+      let ready,errors='',seq=0;const pending=new Map(),lines=createInterface({input:worker.stdout});worker.stderr.on('data',b=>errors+=b);
+      const started=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Python Stripe fixture startup timed out')),120000);ready=()=>{clearTimeout(timer);resolve();};worker.once('exit',code=>{clearTimeout(timer);reject(Error('Python Stripe fixture stopped '+code+' '+errors));});});
+      lines.on('line',line=>{const packet=JSON.parse(line);if(packet.ready){ready();return;}pending.get(packet.request_id)?.(packet.result);pending.delete(packet.request_id);});cleanup.push(()=>lines.close());worker.once('exit',()=>children.delete(worker));await started;
+      const pythonStripe=(action,d=delivery,access='alice')=>new Promise((resolve,reject)=>{const request_id=String(seq++),timer=setTimeout(()=>{pending.delete(request_id);reject(Error('Python Stripe request timed out: '+errors));},30000);pending.set(request_id,value=>{clearTimeout(timer);resolve(value);});worker.stdin.write(JSON.stringify({request_id,action,access,endpoint_id:stripeEndpoint,delivery:{...d,body:d.body.toString()}})+'\n');});
+      const outcomes=await Promise.all([adapter.handle(delivery,'alice',{timeoutMs:10000}),pythonStripe('stripe-handle')]);
+      assert.ok(outcomes.every(o=>o.outcome==='staged'));assert.equal(outcomes.filter(o=>o.replayed).length,1);
+      outboxKey=outcomes[0].receipt.outbox_key;
+      assert.deepEqual(await pythonStripe('stripe-inspect'),await adapter.inspect(delivery,'alice',{timeoutMs:10000}));
+      assert.equal((await pythonStripe('stripe-inspect',delivery,'bob')).code,'unauthorized');
+      const other={...event,id:'evt_csv_also_paid'};await assert.rejects(ingress(other));const otherDelivery=stripeInvocations.get(other.id).delivery;
+      assert.equal((await pythonStripe('stripe-handle',otherDelivery)).reason,'already_applied');
+      const older={...event,id:'evt_csv_old_failure',type:'payment_intent.payment_failed',created:event.created-60};await assert.rejects(ingress(older));
+      assert.equal((await adapter.handle(stripeInvocations.get(older.id).delivery,'alice',{timeoutMs:10000})).reason,'already_applied');
+      await pool.query('UPDATE sdk_csv_payments SET enabled=false');assert.equal((await pythonStripe('stripe-handle')).code,'unauthorized');await pool.query('UPDATE sdk_csv_payments SET enabled=true');
+      assert.equal((await pool.query('SELECT applications FROM sdk_csv_payments')).rows[0].applications,1);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM gregale_stripe_webhook_receipts')).rows[0].n,3);
+      await stop(worker);
+    }else await stageCsvImport({sdk,pool,scope,importId,ownerId:'alice',input:{import_id:importId,source}});
     const publisher=sdk.createEventPublisher(new sdk.EventContract(JSON.parse(await readFile(new URL('event-contract.json',import.meta.url),'utf8'))),{scope});
     const rolledBack=randomUUID();await assert.rejects(sdk.withEventOutboxTransaction(pool,async tx=>{
       await tx.query('INSERT INTO sdk_csv_event_inputs VALUES ($1,$2,$3)',[rolledBack,'alice',{import_id:rolledBack,source}]);
@@ -136,7 +189,7 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM gregale_event_outbox')).rows[0].n,1);
     const outbox=sdk.createEventOutbox(pool,{scope,token:'fixture-owner'});
     assert.equal((await outbox.recoverNext({timeoutMs:10000,backoffMs:1})).outcome,'unconfirmed');
-    const published=publications.get('csv-import:'+importId);assert.ok(published);assert.equal(publishPosts,1);
+    const published=publications.get(outboxKey);assert.ok(published);assert.equal(publishPosts,1);
 
     const subscriptionId=randomUUID(),eventSource=published.source,ingressKey=randomUUID();env.GREGALE_CSV_EVENT_KEY=ingressKey;
     const body=JSON.stringify({specversion:'1.0',source:eventSource,id:published.receipt.id,type:published.input.type,data:published.input.data});
@@ -158,10 +211,10 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
     const pythonEvent=(action,access='alice',run_id)=>new Promise((resolve,reject)=>{
       const request_id=String(eventInvocation++),timer=setTimeout(()=>{pending.delete(request_id);reject(new Error('Python event request timed out'));},30000);
       pending.set(request_id,result=>{clearTimeout(timer);resolve(result);});
-      eventWorker.stdin.write(JSON.stringify({request_id,action,access,run_id,key:'csv-import:'+importId,subscription_id:subscriptionId,source:eventSource,delivery:{headers,body}})+'\n');
+      eventWorker.stdin.write(JSON.stringify({request_id,action,access,run_id,key:outboxKey,subscription_id:subscriptionId,source:eventSource,delivery:{headers,body}})+'\n');
     });
     assert.equal((await pythonEvent('outbox-reconcile')).outcome,'published');
-    assert.equal((await outbox.status('csv-import:'+importId,{timeoutMs:10000})).state,'published');
+    assert.equal((await outbox.status(outboxKey,{timeoutMs:10000})).state,'published');
     assert.equal((await pool.query('SELECT request_body FROM gregale_event_outbox')).rows[0].request_body,null);assert.equal(publishPosts,1);
     await assert.rejects(events.handle(delivery,'bob',{timeoutMs:10000}),{code:'unauthorized'});
     const starts=await Promise.all([events.handle(delivery,'alice',{timeoutMs:10000}),pythonEvent('handle')]);

@@ -4951,3 +4951,11 @@ reads bounded history, explicitly replays skipped occurrences and attaches typed
 runs, rechecking current application authorization. See
 [usage and recovery](../../docs/sdk-pipeline-schedules.md) and the
 [nightly reviewed CSV example](../../examples/sdk-csv-jobs/README.md#scheduled-reviewed-imports).
+
+## Typed Stripe webhook pipelines (preview)
+
+`createStripeWebhookAdapter` projects native verified Stripe snapshot deliveries
+into generated business events. Current-owner authorization, business writes and
+outbox intent share one PostgreSQL transaction and a cross-language handoff
+receipt. See [setup and recovery](../../docs/sdk-stripe-webhooks.md) and the
+[paid CSV flow](../../examples/sdk-csv-jobs/README.md#stripe-paid-reviewed-imports).

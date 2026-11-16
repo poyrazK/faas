@@ -3878,3 +3878,9 @@ inputs to native scheduled pipelines. Preview calendars, read precise bounded
 history, explicitly replay skipped occurrences and attach typed runs with current
 application authorization. See [usage and recovery](../../docs/sdk-pipeline-schedules.md)
 and the [nightly reviewed CSV example](../../examples/sdk-csv-jobs/README.md#scheduled-reviewed-imports).
+
+`StripeWebhookAdapter[Input, Access]` in `faas_sdk.preview` projects native verified
+Stripe snapshot deliveries into generated business events. Current-owner checks,
+business writes and typed outbox intent commit together with a cross-language
+handoff receipt. See [setup and recovery](../../docs/sdk-stripe-webhooks.md) and
+the [paid CSV flow](../../examples/sdk-csv-jobs/README.md#stripe-paid-reviewed-imports).

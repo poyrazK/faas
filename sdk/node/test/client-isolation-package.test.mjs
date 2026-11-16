@@ -60,6 +60,8 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(typeof previewSdk.createEventPublisher,'function');assert.equal(typeof previewSdk.createEventOutbox,'function');assert.equal(typeof previewSdk.withEventOutboxTransaction,'function');
     assert.equal(sourceSdk.createEventOutbox,undefined);assert.equal(publicBrowser.createEventPublisher,undefined);
     assert.ok(previewSdk.eventOutboxSchema.includes('gregale_event_outbox'));
+    assert.equal(typeof previewSdk.createStripeWebhookAdapter,'function');assert.equal(typeof previewSdk.stripeDeliveryContextFromHeaders,'function');
+    assert.ok(previewSdk.stripeWebhookSchema.includes('gregale_stripe_webhook_receipts'));assert.equal(sourceSdk.createStripeWebhookAdapter,undefined);assert.equal(fileBrowser.createStripeWebhookAdapter,undefined);
     assert.equal(typeof previewSdk.definePipelineSchedule,'function');assert.equal(typeof previewSdk.createPipelineScheduleClient,'function');assert.equal(sourceSdk.definePipelineSchedule,undefined);assert.equal(publicBrowser.createPipelineScheduleClient,undefined);
     const {EventContract}=await import('@gregale/sdk-node/preview/events/runtime');
     assert.equal(EventContract,previewSdk.EventContract);
@@ -229,6 +231,17 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     definePipelineSchedule(jobContract,7,{scope:eventScope,ownerId:'alice',cron:'0 2 * * *'});
     const schedules=createPipelineScheduleClient(schedule,{deploymentId:'id',token:'server',authorize:async(access:{id:string})=>access.id==='alice'});
     async function useSchedule():Promise<void>{const run:TypedPipelineRun<number>=await schedules.attach('occurrence',{id:'alice'},{timeoutMs:1000});const output:number=await run.result({timeoutMs:1000});void output;}
+    import {createStripeWebhookAdapter,type StripeWebhookDefinition,type StripeWebhookDelivery,type StripeWebhookOutcome} from '@gregale/sdk-node/preview';
+    declare const stripeDefinition:StripeWebhookDefinition<string,{id:string}>;
+    declare const stripeDelivery:StripeWebhookDelivery;
+    const stripe=createStripeWebhookAdapter(eventContract,stripeDefinition);
+    async function useStripe():Promise<void>{
+      const outcome:StripeWebhookOutcome=await stripe.handle(stripeDelivery,{id:'alice'},{timeoutMs:1000});void outcome;
+      // @ts-expect-error principal must match application context
+      stripe.inspect(stripeDelivery,1,{timeoutMs:1000});
+      // @ts-expect-error projection must return the generated event payload
+      const bad:StripeWebhookDefinition<string,{id:string}>={...stripeDefinition,apply:async()=>({state:'stage',input:7})};void bad;
+    }
     const client: GregaleClient = createClient('https://api.test');
     const typedJob=client.jobs.defineJob(jobContract);
     const typedSubmission:Promise<import('@gregale/sdk-node').TypedJobRun<number>>=typedJob.submit([{id:'one',value:'input'}],{timeoutMs:1000,idempotencyKey:'one'});
