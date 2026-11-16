@@ -6807,11 +6807,11 @@ After the native quarantine has a retained result, separately qualify and approv
 retirement using an owner credential and the original binding profile:
 
 ```sh
-gregale mcp server tasks execution retire-qualify \
+gregale mcp server tasks run retire-qualify \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --allow-local-checks
 # Review the new retirement qualification_sha256.
-gregale mcp server tasks execution retire-approve \
+gregale mcp server tasks run retire-approve \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --qualification-sha256 "$RETIREMENT_SHA256"
 ```
@@ -6819,7 +6819,7 @@ gregale mcp server tasks execution retire-approve \
 The local agent tool `gregale_apply_task_tool_retire` accepts only `intent_id`,
 `operation_id`, `handover_id`, the retirement `qualification_sha256` and explicit
 `allow_tool_execution=true`. It requires `build-tools` and write consent. Its CLI
-equivalent is `gregale mcp server tasks execution retire` with the same identity
+equivalent is `gregale mcp server tasks run retire` with the same identity
 flags and `--allow-tool-execution`. Restore and quarantine approvals do not grant
 retirement authority. Qualification lasts one minute and cannot be renewed.
 
