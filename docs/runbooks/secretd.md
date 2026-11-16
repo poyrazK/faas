@@ -396,6 +396,34 @@ hold a grant for, and need no cluster key.
 
 Back out a node by unsetting the variable and restarting schedd.
 
+### Take the control identity off compute (slice 3k-2)
+
+After step 2 holds on every compute node, the node no longer needs the
+cluster signing key at all.
+
+1. **Every compute node mints through secretd.** In Ansible, set
+   `faas_schedd_secretd_internal_svc: true` for each compute host and
+   converge. Workflow outbound (if enabled) now mints through secretd too.
+   Check that `faas_secretd_opens_total{rpc="MintWorkflowIdentity"}` rises
+   when outbound steps run and that refusals stay flat.
+2. **schedd's contract step is done.** `faas_seal_domain_control_contracted`
+   and `faas_seal_domain_delivery_contracted` are true, so no fleet identity
+   is loaded. The role refuses the retirement without it.
+3. **Retire.** Set the GitHub environment variable
+   `SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE=true` and run cd-compute. Each
+   node loses `control.age`, its previous twin and its probe result, and
+   schedd starts with `FAAS_SEAL_DOMAIN_CONTROL_RETIRED=true`. Check:
+   - the journal shows `control identity retired on this node`;
+   - compute schedds export no `faas_seal_domain_loaded{domain="control"}`
+     series (a retired domain is left out, so FaasSealDomainIdentityMissing
+     stays quiet) and the control plane's schedd reports 1;
+   - internal_only dispatches and workflow outbound steps still pass.
+
+A schedd that refuses to start names what is left (a minter that is not
+secretd, a control identity, or a fleet identity). Back out by unsetting the
+variable and running cd-compute again: the identity comes back with the next
+converge.
+
 ## Rotation
 
 The runtime domain rotates as before (`docs/runbooks/seal-domain-key-escrow.md`).
