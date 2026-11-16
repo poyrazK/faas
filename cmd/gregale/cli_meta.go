@@ -1842,6 +1842,17 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<app>", "KEY=VALUE..."}},
 				{Name: "unset", Short: "Remove labels", Positionals: []string{"<app>", "KEY..."}},
 			}},
+			{Name: subProtection, Short: "Show or change the app's production protection (preview)", Positionals: []string{"<app>"},
+				Notes: []string{
+					"New public apps get availability and latency SLOs, an hourly health check, email alerts and a rollback gate as ordinary objects you can edit or delete.",
+					"The health check's requests and the wakes it alone causes are not billed.",
+					"off deletes the protection objects you have not changed; on creates the missing ones after the next live production deploy.",
+				},
+				Examples: []string{"gregale app protection my-api", "gregale app protection off my-api", "gregale app protection on my-api"},
+				Subcommands: []cliSub{
+					{Name: "on", Short: "Turn protection on, also for an app created before it existed", Positionals: []string{"<app>"}},
+					{Name: "off", Short: "Turn protection off and delete its unchanged objects", Positionals: []string{"<app>"}},
+				}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
 				{Name: "project", Short: "check every app of this project instead of one", Value: "PROJECT"},
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},

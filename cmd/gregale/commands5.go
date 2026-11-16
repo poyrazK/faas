@@ -1163,6 +1163,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppsUDP(slug, commandArgs)
 		case subStreamingCap:
 			return cmdAppsStreamingCap(slug, commandArgs)
+		case subProtection:
+			return cmdAppProtection(slug, commandArgs)
 		case subStaticEgressIP:
 			return cmdAppStaticEgressIP(slug, commandArgs)
 		}

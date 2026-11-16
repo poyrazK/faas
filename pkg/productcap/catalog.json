@@ -4629,6 +4629,9 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_app_protection_test.go::TestGetAppProtectionReportsBaselineItems",
       "routes": [
         "/v1/apps/{}/protection"
+      ],
+      "cli": [
+        "app protection"
       ]
     },
     {
