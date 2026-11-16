@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +49,10 @@ func TestInstancesForceParkBreakGlassDBSubmitsAndWaits(t *testing.T) {
 	}
 
 	var notified []string
+	// Force-park intents settle through schedd's operator park protocol,
+	// which MemStore enforces; the fake schedd records the outcome here and
+	// the command reads it through the intent seam.
+	var outcomes sync.Map
 	old := instancesBreakGlassDBOpener
 	oldOut, oldErr := osStdout, osStderr
 	t.Cleanup(func() {
@@ -60,6 +65,15 @@ func TestInstancesForceParkBreakGlassDBSubmitsAndWaits(t *testing.T) {
 			notify: func(_ context.Context, channel, payload string) error {
 				notified = append(notified, channel+" "+payload)
 				return nil
+			},
+			intent: func(ctx context.Context, id string) (state.OperatorIntent, error) {
+				intent, err := store.GetOperatorIntent(ctx, id)
+				if err == nil {
+					if status, ok := outcomes.Load(id); ok {
+						intent.Status = status.(state.OperatorIntentStatus)
+					}
+				}
+				return intent, err
 			},
 			close: func() {},
 		}, nil
@@ -74,7 +88,7 @@ func TestInstancesForceParkBreakGlassDBSubmitsAndWaits(t *testing.T) {
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
 				intent, err := store.ClaimPendingOperatorIntent(ctx)
-				if errors.Is(err, state.ErrNotFound) {
+				if errors.Is(err, state.ErrOperatorIntentNotFound) || errors.Is(err, state.ErrNotFound) {
 					time.Sleep(10 * time.Millisecond)
 					continue
 				}
@@ -84,12 +98,9 @@ func TestInstancesForceParkBreakGlassDBSubmitsAndWaits(t *testing.T) {
 					return
 				}
 				if succeed {
-					err = store.MarkOperatorIntentSucceeded(ctx, intent.ID, nil)
+					outcomes.Store(intent.ID, state.OperatorIntentSucceeded)
 				} else {
-					err = store.MarkOperatorIntentFailed(ctx, intent.ID, "park failed", nil)
-				}
-				if err != nil {
-					t.Error(err)
+					outcomes.Store(intent.ID, state.OperatorIntentFailed)
 				}
 				done <- intent
 				return

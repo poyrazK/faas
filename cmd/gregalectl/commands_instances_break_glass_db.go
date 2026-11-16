@@ -25,6 +25,9 @@ const nodeRolloutActorID = "5f0d6a3e-8c1b-4b7a-9e2d-7a41c0de0001"
 type instancesBreakGlassDB struct {
 	store  state.Store
 	notify func(ctx context.Context, channel, payload string) error
+	// intent reads the intent's outcome; nil reads store.GetOperatorIntent.
+	// Tests settle intents here instead of replaying schedd's park protocol.
+	intent func(ctx context.Context, id string) (state.OperatorIntent, error)
 	close  func()
 }
 
@@ -90,8 +93,12 @@ func forceParkBreakGlassDB(instanceID, reason, traceID string, timeout time.Dura
 		}
 	}
 	_, _ = fmt.Fprintf(osStderr, "intent=%s instance=%s\n", receipt.IntentID, instanceID)
+	readIntent := conn.intent
+	if readIntent == nil {
+		readIntent = conn.store.GetOperatorIntent
+	}
 	for {
-		intent, err := conn.store.GetOperatorIntent(ctx, receipt.IntentID)
+		intent, err := readIntent(ctx, receipt.IntentID)
 		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 			_, _ = fmt.Fprintf(osStderr, "gregalectl instances force-park: poll intent %s: %v\n", receipt.IntentID, err)
 			return 1
