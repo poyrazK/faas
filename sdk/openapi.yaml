@@ -36066,6 +36066,15 @@ components:
         preview_service_calls_policy:
           $ref: '#/components/schemas/PreviewServiceCallsPolicy'
           description: "Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`."
+        app_protocol:
+          type: string
+          description: "Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets none."
+        streaming:
+          type: boolean
+          description: "Compose `x-gregale-streaming`. Omitted when the file sets none."
+        wake_ahead:
+          type: boolean
+          description: "Compose `x-gregale-wake-ahead`. Omitted when the file sets none."
         allowed_service_callers:
           type: array
           items: {type: string}
@@ -40740,7 +40749,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_all_failed, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string

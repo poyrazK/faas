@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-20261113180000: support opens a ticket for a customer who may be
+// ADR-20261115175928: support opens a ticket for a customer who may be
 // stuck. The customer sees it and is notified; no service clock runs
 // until the customer replies.
 func TestSupportContactCustomerOpensWaitingTicket(t *testing.T) {

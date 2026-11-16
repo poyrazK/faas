@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
@@ -1009,7 +1010,7 @@ func cmdApp(args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
-		return printErr("Could not update app", err)
+		return printErr("Could not update app", explainPerInstanceConcurrencyRefusal(err, explicit["per-instance-concurrency"]))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -1685,6 +1686,17 @@ func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
 // plan's concurrency per VM, which the API enforces.
 func errNegativePerInstanceConcurrency(value int) error {
 	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the plan's concurrency per VM); got %d", value)
+}
+
+// explainPerInstanceConcurrencyRefusal turns the API's dark-launch refusal of
+// per_instance_concurrency, which answers like an unknown field so an N-1
+// apid and this one agree (ADR-20261022203523), into what it means for the
+// caller: the setting is not enabled for this account yet.
+func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
+	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
+		return fmt.Errorf("--per-instance-concurrency is in early access and not enabled for this account; leave it unset to use the plan's concurrency per VM (%w)", err)
+	}
+	return err
 }
 
 const manifestTriggerCleanupTimeout = 10 * time.Second
@@ -2612,7 +2624,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if explicit["preview"] {
 			planFlag = "--preview"
 		}
-		if *diff || *dryRun || *serverDiff || *createOnly || *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+		if *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+			return printErr("Invalid flags", errors.New(planFlag+" previews a single app; for a project run: gregale deploy --project --dry-run"))
+		}
+		if *diff || *dryRun || *serverDiff || *createOnly {
 			return printErr("Invalid flags", errors.New(planFlag+" cannot be combined with deploy mutation or project preview flags"))
 		}
 		if *tarball != "" || *templateName != "" || *repo != "" || *githubSnippet {
@@ -4129,6 +4144,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if !*createOnly {
 		if err := preflightDeploySessionStorage(client); err != nil {
 			return printErr("Could not save deploy session", err)
+		}
+	}
+	// A datastore image is refused after the app exists, which left an
+	// empty app counting toward the app quota (prod 2026-11-15: --image
+	// redis). Refuse it here, before anything is created.
+	if *image != "" {
+		if hint, denied := statefuldenylist.Match(*image); denied {
+			return printErr("Stateless-only platform", fmt.Errorf("image %s runs a datastore, which loses its data when the app parks; %s. Nothing was created or deployed", *image, hint))
 		}
 	}
 	resolvedApp := api.AppResponse{}
@@ -7049,7 +7072,11 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	projectSlug := fs.String("project", "", "read every service of this project together, each line prefixed with its service")
 	projectServices := fs.String("service", "", "with --project, only these services (comma-separated)")
 	if err := parseAppLogFlags(fs, args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
+		// The parser already wrote its single JSON Problem. Keep the
+		// existing synopsis for human output and unreported local errors.
+		if diagnostic, ok := fs.Output().(*jsonFlagErrorWriter); !ok || !diagnostic.wrote {
+			PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
+		}
 		return 1
 	}
 	if *projectSlug != "" {

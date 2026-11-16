@@ -157,7 +157,12 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		// A verified empty deployment roster is an availability condition,
 		// including a newly created app. It must not be mistaken for an
 		// unverified policy or fall through to mutable backend selection.
-		if len(frozen.Weights) == 0 && inputs.HostDeploymentID == "" && !inputs.RevisionPresent && !inputs.ResolveRelease {
+		// A project app resolves its release first; with no release member
+		// it reads the same roster, so an empty one is the same condition
+		// (prod 2026-11-15: a project app whose deploys all failed answered
+		// "could not verify this route's traffic policy" for its lifetime).
+		if len(frozen.Weights) == 0 && inputs.HostDeploymentID == "" && !inputs.RevisionPresent {
+			recordTrafficPolicyStage(r.Context(), "routing_empty_roster")
 			markTrafficPhase(r.Context(), trafficCapacity)
 			recordTrafficRefusal(r.Context(), "capacity")
 			w.Header().Set("Retry-After", "1")

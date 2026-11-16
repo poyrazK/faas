@@ -79,7 +79,7 @@ func (m *Manager) openSealedSnapshot(ctx context.Context, appID string, snap *Sn
 		if appID == "" || snap.CaptureID == "" {
 			return errors.New("fcvm: remote capture key needs the app and capture ids")
 		}
-		identity, err = remote.OpenCaptureKey(ctx, appID, snap.CaptureID)
+		identity, err = m.openRemoteCaptureKey(ctx, remote, appID, snap)
 	} else {
 		if len(m.hostIdentities) == 0 {
 			return ErrNoCaptureKey

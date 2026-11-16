@@ -141,7 +141,8 @@ as human root help and never include credentials or supplied option values.
 
 JSON help uses the same command manifest and canonical names as completion and
 the reference. It describes documented argument contracts, without inferring
-types, defaults, output schemas or validation rules from prose. `--all` is
+types, defaults or validation rules from prose. Output contracts, where
+registered, are explicit metadata described below. `--all` is
 accepted and has no additional effect because JSON already includes every local
 option. `gregale --json help --operator` additionally lists operator and
 compatibility roots; an explicitly named operator topic remains inspectable.
@@ -155,6 +156,80 @@ be stale; discovery is guidance, and the server still decides authorization.
 Unknown topics or help options exit `1`, leave stdout empty, and write one
 Problem JSON object to stderr. Human help and command-local `--help` keep their
 formatted usage output, including when `FAAS_JSON=1` is set.
+
+### Discovering flag dependencies
+
+The JSON help for `build list` and `invocation list` also includes optional
+`flag_rules`, drawn from the same explicit registry as their existing validators.
+Each rule has a stable `id`, `kind: "requires"`, `when` conditions and required
+conditions. All `when` conditions must match; all `requires` conditions must
+hold. Conditions use registered option names, a `test` and a Boolean `value`:
+
+- `present` tests whether `--output` was supplied, including `--output=`.
+- `enabled` tests the parsed Boolean value of `--all` or `--stream`; explicit
+  `false` and repeated flags retain their normal parsing rules.
+- `effective` on `json` tests the selected output mode, including environment
+  or saved preferences, rather than requiring the literal `--json` spelling.
+- `active` on `progress` means a validated progress mode other than `off`.
+
+An output flag requires enabled `--all`. Enabled stdout streaming requires
+both `--all` and effective JSON mode, conditional on output being absent.
+`--stream=false` adds no requirement. Active export progress requires both
+output presence and enabled `--all`. File output accepts redundant `--stream`
+with a human receipt. These rules do not replace other validation of paths,
+limits, arguments or flag values. Unregistered commands omit `flag_rules`;
+filtered options and rules requiring unavailable options remain undiscoverable.
+
+When one of these existing checks fails in JSON mode, the single stderr Problem
+adds `cli.kind: "invalid_flag_combination"`, its registered `rule`, the unmet
+`missing` conditions and validated offline `help_argv`. No supplied path, raw
+arguments or credential is retained in that metadata. The original detail,
+code, category and exit remain: stdout-stream usage has code
+`validation_failed`, output-without-all has code `invalid_request`, and both
+exit 1. The checks still run at their existing points before authentication
+and API reads. Human messages and valid invocation behavior are unchanged.
+
+### Discovering list output formats
+
+`gregale --json help build list` and `gregale --json help invocation list`
+include an optional `output` object in the existing version-1 help document.
+It describes valid invocations with effective JSON mode enabled, including
+`FAAS_JSON=1` or a saved JSON preference. Other commands omit the object until
+an explicit output contract is registered; absence does not imply a format.
+No API request, saved option value or row data is needed for discovery.
+
+Each `modes` entry has a `when` map of effective Boolean options. `false` is
+meaningful; a missing key is unconstrained. `output` means the flag was supplied,
+not its path or truthiness. These conditions describe valid invocations, so an
+empty output path or an invalid option combination still fails validation.
+Modes requiring an unavailable option are omitted with that option.
+
+| Mode | Conditions | JSON-mode stdout | Empty inventory |
+| --- | --- | --- | --- |
+| `page` | `all=false`, `stream=false`, no output flag | Object: build `items` or `invocations`, with `next_cursor` | Empty row array in the object |
+| `all` | `all=true`, `stream=false`, no output flag | Build array; invocation object with `invocations` | Empty array, or object containing it |
+| `stream` | `all=true`, `stream=true`, no output flag | Ordered JSON Lines records, emitted per page | Zero bytes |
+| `file` | `all=true`, output flag supplied; stream unconstrained | JSON completion receipt after file publication | Receipt for an empty JSON Lines file |
+
+`stdout` reports encoding, shape, row/cursor field names, empty behavior and
+emission timing. File mode also describes the JSON Lines artifact, atomic
+no-overwrite publication and receipt fields. The optional receipt `path` is
+omitted when unsafe to expose. This contract describes containers and receipts,
+not the schema of individual API rows or a point-in-time inventory snapshot.
+
+`errors` identifies the stderr Problem fields and existing HTTP-status exit
+mapping. Request IDs are optional. Buffered reads leave stdout empty on a read
+failure; streamed reads can leave complete earlier records plus optional
+`pagination` progress in the Problem. Every mode can leave torn stdout on a
+stdout-write failure. File errors before publication leave no final artifact
+and no stdout rows; a receipt-write error retains the completed file. The
+metadata preserves the existing transport/local classifications and exit 130
+for signal cancellation owned by stream/file mode. Native OS signal exits,
+including SIGPIPE, remain possible and may produce no Problem.
+
+This is additive help metadata. Human help, local `--help`, flag parsing,
+list runtime behavior, man pages and Markdown references keep their existing
+contracts.
 
 `gregale deploy --help` and `gregale app --help` show common options and examples.
 Add `--all` to see every option grouped by purpose:
@@ -613,6 +688,38 @@ credentials, and Gregale API key strings are redacted, including nested error
 fields. This protects recognized credentials, not arbitrary secrets in user
 messages. Successful command output remains on stdout.
 
+Flag-parser errors also include a CLI-local `cli` object. Its `kind` distinguishes
+`unknown_flag`, `missing_value`, `invalid_value`, `misplaced_global_flag` and
+unclassified `invalid_flag` errors. When available, `flag`, `suggested_flags`,
+`expected_type`, `value_marker`, `allowed_values` and `placement` describe
+registered options, without supplied values or saved defaults. Expected types
+are `boolean`, `integer`, `number`, `duration`, `enum` and `value` (a documented
+format with no narrower parser type). Command-specific limits still apply.
+
+For example, `gregale --json deploy --naem demo` returns exit `1` and one
+`validation_failed` Problem (category `invalid_request`) whose `cli.suggested_flags` is `["--name"]` and whose
+`cli.help_argv` is `["gregale", "--json", "help", "deploy"]`. Follow that argument
+array to discover the flag; the CLI never applies or executes the suggestion.
+Ambiguous typos have no suggestion. `help_argv` uses a validated visible command
+or falls back to root JSON help, without API requests. Prefix-only globals use
+`placement: "before_command"`; a command-local resource `--profile` retains its
+local meaning. Other validation and API errors omit `cli`. Human diagnostics,
+Problem codes, exit codes and stdout/stderr routing stay unchanged.
+
+Unknown commands at the root, in the shared nested-command renderer and in
+the invocation family expose `cli.kind: "unknown_command"`. Unknown JSON help
+topics use `unknown_help_topic`. For example,
+`gregale --json invocation lsit` returns `suggested_commands` containing
+`["gregale", "invocation", "list"]`, and `help_argv` containing
+`["gregale", "--json", "help", "invocation", "list"]`.
+Corrections contain only visible canonical command words; they do not preserve
+targets, flags or values from the failed invocation. A command path can still
+require arguments: inspect its help before constructing a new invocation.
+Ambiguous, unrelated and hidden names get no correction. Help falls back to
+the deepest visible parent or root. Advice uses offline capability state and
+never executes a command. Human diagnostics and existing Problem codes remain
+unchanged; API errors omit this metadata.
+
 Successful `--json` output takes one of two shapes, and a command keeps its
 shape across releases:
 
@@ -945,6 +1052,77 @@ page requests; normal OS SIGPIPE behavior applies to a closed stdout pipe.
 Streaming does not resume or replay a failed read automatically. Inventory
 changes during traversal can affect the observed rows.
 
+### Live progress for file exports
+
+File exports accept opt-in `--progress plain` or `--progress ndjson` on both
+build and invocation lists. The default is `off`; explicitly selecting `off`
+keeps the same silent stderr behavior and does not require file output.
+Active progress requires both `--all` and `--output`, and invalid modes or
+combinations fail before login, API access or private-file creation.
+
+```sh
+gregale --json build list --all --output builds.jsonl --progress ndjson
+gregale invocation list --all --output invocations.jsonl --progress plain
+```
+
+Progress goes only to stderr; stdout retains the normal JSON or human receipt.
+Plain mode prints counter lines. NDJSON mode emits `type: "list_export_progress"`
+and `schema_version: 1`, with `event`, `pages_completed`, `items_emitted`,
+`bytes_written`, `elapsed_ms` and `published`. All counters and false values
+are explicit, including zeros. Events contain no rows, cursors, paths, filters,
+profiles, API addresses or credentials. JSON help describes this optional
+stderr stream on the file-output mode.
+
+A `start` event precedes reads. `update` events follow complete validated pages,
+including empty pages, at most once per 250 ms. This is cooperative page progress,
+not a background heartbeat while a read is blocked. The unthrottled terminal
+`published` event follows the atomic link and sets `published: true`. A failure
+before publication emits `stopped` with `published: false`, followed by the
+existing Problem or human error. Partial private bytes can be counted without
+being usable as an export. A receipt-write failure after publication retains
+the completed file and its `published` event.
+
+Use `--json --progress ndjson` when parsing both progress and the final error.
+The existing error code, category, exit and request ID remain authoritative;
+private file bytes do not acquire stdout pagination metadata. Progress is
+best effort: a failed or short diagnostic write disables further progress
+without changing export reads or publication. Native OS signal behavior and
+the cooperative limits of local I/O remain unchanged.
+
+### Overall timeout for list reads
+
+Build and invocation lists accept an optional positive `--timeout DURATION`
+for a single page, a complete `--all` walk, stdout streaming or a file export:
+
+```sh
+gregale --json build list --all --output builds.jsonl --timeout 2m
+gregale --json invocation list --all --stream --timeout 30s
+```
+
+One deadline starts after local validation, output preflight and client setup,
+then covers all list requests and response reads. Human invocation lists use
+the same deadline for their preliminary app-name lookup. Existing eligible
+HTTP retry waits share the remaining budget; retry eligibility/counts are
+unchanged. The list endpoints themselves retain the SDK's closed retry policy.
+`--http-timeout` still bounds individual requests, so the earlier applicable
+request or overall deadline wins. Omitting `--timeout` adds no overall deadline.
+An explicitly supplied zero, negative, empty, invalid or overflowing duration
+fails before authentication, API reads or creating a private output file.
+Repeated timeout flags keep the parser's usual last-value-wins behavior.
+
+Expiry uses the existing temporary-failure exit 3 and stderr Problem contract.
+An actual API failure retains its server code and request ID. Buffered reads
+emit no rows on expiry; stdout streams can retain earlier records and their
+existing `pagination` progress. Signal cancellation in stream/file mode keeps
+exit 130. No automatic resume or new retry policy is added.
+
+File exports check expiry before publication, including after sync/close, and
+clean up their own private file when possible. Once the atomic link publishes
+an artifact, later expiry or receipt failure retains that completed file.
+The timeout cooperatively bounds context-aware reads and publication checks;
+it cannot interrupt a blocked local stdout write or filesystem call. It does
+not promise a strict process wall-clock limit or change the file commit point.
+
 ### Export invocation and build lists to a file
 
 Use `--all --output PATH` for a complete JSON Lines file:
@@ -1135,3 +1313,7 @@ a quoted continuation command with the scope, filters, and page size, even
 when the current page is empty. `--all` follows empty pages with continuation
 and stops without partial output on API errors, repeated cursors, or the
 1,000-page guard. Pages reflect live data rather than a fixed snapshot.
+
+Verification file inputs must name regular files directly; final-component
+symlinks, including dangling links, are refused. Symlinked parent directories
+retain the existing customer-file policy.

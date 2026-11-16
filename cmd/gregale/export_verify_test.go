@@ -211,3 +211,39 @@ func TestExportIntegrityFilesAndOutputFailures(t *testing.T) {
 		t.Fatal("input changed")
 	}
 }
+
+func TestExportVerificationRejectsInputSymlinks(t *testing.T) {
+	directory := t.TempDir()
+	path, receipt := filepath.Join(directory, "rows.jsonl"), filepath.Join(directory, "receipt.json")
+	data := "{}\n"
+	for name, contents := range map[string]string{path: data, receipt: integrityReceiptJSON(data, 1)} {
+		if err := os.WriteFile(name, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, target := range []string{path, receipt, filepath.Join(directory, "missing")} {
+		link := filepath.Join(t.TempDir(), "linked-input")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		left, right := path, receipt
+		if target == receipt {
+			right = link
+		} else {
+			left = link
+		}
+		if _, err := main.VerifyExportFiles(left, right); err == nil {
+			t.Fatal("symlink accepted")
+		}
+	}
+	// Existing platform policy allows symlinked parent directories, such as /tmp
+	// on macOS; only the customer-named final component must be a regular file.
+	parentLink := filepath.Join(t.TempDir(), "parent")
+	if err := os.Symlink(directory, parentLink); err != nil {
+		t.Fatal(err)
+	}
+	result, err := main.VerifyExportFiles(filepath.Join(parentLink, "rows.jsonl"), filepath.Join(parentLink, "receipt.json"))
+	if err != nil || !result.Verified {
+		t.Fatalf("parent symlink refused: %+v %v", result, err)
+	}
+}

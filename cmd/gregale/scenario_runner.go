@@ -639,7 +639,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 			return printErr("Not logged in", err)
 		}
 	} else if *engine == "simulated" && len(scenario.Simulation) == 0 {
-		return printErr("No simulation", fmt.Errorf("scenario %q has no simulation command", *scenarioName))
+		return printErr("No simulation", errNoSimulationCommand(*scenarioName))
 	} else if *engine == "local" {
 		if err := validateLocalTestScenario(scenario); err != nil {
 			return printErr("Invalid local scenario", err)
@@ -2812,4 +2812,14 @@ func writeTestReport(path string, receipts []testRunReceipt) error {
 		return err
 	}
 	return nil
+}
+
+// errNoSimulationCommand says what --engine simulated needs and what to run
+// instead: the bare "has no simulation command" left users guessing which key
+// to add (microservices-demo feedback 2026-11-16).
+func errNoSimulationCommand(scenario string) error {
+	return fmt.Errorf("scenario %q has no simulation command; --engine simulated runs the scenario's `simulation:` command "+
+		"(for example `simulation: [node, --test, test/checkout.simulated.test.mjs]` in gregale-test.yaml), "+
+		"or run it against a real deployment with --engine real-vm or a local server with --engine local --base-url URL; "+
+		"see "+docsSiteURL+"/scenario-tests", scenario)
 }

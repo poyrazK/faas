@@ -155,6 +155,9 @@ func toolSuccessSchema(name string) map[string]any {
 }
 
 func toolIdempotent(name string, readOnly bool) bool {
+	if name == "gregale_plan_task_tool_deploy" || name == "gregale_plan_task_tool_recovery" {
+		return true // Read-only reviews create no durable plan or release state.
+	}
 	if name == "gregale_start_job" || name == "gregale_cancel_job_run" {
 		return true // Caller-stable dispatch key, or native repeat-safe cancellation.
 	}
@@ -167,6 +170,18 @@ func toolIdempotent(name string, readOnly bool) bool {
 // Native result DTOs keep their existing fields while every apply result also
 // identifies the MCP plan, including receipts written by older bridges.
 func bindToolPlanID(name string, args any, data json.RawMessage) (json.RawMessage, error) {
+	if name == "gregale_apply_task_tool_retire" {
+		return bindTaskRetirementReceipt(args, data)
+	}
+	if name == "gregale_apply_task_tool_quarantine" {
+		return bindTaskQuarantineReceipt(args, data)
+	}
+	if name == "gregale_apply_task_tool_restore" {
+		return bindTaskRestoreReceipt(args, data)
+	}
+	if name == "gregale_apply_task_tool_deploy" {
+		return bindTaskExecutionReceipt(args, data)
+	}
 	if !strings.HasPrefix(name, "gregale_apply_") && name != "gregale_promote_deployment" {
 		return data, nil
 	}

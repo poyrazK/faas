@@ -616,8 +616,13 @@ type InstanceStatsRow struct {
 	// Same kernel counter family (interface bytes, includes
 	// Ethernet framing); same TxValid gate as egress (a cache
 	// regression / first-sample state zeroes BOTH columns).
-	NetRxBytes        uint64
-	RxValid           uint32
+	NetRxBytes uint64
+	RxValid    uint32
+	// InternalTxBytes (billing review R8-2) is the cumulative part of
+	// NetTxBytes the guest sent to internal destinations, valid only when
+	// InternalTxValid; older schedds and vmmds never report it.
+	InternalTxBytes   uint64
+	InternalTxValid   bool
 	DiskUsedBytes     int64
 	DiskCapacityBytes int64
 	DiskValid         bool
@@ -664,6 +669,10 @@ func (c *Client) ListInstanceStats(ctx context.Context) ([]InstanceStatsRow, err
 			NetRxBytes:   r.GetNetRxBytes(),
 			RxValid:      r.GetRxValid(),
 			Departed:     r.GetDeparted(),
+		}
+		if v := r.GetInternalTxBytes(); v != nil && v.GetValue() >= 0 {
+			row.InternalTxBytes = uint64(v.GetValue())
+			row.InternalTxValid = true
 		}
 		if used, capacity := r.GetDiskUsedBytes(), r.GetDiskCapacityBytes(); used != nil && capacity != nil && capacity.GetValue() > 0 && used.GetValue() >= 0 && used.GetValue() <= capacity.GetValue() {
 			row.DiskUsedBytes = used.GetValue()

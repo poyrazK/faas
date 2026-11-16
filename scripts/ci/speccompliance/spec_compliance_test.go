@@ -147,7 +147,7 @@ var routeExclude = map[string]bool{
 	// ADR-20261112134100: private staff inbox metadata; public customer counterparts remain documented.
 	"GET /v1/admin/support/notifications":          true,
 	"POST /v1/admin/support/tickets/{ticket}/read": true,
-	// ADR-20261115120000: the private staff inbox API, now registered literally; the operator console reads it.
+	// ADR-20261115175927: the private staff inbox API, now registered literally; the operator console reads it.
 	"GET /v1/admin/support/tickets":                                               true,
 	"GET /v1/admin/support/tickets/{ticket}":                                      true,
 	"GET /v1/admin/support/tickets/{ticket}/messages":                             true,
@@ -524,7 +524,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/tenants/{id}/360":             true, // operator-only tenant 360 projection
 	"GET /v1/admin/obs/lookup":                       true, // operator-only identifier lookup (ADR-20261112170000)
 	"GET /v1/admin/obs/attention":                    true, // operator-only customer attention signals (ADR-20261113123000)
-	"GET /v1/admin/obs/attention/summary":            true, // operator console signal actions (ADR-20261115120000)
+	"GET /v1/admin/obs/attention/summary":            true, // operator console signal actions (ADR-20261115175927)
 	"GET /v1/admin/obs/attention/{id}/contact-draft": true,
 	"POST /v1/admin/obs/attention/{id}/dismiss":      true,
 	"POST /v1/admin/obs/attention/{id}/contact":      true,
@@ -1161,7 +1161,7 @@ var schemaSpecOnly = map[string]bool{
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
-	"FlagRule": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
@@ -1735,11 +1735,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "deployment_response_check.go"),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
+		filepath.Join(root, "pkg", "api", "mcp_access_fingerprint.go"),
 		filepath.Join(root, "pkg", "api", "mcp_admission.go"),
 		filepath.Join(root, "pkg", "api", "mcp_admission_history.go"),
 		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
 		filepath.Join(root, "pkg", "api", "tool_publications.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_releases.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_quarantine.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_retirement.go"),
 		filepath.Join(root, "pkg", "api", "tool_publication_verification.go"),
 		filepath.Join(root, "pkg", "api", "tool_publication_readiness.go"),
 		filepath.Join(root, "pkg", "api", "tool_invocations.go"),

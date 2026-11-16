@@ -696,6 +696,9 @@ func (c Config) NftCommands() [][]string {
 			add("add", "counter", "ip", "faas", e.CounterName, "{}")
 		}
 	}
+	// R8-2: count the guest's own traffic to internal destinations, so
+	// billing can leave it out of app egress.
+	cmds = append(cmds, c.internalEgressAccounting(nft)...)
 	// NAT: publish :8080 to the guest; masquerade the guest's egress.
 	add("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}")
 	cmds = append(cmds, c.appPortDNATRules(nft)...)

@@ -8,11 +8,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // ServiceRequestObservation is target-side debug evidence, with identity from
 // the authorized resolver and selected endpoint rather than guest headers.
-// Latency is time to the first upstream response header, including for streams.
+// Latency is time to the first upstream response header, including for
+// streams; a gRPC call is observed when it completes, because its outcome is
+// in its trailers.
 type ServiceRequestObservation struct {
 	AccountID         string
 	ScenarioTestRunID string
@@ -105,7 +109,11 @@ func (p *ServiceProxy) withServiceRequestObservation(r *http.Request, target Ser
 // It deliberately adds no financial usage event: internal dependency evidence
 // must not change the ingress accounting contract (ADR-234/ADR-429).
 func (h *Handler) RecordServiceRequest(r *http.Request, observation ServiceRequestObservation) {
-	if h == nil || h.requestTelemetry == nil || r == nil {
+	if h == nil || r == nil {
+		return
+	}
+	h.observeServiceRequestMetrics(r, observation)
+	if h.requestTelemetry == nil {
 		return
 	}
 	row, ok := serviceRequestTelemetryRow(r, observation)
@@ -113,6 +121,41 @@ func (h *Handler) RecordServiceRequest(r *http.Request, observation ServiceReque
 		row.Route = h.serviceRequestRoute(r, observation)
 		h.requestTelemetry.RecordFromObserve(row)
 	}
+}
+
+// AppPlanResolver names an app's plan; the deployment label set caps an
+// app's deployment series by plan. ok is false when the app is unknown.
+type AppPlanResolver func(ctx context.Context, appID string) (plan api.Plan, ok bool)
+
+// WithAppPlanResolver lets service calls, which arrive without a resolved
+// public App, record request metrics under the target's plan.
+func (h *Handler) WithAppPlanResolver(resolve AppPlanResolver) *Handler {
+	h.appPlan = resolve
+	return h
+}
+
+// observeServiceRequestMetrics records a service call in the request
+// duration series app health, SLOs, error-rate alerts and the platform outage
+// detector read. Service calls reached request telemetry only, so an
+// internal-only service (every gRPC backend of a microservices app) read
+// "unknown: request_evidence_unavailable" in app health and could never trip
+// an SLO or outage alert (microservices-demo, 2026-11-16). The public edge
+// records its own requests in observe; a service call never passes there.
+func (h *Handler) observeServiceRequestMetrics(r *http.Request, o ServiceRequestObservation) {
+	appID := o.Target.AppID
+	if h.metrics == nil || appID == "" || o.Status < 100 || o.Status > 599 || isRouteProbe(r.Context()) {
+		return
+	}
+	plan := api.PlanFree
+	if h.appPlan != nil {
+		if resolved, ok := h.appPlan(r.Context(), appID); ok {
+			plan = resolved
+		}
+	}
+	h.metrics.PreInstantiateApp(appID)
+	deployment := h.metrics.deploymentLabels.admit(appID, plan, o.Target.DeploymentID)
+	h.metrics.ObserveRequestDurationByDeploymentWithTrace(appID, statusClassBucket(o.Status), deployment,
+		time.Duration(o.LatencyMS)*time.Millisecond, traceIDFromContext(r.Context()))
 }
 
 // serviceRequestRoute labels a service call with the target app's route, as

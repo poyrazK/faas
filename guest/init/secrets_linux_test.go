@@ -129,14 +129,15 @@ func TestBuildEnv_EmptyKeysRejectsEmptyKey(t *testing.T) {
 
 func TestValidEnvKeyShape(t *testing.T) {
 	cases := map[string]bool{
-		"OK":            true,
-		"A1":            true,
-		"FOO_BAR_BAZ":   true,
-		"":              false,
-		"lowercase":     false,
-		"_UNDERSCORE":   false,
-		"HY-PHEN":       false,
-		"9STARTS_DIGIT": false,
+		"OK":                       true,
+		"A1":                       true,
+		"FOO_BAR_BAZ":              true,
+		"":                         false,
+		"lowercase":                true,
+		"DOTNET_EnableDiagnostics": true,
+		"_UNDERSCORE":              false,
+		"HY-PHEN":                  false,
+		"9STARTS_DIGIT":            false,
 	}
 	for in, want := range cases {
 		if got := validEnvKey(in); got != want {

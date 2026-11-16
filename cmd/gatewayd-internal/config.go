@@ -43,6 +43,13 @@ type Config struct {
 	// to 127.0.0.1:9090 (loopback only).
 	ControlAddr string `toml:"control_addr"`
 
+	// ControlServiceProxy mounts /v1/internal/services/ on the loopback
+	// control listener for the e2e harness. That route has no connection-bound
+	// caller resolver: it takes X-Faas-Caller-App on trust, so any host-local
+	// process could call a private service as any app. Test-only; production
+	// never sets it, and guests use service_proxy_listen instead.
+	ControlServiceProxy bool `toml:"control_service_proxy"`
+
 	// ServiceProxyListen is the tenant-bridge listener for cross-VM service
 	// discovery. It must bind the host bridge address on the reserved service
 	// proxy port (10081 or legacy 10080). Both HTTP ports start on the same

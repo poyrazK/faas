@@ -168,3 +168,23 @@ func TestExportVerificationAcceptsActualListReceipts(t *testing.T) {
 		})
 	}
 }
+
+// Keep a direct public entry-point invocation visible to the JSON parity gate.
+// The matrix above separately checks the same path through its output helper.
+func TestExportVerificationJSONDispatcher(t *testing.T) {
+	calls := setupExportVerificationCLI(t)
+	data := "{\"value\":9007199254740993}\n"
+	path, receipt := filepath.Join(t.TempDir(), "rows.jsonl"), filepath.Join(t.TempDir(), "receipt.json")
+	for name, contents := range map[string]string{path: data, receipt: integrityReceiptJSON(data, 1)} {
+		if err := os.WriteFile(name, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, stderr, restore := main.SwapIO(t)
+	defer restore()
+	code := main.Run([]string{"--json", "export", "verify", path, "--receipt", receipt})
+	var report main.ExportVerification
+	if code != 0 || calls.Load() != 0 || stderr() != "" || json.Unmarshal(out.Bytes(), &report) != nil || !report.Verified || !report.Checks.SHA256 || !report.Checks.BytesWritten || !report.Checks.ItemsEmitted {
+		t.Fatalf("exit=%d calls=%d out=%s err=%s", code, calls.Load(), out.String(), stderr())
+	}
+}

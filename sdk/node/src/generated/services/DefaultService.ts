@@ -52,6 +52,12 @@ import type { MCPReadinessSnapshot } from '../models/MCPReadinessSnapshot.js';
 import type { PrivateToolInvocationRequest } from '../models/PrivateToolInvocationRequest.js';
 import type { RestoreMCPReadinessPolicyRequest } from '../models/RestoreMCPReadinessPolicyRequest.js';
 import type { SetMCPReadinessPolicyRequest } from '../models/SetMCPReadinessPolicyRequest.js';
+import type { TaskToolRecoveryRestoreRequest } from '../models/TaskToolRecoveryRestoreRequest.js';
+import type { TaskToolReleaseIntent } from '../models/TaskToolReleaseIntent.js';
+import type { TaskToolReleaseIntentCheck } from '../models/TaskToolReleaseIntentCheck.js';
+import type { TaskToolReleaseIntentDecision } from '../models/TaskToolReleaseIntentDecision.js';
+import type { TaskToolReleaseIntentRecord } from '../models/TaskToolReleaseIntentRecord.js';
+import type { TaskToolRetirementRequest } from '../models/TaskToolRetirementRequest.js';
 import type { ToolGrantIntent } from '../models/ToolGrantIntent.js';
 import type { ToolGrantPage } from '../models/ToolGrantPage.js';
 import type { ToolGrantRecord } from '../models/ToolGrantRecord.js';
@@ -78,6 +84,198 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DefaultService {
   protected static readonly clientConfig?: typeof OpenAPI;
+  /**
+   * Read the retained Task review and last observed approval; requires account-wide read scope
+   * Return the retained credential-free Task stack review and its last recorded approval state. The requesting key and personal owner may inspect it. This read observes no source files and certifies no current binding or native app facts. Expired reviews are projected as expired. Every response keeps ready_to_apply and bindings_verified false.
+   * @returns TaskToolReleaseIntentRecord Retained Task review metadata from this account journal
+   * @throws ApiError
+   */
+  public static getTaskToolReleaseIntent({
+    id,
+  }: {
+    /**
+     * Stable identity of the saved Task stack review
+     */
+    id: string,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/task-tool-release-intents/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `Malformed Task review identity`,
+        403: `Personal Task review inspection scope is required`,
+        404: `The review is unavailable to this inspecting principal`,
+        409: `The requested Task review cannot be inspected in its current form`,
+      },
+    });
+  }
+  /**
+   * Save an immutable Task stack review; requires deploy-write scope and MFA policy
+   * Save an immutable Node Task stack review under a caller-chosen stable identity. Bind its source fingerprint, exact native app snapshots and requesting key to the account. Existing identical requests return the retained record; changed reviews conflict. The review expires fifteen minutes after preparation and grants no runtime authority. Retain at most 256 intent identities per account.
+   * @returns TaskToolReleaseIntentRecord Newly prepared or identically replayed immutable Task intent
+   * @throws ApiError
+   */
+  public static prepareTaskToolReleaseIntent({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Stable identity of the saved Task stack review
+     */
+    id: string,
+    requestBody: TaskToolReleaseIntent,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/task-tool-release-intents/{id}',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Unsupported or oversized Task stack review input`,
+        403: `Task intent preparation requires personal deploy-write authority and MFA policy`,
+        404: `The Task review requester is no longer available`,
+        409: `The intent identity or its native app snapshot already differs`,
+        429: `The account has reached its retained Task review quota`,
+      },
+    });
+  }
+  /**
+   * Revalidate source fingerprint and native app reviews; requires deploy-write scope and MFA policy
+   * Compare a freshly computed local release fingerprint with the retained Task intent and revalidate native app and requesting-key facts. Observed mismatches permanently mark pending or approved reviews stale. Restoring previous source bytes does not revive approval. An execution request atomically claims or guards a separately owner-authorized local operation; only its requesting key may transition it. Guard checks retain app configuration pins while allowing deployment revisions made by the native adapter. Existing native traffic/readiness fences remain mandatory. This endpoint only changes journal metadata and never executes customer code itself.
+   * @returns TaskToolReleaseIntentRecord Task source and native snapshot revalidation result
+   * @throws ApiError
+   */
+  public static checkTaskToolReleaseIntent({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Task intent identity whose source and native snapshots are revalidated
+     */
+    id: string,
+    requestBody: TaskToolReleaseIntentCheck,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/task-tool-release-intents/{id}/check',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid current Task release fingerprint`,
+        403: `Task revalidation requires the requesting publisher or personal owner`,
+        404: `No review can be revalidated by this caller`,
+        409: `The Task review changed before revalidation completed`,
+      },
+    });
+  }
+  /**
+   * Restore the exact owner-approved web deployment once; requires the requesting key and MFA policy
+   * The trusted local CLI checks retained Task compatibility under the release advisory lock and submits private claim possession plus fresh evidence. Native storage locks the recovery approval, credentials, app snapshots, running generations and observer heartbeat. The ordinary traffic endpoint's approval, policy, readiness, canary, binding, lifecycle and serving-CAS gates remain mandatory. Traffic and approval consumption commit in the same transaction. Exact repeats return the retained commit receipt after expiry or revocation without replaying traffic. A receipt records a historical traffic commit, not current runtime health. No migration, worker retirement or automatic claim takeover is performed.
+   * @returns TaskToolReleaseIntentRecord Native operation including its retained atomic restore receipt
+   * @throws ApiError
+   */
+  public static restoreTaskToolRecovery({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Original Task intent containing the settled owner-approved recovery
+     */
+    id: string,
+    requestBody: TaskToolRecoveryRestoreRequest,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/task-tool-release-intents/{id}/recovery/restore',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid recovery request`,
+        401: `code: unauthorized`,
+        403: `Caller is not the current requesting publisher or lacks traffic authority`,
+        404: `No matching recovery is available to this caller`,
+        409: `Approval, evidence, native generation, runtime, policy or traffic changed`,
+        422: `The ordinary native traffic gate refused this change`,
+      },
+    });
+  }
+  /**
+   * Request conditional parking of the exact quarantined worker; requires the requesting key and MFA policy
+   * The trusted local CLI observes the retained candidate claim fences and rechecks replacement workers, restored web, native policy, observer, running generation and shutdown grace. Native parking and separate retirement approval consumption commit together. Pending replays only reconcile the recorded transition. Retired requires native drain plus absent or expired Task registrations observed through the read-only observer role. Customer Task SQL and native state do not share a transaction. Active Tasks are not cancelled and historical receipts do not certify current service health.
+   * @returns TaskToolReleaseIntentRecord Retained native operation; retirement_pending does not mean shutdown is complete
+   * @throws ApiError
+   */
+  public static parkTaskToolRetirement({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Original Task intent containing separately approved candidate retirement
+     */
+    id: string,
+    requestBody: TaskToolRetirementRequest,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/task-tool-release-intents/{id}/recovery/retire',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid retirement request`,
+        401: `code: unauthorized`,
+        403: `Caller lacks current publisher or native parking authority`,
+        404: `No matching retirement is available to this caller`,
+        409: `Approval, evidence, generation, running instances, policy or traffic changed`,
+      },
+    });
+  }
+  /**
+   * Record an exact-digest owner decision; requires personal non-agent administrator and MFA policy
+   * An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app and key facts. Owner cancellation uses the retained review even after source files or requesting-key authority disappear. Decisions never renew the fifteen-minute deadline. A separate authorize decision from a non-agent admin API key can bind one local Task execution identity to a salted private binding digest. It requires an approved fresh review and cannot replace or renew an existing execution claim.
+   * @returns TaskToolReleaseIntentRecord Retained owner verdict with its original review expiry
+   * @throws ApiError
+   */
+  public static decideTaskToolReleaseIntent({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Retained Task review identity for an exact-digest owner decision
+     */
+    id: string,
+    requestBody: TaskToolReleaseIntentDecision,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/task-tool-release-intents/{id}/decision',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid owner verdict or Task source fingerprint`,
+        403: `A non-agent personal administrator and MFA policy are required to decide`,
+        404: `The owner decision target or owner credential is unavailable`,
+        409: `The owner digest or retained Task decision no longer matches`,
+      },
+    });
+  }
   /**
    * List readiness incident events and notification status
    * Newest logical events first, independently of notification success. Retries update delivery status without adding timeline rows. Omitting scope lists every environment.

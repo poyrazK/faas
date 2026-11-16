@@ -155,7 +155,7 @@ func diffExportFilesIgnoring(beforePath, afterPath, key string, explain bool, ig
 	if err != nil {
 		return exportDiffReport{}, err
 	}
-	defer beforeFile.Close()
+	defer func() { _ = beforeFile.Close() }()
 	before, err := readExportDiffIndexOptions(beforeFile, key, "before", options)
 	if err != nil {
 		return exportDiffReport{}, err
@@ -164,7 +164,7 @@ func diffExportFilesIgnoring(beforePath, afterPath, key string, explain bool, ig
 	if err != nil {
 		return exportDiffReport{}, err
 	}
-	defer afterFile.Close()
+	defer func() { _ = afterFile.Close() }()
 	after, err := readExportDiffIndexOptions(afterFile, key, "after", options)
 	if err != nil {
 		return exportDiffReport{}, err

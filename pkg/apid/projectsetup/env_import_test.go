@@ -28,7 +28,7 @@ func TestPlanEnvImport(t *testing.T) {
 			"FROM_DOTENV":   value("${TOKEN_FROM_DOTENV}"),
 			"FROM_HOST":     nil,
 			"BLANK":         value(""),
-			"lowercase":     value("x"),
+			"bad-key":       value("x"),
 			"PORT":          value("3000"),
 			"GREGALE_TRACE": value("1"),
 		},
@@ -44,7 +44,7 @@ func TestPlanEnvImport(t *testing.T) {
 		"STRIPE_KEY": EnvSkipSecret, "SESSION_TOKEN": EnvSkipSecret, "UPSTREAM": EnvSkipSecret, "DATABASE_URL": EnvSkipSecret,
 		"BILLING_URL": EnvSkipServiceAddress, "CACHE_HOST": EnvSkipServiceAddress, "QUEUE": EnvSkipServiceAddress,
 		"LOCAL_URL": EnvSkipLocalAddress, "DOCKER_HOST": EnvSkipLocalAddress,
-		"FROM_DOTENV": EnvSkipInterpolated, "FROM_HOST": EnvSkipHostValue, "BLANK": EnvSkipEmpty, "lowercase": EnvSkipInvalid,
+		"FROM_DOTENV": EnvSkipInterpolated, "FROM_HOST": EnvSkipHostValue, "BLANK": EnvSkipEmpty, "bad-key": EnvSkipInvalid,
 	}
 	if !maps.Equal(got.Skipped, wantSkipped) {
 		t.Fatalf("skipped %v, want %v", got.Skipped, wantSkipped)

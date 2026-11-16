@@ -46,6 +46,57 @@ func (q *Queries) ChangeToolInvocation(ctx context.Context, db DBTX, arg ChangeT
 	return err
 }
 
+const completeTaskRecoveryTraffic = `-- name: CompleteTaskRecoveryTraffic :execrows
+UPDATE task_tool_release_intents AS intent SET payload=$1
+WHERE intent.account_id=$2 AND intent.id=$3
+AND intent.payload->'execution'->'recovery'->>'decision'='approved'
+AND intent.payload->'execution'->'recovery'->'result' IS NULL
+AND (intent.payload->'execution'->'recovery'->'qualification'->>'expires_at')::timestamptz>clock_timestamp()
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=$4::uuid AND k.account_id=$2
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=$5::uuid AND k.account_id=$2
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM app_custom_metrics m WHERE m.app_id=$6::uuid AND m.name='mcp_tasks_observer_heartbeat'
+ AND m.value=1 AND m.observed_at<=clock_timestamp() AND m.observed_at>=clock_timestamp()-$7::integer*interval '1 second')
+`
+
+type CompleteTaskRecoveryTrafficParams struct {
+	Payload          []byte
+	AccountID        pgtype.UUID
+	ID               string
+	OwnerKeyID       pgtype.UUID
+	RequesterKeyID   pgtype.UUID
+	MetricAppID      pgtype.UUID
+	FreshnessSeconds int32
+}
+
+func (q *Queries) CompleteTaskRecoveryTraffic(ctx context.Context, db DBTX, arg CompleteTaskRecoveryTrafficParams) (int64, error) {
+	result, err := db.Exec(ctx, completeTaskRecoveryTraffic,
+		arg.Payload,
+		arg.AccountID,
+		arg.ID,
+		arg.OwnerKeyID,
+		arg.RequesterKeyID,
+		arg.MetricAppID,
+		arg.FreshnessSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const countTaskToolReleaseIntents = `-- name: CountTaskToolReleaseIntents :one
+SELECT count(*) FROM task_tool_release_intents WHERE account_id=$1
+`
+
+func (q *Queries) CountTaskToolReleaseIntents(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countTaskToolReleaseIntents, accountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countToolGrants = `-- name: CountToolGrants :one
 SELECT count(*) AS total, count(*) FILTER (WHERE key_id=$2) AS per_key FROM tool_grants WHERE account_id=$1
 `
@@ -135,6 +186,22 @@ func (q *Queries) FinishToolPublication(ctx context.Context, db DBTX, arg Finish
 		arg.Payload,
 	)
 	return err
+}
+
+const getTaskToolReleaseIntent = `-- name: GetTaskToolReleaseIntent :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2
+`
+
+type GetTaskToolReleaseIntentParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+func (q *Queries) GetTaskToolReleaseIntent(ctx context.Context, db DBTX, arg GetTaskToolReleaseIntentParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getTaskToolReleaseIntent, arg.AccountID, arg.ID)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
 }
 
 const getToolGrant = `-- name: GetToolGrant :one
@@ -234,6 +301,25 @@ func (q *Queries) GetToolPublication(ctx context.Context, db DBTX, arg GetToolPu
 	var payload []byte
 	err := row.Scan(&payload)
 	return payload, err
+}
+
+const insertTaskToolReleaseIntent = `-- name: InsertTaskToolReleaseIntent :execrows
+INSERT INTO task_tool_release_intents(account_id,id,status,payload) VALUES($1,$2,'pending',$3)
+ON CONFLICT(account_id,id) DO NOTHING
+`
+
+type InsertTaskToolReleaseIntentParams struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+}
+
+func (q *Queries) InsertTaskToolReleaseIntent(ctx context.Context, db DBTX, arg InsertTaskToolReleaseIntentParams) (int64, error) {
+	result, err := db.Exec(ctx, insertTaskToolReleaseIntent, arg.AccountID, arg.ID, arg.Payload)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertToolGrant = `-- name: InsertToolGrant :execrows
@@ -457,6 +543,169 @@ func (q *Queries) LockPublicationReadinessEvidence(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const lockTaskRecoveryApp = `-- name: LockTaskRecoveryApp :one
+SELECT id FROM apps WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT
+`
+
+type LockTaskRecoveryAppParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+// Block new instance FK admissions while recovery compares the complete VM set.
+// NOWAIT avoids a lock cycle with native traffic/admission transactions.
+func (q *Queries) LockTaskRecoveryApp(ctx context.Context, db DBTX, arg LockTaskRecoveryAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockTaskRecoveryApp, arg.AccountID, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockTaskRecoveryHeartbeat = `-- name: LockTaskRecoveryHeartbeat :one
+SELECT value,observed_at FROM app_custom_metrics WHERE app_id=$1 AND name='mcp_tasks_observer_heartbeat' FOR SHARE
+`
+
+type LockTaskRecoveryHeartbeatRow struct {
+	Value      float64
+	ObservedAt pgtype.Timestamptz
+}
+
+func (q *Queries) LockTaskRecoveryHeartbeat(ctx context.Context, db DBTX, appID pgtype.UUID) (LockTaskRecoveryHeartbeatRow, error) {
+	row := db.QueryRow(ctx, lockTaskRecoveryHeartbeat, appID)
+	var i LockTaskRecoveryHeartbeatRow
+	err := row.Scan(&i.Value, &i.ObservedAt)
+	return i, err
+}
+
+const lockTaskRecoveryInstances = `-- name: LockTaskRecoveryInstances :many
+SELECT id::text AS id, app_id::text AS app_id, COALESCE(deployment_id::text,'')::text AS deployment_id, state::text AS state
+FROM instances WHERE app_id=$1 ORDER BY id FOR SHARE
+`
+
+type LockTaskRecoveryInstancesRow struct {
+	ID           string
+	AppID        string
+	DeploymentID string
+	State        string
+}
+
+func (q *Queries) LockTaskRecoveryInstances(ctx context.Context, db DBTX, appID pgtype.UUID) ([]LockTaskRecoveryInstancesRow, error) {
+	rows, err := db.Query(ctx, lockTaskRecoveryInstances, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockTaskRecoveryInstancesRow{}
+	for rows.Next() {
+		var i LockTaskRecoveryInstancesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.State,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockTaskToolExecutionOwnerKey = `-- name: LockTaskToolExecutionOwnerKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now())
+AND k.scopes @> ARRAY['admin']::text[] AND NOT k.scopes @> ARRAY['agent']::text[]
+AND k.label IS DISTINCT FROM 'mcp-login'
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k
+`
+
+type LockTaskToolExecutionOwnerKeyParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+// Owner authority is checked again under lock for every adapter transition.
+func (q *Queries) LockTaskToolExecutionOwnerKey(ctx context.Context, db DBTX, arg LockTaskToolExecutionOwnerKeyParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockTaskToolExecutionOwnerKey, arg.AccountID, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockTaskToolReleaseApp = `-- name: LockTaskToolReleaseApp :one
+SELECT a.id FROM apps a WHERE a.account_id=$1 AND a.id=$2 AND a.slug=$3
+AND a.status='active' AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id)) FOR SHARE OF a
+`
+
+type LockTaskToolReleaseAppParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) LockTaskToolReleaseApp(ctx context.Context, db DBTX, arg LockTaskToolReleaseAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockTaskToolReleaseApp, arg.AccountID, arg.ID, arg.Slug)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockTaskToolReleaseIntent = `-- name: LockTaskToolReleaseIntent :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2 FOR UPDATE
+`
+
+type LockTaskToolReleaseIntentParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+func (q *Queries) LockTaskToolReleaseIntent(ctx context.Context, db DBTX, arg LockTaskToolReleaseIntentParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockTaskToolReleaseIntent, arg.AccountID, arg.ID)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
+}
+
+const lockTaskToolReleaseIntentNowait = `-- name: LockTaskToolReleaseIntentNowait :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT
+`
+
+type LockTaskToolReleaseIntentNowaitParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+func (q *Queries) LockTaskToolReleaseIntentNowait(ctx context.Context, db DBTX, arg LockTaskToolReleaseIntentNowaitParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockTaskToolReleaseIntentNowait, arg.AccountID, arg.ID)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
+}
+
+const lockTaskToolReleaseKey = `-- name: LockTaskToolReleaseKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND (k.expires_at IS NULL OR k.expires_at>now())
+AND (k.scopes @> ARRAY['deploy:write']::text[] OR k.scopes @> ARRAY['admin']::text[])
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k
+`
+
+type LockTaskToolReleaseKeyParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) LockTaskToolReleaseKey(ctx context.Context, db DBTX, arg LockTaskToolReleaseKeyParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockTaskToolReleaseKey, arg.AccountID, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockToolGrantCredential = `-- name: LockToolGrantCredential :one
 SELECT ciphertext FROM app_secrets
 WHERE account_id=$1 AND app_id=$2 AND scope=$3 AND key=$4
@@ -624,6 +873,45 @@ func (q *Queries) LockToolPublicationCandidate(ctx context.Context, db DBTX, arg
 	return id, err
 }
 
+const readTaskRetirementApp = `-- name: ReadTaskRetirementApp :one
+SELECT status,manifest,COALESCE(workload_class,'')::text AS workload_class,COALESCE(park_transition_id::text,'')::text AS park_transition_id FROM apps WHERE account_id=$1 AND id=$2 FOR SHARE
+`
+
+type ReadTaskRetirementAppParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+type ReadTaskRetirementAppRow struct {
+	Status           string
+	Manifest         []byte
+	WorkloadClass    string
+	ParkTransitionID string
+}
+
+func (q *Queries) ReadTaskRetirementApp(ctx context.Context, db DBTX, arg ReadTaskRetirementAppParams) (ReadTaskRetirementAppRow, error) {
+	row := db.QueryRow(ctx, readTaskRetirementApp, arg.AccountID, arg.ID)
+	var i ReadTaskRetirementAppRow
+	err := row.Scan(
+		&i.Status,
+		&i.Manifest,
+		&i.WorkloadClass,
+		&i.ParkTransitionID,
+	)
+	return i, err
+}
+
+const readTaskRetirementLatestDeployment = `-- name: ReadTaskRetirementLatestDeployment :one
+SELECT id::text FROM deployments WHERE app_id=$1 ORDER BY created_at DESC LIMIT 1
+`
+
+func (q *Queries) ReadTaskRetirementLatestDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, readTaskRetirementLatestDeployment, appID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const revokeToolGrant = `-- name: RevokeToolGrant :one
 UPDATE tool_grants SET revoked_at=COALESCE(revoked_at,now()),
 payload=jsonb_set(payload,'{revoked_at}',to_jsonb(COALESCE(revoked_at,now())))
@@ -737,6 +1025,31 @@ func (q *Queries) StoreToolOAuthAuthorization(ctx context.Context, db DBTX, arg 
 	return err
 }
 
+const taskQuarantineClockFresh = `-- name: TaskQuarantineClockFresh :one
+SELECT ($1::timestamptz>clock_timestamp()
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=$2::uuid AND k.account_id=$3 AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=$4::uuid AND k.account_id=$3 AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())))::boolean AS fresh
+`
+
+type TaskQuarantineClockFreshParams struct {
+	ExpiresAt      pgtype.Timestamptz
+	OwnerKeyID     pgtype.UUID
+	AccountID      pgtype.UUID
+	RequesterKeyID pgtype.UUID
+}
+
+func (q *Queries) TaskQuarantineClockFresh(ctx context.Context, db DBTX, arg TaskQuarantineClockFreshParams) (bool, error) {
+	row := db.QueryRow(ctx, taskQuarantineClockFresh,
+		arg.ExpiresAt,
+		arg.OwnerKeyID,
+		arg.AccountID,
+		arg.RequesterKeyID,
+	)
+	var fresh bool
+	err := row.Scan(&fresh)
+	return fresh, err
+}
+
 const toolGrantEntries = `-- name: ToolGrantEntries :many
 SELECT g.payload AS grant_payload,p.payload AS publication_payload
 FROM tool_grants g JOIN tool_publications p ON p.account_id=g.account_id AND p.id=g.version
@@ -772,6 +1085,27 @@ func (q *Queries) ToolGrantEntries(ctx context.Context, db DBTX, arg ToolGrantEn
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateTaskToolReleaseIntent = `-- name: UpdateTaskToolReleaseIntent :exec
+UPDATE task_tool_release_intents SET status=$3,payload=$4 WHERE account_id=$1 AND id=$2
+`
+
+type UpdateTaskToolReleaseIntentParams struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
+}
+
+func (q *Queries) UpdateTaskToolReleaseIntent(ctx context.Context, db DBTX, arg UpdateTaskToolReleaseIntentParams) error {
+	_, err := db.Exec(ctx, updateTaskToolReleaseIntent,
+		arg.AccountID,
+		arg.ID,
+		arg.Status,
+		arg.Payload,
+	)
+	return err
 }
 
 const updateToolOAuthConnection = `-- name: UpdateToolOAuthConnection :exec

@@ -17,3 +17,18 @@ const LivenessReasonInfrastructure = "liveness_infrastructure"
 // confirmed VM failure and is therefore eligible for the restart circuit
 // breaker.
 const LivenessReasonProcessExited = "liveness_process_exited"
+
+// LivenessReasonTrafficUnreachable is emitted when the instance's requests
+// keep failing at the bridge-to-guest hop even through a freshly started
+// bridge (vmmdgrpc streamBridgeInstanceReport). On 2026-11-15/16 a restored
+// instance in that state answered 502 for up to nine hours while its own
+// health check passed. schedd replaces the VM; like infrastructure, the
+// restart does not count toward parking the app.
+const LivenessReasonTrafficUnreachable = "liveness_traffic_unreachable"
+
+// LivenessReasonBudgeted reports whether a liveness restart counts toward the
+// app's eviction budget: platform-side evidence (infrastructure pressure, an
+// unreachable traffic hop) replaces the VM but never parks a healthy app.
+func LivenessReasonBudgeted(reason string) bool {
+	return reason != LivenessReasonInfrastructure && reason != LivenessReasonTrafficUnreachable
+}

@@ -9,7 +9,7 @@ Every failure names its code and a fix; start from the fix.
 - See an app's state, park reason and recommendations:
     gregale inspect <app>
 - Run a command against the live deployment:
-    gregale app <app> exec -- <command>
+    gregale app exec <app> -- <command>
 - Check the source locally:
     gregale doctor
 

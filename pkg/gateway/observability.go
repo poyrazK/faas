@@ -19,13 +19,15 @@ import (
 // through the internal proxy.
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rid := r.Header.Get(api.RequestIDHeader)
-		if rid == "" || len(rid) > 128 {
-			rid = newRequestID()
-			// Propagate the replacement to downstream audit and application
-			// handlers, not just to the response and request context.
-			r.Header.Set(api.RequestIDHeader, rid)
-		}
+		// The public listener is the trust boundary: a client's
+		// x-faas-request-id is never adopted. It became the app's request id
+		// and, on direct HTTP calls, its invocation id, so a caller could
+		// pick or replay another request's id (quotes and "../" included)
+		// and collide with telemetry and app-side dedupe (prod 2026-11-15).
+		// Callers correlate with their own header (X-Request-Id passes
+		// through untouched).
+		rid := newRequestID()
+		r.Header.Set(api.RequestIDHeader, rid)
 		w.Header().Set(api.RequestIDHeader, rid)
 		r = r.WithContext(WithRequestID(r.Context(), rid)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
 		next.ServeHTTP(w, r)

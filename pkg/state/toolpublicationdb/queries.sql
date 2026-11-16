@@ -3,6 +3,45 @@ INSERT INTO tool_publications (account_id, id, status, payload)
 VALUES ($1, $2, 'running', $3)
 ON CONFLICT (account_id, id) DO NOTHING;
 
+-- name: InsertTaskToolReleaseIntent :execrows
+INSERT INTO task_tool_release_intents(account_id,id,status,payload) VALUES($1,$2,'pending',$3)
+ON CONFLICT(account_id,id) DO NOTHING;
+
+-- name: CountTaskToolReleaseIntents :one
+SELECT count(*) FROM task_tool_release_intents WHERE account_id=$1;
+
+-- name: GetTaskToolReleaseIntent :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2;
+
+-- name: LockTaskToolReleaseIntent :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2 FOR UPDATE;
+
+-- name: LockTaskToolReleaseIntentNowait :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT;
+
+-- name: UpdateTaskToolReleaseIntent :exec
+UPDATE task_tool_release_intents SET status=$3,payload=$4 WHERE account_id=$1 AND id=$2;
+
+-- name: LockTaskToolReleaseApp :one
+SELECT a.id FROM apps a WHERE a.account_id=$1 AND a.id=$2 AND a.slug=$3
+AND a.status='active' AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id)) FOR SHARE OF a;
+
+-- name: LockTaskToolReleaseKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND (k.expires_at IS NULL OR k.expires_at>now())
+AND (k.scopes @> ARRAY['deploy:write']::text[] OR k.scopes @> ARRAY['admin']::text[])
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k;
+
+-- Owner authority is checked again under lock for every adapter transition.
+-- name: LockTaskToolExecutionOwnerKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now())
+AND k.scopes @> ARRAY['admin']::text[] AND NOT k.scopes @> ARRAY['agent']::text[]
+AND k.label IS DISTINCT FROM 'mcp-login'
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k;
+
 -- name: LockPublicationReadinessEvidence :many
 SELECT evidence FROM deployment_mcp_readiness_evidence WHERE deployment_id=$1 FOR SHARE;
 
@@ -147,3 +186,39 @@ ON CONFLICT(account_id,connection_id) DO UPDATE SET phase=EXCLUDED.phase,flow_ci
 
 -- name: CancelToolOAuthAuthorization :exec
 UPDATE tool_oauth_authorizations SET phase='failed',flow_ciphertext=NULL WHERE account_id=$1 AND connection_id=$2;
+
+-- name: LockTaskRecoveryInstances :many
+SELECT id::text AS id, app_id::text AS app_id, COALESCE(deployment_id::text,'')::text AS deployment_id, state::text AS state
+FROM instances WHERE app_id=$1 ORDER BY id FOR SHARE;
+
+-- name: LockTaskRecoveryHeartbeat :one
+SELECT value,observed_at FROM app_custom_metrics WHERE app_id=$1 AND name='mcp_tasks_observer_heartbeat' FOR SHARE;
+
+-- name: CompleteTaskRecoveryTraffic :execrows
+UPDATE task_tool_release_intents AS intent SET payload=sqlc.arg(payload)
+WHERE intent.account_id=sqlc.arg(account_id) AND intent.id=sqlc.arg(id)
+AND intent.payload->'execution'->'recovery'->>'decision'='approved'
+AND intent.payload->'execution'->'recovery'->'result' IS NULL
+AND (intent.payload->'execution'->'recovery'->'qualification'->>'expires_at')::timestamptz>clock_timestamp()
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(owner_key_id)::uuid AND k.account_id=sqlc.arg(account_id)
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(requester_key_id)::uuid AND k.account_id=sqlc.arg(account_id)
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM app_custom_metrics m WHERE m.app_id=sqlc.arg(metric_app_id)::uuid AND m.name='mcp_tasks_observer_heartbeat'
+ AND m.value=1 AND m.observed_at<=clock_timestamp() AND m.observed_at>=clock_timestamp()-sqlc.arg(freshness_seconds)::integer*interval '1 second');
+
+-- Block new instance FK admissions while recovery compares the complete VM set.
+-- NOWAIT avoids a lock cycle with native traffic/admission transactions.
+-- name: LockTaskRecoveryApp :one
+SELECT id FROM apps WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT;
+
+-- name: TaskQuarantineClockFresh :one
+SELECT (sqlc.arg(expires_at)::timestamptz>clock_timestamp()
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(owner_key_id)::uuid AND k.account_id=sqlc.arg(account_id) AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(requester_key_id)::uuid AND k.account_id=sqlc.arg(account_id) AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())))::boolean AS fresh;
+
+-- name: ReadTaskRetirementApp :one
+SELECT status,manifest,COALESCE(workload_class,'')::text AS workload_class,COALESCE(park_transition_id::text,'')::text AS park_transition_id FROM apps WHERE account_id=$1 AND id=$2 FOR SHARE;
+
+-- name: ReadTaskRetirementLatestDeployment :one
+SELECT id::text FROM deployments WHERE app_id=$1 ORDER BY created_at DESC LIMIT 1;

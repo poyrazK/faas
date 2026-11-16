@@ -109,6 +109,9 @@ type Loop struct {
 	// queuePushLanes holds each push-queue trigger's lane allowance
 	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance
+	// queueHoldRefreshed is when each held push-queue trigger last refreshed
+	// its messages' retention (trigger ID → time.Time; ADR-20261113180000).
+	queueHoldRefreshed sync.Map
 	// brokerLanes tracks broker trigger lanes and app owners (ADR-20261027162741).
 	brokerLanes brokerLanes
 	// triggerSecretIdentities opens Kafka credentials only in the
@@ -4284,7 +4287,13 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 		// An ordinary 5xx is retryable under the durable invocation contract.
 		// Runner-caught exceptions are marked InvocationFailed above and take
 		// the permanent branch instead.
-		err = appAnsweredError{err: fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)}
+		// Keep what the app said: without it a dead-lettered invocation's
+		// error_detail read only "retryable HTTP 500" (prod 2026-11-15).
+		msg := fmt.Sprintf("application or gateway returned retryable HTTP %d", statusCode)
+		if detail := safetext.Ellipsis(strings.TrimSpace(string(out.Result)), invocationFailureDetailMaxBytes); detail != "" {
+			msg += ": " + detail
+		}
+		err = appAnsweredError{err: errors.New(msg)}
 	}
 	return out, err
 }
@@ -5114,6 +5123,9 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 			l.cronMetrics.decision("not_due")
 		}
 		// Already fired in the current window.
+		return
+	}
+	if len(c.Command) == 0 && l.pauseFailingCron(ctx, c) {
 		return
 	}
 	if len(c.Command) > 0 || c.SchedulePolicy != nil {

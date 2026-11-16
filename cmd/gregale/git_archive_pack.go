@@ -453,7 +453,7 @@ func readGitArchiveRules(srcPath string, dockerfile bool) (packRules, error) {
 	if err != nil {
 		return rules, fmt.Errorf("read deploy ignore files: %w", err)
 	}
-	rules.patterns = parseDockerignore(dockerignore)
+	rules.patterns = rootDockerignorePatterns(dockerignore)
 	rules.patterns = append(rules.patterns, composeServiceDockerignorePatterns(func(rel string) ([]byte, bool) {
 		data, ok := composeInputs[rel]
 		return data, ok

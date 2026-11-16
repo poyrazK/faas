@@ -12,7 +12,7 @@ test('the default entry leaves preview services and helpers out', () => {
   for (const name of ['AppsService', 'CronsService', 'FaaSClient', 'verifyWebhook', 'ErrNotFound']) {
     assert.ok(pub[name], `${name} must stay in the default entry`);
   }
-  for (const name of ['RealtimeService', 'StorageService', 'QueuesService', 'McpService', 'createRealtimeClient', 'GregaleOperations', 'insertCommitEvent']) {
+  for (const name of ['RealtimeService', 'StorageService', 'QueuesService', 'McpService', 'createRealtimeClient', 'createLiveJob', 'createLiveJobBridge', 'realtimeLiveJobSource', 'defineJobPipeline', 'createJobPipelineClient', 'jobPipelineLiveSnapshot', 'GregaleOperations', 'insertCommitEvent']) {
     assert.equal(pub[name], undefined, `${name} is a preview export`);
     assert.ok(preview[name], `${name} must be in the preview entry`);
   }
@@ -36,5 +36,5 @@ test('only the preview client runs disposable executions', () => {
 test('preview subpaths live under ./preview', () => {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { exports: Record<string, unknown> };
   const outside = Object.keys(pkg.exports).filter((key) => key !== './preview' && !key.startsWith('./preview/'));
-  assert.deepEqual(outside.sort(), ['.', './browser', './secrets/runtime', './workflows']);
+  assert.deepEqual(outside.sort(), ['.', './browser', './functions/runtime', './jobs/runtime', './lifecycle/runtime', './secrets/runtime', './workflows']);
 });
