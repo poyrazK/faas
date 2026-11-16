@@ -21,17 +21,16 @@ import (
 // so only a pass that reads the layers fails on it.
 func corruptLayerBlobs(t *testing.T, archive string) string {
 	t.Helper()
-	in, err := os.Open(archive)
+	original, err := os.ReadFile(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = in.Close() }()
 	path := filepath.Join(t.TempDir(), "corrupt.tar")
 	out, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, tw := tar.NewReader(in), tar.NewWriter(out)
+	tr, tw := tar.NewReader(bytes.NewReader(original)), tar.NewWriter(out)
 	corrupted := 0
 	for {
 		hdr, err := tr.Next()
