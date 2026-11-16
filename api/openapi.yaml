@@ -474,6 +474,33 @@ paths:
         '404': { description: No matching recovery is available to this caller }
         '409': { description: 'Approval, evidence, native generation, runtime, policy or traffic changed' }
         '422': { description: The ordinary native traffic gate refused this change }
+  /v1/task-tool-release-intents/{id}/recovery/retire:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Original Task intent containing separately approved candidate retirement
+      schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+    post:
+      operationId: parkTaskToolRetirement
+      summary: Request conditional parking of the exact quarantined worker; requires the requesting key and MFA policy
+      description: The trusted local CLI observes the retained candidate claim fences and rechecks replacement workers, restored web, native policy, observer, running generation and shutdown grace. Native parking and separate retirement approval consumption commit together. Pending replays only reconcile the recorded transition. Retired requires native drain plus absent or expired Task registrations observed through the read-only observer role. Customer Task SQL and native state do not share a transaction. Active Tasks are not cancelled and historical receipts do not certify current service health.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskToolRetirementRequest' }
+      responses:
+        '200':
+          description: Retained native operation; retirement_pending does not mean shutdown is complete
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskToolReleaseIntentRecord' }
+        '400': { description: Invalid retirement request }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Caller lacks current publisher or native parking authority }
+        '404': { description: No matching retirement is available to this caller }
+        '409': { description: 'Approval, evidence, generation, running instances, policy or traffic changed' }
   /v1/task-tool-release-intents/{id}/decision:
     parameters:
     - name: id
@@ -74374,6 +74401,8 @@ components:
       required:
       - release_fingerprint
       properties:
+        retirement:
+          $ref: '#/components/schemas/TaskToolRetirementRequest'
         quarantine:
           $ref: '#/components/schemas/TaskToolQuarantineRequest'
         release_fingerprint:
@@ -74390,6 +74419,8 @@ components:
       - release_fingerprint
       - decision
       properties:
+        retirement:
+          $ref: '#/components/schemas/TaskToolRetirementRequest'
         quarantine:
           $ref: '#/components/schemas/TaskToolQuarantineRequest'
         intent_sha256:
@@ -74412,6 +74443,9 @@ components:
           - recovery_quarantine_qualify
           - recovery_quarantine_approve
           - recovery_quarantine_revoke
+          - recovery_retire_qualify
+          - recovery_retire_approve
+          - recovery_retire_revoke
         execution:
           $ref: '#/components/schemas/TaskToolReleaseExecutionRequest'
         recovery:
@@ -74486,6 +74520,8 @@ components:
       additionalProperties: false
       required: [id, operation_id, revision, state, requested_at]
       properties:
+        retirement:
+          $ref: '#/components/schemas/TaskToolRetirement'
         quarantine:
           $ref: '#/components/schemas/TaskToolQuarantine'
         result:
@@ -74510,7 +74546,7 @@ components:
         handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
         operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
         revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
-        action: { type: string, enum: [restore, quarantine] }
+        action: { type: string, enum: [restore, quarantine, retire] }
         target_deployment_id: { type: string, format: uuid }
         expected_serving_deployment_id: { type: string, format: uuid }
         bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
@@ -74625,6 +74661,68 @@ components:
         qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
         worker_deployment_id: { type: string, format: uuid }
         serving_deployment_id: { type: string, format: uuid }
+        worker_ids:
+          type: array
+          minItems: 1
+          maxItems: 1024
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        observed_at: { type: string, format: date-time }
+        recorded_at: { type: string, format: date-time }
+    TaskToolRetirement:
+      description: Separate fixed owner approval for atomic native conditional parking. Pending means a park request committed; retired also requires native drain and absent or expired Task registrations. Restore and quarantine approvals do not authorize retirement.
+      type: object
+      additionalProperties: false
+      required: [qualification, state]
+      properties:
+        qualification:
+          $ref: '#/components/schemas/TaskToolRecoveryQualification'
+        state: { type: string, enum: [qualified, retirement_pending, retired] }
+        decision: { type: string, enum: [approved, revoked] }
+        authorizer_key_id: { type: string, format: uuid }
+        decided_at: { type: string, format: date-time }
+        park_transition_id: { type: string, format: uuid }
+        park_requested_at: { type: string, format: date-time }
+        result:
+          $ref: '#/components/schemas/TaskToolRetirementResult'
+    TaskToolRetirementRequest:
+      description: Private trusted CLI qualification, native park or read-only shutdown observation. Agent tools accept public identities only. Pending replays never issue a new park request.
+      type: object
+      additionalProperties: false
+      properties:
+        action: { type: string, enum: [park, observe] }
+        qualification:
+          $ref: '#/components/schemas/TaskToolRecoveryQualification'
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        claim_token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        checked_at: { type: string, format: date-time }
+        shutdown_timeout_ms: { type: integer, format: int64, minimum: 1 }
+        expected_instance_ids:
+          type: object
+          maxProperties: 35
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 1024
+            uniqueItems: true
+            items: { type: string, format: uuid }
+        expected_mcp_access_policy:
+          $ref: '#/components/schemas/MCPAccessPolicyExpectation'
+    TaskToolRetirementResult:
+      description: Historical observation of the exact native park transition, drained instances and absent or expired candidate Task registrations. No active Task cancellation or current service-health certification is implied.
+      type: object
+      additionalProperties: false
+      required: [operation_id, handover_id, qualification_sha256, worker_deployment_id, serving_deployment_id, worker_ids, park_transition_id, evidence_sha256, observed_at, recorded_at]
+      properties:
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        worker_deployment_id: { type: string, format: uuid }
+        serving_deployment_id: { type: string, format: uuid }
+        park_transition_id: { type: string, format: uuid }
         worker_ids:
           type: array
           minItems: 1

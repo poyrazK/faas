@@ -167,6 +167,13 @@ func (m *MemStore) ChangeTaskToolReleaseIntent(ctx context.Context, account, id,
 	if !ok {
 		return record, ErrNotFound
 	}
+	if tasktoolrelease.IsRetirementChange(action, in) {
+		out, err := m.changeTaskRetirementLocked(account, record, in)
+		if err == nil {
+			m.taskToolReleaseIntents[account+":"+id] = cloneTaskToolRelease(out)
+		}
+		return cloneTaskToolRelease(out), err
+	}
 	if tasktoolrelease.IsQuarantineChange(action, in) {
 		out, err := m.changeTaskQuarantineLocked(ctx, account, record, in)
 		if err == nil {
