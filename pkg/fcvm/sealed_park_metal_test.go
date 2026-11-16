@@ -8,7 +8,9 @@ package fcvm
 // cache: the wake cold-boots instead of failing.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -57,6 +59,16 @@ func TestMetalWakeFromSealedParkSnapshot(t *testing.T) {
 	m.WithStorage(cache) // as vmmd wires it: SealCaptureStorage wraps the manager's store
 	m.SetHostIdentities([]*age.X25519Identity{fleet})
 	withCgroupRootAt(t, "/sys/fs/cgroup")
+	// A locally assembled lifecycle fixture: model only its admission
+	// sidecar (a manager with a store refuses an un-scanned base, #299).
+	scan, err := json.Marshal(baseScanSidecar{Image: "sealed-park-fixture",
+		Findings: map[string]int{"CRITICAL": 0}, FixAvailableFindings: map[string]int{"CRITICAL": 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Put(ctx, wire.ScanKeyForBaseKey(base), bytes.NewReader(scan)); err != nil {
+		t.Fatal(err)
+	}
 
 	const instance, captureID = "sealedpark", "5b0c3f9e-7d2a-4c1e-9a43-0f6d2b8e1a11"
 	prefix := "snap/sealed-park/captures/" + captureID + "/v2/"
