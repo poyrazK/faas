@@ -168,10 +168,17 @@ and object, so support can explain where an alert came from.
 
 ### 5. Turning it off
 
-`gregale app protection off` (and `protection: off` in `gregale.yaml`) sets
-`app_protection.state` to `off` and deletes the baseline objects that are still
-unedited. Edited objects stay, because they are now the customer's.
-`protection on` re-applies the baseline. Both are audited.
+`gregale app protection off <app>` (`PUT /v1/apps/{slug}/protection`
+with `{"state":"off"}`; `protection: off` in `gregale.yaml` in slice 4b) sets
+`app_protection.state` to `off` and deletes the baseline objects that still
+hold the values the baseline wrote, alerts and the gate first. Edited objects
+stay, because they are now the customer's. An SLO or health check that a kept
+alert rule or release gate still references stays too, since deleting it
+would delete that rule. The account email channel is never deleted; other
+apps may use it. Records of deleted objects are forgotten, so
+`protection on` re-applies the baseline; `on` also enrolls an app created
+before protection existed. Both are audited (`protection.on`,
+`protection.off`).
 
 ### 6. Status
 
@@ -180,7 +187,9 @@ baseline item: `active`, `pending` (waiting for a live production
 deployment), `skipped` (with the reason above), or `removed` (the customer
 deleted it). A later slice adds `customized`.
 
-`gregale status` and `gregale app get` print one line:
+`gregale app protection <app>` prints one line and then each item;
+`gregale app <app>` prints the line as `production:` (nothing when the
+account cannot read protection). `gregale status` gains it later:
 
 ```
 Production: protected ✓ (SLO, health check, alerts, rollback)
@@ -229,8 +238,9 @@ outage detector fires, so the baseline alert arrives first.
       route-probe challenge (no telemetry or usage rows).
    b. Unbilled probe wakes and park-after-probe (gateway, meterd, schedd).
       Required before the flag is released to customers.
-4. CLI: `gregale app protection on|off`, the status line and the
-   `gregale.yaml` `protection:` key.
+4. a. `PUT /v1/apps/{slug}/protection`, CLI `gregale app protection
+      [on|off]` and the status line.
+   b. The `gregale.yaml` `protection:` key.
 5. Docs page and rollout.
 
 ## Alternatives considered
