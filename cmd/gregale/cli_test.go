@@ -627,7 +627,7 @@ func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "existing"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "existing", "--yes"}); code != 0 {
 		t.Errorf("cmdDeploy with existing app = %d, want 0", code)
 	}
 }
@@ -1827,6 +1827,7 @@ func TestCmdDeploy_RequireAuthn_ExistingAppPATCH(t *testing.T) {
 		"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"--name", "existing-app",
 		"--require-authn",
+		"--yes", // existing app, directory not linked (#7372 prompts otherwise)
 	}); code != 0 {
 		t.Fatalf("cmdDeploy existing-app exit = %d, want 0", code)
 	}
