@@ -220,7 +220,7 @@ gregale postgres attach orders my-api --access migration --env MIGRATION_DATABAS
 
 A failed release command leaves the previous deployment serving. A rollback
 never undoes a migration; see
-[Releases that change the database](deploys.md#releases-that-change-the-database).
+[Releases that change the database](releases.md#releases-that-change-the-database).
 
 To rotate a credential, run `gregale postgres bindings list orders`, then
 `gregale postgres bindings rotate BINDING_ID --wait`. Rotation returns once
@@ -278,7 +278,7 @@ every plan:
   source keeps its 7-day undo, but recovering it then needs room under your
   plan's limit (delete or purge the copy, or upgrade). A purged source is
   kept, with its name and storage, until the copy is deleted.
-- A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
+- A [rollback that restores the database](releases.md#rollbacks-that-restore-the-database)
   never uses the slot: its copy becomes the app's database, so the account
   needs room for it inside the limit.
 
