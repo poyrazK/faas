@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/auth/middleware"
+	csrf "github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -63,20 +63,22 @@ func (s *server) renderSupportAccessDashboard(w http.ResponseWriter, r *http.Req
 			return
 		}
 		item := dashboard.SupportAccessOrg{Slug: org.Slug, Name: org.Name, Personal: org.Personal, Enabled: access.Enabled, Access: access}
-		if apps, err := s.store.ListAppsByOrg(r.Context(), org.ID); err == nil {
-			for _, app := range apps {
-				item.Apps = append(item.Apps, app.Slug)
+		if lister, ok := s.store.(state.OrgAppLister); ok {
+			if apps, err := lister.ListAppsByOrg(r.Context(), org.ID); err == nil {
+				for _, app := range apps {
+					item.Apps = append(item.Apps, app.Slug)
+				}
 			}
 		}
 		data.Orgs = append(data.Orgs, item)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardSupportAccessAction, actor.ID, dashboardSupportAccessCSRFCookie)
+	token, err := csrf.IssueForAuthenticatedNamed(s.sessions, dashboardSupportAccessAction, actor.ID, dashboardSupportAccessCSRFCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
 		return
 	}
 	data.CSRFToken = token
-	http.SetCookie(w, &http.Cookie{Name: dashboardSupportAccessCSRFCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
+	http.SetCookie(w, &http.Cookie{Name: dashboardSupportAccessCSRFCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(csrf.DefaultCSRFTTL.Seconds())})
 	w.Header().Set("Cache-Control", "no-store")
 	page := dashboard.Page{Title: "Support access", Body: "support_access", Account: dashboardAccountView(acct, 0), Data: data}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
@@ -92,7 +94,7 @@ func (s *server) dashboardSupportAccessPost(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	actor := actorAccount(r, acct)
-	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardSupportAccessAction, actor.ID, dashboardSupportAccessCSRFCookie); err != nil {
+	if err := csrf.VerifyAuthenticatedNamed(s.sessions, r, dashboardSupportAccessAction, actor.ID, dashboardSupportAccessCSRFCookie); err != nil {
 		http.Error(w, "reload the support access page and try again", http.StatusForbidden)
 		return
 	}
