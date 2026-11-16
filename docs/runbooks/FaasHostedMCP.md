@@ -124,3 +124,18 @@ grants. At the bound, new client registrations or sign-ins are refused; the
 
 Raising the bound is a code change (`hostedOAuthEntries` in
 `pkg/mcpmanagement/hosted_limits.go`) and an ADR amendment.
+
+## Optional Task recovery inspection
+
+`--allow-task-inspection` defaults off. With `build-tools` selected it exposes
+only `gregale_inspect_task_tool_recovery` and `gregale_plan_task_tool_recovery`
+to the original personal-account agent key. It is independent of
+`--allow-tool-publishing`, invocation and connection write consent, and needs no
+CLI runner or upload store. The key must retain `agent,apps:read,deploy:write`
+for the existing native requester check. OAuth, organization/project-limited
+and app-bound credentials remain excluded; another key cannot read the journal.
+See the [customer workflow](../mcp.md#hosted-read-only-task-inspection) and
+[ADR-20261116163708](../adr/20261116163708-hosted-task-recovery-inspection.md).
+Disabling the flag on bridge restart removes the tools; it never changes native
+release state, approvals or running executors. Do not retry a release to recover
+an inspection response: reconnect and inspect its retained intent ID.

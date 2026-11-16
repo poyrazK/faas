@@ -131,6 +131,15 @@ faas_seal_domain_edge_retired_on_compute: false
 # secretd.
 faas_seal_domain_delivery_retired_on_compute: false
 
+# ADR-20261110210000 slice 3k-2, per compute node: true takes the control
+# identity off the node. The role removes control.age (and its .previous
+# twin), skips the domain probe, and tells schedd it is retired: it then
+# refuses to start unless its tokens come from secretd
+# (faas_schedd_secretd_internal_svc). Needs schedd's contract step, since the
+# fleet identity also opens the cluster signing key. The control plane keeps
+# the identity for its schedd and secretd.
+faas_seal_domain_control_retired_on_compute: false
+
 # Operator-local files from `gregalectl seal-domain init --domain source`.
 # Control-plane hosts stage both: githubd reads the identity, apid seals to
 # the recipient.
