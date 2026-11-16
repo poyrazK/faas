@@ -754,3 +754,5 @@ export * from './pipeline-children-state.js';
 export type * from './pipeline-children-types.js';
 
 export { createEventPipeline, EventContract, EventPipelineError, eventPipelineIdentity, eventPipelineSchema, parseEventPipelineReceipt, postgresEventPipelineStore, type EventContractSpec, type EventPipeline, type EventPipelineDefinition, type EventPipelineDelivery, type PipelineEvent, type EventPipelineAction, type EventPipelineOutcome, type EventPipelineIntent, type EventPipelineReceipt, type EventPipelineStore } from './event-pipelines.js';
+
+export { createEventPublisher, createEventOutbox, eventOutboxSchema, withEventOutboxTransaction, EventOutboxError, type EventOutboxCode, type EventOutboxOptions, type EventPublicationOptions, type EventPublicationOutcome, type EventPublicationReceipt, type EventOutboxStatus, type EventOutboxOutcome, type EventOutboxRetryPolicy, type EventPublisherDefinition, type EventStageOptions, type TypedEventPublisher, type EventOutbox, type EventOutboxRecoveryOptions, type EventOutboxBatchOptions, type EventOutboxPool, type EventOutboxTransaction } from './event-outbox.js';

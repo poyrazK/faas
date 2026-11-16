@@ -435,7 +435,7 @@ payload contains only `import_id`. Application-owned immutable records supply it
 authorized owner and verified source file; a producer cannot claim another owner
 or make the consumer read an arbitrary file by changing an event payload.
 
-The full flow is business record -> authenticated CloudEvent -> shared durable
+The full flow is atomic business record + publication outbox -> authenticated CloudEvent -> shared durable
 start receipt -> validation Job -> private browser approval -> import Job ->
 verified report. [pipeline-events.mjs](pipeline-events.mjs) and
 [event_pipeline.py](event_pipeline.py) implement the same adapter using
@@ -455,10 +455,14 @@ as the application owner. Both adapters use the same primary database and
 acknowledged autocommit statements. The local example stores immutable business
 inputs in `sdk_csv_event_inputs(import_id uuid PRIMARY KEY, owner_id text,
 input jsonb)`; `input` is the reviewed pipeline input with its verified source.
-Keep those records private and insert-only. Publish the event after the business
-record commits, using the existing transactional event-outbox path when reliable
-publication with business writes is required. This adapter coordinates consumption
-and pipeline starts; it does not publish business events itself.
+Keep those records private and insert-only. [pipeline-producer.mjs](pipeline-producer.mjs)
+and [event_producer.py](event_producer.py) atomically insert the authorized import
+and stage its generated event. Apply `eventOutboxSchema` / `EVENT_OUTBOX_SCHEMA`
+explicitly in the application migration transaction too, including the upgrade
+for existing Go outboxes. A separately scheduled bounded outbox worker publishes
+after acknowledged claim commit. See [typed publication and migration](../../docs/sdk-event-outbox.md).
+The pipeline adapter coordinates consumption and workflow starts.
+
 
 Configure the selected environment's native event subscription to invoke your
 authenticated backend. Its verifier must check the delivery boundary before
@@ -473,8 +477,15 @@ npm --prefix sdk/node run build
 GREGALE_CSV_EVENT_PIPELINE=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
 ```
 
-This runs competing Node/Python event consumers against real isolated UTF-8
-PostgreSQL. The native fixture accepts the workflow but drops the start response.
+This first commits the import and typed publication intent atomically against
+real isolated UTF-8 PostgreSQL and proves a failed transaction leaves neither.
+Node publishes, the native fixture accepts the event but drops the response,
+and Python reconciles the retained receipt without republishing. Confirmed
+settlement erases the saved payload. The accepted event supplies the authenticated
+consumer delivery, with an acceptance ID above JavaScript's safe integer limit.
+
+Competing Node/Python consumers then handle that delivery. The native fixture
+accepts the workflow but drops the start response.
 Both consumers report `start_unknown`; Python reconciles the externally inspected
 run ID and Node observes the same receipt. Repeated deliveries never start another
 run. The recovered run then completes the existing mixed-language workers,

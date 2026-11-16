@@ -41,7 +41,7 @@ import faas_sdk.preview as preview
 from faas_sdk.preview.event_contract import EventContract
 assert preview.EventContract is EventContract
 assert EventContract({"version":1,"type":"example.event","data":{"type":"string"}}).input("hello") == "hello"
-for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore"):
+for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore", "EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction"):
     assert hasattr(preview,name) and not hasattr(faas_sdk,name)
 for name in ("BuildWaitOptions", "DeploymentWaitOptions", "WaiterError", "WaiterFailureCode", "WaiterOptions", "WaiterProgress", "WaiterTimeoutError", "SourceUploadCheckpoint", "SourceUploadOptions", "SourceUploadError", "save_source_upload_checkpoint", "load_source_upload_checkpoint"):
     assert getattr(preview, name) is getattr(faas_sdk, name)
@@ -181,6 +181,14 @@ from faas_sdk import JobContract,JobInput,JobSubmitOptions,JobRunOptions,JobProg
 from faas_sdk.preview import LiveJob,LiveJobSnapshot,LiveJobFailure,LiveJobSource,realtime_live_job_source
 from faas_sdk.preview import PipelineChild,PipelineChildOptions,PipelineBatchResult,PipelineChildView,PipelineGateOptions,PipelineGateOutcome,PipelineGateService,JobPipeline,JobPipelineClient,PipelineCheckpoint,PipelineInspection,TypedPipelineRun,JobPipelineContext,PipelineJob,PipelineJobResult
 from faas_sdk.preview import EventContract,EventPipeline,EventPipelineDelivery,EventPipelineOutcome
+from faas_sdk.preview import EventPublisher,EventOutbox,EventOutboxStatus,EventOutboxOutcome,EventPublicationOptions,EventPublicationOutcome,EventOutboxRecoveryOptions,EventOutboxPool,EventOutboxTransaction,with_event_outbox_transaction
+async def typed_outbox(publisher:EventPublisher[str],worker:EventOutbox,pool:EventOutboxPool)->None:
+    async def stage(tx:EventOutboxTransaction)->EventOutboxStatus:
+        return await publisher.stage(tx,"hello",EventPublicationOptions(key="one"))
+    assert_type(await with_event_outbox_transaction(pool,stage,timeout=1),EventOutboxStatus)
+    assert_type(await publisher.publish("hello",EventPublicationOptions(key="two"),timeout=1),EventPublicationOutcome)
+    assert_type(await worker.recover_next(EventOutboxRecoveryOptions(timeout=1)),EventOutboxOutcome)
+    assert_type(await worker.status("one",timeout=1),EventOutboxStatus | None)
 async def typed_event_pipeline(client:EventPipeline[str,str,int,str],delivery:EventPipelineDelivery)->None:
     assert_type(await client.handle(delivery,"alice",timeout=1),EventPipelineOutcome)
     assert_type(await client.inspect(delivery,"alice",timeout=1),EventPipelineOutcome | None)
@@ -330,6 +338,9 @@ def observe(info: ResponseInfo) -> None:
     negative = tmp_path / "invalid.py"
     negative.write_text("""
 from faas_sdk import RequestOptions, ResponseInfo, RetryPolicy, FaaSClient, PaginationOptions, PaginationPage, BuildWaitOptions, DeploymentWaitOptions, WaiterProgress, SourceUploadCheckpoint, SourceUploadOptions
+from faas_sdk.preview import EventPublisher,EventPublicationOptions
+async def invalid_event(publisher:EventPublisher[str])->None:
+    await publisher.publish(7,EventPublicationOptions(key="one"),timeout=1)
 def check(options: RequestOptions, info: ResponseInfo) -> None:
     options.timeout = 2
     info.status = 200

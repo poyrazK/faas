@@ -210,6 +210,12 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "_event_outbox_protocol.py",
+    "event_outbox.py",
+    "event_outbox_state.py",
+    "event_outbox_transaction.py",
+    "event_publication.py",
+
     "event_contract.py",
     "event_types.py",
     "event_pipeline_state.py",
@@ -1295,6 +1301,10 @@ elsewhere its calls answer 404 no such API route.
 # ruff: noqa: F401
 from .pipeline_state import PipelineFailure, pipeline_failure, PIPELINE_JOB_SCHEMA, PipelineError, PipelineJobReceipt, PipelineJobStore, PipelineScope, PostgresPipelineJobStore, pipeline_job_identity, read_pipeline_artifact
 from .event_contract import EventContract
+from .event_outbox import EventPublisher, EventOutbox, EventOutboxRecoveryOptions, EventOutboxReconciliation
+from .event_outbox_state import EventOutboxError, EventOutboxStatus, EventOutboxOutcome, EventOutboxRetryPolicy, EventPublicationOptions, EventPublicationOutcome, EventPublicationReceipt
+from .event_outbox_transaction import EventOutboxPool, EventOutboxConnection, EventOutboxTransaction, PsycopgEventOutboxPool, with_event_outbox_transaction
+from ._event_outbox_protocol import EVENT_OUTBOX_SCHEMA
 from .event_pipelines import EventPipeline, EventPipelineAction, EventPipelineDelivery, EventPipelineOutcome, PipelineEvent
 from .event_pipeline_state import EVENT_PIPELINE_SCHEMA, EventPipelineError, EventPipelineReceipt, EventPipelineStore, PostgresEventPipelineStore, event_pipeline_identity
 
@@ -1831,6 +1841,24 @@ from .event_acknowledgment_intent_recovery_pass import (
 )
 
 __all__ = (
+    "EventPublisher",
+    "EventOutbox",
+    "EventOutboxRecoveryOptions",
+    "EventOutboxReconciliation",
+    "EventOutboxError",
+    "EventOutboxStatus",
+    "EventOutboxOutcome",
+    "EventOutboxRetryPolicy",
+    "EventPublicationOptions",
+    "EventPublicationOutcome",
+    "EventPublicationReceipt",
+    "EventOutboxPool",
+    "EventOutboxConnection",
+    "EventOutboxTransaction",
+    "PsycopgEventOutboxPool",
+    "with_event_outbox_transaction",
+    "EVENT_OUTBOX_SCHEMA",
+
     'EventContract', 'EventPipeline', 'EventPipelineAction', 'EventPipelineDelivery', 'EventPipelineOutcome', 'PipelineEvent', 'EVENT_PIPELINE_SCHEMA', 'EventPipelineError', 'EventPipelineReceipt', 'EventPipelineStore', 'PostgresEventPipelineStore', 'event_pipeline_identity',
     'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
     'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',

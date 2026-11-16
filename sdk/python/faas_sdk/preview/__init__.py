@@ -424,6 +424,7 @@ from ._event_deadline_policy import (
     EventDeadlineRatioOptions,
     EventDeadlineTarget,
 )
+from ._event_outbox_protocol import EVENT_OUTBOX_SCHEMA
 from ._wrapper import FaaSClient as FaaSClient
 from .ai_gateway import (
     AI_CALL_HEADER,
@@ -622,6 +623,23 @@ from .event_deadline_watch import (
     EventDeadlineWatchCancelled,
     EventDeadlineWatchOptions,
     awatch_event_subscription_deadlines,
+)
+from .event_outbox import EventOutbox, EventOutboxReconciliation, EventOutboxRecoveryOptions, EventPublisher
+from .event_outbox_state import (
+    EventOutboxError,
+    EventOutboxOutcome,
+    EventOutboxRetryPolicy,
+    EventOutboxStatus,
+    EventPublicationOptions,
+    EventPublicationOutcome,
+    EventPublicationReceipt,
+)
+from .event_outbox_transaction import (
+    EventOutboxConnection,
+    EventOutboxPool,
+    EventOutboxTransaction,
+    PsycopgEventOutboxPool,
+    with_event_outbox_transaction,
 )
 from .event_pipeline_state import (
     EVENT_PIPELINE_SCHEMA,
@@ -880,6 +898,24 @@ from .realtime_workers import (
 )
 
 __all__ = (
+    "EventPublisher",
+    "EventOutbox",
+    "EventOutboxRecoveryOptions",
+    "EventOutboxReconciliation",
+    "EventOutboxError",
+    "EventOutboxStatus",
+    "EventOutboxOutcome",
+    "EventOutboxRetryPolicy",
+    "EventPublicationOptions",
+    "EventPublicationOutcome",
+    "EventPublicationReceipt",
+    "EventOutboxPool",
+    "EventOutboxConnection",
+    "EventOutboxTransaction",
+    "PsycopgEventOutboxPool",
+    "with_event_outbox_transaction",
+    "EVENT_OUTBOX_SCHEMA",
+
     'EventContract', 'EventPipeline', 'EventPipelineAction', 'EventPipelineDelivery', 'EventPipelineOutcome', 'PipelineEvent', 'EVENT_PIPELINE_SCHEMA', 'EventPipelineError', 'EventPipelineReceipt', 'EventPipelineStore', 'PostgresEventPipelineStore', 'event_pipeline_identity',
     'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
     'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',

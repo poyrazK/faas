@@ -57,6 +57,9 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(sourceSdk.defineJobPipeline,undefined);assert.equal(fileBrowser.defineJobPipeline,undefined);
     assert.equal(sourceSdk.createEventPipeline,undefined);assert.equal(publicBrowser.createEventPipeline,undefined);assert.equal(fileBrowser.createEventPipeline,undefined);
     assert.equal(typeof previewSdk.createEventPipeline,'function');assert.equal(typeof previewSdk.postgresEventPipelineStore,'function');
+    assert.equal(typeof previewSdk.createEventPublisher,'function');assert.equal(typeof previewSdk.createEventOutbox,'function');assert.equal(typeof previewSdk.withEventOutboxTransaction,'function');
+    assert.equal(sourceSdk.createEventOutbox,undefined);assert.equal(publicBrowser.createEventPublisher,undefined);
+    assert.ok(previewSdk.eventOutboxSchema.includes('gregale_event_outbox'));
     const {EventContract}=await import('@gregale/sdk-node/preview/events/runtime');
     assert.equal(EventContract,previewSdk.EventContract);
     assert.deepEqual(new EventContract({version:1,type:'example.event',data:{type:'string'}}).input('hello'),'hello');
@@ -191,6 +194,18 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, type RequestOptions, type ResponseInfo, type ResponseObserver, type PaginationOptions, type DeploymentPagination, type DeploymentResponse, type DeploymentListResponse, type BuildResponse, type BuildListResponse, PaginationError, FaaSClient, AppsService, DeploymentsService } from '@gregale/sdk-node';
     import {contract as eventContract} from './typed-event.js';
     import {createEventPipeline,type EventPipelineDefinition,type EventPipelineDelivery,type EventPipelineOutcome} from '@gregale/sdk-node/preview';
+    import {createEventPublisher,createEventOutbox,withEventOutboxTransaction,type EventOutboxPool,type EventOutboxStatus,type EventPublicationOutcome} from '@gregale/sdk-node/preview';
+    declare const outboxPool:EventOutboxPool;
+    declare const eventScope:import('@gregale/sdk-node/preview').PipelineScope;
+    const publisher=createEventPublisher(eventContract,{scope:eventScope});
+    async function useOutbox():Promise<void>{
+      const result:EventOutboxStatus=await withEventOutboxTransaction(outboxPool,tx=>publisher.stage(tx,'typed',{key:'one'}),{timeoutMs:1000});
+      const direct:EventPublicationOutcome=await publisher.publish('typed',{key:'two',timeoutMs:1000});
+      void result;void direct;
+      // @ts-expect-error generated event payload is a string
+      await publisher.publish(7,{key:'three',timeoutMs:1000});
+      await createEventOutbox(outboxPool,{scope:eventScope,token:'secret'}).recover({maxEvents:10,timeoutMs:1000});
+    }
     declare const eventDefinition:EventPipelineDefinition<string,string,number,{id:string}>;
     declare const eventDelivery:EventPipelineDelivery;
     const triggeredPipelines=createEventPipeline(eventContract,eventDefinition);

@@ -4933,3 +4933,12 @@ an application-owned PostgreSQL ledger and never automatically repeats unknown
 starts. Existing pipelines opt in through a coordinator; their APIs stay intact.
 See [usage and recovery](../../docs/sdk-pipeline-composition.md) and the
 [reviewed batch CSV example](../../examples/sdk-csv-jobs/README.md#batch-imports-preview).
+
+## Typed transactional events (preview)
+
+Stage generated event payloads with business writes through `createEventPublisher`
+and `withEventOutboxTransaction`, then run bounded `createEventOutbox` recovery.
+The application-owned PostgreSQL protocol interoperates with upgraded Go/Python
+workers and honors persisted retry policy, publishing pause and rate limits.
+See [migration, authorization and recovery](../../docs/sdk-event-outbox.md) and
+the [complete CSV flow](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).

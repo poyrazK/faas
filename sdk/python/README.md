@@ -3865,3 +3865,10 @@ Typed application CloudEvents can start durable Job pipelines through the previe
 with generated payload types, current owner authorization and shared Node/Python
 start receipts. See [event-triggered pipelines](../../docs/sdk-event-pipelines.md)
 and the [CSV example](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
+Typed transactional publication is available through `EventPublisher`,
+`with_event_outbox_transaction`, `PsycopgEventOutboxPool` and bounded `EventOutbox`
+workers in `faas_sdk.preview`. Business writes and validated event intent commit
+together; workers share the upgraded Go/Node PostgreSQL protocol and controls.
+See [migration, authorization and recovery](../../docs/sdk-event-outbox.md) and
+the [complete CSV flow](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).

@@ -14,6 +14,7 @@ from typing import Any
 import psycopg
 from event_pipeline import ImportRecord, csv_event_pipeline
 from faas_sdk.preview import (
+    EventOutboxError,
     EventPipelineDelivery,
     EventPipelineError,
     EventPipelineOutcome,
@@ -28,6 +29,9 @@ from psycopg.rows import dict_row
 
 
 async def execute(request: dict[str, Any]) -> dict[str, Any] | None:
+    if request["action"].startswith("outbox-"):
+        from outbox_driver import execute as outbox_execute
+        return await outbox_execute(request)
     scope = PipelineScope.from_dict(json.loads(os.environ["GREGALE_PIPELINE_SCOPE"]))
     async with await psycopg.AsyncConnection.connect(
         os.environ["DATABASE_URL"],
@@ -118,7 +122,7 @@ async def main() -> None:
         request = json.loads(line)
         try:
             result = await execute(request)
-        except EventPipelineError as error:
+        except (EventPipelineError, EventOutboxError) as error:
             result = {"code": error.code}
         print(
             json.dumps({"request_id": request["request_id"], "result": result}),
@@ -129,6 +133,6 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except EventPipelineError as error:
+    except (EventPipelineError, EventOutboxError) as error:
         print(json.dumps({"code": error.code}))
         raise SystemExit(2) from None

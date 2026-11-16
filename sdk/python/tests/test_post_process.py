@@ -171,6 +171,11 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/preview/event_contract.py": b"# uncommitted event schemas\n",
         "faas_sdk/preview/event_types.py": b"# uncommitted event generation\n",
         "faas_sdk/preview/event_pipeline_state.py": b"# uncommitted event start receipts\n",
+        "faas_sdk/preview/_event_outbox_protocol.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_outbox.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_outbox_state.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_outbox_transaction.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_publication.py": b"# uncommitted outbox runtime\n",
         "faas_sdk/preview/event_pipelines.py": b"# uncommitted event adapters\n",
         "faas_sdk/preview/pipeline_children.py": b"# uncommitted child runtime\n",
         "faas_sdk/preview/pipeline_children_state.py": b"# uncommitted child receipts\n",
@@ -397,6 +402,16 @@ def test_regenerated_preview_barrel_preserves_event_pipelines(tmp_path, monkeypa
     for module in ("event_contract.py", "event_types.py", "event_pipeline_state.py", "event_pipelines.py"):
         assert module in generator.PREVIEW_WRAPPER_MODULES
     for name in ("EventContract", "EventPipeline", "EventPipelineReceipt", "EventPipelineDelivery", "PostgresEventPipelineStore"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_event_outbox(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_event_outbox_protocol.py", "event_outbox.py", "event_outbox_state.py", "event_outbox_transaction.py", "event_publication.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction"):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
