@@ -32,7 +32,7 @@ func TestParseLayerReuse(t *testing.T) {
 func TestLayerReuseKeyCoversEveryLayerInput(t *testing.T) {
 	base := layerReuseInputs{
 		accountID: "acct", imageDigest: "sha256:img", manifest: api.AppManifest{Entrypoint: []string{"node", "index.js"}, Port: 8080},
-		guestInitDigest: "sha256:init", plan: api.PlanPro,
+		guestInitDigest: "sha256:init", plan: api.PlanPro, imagedVersion: "v1",
 	}
 	baseKey, err := layerReuseKey(base)
 	if err != nil {
@@ -46,11 +46,12 @@ func TestLayerReuseKeyCoversEveryLayerInput(t *testing.T) {
 		"image":             func(in *layerReuseInputs) { in.imageDigest = "sha256:img2" },
 		"shared runtime":    func(in *layerReuseInputs) { in.runtime = "node24" },
 		"runner base":       func(in *layerReuseInputs) { in.runtimeBaseDiffIDs = []string{"sha256:l1"} },
-		"split outcome":     func(in *layerReuseInputs) { in.runtimeReason = "content_outside_app" },
+		"start command":     func(in *layerReuseInputs) { in.startCommand = "npm start" },
 		"manifest command":  func(in *layerReuseInputs) { in.manifest.Entrypoint = []string{"node", "server.js"} },
 		"manifest env":      func(in *layerReuseInputs) { in.manifest.Env = map[string]string{"A": "1"} },
 		"guest-init binary": func(in *layerReuseInputs) { in.guestInitDigest = "sha256:init2" },
 		"plan":              func(in *layerReuseInputs) { in.plan = api.PlanHobby },
+		"imaged build":      func(in *layerReuseInputs) { in.imagedVersion = "v2" },
 	}
 	for name, change := range changes {
 		in := base
@@ -68,6 +69,7 @@ func TestLayerReuseKeyCoversEveryLayerInput(t *testing.T) {
 		func(in *layerReuseInputs) { in.imageDigest = "" },
 		func(in *layerReuseInputs) { in.guestInitDigest = "" },
 		func(in *layerReuseInputs) { in.plan = "" },
+		func(in *layerReuseInputs) { in.imagedVersion = "" },
 	} {
 		in := base
 		missing(&in)
@@ -164,7 +166,7 @@ func TestBuildOrReuseAppLayerRepublishesARecordedLayer(t *testing.T) {
 	key := strings.Repeat("c", 64)
 	deploy := func(app state.App, dep string) rootfs.BuildResult {
 		t.Helper()
-		res, err := h.buildOrReuseAppLayer(ctx, key, app, state.Deployment{ID: dep}, rootfs.BuildInput{Storage: be, StorageKey: "apps/a/" + dep + ".ext4"})
+		res, err := h.buildOrReuseAppLayer(ctx, key, app, state.Deployment{ID: dep}, rootfs.BuildInput{Storage: be, StorageKey: "apps/a/" + dep + ".ext4"}, nil)
 		if err != nil {
 			t.Fatalf("deploy %s: %v", dep, err)
 		}
@@ -211,7 +213,7 @@ func TestBuildOrReuseAppLayerRepublishesARecordedLayer(t *testing.T) {
 
 	// With reuse off, nothing is looked up or recorded.
 	h.WithLayerReuse("")
-	if _, err := h.buildOrReuseAppLayer(ctx, "", app, state.Deployment{ID: "dep-5"}, rootfs.BuildInput{Storage: be, StorageKey: "apps/a/dep-5.ext4"}); err != nil {
+	if _, err := h.buildOrReuseAppLayer(ctx, "", app, state.Deployment{ID: "dep-5"}, rootfs.BuildInput{Storage: be, StorageKey: "apps/a/dep-5.ext4"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(builder.calls) != 4 {
