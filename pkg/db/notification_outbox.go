@@ -101,6 +101,10 @@ func notificationOutboxRetryDelay(attempts int) time.Duration {
 // NotificationRetryDelay shares the existing bounded outbox backoff with
 // durable handler progress. The recorded time is an eligibility boundary;
 // polling, other work and consumer backoff can deliver a notification later.
+// NotificationOutboxPollInterval is how often each replay worker drains the
+// outbox.
+func NotificationOutboxPollInterval() time.Duration { return notificationOutboxPoll }
+
 func NotificationRetryDelay(attempts int) time.Duration {
 	return notificationOutboxRetryDelay(attempts)
 }
