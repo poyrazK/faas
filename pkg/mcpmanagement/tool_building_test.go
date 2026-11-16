@@ -202,7 +202,7 @@ func TestToolBuildingPublicationJourney(t *testing.T) {
 			f, backend := newPublicationFixture(t)
 			cs, ctx := connectSelectedTestServer(t, backend, Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, LocalCLI: f.cli, Toolsets: []string{ToolsetBuildTools}}, protocol)
 			catalog, err := cs.ListTools(ctx, nil)
-			if err != nil || len(catalog.Tools) != 14 {
+			if err != nil || len(catalog.Tools) != 15 {
 				t.Fatalf("catalog=%v error=%v", catalog, err)
 			}
 			manifest := publicationCall(t, ctx, cs, "gregale_get_tool_template", toolTemplateArgs{Runtime: "go"}, false)

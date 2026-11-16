@@ -2941,6 +2941,7 @@ from .managed_realtime_signal_request import ManagedRealtimeSignalRequest
 from .managed_realtime_signal_response import ManagedRealtimeSignalResponse
 from .managed_realtime_signal_response_member_id import ManagedRealtimeSignalResponseMemberId
 from .managed_service_probe_spec import ManagedServiceProbeSpec
+from .mcp_access_policy_expectation import MCPAccessPolicyExpectation
 from .mcp_admission_evidence import MCPAdmissionEvidence
 from .mcp_admission_evidence_outcome import MCPAdmissionEvidenceOutcome
 from .mcp_admission_evidence_version import MCPAdmissionEvidenceVersion
@@ -6158,6 +6159,10 @@ from .task_tool_recovery_handover_state import TaskToolRecoveryHandoverState
 from .task_tool_recovery_qualification import TaskToolRecoveryQualification
 from .task_tool_recovery_qualification_action import TaskToolRecoveryQualificationAction
 from .task_tool_recovery_request import TaskToolRecoveryRequest
+from .task_tool_recovery_restore_request import TaskToolRecoveryRestoreRequest
+from .task_tool_recovery_restore_request_expected_instance_ids import TaskToolRecoveryRestoreRequestExpectedInstanceIds
+from .task_tool_recovery_result import TaskToolRecoveryResult
+from .task_tool_recovery_result_action import TaskToolRecoveryResultAction
 from .task_tool_release_app import TaskToolReleaseApp
 from .task_tool_release_app_role import TaskToolReleaseAppRole
 from .task_tool_release_execution import TaskToolReleaseExecution
@@ -9534,6 +9539,7 @@ __all__ = (
     "ManagedRealtimeSignalResponse",
     "ManagedRealtimeSignalResponseMemberId",
     "ManagedServiceProbeSpec",
+    "MCPAccessPolicyExpectation",
     "MCPAdmissionEvidence",
     "MCPAdmissionEvidenceOutcome",
     "MCPAdmissionEvidenceVersion",
@@ -12547,6 +12553,10 @@ __all__ = (
     "TaskToolRecoveryQualification",
     "TaskToolRecoveryQualificationAction",
     "TaskToolRecoveryRequest",
+    "TaskToolRecoveryRestoreRequest",
+    "TaskToolRecoveryRestoreRequestExpectedInstanceIds",
+    "TaskToolRecoveryResult",
+    "TaskToolRecoveryResultAction",
     "TaskToolReleaseApp",
     "TaskToolReleaseAppRole",
     "TaskToolReleaseExecution",

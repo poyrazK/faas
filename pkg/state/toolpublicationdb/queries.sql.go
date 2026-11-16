@@ -46,6 +46,46 @@ func (q *Queries) ChangeToolInvocation(ctx context.Context, db DBTX, arg ChangeT
 	return err
 }
 
+const completeTaskRecoveryTraffic = `-- name: CompleteTaskRecoveryTraffic :execrows
+UPDATE task_tool_release_intents AS intent SET payload=$1
+WHERE intent.account_id=$2 AND intent.id=$3
+AND intent.payload->'execution'->'recovery'->>'decision'='approved'
+AND intent.payload->'execution'->'recovery'->'result' IS NULL
+AND (intent.payload->'execution'->'recovery'->'qualification'->>'expires_at')::timestamptz>clock_timestamp()
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=$4::uuid AND k.account_id=$2
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=$5::uuid AND k.account_id=$2
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM app_custom_metrics m WHERE m.app_id=$6::uuid AND m.name='mcp_tasks_observer_heartbeat'
+ AND m.value=1 AND m.observed_at<=clock_timestamp() AND m.observed_at>=clock_timestamp()-$7::integer*interval '1 second')
+`
+
+type CompleteTaskRecoveryTrafficParams struct {
+	Payload          []byte
+	AccountID        pgtype.UUID
+	ID               string
+	OwnerKeyID       pgtype.UUID
+	RequesterKeyID   pgtype.UUID
+	MetricAppID      pgtype.UUID
+	FreshnessSeconds int32
+}
+
+func (q *Queries) CompleteTaskRecoveryTraffic(ctx context.Context, db DBTX, arg CompleteTaskRecoveryTrafficParams) (int64, error) {
+	result, err := db.Exec(ctx, completeTaskRecoveryTraffic,
+		arg.Payload,
+		arg.AccountID,
+		arg.ID,
+		arg.OwnerKeyID,
+		arg.RequesterKeyID,
+		arg.MetricAppID,
+		arg.FreshnessSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countTaskToolReleaseIntents = `-- name: CountTaskToolReleaseIntents :one
 SELECT count(*) FROM task_tool_release_intents WHERE account_id=$1
 `
@@ -496,6 +536,77 @@ func (q *Queries) LockPublicationReadinessEvidence(ctx context.Context, db DBTX,
 			return nil, err
 		}
 		items = append(items, evidence)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockTaskRecoveryApp = `-- name: LockTaskRecoveryApp :one
+SELECT id FROM apps WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT
+`
+
+type LockTaskRecoveryAppParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+// Block new instance FK admissions while recovery compares the complete VM set.
+// NOWAIT avoids a lock cycle with native traffic/admission transactions.
+func (q *Queries) LockTaskRecoveryApp(ctx context.Context, db DBTX, arg LockTaskRecoveryAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockTaskRecoveryApp, arg.AccountID, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockTaskRecoveryHeartbeat = `-- name: LockTaskRecoveryHeartbeat :one
+SELECT value,observed_at FROM app_custom_metrics WHERE app_id=$1 AND name='mcp_tasks_observer_heartbeat' FOR SHARE
+`
+
+type LockTaskRecoveryHeartbeatRow struct {
+	Value      float64
+	ObservedAt pgtype.Timestamptz
+}
+
+func (q *Queries) LockTaskRecoveryHeartbeat(ctx context.Context, db DBTX, appID pgtype.UUID) (LockTaskRecoveryHeartbeatRow, error) {
+	row := db.QueryRow(ctx, lockTaskRecoveryHeartbeat, appID)
+	var i LockTaskRecoveryHeartbeatRow
+	err := row.Scan(&i.Value, &i.ObservedAt)
+	return i, err
+}
+
+const lockTaskRecoveryInstances = `-- name: LockTaskRecoveryInstances :many
+SELECT id::text AS id, app_id::text AS app_id, COALESCE(deployment_id::text,'')::text AS deployment_id, state::text AS state
+FROM instances WHERE app_id=$1 ORDER BY id FOR SHARE
+`
+
+type LockTaskRecoveryInstancesRow struct {
+	ID           string
+	AppID        string
+	DeploymentID string
+	State        string
+}
+
+func (q *Queries) LockTaskRecoveryInstances(ctx context.Context, db DBTX, appID pgtype.UUID) ([]LockTaskRecoveryInstancesRow, error) {
+	rows, err := db.Query(ctx, lockTaskRecoveryInstances, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockTaskRecoveryInstancesRow{}
+	for rows.Next() {
+		var i LockTaskRecoveryInstancesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.State,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
