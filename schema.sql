@@ -46701,6 +46701,34 @@ CREATE TABLE public.managed_postgres_creation_receipts (
 
 
 --
+-- Name: managed_postgres_custom_roles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_custom_roles (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    bypass_rls boolean DEFAULT false NOT NULL,
+    granted_to text[] DEFAULT '{}'::text[] NOT NULL,
+    member_of text[] DEFAULT '{}'::text[] NOT NULL,
+    state text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_custom_roles_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT managed_postgres_custom_roles_granted_to_check CHECK ((granted_to <@ ARRAY['migration'::text, 'read_only'::text, 'read_write'::text])),
+    CONSTRAINT managed_postgres_custom_roles_last_error_check CHECK ((char_length(last_error) <= 128)),
+    CONSTRAINT managed_postgres_custom_roles_member_of_check CHECK ((cardinality(member_of) <= 16)),
+    CONSTRAINT managed_postgres_custom_roles_name_check CHECK ((name ~ '^[a-z_][a-z0-9_]{0,62}$'::text)),
+    CONSTRAINT managed_postgres_custom_roles_revision_check CHECK ((revision > 0)),
+    CONSTRAINT managed_postgres_custom_roles_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'ready'::text, 'deleting'::text])))
+);
+
+
+--
 -- Name: managed_postgres_cutover_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69919,6 +69947,14 @@ ALTER TABLE ONLY public.managed_postgres_creation_receipts
 
 
 --
+-- Name: managed_postgres_custom_roles managed_postgres_custom_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_custom_roles
+    ADD CONSTRAINT managed_postgres_custom_roles_pkey PRIMARY KEY (database_id, name);
+
+
+--
 -- Name: managed_postgres_cutover_credentials managed_postgres_cutover_crede_cutover_id_source_binding_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -83096,6 +83132,13 @@ CREATE INDEX managed_postgres_clone_owner_idx ON public.managed_postgres_databas
 --
 
 CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'target'::text));
+
+
+--
+-- Name: managed_postgres_custom_roles_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_custom_roles_due_idx ON public.managed_postgres_custom_roles USING btree (retry_at) WHERE (state <> 'ready'::text);
 
 
 --
@@ -104804,6 +104847,14 @@ ALTER TABLE ONLY public.managed_postgres_creation_receipts
 
 ALTER TABLE ONLY public.managed_postgres_creation_receipts
     ADD CONSTRAINT managed_postgres_creation_receipts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_custom_roles managed_postgres_custom_roles_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_custom_roles
+    ADD CONSTRAINT managed_postgres_custom_roles_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

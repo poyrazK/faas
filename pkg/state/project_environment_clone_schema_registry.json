@@ -10634,6 +10634,30 @@
     }
   },
   {
+    "table": "managed_postgres_custom_roles",
+    "columns": [
+      "account_id",
+      "attempt_count",
+      "bypass_rls",
+      "created_at",
+      "database_id",
+      "granted_to",
+      "last_error",
+      "member_of",
+      "name",
+      "retry_at",
+      "revision",
+      "state",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
     "table": "managed_postgres_checkpoint_maintenance",
     "columns": [
       "activation_requested_at",

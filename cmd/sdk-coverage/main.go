@@ -266,6 +266,11 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases, behind the preview-databases
 	// capability until launch.
 	"PUT /v1/postgres/databases/{id}/previews": true,
+	// ADR-20261116213000 custom Postgres roles, behind the
+	// postgres_custom_roles flag until launch.
+	"GET /v1/postgres/databases/{id}/roles":           true,
+	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
+	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly

@@ -1211,6 +1211,19 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 	return limits.PreviewApps * databases.DatabasesMax
 }
 
+// ManagedPostgresCustomRolesMax is how many custom group roles one managed
+// database may declare (ADR-20261116213000): none on Free, 16 on Hobby and
+// above. Unknown plans fail closed.
+func ManagedPostgresCustomRolesMax(p Plan) int {
+	if _, ok := LimitsFor(p); !ok || p == PlanFree {
+		return 0
+	}
+	if _, managed := ManagedPostgresLimitsFor(p); !managed {
+		return 0
+	}
+	return 16
+}
+
 // ManagedPostgresAllowanceBranchTTLMax is the longest TTL a branch may carry
 // and still sit in the plan's branch allowance instead of its database limit
 // (ADR-20261106103654 amendment 1). A branch with a longer TTL, or none,
