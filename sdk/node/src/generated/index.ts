@@ -3236,6 +3236,9 @@ export type { SweepStuckBuildsResponse } from './models/SweepStuckBuildsResponse
 export type { SyntheticCheckResponse } from './models/SyntheticCheckResponse.js';
 export type { SyntheticCheckResults } from './models/SyntheticCheckResults.js';
 export type { SyntheticCheckRun } from './models/SyntheticCheckRun.js';
+export type { TaskToolQuarantine } from './models/TaskToolQuarantine.js';
+export type { TaskToolQuarantineRequest } from './models/TaskToolQuarantineRequest.js';
+export type { TaskToolQuarantineResult } from './models/TaskToolQuarantineResult.js';
 export type { TaskToolRecoveryHandover } from './models/TaskToolRecoveryHandover.js';
 export type { TaskToolRecoveryQualification } from './models/TaskToolRecoveryQualification.js';
 export type { TaskToolRecoveryRequest } from './models/TaskToolRecoveryRequest.js';

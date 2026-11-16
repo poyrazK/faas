@@ -211,3 +211,8 @@ AND EXISTS(SELECT 1 FROM app_custom_metrics m WHERE m.app_id=sqlc.arg(metric_app
 -- NOWAIT avoids a lock cycle with native traffic/admission transactions.
 -- name: LockTaskRecoveryApp :one
 SELECT id FROM apps WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT;
+
+-- name: TaskQuarantineClockFresh :one
+SELECT (sqlc.arg(expires_at)::timestamptz>clock_timestamp()
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(owner_key_id)::uuid AND k.account_id=sqlc.arg(account_id) AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(requester_key_id)::uuid AND k.account_id=sqlc.arg(account_id) AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())))::boolean AS fresh;

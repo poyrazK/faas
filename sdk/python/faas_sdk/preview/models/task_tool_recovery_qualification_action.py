@@ -1,8 +1,9 @@
 from typing import Literal
 
-TaskToolRecoveryQualificationAction = Literal["restore"]
+TaskToolRecoveryQualificationAction = Literal["quarantine", "restore"]
 
 TASK_TOOL_RECOVERY_QUALIFICATION_ACTION_VALUES: set[TaskToolRecoveryQualificationAction] = {
+    "quarantine",
     "restore",
 }
 
