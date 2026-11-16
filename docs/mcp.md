@@ -561,6 +561,8 @@ gregale mcp serve --transport stdio --tools core,build-tools --allow-writes
 | `gregale_check_task_tool_deploy` | Re-review source and native app/key snapshots. Observed drift permanently invalidates approval. Requires write consent for journal updates. |
 | `gregale_apply_task_tool_deploy` | Start one separately owner-authorized local Node Task release with explicit execution consent. Uses the owner's private binding profile and preserves native release gates; duplicates never restart a claimed operation. |
 | `gregale_get_task_tool_operation` | Inspect the retained execution state and last guarded stage after reconnect, without paths or credentials. Interrupted claims require owner reconciliation. |
+| `gregale_inspect_task_tool_recovery` | Compare durable Task checkpoints with fresh native deployment, serving, instance and observer observations. GET only; needs no local files, bindings or executable CLI. |
+| `gregale_plan_task_tool_recovery` | Produce a hashed, expiring read-only plan listing blockers and required owner checks for resume, restore and candidate retirement. Grants no recovery execution or claim takeover. |
 | `gregale_apply_tool_deploy` | Start one asynchronous publication attempt from the unchanged reviewed project, using a private source snapshot. Repeated calls return the same receipt without repeating builds or fixtures. |
 | `gregale_get_tool_deploy` | Inspect that attempt's retained receipt and, when its deployment ID is known and bound, fresh native deployment status. Never invokes fixtures or promotes. |
 
@@ -1084,6 +1086,58 @@ Task execution does not register tool versions or grant invocation authority.
 Root `bindings_verified` and `ready_to_apply` remain false; the nested execution
 record represents a separate bounded permission, not complete stack readiness.
 See [ADR 20261115101539](adr/20261115101539-owner-bound-task-tool-execution.md).
+
+### Task execution evidence and recovery plans
+
+The trusted local adapter now retains its checkpoints in the native operation
+journal as well as its private local file. Each checkpoint includes a monotonic
+revision, stable release correlation ID, serving baseline, candidate deployment
+IDs, previous-worker generations, Task worker IDs and recorded promotion/park
+state. A pending submission is acknowledged natively before the deployment POST;
+its deployment ID follows when the response arrives. A missing checkpoint
+acknowledgement stops further release effects. Checkpoint identity and progress
+cannot be rewritten by a later revision. These are claim-holder execution
+records; live health still requires separate observation.
+
+Use `gregale_inspect_task_tool_recovery` or `gregale_plan_task_tool_recovery` with
+only `intent_id`, including on a read-only local `build-tools` connection. The
+CLI equivalents also need no source plan or private bindings:
+
+```sh
+gregale mcp server tasks execution inspect --id "$INTENT_ID"
+gregale mcp server tasks execution plan-recovery --id "$INTENT_ID"
+```
+
+Both tools use native GET APIs only. They compare current app identities and
+configuration, deployment status, serving revisions, worker instances/generations
+and observer telemetry with the checkpoint. When a deployment reply was lost,
+inspection follows bounded app-history pages for its exact operation reason and
+app identity. Exactly one match in complete history may identify the deployment.
+Zero matches, duplicate matches, incomplete history, cursor cycles or unavailable
+facts remain unresolved. Observation neither updates the checkpoint nor repeats
+the POST. Legacy operations without checkpoints report missing evidence.
+
+The report distinguishes recorded completion from current observations. A
+`running` entry reports `running_or_interrupted`, because it does not establish
+that the local executor lives. The plan lists `resume`, `restore` and `retire`,
+each either `blocked` with specific reasons or `requires_owner_checks`. An
+observed zero-live boundary after promotion can support owner review of a lost
+park reply, while missing old workers block restoration. Changed journals,
+foreign generations and uncertain submissions block affected actions.
+
+Plans expire after one minute and include `evidence_sha256` and
+`recovery_plan_id`. They always return `read_only=true`, `ready_to_apply=false`
+and `owner_authorization_required=true`. The hash identifies this report; no
+execution endpoint accepts it as authority. Artifact/dependency checks, database
+and retained-key compatibility, live endpoint/catalog/role readiness and new
+separate owner recovery authorization remain required. Current owner-operated
+native recovery remains the execution path. No credentials, customer code, Task
+database connections or public application probes run during inspection.
+
+Checkpoints retain at most 1,024 Task worker IDs and 32 previous-worker entries;
+these bound journal size and do not change deployment quotas. Recovery history
+inspection is bounded to ten pages of up to 200 deployments per candidate role.
+See [ADR 20261115105244](adr/20261115105244-task-execution-evidence-recovery-plans.md).
 
 
 ## Hosted tool publishing (preview)

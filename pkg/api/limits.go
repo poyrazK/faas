@@ -43,6 +43,10 @@ const (
 	TaskToolReleaseIntentsPerAccount           = 256
 	TaskToolReleaseAppsMax                     = 35
 	TaskToolReleaseApprovalTTL                 = 15 * time.Minute
+	TaskToolReleaseReceiptWorkerIDsMax         = 1024
+	TaskToolReleaseReceiptRevisionMax          = 9_007_199_254_740_991
+	TaskToolRecoveryObservationTTL             = time.Minute
+	TaskToolRecoveryHistoryPagesMax            = 10
 	ToolPublicationOutcomeMaxBytes             = 512 << 10
 	ToolPublicationCatalogMaxBytes             = 256 << 10
 	ToolPublicationMaxTools                    = 64

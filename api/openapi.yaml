@@ -74388,6 +74388,11 @@ components:
         authorized_at: { type: string, format: date-time }
         claim_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
         stage: { type: string, enum: [prepared, deploying_worker, deploying_web, replacements_started, web_promoted, draining_previous, previous_parked, complete] }
+        receipt:
+          $ref: '#/components/schemas/TaskToolReleaseReceipt'
+        completed_stages:
+          type: array
+          items: { type: string, enum: [baseline_captured, worker_submitted, web_submitted, workers_recorded, promotion_recorded, previous_workers_parked, release_completed] }
     TaskToolReleaseExecutionRequest:
       description: Exact local execution identity and bounded transition. Private claim material is submitted by the trusted CLI and is never returned in API receipts.
       type: object
@@ -74399,6 +74404,36 @@ components:
         bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
         claim_token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true }
         stage: { type: string, enum: [prepared, deploying_worker, deploying_web, replacements_started, web_promoted, draining_previous, previous_parked, complete] }
+        receipt:
+          $ref: '#/components/schemas/TaskToolReleaseReceipt'
+    TaskToolReleaseReceipt:
+      description: Monotonic checkpoint from the authenticated local execution claim holder. Deployment and worker identities require independent fresh native observation during recovery; this metadata grants no action authority.
+      type: object
+      additionalProperties: false
+      required: [revision, release_id, stage, serving_captured, previous_deployments, worker_ids, promoted, parked]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        release_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        stage: { type: string, enum: [prepared, deploying_worker, deploying_web, replacements_started, web_promoted, draining_previous, previous_parked, complete] }
+        serving_captured: { type: boolean }
+        serving_deployment_id: { type: string, format: uuid }
+        web_deployment_id: { type: string, format: uuid }
+        worker_deployment_id: { type: string, format: uuid }
+        pending_submission: { type: string, enum: [web, worker] }
+        previous_deployments:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, format: uuid }
+        worker_ids:
+          type: array
+          maxItems: 1024
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        promoted: { type: boolean }
+        parked:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: boolean, enum: [true] }
     DataPipelineFreshness:
       type: object
       additionalProperties: false

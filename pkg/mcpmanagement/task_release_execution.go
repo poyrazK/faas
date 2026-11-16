@@ -24,7 +24,26 @@ func taskExecutionOutputSchema() map[string]any {
 	for _, name := range []string{"operation_id", "bindings_sha256", "claim_sha256"} {
 		props[name] = map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"}
 	}
+	props["receipt"] = taskReleaseReceiptSchema()
+	props["completed_stages"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"operation_id", "bindings_sha256", "authorizer_key_id", "state", "authorized_at"}, "properties": props}
+}
+
+func taskReleaseReceiptSchema() map[string]any {
+	props := map[string]any{
+		"revision":         map[string]any{"type": "integer", "minimum": 1, "maximum": api.TaskToolReleaseReceiptRevisionMax},
+		"release_id":       map[string]any{"type": "string", "pattern": "^[0-9a-f]{32}$"},
+		"stage":            map[string]any{"type": "string", "enum": []string{"prepared", "deploying_worker", "deploying_web", "replacements_started", "web_promoted", "draining_previous", "previous_parked", "complete"}},
+		"serving_captured": map[string]any{"type": "boolean"}, "promoted": map[string]any{"type": "boolean"},
+		"previous_deployments": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string", "format": "uuid"}},
+		"parked":               map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "boolean", "const": true}},
+		"worker_ids":           map[string]any{"type": "array", "maxItems": api.TaskToolReleaseReceiptWorkerIDsMax, "uniqueItems": true, "items": map[string]any{"type": "string", "format": "uuid"}},
+		"pending_submission":   map[string]any{"type": "string", "enum": []string{"web", "worker"}},
+	}
+	for _, name := range []string{"serving_deployment_id", "web_deployment_id", "worker_deployment_id"} {
+		props[name] = map[string]any{"type": "string", "format": "uuid"}
+	}
+	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"revision", "release_id", "stage", "serving_captured", "previous_deployments", "worker_ids", "promoted", "parked"}, "properties": props}
 }
 
 func (m *management) getTaskExecution(ctx context.Context, args taskReleaseIntentArgs) (any, error) {

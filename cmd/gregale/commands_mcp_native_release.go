@@ -357,7 +357,7 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 		}
 	}
 	if !s.journalExists {
-		if err := saveMCPNativeState(state, &s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, &s); err != nil {
 			return printErr("MCP release journal", err)
 		}
 	}
@@ -424,7 +424,7 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 			return printErr("MCP release journal", err)
 		}
 		s.Stage = "complete"
-		if err = saveMCPNativeState(state, &s); err != nil {
+		if err = saveMCPNativeStateContext(ctx, state, &s); err != nil {
 			return printErr("MCP release journal", err)
 		}
 	}
@@ -558,7 +558,7 @@ func reconcileMCPNativeSubmission(ctx context.Context, c *Client, p mcpNativeRel
 		s.WorkerDeployment = id
 	}
 	s.PendingSubmission = ""
-	return saveMCPNativeState(state, s)
+	return saveMCPNativeStateContext(ctx, state, s)
 }
 
 func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool, s *mcpNativeReleaseState, state string) error {
@@ -585,7 +585,7 @@ func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool,
 		s.ReleaseID = hex.EncodeToString(entropy[:])
 	}
 	s.PendingSubmission = kind
-	if err := saveMCPNativeState(state, s); err != nil {
+	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 		return err
 	}
 	args := []string{"--path", path, "--source=worktree", "--name", app, "--app", "--wait", "--timeout", "600", "--reason", "mcp-release-" + s.ReleaseID + "-" + kind, "--idempotency-key", "mcp-release-" + s.ReleaseID + "-" + kind}
@@ -600,7 +600,7 @@ func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool,
 			s.WorkerDeployment = dep.ID
 		}
 		s.PendingSubmission = ""
-		journalErr = saveMCPNativeState(state, s)
+		journalErr = saveMCPNativeStateContext(ctx, state, s)
 	}})
 	if journalErr != nil {
 		return journalErr
@@ -894,19 +894,19 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			}
 		}
 		s.ServingCaptured = true
-		if err := saveMCPNativeState(state, s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 			return err
 		}
 	}
 	s.Stage = "deploying_worker"
-	if err := saveMCPNativeState(state, s); err != nil {
+	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 		return err
 	}
 	if err := mcpNativeDeploy(ctx, c, p.WorkerPath, p.WorkerApp, false, s, state); err != nil {
 		return err
 	}
 	s.Stage = "deploying_web"
-	if err := saveMCPNativeState(state, s); err != nil {
+	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 		return err
 	}
 	if err := mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state); err != nil {
@@ -923,7 +923,7 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		if err == nil {
 			s.WorkerIDs = ids
 			s.Stage = "replacements_started"
-			return saveMCPNativeState(state, s)
+			return saveMCPNativeStateContext(ctx, state, s)
 		}
 		select {
 		case <-ctx.Done():
@@ -1030,7 +1030,7 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		}
 		s.Promoted = true
 		s.Stage = "web_promoted"
-		if err := saveMCPNativeState(state, s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 			return err
 		}
 	}
@@ -1074,10 +1074,10 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		}
 		s.Parked[slug] = true
 		s.Stage = "draining_previous"
-		if err := saveMCPNativeState(state, s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 			return err
 		}
 	}
 	s.Stage = "previous_parked"
-	return saveMCPNativeState(state, s)
+	return saveMCPNativeStateContext(ctx, state, s)
 }

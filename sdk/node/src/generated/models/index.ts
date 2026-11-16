@@ -3240,6 +3240,7 @@ export type { TaskToolReleaseIntent } from './TaskToolReleaseIntent.js';
 export type { TaskToolReleaseIntentCheck } from './TaskToolReleaseIntentCheck.js';
 export type { TaskToolReleaseIntentDecision } from './TaskToolReleaseIntentDecision.js';
 export type { TaskToolReleaseIntentRecord } from './TaskToolReleaseIntentRecord.js';
+export type { TaskToolReleaseReceipt } from './TaskToolReleaseReceipt.js';
 export type { TemplateView } from './TemplateView.js';
 export type { TenantHostnameResponse } from './TenantHostnameResponse.js';
 export type { TenantSurfaceResponse } from './TenantSurfaceResponse.js';
