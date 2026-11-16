@@ -268,7 +268,9 @@ func (t *binaryHopTransport) send(cc *hopClientConn, req *http.Request, noConten
 		body := &hopResponseBody{t: t, cc: cc, resp: resp, writeDone: writeDone, stop: stop}
 		body.cr.Reset(cc.br)
 		resp.Body = body
-		return resp, nil
+		// A failed head write still returns the server's early answer
+		// (resp.Close is set), as net/http does.
+		return resp, nil //nolint:nilerr // headErr is answered by the early response above.
 	}
 }
 
