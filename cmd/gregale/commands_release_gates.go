@@ -72,7 +72,7 @@ func releaseGatesList(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	if len(out.Gates) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "No release gates. Add one with `gregale release gate create`.")
+		_, _ = fmt.Fprintln(osStdout, "No release gates. Add one with `gregale release gate add`.")
 		return 0
 	}
 	w := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
@@ -143,7 +143,7 @@ func releaseGatesAdd(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	usage := "usage: gregale release gate create --name NAME (--slo NAME [--max-burn-rate N] | --new-errors [--max-new-groups N] [--min-events N] | --metric NAME (--below V | --above V | --max-rise PCT | --max-drop PCT) | --check NAME [--max-failure-percent PCT] | --ai METRIC [--max-increase PCT]) [--min-samples N] [--app <slug>]"
+	usage := "usage: gregale release gate add --name NAME (--slo NAME [--max-burn-rate N] | --new-errors [--max-new-groups N] [--min-events N] | --metric NAME (--below V | --above V | --max-rise PCT | --max-drop PCT) | --check NAME [--max-failure-percent PCT] | --ai METRIC [--max-increase PCT]) [--min-samples N] [--app <slug>]"
 	if rejectUnexpectedFlagArgs(fs) || *name == "" {
 		PrintUsage(os.Stderr, usage, "release-gates")
 		return 1
@@ -174,7 +174,7 @@ func releaseGatesAdd(args []string) int {
 	return 0
 }
 
-// releaseGateFlags are `release gate create`'s flags. MaxGroups and
+// releaseGateFlags are `release gate add`'s flags. MaxGroups and
 // MaxFailurePercent are -1 when unset.
 type releaseGateFlags struct {
 	Name, SLO            string
