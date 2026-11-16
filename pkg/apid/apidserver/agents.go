@@ -58,6 +58,9 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	if runs, ok := h.Store.(agents.RunCallbackStore); ok {
 		h.RunCallbacks = runs
 	}
+	if tasks, ok := h.Store.(agents.SandboxTaskStore); ok {
+		h.SandboxTasks = tasks
+	}
 	if subs, ok := h.Store.(agents.GitHubSubscriptionStore); ok {
 		h.GitHubSubscriptions = subs
 	}

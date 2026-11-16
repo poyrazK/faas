@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 
@@ -129,6 +130,17 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		opErr = problem
 		return grpcerr.ToStatus(problem)
 	}
+	task, problem := sandboxTaskFromProto(first.GetStart(), wake)
+	if problem != nil {
+		opErr = problem
+		return grpcerr.ToStatus(problem)
+	}
+	runner, _ := s.vmm.(sandboxTaskRunner)
+	if task != nil && runner == nil {
+		problem := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented, "Sandbox tasks unavailable", "this vmm cannot run sandbox tasks")
+		opErr = problem
+		return grpcerr.ToStatus(problem)
+	}
 	ctx := stream.Context()
 	inst, err := sandboxVMM.WakeSandbox(ctx, wake)
 	if err != nil {
@@ -162,6 +174,9 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 	}}}); err != nil {
 		opErr = err
 		return err
+	}
+	if task != nil {
+		go runSandboxTask(ctx, runner, wake, *task, act)
 	}
 	opErr = s.serveSandbox(ctx, stream, wake.Instance, act)
 	return opErr
@@ -401,4 +416,68 @@ func (s *Server) CaptureSandboxSnapshot(ctx context.Context, req *vmmdpb.Capture
 	return &vmmdpb.CaptureAgentSnapshotResponse{VmstateBytes: info.VMStateBytes, Snapshot: &vmmdpb.AgentRunSnapshot{
 		StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey, FcVersion: snap.FCVersion, MemBytes: snap.MemBytes,
 	}}, nil
+}
+
+// sandboxTaskRunner runs a sandbox task's command in its session VM
+// (ADR-20261116182615 §3); *fcvm.Manager implements it.
+type sandboxTaskRunner interface {
+	RunSandboxTask(ctx context.Context, instance, sandboxID string, argv []string, timeout time.Duration, maxOutput int64) (fcvm.SandboxTaskResult, error)
+}
+
+// sandboxTask is a validated sandbox task: the command vmmd runs and its
+// bounds.
+type sandboxTask struct {
+	argv      []string
+	timeout   time.Duration
+	maxOutput int64
+}
+
+// sandboxTaskFromProto validates a start frame's task and builds its
+// command. A kind is a fixed command; the caller's fields reach it only as
+// validated arguments after "--", never as shell text.
+func sandboxTaskFromProto(start *vmmdpb.RunSandboxStart, wake fcvm.SandboxWakeRequest) (*sandboxTask, *api.Problem) {
+	t := start.GetTask()
+	if t == nil {
+		return nil, nil
+	}
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid sandbox task", detail)
+	}
+	timeout := time.Duration(t.GetTimeoutMs()) * time.Millisecond
+	idx := wake.Plan.PlanIndex()
+	switch {
+	case t.GetKind() != "browse":
+		return nil, invalid("task kind must be browse")
+	case !wake.Browser || wake.Network != api.SandboxNetworkWeb:
+		return nil, invalid("a browse task needs a browser session in web mode")
+	case !api.ValidSandboxBrowseURL(t.GetUrl()):
+		return nil, invalid("url must be an http or https URL of a public host")
+	case t.GetMaxChars() < 1 || int(t.GetMaxChars()) > api.SandboxBrowseMaxChars:
+		return nil, invalid("max_chars is out of range")
+	case timeout <= 0 || timeout > time.Duration(api.SandboxTaskTimeoutSec[idx])*time.Second:
+		return nil, invalid("timeout_ms is outside the plan")
+	case t.GetMaxOutputBytes() < 1 || t.GetMaxOutputBytes() > int64(api.SandboxTaskOutputMaxBytes):
+		return nil, invalid("max_output_bytes is out of range")
+	}
+	argv := []string{"gregale-browser", "fetch", "--max-chars", strconv.Itoa(int(t.GetMaxChars())), "--timeout", strconv.Itoa(int(timeout.Seconds())),
+		"--", t.GetUrl()}
+	return &sandboxTask{argv: argv, timeout: timeout, maxOutput: t.GetMaxOutputBytes()}, nil
+}
+
+// runSandboxTask runs the task once the session is booted and puts its end
+// on the session's stream. It counts as a call, so the session does not
+// freeze under it.
+func runSandboxTask(ctx context.Context, runner sandboxTaskRunner, wake fcvm.SandboxWakeRequest, task sandboxTask, act *sandboxActivity) {
+	act.begin()
+	res, err := runner.RunSandboxTask(ctx, wake.Instance, wake.SandboxID, task.argv, task.timeout, task.maxOutput)
+	act.end(time.Now())
+	done := &vmmdpb.RunSandboxTaskDone{ExitCode: int32(res.ExitCode), Output: res.Output, TimedOut: res.TimedOut, Truncated: res.Truncated}
+	if err != nil {
+		done = &vmmdpb.RunSandboxTaskDone{ExitCode: -1, Error: err.Error()}
+	}
+	select {
+	case act.outbox <- &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_TaskDone{TaskDone: done}}:
+	case <-act.done:
+	case <-ctx.Done():
+	}
 }

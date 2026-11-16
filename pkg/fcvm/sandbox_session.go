@@ -344,3 +344,48 @@ func (m *Manager) sandboxWebEgressRefusal() error {
 	}
 	return nil
 }
+
+// SandboxTaskResult is a sandbox task command's end (ADR-20261116182615 §3):
+// its exit code and standard output, capped at the task's limit.
+type SandboxTaskResult struct {
+	ExitCode  int
+	Output    []byte
+	TimedOut  bool
+	Truncated bool
+}
+
+// RunSandboxTask runs argv in sandboxID's VM as the session's user, bounded
+// by timeout, and returns its exit code and at most maxOutput bytes of its
+// standard output. Standard error is discarded.
+func (m *Manager) RunSandboxTask(ctx context.Context, instance, sandboxID string, argv []string, timeout time.Duration, maxOutput int64) (SandboxTaskResult, error) {
+	if len(argv) == 0 || timeout <= 0 || maxOutput <= 0 {
+		return SandboxTaskResult{}, errors.New("fcvm: incomplete sandbox task")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout+sandboxTemplateStartSlack)
+	defer cancel()
+	conn, err := m.DialSandboxSession(ctx, instance, sandboxID)
+	if err != nil {
+		return SandboxTaskResult{}, fmt.Errorf("fcvm: sandbox %s task: %w", instance, err)
+	}
+	defer func() { _ = conn.Close() }()
+	var out SandboxTaskResult
+	collect := func(stream uint32, data []byte) error {
+		if stream != sandboxproto.FrameStdout {
+			return nil
+		}
+		room := maxOutput - int64(len(out.Output))
+		if int64(len(data)) > room {
+			data, out.Truncated = data[:max(room, 0)], true
+		}
+		out.Output = append(out.Output, data...)
+		return nil
+	}
+	var res sandboxproto.ExecResult
+	op := sandboxproto.Request{Op: sandboxproto.OpExec, Argv: argv, TimeoutMillis: timeout.Milliseconds(), MaxOutputBytes: maxOutput}
+	if err := sandboxproto.Do(ctx, conn, op, collect, &res); err != nil {
+		return SandboxTaskResult{}, fmt.Errorf("fcvm: sandbox %s task: %w", instance, err)
+	}
+	out.ExitCode, out.TimedOut = res.ExitCode, res.TimedOut
+	out.Truncated = out.Truncated || res.OutputTruncated
+	return out, nil
+}
