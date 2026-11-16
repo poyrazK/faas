@@ -125,7 +125,9 @@ func TestSupportGrantAdmitsOperatorToCoveredRoutesOnly(t *testing.T) {
 			t.Fatalf("support deploy %v = %d %s, want 403 %q", tc.body, code, body, tc.want)
 		}
 	}
-	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/deployments/source-ref", map[string]any{"repo": "acme/shop", "ref": "refs/heads/main"}); code == http.StatusForbidden || code == http.StatusNotFound {
+	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/deployments/source-ref", map[string]any{"repo": "acme/shop", "ref": "refs/heads/main"}); code == http.StatusForbidden || code == http.StatusNotFound && !strings.Contains(body, "github_install_not_found") {
+		// The fixture has no GitHub App installation, so the deploy handler
+		// itself answers github_install_not_found: the gate admitted it.
 		t.Fatalf("support deploy of the production branch = %d %s, want it admitted", code, body)
 	}
 	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/rollback", map[string]any{"alert_rule_id": "x"}); code != http.StatusForbidden || !strings.Contains(body, "alert_rule_id") {
