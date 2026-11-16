@@ -85,6 +85,20 @@ func protectionSummary(slug string, resp api.AppProtectionResponse) string {
 	return fmt.Sprintf("partly protected — %s (gregale app protection %s)", strings.Join(missing, ", "), slug)
 }
 
+// printAppProtectionLine adds the production protection line to the app
+// info block. It prints nothing for a project environment, or when the
+// account cannot read protection (capability not released, older apid).
+func printAppProtectionLine(ctx context.Context, client *Client, slug, environment string) {
+	if environment != "" {
+		return
+	}
+	resp, err := client.GetAppProtection(ctx, slug)
+	if err != nil {
+		return
+	}
+	fmt.Printf("%-30s %s\n", "production:", protectionSummary(slug, resp))
+}
+
 // renderAppProtection prints the summary and each item.
 func renderAppProtection(w io.Writer, slug string, resp api.AppProtectionResponse) {
 	_, _ = fmt.Fprintf(w, "Production: %s\n", protectionSummary(slug, resp))
