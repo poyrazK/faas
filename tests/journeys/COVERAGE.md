@@ -104,6 +104,10 @@ input refusal without API access or row-body leakage.
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
+`TestJSONInputLocationsIsolatedCLI` extends row 156: malformed file input
+returns a typed source/line/column, then returned offline help is followed,
+with zero API requests and no invocation submission.
+
 `TestCLIArgumentCountsIsolatedCLI` extends row 156: missing invocation IDs and
 extra flag-only positionals expose counts and offline help without API requests.
 
@@ -195,3 +199,9 @@ input diagnostics: inline/file/stdin sources, human and JSON errors, CRLF
 locations, omitted payload values and zero API calls on malformed input.
 `TestJSONInputValidPayloadIsolatedAPI` verifies that the built CLI still sends
 valid input with large numbers and Unicode text intact.
+
+`TestExportDiffExplainIsolatedCLI` extends row 156: offline JSON Pointer field
+explanations, human and environment JSON, exact integer drift, whole-field
+subtree changes, empty explanations, opt-in/false behavior, CI exits, help,
+invalid-input privacy, unchanged files and zero API requests. A core-only pass
+does not qualify the built-CLI journey.

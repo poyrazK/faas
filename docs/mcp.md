@@ -1121,11 +1121,45 @@ the POST. Legacy operations without checkpoints report missing evidence.
 
 The report distinguishes recorded completion from current observations. A
 `running` entry reports `running_or_interrupted`, because it does not establish
-that the local executor lives. The plan lists `resume`, `restore` and `retire`,
+that the local executor lives. The plan lists `resume`, `restore`, `quarantine` and `retire`,
 each either `blocked` with specific reasons or `requires_owner_checks`. An
 observed zero-live boundary after promotion can support owner review of a lost
 park reply, while missing old workers block restoration. Changed journals,
 foreign generations and uncertain submissions block affected actions.
+
+Recovery inspection also validates the versioned handover and the retained
+restore, quarantine and retirement journals. Its optional `lifecycle` summary
+separates immutable history from fresh native observations: `restore`,
+`quarantine` and `retirement` describe each phase, while `executor_fenced` and
+`handover_state` show whether the old executor can still act. Classification can
+be `executor_exited`, `handover_pending`, `executor_fenced`, `restored`,
+`quarantine_applying`, `quarantined`, `retirement_pending` or `retired`.
+Unconsumed qualifications show `qualified`, `approved`, `approval_expired` or
+`revoked`; consumed results keep their historical state after expiry/revocation.
+
+Both inspection and planning include a `next_step` for these operations, with
+specific blockers and `requires_original_bindings`. A changed journal or future
+timestamp recommends `inspect_again`. A stopping handover recommends
+`observe_handover`; an admitted quarantine or committed park recommends
+`observe_quarantine` or `observe_retirement`. Native zero-live evidence alone
+cannot complete retirement because inspection cannot read the Task database.
+These local observations use the original trusted adapter and bindings through
+the existing quarantine/retire tool or CLI; they may record native observation
+metadata but never repeat the original SQL fence or park. A known candidate
+identity/generation change during pending retirement requires owner reconciliation.
+
+`apply_retirement` refers to `gregale_apply_task_tool_retire`; its owner steps
+use `execution retire-qualify` and `execution retire-approve`.
+
+Fresh qualification, approval and apply recommendations retain every separate
+owner/local/runtime check. Expired or revoked unused qualifications require owner
+reconciliation and cannot be renewed. Fenced/exited executors always block
+`resume`. Retained restore/quarantine/retirement results block reapplication;
+`retired` recommends `prepare_new_release`, meaning a new review and authorization
+rather than reusing the old claim. Neither historical classification nor a next
+step certifies current health or grants execution. Invalid identities, digests,
+revisions or unsupported journal states are rejected. Existing operations without
+lifecycle metadata retain conservative legacy inspection guidance.
 
 Plans expire after one minute and include `evidence_sha256` and
 `recovery_plan_id`. They always return `read_only=true`, `ready_to_apply=false`
@@ -1206,8 +1240,9 @@ Use `recovery-revoke` with the same identity, revision and qualification digest 
 revoke the recovery decision, including after app drift or expiry. Current owner
 authority is required for these decisions. Root `ready_to_apply` and
 `bindings_verified` remain false. A settled approved handover can now be consumed
-by the one-time restore flow below. Resume and candidate retirement remain
-separate milestones. See
+by the one-time restore flow below. The original executor stays permanently fenced. Candidate quarantine and
+retirement use their separate approvals below; a later deployment needs a new
+release review. See
 [ADR 20261115123000](adr/20261115123000-task-recovery-handover-owner-qualification.md).
 
 

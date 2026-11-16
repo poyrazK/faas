@@ -32,6 +32,7 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115170835: Field explanations for offline export diffs](20261115170835-cli-export-diff-explanations.md) — accepted; opt-in JSON Pointer paths and change kinds without field values.
 - [ADR-20261115163305: Offline comparison of CLI export inventories](20261115163305-cli-offline-export-diff.md) — accepted; deterministic keyed JSON comparisons, exact decimal values and opt-in CI failures without API reads.
 
 - [ADR-20261115213230: Snapshot drives stored as deltas](20261115213230-snapshot-drive-deltas.md) — accepted; distinct identifier preserving the snapshot-drive decision and its scoped citations.
@@ -61,6 +62,7 @@
 - [ADR-20261114132157: Structured CLI help](20261114132157-cli-json-help.md) — accepted; versioned JSON discovery through existing help, canonical paths, local argument metadata and offline capability visibility.
 - [ADR-20261115071638: Global option discovery in CLI JSON help](20261115071638-cli-json-global-flags.md) — accepted; inherited option spellings, values and placement from the same registry as human root help.
 - [ADR-20261115082128: Structured corrections for CLI flag errors](20261115082128-cli-structured-flag-corrections.md)
+- [ADR-20261115085307: Structured JSON input locations in CLI errors](20261115085307-cli-json-input-locations.md) — accepted; typed input origins and positions, with safe paths and unchanged human diagnostics.
 - [ADR-20261115100510: Structured corrections for unknown CLI commands](20261115100510-cli-structured-command-corrections.md)
 - [ADR-20261115103154: Structured CLI argument-count diagnostics](20261115103154-cli-argument-count-diagnostics.md)
 - [ADR-20261114143410: Structured recovery for CLI Job waits](20261114143410-cli-job-wait-recovery.md) — accepted; Problem diagnostics on stderr, compatible stdout receipts and exact-run, profile-preserving recovery.
@@ -2430,6 +2432,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261115145619: Owner-approved candidate Task quarantine](20261115145619-owner-approved-candidate-task-quarantine.md) — separate expiring authority, one admitted fence attempt and read-only reconciliation.
 
+- [ADR-20261115160000: Owner-approved Task worker retirement](20261115160000-owner-approved-task-worker-retirement.md) — separate expiring approval, atomic conditional parking and read-only shutdown reconciliation.
+
+- [ADR-20261115171000: Lifecycle-aware Task recovery guidance](20261115171000-lifecycle-aware-task-recovery-guidance.md) — validated recovery history, next steps and permanent-fence/reapplication blockers.
 - [ADR-20261115183908: Owner-approved Task worker retirement](20261115183908-owner-approved-task-worker-retirement.md) — separate expiring approval, atomic conditional parking and read-only shutdown reconciliation.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)
 - [ADR-20261115194000: Platform alerts for outages and failing crons](20261115194000-platform-alerts.md) — accepted; schedd pauses an HTTP cron after 10 failed runs over 24 h and meterd emails accounts about it and about apps at ≥90% 5xx, unless they have their own error-rate rule

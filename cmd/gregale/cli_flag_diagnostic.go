@@ -18,6 +18,7 @@ type cliFlagDiagnostic struct {
 	Placement         string            `json:"placement,omitempty"`
 	HelpArgv          []string          `json:"help_argv"`
 	Arguments         *cliArgumentCount `json:"arguments,omitempty"`
+	Location          *cliInputLocation `json:"location,omitempty"`
 }
 
 func flagDiagnosticPath(name string) string {

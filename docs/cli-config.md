@@ -703,7 +703,7 @@ array to discover the flag; the CLI never applies or executes the suggestion.
 Ambiguous typos have no suggestion. `help_argv` uses a validated visible command
 or falls back to root JSON help, without API requests. Prefix-only globals use
 `placement: "before_command"`; a command-local resource `--profile` retains its
-local meaning. Other validation and API errors omit `cli`. Human diagnostics,
+local meaning. Errors outside these flag-parser and JSON-input syntax paths omit `cli`. Human diagnostics,
 Problem codes, exit codes and stdout/stderr routing stay unchanged.
 
 Unknown commands at the root, in the shared nested-command renderer and in
@@ -752,6 +752,22 @@ columns count Unicode characters, and a tab counts as one character. LF and
 CRLF files are supported. Truncated JSON points at the end of the input.
 The same location appears in JSON error details. Diagnostics omit payload
 contents, and valid input keeps its original bytes and numeric precision.
+
+With `--json`, these shared-reader syntax failures additionally expose
+`cli.kind: "invalid_json"`, `cli.flag` and `cli.location`. Location contains
+`source` (`inline`, `file` or `stdin`), one-based `line` and `column`, plus
+`path` for a file. Paths retain their supplied spelling; a file called
+`stdin` or `inline` is explicitly a file. Known credential-bearing paths
+and filenames that are not valid UTF-8 omit `path`; an omitted path is not
+an instruction to open a redacted filename. Filename control characters
+remain escaped in the JSON document.
+
+For `gregale --json invocation run demo --payload @request.json`, a syntax
+failure can include `"cli":{"kind":"invalid_json","flag":"--payload",
+"location":{"source":"file","path":"request.json","line":12,"column":9}}`
+alongside its existing `help_argv`. Wrapped errors retain the location.
+Read/permission failures and API errors do not get a syntax location. No
+payload excerpt is included, and invalid input fails before submission.
 
 Shared command errors use these exit codes. JSON error objects on stderr
 include `category` and `exit_code` alongside the server's unchanged `code`:
@@ -920,6 +936,37 @@ coefficient/exponent notation. Human IDs are JSON-escaped. Effective JSON mode,
 including `FAAS_JSON=1`, emits `schema_version: 1`, `key`, `has_changes`, `summary`,
 `added`, `removed` and `changed`. Zero/false values and empty arrays are explicit.
 Row bodies and input paths are not included in the report.
+
+Use `--explain` to identify fields within records present in both files:
+
+```sh
+gregale --json export diff before.jsonl after.jsonl --explain --fail-on-change
+```
+
+JSON mode adds `explanations`, an array of `{id, changes}` entries in the same
+order as `changed`. Each change has `path` and `kind` (`added`, `removed`, or
+`changed`). Paths use JSON Pointer escaping: `~` becomes `~0`, `/` becomes `~1`,
+and the empty field name is `/`. Changes sort by escaped path. For example:
+
+```json
+{"id":"build-1","changes":[{"path":"/status","kind":"changed"}]}
+```
+
+Object fields are compared recursively. Arrays, scalar/object replacements, and
+added or removed objects are reported once at their containing field; array
+indices and descendants of those objects are omitted. Empty objects and null
+remain distinct from missing fields. Semantic equality, including equivalent
+number spellings and object-field order, still produces no change.
+
+Only changed IDs get explanations; added and removed records stay in the existing
+ID arrays. Enabled explanations are `[]` when no records changed, including empty
+inventories. Human mode appends field paths and kinds with JSON escaping for
+control characters. IDs and field names are intentional result data; field values
+and input paths are omitted. No additional file read or API request is made.
+Explain mode retains object field names and digests across the indexes, so memory
+also grows with indexed object fields. Arrays retain one digest. Without the flag,
+or with `--explain=false`, the existing JSON and human report bytes are unchanged.
+Repeated Boolean flags keep normal last-value-wins behavior.
 
 Comparisons exit 0 by default. `--fail-on-change` exits 1 after printing a complete
 report when additions, removals or changes exist. `--fail-on-change=false`
