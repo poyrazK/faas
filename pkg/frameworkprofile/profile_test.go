@@ -1,6 +1,8 @@
 package frameworkprofile
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -241,6 +243,18 @@ func TestAnalyzeMarksADefaultedHealthPath(t *testing.T) {
 		{"gregale.yaml health", fstest.MapFS{"package.json": {Data: []byte(express)}, "server.js": {Data: []byte("app.listen(3000);\n")},
 			"gregale.yaml": {Data: []byte("hosting:\n  health: /healthz\n")}}, "/healthz", false},
 		{"dockerfile", fstest.MapFS{"Dockerfile": {Data: []byte("FROM redis:7\n")}}, "/healthz", true},
+		// Plain routers declare the route without a registration call
+		// (journeys 2026-11-16 TestHealthGate).
+		{"node:http switch", fstest.MapFS{"package.json": {Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
+			"server.js": {Data: []byte("switch (url.pathname) {\n  case \"/healthz\":\n    return ok(res);\n}\n")}}, "/healthz", false},
+		{"pathname comparison", fstest.MapFS{"package.json": {Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
+			"server.js": {Data: []byte("if (req.url === '/ready') { res.end('ok'); }\n")}}, "/ready", false},
+		{"go HandleFunc", fstest.MapFS{"go.mod": {Data: []byte("module x\n\ngo 1.22\n")},
+			"main.go": {Data: []byte("package main\nfunc main() { http.HandleFunc(\"/healthz\", ok) }\n")}}, "/healthz", false},
+		{"python http.server", fstest.MapFS{"requirements.txt": {Data: []byte("\n")},
+			"main.py": {Data: []byte("class H(BaseHTTPRequestHandler):\n    def do_GET(self):\n        if self.path == \"/health\":\n            pass\n")}}, "/health", false},
+		{"client call is not a route", fstest.MapFS{"package.json": {Data: []byte(express)},
+			"server.js": {Data: []byte("await fetch(\"/healthz\"); app.listen(3000);\n")}}, "/healthz", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Analyze(tc.files)
@@ -350,5 +364,18 @@ func TestAnalyzeMarksHostingStartExplicit(t *testing.T) {
 				t.Fatalf("start = %q explicit=%v; want %q explicit=%v", profile.StartCommand, profile.StartFromConfig, tt.wantCmd, tt.explicit)
 			}
 		})
+	}
+}
+
+// The journey probe app (tests/journeys/testdata/probe-node) declares /healthz
+// in a node:http switch; its readiness must stay strict HTTP so TestHealthGate
+// can refuse a release whose /healthz answers 503.
+func TestAnalyzeJourneyProbeKeepsStrictHealth(t *testing.T) {
+	got, err := Analyze(os.DirFS(filepath.Join("..", "..", "tests", "journeys", "testdata", "probe-node")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HealthPath != "/healthz" || got.HealthDefaulted {
+		t.Fatalf("probe health %q defaulted %v; want /healthz declared", got.HealthPath, got.HealthDefaulted)
 	}
 }

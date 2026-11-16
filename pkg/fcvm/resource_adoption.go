@@ -695,7 +695,7 @@ func fenceMemoryMaxFor(l Lease) string {
 	if l.IsBuilder {
 		return memoryMaxValue(api.BuilderMemoryMaxMB(l.MemoryMaxMiB))
 	}
-	return memoryMaxValue(api.BillableRAMMB(l.MemoryMaxMiB))
+	return memoryMaxValue(api.AppVMMemoryMaxMB(l.MemoryMaxMiB))
 }
 
 // adoptionWriter commits adoption blocks off the wake critical path. Marks

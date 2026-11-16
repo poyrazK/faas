@@ -163,6 +163,12 @@ the 20 s gate.
   `api.BuildKitSeedRetryMax` (30 min): the metal run's first seed attempt
   met the new builder base's scan still pending. Drain stops a seed run's VM as it
   does a build's.
+- **Room for the seed (2026-11-16).** The artifact cache keeps `/srv/fc`
+  nearly full (19-21 GB free on both production nodes), so a seed run first
+  asks the cache for the build-drive floor plus the seed reserve, as a build
+  asks it for the floor. Without that a seed was never made. The seed thus
+  outranks the cache's oldest artifacts, which can be fetched again, and the
+  cache is smaller by the seed's real size (about 1.5-2 GB).
 - **Reflink only.** A copy that cannot share the seed's blocks is not made:
   the seed is a 28 GiB sparse image, so a byte copy would cost more than the
   pull it saves. Without a copy the build runs as today. `/srv/fc` is XFS

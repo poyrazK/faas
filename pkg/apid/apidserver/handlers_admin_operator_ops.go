@@ -346,7 +346,9 @@ func (s *server) obsNodeDetail(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("could not list node apps"))
 		return
 	}
-	instances, err := s.store.ListInstancesOnNodeID(r.Context(), node.ID)
+	// Only the VMs the node holds: its full instance history runs to tens of
+	// thousands of parked and stopped rows, which the console never shows.
+	instances, err := s.store.ListResidentInstancesOnNodeID(r.Context(), node.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list node instances"))
 		return

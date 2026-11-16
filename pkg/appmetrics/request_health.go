@@ -2,6 +2,7 @@ package appmetrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -51,6 +52,10 @@ func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string
 	}
 	selector := fmt.Sprintf(`gateway_request_duration_by_deployment_seconds_count{app=%q,deployment=~%q}`, appID, strings.Join(labels, "|"))
 	count, err := client.QueryScalar(ctx, fmt.Sprintf(`sum(increase(%s[%s]))`, selector, api.AppHealthMetricsRange))
+	if errors.Is(err, promql.ErrNoData) {
+		out.Reason = requestsUnobservedReason(ctx, client)
+		return out
+	}
 	if err != nil || !validHealthCount(count) {
 		return out
 	}
@@ -98,4 +103,20 @@ func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string
 
 func validHealthCount(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value < float64(math.MaxInt64)
+}
+
+// RequestsUnobservedReason is a serving release with no request series yet:
+// the gateway creates a release's counter on its first request, so an app
+// nobody called since its deploy (or since the gateway restarted) has none.
+// That is reported only while the gateway exports the series for other apps;
+// with none anywhere the telemetry itself is missing and stays unavailable
+// (prod 2026-11-16: an idle gRPC service read "telemetry could not be read").
+const RequestsUnobservedReason = "requests_unobserved"
+
+func requestsUnobservedReason(ctx context.Context, client *promql.Client) string {
+	live, err := client.QueryScalar(ctx, `count(gateway_request_duration_by_deployment_seconds_count)`)
+	if err != nil || !validHealthCount(live) || live < 1 {
+		return "request_evidence_unavailable"
+	}
+	return RequestsUnobservedReason
 }

@@ -26,8 +26,11 @@ import (
 // CacheEntry points to a cached OCI tarball and its size. Build handoffs use a
 // hard-link lease so canonical entries can be evicted without data loss.
 type CacheEntry struct {
-	Path      string
-	Bytes     int64
+	Path  string
+	Bytes int64
+	// Digest is the artifact's SHA-256, which the lookup checked against the
+	// entry's artifact.sha256 sidecar.
+	Digest    string
 	Toolchain CacheToolchain
 }
 
@@ -71,6 +74,12 @@ type Cache struct {
 	// fsUsage reports the cache filesystem's available and total bytes.
 	// A seam so tests can drive the floor without filling a disk.
 	fsUsage func(path string) (avail, size uint64, err error)
+	// verified remembers the digests of artifacts this process has hashed
+	// or published, so a hit does not read the artifact again.
+	verified verifiedArtifacts
+	// hashArtifact hashes an artifact; nil is hashFileInfo. A seam for
+	// tests that count reads.
+	hashArtifact func(path string) (string, os.FileInfo, error)
 }
 
 // DefaultCacheMinFreeFraction keeps a fifth of the cache filesystem free.
@@ -191,8 +200,8 @@ func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (Cache
 	if err != nil {
 		return CacheEntry{}, false
 	}
-	got, err := hashFile(p)
-	if err != nil || got != strings.TrimSpace(string(digest)) {
+	got, ok := c.artifactDigest(p)
+	if !ok || got != strings.TrimSpace(string(digest)) {
 		return CacheEntry{}, false
 	}
 	var toolchain CacheToolchain
@@ -205,7 +214,7 @@ func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (Cache
 		}
 		_ = root.Close()
 	}
-	return CacheEntry{Path: p, Bytes: st.Size(), Toolchain: toolchain}, true
+	return CacheEntry{Path: p, Bytes: st.Size(), Digest: got, Toolchain: toolchain}, true
 }
 
 // checksumPath returns the canonical sidecar path for (sourceHash, fw, plan).
@@ -325,6 +334,13 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	if err := os.Chmod(tmpPath, cacheArtifactMode); err != nil {
 		return fmt.Errorf("cache: store %s: chmod tmp: %w", dst, err)
 	}
+	// Backdate the artifact past verifiedArtifactMinAge so this process can
+	// trust the digest it computed while copying: any later write moves the
+	// modification time to now. On failure the digest is not remembered and
+	// the first hit hashes the artifact, as before.
+	backdated := time.Now().Add(-2 * verifiedArtifactMinAge)
+	_ = os.Chtimes(tmpPath, backdated, backdated)
+	stored, statErr := tmp.Stat()
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("cache: store %s: close tmp: %w", dst, err)
 	}
@@ -349,7 +365,8 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	// layer-without-sidecar and returns a cache miss — the
 	// conservative choice. Every successful Lookup after both
 	// publishes have landed sees both files.
-	if err := writeCacheSidecar(filepath.Join(filepath.Dir(dst), "artifact.sha256"), hex.EncodeToString(digest.Sum(nil))); err != nil {
+	artifactDigest := hex.EncodeToString(digest.Sum(nil))
+	if err := writeCacheSidecar(filepath.Join(filepath.Dir(dst), "artifact.sha256"), artifactDigest); err != nil {
 		return err
 	}
 	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" || toolchain.IssueSourceMaps != nil {
@@ -357,7 +374,13 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 			return err
 		}
 	}
-	return c.writeSidecar(sourceHash, fw, plan)
+	if err := c.writeSidecar(sourceHash, fw, plan); err != nil {
+		return err
+	}
+	if statErr == nil {
+		c.verified.record(dst, artifactDigest, stored, time.Now())
+	}
+	return nil
 }
 
 // writeSidecar atomically publishes the sidecar file at
@@ -823,14 +846,6 @@ func dirSize(root string) (int64, error) {
 //
 //nolint:forbidigo // path is a vetted-id cache file under c.root joined from sourceHash + framework — no customer input reaches the open. Symlink-attack impossible because c.root is apid-owned and populated only by builderd.
 func hashFile(path string) (string, error) {
-	f, err := openNoFollow(path, unix.O_RDONLY, 0)
-	if err != nil {
-		return "", fmt.Errorf("hash: open: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", fmt.Errorf("hash: read: %w", err)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	digest, _, err := hashFileInfo(path)
+	return digest, err
 }

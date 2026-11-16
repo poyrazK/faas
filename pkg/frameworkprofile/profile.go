@@ -490,7 +490,14 @@ func looksLikeDevelopmentCommand(command string) bool {
 	return false
 }
 
-var healthPathRegex = regexp.MustCompile(`(?i)(?:get|route|handle|head|live|post|put|patch|delete)\s*\(\s*["'](/(?:healthz?|readyz?|livez?|ready|live))["']`)
+// healthPathRegex finds a conventional health route in source: a framework
+// registration (app.get("/healthz"), @app.route, http.HandleFunc), a plain
+// router's switch case (case "/healthz":) or a path comparison
+// (url.pathname === "/healthz", self.path == "/healthz", r.URL.Path ==
+// "/healthz"). A plain node:http server declared its /healthz only in a
+// switch, so its 503 went unprobed under TCP readiness and an unhealthy
+// release deployed (journeys 2026-11-16 TestHealthGate; ADR-079 amendment 2).
+var healthPathRegex = regexp.MustCompile(`(?i)(?:(?:get|route|handle|handlefunc|head|live|post|put|patch|delete)\s*\(\s*|\bcase\s+|[=!]==?\s*)["'](/(?:healthz?|readyz?|livez?|ready|live))["']`)
 
 // inferHealthPath only accepts conventional readiness names. Choosing an
 // arbitrary application route as a smoke endpoint is worse than retaining the

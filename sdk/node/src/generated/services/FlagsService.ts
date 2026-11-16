@@ -4,7 +4,13 @@
 /* eslint-disable */
 import type { FeatureFlagVersion } from '../models/FeatureFlagVersion.js';
 import type { FlagDecision } from '../models/FlagDecision.js';
+import type { FlagEventsRequest } from '../models/FlagEventsRequest.js';
+import type { FlagEventsResponse } from '../models/FlagEventsResponse.js';
 import type { FlagEvidencePage } from '../models/FlagEvidencePage.js';
+import type { FlagExperiment } from '../models/FlagExperiment.js';
+import type { FlagExperimentCreateRequest } from '../models/FlagExperimentCreateRequest.js';
+import type { FlagExperimentList } from '../models/FlagExperimentList.js';
+import type { FlagExperimentResults } from '../models/FlagExperimentResults.js';
 import type { FlagLifecycleReport } from '../models/FlagLifecycleReport.js';
 import type { FlagOutcomesResponse } from '../models/FlagOutcomesResponse.js';
 import type { FlagRolloutPromotion } from '../models/FlagRolloutPromotion.js';
@@ -517,6 +523,343 @@ export class FlagsService {
         404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         426: `Runtime SDK does not support a capability used by the current flag bundle.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List an environment's flag experiments.
+   * Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers that later send a conversion event.
+   * @returns FlagExperimentList The environment's experiments, newest first.
+   * @throws ApiError
+   */
+  public static listProjectFlagExperiments({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+  }): CancelablePromise<FlagExperimentList> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/experiments',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create, and optionally start, a flag experiment.
+   * The rule must be a weighted rule of an enabled variant flag that allocates by customer; control must be one of its variants. One experiment runs per rule; FlagExperimentsMaxRunning run per environment.
+   * @returns FlagExperiment The created experiment, running when start was set.
+   * @throws ApiError
+   */
+  public static createProjectFlagExperiment({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    requestBody: FlagExperimentCreateRequest,
+  }): CancelablePromise<FlagExperiment> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/experiments',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Another experiment uses the key or already runs on the rule, or the environment is at its experiment limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read one flag experiment.
+   * @returns FlagExperiment The experiment.
+   * @throws ApiError
+   */
+  public static getProjectFlagExperiment({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Experiment key, unique within the environment.
+     */
+    key: string,
+  }): CancelablePromise<FlagExperiment> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/experiments/{key}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a flag experiment that is not running, with its units.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteProjectFlagExperiment({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Experiment key, unique within the environment.
+     */
+    key: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}/environments/{environment}/experiments/{key}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The experiment is running; stop it first.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Start a draft flag experiment.
+   * @returns FlagExperiment The running experiment.
+   * @throws ApiError
+   */
+  public static startProjectFlagExperiment({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Experiment key, unique within the environment.
+     */
+    key: string,
+  }): CancelablePromise<FlagExperiment> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/experiments/{key}/start',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Another experiment already runs on the rule, or the environment is at its running limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Stop a running flag experiment and freeze its results.
+   * @returns FlagExperiment The stopped experiment.
+   * @throws ApiError
+   */
+  public static stopProjectFlagExperiment({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Experiment key, unique within the environment.
+     */
+    key: string,
+  }): CancelablePromise<FlagExperiment> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/experiments/{key}/stop',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a flag experiment's sequential results.
+   * Each variant is compared with control by an always-valid mixture sequential probability ratio test, so results may be read at any time. A sample ratio mismatch against the rule's weights is reported first.
+   * @returns FlagExperimentResults Per-variant conversion, lift, confidence sequence and status.
+   * @throws ApiError
+   */
+  public static getProjectFlagExperimentResults({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Experiment key, unique within the environment.
+     */
+    key: string,
+  }): CancelablePromise<FlagExperimentResults> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/experiments/{key}/results',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Report conversion events for flag experiments.
+   * Requires the same workload identity as getRuntimeFlags. Account, app and environment come from the token. Each event names the verified customer of the request it belongs to; events for customers that are not active platform tenants of the account are dropped. Accepted events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never billed.
+   * @returns FlagEventsResponse What happened to each event of the batch, and the month's usage.
+   * @throws ApiError
+   */
+  public static postRuntimeFlagEvents({
+    requestBody,
+    xFaasFlagsCapabilities,
+  }: {
+    requestBody: FlagEventsRequest,
+    /**
+     * Comma-separated optional runtime SDK capabilities. SDKs that report events advertise track-v1.
+     */
+    xFaasFlagsCapabilities?: string,
+  }): CancelablePromise<FlagEventsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/flags/events',
+      headers: {
+        'X-Faas-Flags-Capabilities': xFaasFlagsCapabilities,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

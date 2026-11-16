@@ -3406,6 +3406,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 							dirtyFileCount++
 						}
 					}
+					if file, untracked := uncommittedProjectFile(dirtyOut, provVal.Root, selectedSourceDir); file != "" && !*worktree {
+						switch {
+						case untracked && path.Base(file) != "gregale.yaml":
+							// HEAD has no Compose file, so the project would plan no workloads.
+							return printErr("Compose file not committed", fmt.Errorf("%s is not committed, and deploy ships committed HEAD without it; commit it, or rerun with --worktree to ship the working tree", file))
+						case untracked:
+							PrintWarn(osStderr, "%s is not committed; this deploy ignores it. Use --worktree to ship it.", file)
+						default:
+							PrintWarn(osStderr, "%s has uncommitted changes; this deploy uses its committed version. Use --worktree to ship your edits.", file)
+						}
+					}
 				}
 			}
 			if dirtyFileCount > 0 && !*worktree {
@@ -3545,7 +3556,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		doctorPreflightRan = true
 	}
 	// localSourceWarning names credential-looking files a local-files
-	// upload (no Git archive) includes; the receipt repeats it for --json.
+	// upload (no Git archive) left out; the receipt repeats it for --json.
 	localSourceWarning := ""
 	if *image == "" && *tarball == "" {
 		if cwdErr != nil {
@@ -3663,15 +3674,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// Preserve the complete selected repository for ScanProject. A project
 			// root is allowed to contain only nested workload markers; framework
 			// detection belongs to the planner, not this single-app CLI path.
+			var excludes []string
+			excludes, localSourceWarning = excludeDeployCredentials(sourceDir, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 			overrides, scanFindings, scanErr := scanAndRedactEnvFiles(sourceDir, secretScanMode)
+			scanFindings, scanErr = withoutExcludedFindings(sourceDir, excludes, scanFindings, scanErr)
 			if scanErr != nil {
 				return printErr("Secret scan failed", scanErr)
 			}
-			path, _, n, packErr := autoPackSource(sourceDir, sourceDir, false, planCapMB, overrides, execution.extraSourceExcludes...)
+			path, _, n, packErr := autoPackSource(sourceDir, sourceDir, false, planCapMB, overrides, excludes...)
 			if packErr != nil {
 				return printErr("Could not pack project source", sourceCap.explain(packErr))
 			}
-			localSourceWarning = warnLocalCredentialFiles(sourceDir, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 			if n == 0 {
 				_ = os.Remove(path)
 				return printErr("No project source found in "+filepath.Base(sourceDir), errors.New("the selected directory contains no regular source files after deploy exclusions"))
@@ -3718,15 +3731,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					packRoot = workspaceContextRoot
 					flatContext = true
 				}
+				var excludes []string
+				excludes, localSourceWarning = excludeDeployCredentials(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(packRoot, secretScanMode)
+				scanFindings, scanErr = withoutExcludedFindings(packRoot, excludes, scanFindings, scanErr)
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, _, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, execution.extraSourceExcludes...)
+				path, _, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, excludes...)
 				if err != nil {
 					return printErr("Could not pack deploy source", sourceCap.explain(err))
 				}
-				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
 				PrintProgress(os.Stderr, "packing %d file(s) from %s", n, filepath.Base(sourceDir))
@@ -3739,15 +3754,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					packRoot = workspaceContextRoot
 					flatContext = true
 				}
+				var excludes []string
+				excludes, localSourceWarning = excludeDeployCredentials(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(packRoot, secretScanMode)
+				scanFindings, scanErr = withoutExcludedFindings(packRoot, excludes, scanFindings, scanErr)
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, fw, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, execution.extraSourceExcludes...)
+				path, fw, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, excludes...)
 				if err != nil {
 					return printErr("Could not pack deploy source", sourceCap.explain(err))
 				}
-				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
 				if fw == fwDocker {
