@@ -32,6 +32,7 @@ const (
 	Secretd_OpenEdgeHeaderSecret_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenEdgeHeaderSecret"
 	Secretd_RegistryFetch_FullMethodName            = "/onebox.faas.secretd.v1.Secretd/RegistryFetch"
 	Secretd_MintInternalServiceToken_FullMethodName = "/onebox.faas.secretd.v1.Secretd/MintInternalServiceToken"
+	Secretd_MintWorkflowIdentity_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/MintWorkflowIdentity"
 )
 
 // SecretdClient is the client API for Secretd service.
@@ -91,6 +92,11 @@ type SecretdClient interface {
 	// signing key stays on the control plane, so a compute node can no longer
 	// mint a token for an app it neither owns nor holds a grant for.
 	MintInternalServiceToken(ctx context.Context, in *MintInternalServiceTokenRequest, opts ...grpc.CallOption) (*MintInternalServiceTokenResponse, error)
+	// MintWorkflowIdentity signs the workflow outbound identity token (ADR-489)
+	// for one step attempt of an app the caller owns or holds a grant for, in
+	// that app's account (slice 3k-2). outboundd still checks the run, attempt
+	// and request template against the database before it acts.
+	MintWorkflowIdentity(ctx context.Context, in *MintWorkflowIdentityRequest, opts ...grpc.CallOption) (*MintWorkflowIdentityResponse, error)
 }
 
 type secretdClient struct {
@@ -210,6 +216,16 @@ func (c *secretdClient) MintInternalServiceToken(ctx context.Context, in *MintIn
 	return out, nil
 }
 
+func (c *secretdClient) MintWorkflowIdentity(ctx context.Context, in *MintWorkflowIdentityRequest, opts ...grpc.CallOption) (*MintWorkflowIdentityResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MintWorkflowIdentityResponse)
+	err := c.cc.Invoke(ctx, Secretd_MintWorkflowIdentity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretdServer is the server API for Secretd service.
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
@@ -267,6 +283,11 @@ type SecretdServer interface {
 	// signing key stays on the control plane, so a compute node can no longer
 	// mint a token for an app it neither owns nor holds a grant for.
 	MintInternalServiceToken(context.Context, *MintInternalServiceTokenRequest) (*MintInternalServiceTokenResponse, error)
+	// MintWorkflowIdentity signs the workflow outbound identity token (ADR-489)
+	// for one step attempt of an app the caller owns or holds a grant for, in
+	// that app's account (slice 3k-2). outboundd still checks the run, attempt
+	// and request template against the database before it acts.
+	MintWorkflowIdentity(context.Context, *MintWorkflowIdentityRequest) (*MintWorkflowIdentityResponse, error)
 	mustEmbedUnimplementedSecretdServer()
 }
 
@@ -306,6 +327,9 @@ func (UnimplementedSecretdServer) RegistryFetch(*RegistryFetchRequest, grpc.Serv
 }
 func (UnimplementedSecretdServer) MintInternalServiceToken(context.Context, *MintInternalServiceTokenRequest) (*MintInternalServiceTokenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MintInternalServiceToken not implemented")
+}
+func (UnimplementedSecretdServer) MintWorkflowIdentity(context.Context, *MintWorkflowIdentityRequest) (*MintWorkflowIdentityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MintWorkflowIdentity not implemented")
 }
 func (UnimplementedSecretdServer) mustEmbedUnimplementedSecretdServer() {}
 func (UnimplementedSecretdServer) testEmbeddedByValue()                 {}
@@ -501,6 +525,24 @@ func _Secretd_MintInternalServiceToken_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Secretd_MintWorkflowIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MintWorkflowIdentityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).MintWorkflowIdentity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_MintWorkflowIdentity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).MintWorkflowIdentity(ctx, req.(*MintWorkflowIdentityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Secretd_ServiceDesc is the grpc.ServiceDesc for Secretd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -543,6 +585,10 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MintInternalServiceToken",
 			Handler:    _Secretd_MintInternalServiceToken_Handler,
+		},
+		{
+			MethodName: "MintWorkflowIdentity",
+			Handler:    _Secretd_MintWorkflowIdentity_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
