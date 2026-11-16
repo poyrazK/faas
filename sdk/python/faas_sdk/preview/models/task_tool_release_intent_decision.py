@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.task_tool_quarantine_request import TaskToolQuarantineRequest
     from ..models.task_tool_recovery_request import TaskToolRecoveryRequest
     from ..models.task_tool_release_execution_request import TaskToolReleaseExecutionRequest
+    from ..models.task_tool_retirement_request import TaskToolRetirementRequest
 
 
 T = TypeVar("T", bound="TaskToolReleaseIntentDecision")
@@ -27,6 +28,9 @@ class TaskToolReleaseIntentDecision:
     intent_sha256: str
     release_fingerprint: str
     decision: TaskToolReleaseIntentDecisionDecision
+    retirement: TaskToolRetirementRequest | Unset = UNSET
+    """Private trusted CLI qualification, native park or read-only shutdown observation. Agent tools accept public
+    identities only. Pending replays never issue a new park request."""
     quarantine: TaskToolQuarantineRequest | Unset = UNSET
     """Private trusted CLI qualification or attempt metadata on existing journal routes. Agent tools accept public
     identities only. A claim is never automatically retried; observe records read-only fence evidence after an
@@ -44,6 +48,10 @@ class TaskToolReleaseIntentDecision:
         release_fingerprint = self.release_fingerprint
 
         decision: str = self.decision
+
+        retirement: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retirement, Unset):
+            retirement = self.retirement.to_dict()
 
         quarantine: dict[str, Any] | Unset = UNSET
         if not isinstance(self.quarantine, Unset):
@@ -66,6 +74,8 @@ class TaskToolReleaseIntentDecision:
                 "decision": decision,
             }
         )
+        if retirement is not UNSET:
+            field_dict["retirement"] = retirement
         if quarantine is not UNSET:
             field_dict["quarantine"] = quarantine
         if execution is not UNSET:
@@ -80,6 +90,7 @@ class TaskToolReleaseIntentDecision:
         from ..models.task_tool_quarantine_request import TaskToolQuarantineRequest
         from ..models.task_tool_recovery_request import TaskToolRecoveryRequest
         from ..models.task_tool_release_execution_request import TaskToolReleaseExecutionRequest
+        from ..models.task_tool_retirement_request import TaskToolRetirementRequest
 
         d = dict(src_dict)
         intent_sha256 = d.pop("intent_sha256")
@@ -87,6 +98,13 @@ class TaskToolReleaseIntentDecision:
         release_fingerprint = d.pop("release_fingerprint")
 
         decision = check_task_tool_release_intent_decision_decision(d.pop("decision"))
+
+        _retirement = d.pop("retirement", UNSET)
+        retirement: TaskToolRetirementRequest | Unset
+        if isinstance(_retirement, Unset):
+            retirement = UNSET
+        else:
+            retirement = TaskToolRetirementRequest.from_dict(_retirement)
 
         _quarantine = d.pop("quarantine", UNSET)
         quarantine: TaskToolQuarantineRequest | Unset
@@ -113,6 +131,7 @@ class TaskToolReleaseIntentDecision:
             intent_sha256=intent_sha256,
             release_fingerprint=release_fingerprint,
             decision=decision,
+            retirement=retirement,
             quarantine=quarantine,
             execution=execution,
             recovery=recovery,

@@ -884,6 +884,46 @@ The receipt is an integrity reference, not a signature or API snapshot. Page
 count cannot be reconstructed from JSON Lines. Results describe bytes read;
 verification does not lock concurrent writers, repair files or replay exports.
 
+## Compare saved exports offline
+
+Compare two JSON Lines inventories by a unique top-level field:
+
+```sh
+gregale export diff before.jsonl after.jsonl
+gregale --json export diff before.jsonl after.jsonl --key id --fail-on-change
+```
+
+The default key is `id`; `--key FIELD` selects a literal top-level field, including
+names containing dots. Keys must be nonempty strings or JSON numbers. Duplicate
+record keys or object fields are refused. Numeric and string keys are distinct.
+Every row must be one UTF-8 JSON object. Empty files, CRLF and a final row without
+a newline are accepted. Invalid rows identify the input and line without echoing
+contents. Unpaired Unicode surrogate escapes are refused.
+
+Row and object-field order do not affect the result; array order does. Numbers
+compare as exact decimal values without floating-point conversion or expanding
+large exponents. `1`, `1.0` and `1e0` are equal, and large integers retain their
+full precision. Each indexed record retains its key and digest; memory grows
+with the unique keys and largest record.
+
+Stdout reports added, removed and changed IDs plus before/after/unchanged counts.
+IDs use deterministic typed lexical order; numeric IDs use exact canonical
+coefficient/exponent notation. Human IDs are JSON-escaped. Effective JSON mode,
+including `FAAS_JSON=1`, emits `schema_version: 1`, `key`, `has_changes`, `summary`,
+`added`, `removed` and `changed`. Zero/false values and empty arrays are explicit.
+Row bodies and input paths are not included in the report.
+
+Comparisons exit 0 by default. `--fail-on-change` exits 1 after printing a complete
+report when additions, removals or changes exist. `--fail-on-change=false`
+disables that behavior; repeated flags retain normal last-value-wins handling.
+Invalid inputs use normal stderr Problems/human errors with no report. An output
+failure can leave partial stdout and retains normal error/signal behavior.
+
+Both files are read-only regular files; no login or API requests are needed.
+Raw `-` is refused; use `./-` for a file with that name. Files can change during
+reading; a diff is not a point-in-time snapshot or origin attestation. Use
+`export verify` with saved receipts separately when integrity checks are needed.
+
 ## List pagination
 
 Deployment and invocation lists use the same pagination controls:

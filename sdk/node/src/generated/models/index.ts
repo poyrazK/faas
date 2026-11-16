@@ -3250,6 +3250,9 @@ export type { TaskToolReleaseIntentCheck } from './TaskToolReleaseIntentCheck.js
 export type { TaskToolReleaseIntentDecision } from './TaskToolReleaseIntentDecision.js';
 export type { TaskToolReleaseIntentRecord } from './TaskToolReleaseIntentRecord.js';
 export type { TaskToolReleaseReceipt } from './TaskToolReleaseReceipt.js';
+export type { TaskToolRetirement } from './TaskToolRetirement.js';
+export type { TaskToolRetirementRequest } from './TaskToolRetirementRequest.js';
+export type { TaskToolRetirementResult } from './TaskToolRetirementResult.js';
 export type { TemplateView } from './TemplateView.js';
 export type { TenantHostnameResponse } from './TenantHostnameResponse.js';
 export type { TenantSurfaceResponse } from './TenantSurfaceResponse.js';

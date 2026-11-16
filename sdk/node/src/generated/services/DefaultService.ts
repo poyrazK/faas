@@ -57,6 +57,7 @@ import type { TaskToolReleaseIntent } from '../models/TaskToolReleaseIntent.js';
 import type { TaskToolReleaseIntentCheck } from '../models/TaskToolReleaseIntentCheck.js';
 import type { TaskToolReleaseIntentDecision } from '../models/TaskToolReleaseIntentDecision.js';
 import type { TaskToolReleaseIntentRecord } from '../models/TaskToolReleaseIntentRecord.js';
+import type { TaskToolRetirementRequest } from '../models/TaskToolRetirementRequest.js';
 import type { ToolGrantIntent } from '../models/ToolGrantIntent.js';
 import type { ToolGrantPage } from '../models/ToolGrantPage.js';
 import type { ToolGrantRecord } from '../models/ToolGrantRecord.js';
@@ -207,6 +208,39 @@ export class DefaultService {
         404: `No matching recovery is available to this caller`,
         409: `Approval, evidence, native generation, runtime, policy or traffic changed`,
         422: `The ordinary native traffic gate refused this change`,
+      },
+    });
+  }
+  /**
+   * Request conditional parking of the exact quarantined worker; requires the requesting key and MFA policy
+   * The trusted local CLI observes the retained candidate claim fences and rechecks replacement workers, restored web, native policy, observer, running generation and shutdown grace. Native parking and separate retirement approval consumption commit together. Pending replays only reconcile the recorded transition. Retired requires native drain plus absent or expired Task registrations observed through the read-only observer role. Customer Task SQL and native state do not share a transaction. Active Tasks are not cancelled and historical receipts do not certify current service health.
+   * @returns TaskToolReleaseIntentRecord Retained native operation; retirement_pending does not mean shutdown is complete
+   * @throws ApiError
+   */
+  public static parkTaskToolRetirement({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Original Task intent containing separately approved candidate retirement
+     */
+    id: string,
+    requestBody: TaskToolRetirementRequest,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/task-tool-release-intents/{id}/recovery/retire',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid retirement request`,
+        401: `code: unauthorized`,
+        403: `Caller lacks current publisher or native parking authority`,
+        404: `No matching retirement is available to this caller`,
+        409: `Approval, evidence, generation, running instances, policy or traffic changed`,
       },
     });
   }

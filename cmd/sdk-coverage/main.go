@@ -626,6 +626,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/tool-oauth-connections/{id}":                      "GetToolOAuthConnection",
 	"GET /v1/tool-oauth-connections/{id}/authorization":        "GetToolOAuthAuthorization",
 	"GET /v1/tool-publications/{id}":                           "GetToolPublication",
+	"POST /v1/task-tool-release-intents/{id}/recovery/retire":  "ParkTaskToolRetirement",
 	"POST /v1/task-tool-release-intents/{id}/recovery/restore": "RestoreTaskToolRecovery",
 	"GET /v1/task-tool-release-intents/{id}":                   "GetTaskToolReleaseIntent",
 	"PUT /v1/task-tool-release-intents/{id}":                   "PrepareTaskToolReleaseIntent",

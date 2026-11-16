@@ -6,8 +6,11 @@ import (
 )
 
 func cmdExport(args []string) int {
+	if len(args) > 0 && args[0] == "diff" {
+		return cmdExportDiff(args[1:])
+	}
 	if len(args) == 0 || args[0] != "verify" {
-		PrintUsage(osStderr, "usage: gregale export verify FILE --receipt RECEIPT", "export")
+		PrintUsage(osStderr, "usage: gregale export <verify|diff> [arguments]", "export")
 		return 1
 	}
 	fs := newFlagSet("export verify", flag.ContinueOnError)

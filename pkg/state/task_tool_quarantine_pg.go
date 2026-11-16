@@ -57,8 +57,14 @@ func (s *PgStore) taskQuarantineRuntime(ctx context.Context, tx pgx.Tx, r api.Ta
 	if r.Execution == nil || r.Execution.Recovery == nil || r.Execution.Recovery.Quarantine == nil || in.ExpectedMCPAccessPolicy == nil {
 		return false, nil
 	}
+	return s.taskCleanupRuntime(ctx, tx, r, in, apps, r.Execution.Recovery.Quarantine.AuthorizerKeyID, r.Execution.Recovery.Quarantine.Qualification.ExpiresAt)
+}
+func (s *PgStore) taskCleanupRuntime(ctx context.Context, tx pgx.Tx, r api.TaskToolReleaseIntentRecord, in *api.TaskToolQuarantineRequest, apps []api.TaskToolReleaseApp, owner string, expiry time.Time) (bool, error) {
+	validPolicy := in != nil && in.ExpectedMCPAccessPolicy != nil && in.ExpectedMCPAccessPolicy.Validate() == nil
+	if !validPolicy {
+		return false, nil
+	}
 	q := toolpublicationdb.New()
-	owner := r.Execution.Recovery.Quarantine.AuthorizerKeyID
 	_, ownerErr := q.LockTaskToolExecutionOwnerKey(ctx, tx, toolpublicationdb.LockTaskToolExecutionOwnerKeyParams{AccountID: mustPgUUID(r.AccountID), ID: mustPgUUID(owner)})
 	if errors.Is(mapErr(ownerErr), ErrNotFound) {
 		return false, nil
@@ -106,5 +112,5 @@ func (s *PgStore) taskQuarantineRuntime(ctx context.Context, tx pgx.Tx, r api.Ta
 	if !metric.ObservedAt.Valid || !taskRecoveryHeartbeatOK(metric.Value, metric.ObservedAt.Time, time.Now()) {
 		return false, nil
 	}
-	return q.TaskQuarantineClockFresh(ctx, tx, toolpublicationdb.TaskQuarantineClockFreshParams{AccountID: mustPgUUID(r.AccountID), OwnerKeyID: mustPgUUID(owner), RequesterKeyID: mustPgUUID(r.RequesterKeyID), ExpiresAt: pgtype.Timestamptz{Time: r.Execution.Recovery.Quarantine.Qualification.ExpiresAt, Valid: true}})
+	return q.TaskQuarantineClockFresh(ctx, tx, toolpublicationdb.TaskQuarantineClockFreshParams{AccountID: mustPgUUID(r.AccountID), OwnerKeyID: mustPgUUID(owner), RequesterKeyID: mustPgUUID(r.RequesterKeyID), ExpiresAt: pgtype.Timestamptz{Time: expiry, Valid: true}})
 }

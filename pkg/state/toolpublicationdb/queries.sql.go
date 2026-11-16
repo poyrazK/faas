@@ -873,6 +873,45 @@ func (q *Queries) LockToolPublicationCandidate(ctx context.Context, db DBTX, arg
 	return id, err
 }
 
+const readTaskRetirementApp = `-- name: ReadTaskRetirementApp :one
+SELECT status,manifest,COALESCE(workload_class,'')::text AS workload_class,COALESCE(park_transition_id::text,'')::text AS park_transition_id FROM apps WHERE account_id=$1 AND id=$2 FOR SHARE
+`
+
+type ReadTaskRetirementAppParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+type ReadTaskRetirementAppRow struct {
+	Status           string
+	Manifest         []byte
+	WorkloadClass    string
+	ParkTransitionID string
+}
+
+func (q *Queries) ReadTaskRetirementApp(ctx context.Context, db DBTX, arg ReadTaskRetirementAppParams) (ReadTaskRetirementAppRow, error) {
+	row := db.QueryRow(ctx, readTaskRetirementApp, arg.AccountID, arg.ID)
+	var i ReadTaskRetirementAppRow
+	err := row.Scan(
+		&i.Status,
+		&i.Manifest,
+		&i.WorkloadClass,
+		&i.ParkTransitionID,
+	)
+	return i, err
+}
+
+const readTaskRetirementLatestDeployment = `-- name: ReadTaskRetirementLatestDeployment :one
+SELECT id::text FROM deployments WHERE app_id=$1 ORDER BY created_at DESC LIMIT 1
+`
+
+func (q *Queries) ReadTaskRetirementLatestDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, readTaskRetirementLatestDeployment, appID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const revokeToolGrant = `-- name: RevokeToolGrant :one
 UPDATE tool_grants SET revoked_at=COALESCE(revoked_at,now()),
 payload=jsonb_set(payload,'{revoked_at}',to_jsonb(COALESCE(revoked_at,now())))
