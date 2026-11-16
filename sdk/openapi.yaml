@@ -40740,7 +40740,7 @@ components:
       properties:
         code:
           type: string
-          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection, replicas, queue, backlog, dead_letters, memory]
+          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, boot_failures, maintenance, requests, collection, replicas, queue, backlog, dead_letters, memory]
         status:
           type: string
           enum: [pass, warning, fail, unknown, not_applicable]

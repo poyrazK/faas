@@ -35,6 +35,11 @@ type Evidence struct {
 	HistoryComplete  bool
 	Instances        []state.Instance
 	InstancesKnown   bool
+	// Recent is the app's newest instances in any state, bounded by
+	// api.AppHealthRecentInstanceLimit: the evidence for boot failures that
+	// the active-instance read cannot see.
+	Recent      []state.Instance
+	RecentKnown bool
 	Readiness        map[string]map[string]state.InstanceReadiness
 	Nodes            map[string]state.ComputeNode
 	Metrics          appmetrics.RequestHealth
@@ -82,6 +87,7 @@ func Evaluate(e Evidence) api.AppHealthResponse {
 			out.Phase = "serving"
 		}
 		assessCapacity(&out, e, serving)
+		assessBootFailures(&out, e, serving)
 	}
 	if e.App.MaintenanceMode {
 		out.Phase = "maintenance"
@@ -263,6 +269,44 @@ func assessCapacity(out *api.AppHealthResponse, e Evidence, live []state.Deploym
 
 // Match the gateway's independent primary-app and primary-ingress gates.
 // Decode only routing fields, never companion environment or probe output.
+// assessBootFailures reports replicas of a serving release that crash-looped
+// or timed out while booting. Readiness looks only at active instances, so a
+// fresh boot that dies while an older replica keeps serving used to read
+// "healthy" (prod 2026-11-15, finding 43); the next wake, restart or
+// scale-up fails the same way.
+func assessBootFailures(out *api.AppHealthResponse, e Evidence, live []state.Deployment) {
+	if !e.RecentKnown {
+		return
+	}
+	serving := make(map[string]bool, len(live))
+	for _, d := range live {
+		serving[d.ID] = true
+	}
+	failed, deploymentID := 0, ""
+	for _, i := range e.Recent {
+		if !serving[i.DeploymentID] || state.State(i.State) != state.StateFailed || i.Kind != "" ||
+			e.Now.Sub(i.StartedAt) > api.AppHealthBootFailureWindow {
+			continue
+		}
+		failed++
+		if deploymentID == "" {
+			deploymentID = i.DeploymentID
+		}
+	}
+	if failed == 0 {
+		return
+	}
+	severity, consequence := Warning, "; the ready replicas keep serving, but the next wake, restart or scale-up is likely to fail the same way"
+	if !out.Capacity.Known || out.Capacity.Ready == 0 {
+		consequence = ""
+		if out.Capacity.Known && out.Capacity.Starting == 0 {
+			severity = Fail
+		}
+	}
+	add(out, "boot_failures", severity, fmt.Sprintf("%d new replica(s) of the serving release crash-looped or timed out while starting in the last %s%s.",
+		failed, spoken(api.AppHealthBootFailureWindow), consequence), "logs", deploymentID)
+}
+
 func requiredSources(d state.Deployment) ([]string, error) {
 	return state.DeploymentReadinessSources(d)
 }

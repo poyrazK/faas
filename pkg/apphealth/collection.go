@@ -44,6 +44,7 @@ func CollectScopeWith(ctx context.Context, store EvidenceStore, client *promql.C
 		AssessMemory: opts.AssessMemory, Plan: opts.Plan, Scope: evidenceScope(scope)}
 	collectDeployments(ctx, store, &e)
 	collectInstances(ctx, store, &e)
+	collectRecentInstances(ctx, store, &e)
 	if e.AssessMemory {
 		collectMemory(ctx, store, &e)
 	}
@@ -80,6 +81,22 @@ func collectDeployments(ctx context.Context, store EvidenceStore, e *Evidence) {
 			break
 		}
 	}
+}
+
+// collectRecentInstances reads the app's newest instances in any state, so
+// boot failures are visible after the failed rows leave the active set.
+func collectRecentInstances(ctx context.Context, store EvidenceStore, e *Evidence) {
+	lister, ok := store.(interface {
+		ListLatestInstancesForApp(context.Context, string, int) ([]state.Instance, error)
+	})
+	if !ok {
+		return
+	}
+	instances, err := lister.ListLatestInstancesForApp(ctx, e.App.ID, api.AppHealthRecentInstanceLimit)
+	if err != nil {
+		return
+	}
+	e.Recent, e.RecentKnown = instances, true
 }
 
 func collectInstances(ctx context.Context, store EvidenceStore, e *Evidence) {

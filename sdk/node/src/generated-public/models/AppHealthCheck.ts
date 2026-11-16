@@ -7,7 +7,7 @@ import type { AppHealthFinding } from './AppHealthFinding.js';
  * Safe evidence explanation and an optional inspection destination.
  */
 export type AppHealthCheck = {
-  code: 'workload' | 'deployment' | 'latest_deployment' | 'readiness' | 'traffic_readiness' | 'maintenance' | 'requests' | 'collection' | 'replicas' | 'queue' | 'backlog' | 'dead_letters' | 'memory';
+  code: 'workload' | 'deployment' | 'latest_deployment' | 'readiness' | 'traffic_readiness' | 'boot_failures' | 'maintenance' | 'requests' | 'collection' | 'replicas' | 'queue' | 'backlog' | 'dead_letters' | 'memory';
   status: 'pass' | 'warning' | 'fail' | 'unknown' | 'not_applicable';
   /**
    * Safe explanation without raw backend errors or probe output.

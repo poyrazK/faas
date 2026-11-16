@@ -16579,6 +16579,11 @@ const CheckpointWorkloadMigrationResumeRecoveryBatchMax = 100
 const (
 	AppHealthInstanceLimit          = 256
 	AppHealthDeploymentHistoryLimit = 50
+	// A replica of a serving release that ended failed (crash loop or boot
+	// timeout) within this window marks the app degraded, even while older
+	// replicas keep serving; the newest instances are read, at most this many.
+	AppHealthBootFailureWindow      = 15 * time.Minute
+	AppHealthRecentInstanceLimit    = 32
 	AppHealthMetricsRange           = "5m"
 	AppHealthMetricsWindow          = 5 * time.Minute
 	AppHealthEvidenceMaxAge         = 2 * time.Minute

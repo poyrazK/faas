@@ -2,6 +2,7 @@ from typing import Literal
 
 AppHealthCheckCode = Literal[
     "backlog",
+    "boot_failures",
     "collection",
     "dead_letters",
     "deployment",
@@ -18,6 +19,7 @@ AppHealthCheckCode = Literal[
 
 APP_HEALTH_CHECK_CODE_VALUES: set[AppHealthCheckCode] = {
     "backlog",
+    "boot_failures",
     "collection",
     "dead_letters",
     "deployment",
