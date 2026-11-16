@@ -958,6 +958,45 @@ also grows with indexed object fields. Arrays retain one digest. Without the fla
 or with `--explain=false`, the existing JSON and human report bytes are unchanged.
 Repeated Boolean flags keep normal last-value-wins behavior.
 
+Use repeatable `--ignore-path POINTER` options to exclude volatile object fields:
+
+```sh
+gregale --json export diff before.jsonl after.jsonl \
+  --ignore-path /updated_at --ignore-path /metrics/read_count \
+  --explain --fail-on-change
+```
+
+Pointers are exact object-member paths, using the same `~0` and `~1` escaping as
+explanations. Dots, percent signs and `*` are literal field-name characters, with
+no wildcard, URI-fragment or JSONPath interpretation. `/` selects an empty field
+name; the empty root pointer, malformed escapes and invalid UTF-8 are refused.
+The effective selected key and all paths beneath it are protected. Policies are
+validated before file reads, including after repeated `--key` options settle.
+
+Fields are excluded from both record digests and explanations. A selected object
+or array field is excluded as a whole, including its presence or absence.
+Missing fields and paths through scalar values have no effect. Surviving object
+containers remain: excluding `/meta/time` does not make `meta: {}` equal to absent
+or null `meta`. Arrays remain atomic; selecting an element beneath an existing
+array is an error before any report. Numeric tokens can name object fields.
+When exclusions overlap, a selected parent field covers its descendants.
+
+Repeated paths are deduplicated and sorted. JSON reports include the explicit
+policy in optional `ignored_paths`; human reports show a JSON-escaped `Ignored
+paths:` line. The policy stays visible even for an empty inventory or a path
+that matches no field. Without exclusions, this field/line is omitted and report
+bytes are unchanged. Added and removed records and their IDs are never hidden;
+`--fail-on-change` uses the remaining comparison after exclusions.
+
+Every input record is fully validated before filtering. Excluded values cannot
+hide malformed JSON/Unicode, duplicate object fields, invalid or duplicate IDs.
+No extra file read, file rewrite, API call or value output is added. Without
+explanations, the extra object tree exists only while processing one record;
+explanations retain the remaining field-name/digest trees in their indexes.
+Exclusion paths and field names are intentional report data. These comparisons
+describe the selected projection; use explicit export verification to check raw
+bytes against an integrity receipt.
+
 Comparisons exit 0 by default. `--fail-on-change` exits 1 after printing a complete
 report when additions, removals or changes exist. `--fail-on-change=false`
 disables that behavior; repeated flags retain normal last-value-wins handling.
