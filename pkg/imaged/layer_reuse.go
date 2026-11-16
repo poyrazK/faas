@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // LayerReuseEnv turns on app layer reuse (ADR-20261112170911): a source
@@ -56,27 +57,35 @@ func LayerReuseDir(cacheRoot string) string {
 }
 
 // layerReuseFormat versions the key; bump it when Build writes anything new
-// into an app layer.
-const layerReuseFormat = "app-layer-reuse/v1"
+// into an app layer. v2 names the shared runner split's inputs instead of
+// its result (ADR-20261112170911 amendment 1).
+const layerReuseFormat = "app-layer-reuse/v2"
 
-// layerReuseInputs is everything rootfs.Builder.Build writes into an app
-// layer, plus the account the layer may be reused in.
+// layerReuseInputs determines everything rootfs.Builder.Build writes into an
+// app layer, plus the account the layer may be reused in. They are known
+// before imaged reads the image's layers, so a reuse never reads them.
 type layerReuseInputs struct {
 	accountID   string
 	imageDigest string
-	// runtime, runtimeBaseDiffIDs and runtimeReason describe the shared
-	// runner base the layer sits on, when one applies.
+	// runtime and runtimeBaseDiffIDs describe the shared runner base the
+	// layer is split at, when one applies. With the image, the manifest and
+	// startCommand they determine the split: which layers the app layer
+	// keeps and the start command and PATH it rewrites into the manifest.
 	runtime            string
 	runtimeBaseDiffIDs []string
-	runtimeReason      string
-	manifest           api.AppManifest
-	guestInitDigest    string
-	plan               api.Plan
+	startCommand       string
+	// manifest is the app manifest before the split.
+	manifest        api.AppManifest
+	guestInitDigest string
+	plan            api.Plan
+	// imagedVersion is the build of the imaged that converts the image: the
+	// split and the layer filter are code, so a new imaged builds anew.
+	imagedVersion string
 }
 
 func layerReuseKey(in layerReuseInputs) (string, error) {
-	if in.accountID == "" || in.imageDigest == "" || in.guestInitDigest == "" || in.plan == "" {
-		return "", errors.New("layer reuse key needs the account, image digest, guest-init digest and plan")
+	if in.accountID == "" || in.imageDigest == "" || in.guestInitDigest == "" || in.plan == "" || in.imagedVersion == "" {
+		return "", errors.New("layer reuse key needs the account, image digest, guest-init digest, plan and imaged version")
 	}
 	manifest, err := json.Marshal(in.manifest)
 	if err != nil {
@@ -84,7 +93,7 @@ func layerReuseKey(in layerReuseInputs) (string, error) {
 	}
 	h := sha256.New()
 	for _, part := range []string{layerReuseFormat, in.accountID, in.imageDigest, in.runtime,
-		strings.Join(in.runtimeBaseDiffIDs, ","), in.runtimeReason, string(manifest), in.guestInitDigest, string(in.plan)} {
+		strings.Join(in.runtimeBaseDiffIDs, ","), in.startCommand, string(manifest), in.guestInitDigest, string(in.plan), in.imagedVersion} {
 		_, _ = fmt.Fprintf(h, "%d:%s\n", len(part), part)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -337,8 +346,10 @@ func (h *Handler) observeLayerReuse(outcome string) {
 }
 
 // appLayerReuseKey returns the layer input key of an eligible deployment, or
-// "" when reuse is off or the inputs cannot be identified.
-func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDigest string, shared *sharedRuntimeLayers, runtime string, manifest api.AppManifest) string {
+// "" when reuse is off or the inputs cannot be identified. manifest is the
+// app manifest before any shared runner split; baseDiffIDs are the runner
+// base's layers when runtime names one.
+func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDigest, runtime string, baseDiffIDs []string, manifest api.AppManifest) string {
 	if h.layerReuse == nil {
 		return ""
 	}
@@ -348,10 +359,8 @@ func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDiges
 		return ""
 	}
 	in := layerReuseInputs{accountID: app.AccountID, imageDigest: imageDigest, runtime: runtime,
-		manifest: manifest, guestInitDigest: guestInit, plan: acct.Plan}
-	if shared != nil {
-		in.runtimeBaseDiffIDs, in.runtimeReason = shared.baseDiffIDs, shared.Reason
-	}
+		runtimeBaseDiffIDs: baseDiffIDs, startCommand: app.StartCommand, manifest: manifest,
+		guestInitDigest: guestInit, plan: acct.Plan, imagedVersion: wire.Version}
 	key, err := layerReuseKey(in)
 	if err != nil {
 		h.log.Warn("imaged: layer reuse key", "app", app.Slug, "err", err)
@@ -360,13 +369,23 @@ func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDiges
 	return key
 }
 
-// buildOrReuseAppLayer republishes the layer recorded for key when it can,
-// and otherwise builds it and records it for key.
-func (h *Handler) buildOrReuseAppLayer(ctx context.Context, key string, app state.App, dep state.Deployment, in rootfs.BuildInput) (rootfs.BuildResult, error) {
+// buildOrReuseAppLayer republishes the layer recorded for key when it can.
+// Otherwise it calls prepare, when set, to supply the build's layers and
+// final manifest, builds the layer and records it for key. Reading and
+// splitting the image's layers is most of a conversion, so a reuse never
+// does it.
+func (h *Handler) buildOrReuseAppLayer(ctx context.Context, key string, app state.App, dep state.Deployment, in rootfs.BuildInput, prepare func(*rootfs.BuildInput) (func(), error)) (rootfs.BuildResult, error) {
 	if key != "" {
 		if result, ok := h.reuseAppLayer(ctx, key, app, dep, in); ok {
 			return result, nil
 		}
+	}
+	if prepare != nil {
+		cleanup, err := prepare(&in)
+		if err != nil {
+			return rootfs.BuildResult{}, err
+		}
+		defer cleanup()
 	}
 	result, err := h.buildAppLayer(ctx, in)
 	if err == nil && key != "" {

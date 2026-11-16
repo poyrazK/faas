@@ -94,10 +94,13 @@ func (f *fakeUnits) snapshot() (started, stopped []string) {
 	return slices.Clone(f.started), slices.Clone(f.stopped)
 }
 
-type fakeUnitProcess struct{ dead, closed atomic.Bool }
+type fakeUnitProcess struct {
+	dead, closed atomic.Bool
+	closes       atomic.Int32
+}
 
 func (p *fakeUnitProcess) alive() bool { return !p.dead.Load() }
-func (p *fakeUnitProcess) close()      { p.closed.Store(true) }
+func (p *fakeUnitProcess) close()      { p.closes.Add(1); p.closed.Store(true) }
 
 type unitFixture struct {
 	manager *streamBridgeManager
@@ -227,6 +230,45 @@ func TestInstanceBridgeUnitLivesAsLongAsItsInstance(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Dir(socket)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("socket directory after park: %v", err)
+	}
+}
+
+// Production fsn-2 (2026-11-08..12): a request's bridge died, the next
+// request found it dead and replaced it, and the first request's completion
+// check then failed and invalidated its lease. That second cleanup closed the
+// dead run's pidfd again, taking the file the resource journal had just
+// opened under the reused number. An entry another path already closed is
+// left alone.
+func TestInstanceBridgeUnitInvalidatedAfterReplacementIsNotClosedTwice(t *testing.T) {
+	f := newUnitFixture(t)
+	j := &fakeBridgeJournal{recorded: map[string]fcvm.InstanceBridge{}}
+	f.manager.journal = j
+	req := &vmmdpb.ForwardHTTPRequestInit{Instance: "a", Port: 8080}
+	held, err := f.manager.acquire(context.Background(), req, "fc-a", bridgeUID(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.proc(0).dead.Store(true)
+	f.acquire(t, "a", bridgeUID(1))
+	started, stopped := f.units.snapshot()
+	if len(started) != 2 || !slices.Equal(stopped, started[:1]) || f.proc(0).closes.Load() != 1 {
+		t.Fatalf("started %v stopped %v, dead run's pidfd closed %d times; want it replaced and closed once", started, stopped, f.proc(0).closes.Load())
+	}
+
+	f.manager.invalidate(context.Background(), held)
+	held.release()
+	_, stopped = f.units.snapshot()
+	if got := f.proc(0).closes.Load(); got != 1 {
+		t.Fatalf("dead run's pidfd closed %d times, want 1", got)
+	}
+	if !slices.Equal(stopped, started[:1]) {
+		t.Fatalf("units stopped %v, want only the dead run %s (the replacement keeps serving)", stopped, started[0])
+	}
+	if !slices.Equal(j.forgotten, started[:1]) {
+		t.Fatalf("journal forgot %v, want %v once", j.forgotten, started[:1])
+	}
+	if f.proc(1).closes.Load() != 0 {
+		t.Fatal("the replacement's pidfd was closed")
 	}
 }
 

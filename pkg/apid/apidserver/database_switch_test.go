@@ -28,7 +28,9 @@ func (switchDrain) DrainPlanForCutover(context.Context, string, string, time.Tim
 
 // switchFixture is an app with a managed database bound for migrations and
 // v1 (no release command) superseded by v2 and v3, whose release commands
-// ran while v1 and v2 served: a rollback to v1 crosses v3's release.
+// ran while v1 and v2 served: a rollback to v1 crosses v3's release, and a
+// switch back to v1 also undoes v2's, the release that replaced v1
+// (ADR-20261023181931 amendment, 2026-11-16).
 type switchFixture struct {
 	env        apidserver.SourceRefTestEnv
 	slug       string
@@ -121,8 +123,8 @@ func TestDatabaseSwitchRollbackRecordsTheSwitchWithoutTouchingTheRelease(t *test
 	}
 	sw := *resp.DatabaseSwitch
 	if sw.Phase != "restoring" || sw.FromDeploymentID != f.v3.ID || sw.TargetDeploymentID != f.v1.ID || sw.TargetRevision != f.v1.Revision ||
-		!slices.Equal(sw.UndoneDeploymentIDs, []string{f.v3.ID}) || sw.SourceDatabaseID != f.sourceID ||
-		sw.SourceDatabaseName != "orders" || sw.TargetName != "orders-before-v3" || sw.RestorePoint == "" {
+		!slices.Equal(sw.UndoneDeploymentIDs, []string{f.v2.ID, f.v3.ID}) || sw.SourceDatabaseID != f.sourceID ||
+		sw.SourceDatabaseName != "orders" || sw.TargetName != "orders-before-v2" || sw.RestorePoint == "" {
 		t.Fatalf("switch %+v", sw)
 	}
 	store := *f.env.Store()
@@ -166,10 +168,19 @@ func TestDatabaseSwitchRollbackRefusals(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("checked switch = %d %s, want 400", w.Code, w.Body)
 	}
-	// v3's release ran while v2 served: nothing to restore.
+	// v3's release ran while v2 served, so the rollback crosses nothing, but
+	// v3 replaced v2: the switch undoes v3's release (the 2026-11-16
+	// amendment). Before it, the most common bad-migration rollback was
+	// refused with "nothing to restore". It still needs acknowledging.
+	w = f.do(t, http.MethodPost, rollback, api.RollbackRequest{TargetDeploymentID: &f.v2.ID, RestoreDatabases: true})
+	if w.Code != http.StatusConflict || switchProblemCode(t, w) != api.CodeRollbackCrossesRelease {
+		t.Fatalf("unacknowledged switch to the previous release = %d %s, want rollback_crosses_release", w.Code, w.Body)
+	}
 	w = f.do(t, http.MethodPost, rollback, api.RollbackRequest{TargetDeploymentID: &f.v2.ID, RestoreDatabases: true, AcknowledgeReleases: true})
-	if w.Code != http.StatusConflict || switchProblemCode(t, w) != api.CodeDatabaseSwitchUnavailable {
-		t.Fatalf("switch crossing nothing = %d %s", w.Code, w.Body)
+	var resp api.DeploymentResponse
+	if w.Code != http.StatusAccepted || json.Unmarshal(w.Body.Bytes(), &resp) != nil || resp.DatabaseSwitch == nil ||
+		!slices.Equal(resp.DatabaseSwitch.UndoneDeploymentIDs, []string{f.v3.ID}) || resp.DatabaseSwitch.TargetName != "orders-before-v3" {
+		t.Fatalf("switch to the previous release = %d %s, want 202 undoing v3", w.Code, w.Body)
 	}
 
 	plain := newReleaseHistory(t, "switch-unconfigured")

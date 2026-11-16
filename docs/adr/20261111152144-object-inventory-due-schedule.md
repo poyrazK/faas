@@ -1,7 +1,7 @@
 # ADR: The inventory sweep reads its due buckets from an indexed schedule
 
 Date: 2026-11-11
-Status: Proposed
+Status: Accepted (2026-11-16)
 Amends: [ADR-20261110151628](20261110151628-object-inventory-follows-activity.md) (how the sweep finds due buckets; the due rules are unchanged)
 Related: [ADR-20261030100835](20261030100835-object-storage-resumable-inventory.md)
 
