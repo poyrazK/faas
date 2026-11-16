@@ -866,6 +866,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 			srv.runAgentActivitySweep(ctx)
 		})
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPostReleaseWatchWorker(ctx) })
+		// ADR-20261116120000: create the protection baseline for enrolled apps.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProtectionReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runScheduledReleaseWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runDatabaseSwitchWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.plainRollbacks().Run(ctx) })

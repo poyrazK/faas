@@ -18164,6 +18164,24 @@ const (
 	// ProtectionBaselineHealthFailures consecutive failed runs fire the
 	// health alert.
 	ProtectionBaselineHealthFailures = 2
+	// ProtectionBaselineBurnWindow is the burn alerts' evaluation window
+	// (docs/slos.md: 14.4 over 1h, with the 6h burn folded in).
+	ProtectionBaselineBurnWindow = "1h"
+	// ProtectionBaselineGateActor is the release gates' created_by.
+	ProtectionBaselineGateActor = "gregale-protection"
+)
+
+// Protection baseline reconciler (ADR-20261116120000 §4): apid sweeps every
+// ProtectionReconcileSweepInterval, leases up to ProtectionReconcileBatch
+// due apps for ProtectionReconcileLease, retries an app with work left after
+// ProtectionReconcileRetry and re-checks a finished one after
+// ProtectionReconcileRecheck.
+const (
+	ProtectionReconcileSweepInterval = 30 * time.Second
+	ProtectionReconcileBatch         = 20
+	ProtectionReconcileLease         = 2 * time.Minute
+	ProtectionReconcileRetry         = 15 * time.Minute
+	ProtectionReconcileRecheck       = 24 * time.Hour
 )
 
 // Event substrate benchmark workload (spec Appendix D V12,

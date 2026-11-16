@@ -21981,6 +21981,8 @@
       "account_id",
       "app_id",
       "created_at",
+      "lease_until",
+      "next_reconcile_at",
       "state",
       "updated_at"
     ],
@@ -21993,6 +21995,8 @@
       "created_at",
       "item",
       "object_id",
+      "reason",
+      "status",
       "written"
     ],
     "kind": "operational"

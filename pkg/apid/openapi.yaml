@@ -101412,11 +101412,15 @@ components:
         name: { type: string, example: availability }
         state:
           type: string
-          enum: [active, pending]
-          description: 'active when the object was created; pending while the app waits for its first healthy deploy.'
+          enum: [active, pending, skipped, removed]
+          description: 'active when the object was created and still exists; pending while the app waits for a live production deployment; skipped when it could not be created yet (see reason), retried automatically; removed when you deleted it, in which case it is not created again.'
         object_id:
           type: string
-          description: 'The created object''s id, or a release gate''s name. Present when state is active.'
+          description: 'The created object''s id. Present when state is active or removed.'
+        reason:
+          type: string
+          enum: [plan, not_released, email_unverified, name_taken, limit_reached, needs_slo, needs_channel]
+          description: 'Why a skipped object could not be created yet: the plan does not include it, the feature is not available to the account, the account email is not verified, you already have an object with this name, the app or account is at its limit, or the SLO or email channel it needs was not created.'
     SyntheticCheckResponse:
       description: 'One synthetic check definition.'
       type: object

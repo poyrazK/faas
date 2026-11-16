@@ -10,13 +10,34 @@ const (
 	AppProtectionStateNone = "none"
 )
 
-// Protection baseline item states. active: the baseline created the
-// object; pending: not created yet (the app has no qualifying healthy
-// deploy, or the reconciler has not run). Later slices add skipped,
-// removed and customized.
+// Protection baseline item states. active: the baseline created the object
+// and it still exists; pending: not created yet (the app has no live
+// production deployment, or the reconciler has not run); skipped: it could
+// not be created yet, Reason says why, and it is retried; removed: the
+// baseline created it and the customer deleted it, so it is not recreated.
 const (
 	AppProtectionItemActive  = "active"
 	AppProtectionItemPending = "pending"
+	AppProtectionItemSkipped = "skipped"
+	AppProtectionItemRemoved = "removed"
+)
+
+// Why a baseline item was skipped.
+const (
+	// The account's plan does not include the object's feature.
+	AppProtectionSkipPlan = "plan"
+	// The feature is not released to the account.
+	AppProtectionSkipNotReleased = "not_released"
+	// Email alerts need the account's email address verified.
+	AppProtectionSkipEmailUnverified = "email_unverified"
+	// The customer already has an object with the baseline's name.
+	AppProtectionSkipNameTaken = "name_taken"
+	// The app or account is at its limit for this kind of object.
+	AppProtectionSkipLimitReached = "limit_reached"
+	// The item needs the SLO it watches, which was not created.
+	AppProtectionSkipNeedsSLO = "needs_slo"
+	// The alert needs the email channel, which was not created.
+	AppProtectionSkipNeedsChannel = "needs_channel"
 )
 
 // ProtectionBaselineItem describes one object of the protection baseline:
@@ -61,11 +82,13 @@ type AppProtectionItemStatus struct {
 	Kind string `json:"kind"`
 	// Name is the object's name.
 	Name string `json:"name"`
-	// State is active or pending.
+	// State is active, pending, skipped or removed.
 	State string `json:"state"`
-	// ObjectID identifies the created object when State is active (a
-	// release gate's name).
+	// ObjectID identifies the created object when State is active or
+	// removed.
 	ObjectID string `json:"object_id,omitempty"`
+	// Reason says why a skipped item could not be created yet.
+	Reason string `json:"reason,omitempty"`
 }
 
 // GetAppProtection reports an app's protection baseline

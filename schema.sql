@@ -33449,6 +33449,8 @@ CREATE TABLE public.app_protection (
     state text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    next_reconcile_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_until timestamp with time zone,
     CONSTRAINT app_protection_state_check CHECK ((state = ANY (ARRAY['on'::text, 'off'::text])))
 );
 
@@ -33460,11 +33462,16 @@ CREATE TABLE public.app_protection (
 CREATE TABLE public.app_protection_objects (
     app_id uuid NOT NULL,
     item text NOT NULL,
-    object_id text NOT NULL,
+    status text DEFAULT 'created'::text NOT NULL,
+    object_id text DEFAULT ''::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
     written jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_protection_objects_item_check CHECK ((item = ANY (ARRAY['availability_slo'::text, 'latency_slo'::text, 'health_check'::text, 'email_channel'::text, 'availability_burn_alert'::text, 'latency_burn_alert'::text, 'health_alert'::text, 'availability_gate'::text]))),
-    CONSTRAINT app_protection_objects_object_id_check CHECK (((object_id <> ''::text) AND (length(object_id) <= 128))),
+    CONSTRAINT app_protection_objects_object_id_check CHECK ((length(object_id) <= 128)),
+    CONSTRAINT app_protection_objects_reason_check CHECK ((length(reason) <= 64)),
+    CONSTRAINT app_protection_objects_status_check CHECK ((status = ANY (ARRAY['created'::text, 'skipped'::text]))),
+    CONSTRAINT app_protection_objects_status_chk CHECK ((((status = 'created'::text) AND (object_id <> ''::text) AND (reason = ''::text)) OR ((status = 'skipped'::text) AND (object_id = ''::text) AND (reason <> ''::text)))),
     CONSTRAINT app_protection_objects_written_check CHECK ((jsonb_typeof(written) = 'object'::text))
 );
 
@@ -77662,6 +77669,13 @@ CREATE INDEX app_private_network_attachments_network_idx ON public.app_private_n
 --
 
 CREATE INDEX app_protection_account_idx ON public.app_protection USING btree (account_id);
+
+
+--
+-- Name: app_protection_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_protection_due_idx ON public.app_protection USING btree (next_reconcile_at) WHERE (state = 'on'::text);
 
 
 --

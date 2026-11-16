@@ -340,6 +340,7 @@ from .app_private_network_node_status_route_status import AppPrivateNetworkNodeS
 from .app_protection_item_status import AppProtectionItemStatus
 from .app_protection_item_status_item import AppProtectionItemStatusItem
 from .app_protection_item_status_kind import AppProtectionItemStatusKind
+from .app_protection_item_status_reason import AppProtectionItemStatusReason
 from .app_protection_item_status_state import AppProtectionItemStatusState
 from .app_protection_response import AppProtectionResponse
 from .app_protection_response_state import AppProtectionResponseState
@@ -7164,6 +7165,7 @@ __all__ = (
     "AppProtectionItemStatus",
     "AppProtectionItemStatusItem",
     "AppProtectionItemStatusKind",
+    "AppProtectionItemStatusReason",
     "AppProtectionItemStatusState",
     "AppProtectionResponse",
     "AppProtectionResponseState",

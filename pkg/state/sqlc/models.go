@@ -1715,17 +1715,21 @@ type AppPrivateNetworkAttachmentNode struct {
 }
 
 type AppProtection struct {
-	AppID     pgtype.UUID
-	AccountID pgtype.UUID
-	State     string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	State           string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	NextReconcileAt pgtype.Timestamptz
+	LeaseUntil      pgtype.Timestamptz
 }
 
 type AppProtectionObject struct {
 	AppID     pgtype.UUID
 	Item      string
+	Status    string
 	ObjectID  string
+	Reason    string
 	Written   []byte
 	CreatedAt pgtype.Timestamptz
 }

@@ -1,10 +1,12 @@
 from typing import Literal
 
-AppProtectionItemStatusState = Literal["active", "pending"]
+AppProtectionItemStatusState = Literal["active", "pending", "removed", "skipped"]
 
 APP_PROTECTION_ITEM_STATUS_STATE_VALUES: set[AppProtectionItemStatusState] = {
     "active",
     "pending",
+    "removed",
+    "skipped",
 }
 
 

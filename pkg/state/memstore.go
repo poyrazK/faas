@@ -175,6 +175,7 @@ type MemStore struct {
 	// app_protection_objects (ADR-20261116120000); allocated on first use.
 	appProtection               map[string]AppProtection
 	appProtectionObjects        map[string]map[AppProtectionItem]AppProtectionObject
+	appProtectionLeases         map[string]appProtectionLease
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner

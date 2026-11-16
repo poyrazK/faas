@@ -2,23 +2,29 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+const appProtectionColumns = `app_id::text, account_id::text, state, created_at, updated_at, next_reconcile_at`
+
+func scanAppProtection(row pgx.Row) (AppProtection, error) {
+	var p AppProtection
+	err := row.Scan(&p.AppID, &p.AccountID, &p.State, &p.CreatedAt, &p.UpdatedAt, &p.NextReconcileAt)
+	return p, err
+}
+
 // GetAppProtection implements AppProtectionStore.
 func (s *PgStore) GetAppProtection(ctx context.Context, appID string) (AppProtection, bool, error) {
-	var p AppProtection
-	err := s.pool.QueryRow(ctx, `
-		select app_id::text, account_id::text, state, created_at, updated_at
+	p, err := scanAppProtection(s.pool.QueryRow(ctx, `
+		select `+appProtectionColumns+`
 		  from app_protection
-		 where app_id = $1::uuid`, appID).
-		Scan(&p.AppID, &p.AccountID, &p.State, &p.CreatedAt, &p.UpdatedAt)
+		 where app_id = $1::uuid`, appID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppProtection{}, false, nil
 	}
@@ -33,15 +39,13 @@ func (s *PgStore) SetAppProtection(ctx context.Context, appID, accountID, state 
 	if state != AppProtectionOn && state != AppProtectionOff {
 		return AppProtection{}, ErrInvalidArgument
 	}
-	var p AppProtection
-	err := s.pool.QueryRow(ctx, `
+	p, err := scanAppProtection(s.pool.QueryRow(ctx, `
 		insert into app_protection (app_id, account_id, state)
 		values ($1::uuid, $2::uuid, $3)
 		on conflict (app_id) do update
-		   set state = excluded.state, updated_at = now()
-		returning app_id::text, account_id::text, state, created_at, updated_at`,
-		appID, accountID, state).
-		Scan(&p.AppID, &p.AccountID, &p.State, &p.CreatedAt, &p.UpdatedAt)
+		   set state = excluded.state, updated_at = now(), next_reconcile_at = now()
+		returning `+appProtectionColumns,
+		appID, accountID, state))
 	if isAppProtectionMissingParent(err) {
 		return AppProtection{}, ErrNotFound
 	}
@@ -53,20 +57,26 @@ func (s *PgStore) SetAppProtection(ctx context.Context, appID, accountID, state 
 
 // RecordAppProtectionObject implements AppProtectionStore.
 func (s *PgStore) RecordAppProtectionObject(ctx context.Context, obj AppProtectionObject) error {
-	if !validAppProtectionObject(obj) || !json.Valid(appProtectionWritten(obj.Written)) {
+	obj, ok := normalizeAppProtectionObject(obj)
+	if !ok {
 		return ErrInvalidArgument
 	}
-	_, err := s.pool.Exec(ctx, `
-		insert into app_protection_objects (app_id, item, object_id, written)
-		values ($1::uuid, $2, $3, $4::jsonb)
+	tag, err := s.pool.Exec(ctx, `
+		insert into app_protection_objects (app_id, item, status, object_id, reason, written)
+		values ($1::uuid, $2, $3, $4, $5, $6::jsonb)
 		on conflict (app_id, item) do update
-		   set object_id = excluded.object_id, written = excluded.written, created_at = now()`,
-		obj.AppID, string(obj.Item), obj.ObjectID, string(appProtectionWritten(obj.Written)))
+		   set status = excluded.status, object_id = excluded.object_id, reason = excluded.reason,
+		       written = excluded.written, created_at = now()
+		 where app_protection_objects.status <> 'created'`,
+		obj.AppID, string(obj.Item), obj.Status, obj.ObjectID, obj.Reason, string(obj.Written))
 	if isAppProtectionMissingParent(err) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return fmt.Errorf("state: record app protection object: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
 	}
 	return nil
 }
@@ -74,7 +84,7 @@ func (s *PgStore) RecordAppProtectionObject(ctx context.Context, obj AppProtecti
 // ListAppProtectionObjects implements AppProtectionStore.
 func (s *PgStore) ListAppProtectionObjects(ctx context.Context, appID string) ([]AppProtectionObject, error) {
 	rows, err := s.pool.Query(ctx, `
-		select app_id::text, item, object_id, written, created_at
+		select app_id::text, item, status, object_id, reason, written, created_at
 		  from app_protection_objects
 		 where app_id = $1::uuid`, appID)
 	if err != nil {
@@ -85,7 +95,7 @@ func (s *PgStore) ListAppProtectionObjects(ctx context.Context, appID string) ([
 	for rows.Next() {
 		var obj AppProtectionObject
 		var item string
-		if err := rows.Scan(&obj.AppID, &item, &obj.ObjectID, &obj.Written, &obj.CreatedAt); err != nil {
+		if err := rows.Scan(&obj.AppID, &item, &obj.Status, &obj.ObjectID, &obj.Reason, &obj.Written, &obj.CreatedAt); err != nil {
 			return nil, fmt.Errorf("state: scan app protection object: %w", err)
 		}
 		obj.Item = AppProtectionItem(item)
@@ -98,6 +108,61 @@ func (s *PgStore) ListAppProtectionObjects(ctx context.Context, appID string) ([
 		return appProtectionItemRank(out[i].Item) < appProtectionItemRank(out[j].Item)
 	})
 	return out, nil
+}
+
+// ClaimAppProtectionReconciles implements AppProtectionStore.
+func (s *PgStore) ClaimAppProtectionReconciles(ctx context.Context, limit int, lease time.Duration) ([]AppProtection, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		update app_protection p
+		   set lease_until = now() + $2::interval
+		 where p.app_id in (select app_id from app_protection
+		                     where state = 'on' and next_reconcile_at <= now()
+		                       and (lease_until is null or lease_until <= now())
+		                     order by next_reconcile_at, app_id
+		                     for update skip locked
+		                     limit $1)
+		returning `+appProtectionColumns,
+		limit, lease)
+	if err != nil {
+		return nil, fmt.Errorf("state: claim app protection reconciles: %w", err)
+	}
+	defer rows.Close()
+	var out []AppProtection
+	for rows.Next() {
+		p, err := scanAppProtection(rows)
+		if err != nil {
+			return nil, fmt.Errorf("state: scan app protection: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: claim app protection reconciles: %w", err)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].NextReconcileAt.Equal(out[j].NextReconcileAt) {
+			return out[i].NextReconcileAt.Before(out[j].NextReconcileAt)
+		}
+		return out[i].AppID < out[j].AppID
+	})
+	return out, nil
+}
+
+// FinishAppProtectionReconcile implements AppProtectionStore.
+func (s *PgStore) FinishAppProtectionReconcile(ctx context.Context, appID string, next time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		update app_protection
+		   set next_reconcile_at = $2, lease_until = null
+		 where app_id = $1::uuid`, appID, next.UTC())
+	if err != nil {
+		return fmt.Errorf("state: finish app protection reconcile: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // isAppProtectionMissingParent reports a foreign-key violation: the app,

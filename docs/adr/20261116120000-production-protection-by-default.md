@@ -62,8 +62,8 @@ The baseline is applied when all of these hold, which mirrors ADR-1446:
 | SLO | `availability` | availability SLI, 99.5%, 30-day window |
 | SLO | `latency` | latency SLI, 1000 ms threshold, 99%, 30-day window |
 | Synthetic check | `health` | `GET` the app's health path (the deployment's `health_path`, else `/`), any 2xx, every 3600 s, timeout the default 10 s |
-| Notification channel | `account-email` | `email`, the account's own verified address; for an org-owned app, the organization's billing email |
-| Alert rule | `availability-burn` | `slo_budget_burn` on `availability`, fast burn (≥ 14.4× over 1 h and 5 m), to `account-email` |
+| Notification channel | `account-email` | `email`, the enrolling account's own verified address (ADR-749 allows no other recipient); an email channel the account already has for that address is reused |
+| Alert rule | `availability-burn` | `slo_budget_burn` on `availability`, `gt` 14.4, window `1h` (the multi-window burn: 1 h above 14.4× and 6 h above 6×), channel only, to `account-email` |
 | Alert rule | `latency-burn` | `slo_budget_burn` on `latency`, same thresholds |
 | Alert rule | `health-failing` | `synthetic_check_consecutive_failures` on `health`, ≥ 2, to `account-email` |
 | Release gate | `availability` | `slo` gate on `availability`, `ReleaseGateDefaultMaxBurnRate` (10) |
@@ -73,10 +73,20 @@ The SLO and latency objectives are deliberately loose: they are meant to
 page when something is clearly wrong, not to define the customer's real
 objective. Customers tighten them by editing the objects.
 
-Each object goes through the same store method, validation, plan gate and
-quota as the public endpoint. A plan without a feature (for example, a plan
-without synthetic checks) skips that object and the status says so. A quota
-that is already full skips the object instead of failing the deploy.
+Each object goes through the same store method, validation, plan gate,
+capability flag and quota as the public endpoint. An object that cannot be
+made yet is recorded as skipped with a reason, and retried:
+
+| Reason | When |
+|---|---|
+| `plan` | the plan lacks the feature (Free has no SLOs or alerts) |
+| `not_released` | the feature's capability flag is off for the account (`custom-slos`, `notification-channels`, `alerts`, `release-gates`) |
+| `email_unverified` | the account's email is not verified |
+| `name_taken` | the customer already has an object with the baseline's name; it is never taken over |
+| `limit_reached` | the app or account is at its limit for that object |
+| `needs_slo` / `needs_channel` | the SLO or channel the item depends on was not created |
+
+A full quota skips the object instead of failing anything.
 
 The release gate combines with what ADR-1446 already defaults: canary,
 first-wake 5xx rollback and the post-release watch. Together they give
@@ -104,11 +114,16 @@ baseline check and is billed normally (§4). The CLI says so on the edit.
 
 ### 4. The customer always wins
 
-apid records each object it created in `app_protection_objects`
-(app, kind, object id, the values it wrote). A reconciler runs after a
-qualifying deploy and on a sweep, and is idempotent:
+apid records each item in `app_protection_objects`: `created` with the
+object id and the values it wrote, or `skipped` with a reason. A created
+record is never replaced. An apid worker sweeps every 30 s and leases up to
+20 due enrolled apps (`app_protection.next_reconcile_at`, `lease_until`), so
+one replica works on an app at a time. An app without a live production
+deployment, or with items still missing, is looked at again after 15
+minutes; a complete or ineligible app after 24 hours. Enrolling (or
+re-enabling) makes the app due at once. The reconciler is idempotent:
 
-- missing object, never created: create it;
+- missing or skipped item: try to create it;
 - object deleted by the customer: **not** recreated; status reports
   "removed by you";
 - object edited by the customer: left alone, and no longer counted as a
@@ -129,8 +144,9 @@ unedited. Edited objects stay, because they are now the customer's.
 ### 6. Status
 
 `GET /v1/apps/{slug}/protection` returns the enrollment state and each
-baseline item: `active`, `pending` (waiting for the first healthy deploy),
-`skipped` (plan or quota, with the reason), `removed` or `customized`.
+baseline item: `active`, `pending` (waiting for a live production
+deployment), `skipped` (with the reason above), or `removed` (the customer
+deleted it). A later slice adds `customized`.
 
 `gregale status` and `gregale app get` print one line:
 
@@ -142,9 +158,10 @@ Production: not protected (gregale app protection on)
 
 ### 7. No double emails
 
-ADR-20261115194000's outage notice is skipped for an app with an active
-`availability-burn` rule, the same way it is skipped for an app with its own
-`error_rate_pct` rule. A full outage burns the budget faster than the
+ADR-20261115194000's outage notice is skipped for an app with an enabled
+`slo_budget_burn` rule on an availability SLO (the baseline's
+`availability-burn`, or the owner's own), the same way it is skipped for an
+app with its own `error_rate_pct` rule. A full outage burns the budget faster than the
 outage detector fires, so the baseline alert arrives first.
 
 ### 8. Rollout

@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -31,25 +32,34 @@ func (s *server) getAppProtection(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrCapacity("could not read app protection"))
 		return
 	}
-	var objects []state.AppProtectionObject
-	if enrolled {
-		if objects, err = store.ListAppProtectionObjects(r.Context(), app.ID); err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not read app protection"))
-			return
-		}
+	if !enrolled {
+		writeJSON(w, http.StatusOK, appProtectionResponse(enrollment, false, nil, nil))
+		return
 	}
-	writeJSON(w, http.StatusOK, appProtectionResponse(enrollment, enrolled, objects))
+	records, err := store.ListAppProtectionObjects(r.Context(), app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read app protection"))
+		return
+	}
+	removed, err := s.removedProtectionObjects(r.Context(), enrollment, records)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read app protection"))
+		return
+	}
+	writeJSON(w, http.StatusOK, appProtectionResponse(enrollment, true, records, removed))
 }
 
-// appProtectionResponse builds the status: every baseline item in order,
-// active when the baseline recorded an object for it, pending otherwise.
-func appProtectionResponse(enrollment state.AppProtection, enrolled bool, objects []state.AppProtectionObject) api.AppProtectionResponse {
+// appProtectionResponse builds the status: every baseline item in order.
+// A created item is active, or removed when the customer deleted the
+// object; a skipped item carries its reason; an unrecorded one is pending.
+func appProtectionResponse(enrollment state.AppProtection, enrolled bool, records []state.AppProtectionObject,
+	removed map[state.AppProtectionItem]bool) api.AppProtectionResponse {
 	if !enrolled {
 		return api.AppProtectionResponse{State: api.AppProtectionStateNone, Items: []api.AppProtectionItemStatus{}}
 	}
-	recorded := make(map[string]string, len(objects))
-	for _, obj := range objects {
-		recorded[string(obj.Item)] = obj.ObjectID
+	byItem := make(map[string]state.AppProtectionObject, len(records))
+	for _, rec := range records {
+		byItem[string(rec.Item)] = rec
 	}
 	out := api.AppProtectionResponse{
 		State: enrollment.State,
@@ -58,15 +68,92 @@ func appProtectionResponse(enrollment state.AppProtection, enrolled bool, object
 	out.Protected = enrollment.State == state.AppProtectionOn
 	for _, item := range api.ProtectionBaselineItems {
 		status := api.AppProtectionItemStatus{Item: item.Item, Kind: item.Kind, Name: item.Name, State: api.AppProtectionItemPending}
-		if id, ok := recorded[item.Item]; ok {
-			status.State = api.AppProtectionItemActive
-			status.ObjectID = id
-		} else {
+		if rec, ok := byItem[item.Item]; ok {
+			switch {
+			case rec.Status == state.AppProtectionObjectSkipped:
+				status.State, status.Reason = api.AppProtectionItemSkipped, rec.Reason
+			case removed[rec.Item]:
+				status.State, status.ObjectID = api.AppProtectionItemRemoved, rec.ObjectID
+			default:
+				status.State, status.ObjectID = api.AppProtectionItemActive, rec.ObjectID
+			}
+		}
+		if status.State != api.AppProtectionItemActive {
 			out.Protected = false
 		}
 		out.Items = append(out.Items, status)
 	}
 	return out
+}
+
+// removedProtectionObjects reports which created baseline objects no longer
+// exist: the customer deleted them.
+func (s *server) removedProtectionObjects(ctx context.Context, enrollment state.AppProtection,
+	records []state.AppProtectionObject) (map[state.AppProtectionItem]bool, error) {
+	removed := map[state.AppProtectionItem]bool{}
+	var gateIDs map[string]bool
+	for _, rec := range records {
+		if rec.Status != state.AppProtectionObjectCreated {
+			continue
+		}
+		exists, err := s.protectionObjectExists(ctx, enrollment, rec, &gateIDs)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			removed[rec.Item] = true
+		}
+	}
+	return removed, nil
+}
+
+// protectionObjectExists looks one created object up by kind. gateIDs
+// caches the app's release gate ids across calls.
+func (s *server) protectionObjectExists(ctx context.Context, enrollment state.AppProtection, rec state.AppProtectionObject,
+	gateIDs *map[string]bool) (bool, error) {
+	var err error
+	switch rec.Item {
+	case state.AppProtectionAvailabilitySLO, state.AppProtectionLatencySLO:
+		store, ok := s.store.(state.SLOStore)
+		if !ok {
+			return true, nil
+		}
+		_, err = store.GetSLO(ctx, rec.AppID, rec.ObjectID)
+	case state.AppProtectionEmailChannel:
+		store, ok := s.store.(state.NotificationChannelStore)
+		if !ok {
+			return true, nil
+		}
+		_, err = store.GetNotificationChannel(ctx, enrollment.AccountID, rec.ObjectID)
+	case state.AppProtectionAvailabilityBurnAlert, state.AppProtectionLatencyBurnAlert, state.AppProtectionHealthAlert:
+		var rule state.AlertRule
+		rule, err = s.store.AlertRuleByID(ctx, rec.ObjectID)
+		if err == nil && rule.AppID != rec.AppID {
+			return false, nil
+		}
+	case state.AppProtectionAvailabilityGate:
+		if *gateIDs == nil {
+			store, ok := s.store.(state.ReleaseGateStore)
+			if !ok {
+				return true, nil
+			}
+			gates, err := store.ListReleaseGates(ctx, rec.AppID)
+			if err != nil {
+				return false, err
+			}
+			*gateIDs = make(map[string]bool, len(gates))
+			for _, g := range gates {
+				(*gateIDs)[g.ID] = true
+			}
+		}
+		return (*gateIDs)[rec.ObjectID], nil
+	default:
+		return true, nil
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // enrollNewAppInProtection enrolls an app created while the protection

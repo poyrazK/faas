@@ -10,12 +10,16 @@ export type AppProtectionItemStatus = {
   kind: 'slo' | 'synthetic_check' | 'notification_channel' | 'alert_rule' | 'release_gate';
   name: string;
   /**
-   * active when the object was created; pending while the app waits for its first healthy deploy.
+   * active when the object was created and still exists; pending while the app waits for a live production deployment; skipped when it could not be created yet (see reason), retried automatically; removed when you deleted it, in which case it is not created again.
    */
-  state: 'active' | 'pending';
+  state: 'active' | 'pending' | 'skipped' | 'removed';
   /**
-   * The created object's id, or a release gate's name. Present when state is active.
+   * The created object's id. Present when state is active or removed.
    */
   object_id?: string;
+  /**
+   * Why a skipped object could not be created yet: the plan does not include it, the feature is not available to the account, the account email is not verified, you already have an object with this name, the app or account is at its limit, or the SLO or email channel it needs was not created.
+   */
+  reason?: 'plan' | 'not_released' | 'email_unverified' | 'name_taken' | 'limit_reached' | 'needs_slo' | 'needs_channel';
 };
 

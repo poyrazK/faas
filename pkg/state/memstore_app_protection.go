@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// appProtectionLease is the lease state AppProtection does not carry.
+type appProtectionLease struct {
+	until time.Time
+}
+
 // GetAppProtection implements AppProtectionStore.
 func (m *MemStore) GetAppProtection(_ context.Context, appID string) (AppProtection, bool, error) {
 	m.mu.Lock()
@@ -35,6 +40,7 @@ func (m *MemStore) SetAppProtection(_ context.Context, appID, accountID, state s
 	}
 	p.State = state
 	p.UpdatedAt = now
+	p.NextReconcileAt = now
 	if m.appProtection == nil {
 		m.appProtection = map[string]AppProtection{}
 	}
@@ -44,7 +50,8 @@ func (m *MemStore) SetAppProtection(_ context.Context, appID, accountID, state s
 
 // RecordAppProtectionObject implements AppProtectionStore.
 func (m *MemStore) RecordAppProtectionObject(_ context.Context, obj AppProtectionObject) error {
-	if !validAppProtectionObject(obj) || !json.Valid(appProtectionWritten(obj.Written)) {
+	obj, ok := normalizeAppProtectionObject(obj)
+	if !ok {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -60,7 +67,10 @@ func (m *MemStore) RecordAppProtectionObject(_ context.Context, obj AppProtectio
 		byItem = map[AppProtectionItem]AppProtectionObject{}
 		m.appProtectionObjects[obj.AppID] = byItem
 	}
-	obj.Written = append(json.RawMessage(nil), appProtectionWritten(obj.Written)...)
+	if existing, ok := byItem[obj.Item]; ok && existing.Status == AppProtectionObjectCreated {
+		return ErrConflict
+	}
+	obj.Written = append(json.RawMessage(nil), obj.Written...)
 	obj.CreatedAt = time.Now().UTC()
 	byItem[obj.Item] = obj
 	return nil
@@ -79,4 +89,54 @@ func (m *MemStore) ListAppProtectionObjects(_ context.Context, appID string) ([]
 		return appProtectionItemRank(out[i].Item) < appProtectionItemRank(out[j].Item)
 	})
 	return out, nil
+}
+
+// ClaimAppProtectionReconciles implements AppProtectionStore.
+func (m *MemStore) ClaimAppProtectionReconciles(_ context.Context, limit int, lease time.Duration) ([]AppProtection, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().UTC()
+	var due []AppProtection
+	for id, p := range m.appProtection {
+		if p.State != AppProtectionOn || p.NextReconcileAt.After(now) {
+			continue
+		}
+		if l, ok := m.appProtectionLeases[id]; ok && l.until.After(now) {
+			continue
+		}
+		due = append(due, p)
+	}
+	sort.Slice(due, func(i, j int) bool {
+		if !due[i].NextReconcileAt.Equal(due[j].NextReconcileAt) {
+			return due[i].NextReconcileAt.Before(due[j].NextReconcileAt)
+		}
+		return due[i].AppID < due[j].AppID
+	})
+	if len(due) > limit {
+		due = due[:limit]
+	}
+	if m.appProtectionLeases == nil {
+		m.appProtectionLeases = map[string]appProtectionLease{}
+	}
+	for _, p := range due {
+		m.appProtectionLeases[p.AppID] = appProtectionLease{until: now.Add(lease)}
+	}
+	return due, nil
+}
+
+// FinishAppProtectionReconcile implements AppProtectionStore.
+func (m *MemStore) FinishAppProtectionReconcile(_ context.Context, appID string, next time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.appProtection[appID]
+	if !ok {
+		return ErrNotFound
+	}
+	p.NextReconcileAt = next.UTC()
+	m.appProtection[appID] = p
+	delete(m.appProtectionLeases, appID)
+	return nil
 }
