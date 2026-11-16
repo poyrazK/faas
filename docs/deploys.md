@@ -40,14 +40,18 @@ otherwise (`--source=worktree` includes uncommitted changes). Before upload:
   `--secrets-file` or `gregale env set` for real secrets.
 - **Credential files in a local-files upload.** When the deploy uploads the
   files on disk (no Git repository, no `origin` remote, or
-  `--source=worktree`), everything not excluded above is uploaded, including
-  `.env` and `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, `*.pem`, `*.key`,
-  `*.p12`, `id_rsa*` and `id_ed25519*` private keys and similar files. The
-  deploy still uploads them, but warns on stderr and adds the warning to the
-  `--json` receipt's `warnings`, naming each file (`.env.example`,
-  `.env.sample`, `.env.template` and `*.pub` are not named). Add the files
-  to `.gregaleignore` to keep them out, and set their values with
-  `gregale env push` or `gregale env set`.
+  `--source=worktree`), files that usually hold credentials stay on your
+  machine: `.env` and `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, `.pgpass`,
+  `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.pem` files holding a private key,
+  `id_rsa*`/`id_ed25519*` private keys, `credentials.json`,
+  `.aws-credentials`, `.aws/credentials`, Google service-account and OAuth
+  client keys and similar files. The deploy names each file it left out on
+  stderr and in the `--json` receipt's `warnings` (`.env.example`,
+  `.env.sample`, `.env.template`, `*.pub` and certificate-only `*.pem` are
+  uploaded). Set runtime values with `gregale env push` or `gregale env set`;
+  to upload one of these files anyway, add a negated rule such as `!.npmrc`
+  to `.gregaleignore`. A secret found in a file that stays local neither
+  warns nor fails `--secret-scan=strict`.
 
 ### Inspect the payload before uploading
 
