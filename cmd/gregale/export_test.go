@@ -1758,6 +1758,9 @@ var RemoveTestFaultRules = removeTestFaultRules
 var RenderAccountSLO = renderAccountSLO
 var RenderAppBindingInventory = renderAppBindingInventory
 var RenderAppMetrics = renderAppMetrics
+
+// RenderServiceMap exposes the service-map text output.
+var RenderServiceMap = renderServiceMap
 var RenderAppSLO = renderAppSLO
 var RenderApplyRescue = renderApplyRescue
 var RenderStoredWorkflowLiveGate = renderStoredWorkflowLiveGate

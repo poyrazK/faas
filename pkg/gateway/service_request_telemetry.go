@@ -31,6 +31,16 @@ type ServiceRequestObservation struct {
 	// Guest is the execution evidence the target's runtime reported, as on
 	// public requests; runtimes that report nothing leave it empty.
 	Guest guestExecutionEvidenceSnapshot
+	// InvocationSource, when set, marks a scheduled or queued invocation the
+	// platform delivered (cron, queue, async_invoke, delayed_task). Its row's
+	// client family reads "gregale-<source>" so HTTP logs tell it apart
+	// from a caller's request (prod findings 2026-11-15 #7).
+	InvocationSource string
+}
+
+// invocationClientFamily is the ua_family of an invocation's telemetry row.
+func invocationClientFamily(source string) string {
+	return "gregale-" + source
 }
 
 // serviceWakeRecorder carries the wake a service call started or joined back
@@ -201,6 +211,10 @@ func serviceRequestTelemetryRow(r *http.Request, o ServiceRequestObservation) (R
 		return RequestTelemetryRow{}, false
 	}
 	traceID := traceIDForTelemetry(r.Context())
+	uaFamily := telemetryUnknownDimension
+	if o.InvocationSource != "" {
+		uaFamily = invocationClientFamily(o.InvocationSource)
+	}
 	return RequestTelemetryRow{
 		AccountID: accountID, AppID: appID, DeploymentID: deploymentID,
 		Route: otherRouteLabel, Method: r.Method, Status: o.Status, LatencyMS: o.LatencyMS,
@@ -209,7 +223,7 @@ func serviceRequestTelemetryRow(r *http.Request, o ServiceRequestObservation) (R
 		InstanceID: o.Target.InstanceID, NodeID: o.Target.NodeID, Region: o.Target.Region,
 		CommitSHA: o.Target.CommitSHA, DeploymentTag: o.Target.DeploymentTag,
 		DeploymentCreatedAt: o.Target.DeploymentCreatedAt, ImageDigest: o.Target.ImageDigest,
-		UAFamily: telemetryUnknownDimension, ReferrerHost: telemetryNoReferrer, Country: telemetryUnknownDimension,
+		UAFamily: uaFamily, ReferrerHost: telemetryNoReferrer, Country: telemetryUnknownDimension,
 		// The receiver already uses this flag to suppress legacy usage for
 		// nonfinancial rows, including rejected ingress admissions. No outbox
 		// write or caller consumer/tenant identity is claimed by this debug row.
