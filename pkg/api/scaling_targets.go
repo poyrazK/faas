@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // The closed scaling-metric set (ADR-194).
@@ -352,4 +353,10 @@ func ErrCustomMetricLimitReached(limit int) *Problem {
 			"Pushing a new value for an existing metric always works; delete an unused "+
 			"metric to free a slot. See "+docsBase+"/scaling-policy#custom-metrics",
 			limit))
+}
+
+// CustomMetricFresh reports whether an observation is current. Future values
+// from older ingestion versions are not evidence of a live producer.
+func CustomMetricFresh(observedAt, now time.Time) bool {
+	return !observedAt.After(now) && now.Sub(observedAt) <= time.Duration(CustomMetricFreshnessSeconds)*time.Second
 }

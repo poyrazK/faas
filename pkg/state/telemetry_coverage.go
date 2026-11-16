@@ -129,21 +129,5 @@ func (s *PgStore) RecordTelemetryCoverage(ctx context.Context, c TelemetryCovera
 // judged by its analytics gaps instead of raw delivery (ADR-20261103113952
 // amendment 6).
 func (s *PgStore) RequestAnalyticsCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error) {
-	id, err := uuid.Parse(appID)
-	if err != nil {
-		return nil, fmt.Errorf("request analytics completeness: app id: %w", err)
-	}
-	body, err := sqlc.New().RequestAnalyticsCompletenessBlockers(ctx, s.pool, sqlc.RequestAnalyticsCompletenessBlockersParams{
-		AppID:       NewPgtypeUUID(id),
-		WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
-		WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
-	})
-	if err != nil {
-		return nil, mapErr(err)
-	}
-	gaps := []string{}
-	if err := json.Unmarshal(body, &gaps); err != nil {
-		return nil, fmt.Errorf("request analytics completeness: decode: %w", err)
-	}
-	return gaps, nil
+	return s.requestAnalyticsCoverageGaps(ctx, appID, from, until, true)
 }

@@ -9,13 +9,22 @@
     - restart faas-gatewayd-internal for seal domains
     - restart faas-gatewayd-public-edge for seal domains
     - restart faas-edgednsd for seal domains
+    - restart faas-neond for seal domains
     - restart faas-meterd for seal domains
     - restart faas-s3-gatewayd for seal domains
     - restart faas-s3-gatewayd-compute for seal domains
     - restart faas-schedd for seal domains
     - restart faas-apid for seal domains
     - restart faas-apid-clone-worker for seal domains
+    - restart faas-secretd for seal domains
     - daemon-reload for seal domains
+
+# ADR-20261110210000 §3: secretd reads the runtime identity as a credential,
+# copied at start.
+- name: seal_domains — try-restart faas-secretd
+  ansible.builtin.command: systemctl try-restart faas-secretd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-secretd for seal domains
 
 - name: seal_domains — try-restart faas-outboundd
   ansible.builtin.command: systemctl try-restart faas-outboundd.service  # noqa: command-instead-of-module
@@ -73,6 +82,11 @@
   ansible.builtin.command: systemctl try-restart faas-edgednsd.service  # noqa: command-instead-of-module
   changed_when: true
   listen: restart faas-edgednsd for seal domains
+
+- name: seal_domains — try-restart faas-neond
+  ansible.builtin.command: systemctl try-restart faas-neond.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-neond for seal domains
 
 - name: seal_domains — try-restart faas-apid
   ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module

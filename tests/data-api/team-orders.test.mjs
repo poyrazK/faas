@@ -9,7 +9,8 @@ import { once } from 'node:events'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
+import { runDataJobs } from '../../cmd/gregale/templates/data-api-teams/workers/data-jobs.mjs'
 import { tmpdir } from 'node:os'
 import { command } from './staging/canary.mjs'
 import { verifyTeamOrderSummary } from './team-order-summary.mjs'
@@ -67,6 +68,9 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0010_saved_views_bulk_fulfilment.sql', import.meta.url), 'utf8'))
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0011_shared_team_views.sql', import.meta.url), 'utf8'))
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0012_team_order_summary.sql', import.meta.url), 'utf8'))
+  await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0013_background_data_jobs.sql', import.meta.url), 'utf8'))
+  await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0014_job_retry_scheduling.sql', import.meta.url), 'utf8'))
+  await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0015_job_history_retention.sql', import.meta.url), 'utf8'))
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/seed.sql', import.meta.url), 'utf8'))
   await owner.query(`GRANT USAGE ON SCHEMA api TO "${role}";
     GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA api TO "${role}";
@@ -76,6 +80,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
     GRANT EXECUTE ON FUNCTION api.create_team_invitation_once(uuid,text,text,api.team_role,timestamptz), api.revoke_team_invitation_once(uuid,text), api.accept_team_invitation_once(uuid,text,text), api.team_invitation_identity(), api.start_team_order_import_once(uuid,text,text,jsonb), api.advance_team_order_import_once(uuid,text,integer), api.transition_team_order_once(uuid,text,uuid,integer,api.order_status), api.claim_team_order_webhook(text,uuid), api.finish_team_order_webhook(text,uuid,uuid,boolean,integer), api.replay_team_order_webhook(text,uuid,integer), api.get_team_delivery_health(text), api.get_team_delivery_operation(text,uuid), api.preview_team_delivery_replay(text,integer), api.set_team_delivery_pause_once(text,uuid,uuid,boolean), api.batch_replay_team_deliveries_once(text,uuid,jsonb), api.save_webhook_subscription_once(text,uuid,uuid,uuid,text,text[],text,boolean,boolean), api.get_webhook_subscription_receipt(text,uuid), api.claim_subscription_webhook(text,uuid,uuid), api.finish_subscription_webhook(text,uuid,uuid,uuid,boolean,integer,text), api.replay_subscription_webhook(text,uuid,uuid,integer), api.get_subscription_health(text,uuid), api.queue_webhook_test_once(text,uuid,uuid,uuid), api.get_webhook_test_receipt(text,uuid), api.save_order_view_once(text,uuid,uuid,uuid,text,api.order_status,integer,integer,text), api.get_order_view_receipt(text,uuid), api.list_view_orders(text,api.order_status,integer,integer,text,uuid,integer,integer), api.preview_team_order_fulfilment(text,jsonb), api.fulfil_team_orders_once(text,uuid,jsonb), api.get_team_bulk_order_receipt(text,uuid), api.save_shared_order_view_once(text,uuid,uuid,uuid,text,api.order_status,integer,integer,text), api.copy_shared_order_view_once(text,uuid,uuid,uuid,uuid,text), api.get_shared_order_view_receipt(text,uuid) TO "${role}"`)
   const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
   await owner.query(`GRANT EXECUTE ON FUNCTION api.summarize_team_orders(text,api.order_status,integer,integer) TO "${role}"`)
+  await owner.query(`GRANT EXECUTE ON FUNCTION api.start_team_order_job(uuid,text,text,uuid),api.claim_team_order_job(),api.retry_team_order_job(uuid,uuid,text),api.resume_team_order_job(uuid),api.advance_team_order_job(uuid,uuid),api.fail_team_order_job(uuid,uuid,text),api.cancel_team_order_job(uuid) TO "${role}"`)
   const snapshot = await inspect(loginURL.toString(), ['api'])
   const typed = await mkdtemp(join(tmpdir(), 'team-orders-client-'))
   t.after(() => rm(typed, { recursive: true, force: true }))
@@ -88,6 +93,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
   await writeFile(join(typed, 'administration.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/administration.ts', import.meta.url), 'utf8'))
   await writeFile(join(typed, 'invitations.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/invitations.ts', import.meta.url), 'utf8'))
   await writeFile(join(typed, 'imports.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/imports.ts', import.meta.url), 'utf8'))
+  await writeFile(join(typed, 'data-jobs.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/data-jobs.ts', import.meta.url), 'utf8'))
   await writeFile(join(typed, 'workflows.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/workflows.ts', import.meta.url), 'utf8'))
   await writeFile(join(typed, 'deliveries.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/deliveries.ts', import.meta.url), 'utf8'))
   await writeFile(join(typed, 'delivery-controls.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/delivery-controls.ts', import.meta.url), 'utf8'))
@@ -98,7 +104,8 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
   await writeFile(join(typed, 'main.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/main.ts', import.meta.url), 'utf8'))
   await writeFile(join(typed,'inference.ts'),(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/test/inference.ts',import.meta.url),'utf8')).replaceAll('../src/','./'))
   await command(new URL('../../sdk/data/node_modules/.bin/tsc', import.meta.url).pathname, ['--strict','--target','ES2022','--module','NodeNext','--lib','ES2022,DOM,DOM.Iterable','--outDir','dist','orders.ts','main.ts','inference.ts'], { cwd: typed, env: process.env })
-  const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'orders' })
+  const dataJobsKey='gdsk_'+'C'.repeat(43)
+  const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'orders',DATA_API_SERVER_KEY_A_SHA256:createHash('sha256').update(dataJobsKey).digest('hex') })
   config.snapshot = snapshot; config.functions = snapshot.functions; config.fingerprint = fingerprint(snapshot)
   const upstream = await port(), ready = await port()
   child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -738,7 +745,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
       await evaluate(`document.getElementById('token').value=${JSON.stringify(adminToken)};document.getElementById('member-resolve').click()`)
       await wait("document.getElementById('admin-message').textContent.includes('original user') && !document.getElementById('member-resolve').disabled")
       await evaluate(`document.getElementById('token').value=${JSON.stringify(token)};document.getElementById('member-resolve').click()`)
-      await wait("document.getElementById('admin-message').textContent.includes('Access change confirmed') && document.getElementById('member-resolve').disabled")
+      await wait("document.getElementById('admin-message').textContent.includes('Access change confirmed') && document.getElementById('member-resolve').disabled && !document.getElementById('audit-load').disabled")
       assert.equal((await owner.query("SELECT count(*)::integer AS n FROM api.team_members WHERE tenant_id='shop-a' AND subject='eve'")).rows[0].n,1)
       await evaluate(`document.getElementById('token').value=${JSON.stringify(token)};document.getElementById('audit-load').click()`)
       await wait("document.querySelectorAll('#audit tr').length>0 && !document.getElementById('audit-load').disabled")
@@ -921,6 +928,43 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
     })
     assert.ok((await owner.query('SELECT status,version FROM api.team_orders WHERE id=ANY($1::uuid[])',[sharedBrowserOrders])).rows.every(r=>r.status==='submitted'&&r.version===2),'shared view publishing and copying must not change orders')
 
+
+    await owner.query("INSERT INTO api.team_users(subject) VALUES('background-owner'); INSERT INTO api.team_members(tenant_id,subject,role) VALUES('background-team','background-owner','owner')")
+    const backgroundToken=await sign('background-owner')
+    await browserInspector(origin,async evaluate=>{
+      const wait=async expression=>{for(let n=0;n<100;n++){if(await evaluate(expression))return;await new Promise(r=>setTimeout(r,50))}assert.fail('background job browser transition timed out')}
+      const connect=async()=>{
+        await wait("Boolean(document.getElementById('connect')?.onclick)")
+        await evaluate(`document.getElementById('url').value=${JSON.stringify(url)};document.getElementById('tenant').value='background-team';document.getElementById('token').value=${JSON.stringify(backgroundToken)};document.getElementById('connect').click()`)
+        await wait("document.getElementById('role').textContent.includes('owner')")
+      }
+      await wait("Boolean(document.getElementById('connect')?.onclick)")
+      await evaluate(`window.nativeFetch=window.fetch;window.dropEnqueue=true;window.fetch=async(...args)=>{const response=await window.nativeFetch(...args);if(window.dropEnqueue&&String(args[0]).includes('/start_team_order_job')){window.dropEnqueue=false;await response.text();throw new TypeError('lost')}return response}`)
+      await connect()
+      await wait("!document.getElementById('job-export').disabled")
+      await evaluate(`document.getElementById('token').value=${JSON.stringify(backgroundToken)};document.getElementById('job-export').click()`)
+      await wait("!document.getElementById('job-resolve').disabled")
+      assert.equal(await evaluate("document.getElementById('tenant').disabled"),true)
+      await evaluate('location.reload()')
+      await connect()
+      await wait("!document.getElementById('job-resolve').disabled")
+      await evaluate(`document.getElementById('token').value=${JSON.stringify(backgroundToken)};document.getElementById('job-resolve').click()`)
+      await wait("document.getElementById('data-jobs').textContent.includes('queued') && !document.getElementById('jobs-load').disabled")
+      assert.equal((await owner.query("SELECT count(*)::int n FROM api.team_order_jobs WHERE tenant_id='background-team'")).rows[0].n,1)
+      await runDataJobs({url,key:dataJobsKey,log:()=>{}})
+      await evaluate(`document.getElementById('token').value=${JSON.stringify(backgroundToken)};document.getElementById('jobs-load').click()`)
+      await wait("document.getElementById('data-jobs').textContent.includes('completed') && !document.getElementById('jobs-load').disabled")
+      await evaluate(`window.URL.createObjectURL=blob=>{blob.text().then(value=>window.savedCsv=value);return 'blob:test'};HTMLAnchorElement.prototype.click=function(){};document.getElementById('token').value=${JSON.stringify(backgroundToken)};Array.from(document.querySelectorAll('#data-jobs button')).find(b=>b.textContent==='Download snapshot CSV').click()`)
+      await wait("Boolean(window.savedCsv?.includes('total_cents')) && !document.getElementById('job-export').disabled")
+      await evaluate(`document.getElementById('token').value=${JSON.stringify(backgroundToken)};document.getElementById('job-export').click()`)
+      await wait("Array.from(document.querySelectorAll('#data-jobs button')).some(b=>b.textContent==='Cancel remaining work' && !b.disabled)")
+      await evaluate(`document.getElementById('token').value=${JSON.stringify(backgroundToken)};Array.from(document.querySelectorAll('#data-jobs button')).find(b=>b.textContent==='Cancel remaining work').click()`)
+      await wait("document.getElementById('data-jobs').textContent.includes('cancelled') && !document.getElementById('jobs-load').disabled")
+      await evaluate(`document.getElementById('token').value=${JSON.stringify(otherToken)};document.getElementById('tenant').value='shop-b';document.getElementById('connect').click()`)
+      await wait("!document.getElementById('connect').disabled")
+      assert.equal(await evaluate("document.querySelectorAll('#data-jobs tr').length"),0)
+    })
+
   }
   // Named routing is tested last so existing legacy-queue acceptance stays representative.
   const {createSubscriptionForm,webhookSubscriptions}=await import(pathToFileURL(join(typed,'dist/subscriptions.js')))
@@ -991,7 +1035,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
   const lostTestForm=createWebhookTestForm(teamsClient({url,accessToken:token,fetch:async(input,init)=>{const response=await fetch(input,init);if(String(input).includes('/rpc/queue_webhook_test_once')){testWrites++;lostTestArgs=JSON.parse(init.body);await response.text();throw TypeError('test response lost')}return response}},'shop-a'))
   assert.equal((await lostTestForm.submit(update.subscription,true)).uncertain,true)
   assert.equal(testWrites,1)
-  await owner.query("UPDATE api.team_members SET role='member' WHERE tenant_id='shop-a' AND subject='alice'")
+  await owner.query("UPDATE api.team_members SET role='owner' WHERE tenant_id='shop-a' AND subject='amy'; UPDATE api.team_members SET role='member' WHERE tenant_id='shop-a' AND subject='alice'")
   const recoveredTest=await lostTestForm.reconcile()
   assert.equal(recoveredTest.outcome,'queued',JSON.stringify(recoveredTest));assert.equal(testWrites,1)
   await owner.query("UPDATE api.team_members SET role='owner' WHERE tenant_id='shop-a' AND subject='alice'")

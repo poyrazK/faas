@@ -31,3 +31,33 @@ func deployHealthcheckOverrides(probe *api.DeploymentHealthcheck) *api.CreateDep
 	}
 	return &api.CreateDeploymentOverrides{Healthcheck: probe}
 }
+
+// resolveDeployReadiness turns --readiness-path into the deployment's
+// steady-state readiness probe. gregale.yaml hosting.readiness_probe sets the
+// same probe from the source; the flag wins for this one deployment.
+func resolveDeployReadiness(path string, explicit map[string]bool) (*api.DeploymentReadinessProbe, error) {
+	if explicit["readiness-path"] && path == "" {
+		return nil, errors.New("--readiness-path must be a non-empty HTTP path")
+	}
+	if path == "" {
+		return nil, nil
+	}
+	probe := &api.DeploymentReadinessProbe{Path: path}
+	if problem := (&api.CreateDeploymentOverrides{ReadinessProbe: probe}).Validate(api.MustLimitsFor(api.PlanFree)); problem != nil {
+		return nil, &api.APIError{Problem: *problem}
+	}
+	return probe, nil
+}
+
+// deployProbeOverrides is the JSON deploy request's probe overrides.
+func deployProbeOverrides(startup *api.DeploymentHealthcheck, readiness *api.DeploymentReadinessProbe) *api.CreateDeploymentOverrides {
+	overrides := deployHealthcheckOverrides(startup)
+	if readiness == nil {
+		return overrides
+	}
+	if overrides == nil {
+		overrides = &api.CreateDeploymentOverrides{}
+	}
+	overrides.ReadinessProbe = readiness
+	return overrides
+}

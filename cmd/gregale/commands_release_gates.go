@@ -174,7 +174,7 @@ func releaseGatesAdd(args []string) int {
 	return 0
 }
 
-// releaseGateFlags are `release gate create`'s flags. MaxGroups and
+// releaseGateFlags are `release gate add`'s flags. MaxGroups and
 // MaxFailurePercent are -1 when unset.
 type releaseGateFlags struct {
 	Name, SLO            string

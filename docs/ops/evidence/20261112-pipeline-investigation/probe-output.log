@@ -1,0 +1,103 @@
+=== RUN   TestInvestigationPauseAcknowledgement
+    investigation_probe_test.go:26: desired=paused observed=live fresh=false -> health=inactive message="Sync is paused."
+    investigation_probe_test.go:26: desired=paused observed=blocked fresh=true -> health=inactive message="Sync is paused."
+--- PASS: TestInvestigationPauseAcknowledgement (0.00s)
+=== RUN   TestInvestigationPausedMonitoringBlindSpot
+    investigation_probe_test.go:42: paused monitoring fresh=true, no WAL evidence -> incident=""
+    investigation_probe_test.go:42: paused monitoring fresh=false, no WAL evidence -> incident=""
+--- PASS: TestInvestigationPausedMonitoringBlindSpot (0.00s)
+=== RUN   TestInvestigationUnrelatedDiscoveryBlocksSetup
+    investigation_probe_test.go:79: saved tables=[orders], latest search="customers" -> setup=blocked/connection_check_required; no exact-table refresh queued
+--- PASS: TestInvestigationUnrelatedDiscoveryBlocksSetup (0.14s)
+=== RUN   TestInvestigationNewReadOnlyLoginMissingHookGrants
+    investigation_probe_test.go:130: new SELECT-only login: hook execute before running reconciliation=false, after=true; paused worker skips that installer
+--- PASS: TestInvestigationNewReadOnlyLoginMissingHookGrants (0.16s)
+=== RUN   TestInvestigationLastReaderCannotBeRevoked
+    investigation_probe_test.go:144: revoke last reader "alice" with create entitlement=true -> invalid pipeline request
+    investigation_probe_test.go:144: revoke last reader "alice" with create entitlement=false -> invalid pipeline request
+--- PASS: TestInvestigationLastReaderCannotBeRevoked (0.12s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/datapipeline	0.487s
+=== RUN   TestInvestigationWaitRejectsStaleFailure
+    investigation_probe_test.go:33: resume response has stale revision-1 failure; wait returns "pipeline blocked: source_authentication_failed" after 0 polls despite next observation being live
+--- PASS: TestInvestigationWaitRejectsStaleFailure (0.00s)
+=== RUN   TestInvestigationResyncSkipsConfirmation
+{
+  "observed_revision": 0,
+  "observation_fresh": false,
+  "id": "a26eadac-e667-41d2-a2c0-6f88e4e1b2ef",
+  "name": "",
+  "source_connection_id": "",
+  "database_id": "",
+  "tables": null,
+  "read_subjects": null,
+  "desired_state": "",
+  "state": "validating",
+  "revision": 2,
+  "generation": 2,
+  "tables_ready": 0,
+  "verification": "",
+  "created_at": ""
+}
+    investigation_probe_test.go:67: non-interactive JSON resync without confirmation -> exit=0 destructive control requests=1
+--- PASS: TestInvestigationResyncSkipsConfirmation (0.07s)
+=== RUN   TestInvestigationDigitLedMirrorName
+✗ Bad Request
+  API returned HTTP 400
+  → https://gregale.dev/docs/cli
+    investigation_probe_test.go:100: valid pipeline slug=true generated mirror="123-orders-mirror" valid database name=false; failed after 1 source check
+--- PASS: TestInvestigationDigitLedMirrorName (0.00s)
+=== RUN   TestInvestigationSourceNameCollision
+{
+  "id": "532ce5d3-0f05-4540-b60f-a42b99b7e0bc",
+  "connection_id": "b808fc5f-3df7-4a53-b645-04eb021ad62a",
+  "connection_revision": 0,
+  "state": "blocked",
+  "fresh": true,
+  "truncated": false,
+  "checks": null,
+  "tables": null,
+  "created_at": ""
+}
+✗ Source compatibility check failed before mirror provisioning
+  connection check found blockers; follow the reported remediation
+{
+  "id": "8a919a39-9e0d-45dd-b5d1-620607d115e3",
+  "connection_id": "b808fc5f-3df7-4a53-b645-04eb021ad62a",
+  "connection_revision": 0,
+  "state": "blocked",
+  "fresh": true,
+  "truncated": false,
+  "checks": null,
+  "tables": null,
+  "created_at": ""
+}
+✗ Source compatibility check failed before mirror provisioning
+  connection check found blockers; follow the reported remediation
+    investigation_probe_test.go:137: different valid pipeline names and URLs generate identical account-unique source names: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-source"
+--- PASS: TestInvestigationSourceNameCollision (0.00s)
+=== RUN   TestInvestigationAuthPreflightAfterProvisioning
+{
+  "observed_revision": 1,
+  "observation_fresh": true,
+  "id": "4de9904c-a565-466e-aca0-b9a88acbfec5",
+  "name": "",
+  "source_connection_id": "",
+  "database_id": "",
+  "tables": null,
+  "read_subjects": null,
+  "desired_state": "",
+  "state": "live",
+  "revision": 1,
+  "generation": 0,
+  "tables_ready": 0,
+  "verification": "",
+  "created_at": ""
+}
+✗ Not Found
+  API returned HTTP 404
+  → https://gregale.dev/docs/cli
+    investigation_probe_test.go:176: missing Auth app is first checked after creating 1 mirror database and 1 live pipeline; CLI exits 4 retaining both
+--- PASS: TestInvestigationAuthPreflightAfterProvisioning (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/gregale	0.169s

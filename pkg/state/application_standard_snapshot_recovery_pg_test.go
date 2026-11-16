@@ -113,7 +113,9 @@ func measuredPromotionRecoveryVersions(t *testing.T) []int64 {
 		// Also remove newly added standards entries, even if the reviewed
 		// manifest forgot them. The audit migration has its separate prepare
 		// operation and must exist before recovery can record a receipt.
-		if strings.Contains(source.Filename, "_application_standard_") && source.Version != 20261002015945515 {
+		// 20261111123949621 is a later replay-safe function fix (#7015), not
+		// a frozen standards migration; ordinary startup replays it.
+		if strings.Contains(source.Filename, "_application_standard_") && source.Version != 20261002015945515 && source.Version != 20261111123949621 {
 			wanted[source.Version] = true
 		}
 	}

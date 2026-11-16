@@ -72,7 +72,10 @@ func (s *Service) AccountingDiagnostics(ctx context.Context, accountID, afterID 
 
 func accountingDiagnostic(row AccountingCoverage, policy UsagePolicy, now time.Time) AccountingDiagnostic {
 	issues := row.Progress.blockingIssues(policy, now)
-	d := AccountingDiagnostic{AccountingCoverage: row, Blocking: issues != 0, Reasons: make([]string, 0)}
+	// A pending final window blocks only an account without headroom, which
+	// is an account-wide question (UsageSnapshot.Stale), so one row's
+	// diagnostic reports it without calling it blocking.
+	d := AccountingDiagnostic{AccountingCoverage: row, Blocking: issues.hard(), Reasons: make([]string, 0)}
 	if validUsageWindow(policy.Window) {
 		if !row.CreatedAt.IsZero() {
 			d.RequiredFrom = row.CreatedAt.UTC().Truncate(policy.Window)
@@ -96,6 +99,7 @@ func accountingDiagnostic(row AccountingCoverage, policy UsagePolicy, now time.T
 		{usageWindowMismatch, "window_mismatch"}, {usageShutdownUnconfirmed, "shutdown_unconfirmed"},
 		{usageCoverageIncomplete, "coverage_incomplete"}, {usageObservationStale, "observation_stale"},
 		{usageFinalCorrectionPending, "final_correction_pending"},
+		{usageFinalWindowPending, "final_window_pending"},
 	} {
 		if issues&reason.issue != 0 {
 			code := reason.code
@@ -118,7 +122,26 @@ const (
 	usageCoverageIncomplete
 	usageObservationStale
 	usageFinalCorrectionPending
+	// usageFinalWindowPending: a deleted resource owes only the window it was
+	// deleted in, which has not closed or closed within StaleAfter. Admission
+	// waits for it only when the account lacks headroom under every monthly
+	// ceiling (ADR-20261115190000).
+	usageFinalWindowPending
 )
+
+// hard reports an issue that blocks admission whatever the account's usage.
+func (i usageIssues) hard() bool {
+	return i&^usageFinalWindowPending != 0
+}
+
+// finalWindowOnSchedule reports a deleted resource whose only missing
+// coverage is its final window (the one it was deleted in, ending at end),
+// while that window is open or closed no more than StaleAfter ago. Earlier
+// windows, when owed, must already be covered: owedFrom is the earliest
+// window still uncollected.
+func finalWindowOnSchedule(owedFrom, end time.Time, policy UsagePolicy, now time.Time) bool {
+	return !end.IsZero() && !owedFrom.Before(end.Add(-policy.Window)) && now.Sub(end) <= policy.StaleAfter
+}
 
 // creationInFlight reports an unresolved obligation whose provider call is
 // still running: the resource is provisioning under a held lease and was
@@ -157,6 +180,12 @@ func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIs
 		if !p.Terminal && !p.CreatedAt.IsZero() && !p.CreatedAt.Before(now.UTC().Truncate(policy.Window)) {
 			return 0
 		}
+		// A resource created and deleted inside one window owes only that
+		// window (ADR-20261115190000).
+		if p.Terminal && !p.CreatedAt.IsZero() &&
+			finalWindowOnSchedule(p.CreatedAt.UTC().Truncate(policy.Window), usageEnd(p.EndedAt, policy.Window), policy, now) {
+			return usageFinalWindowPending
+		}
 		return usageCoverageMissing
 	}
 	if p.Window != policy.Window {
@@ -169,7 +198,11 @@ func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIs
 			return usageShutdownUnconfirmed
 		}
 		if p.CollectedUntil.Before(end) {
-			issues |= usageCoverageIncomplete
+			if finalWindowOnSchedule(p.CollectedUntil, end, policy, now) {
+				issues |= usageFinalWindowPending
+			} else {
+				issues |= usageCoverageIncomplete
+			}
 		}
 		// The final correction tail revises windows that already have a
 		// reading, so admission does not wait for it: it blocks only once the

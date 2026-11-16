@@ -180,7 +180,18 @@ func orgObjectOwnership(t *testing.T, base state.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An object event nobody receives is not kept (ADR-614 amendment
+	// 2026-11-13); the company app receives this one. The subscription goes
+	// once the receipt exists, so it does not hold the creator's erasure.
+	subscriptions := base.(state.EventSubscriptionStore)
+	sub, _, err := subscriptions.UpsertEventSubscription(ctx, f.actor.ID, f.app.ID, api.ObjectEventSource, "*", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := store.AppendEvent(t.Context(), "objectstorage", "event.published", &f.actor.ID, objectEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := subscriptions.DeleteEventSubscription(ctx, sub.ID, f.actor.ID, f.app.ID); err != nil {
 		t.Fatal(err)
 	}
 	if actorKey.IssuerAccountID != f.actor.ID || ownerKey.IssuerAccountID != f.owner.ID || binding.IssuerAccountID != "" {

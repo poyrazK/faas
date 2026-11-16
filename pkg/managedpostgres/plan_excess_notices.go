@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
+
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -26,6 +28,20 @@ type PlanExcessNotice struct {
 	// DeleteAt is when the database is deleted if it still does not fit,
 	// set only while the deletion pass is on (ADR-20261110184700).
 	DeleteAt time.Time
+	// Reminder marks the one reminder sent a week before DeleteAt
+	// (ADR-20261110184700 amendment 2026-11-12); RecordedAt is then when it
+	// was found due.
+	Reminder bool
+}
+
+// PlanExcessReminderStore is the optional store capability the cap sweep uses
+// to find the deletion reminders due.
+type PlanExcessReminderStore interface {
+	// PlanExcessRemindersDue lists notices whose mailed deletion date falls
+	// after now and within api.ManagedPostgresPlanExcessDeleteReminder of
+	// it, with no reminder queued, for databases not being deleted, soonest
+	// first.
+	PlanExcessRemindersDue(ctx context.Context, now time.Time, limit int) ([]PlanExcessNotice, error)
 }
 
 // PlanExcessNoticeStore is the optional store capability the cap sweep uses
@@ -100,6 +116,25 @@ func (s *PostgresStore) UnmailedPlanExcessNotices(ctx context.Context, since tim
 	return notices, nil
 }
 
+// PlanExcessRemindersDue implements PlanExcessReminderStore.
+func (s *PostgresStore) PlanExcessRemindersDue(ctx context.Context, now time.Time, limit int) ([]PlanExcessNotice, error) {
+	if limit < 1 || limit > 500 || now.IsZero() {
+		return nil, ErrInvalid
+	}
+	rows, err := new(sqlc.Queries).ListManagedPostgresPlanExcessRemindersDue(ctx, s.catalog, sqlc.ListManagedPostgresPlanExcessRemindersDueParams{
+		Now: databaseNullableTime(now), RemindUntil: databaseNullableTime(now.Add(api.ManagedPostgresPlanExcessDeleteReminder)), BatchSize: int32(limit)})
+	if err != nil {
+		return nil, mapPostgresError(err)
+	}
+	notices := make([]PlanExcessNotice, 0, len(rows))
+	for _, row := range rows {
+		notices = append(notices, PlanExcessNotice{DatabaseID: databaseUUID(row.DatabaseID), AccountID: databaseUUID(row.AccountID),
+			DatabaseName: row.Name, ServiceClass: ServiceClass(row.ServiceClass), Reason: row.Reason, RecordedAt: now.UTC(),
+			DeleteAt: row.DeleteAt.Time.UTC(), Reminder: true})
+	}
+	return notices, nil
+}
+
 // SyncPlanExcessNotices implements PlanExcessNoticeStore.
 func (s *MemoryStore) SyncPlanExcessNotices(_ context.Context, databaseIDs []string, suspended map[string]string, recordedAt time.Time) (int, error) {
 	if recordedAt.IsZero() {
@@ -157,12 +192,56 @@ func (s *MemoryStore) UnmailedPlanExcessNotices(_ context.Context, since time.Ti
 	return notices, nil
 }
 
-// memoryPlanExcessNotice is a notice, whether an email claimed it, and the
-// deletion date that email named.
+// PlanExcessRemindersDue implements PlanExcessReminderStore.
+func (s *MemoryStore) PlanExcessRemindersDue(_ context.Context, now time.Time, limit int) ([]PlanExcessNotice, error) {
+	if limit < 1 || limit > 500 || now.IsZero() {
+		return nil, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	until := now.Add(api.ManagedPostgresPlanExcessDeleteReminder)
+	var notices []PlanExcessNotice
+	for id, n := range s.planExcessNotices {
+		database, ok := s.databases[id]
+		if !ok || !n.mailed || n.reminded || n.deleteAt.IsZero() || !n.deleteAt.After(now) || n.deleteAt.After(until) ||
+			database.State == StateDeleting || database.State == StateDeleted {
+			continue
+		}
+		notice := n.PlanExcessNotice
+		notice.AccountID, notice.DatabaseName, notice.ServiceClass = database.AccountID, database.Name, database.Spec.Class
+		notice.RecordedAt, notice.DeleteAt, notice.Reminder = now.UTC(), n.deleteAt, true
+		notices = append(notices, notice)
+	}
+	sort.Slice(notices, func(i, j int) bool {
+		if !notices[i].DeleteAt.Equal(notices[j].DeleteAt) {
+			return notices[i].DeleteAt.Before(notices[j].DeleteAt)
+		}
+		return notices[i].DatabaseID < notices[j].DatabaseID
+	})
+	if len(notices) > limit {
+		notices = notices[:limit]
+	}
+	return notices, nil
+}
+
+// memoryPlanExcessNotice is a notice, whether an email claimed it, the
+// deletion date that email named, and whether its reminder was queued.
 type memoryPlanExcessNotice struct {
 	PlanExcessNotice
 	mailed   bool
 	deleteAt time.Time
+	reminded bool
+}
+
+// markPlanExcessNoticeReminded stands in for the mail outbox linking a
+// reminder's intent.
+func (s *MemoryStore) markPlanExcessNoticeReminded(databaseID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n, ok := s.planExcessNotices[databaseID]; ok {
+		n.reminded = true
+		s.planExcessNotices[databaseID] = n
+	}
 }
 
 // markPlanExcessNoticeMailed stands in for the mail outbox linking an intent

@@ -62,10 +62,10 @@ func TestHandlers_CreateKey_NonAdminGetsExpiry(t *testing.T) {
 	}
 }
 
-// TestHandlers_CreateKey_AdminHasNoExpiry pins the
-// "admin = never expires" legacy semantics. A key with
-// scopes=["admin"] returns ExpiresAt="".
-func TestHandlers_CreateKey_AdminHasNoExpiry(t *testing.T) {
+// TestHandlers_CreateKey_AdminExpiresInAYear pins ADR-20261114120000: a
+// full-access key expires DefaultAPIKeyLifetimeDays after it is minted,
+// like every other key.
+func TestHandlers_CreateKey_AdminExpiresInAYear(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
 
 	body := api.CreateKeyRequest{Label: "admin-key", Scopes: []string{api.ScopeAdmin}}
@@ -77,8 +77,13 @@ func TestHandlers_CreateKey_AdminHasNoExpiry(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.ExpiresAt != "" {
-		t.Errorf("admin key: ExpiresAt = %q, want empty (legacy admin semantics)", resp.ExpiresAt)
+	got, err := time.Parse(time.RFC3339, resp.ExpiresAt)
+	if err != nil {
+		t.Fatalf("admin key ExpiresAt = %q: %v", resp.ExpiresAt, err)
+	}
+	want := time.Now().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
+	if d := got.Sub(want); d < -time.Hour || d > time.Hour {
+		t.Errorf("admin key ExpiresAt = %s, want about %s", got, want)
 	}
 }
 

@@ -6,11 +6,13 @@
 // helpers for those capabilities. Preview and internal capabilities are in
 // '@gregale/sdk-node/preview' (src/preview.ts), which re-exports everything.
 //
-// The generated services call `OpenAPI.BASE/TOKEN/HEADERS` from the shared
-// runtime core in `src/generated/core/` — the `FaaSClient` constructor sets
-// these once at construction time. Mutating methods receive a fresh
-// `Idempotency-Key` per logical call, preserved across retries, via the
-// fetch wrapper stack installed on `globalThis.fetch` (see `client.ts`).
+// createClient binds these services to private configuration and transport.
+// Static service exports and FaaSClient retain their legacy shared state.
+
+export { createClient, type GregaleClient } from './isolated-client.js';
+export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
+export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
+export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 
 // Generated runtime core, shared with the preview entry.
 export {
@@ -106,3 +108,13 @@ export {
 } from './webhook.js';
 // Opaque login-target signal for opt-in pre-auth abuse observation.
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
+
+export { SourceUploadError, parseSourceUploadCheckpoint, saveSourceUploadCheckpoint, loadSourceUploadCheckpoint, type SourceUploadCheckpoint, type SourceUploadOptions, type SourceUploadProgress, type SourceUploadStage, type SourceUploadCode, type SourceUploadInput, type SourceUploads } from './source-upload.js';
+export { inspectSource, prepareSource, SourcePreparationError, type SourcePreparationCode, type SourcePreparationOptions, type SourcePreparationProgress, type SourceIssue, type SourceEntry, type SourcePlan, type PreparedSource } from './source-preparation.js';
+export { SourceDeploymentError, loadSourceDeploymentState, parseSourceDeploymentState, type SourceDeploymentCode, type SourceDeploymentPhase, type SourceDeploymentArchive, type SourceDeploymentState, type SourceDeploymentProgress, type SourceDeploymentOptions, type SourceDeploymentPreparationOptions, type SourceDeploymentWaitOptions, type SourceDeploymentReleaseProgress, type SourceDeploymentInput, type SourceDeploymentResumeInput, type SourceDeploymentResult, type SourceDeployments } from './source-deployment.js';
+export { inspectProject, parseProjectPlan, validateProjectPlan, projectDeployOptions, ProjectInspectionError, type ProjectPlan, type ProjectInspectionOptions, type ProjectShape, type ProjectFramework, type ProjectIssue, type ProjectIssueCode, type ProjectInput, type ProjectSetting, type ProjectCandidate, type ProjectGeneratedFile, type ProjectBuild } from './project-inspection.js';
+
+export { parseReviewedProjectPlan, parseProjectApplicationState, loadProjectApplicationState, ProjectWorkflowError, type ReviewedProjectPlan, type ProjectPreviewInput, type ProjectPreviewOptions, type ProjectApplyOptions, type ProjectWorkflowOptions, type ProjectWorkflowCode, type ProjectWorkflowPhase, type ProjectWorkflowProgress, type ProjectApplicationState, type ProjectApplicationResult, type ProjectWorkloadOutcome, type ProjectWorkflows } from './project-workflows.js';
+export { parseProjectVerificationTarget, projectVerificationTarget, type VerificationOutcome, type VerificationCode, type VerificationWorkload, type ProjectVerificationTarget, type VerificationCheckResult, type VerificationCheckContext, type VerificationCheck, type VerificationCheckEvidence, type VerificationHealth, type VerificationTimeline, type VerificationWorkloadReport, type ProjectVerificationReport, type ProjectVerificationOptions, type ProjectVerification } from './project-verification.js';
+export { JobContract, JobError, prepareJobInput, readJobInput, decodeJobOutput, runLocalJobBatch, runJobTask, localJobStore, type JobCode, type JobSchema, type JobContractSpec, type JobInput, type JobInputBinding, type JobStore, type JobContext, type JobHandler, type JobArtifact, type LocalJobOutcome } from './job-runtime.js';
+export { parseJobCheckpoint, type JobCheckpoint, type JobProgress, type JobRunOptions, type JobSubmitOptions, type JobItemOutcome, type TypedJobRun, type TypedJob, type TypedJobs } from './typed-jobs.js';

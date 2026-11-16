@@ -37,6 +37,10 @@ const (
 	Delivery Domain = "delivery"
 	Control  Domain = "control"
 	Account  Domain = "account"
+	// Neon holds the per-project Neon API keys (ADR-20261112160000 §3).
+	// neond seals and opens them on the control plane; apid, which asks
+	// neond to call Neon, never holds the identity.
+	Neon Domain = "neon"
 
 	// Dedicated identities that predate the registry (ADR-1737, ADR
 	// 20261016151947, ADR-1591). They are listed so every sealed column has
@@ -109,7 +113,7 @@ var computeOnly = []string{RoleCompute}
 var bothRoles = []string{RoleControlPlane, RoleCompute}
 
 var registry = []Spec{
-	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
+	{Domain: Runtime, Readers: []string{"vmmd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("app_secrets", "ciphertext"),
 		cols("project_environment_secrets", "ciphertext"),
 		cols("app_config_guard_secrets", "ciphertext"),
@@ -127,12 +131,18 @@ var registry = []Spec{
 		// build domain's contract check waits for any such capture to
 		// expire.
 		cols("crash_captures", "sealed_key"),
+		// ADR-20261110210000 slice 3d-3: a park or warm snapshot's capture
+		// key, sealed at the source by vmmd exactly as a crash capture's,
+		// opened by vmmd (or secretd by reference) to restore it.
+		cols("snapshots", "sealed_key"),
 	)},
 	{Domain: Outbound, Readers: []string{"outboundd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("outbound_integration_credentials", "authorization_sealed"),
 		cols("outbound_integration_credential_keys", "authorization_sealed"),
 	)},
-	{Domain: Build, Readers: []string{"imaged", "vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
+	// ADR-20261110210000 slice 3j: the control plane's secretd pulls from
+	// apps' private registries with it.
+	{Domain: Build, Readers: []string{"imaged", "vmmd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("app_registry_credentials", "password_encrypted"),
 		cols("job_registry_credentials", "password_encrypted"),
 	)},
@@ -144,7 +154,7 @@ var registry = []Spec{
 	// headers and sealed edge-rule request header values
 	// (ADR-20261108110000). gatewayd-public's DNS-provider token is not
 	// stored in these columns, so it is not a reader.
-	{Domain: Edge, Readers: []string{"gatewayd-internal"}, Roles: computeOnly, Wired: true, Columns: join(
+	{Domain: Edge, Readers: []string{"gatewayd-internal", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("apps", "public_auth_basic"),
 		cols("app_log_drains", "auth_header_sealed"),
 		cols("application_standard_log_destinations", "auth_header_sealed"),
@@ -163,6 +173,12 @@ var registry = []Spec{
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
 	)},
+	// Per-project Neon API keys (ADR-20261112160000 §3). neond seals each
+	// key to this domain alone and is its only reader: the table is new, so
+	// there is no fleet copy.
+	{Domain: Neon, Readers: []string{"neond"}, Roles: cpOnly, Wired: true, Columns: join(
+		cols("neon_project_keys", "sealed_key"),
+	)},
 	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),
 	)},
@@ -170,12 +186,14 @@ var registry = []Spec{
 	// delivery too. apid merges an update without opening the stored config
 	// and seals new credentials to the domain and, for now, the fleet key:
 	// a schedd of the previous release opens them with the fleet key alone.
-	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
+	{Domain: Delivery, Readers: []string{"schedd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
 		cols("app_webhooks", "secret_sealed", "previous_secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
-	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
+	// ADR-20261110210000 slice 3k: the control plane's secretd also opens the
+	// cluster key, to mint internal-service tokens for compute schedds.
+	{Domain: Control, Readers: []string{"schedd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("cluster_signing_keys", "sealed_blob"),
 	)},
 	// Account values are wired a group at a time (ADR 20261022111812):
@@ -188,6 +206,8 @@ var registry = []Spec{
 	// (Pipeline).
 	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("accounts", "mfa_secret_encrypted"),
+		cols("tool_oauth_connections", "credentials_ciphertext"),
+		cols("tool_oauth_authorizations", "flow_ciphertext"),
 		// apid seals a managed workflow's plan and its workflow worker
 		// opens it; schedd never reads it.
 		cols("agent_execution_workflows", "sealed_plan"),

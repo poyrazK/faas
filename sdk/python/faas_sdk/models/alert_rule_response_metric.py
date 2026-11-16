@@ -2,6 +2,7 @@ from typing import Literal
 
 AlertRuleResponseMetric = Literal[
     "account_spend_eur",
+    "ai_budget_alerts",
     "api_up",
     "cert_expiry_seconds",
     "cert_issuance_failed",
@@ -91,6 +92,7 @@ AlertRuleResponseMetric = Literal[
 
 ALERT_RULE_RESPONSE_METRIC_VALUES: set[AlertRuleResponseMetric] = {
     "account_spend_eur",
+    "ai_budget_alerts",
     "api_up",
     "cert_expiry_seconds",
     "cert_issuance_failed",

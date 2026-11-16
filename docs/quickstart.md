@@ -88,7 +88,7 @@ verify the app; choose another GET path that reaches an application route.
 Useful follow-ups:
 
 ```bash
-gregale invoke my-api --method GET --path /
+gregale invocation run my-api --method GET --path /
 gregale logs my-api --follow
 gregale metric my-api
 gregale open my-api
@@ -97,12 +97,14 @@ gregale feature list
 
 On Hobby, Pro and Scale a new app is private: every request needs an API key
 as `Authorization: Bearer <key>`, so opening its URL in a browser shows
-`401 unauthorized`. `gregale invoke` sends the request with your login and is
+`401 unauthorized`. `gregale invocation run` sends the request with your login and is
 the way to test it; never put a key in a URL. To make the app public on
-purpose, run `gregale app update my-api --no-require-authn`. The public
-`/healthz` URL answers `{"status":"ok","source":"edge"}` from Gregale's edge,
-so it does not show your code ran; use
-`gregale invoke my-api --method GET --path /healthz` to reach your handler's own
+purpose, run `gregale app update my-api --no-require-authn`. On a public
+app the `/healthz` URL answers `{"status":"ok","source":"edge"}` from
+Gregale's edge without a key; on a private app it answers
+`401 unauthorized` without one, like every other path. The edge answer does
+not show your code ran; use
+`gregale invocation run my-api --method GET --path /healthz` to reach your handler's own
 health route.
 
 Apps park when idle and wake on the next request; this saves idle cost but the

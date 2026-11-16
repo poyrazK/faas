@@ -92,10 +92,16 @@ func (s *server) createSignupAccount(r *http.Request, method, source string, par
 	if params.TermsAcceptance == nil {
 		params.TermsAcceptance = signupTermsAcceptance(method)
 	}
+	var err error
+	params.Referral, err = s.sales.SignupAttribution(r)
+	if err != nil {
+		return state.CreateAccountWithPersonalOrgResult{}, err
+	}
 	res, err := s.store.CreateAccountWithPersonalOrg(r.Context(), params)
 	if err == nil {
 		s.signups.record(ip)
 		s.recordSignup(r.Context(), res.Account.ID, method, source)
+		s.recordSignupFacts(r.Context(), r, res.Account.ID, res.Account.Email, method)
 	}
 	return res, err
 }

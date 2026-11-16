@@ -49,6 +49,37 @@ otherwise (`--source=worktree` includes uncommitted changes). Before upload:
   to `.gregaleignore` to keep them out, and set their values with
   `gregale env push` or `gregale env set`.
 
+### Inspect the payload before uploading
+
+```bash
+gregale deploy --dry-run --explain-files
+gregale deploy --dry-run --explain-files --worktree --json
+gregale deploy --dry-run --explain-files --path services/api --source=head
+```
+
+This local inspection needs no login and makes no API calls. It uses the deploy
+packers and reports included paths, byte sizes, excluded paths and the ignore
+file and line responsible for a match. Sizes come from the finished archive,
+including generated Go build files and secret-scan replacements. Credential-like
+filenames are marked; file contents, secret values and ignore-rule text are not
+printed. `--secrets-file PATH` excludes that file without importing its values
+as remote configuration.
+
+The default source selection is the same as deploy. HEAD reports describe Git's
+normalized archive, so uncommitted, untracked and export-ignored files are absent.
+An excluded directory represents its pruned subtree. For a declared workspace
+member, the report includes the repository context and the selected source root.
+For a functions project, select one function with `--path`; use `--project` to
+inspect a project root archive. Image, tarball, remote repository and template
+inputs are not supported by file inspection.
+
+JSON includes `source_mode`, `commit` for HEAD, `file_count`, `included_bytes`,
+`compressed_bytes` and `files`. Each file records its logical `path`, included
+`archive_path`, `included`, `bytes`, `reason` and any `rule_file`/`rule_line`.
+Account upload limits, remote configuration and runtime readiness are unchecked;
+`account_limit_checked` is false. Ordinary `--dry-run` without `--explain-files`
+continues to compare authenticated remote state.
+
 ### Limits
 
 | Limit | Free | Hobby | Pro | Scale |
@@ -261,6 +292,12 @@ name one with `--installation-id` (`gregale github status` lists them).
 **Who can connect.** A personal installation can be connected by its owner;
 an organization's installation by an admin of the organization. Each
 installation belongs to one Gregale account.
+
+If GitHub shows only other people's personal installations, Connect GitHub
+continues with installing Gregale on your own account. Connection failures in
+Settings → Integrations explain the reason and next step. **Install on GitHub**
+starts a fresh installation request when you need to choose another account;
+the return to Gregale remains verified.
 
 **Deploy from GitHub Actions instead.** `gregale github setup my-api --repo
 acme/my-api` binds the app, writes a deploy workflow, and hands production
@@ -530,7 +567,13 @@ until the copy is ready and its credentials are verified:
 
 Until the switch reaches step 4, any failure (or `gregale release rollback status
 my-api <id> --cancel`) unwinds it, and the app keeps serving its current
-release on the original database. The restored copy is kept either way;
+release on the original database.
+
+When the code is fine and the data is not, restore the database to a point
+you pick and switch the app without changing its code:
+`gregale postgres restore orders --name orders-0900 --point-in-time <time> --switch my-api`
+runs the same steps with the current release
+([Restore and switch an app](postgres.md#restore-and-switch-an-app)). The restored copy is kept either way;
 delete it with `gregale postgres delete` if you do not need it.
 
 What to expect:
@@ -1034,6 +1077,15 @@ they finish. If you start another deploy before an earlier one goes live, the
 earlier one never goes live: it is superseded when it reaches the cutover,
 whether or not the newer deploy succeeds.
 
+When a revision goes live, the previous one stops taking new requests at once.
+Its instances that are still answering requests keep running for up to
+30 seconds so those requests can finish, then park. An instance with nothing
+in flight parks immediately. The draining instances use the one extra
+instance a rollout may run beside the app's limit, so a one-instance app keeps
+its old instance's requests while the new revision starts. Only an app that
+is already past that, its limit plus the extra instance, parks the old
+instances at once so the new revision can start.
+
 Use a revision anywhere a deployment ID is accepted:
 
 ```bash
@@ -1157,8 +1209,14 @@ rollback to any deploy, and `--rollback-on-5xx=false` skips it.
 The first window opens when Gregale first sees traffic for the completed
 release and lasts 5 minutes. If at least 5 of the release's responses are 5xx,
 and those are at least half its requests, Gregale rolls back to the release it
-replaced. The check runs every 15 seconds, and the release keeps serving until
-the previous one is ready again. While a rollout runs, a plain
+replaced. A 5xx the replaced release also returned in the 24 hours before, for
+the same method, route and status, does not count: a route that already failed
+cannot roll a release back. The check runs every 15 seconds, and the release
+keeps serving until the previous one is ready again. The rolled-back release
+records the decision, and `gregale release summary <id>` shows it with or
+without a canary, for example `abort_post_release_5xx: first-wake 5xx: 5 of 5
+responses failed; rolled back automatically to <previous>`. While a rollout
+runs, a plain
 `gregale rollback my-api` is refused because traffic is split; to stop the
 rollout and return its traffic to the release it replaced, run
 `gregale release traffic rollback my-api` (the same as
@@ -1253,7 +1311,9 @@ aborted and traffic returns to the previous revision, even with no traffic.
 For 30 minutes after a release reaches 100%, Gregale keeps comparing it with
 the previous release's traffic from before the rollout. A clear 5xx or p95
 latency regression rolls it back automatically and records why on the
-deployment (`gregale release summary`). This also covers immediate
+deployment (`gregale release summary`). When the previous release had too
+little traffic to compare, the first-window bar applies instead, again leaving
+out 5xx the previous release also returned. This also covers immediate
 releases, and anything the canary's share of traffic did not show. Releases
 deployed with `--rollback-on-5xx=false` are not watched. The watch ends early
 only when a newer release takes traffic; deploying one with `--no-traffic`,

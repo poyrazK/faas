@@ -19,6 +19,9 @@ func TestHotPathValidate(t *testing.T) {
 		{name: "binary hop without keep-alive", hot: HotPath{EdgeBinaryHop: true}, edge: PublicEdge{ComputeNodes: true}, wantErr: "hot_path.edge_binary_hop"},
 		{name: "keep-alive without compute edges", hot: HotPath{EdgeKeepAlivePerNode: true}, wantErr: "hot_path.edge_keepalive_per_node"},
 		{name: "fast path without the tier", hot: HotPath{FrozenFastPath: true}, wantErr: "hot_path.frozen_fast_path"},
+		{name: "dispatch concurrency in range", hot: HotPath{InvocationDispatchConcurrency: MaxInvocationDispatchConcurrency}},
+		{name: "dispatch concurrency too high", hot: HotPath{InvocationDispatchConcurrency: MaxInvocationDispatchConcurrency + 1}, wantErr: "hot_path.invocation_dispatch_concurrency"},
+		{name: "dispatch concurrency negative", hot: HotPath{InvocationDispatchConcurrency: -1}, wantErr: "hot_path.invocation_dispatch_concurrency"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			errs := tc.hot.validate(tc.edge)

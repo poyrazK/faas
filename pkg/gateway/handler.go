@@ -992,6 +992,8 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
+	// appPlan names a service call target's plan (WithAppPlanResolver).
+	appPlan               AppPlanResolver
 	publicRoutingPolicy   PublicRoutingPinner
 	publicRoutingStride   publicRoutingStride
 	publicRoutingFreezes  publicRoutingFreezes
@@ -1379,6 +1381,9 @@ type Handler struct {
 	// (cmd/gatewayd-internal/main.go → secretbox.MultiOpen
 	// → publicAuthUnsealer closure).
 	publicAuthUnsealer PublicAuthUnsealer
+	// basicAuthVerifiers checks basic auth against verify-only verifiers
+	// (ADR-20261110210000 slice 3h); nil keeps the sealed path alone.
+	basicAuthVerifiers *BasicAuthVerifiers
 
 	// edgeRules (ADR-089 / issue #561 PR 3) is the
 	// per-host LRU-backed matcher consulted between the
@@ -2374,7 +2379,7 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		// RFC 9110 §15.5.2: a 401 carries the challenge (production-us
 		// hunt #9, H9-82).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			"Unauthorized", missingBearerDetail(tok)).
 			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
@@ -2907,8 +2912,13 @@ func (h *Handler) applyEdgeRuleHeaders(w http.ResponseWriter, r *http.Request, a
 	// any request-side op runs (ADR-968).
 	requestOps := expandHeaderOps(rule.RequestHeaders, r)
 	responseOps := expandHeaderOps(rule.ResponseHeaders, r)
-	// Request-side ops: apply directly to r.Header.
+	// Request-side ops: apply directly to r.Header. A sealed value is added
+	// by the instance's vmmd (ADR-20261110210000 slice 3i).
 	for _, op := range requestOps {
+		if op.SecretID != "" {
+			recordEdgeSecretHeader(r, op)
+			continue
+		}
 		applyHeaderOp(r.Header, op)
 	}
 	// Response-side ops: wrap w with a headerRecorder that
@@ -5392,7 +5402,7 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 		})
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			"Unauthorized", missingBearerDetail(tok)).
 			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
@@ -5466,7 +5476,7 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 // every other credential compare in the platform
 // (api.HashAPIKey / cmd/apid webhook signing).
 func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
-	if h.publicAuthCache == nil || h.publicAuthUnsealer == nil {
+	if (h.publicAuthCache == nil || h.publicAuthUnsealer == nil) && h.basicAuthVerifiers == nil {
 		rec.status = http.StatusInternalServerError
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Auth chain not wired",
@@ -5521,13 +5531,11 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 	// PublicAuthUnsealer.UnsealBasicAuth on the
 	// secretbox-sealed BasicSealed blob stored on the apps
 	// row.
-	expectedUser, expectedPass, ok := h.publicAuthCache.Get(app.ID, app.PublicAuth.BasicSealed, func() (string, string, bool) {
-		u, p, err := h.publicAuthUnsealer.UnsealBasicAuth(r.Context(), app.PublicAuth.BasicSealed)
-		if err != nil {
-			return "", "", false
-		}
-		return u, p, true
-	})
+	//
+	// ADR-20261110210000 slice 3h: with verifiers, the credential is
+	// checked against its argon2id verifier and never opened; the sealed
+	// path stays as the fallback for a blob that has none yet.
+	matched, ok := h.basicAuthMatches(r, app, user, pass)
 	if !ok {
 		// Unseal failure is treated as a credential mismatch
 		// (401) so a brute-forcer can't tell the difference
@@ -5545,11 +5553,8 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	// (3) Constant-time compare of fixed-length digests, both
-	// evaluated. ConstantTimeCompare returns early on unequal
-	// lengths and || skipped the password compare on a wrong
-	// username, so timing revealed the username and both lengths.
-	if !basicCredentialsMatch(user, pass, expectedUser, expectedPass) {
+	// (3) The credential did not match.
+	if !matched {
 		// One audit row per app and client prefix a minute: a guessing
 		// flood wrote one per guess and filled the bounded audit queue.
 		if h.publicAuthGuesses.fail(guessKey) {
@@ -5982,8 +5987,12 @@ func (c *capWriter) Write(b []byte) (int, error) {
 		// Fire once; idempotent under concurrent writes thanks
 		// to disabled CAS. A committed response cannot become a
 		// problem document any more (see committed).
-		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil && !c.committed {
-			c.onCap()
+		if c.disabled.CompareAndSwap(false, true) {
+			if !c.committed && c.onCap != nil {
+				c.onCap()
+			} else if c.committed {
+				markResponseTruncated(c.ResponseWriter)
+			}
 		}
 		if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
 			c.onWarn("exceeded")
@@ -6307,6 +6316,10 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Outermost: a gRPC caller gets the platform's errors as gRPC statuses;
+	// the recorders below still see the HTTP status (grpc_platform_error.go).
+	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
+	defer finishGRPC()
 	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
@@ -7800,6 +7813,9 @@ haveApp:
 			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
 		}
 		if err != nil {
+			if h.clientLeftDuringWake(r, app) {
+				return
+			}
 			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
 				// still alive. Record the visit and let the page's fetch/meta
@@ -8101,6 +8117,7 @@ haveApp:
 	// the HTTP bytes to this exact instance. A retry restamps for its own
 	// target inside the forward closures below.
 	var identity api.PlatformIdentity
+	r = h.withFlagRequestAttributes(r)
 	r, identity = stampTargetIdentity(r, app, target)
 	requestAttrs.addIdentity(identity)
 
@@ -8514,6 +8531,13 @@ haveApp:
 		capped := h.setupBufferedCapWriter(w, r.Method, app, planCap)
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				// Only vmmd adds sealed edge-rule headers
+				// (ADR-20261110210000 slice 3i); without it the
+				// request would reach the app without its credential.
+				if len(edgeSecretHeadersFrom(req.Context())) > 0 {
+					writeForwarderProblem(w, http.StatusServiceUnavailable)
+					return
+				}
 				req, _ = stampTargetIdentity(req, app, tgt)
 				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
 				defer endTracking()
@@ -8771,6 +8795,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		if decision.path != "" {
 			requestLog = requestLog.With(decision.logAttribute())
 		}
+		if truncated := truncatedResponse(r); truncated != nil {
+			requestLog = requestLog.With("response_truncated", true, "sent_status", truncated.status, "response_bytes", truncated.Bytes)
+		}
 		if revision := TrafficPolicyRevision(r.Context()); revision != "" {
 			requestLog = requestLog.With("traffic_policy_revision", revision)
 		}
@@ -8852,7 +8879,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				AppID:                                appUUID,
 				DeploymentID:                         deploymentUUID,
 				Route:                                telemetryRoute,
-				Method:                               r.Method,
+				Method:                               api.NormalizeRequestAnalyticsMethod(r.Method),
 				Status:                               status,
 				LatencyMS:                            int(elapsed / time.Millisecond),
 				ColdBoot:                             cold,
@@ -9378,6 +9405,10 @@ type statusRecorder struct {
 	// Retain the origin's privacy veto before response-header rules can
 	// remove it. The parked HEAD cache is shared with anonymous callers.
 	headCachePrivate bool
+
+	// responseTruncated is set when the body passed the plan's cap after
+	// the status went out (truncated_response_telemetry.go).
+	responseTruncated bool
 
 	// Capture the final rebound request context when the response commits.
 	trafficResponseCommittedContext context.Context

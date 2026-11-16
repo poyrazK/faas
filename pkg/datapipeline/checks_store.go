@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,7 +58,7 @@ func (s *PostgresStore) Check(ctx context.Context, account, id string) (Connecti
 	return describeCheck(r)
 }
 
-func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, revision int64, database string) (ConnectionCheck, error) {
+func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, revision int64, database string, options ...api.RequestDataConnectionCheck) (ConnectionCheck, error) {
 	if !validID(account) || !validID(id) {
 		return ConnectionCheck{}, ErrNotFound
 	}
@@ -64,6 +66,10 @@ func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, re
 		return ConnectionCheck{}, ErrInvalid
 	}
 	database = canonicalID(database)
+	selection, err := discoverySelection(options)
+	if err != nil {
+		return ConnectionCheck{}, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return ConnectionCheck{}, storeError(err)
@@ -105,6 +111,15 @@ func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, re
 		if decodeErr != nil {
 			return ConnectionCheck{}, decodeErr
 		}
+		if !slices.Equal(check.RequestedTables, selection.RequestedTables) || check.Search != selection.Search || check.Mode != selection.Mode {
+			// A saved setup retry can narrow an earlier discovery request. Keep
+			// its failed-check cooldown even when that selection changes.
+			age := time.Since(old.CreatedAt.Time)
+			if ownerErr == nil && old.State == "blocked" && age >= 0 && age < api.DataPipelineCheckRetryInterval {
+				return check, nil
+			}
+			return s.enqueueCheck(ctx, tx, account, id, revision, database, selection)
+		}
 		// Coalesce active and very recent requests. Retrying a lost HTTP response
 		// must not continuously replace a worker's lease or flood the source.
 		age := time.Since(old.CreatedAt.Time)
@@ -114,7 +129,42 @@ func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, re
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return ConnectionCheck{}, storeError(err)
 	}
-	r, err := s.q.PipelineCheckRequest(ctx, tx, sqlc.PipelineCheckRequestParams{AccountID: account, ConnectionID: id, ID: uuid.NewString(), ConnectionRevision: revision, DatabaseID: database})
+	return s.enqueueCheck(ctx, tx, account, id, revision, database, selection)
+}
+
+func discoverySelection(options []api.RequestDataConnectionCheck) (api.DataConnectionCheck, error) {
+	selection := api.DataConnectionCheck{}
+	if len(options) > 1 {
+		return selection, ErrInvalid
+	}
+	if len(options) == 0 {
+		return selection, nil
+	}
+	r := options[0]
+	if len(r.Tables) > api.DataPipelineTablesMax || len(r.Search) > api.DataPipelineIdentifierMaxBytes || strings.Trim(r.Search, "abcdefghijklmnopqrstuvwxyz0123456789_") != "" || (len(r.Tables) > 0 && r.Search != "") {
+		return selection, ErrInvalid
+	}
+	if r.Mode != "" && r.Mode != "snapshot" {
+		return selection, ErrInvalid
+	}
+	selection.Mode = r.Mode
+	selection.Search = r.Search
+	selection.RequestedTables = slices.Clone(r.Tables)
+	slices.Sort(selection.RequestedTables)
+	for i, table := range selection.RequestedTables {
+		if !identifier.MatchString(table) || strings.HasPrefix(table, "gregale_") || i > 0 && selection.RequestedTables[i-1] == table {
+			return api.DataConnectionCheck{}, ErrInvalid
+		}
+	}
+	return selection, nil
+}
+
+func (s *PostgresStore) enqueueCheck(ctx context.Context, tx pgx.Tx, account, id string, revision int64, database string, selection api.DataConnectionCheck) (ConnectionCheck, error) {
+	payload, err := json.Marshal(selection)
+	if err != nil {
+		return ConnectionCheck{}, ErrInvalid
+	}
+	r, err := s.q.PipelineCheckRequest(ctx, tx, sqlc.PipelineCheckRequestParams{AccountID: account, ConnectionID: id, ID: uuid.NewString(), ConnectionRevision: revision, DatabaseID: database, Result: payload})
 	if err != nil {
 		return ConnectionCheck{}, storeError(err)
 	}
@@ -125,8 +175,19 @@ func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, re
 }
 
 func (s *PostgresStore) ClaimCheck(ctx context.Context, token string) (ConnectionCheck, error) {
-	r, err := s.q.PipelineCheckClaim(ctx, s.pool, token)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		return ConnectionCheck{}, storeError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err = s.q.PipelineWorkerProtocol(ctx, tx); err != nil {
+		return ConnectionCheck{}, storeError(err)
+	}
+	r, err := s.q.PipelineCheckClaim(ctx, tx, token)
+	if err != nil {
+		return ConnectionCheck{}, storeError(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return ConnectionCheck{}, storeError(err)
 	}
 	return describeCheck(checkRecord(r))
@@ -136,7 +197,7 @@ func (s *PostgresStore) FinishCheck(ctx context.Context, c ConnectionCheck, resu
 	if result.State != "passed" && result.State != "blocked" {
 		return ErrInvalid
 	}
-	payload := api.DataConnectionCheck{Checks: result.Checks, Tables: result.Tables, Truncated: result.Truncated, Capacity: result.Capacity}
+	payload := api.DataConnectionCheck{Mode: c.Mode, RequestedTables: c.RequestedTables, Search: c.Search, Checks: result.Checks, Tables: result.Tables, Truncated: result.Truncated, Capacity: result.Capacity}
 	blob, err := json.Marshal(payload)
 	if err != nil || len(blob) > api.DataPipelineCheckMaxBytes {
 		return ErrInvalid
@@ -172,7 +233,7 @@ func (s *Service) RequestCheck(ctx context.Context, account, id string, r api.Re
 			return api.DataConnectionCheck{}, err
 		}
 	}
-	check, err := s.Store.RequestCheck(ctx, account, id, r.ExpectedRevision, r.DatabaseID)
+	check, err := s.Store.RequestCheck(ctx, account, id, r.ExpectedRevision, r.DatabaseID, r)
 	return check.DataConnectionCheck, err
 }
 

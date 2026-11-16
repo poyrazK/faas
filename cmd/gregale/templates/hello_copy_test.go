@@ -80,10 +80,17 @@ func TestHelloTemplatesMatchRuntimeAndAccessDefaults(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"gregale invoke <slug> --method GET --path /", "Authorization: Bearer <key>", "401 unauthorized", `"source":"edge"`, "--path /healthz"} {
+		for _, want := range []string{"gregale invocation run <slug> --method GET --path /", "Authorization: Bearer <key>", "401 unauthorized", `"source":"edge"`, "--path /healthz"} {
 			if !strings.Contains(string(readme), want) {
 				t.Errorf("%s README lacks %q", name, want)
 			}
+		}
+		// The gateway enforces require-authn before the edge health
+		// answer, so a private app's keyless /healthz is a 401, not the
+		// edge 200 the README once promised unconditionally (#6630).
+		text := strings.Join(strings.Fields(string(readme)), " ")
+		if !strings.Contains(text, "On a public app the `/healthz` URL answers") || !strings.Contains(text, "on a private app it needs a key") {
+			t.Errorf("%s README must scope the keyless edge /healthz answer to public apps", name)
 		}
 	}
 }

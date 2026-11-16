@@ -17,7 +17,7 @@ import (
 // Validate execution prerequisites before Docker resets, credential minting or
 // task-VM tunnels. Do not run customer scripts, build, install or contact a
 // package registry. Remote resource bindings are not needed to find tools.
-func devLocalPreflight(root string, fns []*localFunction, app *devLocalAppPlan, env []string) error {
+func devLocalPreflight(ctx context.Context, root string, fns []*localFunction, app *devLocalAppPlan, env []string) error {
 	var issues []error
 	for _, fn := range fns {
 		childEnv := fn.environment(env)
@@ -32,7 +32,7 @@ func devLocalPreflight(root string, fns []*localFunction, app *devLocalAppPlan, 
 		}
 	}
 	if app != nil {
-		if err := devLocalAppPreflight(root, *app, env); err != nil {
+		if err := devLocalAppPreflight(ctx, root, *app, env); err != nil {
 			issues = append(issues, err)
 		}
 	}
@@ -59,7 +59,7 @@ func devLocalToolOnPath(name string, env []string) (string, error) {
 	return "", fmt.Errorf("%s is not available on the local process PATH; install %s or update the selected PATH: %w", name, name, exec.ErrNotFound)
 }
 
-func devLocalAppPreflight(root string, app devLocalAppPlan, env []string) error {
+func devLocalAppPreflight(ctx context.Context, root string, app devLocalAppPlan, env []string) error {
 	// The supervisor launches a shell from the CLI's PATH. Arbitrary shell
 	// commands can activate environments or define tools themselves; do not
 	// attempt to interpret them as a detected framework command.
@@ -116,7 +116,7 @@ func devLocalAppPreflight(root string, app devLocalAppPlan, env []string) error 
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	for _, module := range modules {
 		cmd := exec.CommandContext(ctx, python, "-B", "-c", "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec(sys.argv[1]) is not None else 1)", module)

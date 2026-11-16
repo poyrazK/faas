@@ -21,11 +21,12 @@ func cliUserAgent() string {
 // cliTransport stamps the CLI's User-Agent on API requests and relays the
 // deprecation and warning headers apid answers with as one stderr line each.
 type cliTransport struct {
-	base http.RoundTripper
+	base  http.RoundTripper
+	debug *httpDebugRecorder
 }
 
 func wrapCLITransport(base http.RoundTripper) http.RoundTripper {
-	return cliTransport{base: base}
+	return cliTransport{base: base, debug: activeHTTPDebug.Load()}
 }
 
 func (t cliTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -46,8 +47,15 @@ func (t cliTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			req.Header.Set(api.AgentReasonHeader, reason)
 		}
 	}
+	var ticket httpDebugTicket
+	if t.debug != nil {
+		ticket = t.debug.start(req)
+	}
 	resp, err := t.base.RoundTrip(req)
-	if err == nil {
+	if t.debug != nil {
+		t.debug.finish(ticket, resp, err, req.Context())
+	}
+	if err == nil && resp != nil {
 		reportServerNotice(req.Method, req.URL.Path, resp.Header)
 	}
 	return resp, err

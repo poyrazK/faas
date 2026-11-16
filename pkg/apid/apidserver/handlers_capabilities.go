@@ -43,11 +43,22 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		case "github-deploys", "pr-previews":
 			// PR previews are built from the same GitHub push/PR pipeline.
 			available = s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())
+		case "crash-snapshots":
+			// Hunt 34 H34-16b: listed as available while FAAS_CRASH_SNAPSHOTS
+			// was unset and every request answered 501.
+			available = s.crashSnapshotsEnabled
+		case "production-forks":
+			available = s.appForksEnabled
+		case "profile-captures":
+			// Hunt 34 H34-16: `debug capture` answered "on-demand profiling
+			// is not enabled on this installation" while the list said
+			// available.
+			available = s.profileCaptures.Enabled
 		case "release-commands":
 			// imaged fails a release command while FAAS_RELEASE_PHASE_ENABLED
 			// is off, so it is advertised only when apid says it is on.
 			available = !s.releasePhaseOff
-		case "outbound-integrations":
+		case "outbound-integrations", "workload-identity":
 			// The outbound relay authenticates the instance with a
 			// vmmd-signed workload-identity token. ADR-1141 provisioning
 			// installs apid's cluster JWKS with vmmd's key; without it every

@@ -1,0 +1,5 @@
+package main
+
+var DiffExportFilesIgnoring = diffExportFilesIgnoring
+var NewExportDiffReadOptions = newExportDiffReadOptions
+var ReadExportDiffIndexOptions = readExportDiffIndexOptions

@@ -1,5 +1,7 @@
 package manifest
 
+import "fmt"
+
 // HotPath holds the request- and wake-path switches of the compute nodes'
 // daemons. Each one shipped default off, was proven on production by hand
 // (systemd drop-ins), and is rendered here so a node rebuild or a role run
@@ -35,7 +37,19 @@ type HotPath struct {
 	FrozenTier     bool `yaml:"frozen_tier,omitempty"`
 	FrozenFastPath bool `yaml:"frozen_fast_path,omitempty"`
 	OwnerCache     bool `yaml:"owner_cache,omitempty"`
+	// InvocationDispatchConcurrency is how many async invocations, event
+	// deliveries and inbound webhooks each schedd's drain delivers at once
+	// (FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY). Zero keeps the binary's
+	// default (sched.DefaultDrainDispatchConcurrency, 8). The pool is shared
+	// by every tenant on the node; a dispatch holds one of schedd's database
+	// connections only while it runs a statement, so watch
+	// schedd_db_pool_canceled_acquires_total after raising it.
+	InvocationDispatchConcurrency int `yaml:"invocation_dispatch_concurrency,omitempty"`
 }
+
+// MaxInvocationDispatchConcurrency bounds hot_path.invocation_dispatch_concurrency
+// well inside what one schedd's database pool can serve.
+const MaxInvocationDispatchConcurrency = 128
 
 func (h HotPath) validate(edge PublicEdge) Errors {
 	var errs Errors
@@ -47,6 +61,9 @@ func (h HotPath) validate(edge PublicEdge) Errors {
 	}
 	if h.FrozenFastPath && !h.FrozenTier {
 		errs = append(errs, Error{"hot_path.frozen_fast_path", "needs hot_path.frozen_tier: the fast path wakes frozen instances"})
+	}
+	if n := h.InvocationDispatchConcurrency; n < 0 || n > MaxInvocationDispatchConcurrency {
+		errs = append(errs, Error{"hot_path.invocation_dispatch_concurrency", fmt.Sprintf("must be 0 (the default, 8) to %d; got %d", MaxInvocationDispatchConcurrency, n)})
 	}
 	return errs
 }

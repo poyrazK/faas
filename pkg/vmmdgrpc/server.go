@@ -343,6 +343,9 @@ type Server struct {
 	// invokeHookBackoffOn is set (vmmd invoke_hook_backoff, default off).
 	invokeHooks         invokeHookBackoff
 	invokeHookBackoffOn bool
+	// edgeHeaderSecrets opens sealed edge-rule request headers
+	// (ADR-20261110210000 slice 3i); nil refuses forwards that name one.
+	edgeHeaderSecrets EdgeHeaderSecretOpener
 	// bridgeStreamHeadroom is vmmd's bridge_stream_headroom switch
 	// (ADR-20261026120000); every stream bridge manager takes it.
 	bridgeStreamHeadroom bool
@@ -1139,12 +1142,22 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	info, err := s.vmm.Park(ctx, req.GetInstance(), fcvm.SnapshotSpec{
+	spec := fcvm.SnapshotSpec{
 		VMStatePath:       req.GetVmstatePath(),
 		StorageKey:        req.GetStorageKey(),
 		VMStateStorageKey: req.GetVmstateStorageKey(),
 		BeforeCheckpoint:  req.GetBeforeCheckpoint(),
-	})
+	}
+	var sealedKey []byte
+	if captureID := req.GetSealCaptureId(); captureID != "" {
+		store, sealed, problem := s.sealParkCapture(captureID, req)
+		if problem != nil {
+			s.ops.Observe(op, time.Since(start), problem)
+			return nil, grpcerr.ToStatus(problem)
+		}
+		spec.Storage, sealedKey = store, sealed
+	}
+	info, err := s.vmm.Park(ctx, req.GetInstance(), spec)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -1155,8 +1168,33 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		VmstateBytes:              info.VMStateBytes,
 		StoredBytes:               info.StoredBytes,
 		BeforeCheckpointCompleted: req.GetBeforeCheckpoint(),
+		SealedKey:                 sealedKey,
 		Capture:                   info.Capture.ToProto(),
 	}, nil
+}
+
+// sealParkCapture (ADR-20261110210000 slice 3d-3) returns the encrypting
+// storage for a sealed park capture. The capture id must be the token of the
+// mem storage key, because restore opens the key by that id, and both halves
+// must go through the storage backend: a host-path vmstate would land in
+// plaintext.
+func (s *Server) sealParkCapture(captureID string, req *vmmdpb.PauseAndSnapshotRequest) (storage.StorageBackend, []byte, *api.Problem) {
+	refuse := func(detail string) *api.Problem {
+		return api.NewProblem(int(codes.FailedPrecondition), api.CodeValidation,
+			"Cannot seal snapshot", detail).WithDocs(wire.DocsBaseURL + "/vmmd#pause")
+	}
+	token, ok := state.SnapshotCaptureToken(req.GetStorageKey())
+	if !ok || token != captureID {
+		return nil, nil, refuse("seal_capture_id must be the capture token of storage_key")
+	}
+	if req.GetVmstateStorageKey() == "" || req.GetVmstatePath() != "" {
+		return nil, nil, refuse("a sealed snapshot needs vmstate_storage_key and no vmstate_path")
+	}
+	store, sealed, err := s.sealCaptureStorage(captureID)
+	if err != nil {
+		return nil, nil, refuse(err.Error())
+	}
+	return store, sealed, nil
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) is the warm-tier twin
@@ -1641,6 +1679,13 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 				row.EgressNewDestinationsLimitPerMin = fanout.Limit
 				row.EgressFloodDropsPerMin = wrapperspb.Int64(fanout.FloodDropsPerMinute)
 				row.EgressFloodDropsLimitPerMin = fanout.FloodLimit
+			}
+		}
+		if provider, ok := s.vmm.(interface {
+			InternalEgressBytes(string) (uint64, bool)
+		}); ok {
+			if internal, present := provider.InternalEgressBytes(inst); present {
+				row.InternalTxBytes = wrapperspb.Int64(int64(min(internal, uint64(1<<62))))
 			}
 		}
 		row.OpenConns = openConns[inst]

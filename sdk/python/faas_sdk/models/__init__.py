@@ -11,6 +11,16 @@ from .account_egress_allowlist_extra_response import AccountEgressAllowlistExtra
 from .account_email_change_request import AccountEmailChangeRequest
 from .account_export_response import AccountExportResponse
 from .account_export_response_schema_version import AccountExportResponseSchemaVersion
+from .account_health import AccountHealth
+from .account_health_code import AccountHealthCode
+from .account_health_deployment import AccountHealthDeployment
+from .account_health_domain import AccountHealthDomain
+from .account_health_request import AccountHealthRequest
+from .account_health_requests import AccountHealthRequests
+from .account_health_restriction import AccountHealthRestriction
+from .account_health_restriction_kind import AccountHealthRestrictionKind
+from .account_health_signal import AccountHealthSignal
+from .account_health_signal_kind import AccountHealthSignalKind
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
@@ -59,6 +69,13 @@ from .agent_connection_response_approvals_item import AgentConnectionResponseApp
 from .agent_connection_response_kind import AgentConnectionResponseKind
 from .agent_connections_response import AgentConnectionsResponse
 from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
+from .agent_undo_item import AgentUndoItem
+from .agent_undo_item_kind import AgentUndoItemKind
+from .agent_undo_item_result import AgentUndoItemResult
+from .agent_undo_item_status import AgentUndoItemStatus
+from .agent_undo_plan import AgentUndoPlan
+from .agent_undo_request import AgentUndoRequest
+from .agent_undo_result import AgentUndoResult
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
@@ -435,6 +452,7 @@ from .create_binding_verification_run_request_service_targets import CreateBindi
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_database_switch_request import CreateDatabaseSwitchRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deploy_token_request_scopes_item import CreateDeployTokenRequestScopesItem
 from .create_deployment_files_body import CreateDeploymentFilesBody
@@ -509,6 +527,7 @@ from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
 from .database_switch import DatabaseSwitch
 from .database_switch_drain import DatabaseSwitchDrain
+from .database_switch_list import DatabaseSwitchList
 from .database_switch_phase import DatabaseSwitchPhase
 from .debug_coverage_response import DebugCoverageResponse
 from .debug_coverage_signal import DebugCoverageSignal
@@ -837,6 +856,7 @@ from .failure_rules import FailureRules
 from .failure_rules_uncertain_outcome import FailureRulesUncertainOutcome
 from .failure_rules_unmatched_failure import FailureRulesUnmatchedFailure
 from .failure_rules_version import FailureRulesVersion
+from .feature_hint import FeatureHint
 from .field_error import FieldError
 from .financial_allocation import FinancialAllocation
 from .financial_app_cost_allocation import FinancialAppCostAllocation
@@ -931,8 +951,10 @@ from .git_hub_connection_verification import GitHubConnectionVerification
 from .git_hub_connection_verification_permissions import GitHubConnectionVerificationPermissions
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
+from .git_hub_deployment_policy_patch_preview_mode import GitHubDeploymentPolicyPatchPreviewMode
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
 from .git_hub_deployment_policy_patch_production_trigger import GitHubDeploymentPolicyPatchProductionTrigger
+from .git_hub_deployment_policy_preview_mode import GitHubDeploymentPolicyPreviewMode
 from .git_hub_deployment_policy_preview_service_policy import GitHubDeploymentPolicyPreviewServicePolicy
 from .git_hub_deployment_policy_production_trigger import GitHubDeploymentPolicyProductionTrigger
 from .git_hub_install_activity import GitHubInstallActivity
@@ -1149,6 +1171,8 @@ from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHo
 from .managed_service_probe_spec import ManagedServiceProbeSpec
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
 from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotState
+from .mcp_readiness_expectation import MCPReadinessExpectation
+from .mcp_readiness_expectation_evidence_ids import MCPReadinessExpectationEvidenceIds
 from .mcp_resource_policy import MCPResourcePolicy
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
@@ -1156,6 +1180,8 @@ from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesT
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
+from .mfa_disable_email_cancel_request import MFADisableEmailCancelRequest
+from .mfa_disable_email_cancel_response import MFADisableEmailCancelResponse
 from .mfa_disable_email_confirm_request import MFADisableEmailConfirmRequest
 from .mfa_disable_email_confirm_response import MFADisableEmailConfirmResponse
 from .mfa_disable_email_request import MFADisableEmailRequest
@@ -1768,6 +1794,7 @@ from .org_project_delete_deployment_scope_exclusion_response_200 import (
 from .org_response import OrgResponse
 from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
+from .org_security_policy import OrgSecurityPolicy
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
 from .outbound_ai_budget_threshold_webhook_payload import OutboundAIBudgetThresholdWebhookPayload
@@ -1813,6 +1840,7 @@ from .plan_managed_not_provisioned_reason import PlanManagedNotProvisionedReason
 from .plan_managed_provision import PlanManagedProvision
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
+from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
@@ -2143,6 +2171,7 @@ from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
 )
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
+from .rotate_key_request import RotateKeyRequest
 from .rotate_key_response import RotateKeyResponse
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
@@ -2191,6 +2220,7 @@ from .runtime_release_response_runtime import RuntimeReleaseResponseRuntime
 from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
+from .safe_apply_org_project_project_release_mode import SafeApplyOrgProjectProjectReleaseMode
 from .safe_apply_project_project_add_services import SafeApplyProjectProjectAddServices
 from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgressive
 from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
@@ -2459,6 +2489,7 @@ from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClas
 from .wake_timeline_page import WakeTimelinePage
 from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
+from .warmup_hook import WarmupHook
 from .webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
 from .webhook_workflow_receipt_response_ignored_reason import WebhookWorkflowReceiptResponseIgnoredReason
 from .webhook_workflow_receipt_response_routing_status import WebhookWorkflowReceiptResponseRoutingStatus
@@ -2707,6 +2738,16 @@ __all__ = (
     "AccountEmailChangeRequest",
     "AccountExportResponse",
     "AccountExportResponseSchemaVersion",
+    "AccountHealth",
+    "AccountHealthCode",
+    "AccountHealthDeployment",
+    "AccountHealthDomain",
+    "AccountHealthRequest",
+    "AccountHealthRequests",
+    "AccountHealthRestriction",
+    "AccountHealthRestrictionKind",
+    "AccountHealthSignal",
+    "AccountHealthSignalKind",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
@@ -2753,6 +2794,13 @@ __all__ = (
     "AgentConnectionResponseKind",
     "AgentConnectionsResponse",
     "AgentConnectionsRevokeAllResponse",
+    "AgentUndoItem",
+    "AgentUndoItemKind",
+    "AgentUndoItemResult",
+    "AgentUndoItemStatus",
+    "AgentUndoPlan",
+    "AgentUndoRequest",
+    "AgentUndoResult",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
@@ -3127,6 +3175,7 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDatabaseSwitchRequest",
     "CreateDeploymentFilesBody",
     "CreateDeploymentFilesBodyKind",
     "CreateDeploymentFilesBodyRuntime",
@@ -3199,6 +3248,7 @@ __all__ = (
     "DailyUsageResponse",
     "DatabaseSwitch",
     "DatabaseSwitchDrain",
+    "DatabaseSwitchList",
     "DatabaseSwitchPhase",
     "DebugCoverageResponse",
     "DebugCoverageSignal",
@@ -3515,6 +3565,7 @@ __all__ = (
     "FailureRulesUncertainOutcome",
     "FailureRulesUnmatchedFailure",
     "FailureRulesVersion",
+    "FeatureHint",
     "FieldError",
     "FinancialAllocation",
     "FinancialAppCostAllocation",
@@ -3609,8 +3660,10 @@ __all__ = (
     "GitHubConnectionVerificationPermissions",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
+    "GitHubDeploymentPolicyPatchPreviewMode",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",
     "GitHubDeploymentPolicyPatchProductionTrigger",
+    "GitHubDeploymentPolicyPreviewMode",
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
@@ -3819,6 +3872,8 @@ __all__ = (
     "ManagedServiceProbeSpec",
     "MCPPolicyConvergenceSnapshot",
     "MCPPolicyConvergenceSnapshotState",
+    "MCPReadinessExpectation",
+    "MCPReadinessExpectationEvidenceIds",
     "MCPResourcePolicy",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
@@ -3826,6 +3881,8 @@ __all__ = (
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
+    "MFADisableEmailCancelRequest",
+    "MFADisableEmailCancelResponse",
     "MFADisableEmailConfirmRequest",
     "MFADisableEmailConfirmResponse",
     "MFADisableEmailRequest",
@@ -4330,6 +4387,7 @@ __all__ = (
     "OrgResponse",
     "OrgResponsePlan",
     "OrgResponseStatus",
+    "OrgSecurityPolicy",
     "OrgWithRole",
     "OrgWithRoleRole",
     "OutboundAIBudgetThresholdWebhookPayload",
@@ -4373,6 +4431,7 @@ __all__ = (
     "PlanManagedProvision",
     "PlanResponse",
     "PlanResponseScanSource",
+    "PlanSourceHost",
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
@@ -4687,6 +4746,7 @@ __all__ = (
     "RotateAppWebhookSecretResponseWebhookSecretSealedMasked",
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
+    "RotateKeyRequest",
     "RotateKeyResponse",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
@@ -4735,6 +4795,7 @@ __all__ = (
     "RuntimeUpgradePreviewResponse",
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
+    "SafeApplyOrgProjectProjectReleaseMode",
     "SafeApplyProjectProjectAddServices",
     "SafeApplyProjectProjectProgressive",
     "SafeApplyProjectProjectReleaseMode",
@@ -4993,6 +5054,7 @@ __all__ = (
     "WakeTimelinePage",
     "WakeTimelinePageMode",
     "WakeTimelineResponse",
+    "WarmupHook",
     "WebhookWorkflowReceiptResponse",
     "WebhookWorkflowReceiptResponseIgnoredReason",
     "WebhookWorkflowReceiptResponseRoutingStatus",

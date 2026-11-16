@@ -137,7 +137,11 @@ func scanVerificationRows(ctx context.Context, tx pgx.Tx, r relation, lower, upp
 }
 
 func readVerificationRows(ctx context.Context, tx pgx.Tx, r relation, lower, upper []string, split, capture bool) (result verificationDigest, err error) {
+	return readVerificationRowsFrom(ctx, tx, r, lower, upper, split, capture, tableIdent(r.Name))
+}
+func readVerificationRowsFrom(ctx context.Context, tx pgx.Tx, r relation, lower, upper []string, split, capture bool, table string) (result verificationDigest, err error) {
 	query, args := verificationQuery(r, lower, upper)
+	query = strings.ReplaceAll(query, tableIdent(r.Name), table)
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
 		return verificationDigest{}, err
@@ -309,7 +313,7 @@ func compareVerificationRange(ctx context.Context, p Pipeline, source *pgxpool.P
 		c.Progress.Reason = "waiting_for_replication"
 		return false, nil
 	}
-	actual, _, err := inspectSourceTable(ctx, source, r.Name)
+	actual, _, err := inspectPipelineTable(ctx, p, source, r.Name)
 	if err != nil {
 		return false, err
 	}

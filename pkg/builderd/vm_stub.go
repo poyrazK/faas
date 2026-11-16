@@ -40,6 +40,9 @@ func (s *VMMDriver) WithDriveSpaceReclaimer(_ BuildDriveSpaceReclaimer) *VMMDriv
 // WithSharedPlatformBlobs mirrors the metal setter; the stub stores no cache.
 func (s *VMMDriver) WithSharedPlatformBlobs(_ bool) *VMMDriver { return s }
 
+// WithBuildKitSeed mirrors the metal setter; the stub boots no seed run.
+func (s *VMMDriver) WithBuildKitSeed(_ bool) *VMMDriver { return s }
+
 // BuildEnvironment keeps non-metal binaries from reading or writing cache
 // entries they cannot prove were produced by the active builder toolchain.
 func (s *VMMDriver) BuildEnvironment() (BuildEnvironment, error) {

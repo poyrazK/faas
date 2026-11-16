@@ -26,20 +26,31 @@ func startCommitRelay(ctx context.Context, store *state.PgStore, identities []*a
 	if len(identities) == 0 {
 		return errors.New("commit: managed relay requires host age identities")
 	}
-	policy := commitwork.NetworkPolicy{Hosts: map[string]bool{}}
-	for _, host := range strings.Split(os.Getenv("FAAS_COMMIT_DATABASE_HOSTS"), ",") {
-		host = strings.TrimSpace(host)
-		if host == "" || strings.ContainsAny(host, "/*:@ ") {
-			return errors.New("commit: exact database hostnames are required")
-		}
-		policy.Hosts[host] = true
+	// ADR-20261112140000 §6: changes sources may reach any public customer
+	// database. The allowlist below may then be empty; it still governs every
+	// other Commit source.
+	public := os.Getenv("FAAS_COMMIT_PUBLIC_DATABASES")
+	if public != "" && public != "true" && public != "false" {
+		return errors.New("commit: FAAS_COMMIT_PUBLIC_DATABASES must be true or false")
 	}
-	for _, value := range strings.Split(os.Getenv("FAAS_COMMIT_DATABASE_CIDRS"), ",") {
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
-		if err != nil {
-			return errors.New("commit: database address prefixes are required")
+	publicDatabases := public == "true"
+	policy := commitwork.NetworkPolicy{Hosts: map[string]bool{}}
+	hosts, cidrs := os.Getenv("FAAS_COMMIT_DATABASE_HOSTS"), os.Getenv("FAAS_COMMIT_DATABASE_CIDRS")
+	if !publicDatabases || hosts != "" || cidrs != "" {
+		for _, host := range strings.Split(hosts, ",") {
+			host = strings.TrimSpace(host)
+			if host == "" || strings.ContainsAny(host, "/*:@ ") {
+				return errors.New("commit: exact database hostnames are required")
+			}
+			policy.Hosts[host] = true
 		}
-		policy.Prefixes = append(policy.Prefixes, prefix.Masked())
+		for _, value := range strings.Split(cidrs, ",") {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+			if err != nil {
+				return errors.New("commit: database address prefixes are required")
+			}
+			policy.Prefixes = append(policy.Prefixes, prefix.Masked())
+		}
 	}
 	cycles := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "schedd_commit_relay_cycles_total", Help: "Managed customer outbox relay source cycles by bounded result code."}, []string{"result"})
 	accepted := prometheus.NewCounter(prometheus.CounterOpts{Name: "schedd_commit_relay_accepted_total", Help: "Customer outbox events checkpointed after durable acceptance."})
@@ -56,7 +67,7 @@ func startCommitRelay(ctx context.Context, store *state.PgStore, identities []*a
 	if realtimeEnabled != "" && realtimeEnabled != "0" && realtimeEnabled != "1" {
 		return errors.New("commit: FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED must be 0 or 1")
 	}
-	manager := &commitmanaged.Manager{RealtimeEnabled: realtimeEnabled == "1", Store: store, Identities: identities, Policy: policy, Report: func(source, code string, n int) {
+	manager := &commitmanaged.Manager{RealtimeEnabled: realtimeEnabled == "1", PublicDatabases: publicDatabases, Store: store, Identities: identities, Policy: policy, Report: func(source, code string, n int) {
 		cycles.WithLabelValues(code).Inc()
 		accepted.Add(float64(n))
 		if code != "healthy" {

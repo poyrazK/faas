@@ -261,18 +261,22 @@ var jsonUsageHelp bool
 // printCommandValidation preserves legacy human diagnostics while emitting one
 // structured Problem for invalid invocations in machine-readable mode.
 func printCommandValidation(w io.Writer, format string, args ...any) {
+	printCommandValidationWithCLI(w, nil, format, args...)
+}
+
+func printCommandValidationWithCLI(w io.Writer, advice *cliFlagDiagnostic, format string, args ...any) {
 	if !jsonOutput || jsonUsageHelp {
 		_, _ = fmt.Fprintf(w, format, args...)
 		return
 	}
-	_ = writeJSONProblemWithExit(w, api.Problem{
+	_ = writeJSONProblemWithCLI(w, api.Problem{
 		Type:    docsSiteURL + "/errors/invalid-request",
 		Title:   "Invalid command usage",
 		Status:  400,
 		Code:    api.CodeValidation,
 		Detail:  strings.TrimSpace(fmt.Sprintf(format, args...)),
 		DocsURL: docsURLForTopic("cli"),
-	}, 1)
+	}, 1, advice)
 }
 
 // printUnknownSubcommand keeps dispatcher failures in the same single-error
@@ -285,7 +289,7 @@ func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got st
 	if ok && jsonOutput && !jsonUsageHelp {
 		detail += fmt.Sprintf("; did you mean %q?", "gregale "+path+" "+suggestion)
 	}
-	printCommandValidation(w, "%s\n", detail)
+	printUnknownCommandValidation(w, path, got, "%s\n", detail)
 	if ok && !jsonOutput {
 		maybeSuggestSub(suggestion)
 	}
@@ -293,6 +297,16 @@ func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got st
 		printSubcommandChoices(w, path, command, got)
 	}
 	return 1
+}
+
+// Keep dispatchers' existing prose while giving their explicit unknown-command
+// branch the same metadata as the shared renderer.
+func printUnknownCommandValidation(w io.Writer, path, got, format string, args ...any) {
+	var advice *cliFlagDiagnostic
+	if jsonOutput && !jsonUsageHelp {
+		advice = describeCommandDiagnostic(cliUnknownCommand, append(strings.Fields(path), got))
+	}
+	printCommandValidationWithCLI(w, advice, format, args...)
 }
 
 // unknownSubcommandChoices follows a dispatcher's own "unknown … subcommand"
@@ -350,6 +364,7 @@ func printSubcommandChoices(w io.Writer, path string, command cliCommand, got st
 	if listApp != "" && api.ValidAppSlug(got) && !commonVerbWord(got) {
 		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s %s\n", got, cliTreeSpellPath(path+" list"), listApp)
 	}
+	printConceptHints(w, path, command, got)
 }
 
 // listAppForm spells slug the way a `list` verb takes an app: positionally
@@ -408,19 +423,24 @@ func PrintUsage(w io.Writer, usage, topic string) {
 // PrintUsage remains the public call site so the doc-slug audit can continue
 // checking literal command topics.
 func printUsage(w io.Writer, usage, topic string) {
+	printUsageWithCLI(w, usage, topic, nil)
+}
+
+func printUsageWithCLI(w io.Writer, usage, topic string, advice *cliFlagDiagnostic) {
 	if flagHelpPrinted {
 		return
 	}
+	printAgentHint(osStderr) // ADR-20261112223000 §5; stderr only
 	usage = spellUsageForTree(usage)
 	if jsonOutput && !jsonUsageHelp {
-		_ = writeJSONProblemWithExit(w, api.Problem{
+		_ = writeJSONProblemWithCLI(w, api.Problem{
 			Type:    docsSiteURL + "/errors/invalid-request",
 			Title:   "Invalid command usage",
 			Status:  400,
 			Code:    api.CodeValidation,
 			Detail:  usage,
 			DocsURL: docsURLForTopic(topic),
-		}, 1)
+		}, 1, advice)
 		return
 	}
 	_, _ = fmt.Fprintf(w, "%s\n", compactUsage(usage))

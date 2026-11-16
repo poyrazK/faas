@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from ..models.secret_file import SecretFile
     from ..models.service_replicas import ServiceReplicas
     from ..models.tracing_config import TracingConfig
+    from ..models.warmup_hook import WarmupHook
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
 
@@ -151,6 +152,10 @@ class AppManifest:
     before_checkpoint: BeforeCheckpointHook | Unset = UNSET
     """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
     warm snapshots; snapshot reuse skips the callback."""
+    warmup: WarmupHook | Unset = UNSET
+    """Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests
+    (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails
+    a deploy."""
     pause: AppManifestPause | Unset = UNSET
     """The app's declared pause tier. Absent means the default for its type: between_requests for a function,
     when_idle for a request-mode app."""
@@ -328,6 +333,10 @@ class AppManifest:
         if not isinstance(self.before_checkpoint, Unset):
             before_checkpoint = self.before_checkpoint.to_dict()
 
+        warmup: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.warmup, Unset):
+            warmup = self.warmup.to_dict()
+
         pause: str | Unset = UNSET
         if not isinstance(self.pause, Unset):
             pause = self.pause
@@ -455,6 +464,8 @@ class AppManifest:
             field_dict["after_restore"] = after_restore
         if before_checkpoint is not UNSET:
             field_dict["before_checkpoint"] = before_checkpoint
+        if warmup is not UNSET:
+            field_dict["warmup"] = warmup
         if pause is not UNSET:
             field_dict["pause"] = pause
         if startup_deadline_s is not UNSET:
@@ -510,6 +521,7 @@ class AppManifest:
         from ..models.secret_file import SecretFile
         from ..models.service_replicas import ServiceReplicas
         from ..models.tracing_config import TracingConfig
+        from ..models.warmup_hook import WarmupHook
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
@@ -792,6 +804,13 @@ class AppManifest:
         else:
             before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
 
+        _warmup = d.pop("warmup", UNSET)
+        warmup: WarmupHook | Unset
+        if isinstance(_warmup, Unset):
+            warmup = UNSET
+        else:
+            warmup = WarmupHook.from_dict(_warmup)
+
         _pause = d.pop("pause", UNSET)
         pause: AppManifestPause | Unset
         if isinstance(_pause, Unset):
@@ -927,6 +946,7 @@ class AppManifest:
             restart_policy=restart_policy,
             after_restore=after_restore,
             before_checkpoint=before_checkpoint,
+            warmup=warmup,
             pause=pause,
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,

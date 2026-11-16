@@ -18,7 +18,7 @@ says why the boot was refused:
 
 | reason | Meaning |
 | --- | --- |
-| `critical` | The scan found a fix-available CRITICAL finding. A base that passed the release scan can fail here later, because the node scans with a newer vulnerability database |
+| `critical` | The scan found a fix-available CRITICAL finding and its 72-hour grace (below) has ended, or the sidecar carries no grace start. A base that passed the release scan can fail here later, because the node scans with a newer vulnerability database |
 | `sidecar_missing` | No sidecar for the base (not staged yet, or the storage read failed) |
 | `incomplete` | The sidecar has no CRITICAL total |
 | `scan_failed` | imaged's Grype scan of the base failed, and it wrote the fail-closed `CRITICAL=9999` placeholder (`wire.BaseScanFailedCount`). Customers see "Base image scan unavailable" |
@@ -43,6 +43,26 @@ says why the boot was refused:
   `/srv/fc` or a stale vulnerability database are the usual causes), fix that,
   then restart `faas-imaged` on the node so it restages and rescans the base;
   the fail-closed `CRITICAL=9999` sidecar is replaced on restart.
+
+## FaasBaseScanCriticalInGrace
+
+> **Severity:** page. **Component:** vmmd. **Metric:** `vmmd_base_scan_grace_admits_total{base}`.
+
+When a scan of a base first finds a fix-available CRITICAL finding, imaged
+stamps `fixable_critical_since` in the sidecar. For
+`api.BaseScanCriticalBootGrace` (72 hours) from that time vmmd keeps booting
+the base so apps already serving on it keep waking, and counts each such boot
+here. schedd refuses every new deployment on the base during the grace
+(`scan_critical`, "Fixable CRITICAL vulnerability in base ext4"). A rescan of
+the same generation keeps the original start, so rescans do not extend the
+grace (deploy-path review P5).
+
+1. Read the sidecar (Triage step 1): `fixable_critical_since` says when the
+   grace ends (add 72 hours).
+2. Find the CVEs and publish a patched base as for `critical` under Fix. The
+   new generation's clean scan ends the alert.
+3. If no patched base can ship before the grace ends, say so on the status
+   page: every app on the runtime stops waking when it does.
 
 ## FaasBaseScanFailureHeld
 

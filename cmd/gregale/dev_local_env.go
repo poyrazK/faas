@@ -68,12 +68,3 @@ func (c devLocalEnvConfig) fingerprint() [sha256.Size]byte {
 	}
 	return sha256.Sum256([]byte("unavailable local env file"))
 }
-
-func (c devLocalEnvConfig) sourceFingerprint(root string) ([sha256.Size]byte, error) {
-	source, err := devSourceFingerprint(root)
-	if err != nil {
-		return source, err
-	}
-	env := c.fingerprint()
-	return sha256.Sum256(append(source[:], env[:]...)), nil
-}

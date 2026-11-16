@@ -37,6 +37,10 @@ func (s *server) createFullProjectEnvironmentClone(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.protectedEnvironmentChangeProblem(r, acct, project.ID, req.FromEnvironment, "clone a protected project environment"); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if !s.fullProjectEnvironmentCloneAdmitted() {
 		api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
 		return
@@ -45,7 +49,16 @@ func (s *server) createFullProjectEnvironmentClone(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid full clone", "a full clone creates an unprotected stage; protect it once it is ready"))
 		return
 	}
-	s.admitFullProjectEnvironmentClone(w, r, acct, project, req)
+	// ADR-20261111114059: priced at admission, which starts the clone.
+	commitBudget, answered := s.chargeEnvironmentClone(w, r, acct, project, req.FromEnvironment, false)
+	if answered {
+		return
+	}
+	rec := &statusRecorder{ResponseWriter: w}
+	s.admitFullProjectEnvironmentClone(rec, r, acct, project, req)
+	if rec.status/100 == 2 {
+		commitBudget()
+	}
 }
 
 // Admission needs the clone machinery switched on fleet-wide and admission
@@ -128,12 +141,28 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 	if key == "" {
 		key = uuid.NewString()
 	}
+	owner, err := state.ProjectResourceAccountByID(r.Context(), s.store, project.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve the project's plan"))
+		return
+	}
+	// Copied crons count against the cron limits of the plan that owns the
+	// project's resources, as the coordinator's materialization does.
+	cronLimits := api.MustLimitsFor(owner.Plan)
 	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(r.Context(), state.ProjectEnvironmentCloneCaptureRequest{AccountID: acct.ID, ProjectID: project.ID,
 		SourceEnvironment: req.FromEnvironment, TargetEnvironment: req.Slug, IdempotencyKey: key, RequireCompleteInventory: true,
 		AdmissionSwitches:       []string{runtimeConfigFullEnvironmentClones, runtimeConfigFullEnvironmentCloneAdmission},
 		QualifiedObjectBackends: s.cloneQualifiedObjectBackends(),
-		CheckObjectCapacity:     s.cloneObjectCapacityCheck(acct)})
+		CheckObjectCapacity:     s.cloneObjectCapacityCheck(acct),
+		CronLimits:              &cronLimits})
 	if err != nil {
+		var cronQuota *state.CronQuotaError
+		if errors.As(err, &cronQuota) {
+			// The clone copies the source's crons paused; copies count against
+			// the plan's cron limits (ADR-20261104120000 amendment 2026-11-12).
+			api.WriteProblem(w, api.ErrPlanCronQuota(owner.Plan, string(cronQuota.Scope), cronQuota.Limit, cronQuota.Observed))
+			return
+		}
 		operator, _ := s.adminAllows(acct)
 		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, operator, err))
 		return
@@ -202,6 +231,8 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, ope
 		return cloneSourceRefusal("source.queue_bindings", "environment-owned queue bindings", "legacy_stage_bindings")
 	case errors.Is(err, state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable):
 		return cloneSourceRefusal("source.work_policies", "work policies scoped to the source environment", "isolation_unavailable")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneCronCaptureUnavailable):
+		return cloneSourceRefusal("source.crons", "crons only on workloads deployed in the source environment", "workload_not_deployed")
 	case errors.Is(err, state.ErrNotFound):
 		return projectEnvironmentNotFound(projectSlug, source)
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):

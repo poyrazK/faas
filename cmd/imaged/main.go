@@ -47,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
+	"github.com/onebox-faas/faas/pkg/objectgc"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -344,6 +345,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("imaged: %w", err)
 	}
+	// ADR-20261115180000: in defer mode the shared store's deletes become
+	// requests the control plane's object GC decides.
+	if deferred, err := objectgc.DeferFromEnv(getenv, storageBackend, store, "imaged"); err != nil {
+		return fmt.Errorf("imaged: %w", err)
+	} else if deferred {
+		log.Info("imaged: shared-store deletes deferred to the control plane")
+	}
 	indexedSnapshots, err := reconcileSnapshotRepositoryIndex(ctx, store, storageBackend)
 	if err != nil {
 		return fmt.Errorf("imaged: reconcile snapshot repository index: %w", err)
@@ -379,15 +387,19 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("imaged: build signer: %w", err)
 		}
 		// ADR-20261109170000: v2 signatures bind each layer to its storage
-		// key. Operators turn them on once every verifier reads v2.
+		// key, so a signed layer copied over another app's key fails
+		// verification. Every verifier reads v2 since v0.1.18-rc.333, so v2
+		// is the default; v1 stays as an explicit rollback only.
+		v2 := true
 		switch format := os.Getenv("FAAS_ARTIFACT_SIGNATURE_FORMAT"); format {
-		case "", "v1":
-		case "v2":
-			signer.WithSignatureV2(true)
+		case "", "v2":
+		case "v1":
+			v2 = false
 		default:
 			return fmt.Errorf("imaged: FAAS_ARTIFACT_SIGNATURE_FORMAT=%q: want v1 or v2", format)
 		}
-		log.Info("imaged: artifact signature format", "v2", os.Getenv("FAAS_ARTIFACT_SIGNATURE_FORMAT") == "v2")
+		signer.WithSignatureV2(v2)
+		log.Info("imaged: artifact signature format", "v2", v2)
 		local = signer
 	}
 	layerSigner, closeSigner, err := artifactSignerFromEnv(ctx, os.Getenv, local, storageBackend, log)
@@ -592,6 +604,20 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// An absent tree (every node without native runtime capture) leaves
 		// collection exactly as before.
 		WithNativeRuntimeSnapshotRoot(envOr("FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT", "/srv/fc/native-snap"))
+	// ADR-20261112170911: reuse an app layer whose inputs are unchanged,
+	// off by default.
+	layerReuse, err := imaged.ParseLayerReuse(getenv(imaged.LayerReuseEnv))
+	if err != nil {
+		return fmt.Errorf("imaged: %w", err)
+	}
+	if layerReuse {
+		dir := filepath.Join(filepath.Dir(appsRoot), "layer-reuse")
+		if cache := storage.AsCacheBackend(storageBackend); cache != nil {
+			dir = imaged.LayerReuseDir(cache.Root())
+		}
+		h.WithLayerReuse(dir)
+		log.Info("imaged: app layer reuse on", "index", dir)
+	}
 	releasePhaseEnabled, err := parseBoolEnv("FAAS_RELEASE_PHASE_ENABLED", getenv("FAAS_RELEASE_PHASE_ENABLED"))
 	if err != nil {
 		return err
@@ -699,7 +725,29 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	} else if len(legacyIdentities) == 0 {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — registry credential unseal disabled (Free plan + anonymous-only deployments)")
 	}
-	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
+	// ADR-20261110210000 slice 3j-2: private images through secretd, so
+	// this node never opens an app's registry password.
+	registryProxy, closeRegistryProxy, err := registryProxyFromEnv(ctx, getenv, log)
+	if err != nil {
+		return err
+	}
+	defer closeRegistryProxy()
+	if registryProxy != nil {
+		h.WithRegistryProxy(registryProxy)
+	}
+	// ADR-20261110210000 slice 3g-3: a node whose build identity is retired
+	// holds nothing that opens a registry password, and reports no build
+	// domain, so FaasSealDomainIdentityMissing does not read it as a node
+	// that lost its identity.
+	buildRetired, err := buildRetiredFromEnv(getenv, registryProxy != nil)
+	if err != nil {
+		return err
+	}
+	if buildRetired {
+		log.Info("build identity retired on this node: private images pull through secretd")
+	} else {
+		sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
+	}
 	log.Info("build seal domain", "domain_identity", len(buildIdentities) > 0, "fleet_identity", len(legacyIdentities) > 0)
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either

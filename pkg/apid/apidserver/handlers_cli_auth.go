@@ -24,10 +24,12 @@ package apidserver
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,9 +80,10 @@ type cliAuthHandlers struct {
 // (cliAuthChain, server.go).
 func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request) {
 	_, deviceCodes := h.srv.store.(state.CliAuthDeviceCodeStore)
-	code, hash, device, err := mintBrowserAuthCode(r, deviceCodes)
+	code, hash, device, loopbackPort, challenge, err := mintBrowserAuthCode(r, deviceCodes)
 	if errors.Is(err, errBrowserAuthInput) {
-		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid authorization", "purpose must be empty, mcp-read, or mcp-write"))
+		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid authorization",
+			"purpose must be empty, mcp-read, or mcp-write; code_challenge needs device and 64 hex characters"))
 		return
 	}
 	if err != nil {
@@ -89,18 +92,23 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 		return
 	}
 	expiresAt := time.Now().Add(cliAuthCodeTTL)
-	deviceCode, err := h.issueCliAuthCode(r, hash, device, expiresAt)
+	deviceCode, err := h.issueCliAuthCode(r, hash, device, challenge, expiresAt)
 	if err != nil {
 		h.log.Error("cli_auth.issue", "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not persist code"))
 		return
 	}
+	h.recordCliAuthRequester(r, hash)
 	url := strings.TrimRight(h.urlBase, "/") + cliAuthPath + "?code=" + code
+	if loopbackPort != 0 {
+		url += "&port=" + strconv.Itoa(loopbackPort)
+	}
 	writeJSON(w, http.StatusOK, api.CliAuthCodeResponse{
 		Code:       code,
 		URL:        url,
 		ExpiresAt:  expiresAt.UTC().Format(time.RFC3339),
 		DeviceCode: deviceCode,
+		Loopback:   loopbackPort != 0,
 	})
 }
 
@@ -108,8 +116,9 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 // 32-byte device code, stores only its hash, and returns it: the row can
 // then be exchanged only with that device code, never with the short code
 // the user types (bug hunt 2026-10-28 H67). Without device, the code was
-// minted long enough to exchange by itself (mintBrowserAuthCode).
-func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device bool, expiresAt time.Time) (string, error) {
+// minted long enough to exchange by itself (mintBrowserAuthCode). A
+// challenge binds the row to the minting CLI's verifier as well (F10-3).
+func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device bool, challenge []byte, expiresAt time.Time) (string, error) {
 	if !device {
 		return "", h.srv.store.IssueCliAuthCode(r.Context(), hash, expiresAt)
 	}
@@ -121,7 +130,7 @@ func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device 
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
-	if err := devices.IssueCliAuthDeviceCode(r.Context(), hash, api.HashToken(raw), expiresAt); err != nil {
+	if err := devices.IssueCliAuthDeviceCode(r.Context(), hash, api.HashToken(raw), challenge, expiresAt); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(raw), nil
@@ -137,7 +146,17 @@ func (h *cliAuthHandlers) consumeCliAuthExchange(r *http.Request, req api.CliAut
 		if raw == nil || !ok {
 			return "", "", false, nil
 		}
-		status, accountID, err = devices.ConsumeCliAuthDeviceCode(r.Context(), api.HashToken(raw))
+		// The verifier's hash is what the CLI sent as its challenge.
+		var verifierHash []byte
+		if req.CodeVerifier != "" {
+			verifier := decodeCliAuthSecret(req.CodeVerifier)
+			if verifier == nil {
+				return "", "", false, nil
+			}
+			sum := sha256.Sum256(verifier)
+			verifierHash = sum[:]
+		}
+		status, accountID, err = devices.ConsumeCliAuthDeviceCode(r.Context(), api.HashToken(raw), verifierHash)
 		return status, accountID, true, err
 	}
 	hash, ok := normalizeCliAuthCode(req.Code)
@@ -156,7 +175,13 @@ func (h *cliAuthHandlers) consumeCliAuthExchange(r *http.Request, req api.CliAut
 // decodeCliDeviceCode decodes a hex device code, or returns nil for a
 // malformed one.
 func decodeCliDeviceCode(deviceCode string) []byte {
-	raw, err := hex.DecodeString(strings.TrimSpace(deviceCode))
+	return decodeCliAuthSecret(deviceCode)
+}
+
+// decodeCliAuthSecret decodes a 32-byte value sent as 64 hex characters (a
+// device code, a code verifier or its SHA-256 challenge), or returns nil.
+func decodeCliAuthSecret(value string) []byte {
+	raw, err := hex.DecodeString(strings.TrimSpace(value))
 	if err != nil || len(raw) != 32 {
 		return nil
 	}
@@ -183,7 +208,7 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	status, accountID, ok, err := h.consumeCliAuthExchange(r, req)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid code", "code must be 16 hex characters (XXXX-XXXX-XXXX-XXXX), or device_code 64 hex characters"))
+			"Invalid code", "code must be 16 hex characters (XXXX-XXXX-XXXX-XXXX), or device_code (and any code_verifier) 64 hex characters"))
 		return
 	}
 	if err != nil {
@@ -240,6 +265,12 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		h.log.Error("cli_auth.account_lookup", "err", err)
 		api.WriteProblem(w, api.ErrCapacity("account lookup failed"))
 		return
+	}
+	// Each `gregale login` mints a 30-day full-access key; keep only the
+	// newest CLILoginKeysMax so logins on many machines (or a CLI that
+	// failed to revoke the key it replaced) cannot pile them up (F11-2).
+	if label == cliLoginKeyLabel {
+		h.srv.retireOldLoginKeys(r, acct, cliLoginKeyLabel, api.CLILoginKeysMax)
 	}
 	// The approval page can be phished (device-code phishing), so the
 	// owner learns about every credential it hands out.
@@ -378,12 +409,18 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	})
 
 	title := "Authorize CLI session"
-	// A CLI code is typed from the terminal, never carried from the link
-	// into the form, so a link someone sent cannot authorize their
-	// terminal. MCP codes arrive through the bridge's own OAuth redirect.
+	// A typed-flow CLI code is typed from the terminal, never carried from
+	// the link into the form, so a link someone sent cannot authorize their
+	// terminal. A one-click (loopback) code rides in the form because its
+	// approval sends the new device code to this browser's own machine, not
+	// to the terminal that minted it (ADR-20261111170000). MCP codes arrive
+	// through the bridge's own OAuth redirect.
 	shownCode := ""
+	loopbackPort := cliAuthLoopbackPort(r.URL.Query().Get("port"), raw)
 	if isMCPAuthCode(raw) {
 		title = "Authorize MCP connection"
+		shownCode = raw
+	} else if loopbackPort != 0 {
 		shownCode = raw
 	}
 	orgs := h.mcpOrgChoices(r, acct.ID, raw)
@@ -396,6 +433,8 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 			"CSRFToken":       token,
 			"AccountEmail":    acct.Email,
 			"MCP":             isMCPAuthCode(raw),
+			"LoopbackPort":    loopbackPort,
+			"Request":         h.cliAuthRequest(r, hash),
 			"MCPCapabilities": mcpCapabilities(raw),
 			"MCPOrgs":         orgs,
 			"MCPProjects":     h.mcpProjectChoices(r, acct.ID, raw, orgs),
@@ -467,6 +506,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	}
 
 	if !h.bindMCPOrg(w, r, acct.ID, rawCode, hash) || !h.bindMCPProjects(w, r, acct.ID, rawCode, hash) {
+		return
+	}
+	if port := cliAuthLoopbackPort(r.PostForm.Get("port"), rawCode); port != 0 {
+		h.approveLoopbackCode(w, r, acct.ID, rawCode, hash, port)
 		return
 	}
 	// Atomically claim the code for this account. ClaimCliAuthCode

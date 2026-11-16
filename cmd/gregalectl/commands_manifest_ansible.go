@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
@@ -243,6 +244,11 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		}
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
 		body += renderLogArchiveVars(m.LogArchive)
+		probeVars, probeErr := renderServingProbeVars(m.ServingProbes, m.Fleet.Hosts)
+		if probeErr != nil {
+			return nil, probeErr
+		}
+		body += probeVars
 		signerVars, signerErr := renderArtifactSignerVars(m.ArtifactSigner, m.Fleet.Hosts, host)
 		if signerErr != nil {
 			return nil, fmt.Errorf("host %s artifact signer: %w", host.Name, signerErr)
@@ -365,6 +371,29 @@ func renderComputeObjectGatewayVars(o manifest.ObjectStorage, host manifest.Host
 		fmt.Fprintf(&b, "faas_object_public_read_max_bytes_per_second: %d\n", publicReads)
 	}
 	return b.String()
+}
+
+// renderServingProbeVars hands every host the same serving probe fleet: the
+// control plane's expected-probe inventory and each compute node's probe read
+// it (docs/ops/serving-probe.md). Keys are the compute nodes' canonical names,
+// which the probe looks its own policy up by (faas_node_name). Absent leaves
+// the roles' unconfigured default (null).
+func renderServingProbeVars(p *manifest.ServingProbes, hosts []manifest.Host) (string, error) {
+	if p == nil {
+		return "", nil
+	}
+	fleet := map[string]map[string]any{}
+	for _, host := range hosts {
+		if host.Role == roleComputeOnly {
+			fleet[canonicalComputeNodeName(host.Name, roleTemplating.RoleComputeOnly)] = p.Policy()
+		}
+	}
+	// JSON is YAML flow syntax; it keeps the exact body one quoted scalar.
+	encoded, err := json.Marshal(fleet)
+	if err != nil {
+		return "", fmt.Errorf("serving probe fleet: %w", err)
+	}
+	return "faas_serving_probe_fleet: " + string(encoded) + "\n", nil
 }
 
 // renderLogArchiveVars hands the manifest's archive bucket to the log_archive
@@ -928,6 +957,9 @@ func renderHotPathVars(h manifest.HotPath, host manifest.Host) string {
 		for _, name := range v.vars {
 			b.WriteString(name + ": true\n")
 		}
+	}
+	if h.InvocationDispatchConcurrency > 0 {
+		fmt.Fprintf(&b, "faas_schedd_invocation_dispatch_concurrency: %d\n", h.InvocationDispatchConcurrency)
 	}
 	return b.String()
 }

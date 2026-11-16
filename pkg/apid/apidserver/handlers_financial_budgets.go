@@ -302,6 +302,18 @@ func financialBudgetHistoryQuery(raw string) (int64, int, error) {
 }
 
 func financialBudgetProblem(err error) *api.Problem {
+	var unavailable *financial.ComputeUnavailableError
+	if errors.As(err, &unavailable) {
+		// Hunt 34 H34-15: say which condition failed and what to do.
+		switch unavailable.Reason {
+		case financial.ComputeUnavailableRunning:
+			return api.NewProblem(422, "financial_compute_not_ready", "Strict compute activation unavailable", "The app has running instances or tasks. Park it (gregale app park <slug>), let its tasks finish, then enable the budget again.")
+		case financial.ComputeUnavailableAccounting:
+			return api.NewProblem(422, "financial_compute_not_ready", "Strict compute activation unavailable", "This month's usage accounting for the app is not complete yet, so the budget cannot start from a known balance. Try again in a few minutes.")
+		case financial.ComputeUnavailableNodes:
+			return api.NewProblem(422, "financial_compute_not_ready", "Strict compute activation unavailable", "Not every node of this Gregale installation can enforce strict compute budgets right now. Nothing in your account blocks it; try again later or contact support.")
+		}
+	}
 	if errors.Is(err, financial.ErrComputeUnavailable) {
 		return api.NewProblem(422, "financial_compute_not_ready", "Strict compute activation unavailable", "Activation requires quiet covered workloads, complete retained accounting, and current capable native owners on every active node. Account budgets require recorded allowances and funded-job owners. Combining compute and egress also requires complete egress accounting and byte-enforcement owners.")
 	}

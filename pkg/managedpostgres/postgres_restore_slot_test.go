@@ -193,4 +193,25 @@ func TestPostgresStorePlanExcessDeletionClock(t *testing.T) {
 	if err != nil || len(notices) != 2 {
 		t.Fatalf("unmailed after rearm = %+v, %v; want shadowed and fresh", notices, err)
 	}
+
+	// ADR-20261110184700 amendment 2026-11-12: a week before its mailed date,
+	// dated is due its one reminder.
+	if due, err := store.PlanExcessRemindersDue(ctx, deleteAt.Add(-api.ManagedPostgresPlanExcessDeleteReminder-time.Minute), 10); err != nil || len(due) != 0 {
+		t.Fatalf("due eight days out = %+v, %v", due, err)
+	}
+	remindAt := deleteAt.Add(-api.ManagedPostgresPlanExcessDeleteReminder)
+	due, err := store.PlanExcessRemindersDue(ctx, remindAt, 10)
+	if err != nil || len(due) != 1 || due[0].DatabaseID != dated.ID || !due[0].Reminder || !due[0].DeleteAt.Equal(deleteAt) ||
+		!due[0].RecordedAt.Equal(remindAt) || due[0].AccountID != accountID {
+		t.Fatalf("due a week out = %+v, %v; want dated", due, err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE managed_postgres_plan_excess_notices SET reminder_mail_intent_id=gen_random_uuid() WHERE database_id=$1", dated.ID); err != nil {
+		t.Fatal(err)
+	}
+	if due, err := store.PlanExcessRemindersDue(ctx, remindAt, 10); err != nil || len(due) != 0 {
+		t.Fatalf("due after the reminder = %+v, %v", due, err)
+	}
+	if due, err := store.PlanExcessRemindersDue(ctx, deleteAt, 10); err != nil || len(due) != 0 {
+		t.Fatalf("due on the date = %+v, %v", due, err)
+	}
 }

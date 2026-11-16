@@ -136,5 +136,15 @@ func (m *Manager) coldBootSpecForWake(nc netns.Config, req WakeRequest, serviceD
 		AppTask:            req.AppTaskOnly,
 		AgentInput:         req.agentRunOnly,
 		InputKey:           req.agentRunInputKey,
+		BuildKitSeedDrive:  builderSeedDrive(req),
 	}
+}
+
+// builderSeedDrive is the BuildKit seed copy of a builder VM, and empty for
+// any other VM.
+func builderSeedDrive(req WakeRequest) string {
+	if req.ExportDir == "" {
+		return ""
+	}
+	return req.BuildKitSeedDrive
 }

@@ -53,6 +53,9 @@ class CronResponse:
     last_fired_at: datetime.datetime | None | Unset = UNSET
     environment: str | Unset = UNSET
     """Project environment the cron runs in; omitted for production."""
+    clone_paused: bool | Unset = UNSET
+    """A full environment clone copied this cron disabled although the source ran it; resuming the environment's
+    automation enables it."""
     schedule_policy: SchedulePolicy | Unset = UNSET
     """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
@@ -109,6 +112,8 @@ class CronResponse:
 
         environment = self.environment
 
+        clone_paused = self.clone_paused
+
         schedule_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.schedule_policy, Unset):
             schedule_policy = self.schedule_policy.to_dict()
@@ -151,6 +156,8 @@ class CronResponse:
             field_dict["last_fired_at"] = last_fired_at
         if environment is not UNSET:
             field_dict["environment"] = environment
+        if clone_paused is not UNSET:
+            field_dict["clone_paused"] = clone_paused
         if schedule_policy is not UNSET:
             field_dict["schedule_policy"] = schedule_policy
         if failure_rules is not UNSET:
@@ -220,6 +227,8 @@ class CronResponse:
 
         environment = d.pop("environment", UNSET)
 
+        clone_paused = d.pop("clone_paused", UNSET)
+
         _schedule_policy = d.pop("schedule_policy", UNSET)
         schedule_policy: SchedulePolicy | Unset
         if isinstance(_schedule_policy, Unset):
@@ -253,6 +262,7 @@ class CronResponse:
             suspended_reason=suspended_reason,
             last_fired_at=last_fired_at,
             environment=environment,
+            clone_paused=clone_paused,
             schedule_policy=schedule_policy,
             failure_rules=failure_rules,
         )

@@ -37,10 +37,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/referrals"
 	quotasql "github.com/onebox-faas/faas/pkg/state/appquota/sqlc"
 	ownersql "github.com/onebox-faas/faas/pkg/state/resourceownership/sqlc"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
+	"golang.org/x/sync/semaphore"
 )
 
 // pgCore is what every Postgres store holds: the pool and the probes over
@@ -65,9 +67,10 @@ func newPgCore(pool *pgxpool.Pool) pgCore {
 // is safe for concurrent use.
 type PgStore struct {
 	pgCore
-	trafficAppsSuffix    string
-	trafficScopedBinding bool
-	realtimeEventSchemas *realtimeEventSchemaCache
+	trafficAppsSuffix      string
+	trafficScopedBinding   bool
+	realtimeEventSchemas   *realtimeEventSchemaCache
+	taskToolExecutionSlots *semaphore.Weighted
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
@@ -78,7 +81,11 @@ func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
 	if core.pool != nil {
 		core.pool.Background = configuredBackgroundPool(options)
 	}
-	return &PgStore{pgCore: core, trafficAppsSuffix: configuredTrafficAppsSuffix(options),
+	slots := int64(0)
+	if pool != nil {
+		slots = int64(pool.Config().MaxConns / 2)
+	}
+	return &PgStore{taskToolExecutionSlots: semaphore.NewWeighted(slots), pgCore: core, trafficAppsSuffix: configuredTrafficAppsSuffix(options),
 		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache()}
 }
 
@@ -394,6 +401,12 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 			values ($1, $2, $3, $4)
 		`, acct.ID, LegalDocumentTerms, a.Version, a.Method); err != nil {
 			return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: record terms acceptance: %w", mapErr(err))
+		}
+	}
+
+	if params.Referral != nil {
+		if err := referrals.Attribute(ctx, tx, acct.ID, *params.Referral); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}
 
@@ -817,7 +830,7 @@ func (s *pgCore) AuthenticateKey(ctx context.Context, hash []byte) (Account, API
 	// IAM-5 gate. Run before the success return so the
 	// middleware can translate the sentinel to the right 401.
 	if key.Status == string(APIKeyStatusRevoked) {
-		return Account{}, APIKey{}, ErrAPIKeyRevoked
+		return Account{}, refusedKey(key.ID, key.AccountID), ErrAPIKeyRevoked
 	}
 	if key.ExpiresAt != nil && !key.ExpiresAt.IsZero() && key.ExpiresAt.Before(time.Now()) {
 		// Lazy expiry: flip to revoked in a single UPDATE
@@ -832,7 +845,7 @@ func (s *pgCore) AuthenticateKey(ctx context.Context, hash []byte) (Account, API
 			    set status = 'revoked',
 			        revoked_at = coalesce(revoked_at, now())
 			  where id = $1 and status <> 'revoked'`, key.ID)
-		return Account{}, APIKey{}, ErrAPIKeyExpired
+		return Account{}, refusedKey(key.ID, key.AccountID), ErrAPIKeyExpired
 	}
 	return acct, key, nil
 }
@@ -1011,6 +1024,8 @@ func syncPersonalOrgStatus(ctx context.Context, tx pgx.Tx, accountID string, sta
 // SuspendAccountForFreeQuota applies the Free plan's monthly hard stop.
 // Only an active account is suspended, so a dunning or operator suspension
 // is never relabelled as a quota stop that the next month would lift.
+// past_due_at is kept: an account moved to Free for non-payment keeps its
+// unpaid-balance marker through the stop (billing review 2026-11-13, R9-1).
 func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bool, error) {
 	if n, err := ownersql.New().SuspendForQuota(ctx, s.pool, mustPgUUID(id)); err != nil {
 		return false, mapErr(err)
@@ -1019,8 +1034,25 @@ func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bo
 	}
 	return s.flipAccountForFreeQuota(ctx, id, `
 		update accounts
-		   set status = 'suspended', suspended_reason = 'free_quota', past_due_at = null
+		   set status = 'suspended', suspended_reason = 'free_quota'
 		 where id = $1 and status = 'active'`, AccountSuspended)
+}
+
+// QuotaSuspended reports whether the account or resource-owning organization
+// id is suspended by the plan's monthly quota stop (SuspendAccountForFreeQuota:
+// the Free compute allowance or an unbilled egress allowance), rather than for
+// payment, abuse or by an operator. That stop parks the subject's apps until
+// the month ends or the plan grows; it does not stop its other resources.
+func (s *PgStore) QuotaSuspended(ctx context.Context, id string) (bool, error) {
+	var suspended bool
+	err := s.pool.QueryRow(ctx, `
+		select exists(select 1 from accounts where id = $1::uuid and status = 'suspended' and suspended_reason = 'free_quota')
+		    or exists(select 1 from orgs where id = $1::uuid and not personal_org and status = 'suspended' and suspended_reason = 'free_quota')`,
+		id).Scan(&suspended)
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return suspended, nil
 }
 
 // RestoreFreeQuotaSuspension lifts only a suspension that
@@ -3499,7 +3531,7 @@ func (s *PgStore) FailRunningInstanceIfOwnedByNode(ctx context.Context, id, node
 // Projection matches scanCrons: id, app_id, schedule, path, enabled,
 // suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds.
 func (s *PgStore) ListOwnedCronsByNodeID(ctx context.Context, nodeID string) ([]Cron, error) {
-	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at, c.deployment_scope
+	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at, c.deployment_scope, c.clone_paused
 		   from crons c
 		   join apps a on a.id = c.app_id
 		  where a.node_id = $1 and c.suspended_reason = '' and c.enabled
@@ -4620,6 +4652,9 @@ func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, t
 	if from != to && (from == AppDeleted || to == AppDeleted) {
 		return s.compareAndSetAppTrafficStatus(ctx, id, from, to)
 	}
+	if from == AppEvictedCold && to == AppActive {
+		return s.wakeAppStatus(ctx, id)
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update apps
 		    set status = $3,
@@ -4632,6 +4667,36 @@ func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, t
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// wakeAppStatus is the parked -> active claim. In the same statement it
+// clears the app's recoverable deployment parks (liveness_exhausted,
+// lifecycle_park, admin_park): parked_reason was stamped once and never
+// cleared, so a release that recovered from a liveness park read "parked:
+// liveness failed" after any later park, and the build and deployment
+// dependency gates kept treating it as parked (2026-11-13). A security park
+// stays until its own release flow.
+func (s *PgStore) wakeAppStatus(ctx context.Context, id string) (bool, error) {
+	var woke int
+	err := s.pool.QueryRow(ctx,
+		`with woke as (
+		     update apps
+		        set status = 'active', park_transition_id = null
+		      where id = $1 and status = 'evicted_cold'
+		  returning id
+		 ), cleared as (
+		     update deployments
+		        set parked_reason = null, parked_at = null
+		      where app_id in (select id from woke)
+		        and parked_reason in ('liveness_exhausted', 'lifecycle_park', 'admin_park')
+		 )
+		 select count(*) from woke`,
+		id,
+	).Scan(&woke)
+	if err != nil {
+		return false, err
+	}
+	return woke == 1, nil
 }
 
 // nilOrBytes returns p.PublicAuth.Sealed when SetPublicAuth is
@@ -5807,11 +5872,17 @@ func (s *PgStore) ProjectEnvironmentBySlug(ctx context.Context, accountID, proje
 
 // ProjectEnvironmentByID is the identity lookup for a platform-owned
 // environment hostname. The router separately verifies its account/project
-// association with the workload encoded in the same hostname.
+// association with the workload encoded in the same hostname. An ID that is
+// an environment branch's slot names the environment of the branch holding
+// it (ADR-20261031193635 stable branch URLs); the returned environment then
+// carries its own ID.
 func (s *PgStore) ProjectEnvironmentByID(ctx context.Context, id string) (ProjectEnvironment, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, project_id, slug, protected, created_at, updated_at
-		  from project_environments where id = $1
+		  from project_environments
+		 where id = $1 or id = (select environment_id from project_environment_branches where slot_id = $1)
+		 order by (id = $1) desc
+		 limit 1
 	`, id)
 	return scanProjectEnvironment(row)
 }
@@ -6025,6 +6096,13 @@ func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, p
 	if _, err := tx.Exec(ctx, `
 		delete from crons c using apps a
 		 where c.app_id = a.id and a.account_id = $1 and a.project_id = $2 and c.deployment_scope = $3
+	`, accountID, projectID, slug); err != nil {
+		return mapErr(err)
+	}
+	// So do its event subscriptions; their work bindings cascade.
+	if _, err := tx.Exec(ctx, `
+		delete from event_subscriptions s using apps a
+		 where s.app_id = a.id and a.account_id = $1 and a.project_id = $2 and s.deployment_scope = $3
 	`, accountID, projectID, slug); err != nil {
 		return mapErr(err)
 	}
@@ -6265,7 +6343,7 @@ func (s *PgStore) ApplyProjectPlan(
 		}
 		row := tx.QueryRow(ctx,
 			`insert into crons (app_id, schedule, path, enabled) values ($1, $2, $3, $4)
-			 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope`,
+			 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused`,
 			c.AppID, c.Schedule, c.Path, c.Enabled,
 		)
 		out, err := scanCronRow(row)
@@ -6567,7 +6645,7 @@ func (s *PgStore) applyProjectReconcileOnce(
 			desiredOrder[appID] = append(desiredOrder[appID], key)
 		}
 		for _, appID := range appByWorkload {
-			rows, err = tx.Query(ctx, `select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope from crons where app_id = $1 order by created_at for update`, appID)
+			rows, err = tx.Query(ctx, `select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused from crons where app_id = $1 order by created_at for update`, appID)
 			if err != nil {
 				return ProjectReconcileResult{}, err
 			}
@@ -6948,6 +7026,23 @@ func markInstallationPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, installat
 		      and parent.github_install_id = $1
 		      and ($5::text[] is null or parent.github_repo_full_name = any($5::text[])))`,
 		installationID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown, repos)
+	if err != nil {
+		return err
+	}
+	// Branch-backed previews of the same projects end with them
+	// (ADR-20261113121342); the branch sweeper deletes them.
+	_, err = tx.Exec(ctx, `
+		update project_environment_branches b
+		   set expires_at = greatest(b.created_at + interval '1 second', least(b.expires_at, now()))
+		  from apps parent
+		 where b.pull_request_number is not null
+		   and b.project_id = parent.project_id
+		   and b.account_id = parent.account_id
+		   and parent.preview_of_slug is null
+		   and parent.status <> 'deleted'
+		   and parent.github_install_id = $1
+		   and ($2::text[] is null or parent.github_repo_full_name = any($2::text[]))`,
+		installationID, repos)
 	return err
 }
 
@@ -6992,6 +7087,17 @@ func markAppPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, appID string) erro
 		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
 		      and coalesce(env.anchor, p.preview_of_slug) = parent.slug)`,
 		appID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		update project_environment_branches b
+		   set expires_at = greatest(b.created_at + interval '1 second', least(b.expires_at, now()))
+		  from apps parent
+		 where parent.id = $1
+		   and b.pull_request_number is not null
+		   and b.project_id = parent.project_id
+		   and b.account_id = parent.account_id`, appID)
 	return err
 }
 
@@ -7793,7 +7899,33 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 	return s.createDeployment(ctx, d, &activity, nil)
 }
 
+// createDeployment reruns the whole create when its traffic policy analysis
+// ran out of time, as app delete does: the analysis runs before COMMIT, so a
+// refused attempt saved nothing. Concurrent deploys of a project's services
+// tripped the 2 s analysis budget and a raw API caller got 422
+// traffic_policy_too_complex with Retry-After 2 (2026-11-12 agent feedback);
+// only the Go client resent it. Each attempt gets its own copy of activity,
+// which the create stamps with the new deployment.
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+	var created Deployment
+	var outboxID int64
+	err := retryTrafficAnalysisTimeout(ctx, func() error {
+		var attemptActivity *OrgActivity
+		if activity != nil {
+			copied := *activity
+			attemptActivity = &copied
+		}
+		var err error
+		created, outboxID, err = s.createDeploymentOnce(ctx, d, attemptActivity, promotionInput, cloneInputs...)
+		if err == nil && activity != nil {
+			*activity = *attemptActivity
+		}
+		return err
+	})
+	return created, outboxID, err
+}
+
+func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
 	if d.submissionAttemptID != "" && !api.ValidDeploymentAttemptID(d.submissionAttemptID) {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
@@ -8136,7 +8268,8 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
 		                          stage_state, rollback_on_5xx, release_command, release_command_shell, disable_startup_cpu_boost,
-		                          override_readiness_probe, override_main_depends_on, github_source_ref, github_installation_id)
+		                          override_readiness_probe, override_main_depends_on, github_source_ref, github_installation_id,
+		                          build_registry_scope)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -8150,7 +8283,8 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, nullif($52, ''), nullif($53, 0))
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, nullif($52, ''), nullif($53, 0),
+		         $54::text[])
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -8194,7 +8328,9 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx,
 		notNullEmptyTextArray(d.ReleaseCommand), d.ReleaseCommandShell, d.DisableStartupCPUBoost,
 		nullJSONRaw(d.OverrideReadinessProbe), notNullEmptyJSONRaw(d.OverrideMainDependsOn),
-		d.GitHubSourceRef, d.GitHubInstallationID)
+		d.GitHubSourceRef, d.GitHubInstallationID,
+		// Slice 3j-4: nil stays NULL (not recorded).
+		d.BuildRegistryScope)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, 0, err
@@ -8930,6 +9066,11 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: begin update traffic tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	recovery, err := s.lockTaskRecoveryTraffic(ctx, tx, id, newPercent, expectedServingID)
+	if err != nil {
+		return Deployment{}, err
+	}
 	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
 	defer s.finishMCPAdmission(ctx, tx, admission, &resultErr)
 
@@ -9061,6 +9202,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if err := s.checkMCPAccessPolicy(ctx, tx, appID); err != nil {
 		return Deployment{}, err
 	}
+	if err := s.checkMCPReadinessExpectation(ctx, tx, appID, id); err != nil {
+		return Deployment{}, err
+	}
 
 	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
 		return Deployment{}, err
@@ -9178,6 +9322,10 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	sort.SliceStable(stamps, func(a, b int) bool {
 		return stamps[a].next-stamps[a].prior < stamps[b].next-stamps[b].prior
 	})
+	recovery, err = s.prepareTaskRecoveryTraffic(ctx, tx, recovery)
+	if err != nil {
+		return Deployment{}, err
+	}
 	for _, stamp := range stamps {
 		if _, err := tx.Exec(ctx,
 			`update deployments
@@ -9222,6 +9370,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
 	}
 	if err := insertPromotionReceipt(ctx, tx, promotionReceipt); err != nil {
+		return Deployment{}, err
+	}
+	if err := completeTaskRecoveryTraffic(ctx, tx, recovery); err != nil {
 		return Deployment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -11067,7 +11218,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	if _, err := tx.Exec(ctx, `
 		update crons
 		   set suspended_reason = ''
-		 where app_id = $1 and suspended_reason = 'no_live_deployment'`, appID); err != nil {
+		 where app_id = $1 and suspended_reason in ('no_live_deployment', 'failing')`, appID); err != nil {
 		return fmt.Errorf("state: reactivate deployment crons: %w", err)
 	}
 	if dep.Status == DeployLive || (dep.CanaryTotalSteps <= 0 && IsServiceRollout(dep)) {
@@ -12193,7 +12344,8 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		                          traffic_percent_explicit,
 		                          release_command, release_command_shell,
 		                          override_readiness_probe, override_main_depends_on,
-		                          github_source_ref, github_installation_id, disable_startup_cpu_boost)
+		                          github_source_ref, github_installation_id, disable_startup_cpu_boost,
+		                          build_registry_scope)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -12207,7 +12359,10 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0), $52)
+		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0), $52,
+		         -- Slice 3j-4: the retry builds the same source, so it keeps
+		         -- the failed row's build registry scope.
+		         (select build_registry_scope from deployments where id = $53::uuid))
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -12238,7 +12393,8 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		newDep.TrafficPercentExplicit,
 		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell,
 		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn),
-		newDep.GitHubSourceRef, newDep.GitHubInstallationID, newDep.DisableStartupCPUBoost)
+		newDep.GitHubSourceRef, newDep.GitHubInstallationID, newDep.DisableStartupCPUBoost,
+		src.ID)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -13746,20 +13902,89 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 // CreateBuildWithID publishes a pre-uploaded source into the queue and
 // advances its deployment under the same lock used by cancellation.
 func (s *PgStore) CreateBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
-	build, _, err := s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, nil)
+	build, _, err := s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, nil, nil)
 	return build, err
 }
 
 func (s *PgStore) CreateBuildWithIDAndActivity(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity OrgActivity) (Build, int64, error) {
-	return s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, &activity)
+	return s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, &activity, nil)
 }
 
-func (s *PgStore) createBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity) (Build, int64, error) {
+// CreateDeferredBuildWithID implements DeferredBuildStore: not_before is
+// written by the same INSERT, so no claim can take the build early.
+func (s *PgStore) CreateDeferredBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, notBefore time.Time, activity *OrgActivity) (Build, int64, error) {
+	return s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, activity, &notBefore)
+}
+
+// StartDeferredBuild implements DeferredBuildStore.
+func (s *PgStore) StartDeferredBuild(ctx context.Context, deploymentID string) (Build, bool, error) {
+	b, err := scanBuild(s.pool.QueryRow(ctx,
+		`update builds set not_before = null
+		  where deployment_id = $1 and status = 'queued' and not_before is not null
+		 returning id, deployment_id, kind, source_bytes, status,
+		           coalesce(failure_class,''), coalesce(log_path,''),
+		           started_at, finished_at, enqueued_at,
+		           cancelled_at, cancelled_by_deployment_cascade,
+		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`, deploymentID))
+	// scanBuild maps pgx.ErrNoRows to ErrNotFound: nothing left to start.
+	if errors.Is(err, ErrNotFound) {
+		return Build{}, false, nil
+	}
+	if err != nil {
+		return Build{}, false, fmt.Errorf("state: start deferred build of %s: %w", deploymentID, err)
+	}
+	return b, true, nil
+}
+
+// DeferredDeployments implements DeferredBuildStore.
+func (s *PgStore) DeferredDeployments(ctx context.Context, appID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`select d.id::text
+		   from deployments d
+		   join builds b on b.deployment_id = d.id
+		  where d.app_id = $1 and b.status = 'queued' and b.not_before is not null
+		  order by d.id`, appID)
+	if err != nil {
+		return nil, fmt.Errorf("state: deferred deployments of %s: %w", appID, err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// createBuildWithID retries a transaction Postgres aborted to break a
+// deadlock; the whole transaction rolled back, so it is safe to run again.
+func (s *PgStore) createBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity, notBefore *time.Time) (Build, int64, error) {
+	for attempt := 0; ; attempt++ {
+		build, outboxID, err := s.createBuildWithIDOnce(ctx, id, deploymentID, kind, sourceBytes, logPath, activity, notBefore)
+		if attempt >= 2 || !transientLockConflict(err) || ctx.Err() != nil {
+			return build, outboxID, err
+		}
+	}
+}
+
+func (s *PgStore) createBuildWithIDOnce(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity, notBefore *time.Time) (Build, int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Build{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Lock the owning account before the deployment row. The
+	// lifecycle_successor_deployments trigger locks the account after the
+	// row update; a concurrent deploy already holding the account and
+	// waiting for this deployment deadlocked with it, and the customer saw
+	// "create build: deadlock detected" (Hunt 34 H34-14). Taking the
+	// account first gives both transactions the same order.
+	if _, err := tx.Exec(ctx, `select 1 from accounts where id=(select a.account_id from deployments d join apps a on a.id=d.app_id where d.id=$1) for no key update`, deploymentID); err != nil {
+		return Build{}, 0, err
+	}
 	tag, err := tx.Exec(ctx, `update deployments set status='building' where id=$1 and status in ('pending','building')`, deploymentID)
 	if err != nil {
 		return Build{}, 0, err
@@ -13767,9 +13992,9 @@ func (s *PgStore) createBuildWithID(ctx context.Context, id, deploymentID string
 	if tag.RowsAffected() != 1 {
 		return Build{}, 0, ErrNotFound
 	}
-	build, err := scanBuild(tx.QueryRow(ctx, `insert into builds(id,deployment_id,kind,source_bytes,status,log_path)
-	values($1,$2,$3,$4,'queued',$5)
-	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade,coalesce(cache_status,''),coalesce(cache_key_sha256,'')`, id, deploymentID, kind, sourceBytes, nullString(logPath)))
+	build, err := scanBuild(tx.QueryRow(ctx, `insert into builds(id,deployment_id,kind,source_bytes,status,log_path,not_before)
+	values($1,$2,$3,$4,'queued',$5,$6)
+	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade,coalesce(cache_status,''),coalesce(cache_key_sha256,'')`, id, deploymentID, kind, sourceBytes, nullString(logPath), notBefore))
 	if err != nil {
 		return Build{}, 0, err
 	}
@@ -14136,7 +14361,8 @@ func (s *PgStore) SweepStuckRunningBuildsWithIDs(ctx context.Context, threshold 
 
 // QueuedBuildsCount (operator-side observability mega-PR / Commit 7
 // — P5) returns the number of builds currently in 'queued' state
-// across the fleet. It excludes running and terminal builds and does not
+// across the fleet. It excludes running and terminal builds, and deferred
+// builds that are not due yet (ADR-20261021221906): they are not backlog. It does not
 // attribute queued builds to a node. A queued-only index supports periodic
 // reads; callers still bound the count with a deadline.
 func (s *PgStore) QueuedBuildsCount(ctx context.Context) (int, error) {
@@ -14160,9 +14386,11 @@ func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error
 		`update builds
 		   set status = 'running', started_at = now()
 		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
+		   and (not_before is null or not_before <= now())
 		   and not (kind = 'preview' and exists (
 		     select 1 from builds o
 		      where o.status = 'queued' and o.kind <> 'preview'
+		        and (o.not_before is null or o.not_before <= now())
 		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=o.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))))
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
@@ -14195,9 +14423,11 @@ func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, node
 		  from deployments d
 		 where b.id = $1
 		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=b.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
+		   and (b.not_before is null or b.not_before <= now())
 		   and not (b.kind = 'preview' and exists (
 		     select 1 from builds o
 		      where o.status = 'queued' and o.kind <> 'preview'
+		        and (o.not_before is null or o.not_before <= now())
 		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=o.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))))
 		   and d.id = b.deployment_id
 		   and (
@@ -14250,6 +14480,7 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		 where id = (
 		   select id from builds
 		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
+		      and (not_before is null or not_before <= now())
 		    order by (kind = 'preview'), enqueued_at asc
 		    limit 1
 		    for update skip locked
@@ -14284,6 +14515,7 @@ func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairness
         join deployments d on d.id = b.deployment_id
         join apps a on a.id = d.app_id
        where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=b.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
+         and (b.not_before is null or b.not_before <= now())
        order by (b.kind = 'preview'), exists (
          select 1 from recent_build_claims r
           where r.account_id = a.account_id
@@ -14327,6 +14559,7 @@ func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, node
 		     join deployments d on d.id = b.deployment_id
 		     join apps a on a.id = d.app_id
 		    where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=b.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
+		      and (b.not_before is null or b.not_before <= now())
 		      and (
 		        (b.coalesced_with is not null and (
 		          coalesce((select w.finished_at from builds w where w.id = b.coalesced_with), '-infinity'::timestamptz) <= now() - $2::interval
@@ -14917,7 +15150,7 @@ func (s *PgStore) CreateCronWithOptions(ctx context.Context, appID, schedule, pa
 		                    command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds,
 		                    schedule_policy, failure_rules, deployment_scope)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
-		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope`,
+		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused`,
 		appID, schedule, path, enabled, opts.Timezone, opts.SkipIfRunning,
 		opts.Command, opts.CommandShell, opts.CommandTimeoutSeconds, opts.CommandMaxOutputBytes,
 		opts.RetryMax, opts.RetryBackoffSeconds, policyJSON(opts.SchedulePolicy), policyJSON(opts.FailureRules), opts.DeploymentScope)
@@ -14987,7 +15220,7 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	// or account cap. This check must run after the app lock and before quota
 	// counts so concurrent retries cannot race into a duplicate INSERT.
 	existing, existingErr := scanCronRow(tx.QueryRow(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused
 		 from crons where app_id = $1 and schedule = $2 and path = $3 and command = $4 and deployment_scope = $5`,
 		appID, schedule, path, opts.Command, opts.DeploymentScope))
 	if existingErr == nil {
@@ -15043,7 +15276,7 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 		                    command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds,
 		                    schedule_policy, failure_rules, deployment_scope)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
-		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope`,
+		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused`,
 		appID, schedule, path, enabled, opts.Timezone, opts.SkipIfRunning,
 		opts.Command, opts.CommandShell, opts.CommandTimeoutSeconds, opts.CommandMaxOutputBytes,
 		opts.RetryMax, opts.RetryBackoffSeconds, policyJSON(opts.SchedulePolicy), policyJSON(opts.FailureRules), opts.DeploymentScope)
@@ -15061,7 +15294,7 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 // did not exist for callers before deletion kept them for restore.
 func (s *PgStore) CronByID(ctx context.Context, id string) (Cron, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope from crons where id = $1 and suspended_reason <> 'app_deleted'`, id)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused from crons where id = $1 and suspended_reason <> 'app_deleted'`, id)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -15126,9 +15359,14 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		   retry_max = coalesce($8, retry_max),
 		   retry_backoff_seconds = coalesce($9, retry_backoff_seconds),
 		   schedule_policy = case when $12::boolean then null else coalesce($10::jsonb, schedule_policy) end,
-		   failure_rules = case when $13::boolean then null else coalesce($11::jsonb, failure_rules) end
+		   failure_rules = case when $13::boolean then null else coalesce($11::jsonb, failure_rules) end,
+		   -- A customer edit of a cron paused for failing resumes it
+		   -- (ADR-20261115194000).
+		   suspended_reason = case when suspended_reason = 'failing'
+		       and ($2::text is not null or $3::text is not null or $4::boolean is not null)
+		       then '' else suspended_reason end
 		 where id = $1
-		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope`,
+		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused`,
 		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg, retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg, clearPolicy, clearRules)
 	c, err := scanCronRow(row)
 	if err != nil {
@@ -15201,14 +15439,18 @@ func (s *PgStore) MarkCronFired(ctx context.Context, id string, at time.Time) er
 	return nil
 }
 
-// CountActiveCronInvocations counts pending/dispatching cron invocations for
+// CountActiveCronInvocations counts pending/dispatching cron invocations, and
+// timed-out runs the app may still be running (CronTimedOutRunHold), for
 // the overlap guard. The cron history index keeps this point lookup cheap.
 func (s *PgStore) CountActiveCronInvocations(ctx context.Context, cronID string) (int, error) {
 	var n int
 	if err := s.pool.QueryRow(ctx, `
 		select count(*) from invocations
 		 where cron_id = $1 and source = 'cron'
-		   and state in ('pending','dispatching')`, cronID).Scan(&n); err != nil {
+		   and (state in ('pending','dispatching')
+		        or (state = 'failed' and outcome = 'timeout' and completed_at is not null
+		            and now() < completed_at + least(completed_at - created_at, $2 * interval '1 second')))`,
+		cronID, int(CronTimedOutRunHold.Seconds())).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -15236,7 +15478,7 @@ func (s *PgStore) StampAppScaleIn(ctx context.Context, appID string) error {
 
 func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope from crons where app_id = $1 order by created_at`, appID)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused from crons where app_id = $1 order by created_at`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -15246,7 +15488,7 @@ func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, er
 
 func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope from crons c where enabled = true and suspended_reason = ''
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused from crons c where enabled = true and suspended_reason = ''
 		  and not exists (select 1 from scenario_test_action_policies p where p.app_id = c.app_id)`)
 	if err != nil {
 		return nil, err
@@ -15289,7 +15531,7 @@ func (s *PgStore) ReactivateCronsForApp(ctx context.Context, appID string) (int,
 	tag, err := s.pool.Exec(ctx, `
 		update crons
 		   set suspended_reason = ''
-		 where app_id = $1 and suspended_reason = 'no_live_deployment'`, appID)
+		 where app_id = $1 and suspended_reason in ('no_live_deployment', 'failing')`, appID)
 	if err != nil {
 		return 0, fmt.Errorf("state: reactivate crons for app: %w", err)
 	}
@@ -17268,7 +17510,10 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 		return Invocation{}, err
 	}
 	if info.environment.ID == "" && inv.AdmissionMaxPending <= 0 && inv.AdmissionMaxBacklogBytes <= 0 {
-		return enqueueInvocationRow(ctx, s.pool, inv)
+		if inv.SentByAppID == "" {
+			return enqueueInvocationRow(ctx, s.pool, inv)
+		}
+		return enqueueSentInvocation(ctx, s.pool, inv)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -17286,6 +17531,10 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	}
 	out, err := enqueueInvocationRow(ctx, tx, inv)
 	if err != nil {
+		return Invocation{}, err
+	}
+	inv.ID = out.ID
+	if err := insertInvocationSendDB(ctx, tx, inv); err != nil {
 		return Invocation{}, err
 	}
 	if info.environment.ID != "" && !stageCronInvocationShape(inv) {
@@ -17671,6 +17920,11 @@ func decrementAccountAsyncInflightTx(ctx context.Context, tx pgx.Tx, accountID s
 // transition transaction, so either both the outcome and callback are durable
 // or neither is.
 func enqueueInvocationDestinationTx(ctx context.Context, tx pgx.Tx, inv Invocation) error {
+	// A send()'s completion invocation commits with the outcome too
+	// (ADR-20261112160000).
+	if err := enqueueInvocationCompletionTx(ctx, tx, inv); err != nil {
+		return err
+	}
 	delivery, ok, err := invocationDestinationDelivery(inv)
 	if err != nil {
 		return fmt.Errorf("state: build invocation destination: %w", err)
@@ -19681,12 +19935,16 @@ func createSnapshotWithQuerier(ctx context.Context, q sqlc.DBTX, snap Snapshot) 
 			return Snapshot{}, ErrInvalidArgument
 		}
 	}
+	if err := validSnapshotSeal(snap); err != nil {
+		return Snapshot{}, err
+	}
 	row, err := sqlc.New().CreateSnapshot(ctx, q, sqlc.CreateSnapshotParams{
 		RecoveryGeneration: snap.RecoveryGeneration,
 		DeploymentID:       mustPgUUID(snap.DeploymentID), FcVersion: snap.FCVersion, BaseImageVersion: snap.BaseImageVersion,
 		MemBytes: snap.MemBytes, DiskBytes: snap.DiskBytes, StoredBytes: snap.StoredBytes, StorageKey: snap.StorageKey,
 		Stale: snap.Stale, Tier: tier, ApplicationStandardCaptureToken: mustPgUUID(snap.ApplicationStandardCaptureToken),
 		CpuTemplate: snap.CPUTemplate, CpuModel: snap.CPUModel,
+		SealedKey: snap.SealedKey, SealedCaptureID: mustPgUUID(snap.SealedCaptureID),
 	})
 	if err != nil {
 		return Snapshot{}, mapErr(err)
@@ -22645,7 +22903,17 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 // and applies its counters in the same transaction. The caller may ACK the
 // frame only after this method returns nil.
 func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32) error {
-	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 {
+	return s.AppendGatewayUsageEventWithServiceReply(ctx, nodeID, eventID, instanceID, minute, requests, txBytes, coldBoots, 0)
+}
+
+// AppendGatewayUsageEventWithServiceReply is AppendGatewayUsageEvent that also
+// queues the reply bytes the instance sent to other apps' service calls for
+// subtraction from its billed egress (billing review R8-2 slice 3), in the
+// same transaction as the frame's idempotency row, so a replayed frame queues
+// nothing twice. It queues only for an instance whose node reports internal
+// egress; elsewhere the bytes stay billed.
+func (s *PgStore) AppendGatewayUsageEventWithServiceReply(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32, serviceReplyBytes int64) error {
+	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 || serviceReplyBytes < 0 {
 		return fmt.Errorf("state: invalid gateway usage counters")
 	}
 	node, err := parsePgUUID(nodeID)
@@ -22687,6 +22955,11 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 		if rows != 1 {
 			return fmt.Errorf("state: gateway usage instance %s not found", instanceID)
 		}
+		if serviceReplyBytes > 0 {
+			if _, err := tx.Exec(ctx, serviceReplyQueue, instanceID, serviceReplyBytes); err != nil {
+				return fmt.Errorf("state: queue service reply bytes: %w", err)
+			}
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -22696,17 +22969,35 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 // in the same transaction as usage_minutes, which makes retry after a meterd
 // crash exactly-once for every observed cumulative value.
 func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
+	tx, rx, _, err := s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
+	return tx, rx, err
+}
+
+// AppendNetworkUsageObservationExcludingInternal implements
+// InternalEgressObserver.
+func (s *PgStore) AppendNetworkUsageObservationExcludingInternal(ctx context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internalCumulative int64) (int64, int64, int64, error) {
+	if internalCumulative < 0 {
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
+}
+
+// appendNetworkUsageObservation is AppendNetworkUsageObservation; with a
+// non-nil internal reading the egress it adds leaves out the internal bytes
+// (billing review R8-2). Financial usage evidence is append-only, so billed
+// egress is reduced before it is written, never after.
+func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
-		return 0, 0, fmt.Errorf("network usage counters must be non-negative")
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	subject, err := ownersql.New().UsageSubject(ctx, tx, ownersql.UsageSubjectParams{InstanceID: mustPgUUID(instanceID), Minute: pgtype.Timestamptz{Time: minute.UTC().Truncate(time.Minute), Valid: true}, AppID: mustPgUUID(appID)})
 	if err != nil {
-		return 0, 0, mapErr(err)
+		return 0, 0, 0, mapErr(err)
 	}
 	billingAccountID := pgUUIDString(subject)
 
@@ -22715,17 +23006,19 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		 values ($1, 0, 0, false, false, $2)
 		 on conflict (instance_id) do nothing`, instanceID, minute.UTC())
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	var previousTx, previousRx int64
-	var previousTxValid, previousRxValid bool
+	var previousTx, previousRx, previousInternal, internalPending, serviceReplies int64
+	var previousTxValid, previousRxValid, previousInternalValid bool
 	err = tx.QueryRow(ctx,
-		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid
+		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid,
+		        internal_tx_bytes, internal_tx_valid, internal_tx_pending, service_reply_pending
 		   from meter_network_checkpoints
 		  where instance_id = $1
-		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid)
+		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid,
+		&previousInternal, &previousInternalValid, &internalPending, &serviceReplies)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
@@ -22757,6 +23050,13 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		nextRxValid = true
 	}
 
+	var excluded, nextInternalPending int64
+	if internal != nil {
+		excluded, nextInternalPending = internalEgressStep(previousInternal, previousInternalValid,
+			internalPending, serviceReplies, *internal, netTxDelta)
+		netTxDelta -= excluded
+	}
+
 	command, err := tx.Exec(ctx,
 		`update usage_minutes
 		    set net_tx_bytes = net_tx_bytes + $1,
@@ -22765,10 +23065,10 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		    and account_id = $5 and app_id = $6`,
 		netTxDelta, netRxDelta, instanceID, minute.UTC().Truncate(time.Minute), billingAccountID, appID)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if command.RowsAffected() != 1 {
-		return 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, minute.UTC().Truncate(time.Minute).Format(time.RFC3339))
+		return 0, 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, minute.UTC().Truncate(time.Minute).Format(time.RFC3339))
 	}
 
 	_, err = tx.Exec(ctx,
@@ -22783,12 +23083,17 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		       updated_at = now()`,
 		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC())
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
+	}
+	if internal != nil {
+		if _, err := tx.Exec(ctx, internalEgressCheckpointUpdate, instanceID, *internal, nextInternalPending); err != nil {
+			return 0, 0, 0, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	return netTxDelta, netRxDelta, nil
+	return netTxDelta, netRxDelta, excluded, nil
 }
 
 // InstanceBillingSeconds returns each instance's actual resident seconds in
@@ -27407,7 +27712,7 @@ func scanCronRow(row interface{ Scan(...any) error }) (Cron, error) {
 	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled,
 		&c.SuspendedReason, &c.Timezone, &c.SkipIfRunning, &lastFired, &c.CreatedAt,
 		&c.Command, &c.CommandShell, &c.CommandTimeoutSeconds, &c.CommandMaxOutputBytes,
-		&c.RetryMax, &c.RetryBackoffSeconds, &schedulePolicy, &failureRules, &c.ScheduleRevision, &anchor, &c.DeploymentScope); err != nil {
+		&c.RetryMax, &c.RetryBackoffSeconds, &schedulePolicy, &failureRules, &c.ScheduleRevision, &anchor, &c.DeploymentScope, &c.ClonePaused); err != nil {
 		return Cron{}, err
 	}
 	if anchor.Valid {
@@ -27635,6 +27940,8 @@ func snapshotFromSQLC(row sqlc.Snapshot) Snapshot {
 		RecoveryGeneration:              row.RecoveryGeneration,
 		CPUTemplate:                     row.CpuTemplate,
 		CPUModel:                        row.CpuModel,
+		SealedKey:                       row.SealedKey,
+		SealedCaptureID:                 pgUUIDString(row.SealedCaptureID),
 	}
 }
 
@@ -27695,12 +28002,15 @@ func mapErr(err error) error {
 		case "environment_recovery_budget":
 			observed, _ := strconv.ParseInt(admission.Detail, 10, 64)
 			return &EnvironmentRecoveryQuotaError{Observed: observed}
-		case "environment_recovery_retained":
+		case "environment_recovery_retained",
+			"event_subscription_environment_membership", "event_subscription_scope_identity":
 			return ErrConflict
 		case "environment_recovery_artifact_unavailable":
 			return ErrLayerArtifactRetired
 		case "account_shared_app_ownership_pending":
 			return ErrOrgAppOwnershipPending
+		case "org_owner_account_inactive":
+			return ErrOrgOwnerInactive
 		case accountManagedPostgresDatabasesConstraint:
 			return accountManagedPostgresDatabasesError(admission.Detail)
 		case "migration_admission_current", "migration_source_current", "function_migration_node_pending":
@@ -28372,6 +28682,41 @@ func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.Cl
 	return api.CliAuthStatus(status), aid, nil
 }
 
+// RecordCliAuthRequester implements CliAuthRequesterStore. It runs right
+// after the mint, so the row is in its stored (keyed) form.
+func (s *PgStore) RecordCliAuthRequester(ctx context.Context, tokenHash []byte, ip string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update cli_auth_codes set requester_ip = $2
+		 where token_hash = $1 and status = 'pending' and account_id is null`,
+		storedCredential(credTagCLIAuthCode, tokenHash), ip)
+	if err != nil {
+		return fmt.Errorf("record cli auth requester: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CliAuthRequester implements CliAuthRequesterStore.
+func (s *PgStore) CliAuthRequester(ctx context.Context, tokenHash []byte) (CliAuthRequest, error) {
+	return firstCredential(ctx, credentialLookups(credTagCLIAuthCode, tokenHash), func(ctx context.Context, value []byte) (CliAuthRequest, error) {
+		var req CliAuthRequest
+		var ip *string
+		err := s.pool.QueryRow(ctx,
+			`select requester_ip, created_at from cli_auth_codes
+			 where token_hash = $1 and expires_at > now()`,
+			value).Scan(&ip, &req.CreatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return req, ErrNotFound
+		}
+		if ip != nil {
+			req.IP = *ip
+		}
+		return req, err
+	})
+}
+
 // ClaimCliAuthCode atomically transitions pending → consumed and binds
 // account_id in one statement. Two error shapes distinguish the
 // reasons a claim can fail (handler renders different banners):
@@ -28389,15 +28734,30 @@ func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.Cl
 // the UPDATE is still atomic — the post-classification SELECT only
 // affects the error we report, not the state).
 func (s *PgStore) ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error {
+	return s.claimCliAuthCode(ctx, tokenHash, accountID, nil)
+}
+
+// ClaimCliAuthCodeForDevice implements CliAuthDeviceCodeStore.
+func (s *PgStore) ClaimCliAuthCodeForDevice(ctx context.Context, tokenHash []byte, accountID string, deviceHash []byte) error {
+	if len(deviceHash) == 0 {
+		return errors.New("claim cli auth code: empty device hash")
+	}
+	return s.claimCliAuthCode(ctx, tokenHash, accountID, storedCredential(credTagCLIDeviceCode, deviceHash))
+}
+
+// claimCliAuthCode claims a pending code for accountID. A non-nil
+// storedDevice replaces the row's device hash in the same statement.
+func (s *PgStore) claimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string, storedDevice []byte) error {
 	lookups := credentialLookups(credTagCLIAuthCode, tokenHash)
 	for _, value := range lookups {
 		tag, err := s.pool.Exec(ctx,
 			`update cli_auth_codes
-			 set status = 'consumed', account_id = $2
+			 set status = 'consumed', account_id = $2,
+			     device_hash = coalesce($3::bytea, device_hash)
 			 where token_hash = $1
 			   and status = 'pending'
 			   and expires_at > now()`,
-			value, accountID)
+			value, accountID, storedDevice)
 		if err != nil {
 			return mapErr(err)
 		}
@@ -28503,11 +28863,15 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 // IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore. A colliding
 // short code is refused rather than ignored: it would bind the device code
 // to someone else's pending row.
-func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash, verifierHash []byte, expiresAt time.Time) error {
+	var verifier []byte
+	if len(verifierHash) > 0 {
+		verifier = verifierHash
+	}
 	tag, err := s.pool.Exec(ctx,
-		`insert into cli_auth_codes (token_hash, device_hash, expires_at) values ($1, $2, $3)
+		`insert into cli_auth_codes (token_hash, device_hash, verifier_hash, expires_at) values ($1, $2, $3, $4)
 		 on conflict do nothing`,
-		storedCredential(credTagCLIAuthCode, tokenHash), storedCredential(credTagCLIDeviceCode, deviceHash), expiresAt)
+		storedCredential(credTagCLIAuthCode, tokenHash), storedCredential(credTagCLIDeviceCode, deviceHash), verifier, expiresAt)
 	if err != nil {
 		return err
 	}
@@ -28519,10 +28883,15 @@ func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceH
 
 // ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore with
 // ConsumeCliAuthCode's contract, keyed by the device code's hash.
-func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash, verifierHash []byte) (api.CliAuthStatus, string, error) {
 	lookups := credentialLookups(credTagCLIDeviceCode, deviceHash)
+	var verifier []byte
+	if len(verifierHash) > 0 {
+		verifier = verifierHash
+	}
 	accountID, err := firstCredential(ctx, lookups, func(ctx context.Context, value []byte) (string, error) {
 		var accountID string
+		// A row bound to a verifier needs it ($2 NULL never equals one).
 		err := s.pool.QueryRow(ctx,
 			`update cli_auth_codes
 			 set consumed_at = now()
@@ -28531,8 +28900,9 @@ func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byt
 			   and account_id is not null
 			   and consumed_at is null
 			   and expires_at > now()
+			   and (verifier_hash is null or verifier_hash = $2::bytea)
 			 returning account_id`,
-			value,
+			value, verifier,
 		).Scan(&accountID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
@@ -29192,7 +29562,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 // newest crons surface first.
 func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at, c.deployment_scope
+		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at, c.deployment_scope, c.clone_paused
 		 from crons c
 		 join apps a on a.id = c.app_id
 		 where a.account_id = $1
@@ -31828,6 +32198,31 @@ func (s *PgStore) RequestTelemetrySharedRouteLatency(ctx context.Context, appID,
 		BaselineRequests: row.BaselineRequests, BaselineP95LatencyMS: row.BaselineP95LatencyMs}, nil
 }
 
+// RequestTelemetryKnownServerErrors counts a release's 5xx responses on
+// method+route+status triples the baseline deployment also returned in its
+// window (Hunt 34 H34-17).
+func (s *PgStore) RequestTelemetryKnownServerErrors(ctx context.Context, appID, releaseID string, releaseSince, releaseUntil time.Time, baselineID string, baselineSince, baselineUntil time.Time) (int64, error) {
+	ids := make([]pgtype.UUID, 0, 3)
+	for _, id := range []string{appID, releaseID, baselineID} {
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			return 0, fmt.Errorf("state: known server errors parse id %q: %w", id, err)
+		}
+		ids = append(ids, pgtype.UUID{Bytes: parsed, Valid: true})
+	}
+	known, err := s.appErrorsQueries().RequestTelemetryKnownServerErrors(ctx, s.pool, sqlc.RequestTelemetryKnownServerErrorsParams{
+		AppID: ids[0], ReleaseID: ids[1], BaselineID: ids[2],
+		ReleaseSince:  pgtype.Timestamptz{Time: releaseSince, Valid: true},
+		ReleaseUntil:  pgtype.Timestamptz{Time: releaseUntil, Valid: true},
+		BaselineSince: pgtype.Timestamptz{Time: baselineSince, Valid: true},
+		BaselineUntil: pgtype.Timestamptz{Time: baselineUntil, Valid: true},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("state: known server errors app=%s release=%s baseline=%s: %w", appID, releaseID, baselineID, err)
+	}
+	return known, nil
+}
+
 // RequestTelemetryBaselineP95ByRoute backs the regression detector's
 // per-route p95 baseline lookup.
 func (s *PgStore) RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error) {
@@ -33131,6 +33526,9 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 			err = sqlc.New().DeleteExternalTriggerDeadLetterAudit(ctx, tx, mustPgUUID(ev.SourceID))
 		}
 	case "webhook_delivery":
+		if err = checkWebhookReplayAdmissionTx(ctx, tx, ev.SourceID); err != nil {
+			return time.Time{}, err
+		}
 		tag, err = tx.Exec(ctx, `
 			update app_webhook_deliveries
 			   set status = 'pending', attempt = 0, last_error = '',

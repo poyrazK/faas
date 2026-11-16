@@ -383,6 +383,462 @@ func (q *Queries) Messages(ctx context.Context, db DBTX, arg MessagesParams) ([]
 	return items, nil
 }
 
+const notificationBindDestination = `-- name: NotificationBindDestination :execrows
+UPDATE support_notifications SET destination_hash=$3 WHERE id=$1 AND lease_id=$2 AND email_state='inflight'
+AND (destination_hash IS NULL OR destination_hash=$3) AND read_at IS NULL
+`
+
+type NotificationBindDestinationParams struct {
+	ID              pgtype.UUID
+	LeaseID         pgtype.UUID
+	DestinationHash []byte
+}
+
+func (q *Queries) NotificationBindDestination(ctx context.Context, db DBTX, arg NotificationBindDestinationParams) (int64, error) {
+	result, err := db.Exec(ctx, notificationBindDestination, arg.ID, arg.LeaseID, arg.DestinationHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const notificationClaim = `-- name: NotificationClaim :one
+WITH ready AS(SELECT n.id FROM support_notifications n WHERE n.email_state='queued' AND n.available_at<=$1 OR n.email_state='inflight' AND n.lease_until<=$1
+ORDER BY n.available_at,n.id FOR UPDATE SKIP LOCKED LIMIT 1)
+UPDATE support_notifications SET email_state='inflight',attempts=attempts+1,lease_id=$2,lease_until=$3 WHERE id IN(SELECT id FROM ready) RETURNING id, sequence, event_id, ticket_id, recipient_id, audience, kind, created_at, read_at, email_state, attempts, lease_id, lease_until, available_at, destination_hash
+`
+
+type NotificationClaimParams struct {
+	AvailableAt pgtype.Timestamptz
+	LeaseID     pgtype.UUID
+	LeaseUntil  pgtype.Timestamptz
+}
+
+func (q *Queries) NotificationClaim(ctx context.Context, db DBTX, arg NotificationClaimParams) (SupportNotification, error) {
+	row := db.QueryRow(ctx, notificationClaim, arg.AvailableAt, arg.LeaseID, arg.LeaseUntil)
+	var i SupportNotification
+	err := row.Scan(
+		&i.ID,
+		&i.Sequence,
+		&i.EventID,
+		&i.TicketID,
+		&i.RecipientID,
+		&i.Audience,
+		&i.Kind,
+		&i.CreatedAt,
+		&i.ReadAt,
+		&i.EmailState,
+		&i.Attempts,
+		&i.LeaseID,
+		&i.LeaseUntil,
+		&i.AvailableAt,
+		&i.DestinationHash,
+	)
+	return i, err
+}
+
+const notificationCount = `-- name: NotificationCount :one
+SELECT count(*) FROM support_notifications n JOIN support_tickets t ON t.id=n.ticket_id
+WHERE n.recipient_id=$1 AND n.audience=$2 AND n.read_at IS NULL
+AND ($3::boolean OR t.scope_key=$4) AND n.created_at>=$5
+AND ($6::uuid IS NULL OR n.ticket_id=$6)
+`
+
+type NotificationCountParams struct {
+	RecipientID pgtype.UUID
+	Audience    string
+	Staff       bool
+	ScopeKey    string
+	Since       pgtype.Timestamptz
+	TicketID    pgtype.UUID
+}
+
+func (q *Queries) NotificationCount(ctx context.Context, db DBTX, arg NotificationCountParams) (int64, error) {
+	row := db.QueryRow(ctx, notificationCount,
+		arg.RecipientID,
+		arg.Audience,
+		arg.Staff,
+		arg.ScopeKey,
+		arg.Since,
+		arg.TicketID,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const notificationCustomers = `-- name: NotificationCustomers :many
+SELECT a.id FROM accounts a JOIN support_tickets t ON t.id=$1
+WHERE a.id<>$2 AND a.status='active' AND a.email_verified_at IS NOT NULL
+AND (t.org_id IS NULL AND t.account_id=a.id OR t.org_id IS NOT NULL AND EXISTS(
+ SELECT 1 FROM orgs o JOIN org_memberships m ON m.org_id=o.id WHERE o.id=t.org_id AND o.status='active' AND NOT o.deleted_pending
+ AND m.account_id=a.id AND m.removed_at IS NULL AND m.role IN ('owner','admin')))
+ORDER BY a.id LIMIT $3
+`
+
+type NotificationCustomersParams struct {
+	TicketID  pgtype.UUID
+	ActorID   pgtype.UUID
+	PageLimit int32
+}
+
+func (q *Queries) NotificationCustomers(ctx context.Context, db DBTX, arg NotificationCustomersParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, notificationCustomers, arg.TicketID, arg.ActorID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const notificationDelivery = `-- name: NotificationDelivery :one
+SELECT n.id, n.sequence, n.event_id, n.ticket_id, n.recipient_id, n.audience, n.kind, n.created_at, n.read_at, n.email_state, n.attempts, n.lease_id, n.lease_until, n.available_at, n.destination_hash,a.email::text AS recipient_email,a.plan,t.org_id,coalesce(o.slug,'')::text AS org_slug FROM support_notifications n
+JOIN accounts a ON a.id=n.recipient_id JOIN support_tickets t ON t.id=n.ticket_id
+LEFT JOIN orgs o ON o.id=t.org_id LEFT JOIN support_staff s ON s.account_id=a.id LEFT JOIN support_resources team ON team.id=t.team_id
+WHERE n.id=$1 AND n.lease_id=$2 AND n.email_state='inflight' AND n.read_at IS NULL
+AND a.status='active' AND a.email_verified_at IS NOT NULL AND (
+ n.audience='customer' AND (t.org_id IS NULL AND t.account_id=a.id OR o.status='active' AND NOT o.deleted_pending AND EXISTS(
+ SELECT 1 FROM org_memberships m WHERE m.org_id=o.id AND m.account_id=a.id AND m.removed_at IS NULL AND m.role IN ('owner','admin')))
+ OR n.audience='staff' AND a.mfa_enrolled_at IS NOT NULL AND t.status<>'resolved'
+ AND (s.role IN ('agent','manager') OR s.account_id IS NULL AND lower(a.email::text)=ANY($3::text[]))
+ AND (t.assignee_id=a.id OR t.assignee_id IS NULL AND n.kind<>'assigned' AND (
+ s.role='manager' OR s.account_id IS NULL OR t.team_id IS NULL OR
+ team.kind='team' AND team.data->>'enabled'='true' AND team.data->'members' @> jsonb_build_array(a.id::text))))
+`
+
+type NotificationDeliveryParams struct {
+	ID              pgtype.UUID
+	LeaseID         pgtype.UUID
+	BootstrapEmails []string
+}
+
+type NotificationDeliveryRow struct {
+	ID              pgtype.UUID
+	Sequence        pgtype.Int8
+	EventID         pgtype.UUID
+	TicketID        pgtype.UUID
+	RecipientID     pgtype.UUID
+	Audience        string
+	Kind            string
+	CreatedAt       pgtype.Timestamptz
+	ReadAt          pgtype.Timestamptz
+	EmailState      string
+	Attempts        int32
+	LeaseID         pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	AvailableAt     pgtype.Timestamptz
+	DestinationHash []byte
+	RecipientEmail  string
+	Plan            string
+	OrgID           pgtype.UUID
+	OrgSlug         string
+}
+
+func (q *Queries) NotificationDelivery(ctx context.Context, db DBTX, arg NotificationDeliveryParams) (NotificationDeliveryRow, error) {
+	row := db.QueryRow(ctx, notificationDelivery, arg.ID, arg.LeaseID, arg.BootstrapEmails)
+	var i NotificationDeliveryRow
+	err := row.Scan(
+		&i.ID,
+		&i.Sequence,
+		&i.EventID,
+		&i.TicketID,
+		&i.RecipientID,
+		&i.Audience,
+		&i.Kind,
+		&i.CreatedAt,
+		&i.ReadAt,
+		&i.EmailState,
+		&i.Attempts,
+		&i.LeaseID,
+		&i.LeaseUntil,
+		&i.AvailableAt,
+		&i.DestinationHash,
+		&i.RecipientEmail,
+		&i.Plan,
+		&i.OrgID,
+		&i.OrgSlug,
+	)
+	return i, err
+}
+
+const notificationExpire = `-- name: NotificationExpire :exec
+DELETE FROM support_notifications WHERE id IN(SELECT n.id FROM support_notifications n WHERE n.created_at<$1 ORDER BY n.created_at,n.id LIMIT $2)
+`
+
+type NotificationExpireParams struct {
+	CreatedAt pgtype.Timestamptz
+	Limit     int32
+}
+
+func (q *Queries) NotificationExpire(ctx context.Context, db DBTX, arg NotificationExpireParams) error {
+	_, err := db.Exec(ctx, notificationExpire, arg.CreatedAt, arg.Limit)
+	return err
+}
+
+const notificationFinish = `-- name: NotificationFinish :exec
+UPDATE support_notifications SET email_state=$3,available_at=$4,lease_id=NULL,lease_until=NULL WHERE id=$1 AND lease_id=$2 AND email_state='inflight'
+`
+
+type NotificationFinishParams struct {
+	ID          pgtype.UUID
+	LeaseID     pgtype.UUID
+	EmailState  string
+	AvailableAt pgtype.Timestamptz
+}
+
+func (q *Queries) NotificationFinish(ctx context.Context, db DBTX, arg NotificationFinishParams) error {
+	_, err := db.Exec(ctx, notificationFinish,
+		arg.ID,
+		arg.LeaseID,
+		arg.EmailState,
+		arg.AvailableAt,
+	)
+	return err
+}
+
+const notificationList = `-- name: NotificationList :many
+SELECT n.id, n.sequence, n.event_id, n.ticket_id, n.recipient_id, n.audience, n.kind, n.created_at, n.read_at, n.email_state, n.attempts, n.lease_id, n.lease_until, n.available_at, n.destination_hash FROM support_notifications n JOIN support_tickets t ON t.id=n.ticket_id
+WHERE n.recipient_id=$1 AND n.audience=$2
+AND ($3::boolean OR t.scope_key=$4) AND n.created_at>=$5
+AND (NOT $6::boolean OR n.read_at IS NULL)
+AND ($7::bigint IS NULL OR n.sequence<$7)
+ORDER BY n.sequence DESC LIMIT $8
+`
+
+type NotificationListParams struct {
+	RecipientID    pgtype.UUID
+	Audience       string
+	Staff          bool
+	ScopeKey       string
+	Since          pgtype.Timestamptz
+	UnreadOnly     bool
+	BeforeSequence pgtype.Int8
+	PageLimit      int32
+}
+
+func (q *Queries) NotificationList(ctx context.Context, db DBTX, arg NotificationListParams) ([]SupportNotification, error) {
+	rows, err := db.Query(ctx, notificationList,
+		arg.RecipientID,
+		arg.Audience,
+		arg.Staff,
+		arg.ScopeKey,
+		arg.Since,
+		arg.UnreadOnly,
+		arg.BeforeSequence,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SupportNotification{}
+	for rows.Next() {
+		var i SupportNotification
+		if err := rows.Scan(
+			&i.ID,
+			&i.Sequence,
+			&i.EventID,
+			&i.TicketID,
+			&i.RecipientID,
+			&i.Audience,
+			&i.Kind,
+			&i.CreatedAt,
+			&i.ReadAt,
+			&i.EmailState,
+			&i.Attempts,
+			&i.LeaseID,
+			&i.LeaseUntil,
+			&i.AvailableAt,
+			&i.DestinationHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const notificationQueue = `-- name: NotificationQueue :exec
+INSERT INTO support_notifications(id,event_id,ticket_id,recipient_id,audience,kind,created_at,email_state,available_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,'queued',$7) ON CONFLICT(event_id,recipient_id,audience) DO NOTHING
+`
+
+type NotificationQueueParams struct {
+	ID          pgtype.UUID
+	EventID     pgtype.UUID
+	TicketID    pgtype.UUID
+	RecipientID pgtype.UUID
+	Audience    string
+	Kind        string
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) NotificationQueue(ctx context.Context, db DBTX, arg NotificationQueueParams) error {
+	_, err := db.Exec(ctx, notificationQueue,
+		arg.ID,
+		arg.EventID,
+		arg.TicketID,
+		arg.RecipientID,
+		arg.Audience,
+		arg.Kind,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const notificationRead = `-- name: NotificationRead :exec
+UPDATE support_notifications SET read_at=$1,email_state=CASE WHEN email_state='queued' THEN 'skipped' ELSE email_state END
+WHERE recipient_id=$2 AND audience=$3 AND ticket_id=$4
+AND sequence<=$5 AND read_at IS NULL
+`
+
+type NotificationReadParams struct {
+	ReadAt          pgtype.Timestamptz
+	RecipientID     pgtype.UUID
+	Audience        string
+	TicketID        pgtype.UUID
+	ThroughSequence pgtype.Int8
+}
+
+func (q *Queries) NotificationRead(ctx context.Context, db DBTX, arg NotificationReadParams) error {
+	_, err := db.Exec(ctx, notificationRead,
+		arg.ReadAt,
+		arg.RecipientID,
+		arg.Audience,
+		arg.TicketID,
+		arg.ThroughSequence,
+	)
+	return err
+}
+
+const notificationStaff = `-- name: NotificationStaff :many
+SELECT a.id FROM accounts a JOIN support_tickets t ON t.id=$1
+LEFT JOIN support_staff s ON s.account_id=a.id LEFT JOIN support_resources team ON team.id=t.team_id
+WHERE a.id<>$2 AND a.status='active' AND a.email_verified_at IS NOT NULL AND a.mfa_enrolled_at IS NOT NULL
+AND (s.role IN ('agent','manager') OR s.account_id IS NULL AND lower(a.email::text)=ANY($3::text[]))
+AND (t.assignee_id=a.id OR t.assignee_id IS NULL AND (
+ s.role='manager' OR s.account_id IS NULL OR t.team_id IS NULL OR
+ team.kind='team' AND team.data->>'enabled'='true' AND team.data->'members' @> jsonb_build_array(a.id::text)))
+ORDER BY a.id LIMIT $4
+`
+
+type NotificationStaffParams struct {
+	TicketID        pgtype.UUID
+	ActorID         pgtype.UUID
+	BootstrapEmails []string
+	PageLimit       int32
+}
+
+func (q *Queries) NotificationStaff(ctx context.Context, db DBTX, arg NotificationStaffParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, notificationStaff,
+		arg.TicketID,
+		arg.ActorID,
+		arg.BootstrapEmails,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const notificationTicketCounts = `-- name: NotificationTicketCounts :many
+SELECT ticket_id,count(*) AS unread_count FROM support_notifications
+WHERE recipient_id=$1 AND audience=$2 AND ticket_id=ANY($4::uuid[]) AND read_at IS NULL AND created_at>=$3 GROUP BY ticket_id
+`
+
+type NotificationTicketCountsParams struct {
+	RecipientID pgtype.UUID
+	Audience    string
+	CreatedAt   pgtype.Timestamptz
+	TicketIds   []pgtype.UUID
+}
+
+type NotificationTicketCountsRow struct {
+	TicketID    pgtype.UUID
+	UnreadCount int64
+}
+
+func (q *Queries) NotificationTicketCounts(ctx context.Context, db DBTX, arg NotificationTicketCountsParams) ([]NotificationTicketCountsRow, error) {
+	rows, err := db.Query(ctx, notificationTicketCounts,
+		arg.RecipientID,
+		arg.Audience,
+		arg.CreatedAt,
+		arg.TicketIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationTicketCountsRow{}
+	for rows.Next() {
+		var i NotificationTicketCountsRow
+		if err := rows.Scan(&i.TicketID, &i.UnreadCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const notificationTicketState = `-- name: NotificationTicketState :one
+SELECT count(*) AS unread_count,coalesce(max(sequence),0)::bigint AS through_sequence FROM support_notifications
+WHERE recipient_id=$1 AND audience=$2 AND ticket_id=$3 AND read_at IS NULL AND created_at>=$4
+`
+
+type NotificationTicketStateParams struct {
+	RecipientID pgtype.UUID
+	Audience    string
+	TicketID    pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+}
+
+type NotificationTicketStateRow struct {
+	UnreadCount     int64
+	ThroughSequence int64
+}
+
+func (q *Queries) NotificationTicketState(ctx context.Context, db DBTX, arg NotificationTicketStateParams) (NotificationTicketStateRow, error) {
+	row := db.QueryRow(ctx, notificationTicketState,
+		arg.RecipientID,
+		arg.Audience,
+		arg.TicketID,
+		arg.CreatedAt,
+	)
+	var i NotificationTicketStateRow
+	err := row.Scan(&i.UnreadCount, &i.ThroughSequence)
+	return i, err
+}
+
 const org = `-- name: Org :one
 SELECT o.id,o.plan FROM orgs o JOIN org_memberships m ON m.org_id=o.id WHERE o.slug=$1 AND m.account_id=$2 AND m.removed_at IS NULL AND m.role IN ('owner','admin') AND NOT o.deleted_pending AND o.status='active' FOR SHARE OF o,m
 `

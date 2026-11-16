@@ -221,6 +221,9 @@ type Problem struct {
 	// exactly the spec; WriteProblem flushes these onto the wire
 	// before WriteHeader. nil = no extras.
 	extraHeaders map[string][]string `json:"-"`
+	// clientRequestID is error correlation metadata retained by SDK decoders.
+	// It is neither part of the problem body nor a forwarded response header.
+	clientRequestID string
 }
 
 // LogExcerpt is one entry of Problem.RelevantLogs — a small,
@@ -866,6 +869,10 @@ const (
 	// only proof is the browser session comes from a session older than
 	// RecentSignInWindow (ADR 20261110100000): sign in again, then retry.
 	CodeRecentSignInRequired = "recent_sign_in_required"
+	// CodeBrowserSessionRequired refuses an API key on an action only a
+	// person in a signed-in browser may take, such as transferring an
+	// organization's ownership (ADR 20261114170352).
+	CodeBrowserSessionRequired = "browser_session_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
 	// the comparison fails. The audit Emit fires regardless.
@@ -936,6 +943,10 @@ const (
 	// unauthenticated developer app, a Dockerfile build, or a build plan the
 	// watch overlay does not understand.
 	CodeDevWatchUnsupported = "dev_watch_unsupported"
+	// CodeDevSessionTearingDown refuses to renew a developer environment
+	// that its lease or `gregale dev --stop` is already tearing down. The
+	// environment comes back on the first start after the teardown finishes.
+	CodeDevSessionTearingDown = "dev_session_tearing_down"
 	// ADR-1151 frozen tier. CodeInstanceNotFreezable is vmmd's refusal to
 	// freeze an instance whose traffic or lifecycle does not allow it (warm
 	// pool, job, app task, builder, private network member, pending waitUntil
@@ -1471,6 +1482,12 @@ const (
 	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
 	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
 	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
+	// CodePlanAsyncBacklog: the app's pending async invocations are at the
+	// plan's MaxQueueDepth (ADR-20261022105723 amendment 2026-11-13).
+	CodePlanAsyncBacklog = "plan_async_backlog"
+	// CodeFunctionSendRateLimited: a function send() past the target app's
+	// plan request rate.
+	CodeFunctionSendRateLimited = "function_send_rate_limited"
 	// CodePlanWorkerReplicas: a worker asks for more running workers than
 	// the plan's WorkerReplicasMax, or the plan runs none
 	// (ADR-20261018101500 amendment 2026-10-31).
@@ -1924,6 +1941,10 @@ const (
 	// Public candidate verification stayed unavailable within the durable
 	// recovery window. This does not establish an application health verdict.
 	CodeDeploymentVerificationUnavailable = "deployment_verification_unavailable"
+	// CodePromotionRolledBack means an environment promotion was rolled back
+	// and this release, the first in its environment, had no earlier release
+	// to restore, so it was retired. The release itself did not fail.
+	CodePromotionRolledBack = "promotion_rolled_back"
 	// CodeReleaseCommandFailed means the deployment's pre-boot release task
 	// failed, timed out, or was cancelled. The previous deployment remains
 	// live; task output is available through the app-task inspection surface.
@@ -1974,6 +1995,10 @@ const (
 	// CodeSecretEntryUnavailable covers an expired, used, unknown or
 	// mismatched secret entry request (ADR-20261026174727).
 	CodeSecretEntryUnavailable = "secret_entry_unavailable"
+	// CodeGitLabCompanyProjectUnavailable refuses a GitLab GitOps source for
+	// a company project, which never uses a member's own GitLab connection
+	// (ADR-20261112230000).
+	CodeGitLabCompanyProjectUnavailable = "gitlab_company_project_unavailable"
 
 	// CodeAppConcurReached is the typed "already at max_concurrency"
 	// result from Engine.AdmitInstance (issue #168). Distinct from
@@ -2080,12 +2105,15 @@ const (
 	CodeOrgMemberCapExceeded     = "org_member_cap_exceeded"
 	CodeOrgInvitationCapExceeded = "org_invitation_cap_exceeded"
 	CodeOrgRoleForbidden         = "org_role_forbidden"
-	CodeOrgAlreadyMember         = "org_already_member"
-	CodeOrgInvitationInvalid     = "org_invitation_invalid"
-	CodeOrgInvitationExpired     = "org_invitation_expired"
-	CodeOrgLastOwner             = "org_last_owner"
-	CodeOrgPersonalImmutable     = "org_personal_immutable"
-	CodeOrgAPIKeyRequiresOrg     = "org_api_key_requires_org"
+	// CodeOrgMFARequired refuses a member without two-factor authentication
+	// on an organization that requires it (ADR 20261114170352).
+	CodeOrgMFARequired       = "org_mfa_required"
+	CodeOrgAlreadyMember     = "org_already_member"
+	CodeOrgInvitationInvalid = "org_invitation_invalid"
+	CodeOrgInvitationExpired = "org_invitation_expired"
+	CodeOrgLastOwner         = "org_last_owner"
+	CodeOrgPersonalImmutable = "org_personal_immutable"
+	CodeOrgAPIKeyRequiresOrg = "org_api_key_requires_org"
 	// CodeOrgFreeLimitExceeded: the caller already owns
 	// FreeOrganizationsOwnedMax Free organizations (ADR-20261031090658).
 	CodeOrgFreeLimitExceeded = "org_free_limit_exceeded"
@@ -2577,6 +2605,8 @@ func StatusForCode(code string) int {
 		return http.StatusGone
 	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden
+	case CodePlanAsyncBacklog, CodeFunctionSendRateLimited:
+		return http.StatusTooManyRequests
 	case CodePlanSourceBytes:
 		return http.StatusRequestEntityTooLarge
 	case CodePlanFeatureGated:
@@ -2799,7 +2829,7 @@ func ErrPlanLimitApps(l Limits, observed int) *Problem {
 func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanLimitDeveloperApps,
 		"Developer environment limit reached",
-		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
+		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Find them with `gregale dev list` and stop an unused one with `gregale dev --stop --name PROJECT --app APP` from any directory.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
 		WithDocs(docsBase + "/plans#developer-environments")
 }
@@ -2830,8 +2860,18 @@ func ErrPlanLimitPreviewWorkloads(l Limits, observed int) *Problem {
 func ErrDevWatchRAM(ramMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeDevWatchUnsupported,
 		"Watch mode needs more memory",
-		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB. Upgrade the plan or use gregale dev without --watch.", DevWatchMinRAMMB, ramMB)).
+		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB on your plan. A production-shaped developer build (gregale dev --watch=false) works on every plan.", DevWatchMinRAMMB, ramMB)).
 		WithLimit(int64(DevWatchMinRAMMB), int64(ramMB)).
+		WithDocs(docsBase + "/cli#dev")
+}
+
+// ErrDevSessionTearingDown is returned when a developer environment cannot
+// be renewed because its teardown has started. Starting it again after the
+// teardown finishes restores it.
+func ErrDevSessionTearingDown() *Problem {
+	return NewProblem(http.StatusConflict, CodeDevSessionTearingDown,
+		"Developer environment is being removed",
+		"its lease ended or it was stopped, and its database and buckets are being cleaned up; run gregale dev again in a minute to start it fresh").
 		WithDocs(docsBase + "/cli#dev")
 }
 
@@ -3353,7 +3393,7 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		"Too many failed authentication attempts",
 		fmt.Sprintf("The failed-authentication limit was reached. Retry after %d seconds with valid credentials.", retryAfterS)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithHint("Wait for the retry window, then sign in again with valid credentials.").
+		WithHint(fmt.Sprintf("Try again in %d seconds, then sign in with valid credentials.", retryAfterS)).
 		WithDocs(docsBase + "/auth")
 }
 
@@ -3369,6 +3409,21 @@ func ErrAPIRateLimited(limit, retryAfterS int) *Problem {
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithDocs(docsBase + "/errors#api_rate_limited")
+}
+
+// ErrFunctionSendRateLimited refuses a function send() past the target app's
+// plan request rate (ADR-20261022105723 amendment 2026-11-13).
+func ErrFunctionSendRateLimited(perSecond int, retryAfter time.Duration) *Problem {
+	retryAfterS := int(math.Ceil(retryAfter.Seconds()))
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeFunctionSendRateLimited,
+		"Function send rate limited",
+		fmt.Sprintf("The target app's plan accepts at most %d sends per second; retry after %d seconds.", perSecond, retryAfterS)).
+		WithLimit(int64(perSecond), int64(perSecond)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/event-driven#async-backlog")
 }
 
 // ErrColdWakeRateLimited refuses a request that would wake one more parked
@@ -3589,6 +3644,14 @@ func ErrUploadChecksumMismatch(uploadID, declared, got string) *Problem {
 // sweep). The CLI auto-rolls to a fresh POST /v1/uploads on receipt of
 // this code (cmd/gregale/upload_session.go, PR-2). 410 Gone so the
 // CLI can distinguish from 404 NotFound (id never existed).
+// ErrAppDeleted is the 410 a read of a deleted app's deployment answers, so
+// a client polling it stops instead of waiting on a 503.
+func ErrAppDeleted(slug string) *Problem {
+	return NewProblem(http.StatusGone, CodeAppDeleted,
+		"App deleted",
+		fmt.Sprintf("App %q was deleted, so its deployments no longer run. Restore it with `gregale app restore %s` during the deletion grace period, or deploy again.", slug, slug))
+}
+
 func ErrUploadSessionExpired(uploadID string) *Problem {
 	return NewProblem(http.StatusGone, CodeUploadSessionExpired,
 		"Upload session expired",
@@ -4689,6 +4752,9 @@ const (
 	// CLI auto-rolls to a fresh POST /v1/uploads and restarts
 	// from byte 0 (cmd/gregale/upload_session.go, PR-2).
 	CodeUploadSessionExpired = "upload_session_expired"
+	// CodeAppDeleted is the 410 a read of a deleted app's deployment
+	// answers (ErrAppDeleted). Deploy waits treat it as final.
+	CodeAppDeleted = "app_deleted"
 	// CodeUploadSessionTooMany is the 429 emitted by POST
 	// /v1/uploads when the per-(account_id, app_slug) open-
 	// session cap (5) or the per-account open-spool budget
@@ -5942,16 +6008,13 @@ func ErrPlanLimitTrustedSigners(l Limits, observed int) *Problem {
 		WithDocs(docsBase + "/deploys#trusted-signers")
 }
 
-// ErrEnvVarInvalidKey is returned when an env key fails the
-// ^[A-Z][A-Z0-9_]*$ pattern. Detail names the specific failure so the CLI
-// can render an actionable message. The regex intentionally reuses the
-// SecretKeyPattern constant because POSIX env-var naming and the secrets
-// naming surface share the same ASCII identifier grammar — keeping one
-// pattern avoids the drift where two regexes diverge over time.
+// ErrEnvVarInvalidKey is returned when an env key fails EnvKeyPattern or
+// spells a platform-provided key in another case. Detail names the specific
+// failure so the CLI can render an actionable message.
 func ErrEnvVarInvalidKey(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeEnvVarInvalidKey,
 		"Invalid env var key",
-		fmt.Sprintf("env var keys must match %s; %s", SecretKeyPattern, detail)).
+		fmt.Sprintf("env var keys must match %s; %s", EnvKeyPattern, detail)).
 		WithDocs(docsBase + "/env#keys")
 }
 
@@ -6374,7 +6437,7 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale rollouts recover <app> --action abort`.").
+		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale release traffic rollback <app>`.").
 		WithDocs(docsBase + "/deployments#canary")
 }
 
@@ -7025,6 +7088,19 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 		WithDocs(docsBase + "/event-driven#queue-depth")
 }
 
+// ErrPlanAsyncBacklog is returned when an async invocation (API async
+// invoke, async route or function send) finds its app's pending async
+// invocations at the plan's MaxQueueDepth (ADR-20261022105723 amendment
+// 2026-11-13). The backlog drains, so it is a 429 with Retry-After.
+func ErrPlanAsyncBacklog(limit, observed int) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodePlanAsyncBacklog,
+		"Per-app async backlog full",
+		fmt.Sprintf("the plan caps this app at %d pending async invocations; observed %d. Retry after the backlog drains.", limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithHeader("Retry-After", "60").
+		WithDocs(docsBase + "/event-driven#async-backlog")
+}
+
 // ErrPlanQueueBacklogBytes is returned on a queue send when the account's
 // pending queue messages already hold the plan's
 // MaxQueueBacklogBytesPerAccount (ADR-20261022105723). Observed is the
@@ -7032,7 +7108,7 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 func ErrPlanQueueBacklogBytes(limit, observed int64) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanQueueBacklogBytes,
 		"Account queue backlog full",
-		fmt.Sprintf("the plan caps this account's pending queue messages at %d bytes; observed %d.", limit, observed)).
+		fmt.Sprintf("the plan caps this account's pending queue messages, async invocations and delayed tasks at %d bytes; observed %d.", limit, observed)).
 		WithLimit(limit, observed).
 		WithDocs(docsBase + "/event-driven#queue-backlog")
 }
@@ -7064,6 +7140,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include the AI gateway",
 			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
+			WithDocs(docsBase + "/cli#ai")
+	}
+	if feature == "ai_semantic_cache" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include the AI semantic cache",
+			fmt.Sprintf("the %s plan doesn't include the AI gateway's semantic cache; upgrade to Pro or Scale to answer calls that mean the same as a cached one.", p)).
 			WithDocs(docsBase + "/cli#ai")
 	}
 	if feature == "route_controls" {
@@ -7489,6 +7571,15 @@ func ErrOrgRoleForbidden(action string) *Problem {
 		"Insufficient role for this action",
 		fmt.Sprintf("your role does not allow %s on this organization.", action)).
 		WithDocs(docsBase + "/orgs#roles")
+}
+
+// ErrOrgMFARequired is the 403 a member without two-factor authentication
+// gets on an organization that requires it (ADR 20261114170352).
+func ErrOrgMFARequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgMFARequired,
+		"Two-factor authentication required",
+		"this organization requires two-factor authentication; turn it on for your account and try again.").
+		WithDocs(docsBase + "/orgs#require-two-factor-authentication")
 }
 
 // ErrOrgAlreadyMember is the 409 returned when the accepting

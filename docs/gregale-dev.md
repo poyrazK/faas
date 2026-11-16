@@ -29,15 +29,17 @@ commands retaining the source, session name, and connection profile.
 Preview the portable choices, then save them:
 
 ```sh
-gregale dev setup --env-file .env.dev --postgres --ttl 72h --save --dry-run
+gregale dev setup --env-file .env.dev --postgres --ttl 72h --save --dry-run   # --ttl up to your plan's maximum (24h on Free)
 gregale dev setup --env-file .env.dev --postgres --ttl 72h --save
 gregale dev
 ```
 
 `--save` records the effective lease, database and bucket choices, and relative
 env-file and service-override-file references in `gregale.yaml` (or the existing
-`gregale.yml`). It preserves unrelated manifest settings, comments, and file
-permissions. It never exports file contents or credentials. Referenced files must
+`gregale.yml`). It preserves unrelated manifest settings, comments, the file's
+indentation, and file permissions, and writes only the choices you made (no
+empty keys); blank lines between entries are not kept. It never exports file
+contents or credentials. Referenced files must
 be inside the source directory; each developer supplies their own values. Session
 names remain local choices. Existing hosting, seed, debug, and watch configuration
 continues to work.
@@ -60,9 +62,19 @@ gregale dev --local --offline --postgres --bucket uploads
 
 The CLI detects the development command, falling back to the ordinary start
 command. It runs the app behind `http://localhost:8787`, passes its listening
-port as `PORT` and loopback address as `HOST`, and restarts the process group
-after source edits settle. The public local URL stays the same across restarts.
-Detected FastAPI, Flask, and Django commands receive explicit host/port options.
+port as `PORT` and loopback address as `HOST`. Recognised Next.js, Vite,
+SvelteKit, Astro, Nuxt, React Router, and Remix development servers own source
+reload: ordinary edits keep the process and HMR WebSocket connections alive.
+Detection includes simple direct `dev` scripts with the matching framework
+dependency declared. Shell wrappers, chained scripts, custom commands, Python
+servers, and ordinary start commands use Gregale process restarts after edits
+settle. Detected framework commands receive explicit host/port options, forwarded
+through the package manager when using a recognised `dev` script.
+
+Gregale still restarts framework servers after selected env-file, Gregale
+manifest, `package.json`, package-manager configuration, or dependency lockfile
+changes, including ignored launch files. The public local URL stays the same
+across restarts. Framework config edits are handled by the framework's watcher.
 Project tools in `node_modules/.bin`, `.venv/bin`, and `venv/bin` are on PATH;
 install your application's dependencies before starting it.
 
@@ -76,6 +88,12 @@ selected environment. No packages are installed automatically. Yarn PnP package
 scripts work without `node_modules`; custom commands and scripts that prepare
 their own tools are validated when they run.
 
+Launch-input reloads repeat those tool checks before stopping the current app.
+An invalid env file or missing runtime, package manager, or detected framework
+tool leaves the healthy process and its WebSocket connections serving with the
+last accepted configuration. Repair the launch inputs and save again to retry;
+the local URL stays the same when the replacement starts.
+
 Override detection for a custom command (which must listen on `PORT`):
 
 ```sh
@@ -85,8 +103,8 @@ gregale dev --local --watch-command 'go run ./cmd/api' --port 9000
 
 The command precedence is `--watch-command`, `dev.watch.command` in
 `gregale.yaml`, the detected framework development command, then the inferred
-start command. `--no-reload` disables CLI restarts; an explicitly selected
-command can still run its own watcher. App logs stream to the terminal. A crash
+start command. `--no-reload` disables CLI restarts; a framework or custom command
+can still run its own watcher. App logs stream to the terminal. A crash
 keeps the proxy available with an unavailable response; fix the source and save
 to restart. Ctrl-C stops the app and its child processes before closing borrowed
 resources. Managed HTTP app processes currently require Linux or macOS.
@@ -152,7 +170,10 @@ save a source file or restart the CLI after changing installed dependencies.
   `x-faas-deadline-ms` headers, and client-sent `x-faas-*` headers are
   dropped, as on Gregale.
 - If this directory has a developer environment (`gregale dev` created
-  one), local functions use its resources:
+  one for it), local functions use its resources. A project made of several
+  functions has no developer environment of its own (a remote environment
+  runs one app), so use `--offline` below for its database and buckets.
+  Local functions use the environment's resources as follows:
   - **Postgres**: the binding's variable (usually `DATABASE_URL`) points at a
     local tunnel to the session's database. The CLI makes the TLS connection
     to the database itself and verifies it as the binding asks, so every
@@ -177,7 +198,10 @@ save a source file or restart the CLI after changing installed dependencies.
   sets its `GREGALE_S3_<NAME>_*` settings. `dev.postgres` and
   `dev.buckets` in `gregale.yaml` are read too. Data stays in Docker
   volumes for this project between runs; `--reset` wipes them. The
-  containers listen on loopback only and stop when you stop.
+  containers listen on loopback only and stop when you stop. They reuse
+  the previous run's local ports when those are free, so `DATABASE_URL` and
+  the S3 endpoint stay the same between runs. The first run pulls the
+  images, which can take a few minutes.
 - Settings layer in this order, later winning: your shell, the session's
   resources, `--env-file`, then each function's `env:` in `gregale.yaml`.
 - Run a cron or an async call as Gregale would, with
@@ -201,6 +225,17 @@ The CLI detects the application shape, uploads the current working tree
 and watches deployable files for the next change. Watching continues while a
 build is running. If another settled edit arrives, Gregale cancels the obsolete
 deployment and builds the newest source instead of letting old saves queue up.
+
+The upload and the watcher select the same files: `.gregaleignore`, plus
+`.dockerignore` for a Dockerfile build, so writing to an ignored file (a log,
+test output) never starts a build. Local `.env` and `.env.*` files stay on your
+machine (`.env.example`, `.env.sample` and `.env.template` are uploaded); the
+CLI names the files it left out. Pass `--env-file` to sync their values as
+sealed developer secrets, or re-include one with a negated rule such as `!.env`
+in `.gregaleignore`. `gregale deploy` keeps uploading them and only warns.
+Python virtual environments (any directory holding `pyvenv.cfg`) and framework
+output such as `.nuxt`, `.output`, `.svelte-kit` and `.turbo` are never
+uploaded.
 
 The first sync uploads a complete source snapshot. Later edits transfer only
 new, changed, and deleted archive entries when that is smaller than the full
@@ -227,6 +262,7 @@ gregale dev --go-command worker # build cmd/worker of the Go module at --path
 gregale dev --all              # run every deployable workspace application
 gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
+gregale dev list               # list every developer environment of the account
 gregale dev status             # show developer-environment quota usage
 gregale dev history            # inspect recent edit-to-live timings and SLO guidance
 gregale dev setup              # preflight a project and print the exact next command
@@ -291,7 +327,7 @@ developer app without copying its slug. Put `--path` and `--name` (source
 selection) before the verb; everything after the verb belongs to the
 delegated command, so `invoke --path` still means the URL path:
 
-- `gregale dev trigger invoke [invoke flags]` runs `gregale invoke` against
+- `gregale dev trigger invoke [invoke flags]` runs `gregale invocation run` against
   the developer app, including `--async`.
 - `gregale dev trigger cron [ROUTE]` fires a cron trigger declared for this
   app in `gregale.yaml`. Manifest crons are keyed to the production app slug,
@@ -342,10 +378,32 @@ first successful sync. It opens at most once per session, including with
 `--once`; a browser-launch failure is non-fatal and leaves a copyable URL in
 the terminal. JSON output never launches a browser.
 
+### Open an authenticated environment in a browser
+
+On plans whose apps require authentication by default (Hobby and above), the
+developer URL only answers requests that carry a Gregale API key, which a
+browser cannot send. While `gregale dev` watches, it serves the environment at
+`http://localhost:8788` and adds your CLI credential to each request, including
+the WebSocket a development server uses for hot reload:
+
+```
+✓ Open in a browser: http://localhost:8788 (signed in as you; forwards to https://dev-….gregale.dev)
+```
+
+`--open` opens that address. The gateway checks the credential and withholds
+it from your app, so application code never sees it. The address answers only
+`localhost` and `127.0.0.1` requests and refuses state-changing requests from
+other sites' pages. `--proxy-port` picks another port (the next free one is
+used when it is taken); `--no-proxy` turns it off. `--once` does not start it.
+With `--json`, its address is a `{"event":"developer_browser_proxy",...}`
+record.
+
 `--env-file` is explicit and additive/update-only. Each non-empty, non-comment
 `KEY=VALUE` entry is written to the developer app's sealed default secret
 scope; omitted keys are left untouched. The CLI compares and reports key names
 only, never prints values, and refreshes the secrets before the first deploy.
+Only keys whose values changed since the last sync of this session are
+written again, since every write refreshes the app's configuration.
 Changes to the file trigger the same debounced redeploy as source edits. The
 file itself is excluded from the source archive, including when it lives inside
 the watched directory. Use `gregale env unset --app <slug> KEY` when a key
@@ -370,6 +428,14 @@ The safe database and binding states appear in human output and `--json`
 receipts; credentials and connection URLs never do. `--stop` and the developer
 lease clean up the binding and database together.
 
+A developer database counts toward your plan's managed PostgreSQL database
+limit, together with your other databases (see
+[Plans](plans.md#developer-environments)). When the limit is reached,
+`--postgres` fails before anything is created; delete a database you no longer
+need, stop another developer environment that has one, or run without
+`--postgres`. `--postgres` provides `DATABASE_URL`, so it cannot be combined
+with a `DATABASE_URL` in `--env-file` or `--service-override-file`.
+
 `--postgres-seed` (or `dev.postgres_seed`) loads development data into that
 database. The CLI never receives database credentials, so the command runs
 inside the developer app instead, as a one-off
@@ -386,16 +452,21 @@ The marker is local to this machine, so write seeds that are safe to repeat.
 
 A failed seed does not fail the live sync: the diagnostic
 (`developer_seed_failed`, phase `seed`) explains what happened, and the seed is
-retried after the next successful sync. With `--once`, a failed seed makes the
-command exit non-zero. With `--json`, the result is emitted as a
+retried after the next successful sync. While watching, the seed runs beside
+the watcher, so edits keep syncing and the browser, logs and debugger start
+without waiting for it; only one seed runs at a time, and one still running
+after 15 minutes (or when you press Ctrl-C) is cancelled. With `--once`, the
+command waits for the seed, and a failed seed makes it exit non-zero. With `--json`, the result is emitted as a
 `{"event":"developer_seed",...}` object containing the database, task ID,
 status and exit code — never the command output or credentials.
 
 Watch mode attaches one app-level runtime log stream after the first live sync.
 It follows the stable developer URL across later redeploys, prefixes lines with
 their stream (`runtime stdout` or `runtime stderr`), and reconnects after a
-transient API or scheduler interruption. `--once` remains finite and does not
-attach the stream.
+transient API or scheduler interruption. While the environment is parked
+between requests the stream says so once and resumes when it wakes, without
+printing lines it already showed. `--once` remains finite and does not attach
+the stream.
 
 Each sync also ends with a compact phase summary, for example
 `sync=1.2s · cache=0.3s · build=2.4s · boot=1.1s · ready=0.4s · route=0ms · edit-to-live=5.4s · slo<=15s (met)`.
@@ -429,22 +500,32 @@ says why, for example `build_command`, `rebuild_input_changed`,
 `no_base_manifest` (the live build predates this feature), or
 `no_live_build`. `changed_paths` and `patch_bytes` describe the changes.
 
-Applying eligible patches to the running environment is not enabled for every
-account yet. Until it is, `dev_patch` is a
-measurement only and the normal developer build always runs; when enabled, the
-build still runs and replaces the patched environment once it is live.
+Live patches are delivered when the Gregale installation turns them on (the
+default). The session reports it as `live_patches`; where it is off,
+`dev_patch` is a measurement only and the normal developer build always runs.
+With delivery on, a patched sync's build waits until you stop saving, then
+replaces the patched environment once it is live.
 
-When a sync publishes a live patch, `dev_patch.generation` is set and the
-watcher follows its delivery while the build continues. As soon as the
-running environment applies it, the terminal prints
-`Live patch applied in 0.8s; the app is restarting with your edit while the full build continues.`
-The phase summary then includes `patch=0.8s` (edit-to-patch, measured on your
-machine), and `gregale dev history` shows `(live patch 0.8s)` beside the sync.
-A patch that fails to apply is reported with its reason, and the build still
-delivers the edit. With `--json`, the watcher emits a
+When a sync publishes a live patch, `dev_patch.generation` is set, and the
+patch is the sync: as soon as the running environment applies it, the
+terminal prints
+`Live patch applied in 0.8s; your edit is live. The full build runs after you stop saving.`
+and the watcher waits for your next edit. The developer build that makes the
+environment converge on a built image is held back (`dev_patch.build_deferred_until`)
+and replaced by the next sync's, so a burst of saves builds once, about three
+minutes after the last one, and the running app is not restarted by a build
+after every save. Until that build is live, a wake that starts the
+environment again replays your patches. The phase summary includes
+`patch=0.8s` (edit-to-patch, measured on your machine), and
+`gregale dev history` shows `(live patch 0.8s)` beside the sync. A patch that
+fails to apply is reported with its reason and starts the build at once,
+which the watcher then follows; a patch no instance acknowledged in time
+(for example, the environment is parked) applies when it next starts.
+`gregale dev --once` always builds. With `--json`, the watcher emits a
 `{"event":"developer_patch",...}` NDJSON record with the generation, `state`
-(`applied` or `failed`), `edit_to_patch_ms`, and `apply_ms`; the
-`developer_sync` receipt includes the same `patch` phase.
+(`applied`, `failed`, or `pending`), `edit_to_patch_ms`, `apply_ms` and
+`build_deferred`; the `developer_sync` receipt includes the same `patch`
+phase.
 
 When a sync cannot be live-patched, the terminal says why and what would make
 the app patchable, for example
@@ -490,8 +571,21 @@ The CLI validates the value locally and prints the effective lease when the
 environment starts; `gregale dev setup` includes it in the start command.
 Because every sync renews the lease with the requested value, the most recent
 start wins: running without `--ttl` returns the environment to 24 hours.
+A running watcher also renews the lease every 15 minutes while you are not
+editing, so an open `gregale dev` never loses its environment (or database)
+to the lease; the lease counts down once the watcher stops.
 Stopping the watcher with Ctrl-C leaves the environment available—use `--stop`
-from the same source directory when it should be removed immediately.
+from the same source directory when it should be removed immediately. `--stop`
+asks before it deletes the environment's database or buckets when you run it
+in a terminal; `--yes` skips the question.
+
+The environment belongs to the source directory it was started from. One
+started from a directory you have since moved, renamed or deleted still counts
+toward your developer-environment budget until its lease ends. List every
+environment with `gregale dev list` and stop one from anywhere with
+`gregale dev --stop --name PROJECT --app APP`. On macOS and Windows, paths that
+differ only in letter case (`~/Code/api`, `~/code/api`) are the same directory
+and the same environment.
 
 ## Debug the remote environment
 
@@ -655,7 +749,15 @@ Watch mode needs:
   `--watch-command`;
 - at least 512 MB of RAM for the developer environment;
 - authentication on the developer environment, because development servers
-  serve source maps and error overlays.
+  serve source maps and error overlays. Open it in a browser through the local
+  address `gregale dev` prints (see above);
+- live patches delivered by the Gregale installation, for automatic selection:
+  without them every save rebuilds anyway, so `gregale dev` keeps the
+  production-shaped build unless you ask for watch mode explicitly.
+
+The Free plan's developer environments have 256 MB and no authentication, so
+they use production-shaped developer builds; `--watch` explains why it is
+refused.
 
 For an automatic choice, a `dev_watch_unsupported` rejection selects the existing
 production-shaped build and prints the server's explanation. It does not
@@ -694,7 +796,10 @@ gregale dev --all --once --json
 
 Each app runs as its own `gregale dev --path DIR --name PROJECT` loop. Its
 output is prefixed with the project name (`[api] build | …`), one app's failed
-build or crash never stops the others, and Ctrl-C stops every loop. With
+build or crash never stops the others, and Ctrl-C stops every loop (a loop
+still running 15 seconds later is killed; a loop whose `gregale dev --all`
+was killed stops itself). `--all --stop` asks once before deleting the apps'
+databases and buckets; `--yes` skips the question. With
 `--json`, every receipt and diagnostic is emitted as one NDJSON line carrying
 `dev_project` and `dev_path`. The command exits 0 only when every loop exits 0.
 

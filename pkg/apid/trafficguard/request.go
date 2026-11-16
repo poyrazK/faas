@@ -14,6 +14,12 @@ var deploymentIDPattern = regexp.MustCompile(`^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}
 
 // Prepare binds the public concurrency condition to authorized account/app IDs.
 func Prepare(ctx context.Context, accountID, appID string, req *api.UpdateDeploymentTrafficRequest) (context.Context, *api.Problem) {
+	if req.ExpectedMCPReadiness != nil {
+		if req.ExpectedMCPReadiness.Validate() != nil {
+			return ctx, api.ErrValidation("invalid expected MCP readiness observations")
+		}
+		ctx = state.WithMCPReadinessExpectation(ctx, accountID, appID, *req.ExpectedMCPReadiness)
+	}
 	if req.ExpectedServingDeploymentID != nil && *req.ExpectedServingDeploymentID != "" {
 		parsed, err := uuid.Parse(*req.ExpectedServingDeploymentID)
 		if err != nil || !deploymentIDPattern.MatchString(*req.ExpectedServingDeploymentID) {

@@ -1,7 +1,7 @@
 # ADR-20261030122204 · Builder VMs start from a seeded BuildKit root
 
-- **Status:** Proposed. Implementation waits on the kernel overlayfs A/B
-  (ADR-20261029105325); see "Decision gate".
+- **Status:** Accepted (2026-11-12). The decision gate is met; see "Gate
+  result".
 - **Date:** 2026-10-30
 - **Amends:** the builder VM's drive layout (spec §4.6 describes drive0 and
   drive1; builders gain an optional drive2). ADR-003, under which builds run
@@ -123,3 +123,55 @@ withdrawn.
 - Not covered: Dockerfile builds, whose base images vary by app, and the
   `mise install` steps Railpack runs on top of the builder image. Seeding
   common runtime versions is a possible extension once this is measured.
+
+
+## Gate result (2026-11-12)
+
+Kernel overlayfs is on by default (ADR-20261029105325, accepted 2026-11-02),
+and the builder image step still costs a minute of every cold-cache build's
+time budget in production: over the seven days to 2026-11-11, 198 of 229
+Railpack builds ran `docker-image://ghcr.io/railwayapp/railpack-builder`,
+p50 34 s and p90 41 s, about half of the 69 s p50 build command (from the
+"slowest build steps" lines builderd writes to the deploy log). That is above
+the 20 s gate.
+
+## Implementation notes (2026-11-12)
+
+- **The seed run builds a platform-owned app.** builderd embeds a minimal
+  Node app and boots it as a build with `buildkit_seed_only`. Railpack plans
+  it exactly as it plans a customer build, so the seed holds the frontend,
+  the builder image and the runtime base under the same references and chain
+  IDs a customer build resolves. No separate pull logic tracks Railpack's
+  choice of builder image, which is pinned by tag inside Railpack's plan.
+- **Disk.** The production build disks had 21-22 GB free on 2026-11-12,
+  about the 20 GiB build-drive floor. builderd creates a seed only when free
+  space covers the floor plus the seed, and drops the seed before refusing a
+  build for space; a missing seed only means the build runs as today.
+- **Layout.** Seeds live in their own directory beside the build drives,
+  which the build-drive janitor does not sweep. vmmd stages drive2 in the
+  jail under its own name; the writable layer keeps `layer.ext4`.
+- **Warm builders** keep BuildKit on drive1, which their snapshot carries,
+  and never take a seed.
+- **Slices,** each shipped with the switch off: the guest and manifest
+  fields; vmmd's optional drive2; builderd's seed run, copy and janitor; the
+  metal test.
+- **builderd** (`FAAS_BUILD_BUILDKIT_SEED`, off by default) checks every
+  `api.BuildKitSeedCheckEvery` (1 min). It boots the seed run only when no
+  build holds the builder slot and free space covers the build-drive floor
+  plus `api.BuildKitSeedReserveBytes` (4 GiB). After a failed run it waits
+  `api.BuildKitSeedRetryMin` (2 min), doubling per failure up to
+  `api.BuildKitSeedRetryMax` (30 min): the metal run's first seed attempt
+  met the new builder base's scan still pending. Drain stops a seed run's VM as it
+  does a build's.
+- **Reflink only.** A copy that cannot share the seed's blocks is not made:
+  the seed is a 28 GiB sparse image, so a byte copy would cost more than the
+  pull it saves. Without a copy the build runs as today. `/srv/fc` is XFS
+  with `reflink=1` on the production nodes.
+- **Seed key.** It covers the builder base identity and digest (guest-init,
+  BuildKit and Railpack, whose plan pins the builder image), the platform,
+  the snapshotter, the seed app's digest and a format version.
+- **Eligible builds.** Railpack builds only: not Dockerfile builds (by
+  framework or Compose options), warm builders or the seed run. A deferred
+  cache export attaches the build's copy to the export VM only when the
+  guest reported `buildkit_seeded`; otherwise the copy goes when the build
+  ends.

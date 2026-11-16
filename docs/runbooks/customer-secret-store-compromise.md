@@ -83,7 +83,7 @@ the values themselves must change. Do it in this order:
    to revoke exposed keys on their side.
 2. **Platform-issued credentials.** Rotate object storage bindings
    (ADR-284/287), managed PostgreSQL credentials (ADR-089, ADR-461), GitHub
-   App keys and webhook secrets (`gregale github-webhook-secret set`), and
+   App keys and webhook secrets (`gregalectl github webhook-secret set`), and
    operator provider keys in `/etc/faas/secrets/*`.
 3. **Identities.** Rotate the exposed seal-domain, fleet or host identity
    (`gregalectl seal-domain init --force` then `migrate`; `gregalectl

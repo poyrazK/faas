@@ -67,19 +67,66 @@ func (g *goRenderer) optional(t Type) string {
 	return "*" + typ
 }
 
-func (g *goRenderer) fields(columns []dataapi.Column, include func(dataapi.Column) bool, typeOf func(dataapi.Column) (string, bool), reserved ...string) {
-	fieldNames := newNames(reserved...)
-	for _, c := range columns {
-		if !include(c) {
-			continue
-		}
-		typ, omit := typeOf(c)
-		tag := c.Name
-		if omit {
+type goField struct {
+	name, wire, typ string
+	omit, nullable  bool
+}
+
+func (g *goRenderer) record(name string, fields []goField, inputs bool) {
+	names := newNames("SetNull", "MarshalJSON", "UnmarshalJSON")
+	for i := range fields {
+		fields[i].name = names.take(pascal(fields[i].wire))
+	}
+	g.printf("type %s struct {\n", name)
+	for _, f := range fields {
+		tag := f.wire
+		if f.omit {
 			tag += ",omitempty"
 		}
-		g.printf("\t%s %s `json:%s`\n", fieldNames.take(pascal(c.Name)), typ, strconv.Quote(tag))
+		tag = "json:" + strconv.Quote(tag)
+		// An interpreted Go tag remains valid even for a PostgreSQL backtick name.
+		if !strings.ContainsRune(tag, '`') {
+			tag = "`" + tag + "`"
+		} else {
+			tag = strconv.Quote(tag)
+		}
+		g.printf("\t%s %s %s\n", f.name, f.typ, tag)
 	}
+	if inputs {
+		g.printf("\tSetNull []string `json:\"-\"`\n")
+	}
+	g.printf("}\n\nfunc (v %s) MarshalJSON() ([]byte, error) {\n return marshalRecord([]recordField{\n", name)
+	for _, f := range fields {
+		g.printf("{%q,v.%s,%t},\n", f.wire, f.name, f.omit)
+	}
+	g.printf("}, ")
+	if inputs {
+		g.printf("v.SetNull, map[string]bool{")
+		for _, f := range fields {
+			if f.nullable {
+				g.printf("%q:true,", f.wire)
+			}
+		}
+		g.printf("}")
+	} else {
+		g.printf("nil,nil")
+	}
+	g.printf(")\n}\n\nfunc (v *%s) UnmarshalJSON(data []byte) error {\n return unmarshalRecord(data, map[string]any{", name)
+	for _, f := range fields {
+		g.printf("%q:&v.%s,", f.wire, f.name)
+	}
+	if inputs {
+		g.printf("}, &v.SetNull, map[string]bool{")
+		for _, f := range fields {
+			if f.nullable {
+				g.printf("%q:true,", f.wire)
+			}
+		}
+		g.printf("}")
+	} else {
+		g.printf("},nil,nil")
+	}
+	g.printf(")\n}\n\n")
 }
 
 func (g *goRenderer) column(c dataapi.Column) Type {
@@ -95,82 +142,60 @@ func RenderGo(contract dataapi.Contract, pkg string) ([]byte, error) {
 	}
 	g := &goRenderer{m: buildModel(contract)}
 	g.printf("%s\npackage %s\n\n", header("//", g.m.Fingerprint), pkg)
-	g.printf("import (\n\t\"bytes\"\n\t\"context\"\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/url\"\n\t\"strconv\"\n\t\"strings\"\n\t\"time\"\n)\n\n")
+	g.printf("import (\n\t\"bytes\"\n\t\"context\"\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"io\"\n\t\"net/http\"\n\t\"net\"\n\t\"reflect\"\n\t\"net/url\"\n\t\"strconv\"\n\t\"strings\"\n\t\"time\"\n)\n\n")
 	g.printf("// SchemaFingerprint identifies the database contract this file was generated from.\nconst SchemaFingerprint = %q\n\n", g.m.Fingerprint)
 	for _, e := range g.m.Enums {
 		g.printf("// %s is the PostgreSQL enum %s.\ntype %s string\n\nconst (\n", e.Name, e.Key, e.Name)
-		constNames := newNames()
-		for _, label := range e.Labels {
-			g.printf("\t%s %s = %s\n", constNames.take(e.Name+pascal(label)), e.Name, strconv.Quote(label))
+		for i, label := range e.Labels {
+			g.printf("\t%s %s = %s\n", e.Constants[i], e.Name, strconv.Quote(label))
 		}
 		g.printf(")\n\n")
 	}
 	for _, c := range g.m.Composites {
-		name := g.m.compositeNm[c.Schema+"."+c.Name]
-		g.printf("// %s is the composite type %s.%s.\ntype %s struct {\n", name, c.Schema, c.Name, name)
-		fieldNames := newNames()
+		var fields []goField
 		for _, f := range c.Fields {
 			t := ParseType(f.Type)
 			t.Nullable = t.Nullable || f.Nullable
-			g.printf("\t%s %s `json:%s`\n", fieldNames.take(pascal(f.Name)), g.goType(t), strconv.Quote(f.Name))
+			fields = append(fields, goField{wire: f.Name, typ: g.goType(t), nullable: t.Nullable})
 		}
-		g.printf("}\n\n")
+		g.record(g.m.compositeNm[c.Schema+"."+c.Name], fields, false)
 	}
 	for _, t := range g.m.Tables {
-		kind := "table"
-		if t.View {
-			kind = "view"
-		}
-		g.printf("// %sRow is a row of the %s %s.%s.\ntype %sRow struct {\n", t.Base, kind, t.Schema, t.Name, t.Base)
-		g.fields(t.Columns, func(dataapi.Column) bool { return true }, func(c dataapi.Column) (string, bool) { return g.goType(g.column(c)), false })
-		g.printf("}\n\n// %sInsert holds insertable columns; nil pointers use database defaults.\ntype %sInsert struct {\n", t.Base, t.Base)
-		g.fields(t.Columns, func(c dataapi.Column) bool { return c.Insertable }, func(c dataapi.Column) (string, bool) {
-			if c.Optional {
-				return g.optional(g.column(c)), true
+		for _, kind := range []string{"Row", "Insert", "Update"} {
+			var fields []goField
+			for _, c := range t.Columns {
+				if kind == "Insert" && !c.Insertable || kind == "Update" && !c.Updatable {
+					continue
+				}
+				typ := g.column(c)
+				omit := kind == "Update" || kind == "Insert" && c.Optional
+				rendered := g.goType(typ)
+				if omit {
+					rendered = g.optional(typ)
+				}
+				fields = append(fields, goField{wire: c.Name, typ: rendered, omit: omit, nullable: typ.Nullable})
 			}
-			return g.goType(g.column(c)), false
-		})
-		var nullable []string
-		for _, c := range t.Columns {
-			if c.Updatable && g.column(c).Nullable {
-				nullable = append(nullable, c.Name)
-			}
+			g.record(t.Base+kind, fields, kind != "Row")
 		}
-		if len(nullable) == 0 {
-			g.printf("}\n\n// %sUpdate holds updatable columns; nil pointers are left unchanged.\ntype %sUpdate struct {\n", t.Base, t.Base)
-			g.fields(t.Columns, func(c dataapi.Column) bool { return c.Updatable }, func(c dataapi.Column) (string, bool) { return g.optional(g.column(c)), true })
-			g.printf("}\n\n")
-			continue
-		}
-		g.printf("}\n\n// %sUpdate holds updatable columns; nil pointers are left unchanged and\n// SetNull names nullable columns to set to NULL.\ntype %sUpdate struct {\n", t.Base, t.Base)
-		g.fields(t.Columns, func(c dataapi.Column) bool { return c.Updatable }, func(c dataapi.Column) (string, bool) { return g.optional(g.column(c)), true }, "SetNull")
-		g.printf("\tSetNull []string `json:\"-\"`\n}\n\nfunc (u %sUpdate) setNull() ([]string, map[string]bool) {\n\treturn u.SetNull, map[string]bool{", t.Base)
-		for i, name := range nullable {
-			if i > 0 {
-				g.printf(", ")
-			}
-			g.printf("%q: true", name)
-		}
-		g.printf("}\n}\n\n")
 	}
 	for _, f := range g.m.Functions {
-		g.printf("// %s holds the arguments of %s.%s; nil pointers use argument defaults.\ntype %s struct {\n", f.Base, f.Schema, f.Name, f.Base)
-		argNames := newNames()
+		var fields []goField
 		for _, a := range f.Args {
-			t := ParseType(a.Type)
+			typ := ParseType(a.Type)
+			rendered := g.goType(typ)
 			if a.Optional {
-				g.printf("\t%s %s `json:%s`\n", argNames.take(pascal(a.Name)), g.optional(t), strconv.Quote(a.Name+",omitempty"))
-			} else {
-				g.printf("\t%s %s `json:%s`\n", argNames.take(pascal(a.Name)), g.goType(t), strconv.Quote(a.Name))
+				rendered = g.optional(typ)
 			}
+			fields = append(fields, goField{wire: a.Name, typ: rendered, omit: a.Optional, nullable: true})
 		}
-		g.printf("}\n\n")
+		g.record(f.Base, fields, true)
 	}
 	methods := newNames("BaseURL", "HTTPClient", "AccessToken", "ServerKey", "Subject", "Anonymous", "Relation")
 	for _, t := range g.m.Tables {
 		insert, update := t.Base+"Insert", t.Base+"Update"
+		method := methods.take(t.Base)
 		g.printf("// %s queries %s.%s.\nfunc (c *Client) %s() Table[%sRow, %s, %s] {\n\treturn newTable[%sRow, %s, %s](c, %q, %q)\n}\n\n",
-			methods.take(t.Base), t.Schema, t.Name, t.Base, t.Base, insert, update, t.Base, insert, update, t.Schema, t.Name)
+			method, t.Schema, t.Name, method, t.Base, insert, update, t.Base, insert, update, t.Schema, t.Name)
 	}
 	for _, f := range g.m.Functions {
 		method := methods.take("RPC" + pascal(qualified(g.m.Schemas, f.Schema, f.Name)))
@@ -484,7 +509,7 @@ func (t Table[R, I, U]) Page(order []CursorOrder, size int, after, before Cursor
 			prefix = append(prefix, o.Column+".eq."+literal)
 		}
 	}
-	t = t.without("order", "or")
+	t = t.without("order", "offset")
 	for _, o := range traversal {
 		t = t.OrderNulls(o.Column, o.Descending, o.NullsFirst)
 	}
@@ -507,19 +532,19 @@ func (t Table[R, I, U]) Offset(n int) Table[R, I, U] { return t.set("offset", st
 // Get reads matching rows. The server caps one response at 1,000 rows.
 func (t Table[R, I, U]) Get(ctx context.Context) ([]R, error) {
 	var rows []R
-	return rows, t.client.do(ctx, http.MethodGet, t.schema, "/rest/v1/"+t.name, t.params, nil, &rows)
+	return rows, t.client.do(ctx, http.MethodGet, t.schema, "/rest/v1/"+url.PathEscape(t.name), t.params, nil, &rows)
 }
 
 // GetInto decodes matching rows into out, for example a slice of your own
 // structs holding relations embedded with Select("id,body,author:users(name)").
 func (t Table[R, I, U]) GetInto(ctx context.Context, out any) error {
-	return t.client.do(ctx, http.MethodGet, t.schema, "/rest/v1/"+t.name, t.params, nil, out)
+	return t.client.do(ctx, http.MethodGet, t.schema, "/rest/v1/"+url.PathEscape(t.name), t.params, nil, out)
 }
 
 // Insert writes rows in one transaction and returns them as stored.
 func (t Table[R, I, U]) Insert(ctx context.Context, rows ...I) ([]R, error) {
 	var out []R
-	return out, t.client.do(ctx, http.MethodPost, t.schema, "/rest/v1/"+t.name, t.params, rows, &out)
+	return out, t.client.do(ctx, http.MethodPost, t.schema, "/rest/v1/"+url.PathEscape(t.name), t.params, rows, &out)
 }
 
 func (t Table[R, I, U]) filtered() bool {
@@ -541,43 +566,35 @@ func (t Table[R, I, U]) Update(ctx context.Context, values U) ([]R, error) {
 		return nil, err
 	}
 	var out []R
-	return out, t.client.do(ctx, http.MethodPatch, t.schema, "/rest/v1/"+t.name, t.params, body, &out)
+	return out, t.client.do(ctx, http.MethodPatch, t.schema, "/rest/v1/"+url.PathEscape(t.name), t.params, body, &out)
 }
 
-// nullUpdate is implemented by generated update types with nullable columns.
-type nullUpdate interface {
-	setNull() ([]string, map[string]bool)
-}
+// updateBody retains raw map support; generated records validate SetNull in MarshalJSON.
+func updateBody(values any) (any, error) { return values, nil }
 
-// updateBody adds explicit nulls for SetNull columns, which a nil pointer
-// cannot express: nil means "leave unchanged".
-func updateBody(values any) (any, error) {
-	nulls, ok := values.(nullUpdate)
-	if !ok {
-		return values, nil
-	}
-	columns, allowed := nulls.setNull()
-	if len(columns) == 0 {
-		return values, nil
-	}
-	encoded, err := json.Marshal(values)
-	if err != nil {
-		return nil, err
-	}
-	fields := map[string]json.RawMessage{}
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		return nil, err
-	}
-	for _, column := range columns {
-		if !allowed[column] {
-			return nil, fmt.Errorf("data api: %q is not a nullable updatable column", column)
-		}
-		if _, set := fields[column]; set {
-			return nil, fmt.Errorf("data api: %q is both set and in SetNull", column)
-		}
-		fields[column] = json.RawMessage("null")
-	}
-	return fields, nil
+// recordField preserves database names independently of encoding/json tag syntax.
+type recordField struct { name string; value any; omit bool }
+func marshalRecord(fields []recordField, nulls []string, allowed map[string]bool) ([]byte,error) {
+ out:=map[string]any{}
+ for _, f:=range fields {
+  v:=reflect.ValueOf(f.value)
+  empty:=!v.IsValid()
+  if v.IsValid() { switch v.Kind() { case reflect.Pointer,reflect.Interface: empty=v.IsNil();case reflect.Slice,reflect.Map,reflect.String:empty=v.Len()==0 } }
+  if f.omit && empty {continue};out[f.name]=f.value
+ }
+ for _, name:=range nulls {
+  if !allowed[name] {return nil,fmt.Errorf("data api: %q is not a nullable input",name)}
+  if value,ok:=out[name];ok { encoded,err:=json.Marshal(value);if err!=nil{return nil,err};if string(encoded)!="null" && !reflect.ValueOf(value).IsZero() {return nil,fmt.Errorf("data api: %q is both set and in SetNull",name)} }
+  out[name]=nil
+ }
+ return json.Marshal(out)
+}
+func unmarshalRecord(data []byte, fields map[string]any, nulls *[]string, allowed map[string]bool) error {
+ var raw map[string]json.RawMessage
+ if err:=json.Unmarshal(data,&raw);err!=nil{return err}
+ if nulls!=nil {*nulls=nil}
+ for name,destination:=range fields { if value,ok:=raw[name];ok { if err:=json.Unmarshal(value,destination);err!=nil{return err};if nulls!=nil && allowed[name] && string(bytes.TrimSpace(value))=="null" {*nulls=append(*nulls,name)} } }
+ return nil
 }
 
 // Delete removes matching rows; it refuses to run without a filter.
@@ -586,7 +603,7 @@ func (t Table[R, I, U]) Delete(ctx context.Context) ([]R, error) {
 		return nil, fmt.Errorf("data api: delete from %s.%s requires a filter", t.schema, t.name)
 	}
 	var out []R
-	return out, t.client.do(ctx, http.MethodDelete, t.schema, "/rest/v1/"+t.name, t.params, nil, &out)
+	return out, t.client.do(ctx, http.MethodDelete, t.schema, "/rest/v1/"+url.PathEscape(t.name), t.params, nil, &out)
 }
 
 func formatValue(value any) string {
@@ -609,13 +626,13 @@ func (c *Client) rpc(ctx context.Context, schema, name string, args, out any, op
 		opt(&o)
 	}
 	if !o.get {
-		return c.do(ctx, http.MethodPost, schema, "/rest/v1/rpc/"+name, nil, args, out)
+		return c.do(ctx, http.MethodPost, schema, "/rest/v1/rpc/"+url.PathEscape(name), nil, args, out)
 	}
 	params, err := queryArgs(args)
 	if err != nil {
 		return err
 	}
-	return c.do(ctx, http.MethodGet, schema, "/rest/v1/rpc/"+name, params, nil, out)
+	return c.do(ctx, http.MethodGet, schema, "/rest/v1/rpc/"+url.PathEscape(name), params, nil, out)
 }
 
 // queryArgs encodes RPC arguments for GET: scalars as text, arrays as
@@ -691,7 +708,13 @@ func arrayLiteral(items []any) (string, error) {
 }
 
 func (c *Client) do(ctx context.Context, method, schema, path string, params url.Values, body, out any) error {
-	target := strings.TrimRight(c.BaseURL, "/") + path
+	base, err := url.Parse(c.BaseURL)
+ if err != nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.ForceQuery || strings.Contains(c.BaseURL, "#") || base.Fragment != "" || base.Path != "" && base.Path != "/" { return fmt.Errorf("data api: BaseURL must be an HTTP(S) origin without credentials, query or fragment") }
+ ip:=net.ParseIP(base.Hostname())
+ if base.Scheme != "https" && !(base.Scheme=="http" && (base.Hostname()=="localhost" || ip!=nil && ip.IsLoopback())) {return fmt.Errorf("data api: HTTPS is required except for loopback development")}
+ if strings.Contains(strings.ToLower(path), "%2f") {return fmt.Errorf("data api: relation and RPC names cannot contain slashes")}
+ if strings.ContainsAny(path,"\\\r\n") {return fmt.Errorf("data api: invalid request path")}
+ target := strings.TrimRight(c.BaseURL, "/") + path
 	if len(params) > 0 {
 		target += "?" + params.Encode()
 	}
@@ -740,7 +763,9 @@ func (c *Client) do(ctx context.Context, method, schema, path string, params url
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	resp, err := httpClient.Do(req)
+	pinned := *httpClient
+ pinned.CheckRedirect = func(*http.Request, []*http.Request) error { return fmt.Errorf("data api: redirects are not allowed") }
+ resp, err := pinned.Do(req)
 	if err != nil {
 		return err
 	}

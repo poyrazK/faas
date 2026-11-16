@@ -13,10 +13,13 @@ import (
 )
 
 const (
-	queueWorkloadProfileName           = "default"
-	queueWorkloadProfileQueueName      = "default"
-	queueWorkloadProfileTargetDepth    = 10.0
-	queueWorkloadProfileMaxConcurrency = 1
+	queueWorkloadProfileName        = "default"
+	queueWorkloadProfileQueueName   = "default"
+	queueWorkloadProfileTargetDepth = 10.0
+	// A new profile binding delivers up to 10 messages at once: the scaler
+	// never runs more workers than the binding's max_concurrency, so the old
+	// default of 1 capped queue-depth scaling at one worker (ADR-20261112200000).
+	queueWorkloadProfileMaxConcurrency = 10
 )
 
 // queueWorkloadProfileScalingPolicy expands the simple profile while
@@ -172,6 +175,18 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Queue workload profile conflict", fmt.Sprintf("default binding already points at queue %q; set force=true to replace it", existing.QueueName)))
 		return
 	}
+	// Re-running setup silently turned a pull default binding into push and
+	// reset its concurrency (ADR-20261112200000): a pull worker's leases then
+	// found no pull binding. Switching mode now needs force, and an omitted
+	// max_concurrency keeps the binding's.
+	if existing != nil && existing.Mode != "push" && !req.Force {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Queue workload profile conflict",
+			fmt.Sprintf("default binding consumes queue %q by %s; queue setup configures push delivery, so set force=true to switch it", existing.QueueName, existing.Mode)))
+		return
+	}
+	if existing != nil && req.MaxConcurrency == 0 {
+		maxConcurrency = existing.MaxConcurrency
+	}
 
 	var retryPolicyJSON []byte
 	if req.RetryPolicy != nil {
@@ -183,6 +198,12 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	enabled := true
+	if existing != nil {
+		// Re-running setup keeps a binding the customer disabled disabled
+		// (ADR-20261113180000, R5-9); `queue bindings update --enabled
+		// true` turns it back on.
+		enabled = existing.Enabled
+	}
 	mode := "push"
 	workloadClass := state.WorkloadClass(class)
 	var binding state.QueueBinding

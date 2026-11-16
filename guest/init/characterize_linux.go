@@ -14,7 +14,7 @@
 // 1026), sends the framed JSON, awaits 1-byte ack, retries with
 // backoff (100/250/500 ms) bounded by the 10s characterization
 // deadline. This is the inverse of the resume listener (1024) and
-// the stateless advisory (1025 DGRAM); ports 1024/1025/1026 stay
+// the stateless advisory (1025 STREAM); ports 1024/1025/1026 stay
 // distinct so a host-side prefix collision is impossible.
 //
 // Lifecycle: caller (boot()) calls runCharacterization after the supervisor

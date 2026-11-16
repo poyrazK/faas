@@ -933,3 +933,53 @@ func TestPgStoreResolveRegressionsNotSeenOnlyJudgedRoutes(t *testing.T) {
 		}
 	}
 }
+
+// Hunt 34 H34-17: the automatic 5xx rollbacks leave out a release's 5xx on
+// method+route+status triples its predecessor also returned in the baseline
+// window. A new status, method or route, or a predecessor failure outside the
+// window, still counts.
+func TestPgStoreRequestTelemetry_KnownServerErrors(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID, releaseID := seedLiveDeploy(t, store, ctx)
+	baseline, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:known-5xx-baseline", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	now := time.Now().UTC()
+	insert := func(deploymentID, method, route string, status, count int32, at time.Time) {
+		t.Helper()
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        route, Method: method, Status: status, LatencyMs: 10,
+			ReceivedAt: pgtype.Timestamptz{Time: at, Valid: true}, Count: count,
+			UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+		}); err != nil {
+			t.Fatalf("InsertRequestTelemetry %s %s %d: %v", method, route, status, err)
+		}
+	}
+	baselineAt := now.Add(-2 * time.Hour)
+	insert(baseline.ID, "GET", "/boom", 500, 3, baselineAt)
+	insert(baseline.ID, "GET", "/status", 503, 1, baselineAt)
+	insert(baseline.ID, "GET", "/", 200, 100, baselineAt)
+	insert(baseline.ID, "GET", "/old", 500, 9, now.Add(-48*time.Hour))
+	insert(releaseID, "GET", "/boom", 500, 5, now)
+	insert(releaseID, "GET", "/status", 503, 2, now)
+	insert(releaseID, "GET", "/status", 502, 4, now)
+	insert(releaseID, "POST", "/boom", 500, 7, now)
+	insert(releaseID, "GET", "/new", 500, 6, now)
+	insert(releaseID, "GET", "/old", 500, 1, now)
+	insert(releaseID, "GET", "/", 200, 40, now)
+
+	got, err := store.RequestTelemetryKnownServerErrors(ctx, appID, releaseID, now.Add(-time.Minute), now.Add(time.Minute),
+		baseline.ID, now.Add(-24*time.Hour), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("RequestTelemetryKnownServerErrors: %v", err)
+	}
+	if got != 7 {
+		t.Fatalf("known server errors = %d, want 7 (GET /boom 500 and GET /status 503)", got)
+	}
+}

@@ -11,9 +11,9 @@ export type AgentApprovalResponse = {
    */
   id: string;
   /**
-   * The kind of action; budget for a change past the agent's monthly budget.
+   * The kind of action; budget for a change past the agent's monthly budget, undo for an agent undoing its own changes.
    */
-  category: 'delete' | 'production' | 'credentials' | 'billing' | 'budget';
+  category: 'delete' | 'production' | 'credentials' | 'billing' | 'budget' | 'undo';
   /**
    * The HTTP method of the request the approval allows.
    */
@@ -38,6 +38,10 @@ export type AgentApprovalResponse = {
    * The connection's client name or key label.
    */
   agent?: string;
+  /**
+   * The id of the agent connection that asked, as GET /v1/agent-connections lists it.
+   */
+  connection_id?: string;
   /**
    * When the agent first made the request.
    */

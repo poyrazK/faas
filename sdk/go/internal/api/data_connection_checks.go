@@ -3,6 +3,8 @@ package api
 // DataConnectionCheck contains catalog metadata only. Checks run in the private
 // worker, using the same connection policy and inspectors as replication.
 type DataConnectionCheck struct {
+	RequestedTables    []string              `json:"requested_tables,omitempty"`
+	Search             string                `json:"search,omitempty"`
 	ID                 string                `json:"id"`
 	ConnectionID       string                `json:"connection_id"`
 	ConnectionRevision int64                 `json:"connection_revision"`
@@ -37,8 +39,10 @@ type DataEndpointCapacity struct {
 }
 
 type RequestDataConnectionCheck struct {
-	ExpectedRevision int64  `json:"expected_revision"`
-	DatabaseID       string `json:"database_id,omitempty"`
+	Tables           []string `json:"tables,omitempty"`
+	Search           string   `json:"search,omitempty"`
+	ExpectedRevision int64    `json:"expected_revision"`
+	DatabaseID       string   `json:"database_id,omitempty"`
 }
 
 type DataConnectionIssue struct {

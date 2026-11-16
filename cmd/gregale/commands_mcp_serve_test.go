@@ -80,7 +80,7 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	tools, err := session.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 24 || requests.Load() != 0 {
+	if err != nil || len(tools.Tools) != 27 || requests.Load() != 0 {
 		t.Fatalf("discovery count=%d discovery=%+v error=%v requests=%d", len(tools.Tools), tools, err, requests.Load())
 	}
 	listed := map[string]bool{}
@@ -153,6 +153,31 @@ func TestMCPServeWriteOptionIsExplicit(t *testing.T) {
 		opts, err := main.ParseMCPServeOptions(tc.args)
 		if err != nil || (*opts.AllowWrites()) != tc.writes {
 			t.Fatalf("write options=%+v error=%v", opts, err)
+		}
+	}
+}
+
+func TestMCPServeHostedInvocationNeedsSeparateOption(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		args := []string{"--transport", "streamable-http", "--tools", "registry,invoke", "--allow-writes"}
+		if enabled {
+			args = append(args, "--allow-tool-invocation")
+		}
+		opts, err := main.ParseMCPServeOptions(args)
+		if err != nil || *opts.AllowToolInvocation() != enabled {
+			t.Fatalf("hosted invocation options: %+v %v", opts, err)
+		}
+	}
+	if _, err := main.ParseMCPServeOptions([]string{"--allow-tool-invocation"}); err == nil {
+		t.Fatal("HTTP invocation option accepted for stdio")
+	}
+}
+
+func TestMCPServeExecuteSelectionIsExplicit(t *testing.T) {
+	for _, selection := range []string{"execute", "core,execute", "build-tools", "core,build-tools", "registry", "core,registry", "invoke", "core,registry,invoke", "all"} {
+		opts, err := main.ParseMCPServeOptions([]string{"--tools", selection})
+		if err != nil || *opts.AllowWrites() {
+			t.Fatalf("selection %s: opts=%+v error=%v", selection, opts, err)
 		}
 	}
 }

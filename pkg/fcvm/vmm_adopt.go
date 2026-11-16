@@ -55,6 +55,14 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 		go wait() // closes the poll handle once the process exits
 		return err
 	}
+	anchoredJails := make([]resourceAsset, 0, len(jails))
+	for _, a := range jails {
+		anchored, err := anchorAdoptedJail(a)
+		if err != nil {
+			return fail(fmt.Errorf("vmm: adopt %s: jail %s: %w", l.Instance, a.Path, err))
+		}
+		anchoredJails = append(anchoredJails, anchored)
+	}
 	// Staged files (a reflinked writable layer, a materialised copy) are
 	// removed at teardown only while they are still the recorded files.
 	for _, a := range files {
@@ -96,7 +104,7 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 	v.proc[l.Instance] = cmd
 	v.recs[l.Instance] = rec
 	v.mu.Unlock()
-	for _, a := range jails {
+	for _, a := range anchoredJails {
 		v.rememberJail(l.Instance, a)
 	}
 	for _, a := range files {
@@ -127,6 +135,38 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 	return nil
 }
 
+// anchorAdoptedJail re-anchors a jail the previous vmmd created to this vmmd's
+// mount namespace (adoption ADR §2 "Mounts"). Under systemd
+// ProtectSystem=strict every vmmd start gets its own mount namespace, so the
+// predecessor's recorded namespace never matches the successor's, and
+// teardown refused every adopted guest's jail for good: the guest stayed
+// draining, which held its node's drain and so every later rollout of the
+// node (production 2026-11-12). The jail lives on the host tmpfs that every
+// mount namespace sees; the same kernel boot and the same directory identity
+// prove it is the recorded jail, which is what the namespace stood for.
+func anchorAdoptedJail(a resourceAsset) (resourceAsset, error) {
+	if a.Namespace == nil {
+		return a, nil
+	}
+	current, err := resourceMountNamespace()
+	if err != nil {
+		return a, err
+	}
+	if current.BootID != a.Namespace.BootID {
+		return a, errors.New("jail was recorded in an earlier boot")
+	}
+	actual, err := resourceDirectoryID(a.Path)
+	if err != nil {
+		return a, err
+	}
+	if actual == nil || a.File == nil || *actual != *a.File {
+		return a, errors.New("jail directory identity changed or unknown")
+	}
+	current.MountID = a.Namespace.MountID
+	a.Namespace = &current
+	return a, nil
+}
+
 // watchAdoptedProcess is the adopted guest's exit watchdog, the counterpart
 // of startJailer's Wait goroutine.
 func (v *JailerVMM) watchAdoptedProcess(l Lease, cmd *exec.Cmd, rec *instanceRecord, wait func()) {
@@ -155,10 +195,13 @@ func (v *JailerVMM) watchAdoptedProcess(l Lease, cmd *exec.Cmd, rec *instanceRec
 // adoptGuestBinds rebuilds bindMounts and bindSourceModes for one adopted
 // guest from its journaled bind assets. Each source is reopened and must
 // still be the recorded inode; its reference pins it for teardown. When the
-// cache has re-staged a source path since the guest bound it, the guest still
-// holds the recorded inode through its bind mount: it is reopened there, through
-// the Firecracker process pid, under the same (path, inode) key, so teardown
-// restores that inode's mode and a new bind of the refreshed file counts apart.
+// cache has re-staged a source path since the guest bound it, or evicted it,
+// the guest still holds the recorded inode through its bind mount: it is
+// reopened there, through the Firecracker process pid, under the same (path,
+// inode) key, so teardown restores that inode's mode and a new bind of a
+// refreshed file counts apart. Without the eviction case, a guest whose source
+// the cache evicted was refused and kept running unowned (production fsn-2,
+// 2026-11-12: the leaked guest failed the rollout's clean-adoption check).
 func (v *JailerVMM) adoptGuestBinds(instance string, pid int, binds []resourceAsset) error {
 	chroot := v.chrootRoot(instance)
 	for _, a := range binds {
@@ -167,15 +210,18 @@ func (v *JailerVMM) adoptGuestBinds(instance string, pid int, binds []resourceAs
 		}
 		f, err := openRecordedBindSource(a.Source, *a.SourceFile)
 		viaGuest := false
-		if errors.Is(err, errBindSourceReplaced) {
+		if errors.Is(err, errBindSourceReplaced) || errors.Is(err, os.ErrNotExist) {
 			viaGuest = true
-			// The path now names another file: take the recorded one from
-			// the guest's own view, where it is still bound.
+			// The path is gone or names another file: take the recorded one
+			// from the guest's own view, where it is still bound.
 			rel, relErr := filepath.Rel(chroot, a.Path)
 			if relErr != nil || rel == "." || strings.HasPrefix(rel, "..") {
 				err = fmt.Errorf("%w; bind target %s is outside the jail", err, a.Path)
-			} else if f, err = openAdoptedBindTarget(pid, rel, *a.SourceFile); err != nil {
-				err = fmt.Errorf("%w, and through the guest: %w", errBindSourceReplaced, err)
+			} else {
+				hostErr := err
+				if f, err = openAdoptedBindTarget(pid, rel, *a.SourceFile); err != nil {
+					err = fmt.Errorf("%w, and through the guest: %w", hostErr, err)
+				}
 			}
 		}
 		if err != nil {

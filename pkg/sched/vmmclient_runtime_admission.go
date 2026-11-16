@@ -39,7 +39,7 @@ func PrepareAdmittedRuntime(ctx context.Context, binding runtimeadmission.Bindin
 		if snapshot.DeploymentID != binding.DeploymentID || snapshot.Networkless {
 			return nil, runtimeadmission.ErrInvalid
 		}
-		req.Boot = &vmmdpb.CreateAdmittedRuntimeRequest_Restore{Restore: &vmmdpb.CreateFromSnapshotRequest{Instance: binding.InstanceID, App: app.toProto(), Plan: string(app.Plan), AccountId: app.AccountID, WakeId: fields.WakeID, KeepPaused: keepPaused, Snapshot: &vmmdpb.SnapshotRef{DeploymentId: snapshot.DeploymentID, VmstatePath: snapshot.VMStatePath, FcVersion: snapshot.FCVersion, StorageKey: snapshot.StorageKey, VmstateStorageKey: snapshot.VMStateStorageKey}}}
+		req.Boot = &vmmdpb.CreateAdmittedRuntimeRequest_Restore{Restore: &vmmdpb.CreateFromSnapshotRequest{Instance: binding.InstanceID, App: app.toProto(), Plan: string(app.Plan), AccountId: app.AccountID, WakeId: fields.WakeID, KeepPaused: keepPaused, Snapshot: &vmmdpb.SnapshotRef{DeploymentId: snapshot.DeploymentID, VmstatePath: snapshot.VMStatePath, FcVersion: snapshot.FCVersion, StorageKey: snapshot.StorageKey, VmstateStorageKey: snapshot.VMStateStorageKey, CaptureId: snapshot.CaptureID, SealedKey: []byte(snapshot.SealedKey), SealedCache: snapshot.SealedCache}}}
 	}
 	hash, err := runtimeadmission.HashBootPayload(req)
 	if err != nil {

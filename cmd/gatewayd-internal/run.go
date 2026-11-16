@@ -510,6 +510,9 @@ type synthAdapter struct {
 	// waking an instance without delivering the envelope leaves the row
 	// looking completed while the guest never sees a request.
 	forward func(gateway.Target) http.Handler
+	// requestObserver records each delivered invocation in request metrics
+	// and telemetry (invocation_telemetry.go); nil records nothing.
+	requestObserver *invocationRequestObserver
 }
 
 func (a *synthAdapter) Wake(ctx context.Context, appID string) error { return a.wake(ctx, appID) }
@@ -1073,12 +1076,17 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	req = req.WithContext(gateway.WithEdgeJWTIdentity(req.Context(), gateway.EdgeJWTIdentity{Issuer: inv.EdgeJWTIssuer, Subject: inv.EdgeJWTSubject}))
 
 	rec := httptest.NewRecorder()
+	started := time.Now()
 	if err := serveSyntheticForward(ctx, a.forward(target), rec, req); err != nil {
 		inv.Result = nil
 		return inv, 0, nil, err
 	}
 	if rec.Code == 0 {
 		rec.Code = http.StatusOK
+	}
+	if publish {
+		// A debug mirror replay (publish=false) is a copy, not a delivery.
+		a.observeInvocation(req, target, inv, started, rec.Code)
 	}
 	inv.OutcomeCode = scheduledInvocationOutcomeCode(rec.Header())
 	inv.ResponseRetryAfter = ""
@@ -1189,6 +1197,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// invocationObserver connects the synth adapter's delivered invocations
+	// to the public handler's request recorder once runWithDeps builds it
+	// (invocation_telemetry.go). Nil records nothing.
+	invocationObserver *invocationRequestObserver
 	// credentialMatcher checks consumer keys and fork tokens against their
 	// stored hashes through apid (ADR 20261029202403). Nil compares plain
 	// hashes locally (unit tests).
@@ -1870,6 +1882,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 			return router.toApp(ctx, app)
 		}).
 		WithDeploymentSmokeTargetLoader(newDeploymentSmokeTargetLoader(pgStore)).
+		// ADR 20261114150000 §3: stamp each deployment's killed flags.
+		WithFlagKillLoader(pgStore.FeatureFlagKillsForDeployment).
 		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
 		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
 		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).
@@ -1981,10 +1995,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// calls resolve the owner schedd per app via the router — they no
 	// longer dial the legacy single schedd.
 	var synth *synthAdapter
+	deps.invocationObserver = &invocationRequestObserver{}
 	synth = &synthAdapter{
-		backend: backend,
-		store:   pgStore,
-		log:     log,
+		backend:         backend,
+		store:           pgStore,
+		log:             log,
+		requestObserver: deps.invocationObserver,
 		wake: func(ctx context.Context, appID string) error {
 			// wake_id is discarded on the synth path (gaps analysis
 			// 2026-07-23): synthesized requests don't return a
@@ -2559,6 +2575,13 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// ADR 20261022111812: once the seal_domains role stages the edge
 	// domain, its identity opens basic-auth credentials and log drain
 	// headers ahead of the fleet and host identities.
+	edgeRetired, err := edgeRetiredFromEnv(osGetenv)
+	if err != nil {
+		return err
+	}
+	if edgeRetired {
+		log.Info("edge identity retired on this node: edge values open through secretd, verifiers and vmmd")
+	}
 	edgeDomainIdentities, err := loadEdgeSealDomain(osGetenv)
 	if err != nil {
 		return err
@@ -2580,6 +2603,17 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		if deps.edgeRulesMatcher != nil {
 			deps.edgeRulesMatcher.headerSecretOpener = newEdgeRuleHeaderSecretOpener(identities)
 		}
+	}
+	injectEdgeHeaderSecrets, err := edgeHeaderSecretsInjectFromEnv(osGetenv)
+	if err != nil {
+		return err
+	}
+	if injectEdgeHeaderSecrets && deps.edgeRulesMatcher != nil {
+		// ADR-20261110210000 slice 3i: this gateway never opens a sealed
+		// request header value; the instance's vmmd does.
+		deps.edgeRulesMatcher.headerSecretsInject = true
+		deps.edgeRulesMatcher.headerSecretOpener = nil
+		log.Info("edge rule header values are added by the instance's vmmd")
 	}
 	log.Info("edge seal domain", "domain_identity", len(edgeDomainIdentities) > 0, "identities", len(deps.edgeIdentities))
 	// PR-3 / ADR-125 fleet-wide signing key: try the
@@ -2917,6 +2951,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
 		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations).
 		WithSelectorSuffixes(appsSuffix(deps.domains.Apps), hostidentity.DeploySuffix())
+	if deps.pgStore != nil {
+		// Service calls record request metrics under the target's plan.
+		handler = handler.WithAppPlanResolver(newAppPlanResolver(deps.pgStore))
+	}
+	// Scheduled and queued deliveries record like service calls.
+	deps.invocationObserver.set(handler.RecordServiceRequest)
 	if deps.financialBudgetAdmission == nil && deps.pgStore != nil {
 		deps.financialBudgetAdmission = newFinancialBudgetAdmission(deps.pgStore)
 	}
@@ -3282,6 +3322,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cmd/apid uses). nil-safe: tests + dev boxes that don't
 	// wire either pass through the per-request unseal path.
 	handler.WithPublicAuth(deps.publicAuthCache, deps.publicAuthUnsealer)
+	// ADR-20261110210000 slice 3h: verify-only basic auth.
+	basicVerifiers, basicErr := basicAuthVerifiersFromEnv(osGetenv, deps.pgStore, metricsRegisterer)
+	if basicErr != nil {
+		return basicErr
+	}
+	if basicVerifiers != nil {
+		handler.WithBasicAuthVerifiers(basicVerifiers)
+	}
 	// ADR-119 — wire the per-service public-key allowlist into
 	// the Handler so applyIngressInternalSvc (handler.go:~4586
 	// area) can validate Authorization: Bearer JWTs on apps
@@ -3848,6 +3896,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		// ADR-20261110210000 slice 3f: with FAAS_GATEWAY_LOG_DRAIN_OPENER=secretd
+		// drain headers open on the control plane, for the owner node only.
+		openHeader, closeOpener, openerErr := logDrainHeaderOpenerFromEnv(ctx, osGetenv, cfg.NodeName, log)
+		if openerErr != nil {
+			return openerErr
+		}
+		defer closeOpener()
+		manager.openHeader = openHeader
 		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		manager.capabilityAllowed = deps.capabilityAllowed
 		manager.edgeEgress = egressSink.RecordEdgeBytes
@@ -4345,7 +4401,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
 			APIMonetizationFor:        handler.APIMonetizationEnabledFor,
-			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
+			AdmitManagedAsync:         gateway.ChainServiceProxyAsyncAdmitters(gateway.NewRehearsalAsyncAdmitter(pgStore), gateway.NewFunctionSendAdmitter(pgStore)),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
 			Authorize:                 newBudgetedServiceProxyAuthorizer(pgStore),
@@ -4360,6 +4416,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ObserveTCPAttempt:     chaosMatchRecorder.ObserveTCPAttempt,
 			Forward:               deps.nodeCache.Forwarding(),
 			RawForward:            deps.nodeCache.RawForwarding(),
+			RecordServiceReply:    serviceReplyRecorder(egressSink),
 			ObserveRequest:        handler.RecordServiceRequest,
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
@@ -4397,7 +4454,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		managedCircuitWired = serviceProxyConfig.Breaker != nil
 		controlServices := gateway.NewServiceProxy(serviceProxyConfig)
-		controlMux.Handle("/v1/internal/services/", controlServices)
+		// This proxy is built before the guest listener's caller resolver is
+		// configured, so it trusts X-Faas-Caller-App. Serve it only when the
+		// e2e harness asks; the debug tunnel below uses WakeTarget, not HTTP.
+		if cfg.ControlServiceProxy {
+			controlMux.Handle("/v1/internal/services/", controlServices)
+		}
 		if debugTunnel != nil {
 			debugTunnel.setTargets(controlServices)
 		}
@@ -4444,6 +4506,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
 				return appID, err
 			}, pgStore)
+			// ADR-20261112160000: a function reads the invocations it sent at
+			// api.svc.gregale/v1/invocations/{id}, authorized by its own VM.
+			guestServiceProxy = gateway.WithFunctionInvocationAPI(guestServiceProxy, func(ctx context.Context, remote string) (string, error) {
+				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
+				return appID, err
+			}, pgStore)
+			// ADR-20261113120824 §3: a function starts the workflow functions
+			// it may call, and reads and signals the runs it started, at
+			// api.svc.gregale/v1/workflow-runs.
+			guestServiceProxy = gateway.WithFunctionWorkflowRunAPI(guestServiceProxy, serviceProxyConfig.ResolveCallerIdentity, pgStore)
 		}
 	}
 
@@ -4858,7 +4930,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ManagedHTTP:        managedHTTP, ManagedCircuit: managedHTTP && managedCircuitWired,
 			// apid seals edge-rule header values only while every serving
 			// gateway reports that it opens them (ADR-20261108110000).
-			EdgeHeaderSecrets: deps.edgeRulesMatcher != nil && deps.edgeRulesMatcher.headerSecretOpener != nil,
+			EdgeHeaderSecrets: deps.edgeRulesMatcher != nil &&
+				(deps.edgeRulesMatcher.headerSecretOpener != nil || deps.edgeRulesMatcher.headerSecretsInject),
 		}, readyProbe.ReadyFunc(), log)
 		defer stopTrafficObserver()
 	}

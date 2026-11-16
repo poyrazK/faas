@@ -144,6 +144,9 @@ func (t *translation) at(ts uint64) (time.Time, bool) {
 	if at.After(t.now.Add(api.CustomMetricMaxFutureSkewSeconds * time.Second)) {
 		return time.Time{}, false
 	}
+	if at.After(t.now) {
+		at = t.now
+	}
 	return at, true
 }
 
@@ -247,7 +250,7 @@ func (t *translation) numbers(original, name string, points []*metricspb.NumberD
 		// A delta up-down counter legitimately goes down; only the stored
 		// total must stay non-negative, which the store enforces.
 		negativeOK := delta && kind == state.CustomMetricKindGauge
-		if math.IsNaN(value) || math.IsInf(value, 0) || (value < 0 && !negativeOK) {
+		if math.IsNaN(value) || math.IsInf(value, 0) || (value < 0 && !negativeOK) || (kind == state.CustomMetricKindGauge && api.ValidateCustomMetricValue(math.Abs(value)) != nil) {
 			t.reject(1, fmt.Sprintf("metric %q: values must be finite and non-negative", original))
 			continue
 		}

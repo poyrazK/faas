@@ -1336,7 +1336,17 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 				promoted, promoteErr = promoteProjectEnvironmentDeploymentDark(ctx, s.store, plan.Sources[workload.WorkloadSlug], promotion.ToEnvironment, promotion.ID)
 			}
 		} else {
-			promoted, promoteErr = promoteProjectEnvironmentDeployment(ctx, s.store, plan.Sources[workload.WorkloadSlug], promotion.ToEnvironment, promotion.ID)
+			// A direct promotion lands in the scope its environment's values
+			// and serving deployment use, so production keeps the lane it is
+			// served from (state.EnvironmentDeploymentScope). Release graphs
+			// keep "production": graph resolution requires it and their
+			// deployments carry their own environment snapshots.
+			scope, scopeErr := state.EnvironmentDeploymentScope(ctx, s.store, acct.ID, plan.Sources[workload.WorkloadSlug].AppID, promotion.ToEnvironment)
+			if scopeErr != nil {
+				promoteErr = scopeErr
+			} else {
+				promoted, promoteErr = promoteProjectEnvironmentDeployment(ctx, s.store, plan.Sources[workload.WorkloadSlug], scope, promotion.ID)
+			}
 		}
 		if promoteErr != nil {
 			if plan.HealthPolicy != nil {
@@ -1607,7 +1617,7 @@ func projectEnvironmentPromotionDeployment(ctx context.Context, store state.Stor
 	}
 	reason := projectEnvironmentPromotionDeploymentReason(promotionID)
 	for _, deployment := range deployments {
-		if deployment.Scope == targetEnvironment && deployment.Reason == reason && deployment.Status == state.DeployLive {
+		if state.EnvironmentOwnsScope(targetEnvironment, deployment.Scope) && deployment.Reason == reason && deployment.Status == state.DeployLive {
 			return deployment, true, nil
 		}
 	}

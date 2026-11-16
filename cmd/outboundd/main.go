@@ -245,13 +245,17 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
 		return err
 	}
+	// ADR 20261114180740: managed prompts are served on the same callers.
+	if handler.Prompts, err = outbound.NewPostgresPromptResolver(pool); err != nil {
+		return err
+	}
 	go runAIUsagePrune(ctx, backend, log)
 	// ADR-997: replays recorded by apid run through this daemon's handler.
 	replayWorker := &outbound.AIReplayWorker{Store: backend, Handler: handler, Log: log}
 	go replayWorker.Run(ctx)
 	// ADR-1340: model canaries are judged here and rolled back when they do
 	// worse than their route's first target.
-	canaryEvaluator := &outbound.AIRouteCanaryEvaluator{Store: backend, Metrics: outboundMetrics, Log: log}
+	canaryEvaluator := &outbound.AIRouteCanaryEvaluator{Store: backend, Prompts: backend, Metrics: outboundMetrics, Log: log}
 	go canaryEvaluator.Run(ctx)
 	// ADR-1431: provider batches are settled here once they finish, and
 	// evaluations replay captured calls against a candidate model.
@@ -259,6 +263,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go batchWorker.Run(ctx)
 	evaluationWorker := &outbound.AIEvaluationWorker{Store: backend, Handler: handler, Log: log}
 	go evaluationWorker.Run(ctx)
+	promptEvaluationWorker := &outbound.AIPromptEvaluationWorker{Store: backend, Handler: handler, Log: log}
+	go promptEvaluationWorker.Run(ctx)
 	// ADR 20261021171712: sampled calls are scored by the integration's
 	// judge model, and quality drift alerts are checked.
 	onlineEvaluationWorker := &outbound.AIOnlineEvaluationWorker{Store: backend, Handler: handler, Log: log}
@@ -273,6 +279,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	shutdownRelay, err := startRelay(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
 	if err != nil {
 		return err
+	}
+	aiGatewayOn := func() bool { return aiGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway) }
+	if err := registerAIGatewayReadiness(ops.Registry(), aiGatewayOn, shutdownRelay != nil); err != nil {
+		return err
+	}
+	if aiGatewayOn() && shutdownRelay == nil {
+		log.Warn("outbound AI gateway is on but the app relay is off; deployed apps cannot reach it until relay_listen and the workload-identity JWKS are set (ADR-989)")
 	}
 	readyProbe := &wire.ReadyzProbe{}
 	pgSignal, stopPGSignal := wire.NewPGPingSignal(ctx, pool, 5*time.Second)

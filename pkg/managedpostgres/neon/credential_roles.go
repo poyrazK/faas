@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/pipelineread"
 )
 
 const ownerLogin = "gregale_owner"
@@ -257,18 +258,26 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 				return err
 			}
 		}
+		if err := revokeCaptureTables(ctx, tx, role.name); err != nil {
+			return err
+		}
 		// GRANT may emit only a warning when an older object's owner differs.
 		// Never deliver a credential that silently lacks its promised data access.
 		var missingPrivileges bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname='public' AND
+ WHERE n.nspname='public' AND NOT (c.relname = ANY($3)) AND
  ((c.relkind IN ('r','p','v','m','f') AND (NOT has_table_privilege($1,c.oid,'SELECT') OR
  (NOT $2 AND (NOT has_table_privilege($1,c.oid,'INSERT') OR NOT has_table_privilege($1,c.oid,'UPDATE') OR NOT has_table_privilege($1,c.oid,'DELETE')))))
- OR (c.relkind='S' AND (NOT has_sequence_privilege($1,c.oid,'SELECT') OR (NOT $2 AND NOT has_sequence_privilege($1,c.oid,'USAGE'))))))`, role.name, role.access == managedpostgres.CredentialReadOnly).Scan(&missingPrivileges); err != nil {
+ OR (c.relkind='S' AND (NOT has_sequence_privilege($1,c.oid,'SELECT') OR (NOT $2 AND NOT has_sequence_privilege($1,c.oid,'USAGE'))))))`, role.name, role.access == managedpostgres.CredentialReadOnly, captureTables).Scan(&missingPrivileges); err != nil {
 			return err
 		}
 		if missingPrivileges {
 			return managedpostgres.ErrConflict
+		}
+		if role.access == managedpostgres.CredentialReadOnly {
+			if err := pipelineread.Grant(ctx, tx, role.name); err != nil {
+				return managedpostgres.ErrConflict
+			}
 		}
 	}
 	if role.access == managedpostgres.CredentialDataAPI {
@@ -310,11 +319,11 @@ func verifyReadOnlyRole(ctx context.Context, tx pgx.Tx, name string) error {
  OR (c.relkind='S' AND has_sequence_privilege($1,c.oid,'USAGE,UPDATE'))))
  OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND p.prosecdef AND has_function_privilege($1,p.oid,'EXECUTE')
- AND NOT `+authHelperSQL+`)
+ AND NOT (`+authHelperSQL+` OR `+pipelineread.TrustedReaderSQL+`))
  OR EXISTS (SELECT 1 FROM pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
  WHERE a.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=$1))
  AND ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
- OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name).Scan(&unsafe)
+ OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name, pipelineread.ReaderBodySHA256).Scan(&unsafe)
 	if err != nil {
 		return err
 	}
@@ -356,6 +365,27 @@ func (i sqlRoleInfo) matches(role credentialRole) bool {
 		return len(i.memberships) == 1 && i.memberships[0] == role.authOwner && sameSettings(i.configuration, authLoginSettings(role))
 	}
 	return len(i.memberships) == 0 && len(i.configuration) == 0
+}
+
+// captureTables mirrors commit.CaptureTables: the Postgres change outbox
+// (ADR-20261112140000) is readable and writable only by its owner and its
+// relay, so an app login's "every public table" grant leaves it out.
+var captureTables = []string{"gregale_outbox", "gregale_commit_binding"}
+
+func revokeCaptureTables(ctx context.Context, tx pgx.Tx, name string) error {
+	for _, table := range captureTables {
+		var present bool
+		if err := tx.QueryRow(ctx, `SELECT to_regclass('public.' || quote_ident($1)) IS NOT NULL`, table).Scan(&present); err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
+		if _, err := tx.Exec(ctx, "REVOKE ALL ON public."+roleIdentifier(table)+" FROM "+roleIdentifier(name)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func initializeCredentialSchema(ctx context.Context, tx pgx.Tx, role credentialRole) error {

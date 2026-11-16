@@ -362,7 +362,7 @@ func runLivenessProbe(path string, timeoutMs, port int) (int, string, string) {
 		port = 8080
 	}
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + path
-	client := &http.Client{Timeout: time.Duration(timeoutMs) * time.Millisecond}
+	client := &http.Client{Timeout: time.Duration(timeoutMs) * time.Millisecond, CheckRedirect: livenessCheckRedirect}
 	resp, err := client.Get(url)
 	if err != nil {
 		// Classify the error. The http package returns

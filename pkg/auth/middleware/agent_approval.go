@@ -180,7 +180,7 @@ func (m *Middleware) ungatedCategory(w http.ResponseWriter, r *http.Request, key
 		m.storeUnavailable(w, r, err, "could not load the agent's approval settings; retry shortly")
 		return false, true
 	}
-	return !categories[rule.Category], false
+	return !agentapproval.Asks(categories, rule), false
 }
 
 // DecideAgentRequest decides an agent key's request under rule: allowed
@@ -200,7 +200,7 @@ func (m *Middleware) DecideAgentRequest(ctx context.Context, acct state.Account,
 	if err != nil {
 		return AgentGateDecision{}, gateUnavailable("could not load the agent's approval settings; retry shortly", err)
 	}
-	if !categories[rule.Category] {
+	if !agentapproval.Asks(categories, rule) {
 		return AgentGateDecision{Allow: true}, nil
 	}
 	if windows, ok := m.Authn.(AgentApprovalWindowGate); ok && rule.Window > 0 {

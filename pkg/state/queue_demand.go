@@ -3,6 +3,7 @@ package state
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -84,9 +85,13 @@ func (s *PgStore) QueueBindingTelemetry(ctx context.Context, appID, bindingID st
 	if err != nil {
 		return QueueStats{}, mapErr(err)
 	}
-	stats := QueueStats{Depth: min(int(row.Depth), limit), InFlight: int(row.InFlight), DeadLetter: int(row.DeadLetter)}
+	stats := QueueStats{Depth: min(int(row.Depth), limit), InFlight: int(row.InFlight), DeadLetter: int(row.DeadLetter),
+		WaitingBehindKey: min(int(row.WaitingBehindKey), limit), BlockedLanes: int(row.BlockedLanes)}
 	if row.OldestPendingAt.Valid {
 		stats.OldestPendingAt = row.OldestPendingAt.Time
+	}
+	if row.OldestBlockedAt.Valid {
+		stats.OldestBlockedAt = row.OldestBlockedAt.Time
 	}
 	return stats, nil
 }
@@ -112,6 +117,53 @@ func (s *PgStore) QueueAppTelemetry(ctx context.Context, appID string, limit int
 	return stats, nil
 }
 
+// InvocationBacklogReader reports an app's pending and dispatching work per
+// invocation source (async_invoke, inbound_webhook, queue, ...) from the
+// backlog counters (ADR-20261022105723). Queue state shows queue messages
+// only; this is how a customer sees the async invocations, webhooks and
+// event deliveries waiting for the scheduler.
+type InvocationBacklogReader interface {
+	InvocationBacklogBySource(ctx context.Context, appID string) (map[string]int64, error)
+}
+
+var (
+	_ InvocationBacklogReader = (*PgStore)(nil)
+	_ InvocationBacklogReader = (*MemStore)(nil)
+)
+
+func (s *PgStore) InvocationBacklogBySource(ctx context.Context, appID string) (map[string]int64, error) {
+	app, err := uuid.Parse(appID)
+	if err != nil {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().ListInvocationBacklogPendingBySource(ctx, s.pool, pgtype.UUID{Bytes: app, Valid: true})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		if row.Pending > 0 {
+			out[row.Source] = row.Pending
+		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) InvocationBacklogBySource(_ context.Context, appID string) (map[string]int64, error) {
+	if _, err := uuid.Parse(appID); err != nil {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]int64{}
+	for _, inv := range m.invocations {
+		if inv.AppID == appID && (inv.State == InvocationPending || inv.State == InvocationDispatching) {
+			out[string(inv.Source)]++
+		}
+	}
+	return out, nil
+}
+
 func parseQueueBindingScope(appID, bindingID, scope string) (pgtype.UUID, pgtype.UUID, error) {
 	app, err := uuid.Parse(appID)
 	if err != nil {
@@ -128,8 +180,34 @@ func (m *MemStore) QueueDepthInScope(ctx context.Context, appID, scope string, l
 	if _, err := queueDepthLimit(limit); err != nil {
 		return 0, err
 	}
-	stats, err := m.QueueStateInScope(ctx, appID, scope)
-	return min(stats.Depth, limit), err
+	if !validQueueStatsScope(scope) {
+		return 0, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	consumed := map[string]bool{"": true}
+	canonicalAppID := canonicalMemUUID(appID)
+	for _, t := range m.triggers {
+		if t.AppID.String() == canonicalAppID && t.Kind == "queue" && t.Enabled && t.Source.Valid && t.Source.String == string(InvocationQueue) {
+			consumed[t.Slug] = true
+		}
+	}
+	for _, b := range m.queueBindings {
+		if canonicalMemUUID(b.AppID) == canonicalAppID && b.RetiredAt == nil {
+			consumed[b.QueueName] = true
+		}
+	}
+	now := time.Now()
+	depth := 0
+	for _, inv := range m.invocations {
+		if inv.AppID != appID || inv.DeploymentScope != scope || inv.Source != InvocationQueue || inv.QueueBindingID == "" && !consumed[inv.QueueName] {
+			continue
+		}
+		if inv.State == InvocationDispatching || inv.State == InvocationPending && !inv.DueAt.After(now) {
+			depth++
+		}
+	}
+	return min(depth, limit), nil
 }
 
 func (m *MemStore) QueueDepthForBindingInScope(_ context.Context, appID, bindingID, scope string, limit int) (int, error) {
@@ -165,6 +243,63 @@ func (m *MemStore) QueueBindingTelemetry(_ context.Context, appID, bindingID str
 		return QueueStats{}, err
 	}
 	stats, err := m.queueStateForBinding(appID, bindingID, "")
+	if err != nil {
+		return stats, err
+	}
+	m.orderedLaneStats(appID, bindingID, &stats)
 	stats.Depth, stats.InFlight, stats.DeadLetter = min(stats.Depth, limit), min(stats.InFlight, limit), min(stats.DeadLetter, limit)
-	return stats, err
+	stats.WaitingBehindKey, stats.BlockedLanes = min(stats.WaitingBehindKey, limit), min(stats.BlockedLanes, limit)
+	return stats, nil
+}
+
+// orderedLaneStats mirrors QueueBindingTelemetry's ordered-work figures
+// (ADR-20261112193306) for the binding's own keyed messages.
+func (m *MemStore) orderedLaneStats(appID, bindingID string, stats *QueueStats) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type lane struct{ policy, digest string }
+	type laneState struct {
+		head    *Invocation // oldest pending or dispatching message
+		pending []*Invocation
+	}
+	binding := canonicalMemUUID(bindingID)
+	now := time.Now()
+	lanes := map[lane]*laneState{}
+	for _, row := range m.invocations {
+		inv := &row
+		if inv.AppID != appID || inv.WorkPolicyName == "" ||
+			(inv.State != InvocationPending && inv.State != InvocationDispatching) {
+			continue
+		}
+		k := lane{inv.WorkPolicyName, string(inv.WorkKeyDigest)}
+		l := lanes[k]
+		if l == nil {
+			l = &laneState{}
+			lanes[k] = l
+		}
+		if l.head == nil || inv.WorkSequence < l.head.WorkSequence {
+			l.head = inv
+		}
+		if inv.State == InvocationPending && inv.Source == InvocationQueue && canonicalMemUUID(inv.QueueBindingID) == binding {
+			l.pending = append(l.pending, inv)
+		}
+	}
+	for _, l := range lanes {
+		waiting := false
+		for _, inv := range l.pending {
+			if inv != l.head && !inv.DueAt.After(now) {
+				stats.WaitingBehindKey++
+			}
+			if inv != l.head {
+				waiting = true
+			}
+		}
+		h := l.head
+		if waiting && h.Attempts > 0 && h.Source == InvocationQueue && canonicalMemUUID(h.QueueBindingID) == binding {
+			stats.BlockedLanes++
+			if stats.OldestBlockedAt.IsZero() || h.CreatedAt.Before(stats.OldestBlockedAt) {
+				stats.OldestBlockedAt = h.CreatedAt
+			}
+		}
+	}
 }

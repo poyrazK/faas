@@ -36,11 +36,11 @@ export function useLiveQuery<Row = Record<string, unknown>>(
  */
 export function useLiveRead<Row = Record<string, unknown>>(
   connection: LiveConnection | null | undefined,
-  options: LiveReadOptions<Row> | null | undefined,
+  options: (LiveReadOptions<Row> & { /** Change on login, logout or tenant switch; never use a token here. */ identityScope?: string }) | null | undefined,
 ): UseLiveQueryResult<Row> {
   const latest = useRef(options)
   latest.current = options
-  const key = options ? JSON.stringify([options.database, options.schema ?? '', options.read]) : null
+  const key = options ? JSON.stringify([options.database, options.schema ?? '', options.read, options.identityScope ?? '', options.anonymous === true ? 'anonymous' : 'serverKey' in options ? 'server' : 'user', 'subject' in options ? options.subject : '']) : null
   return useLive<Row>(connection, key, options?.initialRows, (conn) => {
     const o = latest.current!
     const read = { database: o.database, read: o.read, schema: o.schema, initialRows: o.initialRows, parse: o.parse }
@@ -58,19 +58,21 @@ function useLive<Row>(
 ): UseLiveQueryResult<Row> {
   const opener = useRef(open)
   opener.current = open
-  const [query, setQuery] = useState<LiveQuery<Row> | null>(null)
+  const [opened, setOpened] = useState<{ key: string; connection: LiveConnection; query: LiveQuery<Row> } | null>(null)
+  // Do not render the previous identity's rows while the effect catches up.
+  const query = opened?.key === key && opened.connection === connection ? opened.query : null
   useEffect(() => {
     if (!connection || key === null) return
     const q = opener.current(connection)
-    setQuery(q)
+    setOpened({ key, connection, query: q })
     return () => {
       q.close()
-      setQuery(null)
+      setOpened(null)
     }
   }, [connection, key])
   const initial = useMemo<LiveQueryState<Row>>(() => Object.freeze({
     status: 'connecting', rows: initialRows ?? [], keys: [], columns: [], snapshot: null, error: undefined,
-  }), []) // the server-rendered rows are fixed for the component's life
+  }), [key, connection]) // identity changes discard the previous subscription's rows
   const getInitial = useCallback(() => initial, [initial])
   const state = useSyncExternalStore(query ? query.subscribe : noSubscription, query ? query.getSnapshot : getInitial, getInitial)
   const awaitTxId = useCallback<UseLiveQueryResult<Row>['awaitTxId']>(

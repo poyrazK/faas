@@ -107,6 +107,20 @@ func (s *Service) Run(ctx context.Context) {
 				}
 			}
 		}
+		if s.Notify != nil {
+			for range api.SupportWorkerBatch {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := s.DispatchNotification(ctx); err != nil {
+					slog.Error("support notification maintenance failed")
+					break
+				}
+			}
+		}
+		if err := q.New().NotificationExpire(ctx, s.Pool, q.NotificationExpireParams{CreatedAt: ts(s.notificationNow().Add(-api.SupportNotificationRetention)), Limit: api.SupportWorkerBatch}); err != nil && ctx.Err() == nil {
+			slog.Error("support notification retention failed")
+		}
 		select {
 		case <-ctx.Done():
 			return

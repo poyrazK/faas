@@ -95,6 +95,8 @@ func cmdDataAPIStorageSQL(args []string) int {
 	fs := newFlagSet("data-api storage sql", flag.ContinueOnError)
 	schema := fs.String("schema", "api", "the Data API's first exposed schema")
 	upgrade := fs.Bool("upgrade", false, "print the upgrade for a storage_objects table without object_key")
+	sessions := fs.Bool("sessions", false, "include durable resumable upload sessions and conditional replacement")
+	maintenance := fs.Bool("maintenance", false, "include owner-only storage cleanup leases and reference guards")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 {
 		PrintUsage(os.Stderr, "usage: gregale data-api storage export [--schema api] [--upgrade]", "data-api")
 		return 1
@@ -102,6 +104,20 @@ func cmdDataAPIStorageSQL(args []string) int {
 	sql, err := dataAPIStorageSQL(*schema, *upgrade)
 	if err != nil {
 		return printErr("Invalid schema", err)
+	}
+	if *sessions {
+		content, readErr := templates.FS.ReadFile("data-api/storage-sessions.sql")
+		if readErr != nil {
+			return printErr("Could not read upload session SQL", readErr)
+		}
+		sql += "\n" + strings.ReplaceAll(string(content), "{{schema}}", *schema)
+	}
+	if *maintenance {
+		content, readErr := templates.FS.ReadFile("data-api/storage-cleanup.sql")
+		if readErr != nil {
+			return printErr("Could not read storage maintenance SQL", readErr)
+		}
+		sql += "\n" + strings.ReplaceAll(string(content), "{{schema}}", *schema)
 	}
 	_, _ = fmt.Fprint(osStdout, sql)
 	return 0

@@ -27,11 +27,15 @@ func TestAuditEventsListTakesAnAppSlug(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	main.ResetJSONOut(t)
-	_, stderr, restore := main.SwapIO(t)
+	stdout, stderr, restore := main.SwapIO(t)
 	code := main.Run([]string{"audit-events", "list", "--app", "h14-py"})
 	restore()
 	if code != 0 || !strings.Contains(query, "ff463f83-b8a5-4566-96b5-83ea5de6fe4a") {
 		t.Fatalf("exit=%d query=%q stderr=%q", code, query, stderr())
+	}
+	// Hunt 34 H34-4: an empty result printed nothing.
+	if !strings.Contains(stdout.String(), "No audit events match.") {
+		t.Fatalf("empty list stdout = %q", stdout.String())
 	}
 	_, stderr, restore = main.SwapIO(t)
 	code = main.Run([]string{"audit-events", "list", "--app", "h14-py", "--app-id", "ff463f83-b8a5-4566-96b5-83ea5de6fe4a"})

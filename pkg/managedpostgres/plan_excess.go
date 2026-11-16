@@ -194,4 +194,31 @@ func (e *CapEnforcer) mailPlanExcessNotices(ctx context.Context, summary *CapSwe
 			e.logger.Warn("managed postgres plan excess email not queued", "database", notice.DatabaseID, "error", err)
 		}
 	}
+	e.remindPlanExcessDeletes(ctx, summary)
+}
+
+// remindPlanExcessDeletes queues the one reminder for each database whose
+// mailed deletion date is a week away or less (ADR-20261110184700 amendment
+// 2026-11-12). It runs only while deletion is on: a date nobody will act on
+// is not worth a reminder. A failed email does not fail the sweep; the next
+// sweep tries again until the date passes.
+func (e *CapEnforcer) remindPlanExcessDeletes(ctx context.Context, summary *CapSweepSummary) {
+	store, ok := e.store.(PlanExcessReminderStore)
+	if !ok || e.planExcessDelete != CapEnforcementOn || e.planDelete == nil {
+		return
+	}
+	notices, err := store.PlanExcessRemindersDue(ctx, e.now().UTC(), e.batchSize)
+	if err != nil {
+		summary.PlanExcessNotifyFailed++
+		e.logger.Warn("managed postgres plan excess reminders not listed", "error", err)
+		return
+	}
+	for _, notice := range notices {
+		if err := e.planNotify(ctx, notice); err != nil {
+			summary.PlanExcessNotifyFailed++
+			e.logger.Warn("managed postgres plan excess reminder not queued", "database", notice.DatabaseID, "error", err)
+			continue
+		}
+		summary.PlanExcessReminded++
+	}
 }

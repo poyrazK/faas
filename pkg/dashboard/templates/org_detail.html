@@ -59,6 +59,10 @@
         {{- end}}
       </p>
 
+      {{if and ($.On "customer-support") (or (eq $d.CallersRole "owner") (eq $d.CallersRole "admin"))}}
+      <p><a href="/dashboard/orgs/{{$d.Org.Slug}}/support">Organization support conversations</a></p>
+      {{end}}
+
       {{if $d.Error}}
         <div class="banner">
           Some sections failed to load: <code>{{$d.Error}}</code>

@@ -140,7 +140,7 @@ async function fixture(t, env = {}, verify = async () => ({ sub: 'private-subjec
     client.on('error', reject)
     client.end()
   })
-  return { state, send }
+  return { config, state, send }
 }
 
 test('anonymous reads sign subject-free claims and never reach unlisted relations', async t => {
@@ -442,8 +442,9 @@ test('the access gate is reread while serving and after a restore (ADR 202610261
   mono += limits.accessRecheckMs
   safety.maybeRefresh()
   safety.maybeRefresh()
+  await Promise.resolve()
   assert.equal(reads, 1, 'one reread at a time')
-  assert.equal(await safety.ready(1000), true, 'a periodic reread never holds a request')
+  assert.equal(await safety.ready(0), false, 'an expired safety lease holds dispatch until the reread succeeds')
   release()
   await safety.refresh()
   assert.equal(config.rowSecurity.get('api.notes'), false, 'RLS disabled by a migration closes the relation')
@@ -451,9 +452,13 @@ test('the access gate is reread while serving and after a restore (ADR 202610261
   assert.ok(config.unsafePublicRead.has('api.products'))
   answer = new Error('database unreachable')
   safety.restored()
-  assert.equal(await safety.ready(1000), true)
+  assert.equal(await safety.ready(1000), false)
   assert.equal(reads, 2, 'a restore rereads at once')
   assert.equal(config.rowSecurity.get('api.notes'), false, 'a failed reread keeps the last state')
+  assert.equal(await safety.ready(1000), false, 'a failed restore cannot qualify the retained metadata')
+  answer = { rowSecurity: new Map([['api.notes', true]]), unsafePublicRead: new Set(), unsafePublicRpc: new Set() }
+  mono += limits.healthProbeMs
+  assert.equal(await safety.ready(1000), true, 'a later successful reread restores service')
 })
 
 test('public RPCs must be approved STABLE or IMMUTABLE security-invoker functions', () => {
@@ -584,4 +589,22 @@ test('a signed-in request to an unprotected relation is refused before the engin
   assert.deepEqual([refused.status, (await refused.json()).code], [403, 'rls_required'])
   assert.equal((await get('/rest/v1/notes')).status, 200)
   assert.deepEqual(upstreamCalls, ['/notes'])
+})
+
+test('DAPI015 authorization is checked again after lifecycle readiness changes metadata', async t => {
+  const { config, state, send } = await fixture(t)
+  config.rowSecurity = new Map([['api.notes', true]])
+  config.lifecycle = { ready: async () => {
+    config.rowSecurity.set('api.notes', false)
+    config.unsafePublicRead = new Set(['api.products'])
+    return true
+  } }
+  const user = await send('/rest/v1/notes', { headers: { Authorization: 'Bearer user' } })
+  assert.equal(user.status, 403)
+  assert.equal(JSON.parse(user.body).code, 'rls_required')
+  config.unsafePublicRead = new Set()
+  const anonymous = await send('/rest/v1/products')
+  assert.equal(anonymous.status, 503)
+  assert.equal(JSON.parse(anonymous.body).code, 'data_api_public_read_unsafe')
+  assert.equal(state.calls.length, 0)
 })

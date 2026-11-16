@@ -26,6 +26,8 @@ On an existing subscription an upgrade happens in place: the billing provider ch
 
 A downgrade applies at the end of the billing period, and is refused until your apps, databases and stored objects fit the lower plan. Downgrading to Free cancels the subscription at the end of the period.
 
+If your plan ends up lower without that check (a subscription that ends or lapses, or a plan change at the provider), apps that do not fit it are parked and do not wake: apps past the plan's deployed-app count (your oldest apps are kept) and apps whose RAM is above the plan's. You get an email naming them. Each wakes again within a minute once it fits: delete apps, lower their RAM, or upgrade.
+
 ### Cancel and resume
 
 A cancelled subscription (`gregale billing cancel`, a downgrade to Free, or a deletion request) keeps its plan until the end of the billing period and then ends. A scheduled downgrade likewise applies at the end of the period. `GET /v1/billing/status` shows what is scheduled (`subscription_ends_at`, `scheduled_plan`, `scheduled_plan_at`), and so does the dashboard billing page.
@@ -51,7 +53,7 @@ Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap
 
 ## Billing email
 
-The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it, so give the organization its own address:
+The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it; until then the organization's quota and billing mail goes to its owner. Give the organization its own address:
 
 ```bash
 curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
@@ -62,6 +64,12 @@ curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
 Only the owner can change it, with MFA and a recent step-up. When the organization already has a subscription, its billing customer moves to the new address first. An address that already pays for another Gregale account or organization is refused with `409 billing_email_in_use`, and so is an upgrade from an organization whose billing email is in use that way. While a member's email is the organization's billing email, that member cannot be removed or delete their account (`409 billing_contact_member`); move the billing email first.
 
 When you change your sign-in email, your own billing customer moves to the new address, and so does the billing email of each organization that billed to your previous address. If the billing provider refuses a move (for example, the new address already pays for another account), that billing email stays as it was and the new address gets an email naming what to update.
+
+## Failed payments
+
+When a payment fails, the account goes past due and you get an email. Your apps, databases and storage keep running, but new deploys are blocked until the payment goes through. Pay from the billing portal (`/dashboard/billing`) to end it.
+
+If the payment is still unpaid seven days later, the account moves to the Free plan and you get an email saying so. It stays active: nothing is suspended or deleted because of the failed payment. From then on the Free plan's limits apply, as they do to any Free account, including the monthly Free quota stop. The unpaid balance stays on the account. Paying it, or starting a new paid subscription, clears it and returns you to a paid plan.
 
 ## Spend cap
 
@@ -109,7 +117,11 @@ When the month's overage reaches the cap:
   policy records the occurrences it missed;
 - object storage, which is billed once the month closes, is billed only up
   to what the cap still allows after the month's compute and egress overage.
-  Object storage keeps serving within its plan limits.
+  Object storage keeps serving within its plan limits;
+- managed PostgreSQL overage (compute, storage and database egress) counts
+  toward the cap too and is billed only up to it. At the cap your databases
+  stop (`hold: compute_ceiling`) like your apps; with a cap of 0 they stop at
+  once. Their data is kept.
 
 When the cap first stops your workloads in a month, Gregale emails the
 account with the cap and the month's overage.
@@ -143,7 +155,12 @@ organization's cap, not at the cap of the member who created them.
 Each plan includes a monthly allowance of application egress: Free 10 GiB,
 Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB. By default every plan stops at
 it: once the month's egress reaches the allowance, the account's apps are
-parked (`quota_exceeded_egress`) until the month ends or the plan grows.
+parked (`quota_exceeded_egress`) until the month ends, the plan grows or, on a
+paid plan, egress overage is turned on. New deploys wait until then too. Your
+managed PostgreSQL databases and buckets keep running: databases have their
+own egress allowance. Gregale emails the account once a day from 80% of the
+allowance, and again when the apps are parked. The Free plan's compute
+allowance works the same way.
 
 A paid account can instead elect to pay for egress above the allowance:
 
@@ -171,8 +188,8 @@ cap: egress in hours the election does not cover, or on Free, never does.
 Only egress sent while the election is on is billed: egress above the
 allowance before you turned it on is never billed, and turning it off keeps
 the hours it covered billable, so turning it off cannot undo egress already
-sent. Turning it back on keeps the original start. The hour in which you turn
-it on is not billed.
+sent. Turning it back on starts a new window, so the hours it was off are
+never billed. The hour in which you turn it on is not billed.
 
 An organization that owns its resources elects for itself:
 `PUT /v1/orgs/{slug}/egress-overage` (owner) or

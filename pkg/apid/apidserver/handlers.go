@@ -318,9 +318,18 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	// PlacementClaimSubscriber stamps the owner (see emitAppCreated
 	// for the full architectural rationale + docs/adr/055).
 	app.NodeID = ""
+	// ADR-20261111114059: a service or worker an agent creates runs its
+	// replicas from the start, so their standing cost is charged here.
+	commitBudget, answered := s.chargeAppCreate(w, r, acct, app)
+	if answered {
+		return
+	}
 	// The store serializes quota counting/insertion across creators and holds
 	// the organization plan stable. Personal pools exclude company apps.
 	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
+	if err == nil {
+		commitBudget()
+	}
 	if err != nil {
 		var qe *state.QuotaError
 		switch {
@@ -999,6 +1008,13 @@ func (s *server) handleDevSourceDeploy(w http.ResponseWriter, r *http.Request, a
 		s.notFound(w, "no such developer environment")
 		return
 	}
+	// A sync must not build into an environment the janitor or --stop has
+	// claimed for teardown; the CLI renews the session first and gets the
+	// same answer there.
+	if app.PreviewPrState == state.PreviewPrStateTearingDown || app.PreviewPrState == state.PreviewPrStateTornDown {
+		api.WriteProblem(w, api.ErrDevSessionTearingDown())
+		return
+	}
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 		api.WriteProblem(w, api.ErrValidation("developer source sync requires multipart/form-data"))
 		return
@@ -1159,6 +1175,7 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 			WorkerReplicas:               apiManifestFromState(a.Manifest).WorkerReplicas,
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			Warmup:                       a.Manifest.Warmup,
 			Pause:                        a.Manifest.Pause,
 			Profiling:                    a.Manifest.Profiling,
 			Tracing:                      a.Manifest.Tracing,

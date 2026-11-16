@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -60,19 +61,58 @@ func TestInstanceHasNoHTTPContract(t *testing.T) {
 	}
 }
 
-// H10-23: a direct OCI image readies on its TCP listener (no health path);
-// its plan-default /healthz probe got 404 and parked a healthy nginx as
-// liveness_exhausted. Only that case tolerates 404.
-func TestTCPReadinessLivenessToleratesNotFound(t *testing.T) {
+// ADR-079 amendment 1: plan-default liveness checks that the server answers,
+// on the contract startup proved. H10-23: a TCP-readiness nginx answered the
+// default /healthz with 404 and was parked. Prod 2026-11-12: Spring apps
+// readying on /actuator/health answered /healthz with 404 and were destroyed
+// ~10 s after every boot; a gRPC app could not answer the HTTP probe at all.
+func TestPlanDefaultLivenessFollowsStartupContract(t *testing.T) {
+	type want struct {
+		path       string
+		grpc       bool
+		service    string
+		unpromised bool
+		period     int
+	}
 	for _, tc := range []struct {
-		name       string
-		healthPath string
-		override   json.RawMessage
-		want       bool
+		name     string
+		inst     Instance
+		override json.RawMessage
+		want     want
 	}{
-		{name: "tcp readiness tolerates 404", want: true},
-		{name: "declared health path does not", healthPath: "/healthz"},
-		{name: "explicit liveness probe does not", override: json.RawMessage(`{"path":"/live"}`)},
+		{name: "tcp readiness: any answer below 500 is alive",
+			want: want{path: "/healthz", unpromised: true, period: 5}},
+		{name: "raw tcp listener: no default http probe",
+			inst: Instance{RoutedPortRawTCP: true},
+			want: want{}},
+		{name: "raw tcp listener: explicit liveness path still runs",
+			inst:     Instance{RoutedPortRawTCP: true},
+			override: json.RawMessage(`{"path":"/live"}`),
+			want:     want{path: "/live", period: 5}},
+		{name: "readiness on /healthz stays strict",
+			inst: Instance{HealthcheckPath: "/healthz"},
+			want: want{path: "/healthz", period: 5}},
+		{name: "declared health path: /healthz is unpromised",
+			inst: Instance{HealthcheckPath: "/actuator/health"},
+			want: want{path: "/healthz", unpromised: true, period: 5}},
+		{name: "timing-only override keeps the startup contract",
+			inst:     Instance{HealthcheckPath: "/actuator/health"},
+			override: json.RawMessage(`{"interval_s":10}`),
+			want:     want{path: "/healthz", unpromised: true, period: 10}},
+		{name: "explicit liveness path is strict",
+			inst:     Instance{HealthcheckPath: "/actuator/health"},
+			override: json.RawMessage(`{"path":"/live"}`),
+			want:     want{path: "/live", period: 5}},
+		{name: "grpc readiness: grpc liveness on the same service",
+			inst: Instance{HealthcheckGRPC: true, HealthcheckGRPCService: "catalog.v1.Catalog", Plan: api.PlanPro},
+			want: want{grpc: true, service: "catalog.v1.Catalog", period: 5}},
+		{name: "grpc readiness without grpc liveness: no default probe",
+			inst: Instance{HealthcheckGRPC: true, Plan: api.PlanHobby},
+			want: want{}},
+		{name: "grpc readiness: explicit http liveness wins",
+			inst:     Instance{HealthcheckGRPC: true, Plan: api.PlanHobby},
+			override: json.RawMessage(`{"path":"/live"}`),
+			want:     want{path: "/live", period: 5}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newTestManager(&fakeRunner{}, &fakeVMM{})
@@ -82,17 +122,66 @@ func TestTCPReadinessLivenessToleratesNotFound(t *testing.T) {
 					got = cfg
 					return func() {}
 				})
+			inst := tc.inst
+			inst.ExecutionMode = api.ExecutionModeRequest
 			m.mu.Lock()
-			m.live["web"] = &Instance{HealthcheckPath: tc.healthPath, ExecutionMode: api.ExecutionModeRequest}
+			m.live["web"] = &inst
 			m.mu.Unlock()
 			m.startLivenessLoop(t.Context(), "web", 1, tc.override)
-			if got.PeriodSeconds == 0 {
-				t.Fatalf("probe not started: %+v", got)
-			}
-			if got.NotFoundIsAlive != tc.want {
-				t.Fatalf("NotFoundIsAlive = %v, want %v", got.NotFoundIsAlive, tc.want)
+			gotWant := want{path: got.Path, grpc: got.GRPC, service: got.GRPCService, unpromised: got.UnpromisedPath, period: got.PeriodSeconds}
+			if gotWant != tc.want {
+				t.Fatalf("liveness config = %+v, want %+v", gotWant, tc.want)
 			}
 			m.cancelLivenessLoop("web")
 		})
+	}
+}
+
+// The wake carries the gRPC readiness service to the liveness probe.
+func TestGRPCWakeLivenessUsesReadinessService(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	var got LivenessProbeConfig
+	m.WithLivenessProbes(NewLivenessRegistry(), LivenessProbeConfig{Path: "/healthz", PeriodSeconds: 5, ConsecutiveFailures: 3}).
+		WithLivenessProbeStarter(func(_ context.Context, _ string, _ int, _ string, cfg LivenessProbeConfig) context.CancelFunc {
+			got = cfg
+			return func() {}
+		})
+	req := admissionWake("grpc-liveness")
+	req.ExecutionMode, req.Plan = api.ExecutionModeRequest, api.PlanScale
+	req.HealthcheckGRPC, req.HealthcheckGRPCService = true, "scorer.v1.Scorer"
+	if _, err := m.Wake(t.Context(), req); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if !got.GRPC || got.GRPCService != "scorer.v1.Scorer" || got.Path != "" || got.UnpromisedPath {
+		t.Fatalf("liveness config = %+v, want gRPC on scorer.v1.Scorer", got)
+	}
+}
+
+// The wake's raw TCP mark reaches the instance, the liveness decision and the
+// adoption record, so a vmmd restart does not bring the HTTP probe back.
+func TestRawTCPWakeSkipsDefaultLivenessAndJournalsIt(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	started := false
+	m.WithLivenessProbes(NewLivenessRegistry(), LivenessProbeConfig{Path: "/healthz", PeriodSeconds: 5, ConsecutiveFailures: 3}).
+		WithLivenessProbeStarter(func(context.Context, string, int, string, LivenessProbeConfig) context.CancelFunc {
+			started = true
+			return func() {}
+		})
+	req := admissionWake("raw-tcp-liveness")
+	req.ExecutionMode, req.RoutedPortRawTCP = api.ExecutionModeService, true
+	if _, err := m.Wake(t.Context(), req); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if started {
+		t.Fatal("plan-default HTTP liveness started for a raw TCP listener")
+	}
+	m.mu.Lock()
+	inst := m.live["raw-tcp-liveness"]
+	m.mu.Unlock()
+	if inst == nil || !inst.RoutedPortRawTCP {
+		t.Fatalf("instance RoutedPortRawTCP not stamped: %+v", inst)
+	}
+	if block := m.adoptionBlockFor(inst, time.Now()); !block.Instance.RoutedPortRawTCP {
+		t.Fatal("adoption record dropped routed_port_raw_tcp")
 	}
 }

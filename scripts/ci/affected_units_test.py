@@ -764,6 +764,7 @@ class RepositoryContractTest(unittest.TestCase):
             "deploy/ansible/roles/prometheus/files/faas.rules.yml": ("host_roles", ["host_config"]),
             "deploy/ansible/roles/grafana/files/frozen-tier.json": ("host_roles", ["host_config"]),
             "deploy/ansible/roles/seal_domains/tasks/main.yml": ("host_roles", ["compute_deploy", "host_config"]),
+            "deploy/ansible/roles/_shared/tasks/serving_probe_fleet_policy.yml": ("host_roles", ["compute_deploy", "host_config"]),
             "deploy/ansible/roles/vmmd_service/files/vmmd.toml.example": ("host_roles", ["compute_deploy"]),
             "deploy/ansible/group_vars/compute_nodes/vmmd_adoption.yml": ("host_roles", ["compute_deploy"]),
             "deploy/ansible/roles/gatewayd_internal_service/files/faas-realtimed.service": ("host_roles", ["compute_deploy"]),
@@ -794,6 +795,22 @@ class RepositoryContractTest(unittest.TestCase):
                 self.assertNotIn(role, restart)
                 self.assertNotIn(role, deps)
         self.assertEqual(self.config["host_config"]["converged_groups"], ["control_plane"])
+
+    def test_shared_serving_policy_selects_both_consuming_roles(self):
+        # ADR-20261112210000: changed validation must converge on the control
+        # plane and compute hosts, including files in the shared task library.
+        policy = "deploy/ansible/roles/_shared/tasks/serving_probe_fleet_policy.yml"
+        original = host_roles.fs_tree(str(REPO))
+        revised = original.read(policy).replace(b"<= 4096", b"<= 4095")
+        self.assertNotEqual(original.read(policy), revised)
+        changed = host_roles.Tree(original.paths,
+                                  lambda path: revised if path == policy else original.read(path),
+                                  "changed serving policy")
+        for group, owner in (("control_plane", "prometheus"), ("compute_nodes", "serving_probe")):
+            with self.subTest(group=group):
+                before, after = host_roles.group_hashes(original, group), host_roles.group_hashes(changed, group)
+                selection = host_roles.changed(before, after, host_roles.notify_targets(changed, after["order"]))
+                self.assertIn(owner, selection["roles"])
 
     def test_inert_paths_are_not_released(self):
         # No release workflow reads an inert path or tree; a role that names

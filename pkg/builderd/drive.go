@@ -189,6 +189,14 @@ func checkBuildDriveCapacity(dest string) error {
 		return err
 	}
 	if available < BuildDriveMinFreeBytes {
+		// A BuildKit seed only saves the platform image unpack
+		// (ADR-20261030122204); a build never waits for disk because of it.
+		removeBuildKitSeeds(dir)
+		if available, err = driveFilesystemAvailable(dir); err != nil {
+			return err
+		}
+	}
+	if available < BuildDriveMinFreeBytes {
 		return fmt.Errorf("%w: available=%d bytes, required=%d bytes", ErrBuildDiskFull, available, BuildDriveMinFreeBytes)
 	}
 	return nil

@@ -123,6 +123,19 @@ func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing
 		{name: "restart budget", lines: []string{
 			"guest-init: app restart budget exhausted after 3 restart(s)\n",
 		}, wantCrash: true},
+		{name: "companion restarts", lines: []string{
+			"Too many arguments!\n",
+			"guest-init: sidecar echo crashed (restart 1/3): run sidecar echo: exit status 127\n",
+		}, wantCrash: true},
+		// Prod test 2026-11-15 (P4): an app that exits 0 without listening
+		// failed its deploy as internal.
+		{name: "clean exit before readiness", lines: []string{
+			"exiting without listening\n",
+			"guest-init: app exited cleanly (status 0, policy=on-failure); a clean exit is not restarted\n",
+		}, wantCrash: true},
+		{name: "workload set main clean exit", lines: []string{
+			"guest-init: main exited cleanly (status 0, policy=no); a clean exit is not restarted\n",
+		}, wantCrash: true},
 		{name: "guest-init failure", lines: []string{
 			"guest-init: assemble overlay: mount overlay: invalid argument\n",
 			"[    0.912345] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100\n",
@@ -143,12 +156,85 @@ func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing
 				if p == nil || p.Code != api.CodeAppStartupCrash || p.Status != 422 || !strings.Contains(p.Detail, "exited before becoming ready") {
 					t.Fatalf("startup failure = %#v, want a 422 %s problem carrying the detail", err, api.CodeAppStartupCrash)
 				}
+				if clean := strings.Contains(strings.Join(tc.lines, ""), "exited cleanly"); clean != strings.Contains(p.Detail, "listening on $PORT") {
+					t.Fatalf("clean-exit hint present = %v, want %v: %q", !clean, clean, p.Detail)
+				}
 				return
 			}
 			if p != nil {
 				t.Fatalf("guest failure without supervisor output = %#v, want a platform (non-problem) error", p)
 			}
 		})
+	}
+}
+
+// Hunt 34 H34-35: an essential companion whose command failed crash-looped
+// and ended guest-init just after the main workload passed readiness, and the
+// wake noticed only at its next vsock dial. The lines are the production
+// console's; the companion's output is the deploy's error.
+func TestExplainGuestStopNamesACompanionCrashAfterReadiness(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), 0)
+	ring := v.registerRing("inst")
+	for _, line := range []string{
+		"2026/11/13 12:41:44 INFO runWorkloads: workload starting name=echo type=sidecar essential=true\n",
+		"Too many arguments!\n",
+		"guest-init: sidecar echo crashed (restart 3/3): run sidecar echo: exit status 127\n",
+		"Too many arguments!\n",
+		"2026/11/13 12:41:44 ERROR runWorkloads: workload exited with error name=echo essential=true err=\"app crash-looped after 3 restart(s): run sidecar echo: exit status 127\"\n",
+		"[    3.600487] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100\n",
+	} {
+		if _, err := ring.Write("stdout", []byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := &instanceRecord{done: make(chan struct{})}
+	close(rec.done)
+	v.mu.Lock()
+	v.recs["inst"] = rec
+	v.mu.Unlock()
+
+	p := api.AsProblem(v.ExplainGuestStop(Lease{Instance: "inst"}))
+	if p == nil || p.Code != api.CodeAppStartupCrash || p.Status != 422 {
+		t.Fatalf("explanation = %#v, want a 422 %s problem", p, api.CodeAppStartupCrash)
+	}
+	for _, want := range []string{"exited after becoming ready", "Too many arguments!", "run sidecar echo: exit status 127"} {
+		if !strings.Contains(p.Detail, want) {
+			t.Errorf("detail %q lacks %q", p.Detail, want)
+		}
+	}
+	if strings.Contains(p.Detail, "Kernel panic") {
+		t.Errorf("detail kept the kernel panic: %q", p.Detail)
+	}
+}
+
+// Deploy-path review P4 (production h35-comp 2026-11-13): the app exited with
+// status 0 just after readiness. A clean exit is not restarted and prints no
+// supervisor marker, and the deploy failed as internal with no app code.
+func TestExplainGuestStopNamesACleanAppExitAfterReadiness(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), 0)
+	ring := v.registerRing("inst")
+	for _, line := range []string{
+		"seeding cache... done\n",
+		"[    2.100000] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000000\n",
+	} {
+		if _, err := ring.Write("stdout", []byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := &instanceRecord{done: make(chan struct{})}
+	close(rec.done)
+	v.mu.Lock()
+	v.recs["inst"] = rec
+	v.mu.Unlock()
+
+	p := api.AsProblem(v.ExplainGuestStop(Lease{Instance: "inst"}))
+	if p == nil || p.Code != api.CodeAppStartupCrash {
+		t.Fatalf("explanation = %#v, want %s", p, api.CodeAppStartupCrash)
+	}
+	for _, want := range []string{"exited after becoming ready", "seeding cache", "clean exit is not restarted"} {
+		if !strings.Contains(p.Detail, want) {
+			t.Errorf("detail %q lacks %q", p.Detail, want)
+		}
 	}
 }
 
@@ -223,6 +309,9 @@ func TestGuestBootArgsSuppressRCUStallWarnings(t *testing.T) {
 	for name, args := range map[string]string{"cold boot": coldBootArgs, "execution": executionBootArgs} {
 		if !strings.Contains(args, "rcupdate.rcu_cpu_stall_suppress=1") {
 			t.Errorf("%s boot args lack RCU stall suppression: %q", name, args)
+		}
+		if !strings.Contains(args, "workqueue.watchdog_thresh=0") {
+			t.Errorf("%s boot args lack workqueue lockup suppression: %q", name, args)
 		}
 	}
 }

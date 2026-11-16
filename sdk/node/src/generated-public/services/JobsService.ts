@@ -23,6 +23,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class JobsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List jobs on the account.
    * Page-based pagination via ?limit / ?offset. NextOffset=-1
@@ -45,7 +46,7 @@ export class JobsService {
      */
     offset?: number,
   }): CancelablePromise<ListJobsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs',
       query: {
@@ -84,7 +85,7 @@ export class JobsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<JobResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/jobs',
       headers: {
@@ -119,7 +120,7 @@ export class JobsService {
      */
     name: string,
   }): CancelablePromise<JobResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}',
       path: {
@@ -151,7 +152,7 @@ export class JobsService {
     name: string,
     requestBody: UpdateJobRequest,
   }): CancelablePromise<JobResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/jobs/{name}',
       path: {
@@ -191,7 +192,7 @@ export class JobsService {
      */
     name: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/jobs/{name}',
       path: {
@@ -227,7 +228,7 @@ export class JobsService {
      */
     name: string,
   }): CancelablePromise<JobRegistryCredentialListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/registry-credentials',
       path: {
@@ -263,7 +264,7 @@ export class JobsService {
     name: string,
     requestBody: PutJobRegistryCredentialRequest,
   }): CancelablePromise<JobRegistryCredentialResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/jobs/{name}/registry-credentials',
       path: {
@@ -307,7 +308,7 @@ export class JobsService {
      */
     registry: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/jobs/{name}/registry-credentials',
       path: {
@@ -351,7 +352,7 @@ export class JobsService {
      */
     offset?: number,
   }): CancelablePromise<ListJobRunsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/runs',
       path: {
@@ -402,7 +403,7 @@ export class JobsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<JobRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/jobs/{name}/runs',
       path: {
@@ -452,7 +453,7 @@ export class JobsService {
      */
     before?: string,
   }): CancelablePromise<ListScheduleOccurrencesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/occurrences',
       path: {
@@ -495,7 +496,7 @@ export class JobsService {
      */
     id: string,
   }): CancelablePromise<JobRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/runs/{id}',
       path: {
@@ -537,7 +538,7 @@ export class JobsService {
      */
     id: string,
   }): CancelablePromise<JobRunCancelledResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/jobs/{name}/runs/{id}/cancel',
       path: {
@@ -575,7 +576,7 @@ export class JobsService {
      */
     id: string,
   }): CancelablePromise<JobRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/jobs/{name}/runs/{id}/replay-failed',
       path: {
@@ -618,7 +619,7 @@ export class JobsService {
      */
     offset?: number,
   }): CancelablePromise<ListJobTasksResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/runs/{id}/tasks',
       path: {
@@ -674,7 +675,7 @@ export class JobsService {
      */
     maxBytes?: number,
   }): CancelablePromise<JobTaskLogResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/logs',
       path: {
@@ -735,7 +736,7 @@ export class JobsService {
      */
     sinceSeq?: number,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream',
       path: {
@@ -800,7 +801,7 @@ export class JobsService {
      */
     cols?: number,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/attach',
       path: {
@@ -860,7 +861,7 @@ export class JobsService {
      */
     offset?: number,
   }): CancelablePromise<ListJobTaskAttemptsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/attempts',
       path: {
@@ -907,7 +908,7 @@ export class JobsService {
      */
     artifact: string,
   }): CancelablePromise<JobArtifactDownloadResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download',
       path: {
@@ -964,7 +965,7 @@ export class JobsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<JobTaskRetryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/retry',
       path: {

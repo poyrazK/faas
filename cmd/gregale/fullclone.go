@@ -34,7 +34,7 @@ func withoutFullEnvironmentClone(command cliCommand) cliCommand {
 	subs := make([]cliSub, 0, len(command.Subcommands))
 	for _, sub := range command.Subcommands {
 		switch sub.Name {
-		case "clone-status":
+		case "clone-status", "resume-automation":
 			continue
 		case "create":
 			sub.Flags = slices.DeleteFunc(slices.Clone(sub.Flags), func(f cliFlag) bool {

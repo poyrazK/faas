@@ -23,6 +23,11 @@ var (
 // introduced by an earlier app layer; the marker then hides the same name from
 // the shared base drive after guest-init mounts the upper filesystem.
 func applyOverlayWhiteout(parent, victimName string, markerPaths ...string) error {
+	// Check again here: this deletes before it creates the marker, so a
+	// ".." victim would remove parent's parent even if a later step failed.
+	if err := validateWhiteoutVictim(victimName); err != nil {
+		return err
+	}
 	if err := mkdirImageDirectories(parent, 0o755); err != nil {
 		return fmt.Errorf("create parent: %w", err)
 	}

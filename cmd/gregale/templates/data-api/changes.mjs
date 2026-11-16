@@ -122,6 +122,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
   const key = new TextEncoder().encode(config.secret.toString('base64url'))
   let relay = `relay.${randomUUID()}`, offset = now() - monotonic()
   let timer = null, dueAt = Infinity, busy = false, again = false, stopped = false
+  let running = null
   let idle = limits.changeEventsIdleMinMs, retry = limits.changeEventsIdleMinMs
   // Delivery reports: the last one sent, whether the platform takes them, and
   // when this relay last published.
@@ -298,7 +299,14 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
     } catch { return null /* Never log tokens or platform errors. */ }
   }
 
-  async function cycle() {
+  function cycle() {
+    if (stopped) return Promise.resolve()
+    if (running) { again = true; return running }
+    running = runCycle()
+    return running
+  }
+
+  async function runCycle() {
     if (stopped) return
     if (busy) { again = true; return }
     busy = true
@@ -347,6 +355,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
       if (outcome.retry) settleDrains()
     } catch { next = retry } finally {
       busy = false
+      running = null
       if (again) { again = false; next = 0 }
       if (!refused) schedule(next)
     }
@@ -377,5 +386,11 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
     drain,
     // Tests drive cycles directly.
     cycle,
+    status: async () => {
+      const result = await rpc('gregale_change_status', {})
+      const status = result.json
+      if (result.status !== 200 || !status || !['pending','failed','leased','lag_seconds'].every(key => typeof status[key] === 'number' && Number.isFinite(status[key]) && status[key] >= 0)) return null
+      return status
+    },
   })
 }

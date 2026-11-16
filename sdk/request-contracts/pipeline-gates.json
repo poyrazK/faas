@@ -1,0 +1,209 @@
+{
+  "scope": {
+    "base_url": "https://pipeline.test",
+    "account_id": "11111111-1111-4111-8111-111111111111",
+    "app_id": "22222222-2222-4222-8222-222222222222",
+    "app_slug": "imports"
+  },
+  "root_contract": {
+    "version": 1,
+    "name": "csv-pipeline",
+    "input": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "contract": {
+    "version": 1,
+    "name": "review-import",
+    "input": {
+      "type": "object",
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "sha256",
+        "rows",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "envelope": {
+    "version": 1,
+    "contract_sha256": "a119d556dd0d30edc13fa16508af2872ddf27f49f34cc256e2ea2e9baea62ee0",
+    "scope": {
+      "base_url": "https://pipeline.test",
+      "account_id": "11111111-1111-4111-8111-111111111111",
+      "app_id": "22222222-2222-4222-8222-222222222222",
+      "app_slug": "imports"
+    },
+    "owner_id": "alice",
+    "input": {
+      "n": 2
+    }
+  },
+  "intent": {
+    "kind": "approval",
+    "scope": {
+      "base_url": "https://pipeline.test",
+      "account_id": "11111111-1111-4111-8111-111111111111",
+      "app_id": "22222222-2222-4222-8222-222222222222",
+      "app_slug": "imports"
+    },
+    "workflow_run_id": "33333333-3333-4333-8333-333333333333",
+    "owner_id": "alice",
+    "pipeline_sha256": "a119d556dd0d30edc13fa16508af2872ddf27f49f34cc256e2ea2e9baea62ee0",
+    "input_sha256": "3a45861783f7fb7e080bc4108f572553c4c3f6d1c74f1bddfa72c70900b8b0e3",
+    "name": "review",
+    "contract_sha256": "3f8a1075131100e1cde2c7146929a7506507455b4940471d179416ce91d26f61",
+    "review": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "rows": 3,
+      "label": "Météo ☁"
+    },
+    "required_roles": [
+      "reviewer"
+    ],
+    "timeout_ms": 60000,
+    "version": 1,
+    "id": "7d146b107e2da78669c3db0a5c8fe2fb7ef1a8873ccf814f64797174dd5a3223",
+    "review_sha256": "542996efe8a3347a7b22c81bc30ef1bb663615f95cc445cda176e36c327d011e",
+    "binding_sha256": "b2711cafac80fa639f38833936ac4a546fbfa85ea6a88fbd1c5f041ba702ca07"
+  },
+  "record": {
+    "intent": {
+      "kind": "approval",
+      "scope": {
+        "base_url": "https://pipeline.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "workflow_run_id": "33333333-3333-4333-8333-333333333333",
+      "owner_id": "alice",
+      "pipeline_sha256": "a119d556dd0d30edc13fa16508af2872ddf27f49f34cc256e2ea2e9baea62ee0",
+      "input_sha256": "3a45861783f7fb7e080bc4108f572553c4c3f6d1c74f1bddfa72c70900b8b0e3",
+      "name": "review",
+      "contract_sha256": "3f8a1075131100e1cde2c7146929a7506507455b4940471d179416ce91d26f61",
+      "review": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "rows": 3,
+        "label": "Météo ☁"
+      },
+      "required_roles": [
+        "reviewer"
+      ],
+      "timeout_ms": 60000,
+      "version": 1,
+      "id": "7d146b107e2da78669c3db0a5c8fe2fb7ef1a8873ccf814f64797174dd5a3223",
+      "review_sha256": "542996efe8a3347a7b22c81bc30ef1bb663615f95cc445cda176e36c327d011e",
+      "binding_sha256": "b2711cafac80fa639f38833936ac4a546fbfa85ea6a88fbd1c5f041ba702ca07"
+    },
+    "expires_at": "2026-11-15T12:01:00.000Z",
+    "decision": {
+      "state": "approved",
+      "actor_id": "alice",
+      "payload": {
+        "reason": "checked"
+      },
+      "decided_at": "2026-11-15T12:00:01.000Z"
+    },
+    "delivery": "delivered"
+  },
+  "journal": [
+    {
+      "seq": 0,
+      "name": "pipeline-gate/review/open",
+      "kind": "step",
+      "status": "succeeded",
+      "attempt": 1,
+      "output": {
+        "id": "7d146b107e2da78669c3db0a5c8fe2fb7ef1a8873ccf814f64797174dd5a3223",
+        "binding_sha256": "b2711cafac80fa639f38833936ac4a546fbfa85ea6a88fbd1c5f041ba702ca07",
+        "expires_at": "2026-11-15T12:01:00.000Z"
+      }
+    },
+    {
+      "seq": 1,
+      "name": "pipeline-gate/review/wait",
+      "kind": "event",
+      "status": "succeeded",
+      "attempt": 1,
+      "output": {
+        "untrusted": "ignored"
+      },
+      "event": "pipeline-gate.7d146b107e2da78669c3db0a5c8fe2fb7ef1a8873ccf814f64797174dd5a3223"
+    },
+    {
+      "seq": 2,
+      "name": "pipeline-gate/review/resolve",
+      "kind": "step",
+      "status": "succeeded",
+      "attempt": 1,
+      "output": {
+        "state": "approved",
+        "actor_id": "alice",
+        "payload": {
+          "reason": "checked"
+        },
+        "decided_at": "2026-11-15T12:00:01.000Z"
+      }
+    }
+  ],
+  "queries": [
+    "INSERT INTO public.gregale_pipeline_gates(id,intent,expires_at) VALUES ($1,$2::jsonb,clock_timestamp()+($3::bigint*interval '1 millisecond')) ON CONFLICT (id) DO NOTHING RETURNING jsonb_build_object('intent',intent,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'decision',decision,'delivery',delivery) AS record",
+    "UPDATE public.gregale_pipeline_gates SET decision=CASE WHEN decision IS NULL AND expires_at<=clock_timestamp() THEN jsonb_build_object('state','expired','actor_id',NULL,'payload',NULL,'decided_at',to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')) ELSE decision END WHERE id=$1 RETURNING jsonb_build_object('intent',intent,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'decision',decision,'delivery',delivery) AS record",
+    "UPDATE public.gregale_pipeline_gates SET decision=CASE WHEN expires_at<=clock_timestamp() THEN jsonb_build_object('state','expired','actor_id',NULL,'payload',NULL,'decided_at',to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')) ELSE $3::jsonb || jsonb_build_object('decided_at',to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')) END WHERE id=$1 AND intent->>'binding_sha256'=$2 AND decision IS NULL RETURNING jsonb_build_object('intent',intent,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'decision',decision,'delivery',delivery) AS record",
+    "UPDATE public.gregale_pipeline_gates SET delivery=$3 WHERE id=$1 AND decision=$2::jsonb RETURNING jsonb_build_object('intent',intent,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'decision',decision,'delivery',delivery) AS record",
+    "UPDATE public.gregale_pipeline_gates SET checked_at=clock_timestamp() WHERE id IN (SELECT id FROM public.gregale_pipeline_gates WHERE delivery='pending' AND intent->'scope'=$2::jsonb AND intent->>'pipeline_sha256'=$3 AND intent->>'contract_sha256'=$4 ORDER BY (decision IS NULL AND expires_at>clock_timestamp()),checked_at,expires_at,id LIMIT $1 FOR UPDATE SKIP LOCKED) RETURNING jsonb_build_object('intent',intent,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'decision',decision,'delivery',delivery) AS record",
+    "SELECT jsonb_build_object('intent',intent,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'decision',decision,'delivery',delivery) AS record FROM public.gregale_pipeline_gates WHERE intent->>'workflow_run_id'=$1 AND intent->>'owner_id'=$2 ORDER BY id LIMIT 100"
+  ]
+}

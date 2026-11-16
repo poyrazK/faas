@@ -99,7 +99,7 @@
     {"path": "security", "source": "docs/security.md"},
     {"path": "sdks", "source": "docs/sdks.md"},
     {"path": "service-map", "source": "docs/service-map.md", "unpublished": "internal capability; not a customer feature"},
-    {"path": "sidecars", "source": "docs/sidecars.md"},
+    {"path": "sidecars", "source": "docs/companions.md"},
     {"path": "static-egress-ip", "source": "docs/static-egress-ip.md"},
     {"path": "storage", "source": "docs/storage.md"},
     {"path": "synthetic-checks", "source": "docs/synthetic-checks.md"},

@@ -69,9 +69,16 @@ IDs and verify HMAC over the timestamp and exact body.
 
 ## Consequences
 
-This is a backend service with a public customer API and private staff API. It does
-not add a dashboard, mail ingestion, attachments, knowledge base, incident merging,
-provider issue creation or automatic historical data recovery. Those integrations
-need their own implementation and acceptance evidence. Support rows are operational
-and excluded from environment cloning. Deploy the additive migration before apid.
+The service has a public customer API and private staff API. Its dashboard portal
+and staff inbox use the existing Go html/template surface (ADR-011), with native
+support reads and form adapters to the same mutation endpoints. Customer portal
+routes share the preview flag; staff pages retain independent live roster checks.
+Forms add account-bound CSRF, preserve UUID receipts/revisions on retry, and retain
+the strict MFA step-up and origin checks for staff writes. Customer snapshots
+exclude staff ownership, service clocks and internal notes.
+
+Mail ingestion, attachments, knowledge base, incident merging, provider issue
+creation and automatic historical data recovery need their own implementation and
+acceptance evidence. Support rows are operational and excluded from environment
+cloning. Deploy the additive migration before apid.
 See `docs/customer-support.md` for the actual contract, limits and operations.

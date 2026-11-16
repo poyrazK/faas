@@ -172,7 +172,7 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
       }
     } catch { /* Usage is best effort: never log tokens or platform errors. */ } finally {
       busy = false
-      if (inflight || pending.size) schedule(limits.usageReportIntervalMs)
+      if (inflight || pending.size || accessDue() || config.caps && (!totals || totals.month !== month(now()))) schedule(limits.usageReportIntervalMs)
     }
   }
 

@@ -100,6 +100,7 @@ func cloneEnvironmentBorrowerCounts(row sqlc.ReadCloneEnvironmentMetadataBorrowe
 		"invocation_work_environment_admissions":  row.InvocationWorkEnvironmentAdmissions,
 		"invocation_work_environment_domains":     row.InvocationWorkEnvironmentDomains,
 		"invocations":                             row.Invocations,
+		"project_environment_branches":            row.ProjectEnvironmentBranches,
 		"project_environment_edge_policies":       row.ProjectEnvironmentEdgePolicies,
 		"project_environment_qualifications":      row.ProjectEnvironmentQualifications,
 		"project_environment_queue_runtime_sets":  row.ProjectEnvironmentQueueRuntimeSets,

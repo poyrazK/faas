@@ -251,6 +251,10 @@ type Middleware struct {
 	// ActivityRecorder records agent activity when Authn cannot: a gateway
 	// sends the rows to apid (ADR-20261111150000).
 	ActivityRecorder AgentActivityRecorder
+	// UndoCapture, when set, records how to reverse each agent write
+	// (ADR-20261112080601): it is called before the handler, and the
+	// capture finished after it answered. apid sets it; a gateway does not.
+	UndoCapture func(r *http.Request, acct state.Account, key state.APIKey) AgentUndoPending
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -589,6 +593,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			// error and emit the audit event from here so the
 			// store stays independent of the audit seam.
 			if err != nil {
+				// ADR-20261114190002: a revoked or expired key still
+				// names its account.
+				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
 					if m.Audit != nil {
@@ -615,6 +622,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// simply unknown; both surface as "invalid
 				// bearer" through the legacy 401 path.
 			} else {
+				noteAccount(r, acct.ID)
 				if !acct.Active() {
 					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
@@ -635,6 +643,18 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// ADR-20261107220000: an agent's write requests are
 				// recorded once the handler answers; the approval gate
 				// notes the approval a request went through on.
+				// ADR-20261111114059 amendment 2026-11-13: a budget preview
+				// writes nothing, so it opens no approval and records no
+				// activity or undo; it only notes the approval the real
+				// request would wait for.
+				if Previewing(r) && ProjectLimitable(key) {
+					if m.notePreviewApproval(w, r, key) {
+						return
+					}
+					*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
+					next(w, r, acct)
+					return
+				}
 				var activity *agentActivityNote
 				if ProjectLimitable(key) && (agentWrite(r.Method) || agentapproval.RecordedRead(r.Pattern)) {
 					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
@@ -671,6 +691,13 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				}
 				if activity != nil {
 					aw := &activityWriter{ResponseWriter: w}
+					activity.id = uuid.NewString()
+					// ADR-20261112080601: read what the write replaces.
+					var undo AgentUndoPending
+					if m.UndoCapture != nil && agentWrite(r.Method) {
+						undo = m.UndoCapture(r, acct, key)
+						aw.keepBody = undo != nil
+					}
 					recorded := false
 					//nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
 					aw.onHijack = func() {
@@ -679,6 +706,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					}
 					next(aw, r, acct)
 					if !recorded {
+						m.finishAgentUndo(r, undo, aw, activity.id)
 						m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
 					}
 					return
@@ -719,6 +747,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				api.WriteProblem(w, api.ErrCapacity("authenticate platform tenant access token"))
 				return
 			}
+			noteAccount(r, acct.ID)
 			if !acct.Active() {
 				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 					"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
@@ -762,6 +791,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		if api.ValidOIDCKeyFormat(tok) {
 			acct, key, err := m.Authn.AuthenticateOIDCBearer(r.Context(), api.HashAPIKey(tok))
 			if err == nil {
+				noteAccount(r, acct.ID)
 				// A bearer exchanged under a trust policy Gregale created is
 				// bound to one app and confined like a per-app deploy token
 				// (ADR-20261101100000).
@@ -804,6 +834,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
+					noteAccount(r, acct.ID)
 					if m.appBoundCredentialRefused(w, r, key, "Deploy token scope is app-bound") {
 						return
 					}
@@ -826,6 +857,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					next(w, r, acct)
 					return
 				}
+				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
 					api.WriteProblem(w, api.ErrAPIKeyExpired())
@@ -881,6 +913,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					r = r.WithContext(withSession(r.Context(), sess))
 					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
+						noteAccount(r, acct.ID)
 						if !acct.Active() {
 							if !inactiveCallerMayReach(r, acct) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
@@ -1363,7 +1396,7 @@ func isBillingRecoveryRoute(method, path string) bool {
 		return true
 	}
 	switch method + " " + path {
-	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
+	case "GET /v1/account", "GET /v1/account/export", "GET /v1/account/health", "GET /v1/usage",
 		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
 		"GET /v1/billing/costs", "GET /v1/billing/forecast", "GET /v1/billing/budgets", "POST /v1/billing/budgets/preview",
 		"PATCH /v1/account/plan",

@@ -36,6 +36,12 @@ func TestNotificationHealthEvidenceAndFailures(t *testing.T) {
 					return
 				}
 				query := r.URL.Query().Get("query")
+				if strings.Contains(query, "faas_notification_receiver_") {
+					// An older deployment can supply aggregate evidence without the
+					// new receiver collector. Its aggregate contract is unchanged.
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"resultType": "vector", "result": []any{}}})
+					return
+				}
 				if tc.mode == "quiet" && strings.Contains(query, "increase(") && !strings.Contains(string(fixture), query) {
 					t.Errorf("production counter query lacks semantic fixture: %s", query)
 				}
@@ -93,7 +99,7 @@ func TestNotificationHealthEvidenceAndFailures(t *testing.T) {
 			}))
 			defer srv.Close()
 			out := NotificationHealth(t.Context(), promql.NewClient(srv.URL, srv.Client()), NewAlertmanagerClient(srv.URL, nil), now)
-			if out.State != tc.want || out.Integrations == nil || len(out.Signals) != 7 {
+			if out.State != tc.want || out.Integrations == nil || len(out.Signals) != 7 || out.ReceiverHealth == nil {
 				t.Fatalf("health: %+v", out)
 			}
 			if tc.mode == "quiet" {

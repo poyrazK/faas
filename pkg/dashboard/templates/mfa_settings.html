@@ -23,6 +23,14 @@
     <p>Signed in as <strong>{{.Account.Email}}</strong>.</p>
     <p id="notice" role="status" aria-live="polite"></p>
     <noscript>Enable JavaScript to manage your authenticator and recovery codes.</noscript>
+    {{if index .Data "PendingDisableAt"}}
+    <section id="pending-disable" role="alert">
+      <h2>Two-factor removal requested</h2>
+      <p>Someone asked by email to turn off two-factor authentication on this account at {{index .Data "PendingDisableAt"}}. If it was not you, cancel it and change your password.</p>
+      {{if index .Data "CanCancelDisable"}}<form data-action="disable-email-cancel"><button type="submit">Cancel the request</button></form>
+      {{else}}<p>Verify your authenticator or use a recovery code below: that cancels the request.</p>{{end}}
+    </section>
+    {{end}}
     {{if not (index .Data "Enrolled")}}
     <section id="enroll">
       <h2>Set up an authenticator</h2>
@@ -102,7 +110,7 @@
         return result;
       }
       async function submit(action, body) {
-        if (['confirm', 'recover', 'disable', 'disable-email', 'recovery-codes'].includes(action)) {
+        if (['confirm', 'recover', 'disable', 'disable-email', 'disable-email-cancel', 'recovery-codes'].includes(action)) {
           const token = await json('/v1/auth/csrf?action=mfa_' + action.replaceAll('-', '_'));
           body.csrf_token = token.csrf_token;
         }
@@ -166,6 +174,9 @@
             message('Save these recovery codes somewhere safe. Your previous codes no longer work.');
           } else if (form.dataset.action === 'disable-email') {
             message('Check your email for the recovery link and its confirmation time. The waiting period is 24 hours.');
+          } else if (form.dataset.action === 'disable-email-cancel') {
+            document.getElementById('pending-disable').hidden = true;
+            message('The request to turn off two-factor authentication was cancelled.');
           } else {
             location.assign({{index .Data "Next"}});
           }

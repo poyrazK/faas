@@ -84,12 +84,8 @@ func (m *publishedLayerDigests) take(be storage.StorageBackend, key string) (str
 }
 
 func localStorageFile(be storage.StorageBackend, key string) (os.FileInfo, bool) {
-	resolver, ok := be.(storage.LocalPathResolver)
+	path, ok := localStoragePath(be, key)
 	if !ok {
-		return nil, false
-	}
-	path, local, err := resolver.LocalPath(key)
-	if err != nil || !local {
 		return nil, false
 	}
 	info, err := os.Stat(path)

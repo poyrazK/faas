@@ -8,8 +8,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/dataapibudget"
 	"github.com/onebox-faas/faas/pkg/apid/dataapiusage"
 	"github.com/onebox-faas/faas/pkg/state"
+	budgetstore "github.com/onebox-faas/faas/pkg/state/dataapibudget"
 	usagestore "github.com/onebox-faas/faas/pkg/state/dataapiusage"
 )
 
@@ -19,7 +21,16 @@ import (
 func (s *server) configureDataAPIUsage(pool *pgxpool.Pool) {
 	if pool != nil {
 		s.dataAPIUsage = usagestore.New(pool)
+		s.dataAPIBudget = budgetstore.New(pool)
 	}
+}
+
+func (s *server) admitDataAPIBudget(w http.ResponseWriter, r *http.Request) {
+	h := dataapibudget.Handler{Verifier: s.workloadVerifier, Workloads: s.store}
+	if s.dataAPIBudget != nil {
+		h.Store = s.dataAPIBudget
+	}
+	h.ServeHTTP(w, r)
 }
 
 // dataAPIAccess is the access settings an app's Data API runtime last
@@ -51,11 +62,20 @@ func (s *server) forgetDataAPIAccess(ctx context.Context, accountID, appID strin
 	if err := s.dataAPIUsage.DeleteAccess(ctx, accountID, appID); err != nil {
 		s.log.Error("forget data api access settings", "app_id", appID, "err", err)
 	}
+	s.syncDataAPIAccess(ctx, appID)
+}
+
+func (s *server) syncDataAPIAccess(ctx context.Context, appID string) {
+	if s.realtime.Host != nil {
+		if err := s.realtime.SyncAppEndpoints(ctx, appID); err != nil {
+			s.log.Warn("data api live access sync unavailable", "app_id", appID)
+		}
+	}
 }
 
 // reportDataAPIUsage is the private runtime surface; workload identity only.
 func (s *server) reportDataAPIUsage(w http.ResponseWriter, r *http.Request) {
-	handler := dataapiusage.ReportHandler{Verifier: s.workloadVerifier, Workloads: s.store}
+	handler := dataapiusage.ReportHandler{Verifier: s.workloadVerifier, Workloads: s.store, AccessChanged: s.syncDataAPIAccess}
 	if s.dataAPIUsage != nil {
 		handler.Store = s.dataAPIUsage
 	}

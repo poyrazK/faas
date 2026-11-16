@@ -180,7 +180,8 @@ var generatedDotfiles = map[string]map[string]string{
 		".gregale/env.json": "{\"optional\":[\"MIGRATION_DATABASE_URL\"]}\n",
 	},
 	"data-api": {
-		".gregale/env.json": "{\"optional\":[\"DOCKER_CONTEXT\",\"MIGRATION_DATABASE_URL\"]}\n",
+		// Owner maintenance and the standalone hook worker are optional serving tools.
+		".gregale/env.json": "{\"optional\":[\"DOCKER_CONTEXT\",\"MIGRATION_DATABASE_URL\",\"DATA_API_SCHEMAS\",\"DATA_API_URL\",\"DATA_API_SERVER_KEY\"]}\n",
 	},
 }
 
@@ -396,7 +397,7 @@ func TarGz(name, dest string) error {
 		if err != nil {
 			return err
 		}
-		if p == "." || strings.HasPrefix(path.Base(p), ".") {
+		if p == "." || strings.HasPrefix(path.Base(p), ".") || path.Base(p) == "node_modules" {
 			if d.IsDir() && p != "." {
 				return fs.SkipDir
 			}

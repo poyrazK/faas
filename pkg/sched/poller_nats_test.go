@@ -29,6 +29,12 @@ type stubNATSMsg struct {
 	reason   string
 	dataJSON []byte
 	subject  string
+	progress atomic.Int32
+}
+
+func (s *stubNATSMsg) InProgress() error {
+	s.progress.Add(1)
+	return nil
 }
 
 func (s *stubNATSMsg) Ack() error {
@@ -314,5 +320,35 @@ func TestNATSPoller_SeqFallbackIsUnique(t *testing.T) {
 	}
 	if !stub2.acked.Load() {
 		t.Fatal("Ack(seq2) did not stamp stub2 — second metadata-less message was treated as the same record as seq1")
+	}
+}
+
+// TestNATSPoller_KeepLeasesSignalsProgress: while a batch is delivered, the
+// poller resets the server's ack wait for each message it still holds, so a
+// handler slower than the ack wait is not redelivered mid-dispatch; stop ends
+// the heartbeat. Not parallel: it shortens the package-level interval.
+func TestNATSPoller_KeepLeasesSignalsProgress(t *testing.T) {
+	old := natsProgressInterval
+	natsProgressInterval = 5 * time.Millisecond
+	t.Cleanup(func() { natsProgressInterval = old })
+
+	held, settled := &stubNATSMsg{}, &stubNATSMsg{}
+	p := &natsPoller{inFlight: map[string]natsMsg{"held": held}}
+	stop := p.keepLeases(context.Background(), []string{"held", "settled"})
+	deadline := time.Now().Add(2 * time.Second)
+	for held.progress.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	stop()
+	if held.progress.Load() < 2 {
+		t.Fatalf("held message signalled progress %d times, want >= 2", held.progress.Load())
+	}
+	if settled.progress.Load() != 0 {
+		t.Fatal("a message the poller no longer holds signalled progress")
+	}
+	after := held.progress.Load()
+	time.Sleep(20 * time.Millisecond)
+	if held.progress.Load() != after {
+		t.Fatal("progress continued after stop")
 	}
 }

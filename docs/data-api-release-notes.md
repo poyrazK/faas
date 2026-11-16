@@ -3,6 +3,28 @@
 This change completes the current core Data API development slice. It does not
 publish artifacts or establish hosted staging acceptance.
 
+## Durable recovery and background workflows
+
+[Workflow setup](data-api/workflows.md) and
+[ADR 20261112130000](adr/20261112130000-data-api-durable-workflows.md) cover:
+
+- Upload reconciliation after a lost commit response, metadata-first deletion,
+  and optional durable sessions with checksums, receipts and version comparison.
+- Opt-in lossless numeric decoding and matching local/remote generated types;
+  Data API live reads inherit the same codec.
+- Teams background import/export jobs, cancellation, persisted progress and
+  errors, and saved statement snapshots for later CSV downloads.
+- Separate owner-only policy/RPC behavior digests with required current-run
+  authorization replay coverage.
+- An optional scheduled hook pump and owner-only backlog/lag observations.
+- A standard OpenAPI 3.1 export alongside the existing Swagger endpoint.
+
+Upload sessions and hook observation require explicit customer SQL migrations
+and grants. Workers require separately configured Gregale Jobs and private
+backend credentials. Existing defaults remain compatible. Local PostgreSQL,
+PostgREST, fault-injection and browser checks do not activate these workflows in
+hosted deployments or replace native KVM release acceptance.
+
 ## Health answers follow the engine; liveness checks the process
 
 [ADR 20261109160000](adr/20261109160000-data-api-health-cache-and-liveness.md):
@@ -414,8 +436,9 @@ it does not provide a snapshot across pages. The full guide covers these bounds.
 | Runtime contract pinning | Optional exact fingerprint guard with owner-approved compatible older clients | Requires an upgraded runtime; matches the captured serving contract, not live DDL |
 | Hosted tooling/distribution | Owner tooling, contract refresh and artifact pin/restore | Public distribution and staging canary still need a configured destination |
 
-GraphQL and Realtime remain outside the agreed core Data API scope. This is a
-capability comparison, not a claim of complete Supabase/PostgREST parity.
+GraphQL remains outside the core Data API scope. Data API live reads are now
+available through the separate realtime capability; see the live-read guide.
+This is a capability comparison, not a claim of complete Supabase/PostgREST parity.
 
 ## Validation
 

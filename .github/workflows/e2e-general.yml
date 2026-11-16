@@ -27,7 +27,7 @@ permissions:
 
 env:
   # Keep in lock-step with ci.yml and go.mod's toolchain directive.
-  GO_VERSION: "1.26.10"
+  GO_VERSION: "1.26.11"
 
 jobs:
   e2e-general:
