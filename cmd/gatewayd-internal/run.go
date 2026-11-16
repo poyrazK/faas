@@ -2937,6 +2937,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
 		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations).
 		WithSelectorSuffixes(appsSuffix(deps.domains.Apps), hostidentity.DeploySuffix())
+	if deps.pgStore != nil {
+		// Service calls record request metrics under the target's plan.
+		handler = handler.WithAppPlanResolver(newAppPlanResolver(deps.pgStore))
+	}
 	if deps.financialBudgetAdmission == nil && deps.pgStore != nil {
 		deps.financialBudgetAdmission = newFinancialBudgetAdmission(deps.pgStore)
 	}

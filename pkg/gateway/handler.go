@@ -992,6 +992,8 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
+	// appPlan names a service call target's plan (WithAppPlanResolver).
+	appPlan               AppPlanResolver
 	publicRoutingPolicy   PublicRoutingPinner
 	publicRoutingStride   publicRoutingStride
 	publicRoutingFreezes  publicRoutingFreezes
