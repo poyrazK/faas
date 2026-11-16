@@ -114,7 +114,7 @@ func cmdAppScaleInteractive(slug, environment string) int {
 			return printErr("Could not save settings plan", err)
 		}
 		PrintOK(osStdout, "Saved plan to %s", path)
-		_, _ = fmt.Fprintln(osStdout, "Apply later with gregale app <slug> scale --apply <plan-file> --confirm.")
+		_, _ = fmt.Fprintln(osStdout, "Apply later with gregale app scale <slug> --apply <plan-file> --confirm.")
 	case 2:
 		confirmed, err := prompt.confirm(ctx, "Apply these settings to "+slug+"?")
 		if err != nil {

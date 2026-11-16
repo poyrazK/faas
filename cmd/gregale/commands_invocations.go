@@ -66,7 +66,7 @@ func cmdInvocations(args []string) int {
 	case "wait":
 		return cmdInvocationsWait(args[1:])
 	}
-	printCommandValidation(os.Stderr, "unknown invocations subcommand %q\n", args[0])
+	printUnknownCommandValidation(os.Stderr, "invocations", args[0], "unknown invocations subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "invocations", nestedCliCommand("invocations"), args[0])
 }
 
@@ -240,6 +240,8 @@ func cmdInvocationsList(args []string) int {
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	stream := fs.Bool("stream", false, "emit rows as JSON Lines as pages arrive (stdout requires --json --all)")
 	outputPath := fs.String("output", "", "publish a new JSON Lines file after all pages complete (requires --all)")
+	progress := fs.String("progress", "off", "export progress on stderr: off, plain or ndjson (requires --all --output)")
+	timeout := fs.Duration("timeout", 0, "overall list read budget including page requests and retries (positive duration)")
 	limit := fs.Int("limit", 50, "max rows (1..100; server caps at 100)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -251,6 +253,16 @@ func cmdInvocationsList(args []string) int {
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale invocation list [--cursor C] [--limit N] [--all] (1 <= N <= 100)", "invocations")
 		return 1
+	}
+	if err := validateListTimeout(*timeout, flagWasSet(fs, "timeout")); err != nil {
+		return printErr("Invalid list timeout", err)
+	}
+	progressMode, err := parseListExportProgress(*progress)
+	if err != nil {
+		return printErr("Invalid list progress", err)
+	}
+	if violation := listFlagRuleViolation(listProgressRequiresExport, listFlagRuleState{Progress: progressMode != listExportProgressOff, Output: flagWasSet(fs, "output"), All: *all}, "invocation list"); violation != nil {
+		return printErr("Invalid list progress", violation)
 	}
 	output, err := prepareListOutput(*outputPath, flagWasSet(fs, "output"), *all, "invocation list")
 	if err != nil {
@@ -265,23 +277,26 @@ func cmdInvocationsList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	ctx, cancel := listReadContext(context.Background(), *timeout)
+	defer cancel()
 	// The ledger is account-wide, so a row needs its app: "POST /healthz
 	// failed" named no app (Hunt 12 H12-33).
 	var slugs map[string]string
 	if !jsonOutput && output == nil {
-		slugs = appSlugsByID(client)
+		slugs = appSlugsByIDContext(ctx, client)
 	}
 	fetch := func(ctx context.Context, cursor string) ([]api.Invocation, string, error) {
 		page, err := client.ListInvocations(ctx, cursor, *limit)
 		return page.Invocations, page.NextBefore, err
 	}
 	if output != nil {
-		return runListFileExport("Could not list invocations", *before, output, fetch)
+		return runListFileExport(ctx, "Could not list invocations", *before, output, progressMode, fetch)
 	}
 	if *stream {
-		return runStreamList("Could not list invocations", *before, fetch)
+		return runStreamList(ctx, "Could not list invocations", *before, fetch)
 	}
-	items, next, err := collectListPages(context.Background(), *before, *all, fetch)
+	items, next, err := collectListPages(ctx, *before, *all, fetch)
+	err = listReadError(ctx, err)
 	resp := api.ListInvocationsResponse{Invocations: items, NextBefore: next}
 	if err != nil {
 		return printErr("Could not list invocations", err)

@@ -69,7 +69,7 @@ func (m *MemStore) ListPendingCheckedRollbacks(context.Context) ([]api.RollbackO
 func (m *MemStore) rollbackRowsLocked(r api.RollbackOperation) []Deployment {
 	rows := []Deployment{}
 	for _, d := range m.deployments {
-		if d.AppID == r.AppID && normalizedDeploymentScope(d.Scope) == r.Scope {
+		if d.AppID == r.AppID && sameServingLane(d.Scope, r.Scope) {
 			rows = append(rows, d)
 		}
 	}
@@ -127,7 +127,7 @@ func (m *MemStore) createCheckedRollbackLocked(ctx context.Context, acct, app, t
 		return r, err
 	}
 	for _, existing := range m.checkedRollbacks {
-		if existing.AppID == app && existing.Scope == r.Scope && !rollbackTerminal(existing) {
+		if existing.AppID == app && sameServingLane(existing.Scope, r.Scope) && !rollbackTerminal(existing) {
 			return r, ErrConflict
 		}
 	}
@@ -253,7 +253,7 @@ func (m *MemStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollb
 		}
 		now := time.Now().UTC()
 		for id, other := range m.deployments {
-			if id == d.ID || other.AppID != r.AppID || normalizedDeploymentScope(other.Scope) != r.Scope || other.Status != DeployLive {
+			if id == d.ID || other.AppID != r.AppID || !sameServingLane(other.Scope, r.Scope) || other.Status != DeployLive {
 				continue
 			}
 			m.retainServingRevisionLocked(other, now)

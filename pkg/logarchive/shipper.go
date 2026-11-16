@@ -63,6 +63,12 @@ type Shipper struct {
 	log     *slog.Logger
 	metrics Metrics
 	now     func() time.Time
+
+	// retired holds instances whose final lines should ship before the
+	// next tick (ShipInstance); kick wakes Run for them.
+	retiredMu sync.Mutex
+	retired   map[string]struct{}
+	kick      chan struct{}
 }
 
 // NewShipper constructs a Shipper. Required fields: cfg (with
@@ -114,6 +120,7 @@ func NewShipper(cfg Config, spool *Spool, s3 *S3Client, log *slog.Logger, metric
 		log:     log,
 		metrics: metrics,
 		now:     time.Now,
+		kick:    make(chan struct{}, 1),
 	}, nil
 }
 
@@ -154,6 +161,8 @@ func (s *Shipper) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-s.kick:
+			s.shipRetired(ctx)
 		case <-flushTicker.C:
 			if _, _, err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
 				s.log.Warn("logarchive.flush_failed", "err", err)
@@ -180,6 +189,12 @@ func (s *Shipper) Run(ctx context.Context) error {
 // daemon log captures the reason via the slog WARN; the metric
 // counter increments the right {reason} bucket.
 func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
+	return s.runFiles(ctx, nil)
+}
+
+// runFiles is one flush pass over the spool files keep accepts (all when
+// keep is nil).
+func (s *Shipper) runFiles(ctx context.Context, keep func(FileInfo) bool) (int, int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.cfg.Enabled() {
@@ -191,6 +206,9 @@ func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 	var shipped int
 	var bytes int64
 	for _, f := range files {
+		if keep != nil && !keep(f) {
+			continue
+		}
 		n, err := s.uploadFile(ctx, f)
 		if err != nil {
 			s.metrics.IncFilesUploaded("err")

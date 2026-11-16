@@ -50,8 +50,13 @@ func guardUnlinkedExistingApp(ctx context.Context, client *Client, slug, dir str
 	if _, err := client.GetApp(ctx, slug); err != nil {
 		return 0 // missing (a create) or unreadable: the deploy path reports it
 	}
+	// --json keeps stderr to one machine-readable Problem; a prose note
+	// before it broke every JSON deploy error to an unlinked app.
+	if jsonOutput {
+		return 0
+	}
 	_, _ = fmt.Fprintln(osStderr, "Note: "+unlinkedExistingAppNotice(slug))
-	if yes || jsonOutput || nonInteractive || !stdinIsTTY() {
+	if yes || nonInteractive || !stdinIsTTY() {
 		return 0
 	}
 	return confirmYesNo(fmt.Sprintf("Replace the running release of %s?", slug), "--yes", "replacing "+slug)

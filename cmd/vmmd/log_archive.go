@@ -70,9 +70,19 @@ type vmmdLogArchiveSink struct {
 	// spills counts Retire calls writing to the spool themselves; Close
 	// waits for them before closing the spool's files.
 	spills sync.WaitGroup
+	// retired, when set, is told once a retired ring's lines are spooled,
+	// so the shipper uploads them before its next tick
+	// (logarchive.Shipper.ShipInstance).
+	retired func(instance string)
 }
 
 func newVMMDLogArchiveSink(spool *logarchive.Spool, metrics logarchive.Metrics, log *slog.Logger) *vmmdLogArchiveSink {
+	return newVMMDLogArchiveSinkNotifying(spool, metrics, log, nil)
+}
+
+// newVMMDLogArchiveSinkNotifying is newVMMDLogArchiveSink that reports each
+// spooled retired ring to retired.
+func newVMMDLogArchiveSinkNotifying(spool *logarchive.Spool, metrics logarchive.Metrics, log *slog.Logger, retired func(string)) *vmmdLogArchiveSink {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -88,6 +98,7 @@ func newVMMDLogArchiveSink(spool *logarchive.Spool, metrics logarchive.Metrics, 
 		dropped:        newVMMDLogArchiveDroppedCounter(),
 		maxQueuedBytes: vmmdLogArchiveQueueBytes,
 		retireWait:     vmmdLogArchiveRetireWait,
+		retired:        retired,
 	}
 	go s.run()
 	return s
@@ -191,6 +202,13 @@ func (s *vmmdLogArchiveSink) spill(instance string, lines []logbuf.Line) {
 	}
 	s.log.Warn("logarchive.retire_spilled",
 		"instance", instance, "lines", len(lines), "dropped", failed, "err", lastErr)
+	s.notifyRetired(instance)
+}
+
+func (s *vmmdLogArchiveSink) notifyRetired(instance string) {
+	if s.retired != nil {
+		s.retired(instance)
+	}
 }
 
 func linesBytes(lines []logbuf.Line) int64 {
@@ -214,6 +232,9 @@ func (s *vmmdLogArchiveSink) run() {
 				s.log.Warn("logarchive.spool_write_failed",
 					"instance", item.instance, "seq", line.Seq, "err", err)
 			}
+		}
+		if item.batch != nil {
+			s.notifyRetired(item.instance)
 		}
 	}
 }
@@ -325,7 +346,7 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		log.Warn("vmmd: log archive shipper init failed", "err", err)
 		return nil, nil
 	}
-	sink := newVMMDLogArchiveSink(spool, metrics, log)
+	sink := newVMMDLogArchiveSinkNotifying(spool, metrics, log, shipper.ShipInstance)
 	if reg != nil {
 		reg.MustRegister(sink.dropped)
 	}

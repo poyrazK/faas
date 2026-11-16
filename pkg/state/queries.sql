@@ -7871,6 +7871,40 @@ UPDATE crons SET enabled = true
 WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
 RETURNING id, app_id;
 
+-- name: ReadProjectEnvironmentCloneEventSubscriptions :many
+-- An app's event subscriptions in one environment (ADR-20261104120000
+-- amendment 2026-11-14). A subscription a clone paused counts as enabled:
+-- resuming it would.
+SELECT source, type, filter, (enabled OR clone_paused)::boolean AS enabled, enabled AS stored_enabled,
+       routing_retry_policy, schema_versions, acknowledgment_lease_seconds
+FROM event_subscriptions
+WHERE app_id = sqlc.arg(app_id)::uuid AND deployment_scope = sqlc.arg(scope)::text
+ORDER BY source, type, filter::text;
+
+-- name: CountProjectEnvironmentCloneUncapturedEventSubscriptions :one
+-- Event subscriptions of the source environment on project apps the clone
+-- does not copy.
+SELECT count(*)::bigint FROM event_subscriptions s JOIN apps a ON a.id = s.app_id
+WHERE a.project_id = sqlc.arg(project_id)::uuid AND a.status <> 'deleted'
+  AND s.deployment_scope = sqlc.arg(scope)::text AND NOT (s.app_id = ANY(sqlc.arg(app_ids)::uuid[]));
+
+-- name: InsertProjectEnvironmentCloneEventSubscription :exec
+-- A copied subscription starts disabled; clone_paused marks one the source
+-- ran. The scope guard resolves the stage's environment ID.
+INSERT INTO event_subscriptions(account_id, app_id, source, type, filter, enabled, clone_paused,
+    routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope)
+SELECT a.account_id, a.id, sqlc.arg(source)::text, sqlc.arg(type)::text, sqlc.arg(filter)::jsonb, false,
+    sqlc.arg(clone_paused)::boolean, sqlc.narg(routing_retry_policy)::jsonb, sqlc.arg(schema_versions)::text[],
+    sqlc.arg(acknowledgment_lease_seconds)::integer, sqlc.arg(scope)::text
+FROM apps a WHERE a.id = sqlc.arg(app_id)::uuid;
+
+-- name: ResumeEnvironmentClonePausedEventSubscriptions :many
+-- Enables the event subscriptions a clone paused in one environment; the
+-- enable clears clone_paused.
+UPDATE event_subscriptions SET enabled = true, updated_at = now()
+WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
+RETURNING id, app_id;
+
 -- name: ReadProjectEnvironmentCloneObjectMutationAuthority :one
 SELECT coalesce(attempt_count = 0 AND lease_token IS NULL, false)::boolean AS legacy_allowed,
        coalesce(lease_token = nullif(sqlc.arg(worker_token)::text, '')::uuid
@@ -13871,11 +13905,11 @@ SELECT app_id::text,deployment_id::text,started_at FROM instances WHERE id=sqlc.
 SELECT changed_at FROM app_runtime_config_changes WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model,sealed_key,sealed_capture_id)
 VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(fc_version)::text,sqlc.arg(base_image_version)::text,
  sqlc.arg(mem_bytes)::bigint,sqlc.arg(disk_bytes)::bigint,sqlc.arg(stored_bytes)::bigint,
  sqlc.arg(storage_key)::text,sqlc.arg(stale)::boolean,sqlc.arg(tier)::text,sqlc.narg(application_standard_capture_token)::uuid,sqlc.arg(recovery_generation)::bigint,
- sqlc.arg(cpu_template)::text,sqlc.arg(cpu_model)::text)
+ sqlc.arg(cpu_template)::text,sqlc.arg(cpu_model)::text,sqlc.narg(sealed_key)::bytea,sqlc.narg(sealed_capture_id)::uuid)
 RETURNING *;
 
 -- name: LatestSnapshot :one
@@ -21776,9 +21810,9 @@ SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d
 -- name: CheckedRollbackCurrentMatches :one
 SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(current_id) AND d.app_id=sqlc.arg(app_id)
  AND d.deleted_at IS NULL
- AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.traffic_percent=100
+ AND d.scope=ANY(sqlc.arg(scopes)::text[]) AND d.status='live' AND d.traffic_percent=100
  AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps) AND d.rollout_state NOT IN ('pending','rolling_out'))
- AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope)
+ AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=sqlc.arg(app_id) AND d.scope=ANY(sqlc.arg(scopes)::text[])
  AND d.status='live' AND d.id<>sqlc.arg(current_id) AND d.id<>sqlc.arg(target_id)
  AND (d.traffic_percent>0 OR d.rollout_state IN ('pending','rolling_out')));
 
@@ -21859,7 +21893,7 @@ UPDATE deployments d SET traffic_percent=0,status=CASE WHEN EXISTS(SELECT 1 FROM
  JOIN project_release_sets rs ON rs.id=rm.release_id WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>clock_timestamp()))
  OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
  THEN 'live' ELSE 'superseded' END
- WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.id<>sqlc.arg(target_id);
+ WHERE d.app_id=sqlc.arg(app_id) AND d.scope=ANY(sqlc.arg(scopes)::text[]) AND d.status='live' AND d.id<>sqlc.arg(target_id);
 
 -- name: RetainCheckedRollbackPredecessor :exec
 INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
@@ -21900,7 +21934,7 @@ SELECT pg_notify('deployment_changed',jsonb_build_object('kind','service_rollout
  (SELECT status FROM deployments WHERE id=sqlc.arg(current_id)::uuid))::text);
 
 -- name: LockCheckedRollbackScope :many
-SELECT id FROM deployments WHERE app_id=sqlc.arg(app_id) AND scope=sqlc.arg(scope) ORDER BY id FOR UPDATE;
+SELECT id FROM deployments WHERE app_id=sqlc.arg(app_id) AND scope=ANY(sqlc.arg(scopes)::text[]) ORDER BY id FOR UPDATE;
 
 -- name: LockAlertRollbackFireApp :many
 SELECT a.id FROM apps a JOIN alert_rules r ON r.app_id=a.id AND r.account_id=a.account_id
@@ -30539,6 +30573,25 @@ VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(
 SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id,
  coalesce(workflow_run_id::text, '')::text AS workflow_run_id, coalesce(workflow_op, '')::text AS workflow_op
 FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;
+
+-- The environment a bucket's storage events belong to (ADR-20261104120000):
+-- a branch's copy bucket or a clone's target bucket is its stage's; every
+-- other bucket is production (''). A stage bucket whose environment is gone
+-- reports its clone operation's ID, which no subscription carries, so its
+-- events reach no one instead of production.
+-- name: ObjectBucketEventEnvironment :one
+SELECT COALESCE(
+    (SELECT bb.environment_id::text FROM project_environment_branch_buckets bb
+     WHERE bb.copy_bucket_id = b.id LIMIT 1),
+    (SELECT COALESCE(
+        (SELECT e.id::text FROM project_environment_clone_operations o
+         JOIN project_environments e ON e.project_id = o.project_id AND e.slug = o.target_environment
+         WHERE o.id = b.environment_clone_operation_id),
+        b.environment_clone_operation_id::text)
+     WHERE b.environment_clone_operation_id IS NOT NULL),
+    '')::text AS environment_id
+FROM object_buckets b
+WHERE b.id = sqlc.arg(bucket_id)::uuid;
 
 -- name: LockWorkflowRunForCallSettle :one
 -- ADR-20261113120824 §2: a call settles under the run lock, taken before the

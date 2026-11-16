@@ -467,7 +467,10 @@ type Engine struct {
 	// sealCrashCaptures seals crash captures at the source (ADR-733,
 	// remote storage backends).
 	sealCrashCaptures bool
-	log               *slog.Logger
+	// sealSnapshots seals park and warm snapshots at the source
+	// (ADR-20261110210000 slice 3d-3, FAAS_SCHEDD_SEAL_SNAPSHOTS).
+	sealSnapshots bool
+	log           *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
 	serviceReconcileSubmit                         func(context.Context, string)
 	environmentQualificationServiceURL             func(context.Context, string) (string, error)
@@ -4216,6 +4219,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		snapKey:          snap.StorageKey,
 		snapCaptureToken: snap.ApplicationStandardCaptureToken,
 		snapMemBytes:     snap.MemBytes,
+		snapSealedID:     snap.SealedCaptureID,
+		snapSealedKey:    string(snap.SealedKey),
 		branchCapture:    branchCapture,
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
@@ -4462,6 +4467,9 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			VMStatePath:                     vmstatePath,
 			VMStateStorageKey:               vmstateStorageKey,
 			MemBytes:                        bootInput.snapMemBytes,
+			CaptureID:                       bootInput.snapSealedID,
+			SealedKey:                       bootInput.snapSealedKey,
+			SealedCache:                     bootInput.snapSealedKey != "",
 		}, false)
 		rpcEndedAt = time.Now()
 		endSpan(createSpan)
@@ -4932,6 +4940,10 @@ type bootInput struct {
 	// Empty when haveSnap is false.
 	snapKey          string
 	snapCaptureToken string
+	// snapSealedID and snapSealedKey are the snap row's seal
+	// (ADR-20261110210000 slice 3d-3); empty for a plaintext snapshot.
+	snapSealedID  string
+	snapSealedKey string
 	// snapMemBytes is the snap row's guest memory length; vmmd matches it
 	// against the requested guest memory before restoring a companion.
 	snapMemBytes int64
@@ -9123,6 +9135,12 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			"snapshot_ms", snapMS, "budget_ms", snapBudget.Milliseconds(),
 			"err", err)
 	}
+	// A transient capture error keeps the prime's retry (dispatchPrime);
+	// any other platform capture failure activates without a snapshot.
+	if err != nil && outcome == wire.InitSnapshotOutcomeSnapshotFailed && !retryableSnapshotPrimeError(err) &&
+		!allowReuse && state.HasSnapshotPrimeAttempt(ctx) {
+		return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)
+	}
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
 		// cold-boots (ADR-005). The app still has a cold-bootable rootfs (§6.2-3).
@@ -10363,7 +10381,7 @@ func (e *Engine) DestroyForLivenessFailure(ctx context.Context, instanceID, reas
 	// evict a healthy app. A destroy timeout is excluded too,
 	// because the control plane has no proof that a restart completed.
 	// nil window → no check (test-only opt-out).
-	budgetedRestart := reason != fcvm.LivenessReasonInfrastructure
+	budgetedRestart := fcvm.LivenessReasonBudgeted(reason)
 	if !budgetedRestart {
 		e.log.Info("liveness: restart excluded from eviction budget",
 			"instance", instanceID,
@@ -11142,6 +11160,12 @@ func (e *Engine) snapshotWrittenPayload(ctx context.Context, sourceInstanceID st
 	}
 	if b.CaptureToken != "" {
 		fields["application_standard_capture_token"] = b.CaptureToken
+	}
+	if len(b.SealedKey) > 0 {
+		// ADR-20261110210000 slice 3d-3: the capture key, sealed to the
+		// capture recipient (ciphertext, base64 in JSON).
+		fields["sealed_key"] = b.SealedKey
+		fields["sealed_capture_id"] = b.SealCaptureID
 	}
 	payload, _ := json.Marshal(fields)
 	return payload

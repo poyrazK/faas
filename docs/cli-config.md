@@ -170,10 +170,12 @@ hold. Conditions use registered option names, a `test` and a Boolean `value`:
   `false` and repeated flags retain their normal parsing rules.
 - `effective` on `json` tests the selected output mode, including environment
   or saved preferences, rather than requiring the literal `--json` spelling.
+- `active` on `progress` means a validated progress mode other than `off`.
 
 An output flag requires enabled `--all`. Enabled stdout streaming requires
 both `--all` and effective JSON mode, conditional on output being absent.
-`--stream=false` adds no requirement. File output accepts redundant `--stream`
+`--stream=false` adds no requirement. Active export progress requires both
+output presence and enabled `--all`. File output accepts redundant `--stream`
 with a human receipt. These rules do not replace other validation of paths,
 limits, arguments or flag values. Unregistered commands omit `flag_rules`;
 filtered options and rules requiring unavailable options remain undiscoverable.
@@ -686,6 +688,38 @@ credentials, and Gregale API key strings are redacted, including nested error
 fields. This protects recognized credentials, not arbitrary secrets in user
 messages. Successful command output remains on stdout.
 
+Flag-parser errors also include a CLI-local `cli` object. Its `kind` distinguishes
+`unknown_flag`, `missing_value`, `invalid_value`, `misplaced_global_flag` and
+unclassified `invalid_flag` errors. When available, `flag`, `suggested_flags`,
+`expected_type`, `value_marker`, `allowed_values` and `placement` describe
+registered options, without supplied values or saved defaults. Expected types
+are `boolean`, `integer`, `number`, `duration`, `enum` and `value` (a documented
+format with no narrower parser type). Command-specific limits still apply.
+
+For example, `gregale --json deploy --naem demo` returns exit `1` and one
+`validation_failed` Problem (category `invalid_request`) whose `cli.suggested_flags` is `["--name"]` and whose
+`cli.help_argv` is `["gregale", "--json", "help", "deploy"]`. Follow that argument
+array to discover the flag; the CLI never applies or executes the suggestion.
+Ambiguous typos have no suggestion. `help_argv` uses a validated visible command
+or falls back to root JSON help, without API requests. Prefix-only globals use
+`placement: "before_command"`; a command-local resource `--profile` retains its
+local meaning. Errors outside these flag-parser and JSON-input syntax paths omit `cli`. Human diagnostics,
+Problem codes, exit codes and stdout/stderr routing stay unchanged.
+
+Unknown commands at the root, in the shared nested-command renderer and in
+the invocation family expose `cli.kind: "unknown_command"`. Unknown JSON help
+topics use `unknown_help_topic`. For example,
+`gregale --json invocation lsit` returns `suggested_commands` containing
+`["gregale", "invocation", "list"]`, and `help_argv` containing
+`["gregale", "--json", "help", "invocation", "list"]`.
+Corrections contain only visible canonical command words; they do not preserve
+targets, flags or values from the failed invocation. A command path can still
+require arguments: inspect its help before constructing a new invocation.
+Ambiguous, unrelated and hidden names get no correction. Help falls back to
+the deepest visible parent or root. Advice uses offline capability state and
+never executes a command. Human diagnostics and existing Problem codes remain
+unchanged; API errors omit this metadata.
+
 Successful `--json` output takes one of two shapes, and a command keeps its
 shape across releases:
 
@@ -708,6 +742,22 @@ columns count Unicode characters, and a tab counts as one character. LF and
 CRLF files are supported. Truncated JSON points at the end of the input.
 The same location appears in JSON error details. Diagnostics omit payload
 contents, and valid input keeps its original bytes and numeric precision.
+
+With `--json`, these shared-reader syntax failures additionally expose
+`cli.kind: "invalid_json"`, `cli.flag` and `cli.location`. Location contains
+`source` (`inline`, `file` or `stdin`), one-based `line` and `column`, plus
+`path` for a file. Paths retain their supplied spelling; a file called
+`stdin` or `inline` is explicitly a file. Known credential-bearing paths
+and filenames that are not valid UTF-8 omit `path`; an omitted path is not
+an instruction to open a redacted filename. Filename control characters
+remain escaped in the JSON document.
+
+For `gregale --json invocation run demo --payload @request.json`, a syntax
+failure can include `"cli":{"kind":"invalid_json","flag":"--payload",
+"location":{"source":"file","path":"request.json","line":12,"column":9}}`
+alongside its existing `help_argv`. Wrapped errors retain the location.
+Read/permission failures and API errors do not get a syntax location. No
+payload excerpt is included, and invalid input fails before submission.
 
 Shared command errors use these exit codes. JSON error objects on stderr
 include `category` and `exit_code` alongside the server's unchanged `code`:
@@ -815,6 +865,149 @@ with `--force`. Interactive confirmation displays a preview before asking for
 approval; JSON mutation calls require an explicit confirmation flag. Already
 confirmed scripted calls keep their existing mutation request/output contract.
 
+## Verify a saved export offline
+
+Save a JSON completion receipt alongside a file export, then check it after
+copying or archiving the data:
+
+```sh
+gregale --json build list --all --output builds.jsonl > builds.receipt.json
+gregale export verify builds.jsonl --receipt builds.receipt.json
+gregale --json export verify builds.jsonl --receipt builds.receipt.json
+```
+
+Verification reads local regular files without login or API requests. It checks
+SHA-256, exact bytes and the number of JSON Lines records. The receipt must name
+format `jsonl`, publication success and nonnegative integer counts. Its optional
+path is ignored; FILE always selects the data. Raw `-` is refused for either
+input; `./-` names a regular file instead. Flags can precede or follow FILE.
+
+Every line must contain one UTF-8 JSON value. Blank/multiline/malformed records
+fail with a line number without echoing their contents. Empty files, CRLF and a
+final record without a newline are accepted, with all exact bytes hashed.
+Records are read one at a time and numeric values are not reserialized.
+
+Exit 0 means all three checks matched. A mismatch exits 1 and prints a comparison
+result; JSON mode (also `FAAS_JSON=1`) emits `schema_version: 1`, `verified`,
+`format`, three Boolean `checks` and `observed` SHA-256/byte/record counts. Zero
+and false values are explicit. Invalid input/read errors use normal stderr
+Problems or human diagnostics and print no result. Output failures can leave
+partial stdout and retain normal error/signal behavior.
+
+The receipt is an integrity reference, not a signature or API snapshot. Page
+count cannot be reconstructed from JSON Lines. Results describe bytes read;
+verification does not lock concurrent writers, repair files or replay exports.
+
+## Compare saved exports offline
+
+Compare two JSON Lines inventories by a unique top-level field:
+
+```sh
+gregale export diff before.jsonl after.jsonl
+gregale --json export diff before.jsonl after.jsonl --key id --fail-on-change
+```
+
+The default key is `id`; `--key FIELD` selects a literal top-level field, including
+names containing dots. Keys must be nonempty strings or JSON numbers. Duplicate
+record keys or object fields are refused. Numeric and string keys are distinct.
+Every row must be one UTF-8 JSON object. Empty files, CRLF and a final row without
+a newline are accepted. Invalid rows identify the input and line without echoing
+contents. Unpaired Unicode surrogate escapes are refused.
+
+Row and object-field order do not affect the result; array order does. Numbers
+compare as exact decimal values without floating-point conversion or expanding
+large exponents. `1`, `1.0` and `1e0` are equal, and large integers retain their
+full precision. Each indexed record retains its key and digest; memory grows
+with the unique keys and largest record.
+
+Stdout reports added, removed and changed IDs plus before/after/unchanged counts.
+IDs use deterministic typed lexical order; numeric IDs use exact canonical
+coefficient/exponent notation. Human IDs are JSON-escaped. Effective JSON mode,
+including `FAAS_JSON=1`, emits `schema_version: 1`, `key`, `has_changes`, `summary`,
+`added`, `removed` and `changed`. Zero/false values and empty arrays are explicit.
+Row bodies and input paths are not included in the report.
+
+Use `--explain` to identify fields within records present in both files:
+
+```sh
+gregale --json export diff before.jsonl after.jsonl --explain --fail-on-change
+```
+
+JSON mode adds `explanations`, an array of `{id, changes}` entries in the same
+order as `changed`. Each change has `path` and `kind` (`added`, `removed`, or
+`changed`). Paths use JSON Pointer escaping: `~` becomes `~0`, `/` becomes `~1`,
+and the empty field name is `/`. Changes sort by escaped path. For example:
+
+```json
+{"id":"build-1","changes":[{"path":"/status","kind":"changed"}]}
+```
+
+Object fields are compared recursively. Arrays, scalar/object replacements, and
+added or removed objects are reported once at their containing field; array
+indices and descendants of those objects are omitted. Empty objects and null
+remain distinct from missing fields. Semantic equality, including equivalent
+number spellings and object-field order, still produces no change.
+
+Only changed IDs get explanations; added and removed records stay in the existing
+ID arrays. Enabled explanations are `[]` when no records changed, including empty
+inventories. Human mode appends field paths and kinds with JSON escaping for
+control characters. IDs and field names are intentional result data; field values
+and input paths are omitted. No additional file read or API request is made.
+Explain mode retains object field names and digests across the indexes, so memory
+also grows with indexed object fields. Arrays retain one digest. Without the flag,
+or with `--explain=false`, the existing JSON and human report bytes are unchanged.
+Repeated Boolean flags keep normal last-value-wins behavior.
+
+Use repeatable `--ignore-path POINTER` options to exclude volatile object fields:
+
+```sh
+gregale --json export diff before.jsonl after.jsonl \
+  --ignore-path /updated_at --ignore-path /metrics/read_count \
+  --explain --fail-on-change
+```
+
+Pointers are exact object-member paths, using the same `~0` and `~1` escaping as
+explanations. Dots, percent signs and `*` are literal field-name characters, with
+no wildcard, URI-fragment or JSONPath interpretation. `/` selects an empty field
+name; the empty root pointer, malformed escapes and invalid UTF-8 are refused.
+The effective selected key and all paths beneath it are protected. Policies are
+validated before file reads, including after repeated `--key` options settle.
+
+Fields are excluded from both record digests and explanations. A selected object
+or array field is excluded as a whole, including its presence or absence.
+Missing fields and paths through scalar values have no effect. Surviving object
+containers remain: excluding `/meta/time` does not make `meta: {}` equal to absent
+or null `meta`. Arrays remain atomic; selecting an element beneath an existing
+array is an error before any report. Numeric tokens can name object fields.
+When exclusions overlap, a selected parent field covers its descendants.
+
+Repeated paths are deduplicated and sorted. JSON reports include the explicit
+policy in optional `ignored_paths`; human reports show a JSON-escaped `Ignored
+paths:` line. The policy stays visible even for an empty inventory or a path
+that matches no field. Without exclusions, this field/line is omitted and report
+bytes are unchanged. Added and removed records and their IDs are never hidden;
+`--fail-on-change` uses the remaining comparison after exclusions.
+
+Every input record is fully validated before filtering. Excluded values cannot
+hide malformed JSON/Unicode, duplicate object fields, invalid or duplicate IDs.
+No extra file read, file rewrite, API call or value output is added. Without
+explanations, the extra object tree exists only while processing one record;
+explanations retain the remaining field-name/digest trees in their indexes.
+Exclusion paths and field names are intentional report data. These comparisons
+describe the selected projection; use explicit export verification to check raw
+bytes against an integrity receipt.
+
+Comparisons exit 0 by default. `--fail-on-change` exits 1 after printing a complete
+report when additions, removals or changes exist. `--fail-on-change=false`
+disables that behavior; repeated flags retain normal last-value-wins handling.
+Invalid inputs use normal stderr Problems/human errors with no report. An output
+failure can leave partial stdout and retains normal error/signal behavior.
+
+Both files are read-only regular files; no login or API requests are needed.
+Raw `-` is refused; use `./-` for a file with that name. Files can change during
+reading; a diff is not a point-in-time snapshot or origin attestation. Use
+`export verify` with saved receipts separately when integrity checks are needed.
+
 ## List pagination
 
 Deployment and invocation lists use the same pagination controls:
@@ -874,6 +1067,77 @@ Ctrl-C cancels the active HTTP read and exits 130. Write failures stop further
 page requests; normal OS SIGPIPE behavior applies to a closed stdout pipe.
 Streaming does not resume or replay a failed read automatically. Inventory
 changes during traversal can affect the observed rows.
+
+### Live progress for file exports
+
+File exports accept opt-in `--progress plain` or `--progress ndjson` on both
+build and invocation lists. The default is `off`; explicitly selecting `off`
+keeps the same silent stderr behavior and does not require file output.
+Active progress requires both `--all` and `--output`, and invalid modes or
+combinations fail before login, API access or private-file creation.
+
+```sh
+gregale --json build list --all --output builds.jsonl --progress ndjson
+gregale invocation list --all --output invocations.jsonl --progress plain
+```
+
+Progress goes only to stderr; stdout retains the normal JSON or human receipt.
+Plain mode prints counter lines. NDJSON mode emits `type: "list_export_progress"`
+and `schema_version: 1`, with `event`, `pages_completed`, `items_emitted`,
+`bytes_written`, `elapsed_ms` and `published`. All counters and false values
+are explicit, including zeros. Events contain no rows, cursors, paths, filters,
+profiles, API addresses or credentials. JSON help describes this optional
+stderr stream on the file-output mode.
+
+A `start` event precedes reads. `update` events follow complete validated pages,
+including empty pages, at most once per 250 ms. This is cooperative page progress,
+not a background heartbeat while a read is blocked. The unthrottled terminal
+`published` event follows the atomic link and sets `published: true`. A failure
+before publication emits `stopped` with `published: false`, followed by the
+existing Problem or human error. Partial private bytes can be counted without
+being usable as an export. A receipt-write failure after publication retains
+the completed file and its `published` event.
+
+Use `--json --progress ndjson` when parsing both progress and the final error.
+The existing error code, category, exit and request ID remain authoritative;
+private file bytes do not acquire stdout pagination metadata. Progress is
+best effort: a failed or short diagnostic write disables further progress
+without changing export reads or publication. Native OS signal behavior and
+the cooperative limits of local I/O remain unchanged.
+
+### Overall timeout for list reads
+
+Build and invocation lists accept an optional positive `--timeout DURATION`
+for a single page, a complete `--all` walk, stdout streaming or a file export:
+
+```sh
+gregale --json build list --all --output builds.jsonl --timeout 2m
+gregale --json invocation list --all --stream --timeout 30s
+```
+
+One deadline starts after local validation, output preflight and client setup,
+then covers all list requests and response reads. Human invocation lists use
+the same deadline for their preliminary app-name lookup. Existing eligible
+HTTP retry waits share the remaining budget; retry eligibility/counts are
+unchanged. The list endpoints themselves retain the SDK's closed retry policy.
+`--http-timeout` still bounds individual requests, so the earlier applicable
+request or overall deadline wins. Omitting `--timeout` adds no overall deadline.
+An explicitly supplied zero, negative, empty, invalid or overflowing duration
+fails before authentication, API reads or creating a private output file.
+Repeated timeout flags keep the parser's usual last-value-wins behavior.
+
+Expiry uses the existing temporary-failure exit 3 and stderr Problem contract.
+An actual API failure retains its server code and request ID. Buffered reads
+emit no rows on expiry; stdout streams can retain earlier records and their
+existing `pagination` progress. Signal cancellation in stream/file mode keeps
+exit 130. No automatic resume or new retry policy is added.
+
+File exports check expiry before publication, including after sync/close, and
+clean up their own private file when possible. Once the atomic link publishes
+an artifact, later expiry or receipt failure retains that completed file.
+The timeout cooperatively bounds context-aware reads and publication checks;
+it cannot interrupt a blocked local stdout write or filesystem call. It does
+not promise a strict process wall-clock limit or change the file commit point.
 
 ### Export invocation and build lists to a file
 
@@ -1065,3 +1329,7 @@ a quoted continuation command with the scope, filters, and page size, even
 when the current page is empty. `--all` follows empty pages with continuation
 and stops without partial output on API errors, repeated cursors, or the
 1,000-page guard. Pages reflect live data rather than a fixed snapshot.
+
+Verification file inputs must name regular files directly; final-component
+symlinks, including dangling links, are refused. Symlinked parent directories
+retain the existing customer-file policy.

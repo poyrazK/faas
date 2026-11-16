@@ -1063,7 +1063,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("schedd: load sign pub %q: %w (run `faas sign-keys init` on imaged's host if missing)", signPubPath, err)
 	}
-	log.Info("schedd: build attestation verifier ready", "pub", signPubPath)
+	// ADR-20261109170000: refuse v1 signatures, which can be replayed onto
+	// another app's storage key, once `signd resign` has converted them.
+	requireV2 := os.Getenv("FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2") == "1"
+	verifier.RequireV2(requireV2)
+	log.Info("schedd: build attestation verifier ready", "pub", signPubPath, "require_v2", requireV2)
 	// ADR-038 amendment (2026-10-24): remember verified layers across
 	// restarts, so the first wakes after a restart do not wait for whole
 	// layers to be read and hashed again.
@@ -2801,6 +2805,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261031193635 slice 5a: credential-free captures of branch
 	// parents. Rows exist only once an opted-in branch cold-boots.
 	go sched.NewEnvironmentBranchCaptureWorker(store, engine, 0, log).Run(ctx)
+	if strings.TrimSpace(os.Getenv("FAAS_SCHEDD_SEAL_SNAPSHOTS")) == "1" {
+		// ADR-20261110210000 slice 3d-3: park and warm snapshots are sealed
+		// at the source. Every vmmd must understand SnapshotRef.sealed_cache
+		// first, or a sealed wake on an older node fails instead of cold
+		// booting.
+		engine.WithSealedSnapshots(true)
+		log.Info("schedd: park and warm snapshots sealed at the source")
+	}
 	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
 		// ADR-733: captures pause a serving instance, so one coordinator
 		// runs them one at a time. vmmd seals every capture at the source,

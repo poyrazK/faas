@@ -529,6 +529,7 @@ var EncodePlatformTenantActivityCursor = encodePlatformTenantActivityCursor
 var EncodeSuspectedDependency = encodeSuspectedDependency
 var EnforceCreateTriggerCaps = enforceCreateTriggerCaps
 var EnvironmentAppsWithoutLiveDeployment = environmentAppsWithoutLiveDeployment
+var ProductionAppsWithoutRelease = productionAppsWithoutRelease
 var EvaluateProjectedQuotaGate = evaluateProjectedQuotaGate
 var EvaluateQuotaGate = evaluateQuotaGate
 var ExecutionRequest = executionRequest

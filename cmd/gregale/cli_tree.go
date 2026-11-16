@@ -54,6 +54,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
 	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
+	{"export", "Verify and compare saved JSON Lines exports offline", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
 	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
 	{"ai", "Configure the AI gateway", "Data"},
@@ -229,6 +230,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"pipeline access review", "pipeline access"},
 	{"pipeline evolution review", "pipeline evolve"},
 	{"pipeline work update", "pipeline operations"},
+	{"export", "export"},
 	{"pipeline", "pipeline"},
 	{"data-api", "data-api"},
 	{"ai", "ai"},
@@ -496,6 +498,10 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp server monitor check", "mcp monitor provider-check"},
 	{"mcp server retirements ack", "mcp retirements acknowledge-manual"},
 	{"mcp server tasks deploy", "mcp tasks release"},
+	// #7335's Task release intent (prepare/get/approve/reject/revoke a
+	// pinned review) and guarded execution take their action as an argument.
+	{"mcp server tasks review", "mcp tasks intent"},
+	{"mcp server tasks run", "mcp tasks execution"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},

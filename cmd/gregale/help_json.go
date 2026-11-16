@@ -73,7 +73,7 @@ func runJSONHelp(args []string) int {
 				message += fmt.Sprintf("; did you mean 'gregale help %s'?", suggestion)
 			}
 		}
-		return printErr("Unknown help topic", fmt.Errorf("%s", message))
+		return printErr("Unknown help topic", commandDiagnosticError(message, cliUnknownHelpTopic, words))
 	}
 	document.RequestedCommand = "gregale " + strings.Join(words, " ")
 	document.Aliases = jsonHelpAliases(commands, document.Command)

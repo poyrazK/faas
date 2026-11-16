@@ -1,6 +1,9 @@
 import { createOpenAPIConfig, type OpenAPIConfig } from './generated/core/OpenAPI.js';
 import { createHttpTransport, type FaaSClientOptions } from './http-transport.js';
 import { bindProjectWorkflows, type ProjectWorkflows } from './project-workflows.js';
+import { bindProjectVerification, type ProjectVerification } from './project-verification.js';
+import { bindTypedJobs, type TypedJobs } from './typed-jobs.js';
+import { bindFiles, type FileHelpers } from './file-client.js';
 import type { IdempotencyKey } from './idempotency.js';
 import type { CancelablePromise } from './generated/core/CancelablePromise.js';
 import type { RequestOptions } from './request-options.js';
@@ -46,7 +49,7 @@ export function bindService<T extends object>(service: T, getConfig: () => Clien
 
 export type BoundClient<Services> = {
   readonly [K in keyof Services as K extends `${infer Name}Service` ? Uncapitalize<Name> : never]: Methods<Services[K]> &
-    (K extends 'DeploymentsService' ? DeploymentPagination & DeploymentWaiters & SourceDeployments : K extends 'UploadsService' ? SourceUploads : K extends 'ProjectsService' ? ProjectWorkflows : object);
+    (K extends 'DeploymentsService' ? DeploymentPagination & DeploymentWaiters & SourceDeployments : K extends 'UploadsService' ? SourceUploads : K extends 'ProjectsService' ? ProjectWorkflows & ProjectVerification : K extends 'JobsService' ? TypedJobs : K extends 'StorageService' ? FileHelpers : object);
 } & {
   /** Applies to future requests; in-flight requests keep their original token. */
   setToken(token: string | undefined): void;
@@ -118,8 +121,16 @@ export function bindClient<Services extends Record<string, object>, Helpers exte
       const additions = bindSourceUploads(() => config);
       for (const key of Object.keys(additions)) if (key in methods) throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
       client[namespace] = Object.freeze({ ...methods, ...additions });
+    } else if (name === 'StorageService') {
+      const additions = bindFiles(() => config);
+      for (const key of Object.keys(additions)) if (key in methods) throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
+      client[namespace] = Object.freeze({ ...methods, ...additions });
+    } else if (name === 'JobsService') {
+      const additions=bindTypedJobs(()=>config);
+      for(const key of Object.keys(additions))if(key in methods)throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
+      client[namespace]=Object.freeze({...methods,...additions});
     } else if (name === 'ProjectsService') {
-      const additions=bindProjectWorkflows(services.DeploymentsService as Parameters<typeof bindProjectWorkflows>[0],()=>config);
+      const additions={...bindProjectWorkflows(services.DeploymentsService as Parameters<typeof bindProjectWorkflows>[0],()=>config),...bindProjectVerification(()=>config)};
       for(const key of Object.keys(additions))if(key in methods)throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
       client[namespace]=Object.freeze({...methods,...additions});
     } else client[namespace] = methods;

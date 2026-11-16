@@ -1,4 +1,15 @@
 - [ADR-20261115163113: Flag experiments: conversion events and sequential results](20261115163113-flag-experiments.md) — accepted; experiments on a variant flag's weighted rule with customer units, SDK `track()` conversion events (`track-v1`) folded into daily per-customer rows with plan telemetry retention, per-experiment unit rows for the experiment's lifetime, monthly per-plan event quota (dropped, never billed), mSPRT always-valid results with a sample ratio mismatch check (amends ADR-377, ADR-20261114150000)
+- [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
+- [ADR-20261115210000: Typed file-triggered jobs](20261115210000-sdk-file-triggered-jobs.md) — accepted; SDK preview
+- [ADR-20261115223000: Typed live views of Jobs and file pipelines](20261115223000-sdk-live-job-views.md) — accepted; SDK preview
+- [ADR-20261116010000: Typed durable job pipelines](20261116010000-sdk-durable-job-pipelines.md) — accepted; SDK preview
+- [ADR-20261115162700: Typed pipeline approval and input gates](20261115162700-sdk-pipeline-gates.md) — accepted; SDK preview
+- [ADR-20261115172526: Typed child pipeline composition](20261115172526-sdk-pipeline-composition.md) — accepted; SDK preview
+
+- [ADR-20261115170000: Typed background jobs in application SDKs](20261115170000-sdk-typed-background-jobs.md) — accepted; portable schemas and generated types, local/native runners, resumable handles and verified per-input results
+
+- [ADR-20261115192838: SDK project verification with explicit deployment evidence](20261115192838-sdk-project-verification.md) — accepted; typed Node/Python verification, identity-aware smoke checks, bounded read-only diagnostics and portable resume targets
+
 - [ADR-20261114150000: Flags usability: short commands, attribute targeting, gateway kill switch, lifecycle](20261114150000-flags-usability.md) — accepted; read-modify-write CLI verbs (`flags create/set/on/off/percent/rule/rm/kill/stale`), rule `attributes` on gateway-verified `gregale.country`/`gregale.ua_family` and app-supplied `app.*` (SDK capability `attribute-targeting-v1`), `killed` flags served as the app fallback and stamped by the gateway in `X-Faas-Flag-Kills`, flag `owner`/`expires_at` with a lifecycle report and hourly `flags.lifecycle_attention` audit events (amends ADR-377)
 - [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)
 
@@ -22,11 +33,23 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115173752: Explicit ignored paths in offline export diffs](20261115173752-cli-export-diff-ignore-paths.md) — accepted; reviewable field exclusions preserve record identity and strict input validation.
+- [ADR-20261115170835: Field explanations for offline export diffs](20261115170835-cli-export-diff-explanations.md) — accepted; opt-in JSON Pointer paths and change kinds without field values.
+- [ADR-20261115163305: Offline comparison of CLI export inventories](20261115163305-cli-offline-export-diff.md) — accepted; deterministic keyed JSON comparisons, exact decimal values and opt-in CI failures without API reads.
+
+- [ADR-20261115213230: Snapshot drives stored as deltas](20261115213230-snapshot-drive-deltas.md) — accepted; distinct identifier preserving the snapshot-drive decision and its scoped citations.
+
+- [ADR-20261115145412: Best-effort progress for CLI list exports](20261115145412-cli-list-export-progress.md) — accepted; throttled private-file counters, explicit publication/stopping events and preserved receipts/errors.
+
+- [ADR-20261115141842: Overall read budgets for CLI lists](20261115141842-cli-overall-list-timeout.md) — accepted; optional shared deadlines, preserved retries/progress and atomic publication boundaries.
+
 - [ADR-20261115135218: Discoverable CLI list flag dependencies](20261115135218-cli-list-flag-dependencies.md) — accepted; shared dependency registry, offline help and typed local advice with preserved validation contracts.
 
 - [ADR-20261115175928: Customer attention contact and outcomes](20261115175928-customer-attention-contact-and-outcomes.md) — accepted; distinct identifier for customer attention, preserving historical migration citations.
 - [ADR-20261115175927: Operator console signal actions](20261115175927-operator-console-signal-actions.md) — accepted; JSON routes for signal actions, customer health and the support inbox.
 - [ADR-20261115133053: Offline output contracts in CLI JSON help](20261115133053-cli-json-help-output-contracts.md) — accepted; explicit list formats, selectors, empty behavior, publication and error contracts without API discovery.
+
+- [ADR-20261115153114: Offline verification of CLI list exports](20261115153114-cli-offline-export-verification.md) — accepted; exact bytes, SHA-256 and record counts checked against saved receipts without API access.
 
 - [ADR-20261115110124: gRPC steps in `gregale test` scenarios](20261115110124-test-grpc-steps.md) — accepted; a request or check may carry a `grpc:` call (definitions from `.proto` files compiled with protocompile and/or server reflection; unary and all streaming shapes; status, protobuf-JSON pointers, message count, header and trailer metadata); `local` dials plaintext HTTP/2, `real-vm` the deployed app over TLS; load mode stays HTTP-only
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)
@@ -40,6 +63,9 @@
 - [ADR-20261114141449: Offline OpenAPI tool generation](20261114141449-openapi-tool-generation.md) — accepted; explicit public API operation selection, offline Node adapter source, completed behavioral assertions before existing publication and exact grants
 - [ADR-20261114132157: Structured CLI help](20261114132157-cli-json-help.md) — accepted; versioned JSON discovery through existing help, canonical paths, local argument metadata and offline capability visibility.
 - [ADR-20261115071638: Global option discovery in CLI JSON help](20261115071638-cli-json-global-flags.md) — accepted; inherited option spellings, values and placement from the same registry as human root help.
+- [ADR-20261115082128: Structured corrections for CLI flag errors](20261115082128-cli-structured-flag-corrections.md)
+- [ADR-20261115085307: Structured JSON input locations in CLI errors](20261115085307-cli-json-input-locations.md) — accepted; typed input origins and positions, with safe paths and unchanged human diagnostics.
+- [ADR-20261115100510: Structured corrections for unknown CLI commands](20261115100510-cli-structured-command-corrections.md)
 - [ADR-20261114143410: Structured recovery for CLI Job waits](20261114143410-cli-job-wait-recovery.md) — accepted; Problem diagnostics on stderr, compatible stdout receipts and exact-run, profile-preserving recovery.
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261114181406: Resumable SDK source uploads and acceptance recovery](20261114181406-sdk-resumable-source-uploads.md) — accepted; bounded Node/Python archive streaming, durable portable checkpoints, offset reconciliation, and receipt-only recovery after uncertain deployment submission.
@@ -2399,4 +2425,17 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114232023: Reviewed project workflows in Node and Python](20261114232023-sdk-reviewed-project-workflows.md) — accepted; server previews, exact-source cached apply, durable submission receipts and per-service outcomes compose complete local projects.
 
 - [ADR-20261115072125: Read-only agent review of MCP Task releases](20261115072125-agent-task-release-review.md) — accepted; offline local stack review reuses native release parsing and fingerprints, reports credential-free roles and limits, and preserves the separate owner-operated release flow.
+- [ADR-20261115082509: Durable Task stack release intents and owner review](20261115082509-task-tool-release-intents.md) — accepted; immutable native stack reviews, separate owner decisions, fixed expiry and source/app drift invalidation grant no execution authority.
+- [ADR-20261115101539: Owner-bound local Task tool execution](20261115101539-owner-bound-task-tool-execution.md) — accepted; separate binding-bound owner authorization, one-time native claims, guarded Node execution and inspection after reconnect preserve native release and recovery fences.
+- [ADR-20261115105244: Durable Task execution evidence and recovery plans](20261115105244-task-execution-evidence-recovery-plans.md) — accepted; monotonic native submission/checkpoint receipts and GET-only recovery observations produce expiring owner-review plans without replay or execution authority.
+- [ADR-20261115123000: Task recovery handover and owner qualification](20261115123000-task-recovery-handover-owner-qualification.md) — accepted; native mutation barrier, normal executor exit receipt, immutable restore qualification and separate expiring owner verdict; recovery apply remains a later milestone.
+- [ADR-20261115132027: One-time owner-approved Task web restoration](20261115132027-one-time-owner-approved-task-web-restore.md) — accepted; local Task compatibility lock, separate runtime snapshots, atomic traffic/approval consumption and retained results prevent duplicate restoration.
+
+- [ADR-20261115145619: Owner-approved candidate Task quarantine](20261115145619-owner-approved-candidate-task-quarantine.md) — separate expiring authority, one admitted fence attempt and read-only reconciliation.
+
+- [ADR-20261115160000: Owner-approved Task worker retirement](20261115160000-owner-approved-task-worker-retirement.md) — separate expiring approval, atomic conditional parking and read-only shutdown reconciliation.
+
+- [ADR-20261115171000: Lifecycle-aware Task recovery guidance](20261115171000-lifecycle-aware-task-recovery-guidance.md) — validated recovery history, next steps and permanent-fence/reapplication blockers.
+- [ADR-20261115183908: Owner-approved Task worker retirement](20261115183908-owner-approved-task-worker-retirement.md) — separate expiring approval, atomic conditional parking and read-only shutdown reconciliation.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)
+- [ADR-20261115194000: Platform alerts for outages and failing crons](20261115194000-platform-alerts.md) — accepted; schedd pauses an HTTP cron after 10 failed runs over 24 h and meterd emails accounts about it and about apps at ≥90% 5xx, unless they have their own error-rate rule

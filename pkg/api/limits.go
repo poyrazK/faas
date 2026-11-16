@@ -39,6 +39,16 @@ const (
 // credentials. The deadline fences abandoned publishers; it never grants a retry.
 const (
 	ToolPublicationIntentMaxBytes              = 64 << 10
+	TaskToolReleaseIntentMaxBytes              = 64 << 10
+	TaskToolReleaseIntentsPerAccount           = 256
+	TaskToolReleaseAppsMax                     = 35
+	TaskToolReleaseApprovalTTL                 = 15 * time.Minute
+	TaskToolReleaseReceiptWorkerIDsMax         = 1024
+	TaskToolReleaseReceiptRevisionMax          = 9_007_199_254_740_991
+	TaskToolRecoveryObservationTTL             = time.Minute
+	TaskToolRecoveryApprovalTTL                = time.Minute
+	TaskToolExecutionBarrierPollInterval       = 25 * time.Millisecond
+	TaskToolRecoveryHistoryPagesMax            = 10
 	ToolPublicationOutcomeMaxBytes             = 512 << 10
 	ToolPublicationCatalogMaxBytes             = 256 << 10
 	ToolPublicationMaxTools                    = 64
@@ -212,6 +222,12 @@ const (
 	// signal.
 	AttentionJobFailures = 3
 	AttentionJobWindow   = 7 * 24 * time.Hour
+	// The last AttentionCronFailures finished runs of one enabled HTTP cron,
+	// all failed or timed out, the newest within AttentionCronWindow, open a
+	// crons_failing signal (prod 2026-11-15: a cron 404'd every 15 minutes
+	// for days and nothing told the customer).
+	AttentionCronFailures = 5
+	AttentionCronWindow   = 24 * time.Hour
 	// A payment failure within AttentionPaymentWindow with no recovery
 	// since opens a payment_failing signal.
 	AttentionPaymentWindow = 14 * 24 * time.Hour
@@ -2115,6 +2131,38 @@ const (
 const (
 	CronCatchUpRecordedMax = 20
 	CronCatchUpScanMax     = 1 << 21
+)
+
+// Platform alerts (ADR-20261115194000). An HTTP cron whose newest
+// CronFailurePauseRuns finished runs all failed, the oldest of them at least
+// CronFailurePauseSpan ago, is paused (suspended_reason 'failing') and its
+// account emailed: a cron failing every 15 minutes ran 96 billed failures a
+// day for weeks unnoticed. An app whose error rate (5xx over 2xx+5xx) stayed
+// at or above AppOutageErrorRatePct over AppOutageWindow, on at least
+// AppOutageMinRequests requests, is emailed about unless it has its own
+// enabled error-rate alert rule. One email per app or cron per
+// PlatformAlertCooldown; sent notices are kept PlatformAlertRetention.
+const (
+	CronFailurePauseRuns   = 10
+	CronFailurePauseSpan   = 24 * time.Hour
+	AppOutageErrorRatePct  = 90.0
+	AppOutageWindow        = "15m"
+	AppOutageMinRequests   = 20
+	PlatformAlertCooldown  = 24 * time.Hour
+	PlatformAlertRetention = 30 * 24 * time.Hour
+)
+
+// Default alerts for SLOs and synthetic checks (ADR-20261115194000,
+// amendment 2026-11-16). A check or SLO a customer created alerted nobody
+// unless they also wrote an alert rule with a channel: a store's checkout
+// check failed for hours and its SLO burned at 126x with no one told. With
+// no enabled alert rule naming it, the account is emailed when a check fails
+// its last SyntheticCheckFailingRuns runs, or when an SLO's multi-window
+// burn rate reaches PlatformAlertSLOBurnRate (the fast-burn page threshold,
+// 2% of a 30-day budget in an hour).
+const (
+	SyntheticCheckFailingRuns = 3
+	PlatformAlertSLOBurnRate  = 14.4
 )
 
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
@@ -10528,8 +10576,13 @@ const (
 	// its GOMEMLIMIT, a soft per-process bound. A reload runs two apid
 	// generations in one cgroup (ADR-1736). Production over 14 days
 	// (2026-10-18): steady state 51-94 MB per process, spikes to 257 MB, and
-	// two OOM kills at the previous 256 MB cap (ADR 20261018132058).
-	APIDMemoryMaxMB                 = 512
+	// two OOM kills at the previous 256 MB cap (ADR 20261018132058). At 512 MB
+	// the hand-off guard (45 %, 230 MB) sat inside apid's working range: the
+	// rc.344 deploy found the cgroup at 244 MB, refused the hand-off and fell
+	// back to a restart, an API gap of about 9 s. 1024 MB puts the guard at
+	// 460 MB; GOMEMLIMIT stays per process so steady state does not grow
+	// (ADR-20261116090000).
+	APIDMemoryMaxMB                 = 1024
 	APIDGoMemLimitMB                = 256
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000

@@ -37,9 +37,15 @@ env:
 jobs:
   acceptance:
     name: builder native (Firecracker amd64)
+    # head_branch alone is not provenance: a fork pull request from a branch
+    # named "main" reports head_branch == 'main' too, and this job checks out
+    # head_sha with GCP credentials and root on a compute node. Only a push to
+    # this repository's main (a protected-branch commit) may trigger it.
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
        github.event.workflow_run.head_branch == 'main') ||
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
@@ -100,8 +106,8 @@ jobs:
               fi
             done < <(
               gh api \
-                "repos/${GITHUB_REPOSITORY}/actions/workflows/images.yml/runs?branch=main&status=success&per_page=100" \
-                --jq '.workflow_runs[] | [.id, .head_sha] | @tsv'
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/images.yml/runs?branch=main&event=push&status=success&per_page=100" \
+                --jq ".workflow_runs[] | select(.event == \"push\" and .head_repository.full_name == \"${GITHUB_REPOSITORY}\") | [.id, .head_sha] | @tsv"
             )
             [[ -n "$source_sha" ]] || {
               echo "::error::no successful builder-base publish was found in the last 100 successful images runs" >&2
@@ -112,6 +118,17 @@ jobs:
             echo "::error::resolved source SHA is invalid" >&2
             exit 1
           }
+          # The checked-out revision runs as root on a compute node with this
+          # job's GCP identity: it must already be on main, never a fork's
+          # commit that merely came from a branch called main.
+          main_relation="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${source_sha}...main" --jq '.status')"
+          case "$main_relation" in
+            ahead|identical) ;;
+            *)
+              echo "::error::source SHA ${source_sha} is not on main (compare: ${main_relation:-missing})" >&2
+              exit 1
+              ;;
+          esac
           echo "run=true" >> "$GITHUB_OUTPUT"
           echo "sha=${source_sha}" >> "$GITHUB_OUTPUT"
 

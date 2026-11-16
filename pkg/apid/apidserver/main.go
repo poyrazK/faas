@@ -1948,6 +1948,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if verifyErr != nil {
 			return fmt.Errorf("apid: load rollback artifact verifier: %w", verifyErr)
 		}
+		rollbackVerifier.RequireV2(deps.getenv("FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2") == "1")
 		srv.WithRollbackArtifactVerifier(rollbackVerifier)
 		log.Info("apid: rollback artifact verifier ready", "pub", signPubPath)
 	}

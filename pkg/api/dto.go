@@ -4940,6 +4940,11 @@ type ResumeEnvironmentAutomationResponse struct {
 	Environment  string   `json:"environment"`
 	CronsResumed int      `json:"crons_resumed"`
 	CronIDs      []string `json:"cron_ids"`
+	// EventSubscriptionsResumed and EventSubscriptionIDs are the event
+	// subscriptions the call enabled (ADR-20261104120000 amendment
+	// 2026-11-14).
+	EventSubscriptionsResumed int      `json:"event_subscriptions_resumed"`
+	EventSubscriptionIDs      []string `json:"event_subscription_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -7832,6 +7837,13 @@ type PlanWorkload struct {
 	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
+	// AppProtocol, Streaming and WakeAhead are the Compose
+	// x-gregale-app-protocol, x-gregale-streaming and x-gregale-wake-ahead
+	// settings the deploy applies; empty or nil when the file sets none, so
+	// a dry run shows them before apply.
+	AppProtocol string `json:"app_protocol,omitempty"`
+	Streaming   *bool  `json:"streaming,omitempty"`
+	WakeAhead   *bool  `json:"wake_ahead,omitempty"`
 	// Visibility is "internal" when the app is or will be hidden from the
 	// public edge: an existing internal app, or a new Compose service without
 	// `ports:` (ADR-20261022131852). Omitted means public.

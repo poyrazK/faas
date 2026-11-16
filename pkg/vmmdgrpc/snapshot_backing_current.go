@@ -47,6 +47,7 @@ func (s *Server) SnapshotBackingCurrent(ctx context.Context, req *vmmdpb.Snapsho
 		DeploymentID: ref.GetDeploymentId(), VMStatePath: ref.GetVmstatePath(),
 		FCVersion: ref.GetFcVersion(), StorageKey: ref.GetStorageKey(),
 		VMStateStorageKey: ref.GetVmstateStorageKey(), MemBytes: ref.GetMemBytes(),
+		CaptureID: ref.GetCaptureId(), SealedKey: ref.GetSealedKey(), SealedCache: ref.GetSealedCache(),
 	}
 	verdict, err := checker.CheckSnapshotBackingCurrent(ctx, snap, req.GetBaseKey())
 	// A stale or unknown verdict is an answer, not a failed call.
