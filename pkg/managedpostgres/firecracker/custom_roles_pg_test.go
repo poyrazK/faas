@@ -53,7 +53,7 @@ func TestCustomRoleBatchesRunWindmillStyleRoles(t *testing.T) {
 	}
 	roles := []string{admin, user}
 	t.Cleanup(func() {
-		ctx := context.Background()
+		ctx := context.WithoutCancel(ctx)
 		_, _ = super.Exec(ctx, "DROP DATABASE IF EXISTS "+dbName+" WITH (FORCE)")
 		_, _ = super.Exec(ctx, "GRANT CONNECT ON DATABASE postgres, template1 TO PUBLIC")
 		for _, role := range roles {
@@ -80,7 +80,7 @@ func TestCustomRoleBatchesRunWindmillStyleRoles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s login: %v", m.Username, err)
 		}
-		t.Cleanup(func() { _ = conn.Close(context.Background()) })
+		t.Cleanup(func() { _ = conn.Close(context.WithoutCancel(ctx)) })
 		return conn
 	}
 	migMaterial, err := issue("mig", managedpostgres.CredentialMigration)
