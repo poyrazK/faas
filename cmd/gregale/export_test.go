@@ -2956,6 +2956,3 @@ func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretCl
 	report, err := s.syncPairs(ctx, client, app, path, list, fp, "developer config")
 	return report.Written, err
 }
-
-// DebugRequestsImpliesList exposes the `debug requests <slug>` default.
-func DebugRequestsImpliesList(args []string) bool { return debugRequestsImpliesList(args) }

@@ -21,7 +21,7 @@ func TestUnknownSubcommandListsTheVerbsAndTheVerbFirstForm(t *testing.T) {
 		want []string
 	}{
 		{"projects environments", main.CmdProjectsEnvironments, "h14p", []string{"Subcommands: list, create,", "gregale environment list h14p"}},
-		// `debug requests h14-py` now lists (TestDebugRequestsBareSlugLists).
+		{"debug requests", main.CmdDebugRequests, "h14-py", []string{"Subcommands: list, export,", "gregale debug requests list h14-py"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stderr, restore := main.CaptureStderr(t)
