@@ -58,9 +58,11 @@ func TestDevLoop(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(src, "version.txt"), []byte("dev-v2\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// Without live patches or a development command an edit is a full
-		// rebuild (349 s on prod, 2026-11-16); the metric tracks the 15 s
-		// target, this bound only that the edit lands at all.
+		// A live patch serves the edit in seconds. When the patch cannot
+		// hold (no patch eligibility, or the patched process failed to
+		// restart: 349 s on prod 2026-11-16, until the deferred build), the
+		// edit lands with the full build. The metric tracks the 15 s target;
+		// this bound checks only that the edit lands at all.
 		eventually(t, "the edit serving without a redeploy", 10*time.Minute, 2*time.Second, func() (bool, string) {
 			r := tg.devGet(devURL, proxy, "/")
 			return r.status == http.StatusOK && strings.Contains(string(r.body), "dev-v2"), r.String()
