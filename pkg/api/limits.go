@@ -1022,6 +1022,11 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
+// builderd remembers the digest of, so a cache hit skips re-reading the
+// artifact to check it. A node's cache holds a few hundred entries.
+const BuilderdVerifiedCacheArtifacts = 1024
+
 // ImagedLayerReuseMaxRecords bounds the records in imaged's node-local app
 // layer reuse index, per kind (layer keys, artifact digests); the oldest go
 // first (ADR-20261112170911). A record is a few hundred bytes.
