@@ -149,6 +149,8 @@ RULES = [
     (r"^objectgc$", "INFRA"),
     # ADR-20261109170000: signd's record of the layers it signed.
     (r"^artifact-signatures$", "INFRA"),
+    # ADR-20261109170000: the layer verifiers' v2-only switch.
+    (r"^artifact-signature-require-v2$", "INFRA"),
     # ADR-20261109170000: signd's listener and imaged's signd target.
     (r"^signd-", "INFRA"),
     # ADR-20261110210000 §4: which logins may set an app's owner node, its
