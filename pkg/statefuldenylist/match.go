@@ -70,7 +70,10 @@ func pathSegmentsAfterRegistry(ref string) []string {
 	// Strip trailing tag / digest.
 	if at := strings.Index(ref, "@"); at >= 0 {
 		ref = ref[:at]
-	} else if colon := strings.LastIndex(ref, ":"); colon > strings.LastIndex(ref, "/") {
+	}
+	// A digest may follow a tag (`redis:7@sha256:…`), so strip the tag too;
+	// pkg/imaged strips both the same way.
+	if colon := strings.LastIndex(ref, ":"); colon > strings.LastIndex(ref, "/") {
 		// The last colon sits AFTER the last slash (a port-style or
 		// tag-style suffix), not a registry port that we already
 		// stripped. Trim it.

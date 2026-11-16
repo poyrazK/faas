@@ -847,6 +847,22 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  "risk",
+				Short: "Show an account's abuse risk: hold, sign-up record, links to held accounts, strikes, abuse events",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "include-pii", Short: "include email, sign-up address and user agent (audited)"},
+				},
+			},
+			{
+				Name:  "held-links",
+				Short: "List new accounts linked to abuse-held accounts, for review",
+				Flags: []cliFlag{
+					{Name: "since", Short: "window, a duration up to 720h (default 24h)"},
+					{Name: "limit", Short: "maximum rows (1..1000)"},
+				},
+			},
+			{
 				Name:  "complimentary",
 				Short: "Give an account a paid plan without a subscription, or end it",
 				Flags: []cliFlag{

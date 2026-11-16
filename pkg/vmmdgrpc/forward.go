@@ -629,25 +629,18 @@ const vmmdRawBridgePath = "/opt/faas/current/bin/vmmd-raw-bridge"
 // $PATH lookup, absolute path only, the env-var override (if used in
 // tests) must also be absolute.
 //
-// The default FAAS_STREAM_BRIDGE_VERSION is "v2" (PR #750, issue #686)
-// — the H2C inner-leg bridge wired through `cmd/vmmd-stream-bridge`.
-// The v1 codepath (the shell-bridge script that hard-codes HTTP/1.1)
-// remains available as the live rollback via
-// FAAS_STREAM_BRIDGE_VERSION=v1 on vmmd. The flip was gated by
-// `make metal-lima` + TestE2E_Streaming_Metal_H2CInnerLeg.
+// The bridge is always "v2" (PR #750, issue #686) — the H2C inner-leg
+// bridge wired through `cmd/vmmd-stream-bridge`. The v1 shell bridge is no
+// longer selectable (bug hunt 2026-10-28 B23; see currentStreamBridgeVersion);
+// roll back by installing the previous bridge binary
+// (docs/ops/h2c-rollback.md).
 const vmmdStreamBridgePath = "/opt/faas/current/bin/vmmd-stream-bridge"
 
-// streamBridgeVersion is the active codepath selector. Set to "v2"
-// (or override via FAAS_STREAM_BRIDGE_VERSION env var in tests) to
-// route the inner leg through the H2C bridge. Default "v2" (issue #686)
-// commits to H2C on the inner leg end-to-end. Override via
-// FAAS_STREAM_BRIDGE_VERSION=v1 for the live rollback to the
-// shell-bridge path while v2 is being validated on the wire.
-//
-// The lookup is per-request, NOT captured at package init: ADR-028's
-// amendment promises a no-deploy rollback (set env var → next RPC
-// flips to v1). Package-init capture would silently ignore a
-// post-start env mutation and break that promise; see
+// streamBridgeVersion is the active codepath selector. Default "v2"
+// (issue #686) commits to H2C on the inner leg end-to-end.
+// FAAS_STREAM_BRIDGE_VERSION=v1 is ignored since bug hunt B23: the shell
+// bridge could smuggle a second request past the edge rules. The lookup
+// stays per-request so a future version can still be flipped live; see
 // currentStreamBridgeVersion below.
 //
 // The package-level var is kept for two reasons: (1) unit tests
@@ -1886,6 +1879,25 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 			"instance", reqInit.GetInstance(), "limit", api.TrafficBridgeCompletionMaxEntries)
 		return instanceBusy(api.TrafficBridgeCompletionMaxEntries, api.TrafficBridgeCompletionMaxEntries+1)
 	}
+	if persistent {
+		guestErr := slices.Contains(httpResp.Header.Values(bridgecompletion.GuestErrorHeader), exchange)
+		if v := s.streamBridges.noteGuestTransport(bridgeLease, guestErr); guestErr {
+			// The bridge, not the guest, answered this 502: its connection to
+			// the guest failed. Nothing else records it.
+			s.log.Warn("vmmd: stream bridge could not reach the guest",
+				"instance", reqInit.GetInstance(), "guest_port", dialPort,
+				"protocol", requestBridgeProtocol, "streak", v.streak)
+			if v.fenceBridge {
+				s.log.Warn("vmmd: replacing stream bridge after repeated guest connection failures",
+					"instance", reqInit.GetInstance(), "failures", v.streak)
+				// After the 502 is relayed; this exchange then needs no completion wait.
+				defer s.streamBridges.invalidate(context.WithoutCancel(ctx), bridgeLease)
+			}
+			if v.reportInstance {
+				s.reportTrafficUnreachable(ctx, reqInit.GetInstance())
+			}
+		}
+	}
 
 	// 8. Mirror guest response headers into the gRPC init frame.
 	initHeaders := make([]*vmmdpb.Header, 0, len(httpResp.Header))
@@ -1895,7 +1907,8 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		// can compute match/mismatch for vmmd_bridge_framing_total.
 		// Stripped from the gRPC init frame — this is a vmmd↔bridge
 		// signal, not a guest response header.
-		if strings.EqualFold(k, "X-Faas-Bridge-Framing") || strings.EqualFold(k, bridgecompletion.RetainedHeader) || strings.EqualFold(k, bridgecompletion.RefusedHeader) {
+		if strings.EqualFold(k, "X-Faas-Bridge-Framing") || strings.EqualFold(k, bridgecompletion.RetainedHeader) || strings.EqualFold(k, bridgecompletion.RefusedHeader) ||
+			strings.EqualFold(k, bridgecompletion.GuestErrorHeader) {
 			continue
 		}
 		if strings.EqualFold(k, "Transfer-Encoding") {

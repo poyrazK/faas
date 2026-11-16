@@ -735,6 +735,12 @@ type Instance struct {
 	// first window has been observed.
 	EgressNewDstPerMin int64
 	EgressFanoutValid  bool
+	// InternalTxBytes is the cumulative bytes this instance sent to
+	// Gregale-internal destinations (billing review R8-2), accumulated from
+	// the per-namespace faas_internal_tx counter deltas so a counter reset
+	// does not lower it. InternalTxValid is false until the first poll.
+	InternalTxBytes uint64
+	InternalTxValid bool
 	// EgressFloodDropsPerMin is the new flows dropped in the last minute for
 	// exceeding the per-destination rate (ADR-361 decision 9). It is
 	// recorded in the same poll tick as the fan-out sample.
@@ -1230,6 +1236,10 @@ type Manager struct {
 	// captureRecipient, when set, is what crash-capture keys are sealed to
 	// in place of the first host identity's recipient (slice 3e).
 	captureRecipient *age.X25519Recipient
+	// captureKeys caches sealed snapshot keys opened through secretd
+	// (ADR-20261110210000 slice 3d-3) so a sealed wake pays the round trip
+	// once per capture, not on every restore.
+	captureKeys captureKeyCache
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -2977,6 +2987,36 @@ func (m *Manager) RecordEgressFanout(instance string, perMinute int64) {
 	if inst, ok := m.live[instance]; ok {
 		inst.EgressNewDstPerMin, inst.EgressFanoutValid = perMinute, true
 	}
+}
+
+// RecordInternalEgress adds delta bytes the instance sent to internal
+// destinations (billing review R8-2) and marks the total observed. Unknown
+// instances are ignored: the poll raced a teardown.
+func (m *Manager) RecordInternalEgress(instance string, delta uint64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.live[instance]; ok {
+		inst.InternalTxBytes += delta
+		inst.InternalTxValid = true
+	}
+}
+
+// InternalEgressBytes returns the instance's cumulative internal egress
+// bytes; ok is false until the first per-namespace poll observed it.
+func (m *Manager) InternalEgressBytes(instance string) (uint64, bool) {
+	if m == nil {
+		return 0, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || !inst.InternalTxValid {
+		return 0, false
+	}
+	return inst.InternalTxBytes, true
 }
 
 // EgressFanout returns the instance's latest fan-out sample and its plan's
@@ -6030,11 +6070,22 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		return WakeColdBoot, scanErr
 	}
 	// ADR-733: a sealed crash capture restores or fails. Cold booting would
-	// hand the caller a fresh instance that is not the capture.
-	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0
-	if sealed {
+	// hand the caller a fresh instance that is not the capture. A sealed park
+	// or warm snapshot (SealedCache, ADR-20261110210000 slice 3d-3) is cache
+	// like any snapshot: one that cannot be opened cold boots (ADR-005).
+	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0 && !req.Snapshot.SealedCache
+	if req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0 {
 		if err := m.openSealedSnapshot(ctx, req.AppID, req.Snapshot); err != nil {
-			return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
+			if sealed {
+				return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
+			}
+			m.log.Warn("sealed snapshot key not opened, cold booting instead of restoring",
+				"instance", req.Instance, "storage_key", req.Snapshot.StorageKey, "err", err)
+			if timings != nil {
+				timings.restoreError = err.Error()
+			}
+			m.metrics.ObserveFallback()
+			req.Snapshot.Stale = true
 		}
 	}
 	restorable := (len(req.ArtifactSources) == 0 || req.SnapshotRestore != nil) && PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
@@ -6621,7 +6672,13 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	}
 	if spec.nativeRuntime == nil {
 		// The native producer already published the backing object exclusively.
-		m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+		// A sealed park (slice 3d-3) publishes its backing through the sealing
+		// store too, as WarmSnapshot does.
+		store := m.storage
+		if spec.Storage != nil {
+			store = spec.Storage
+		}
+		m.writeSnapshotBackingTo(context.WithoutCancel(ctx), store, instance, spec.StorageKey)
 	}
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, true, nil

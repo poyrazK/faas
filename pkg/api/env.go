@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // Customer env-var DTOs (issue #395 / ADR-045). The wire shape mirrors
@@ -97,17 +98,22 @@ type AppEnvListResponse struct {
 	Count      int              `json:"count"`
 }
 
-// ValidateEnvKey returns nil when key matches ^[A-Z][A-Z0-9_]*$ and is
-// within MaxSecretKeyLen bytes; otherwise it returns the api.Problem-
-// shaped CodeEnvVarInvalidKey. Returns *Problem directly (not error)
-// so call sites can pass it straight to api.WriteProblem.
-//
-// This intentionally reuses SecretKeyPattern and MaxSecretKeyLen
-// (rather than duplicating the regex literal) because POSIX env-var
-// naming and the secrets naming surface share the same ASCII
-// identifier grammar. Keeping one pattern avoids the drift where two
-// regexes diverge over time. The DB CHECK in migration 00061 mirrors
-// this regex verbatim.
+// EnvKeyPattern is the env var name grammar: the POSIX portable name
+// (letters, digits and underscore, starting with a letter), case
+// sensitive. Runtimes read mixed-case names (.NET's DOTNET_gcServer and
+// DOTNET_EnableDiagnostics, Java's -D style tooling), so an uppercase-only
+// rule refused real configuration (microservices-demo, 2026-11-16). Secret
+// names keep SecretKeyPattern. The app_envs and app_config_revisions CHECKs
+// mirror this pattern (migration 20261116100000000).
+const EnvKeyPattern = `^[A-Za-z][A-Za-z0-9_]*$`
+
+var envKeyRe = regexp.MustCompile(EnvKeyPattern)
+
+// ValidateEnvKey returns nil when key matches EnvKeyPattern, is within
+// MaxSecretKeyLen bytes, and is not another spelling of a platform-provided
+// key; otherwise it returns the api.Problem-shaped CodeEnvVarInvalidKey.
+// Returns *Problem directly (not error) so call sites can pass it straight
+// to api.WriteProblem.
 func ValidateEnvKey(key string) *Problem {
 	if key == "" {
 		return ErrEnvVarInvalidKey("key is required")
@@ -115,9 +121,14 @@ func ValidateEnvKey(key string) *Problem {
 	if len(key) > MaxSecretKeyLen {
 		return ErrEnvVarInvalidKey(fmt.Sprintf("key length %d exceeds max %d", len(key), MaxSecretKeyLen))
 	}
-	re := regexp.MustCompile(SecretKeyPattern)
-	if !re.MatchString(key) {
-		return ErrEnvVarInvalidKey("must start with a letter and contain only A-Z, 0-9, underscore")
+	if !envKeyRe.MatchString(key) {
+		return ErrEnvVarInvalidKey("must start with a letter and contain only letters, digits and underscore")
+	}
+	// Reserved-name checks across the platform compare the uppercase form
+	// (PORT, FAAS_*, GREGALE_*, identity keys). A mixed-case spelling would
+	// slip past them and confuse anything that folds case, so it is refused.
+	if upper := strings.ToUpper(key); upper != key && PlatformProvidedEnvKey(upper) {
+		return ErrEnvVarInvalidKey(fmt.Sprintf("%s is reserved for the platform in any letter case", upper))
 	}
 	return nil
 }

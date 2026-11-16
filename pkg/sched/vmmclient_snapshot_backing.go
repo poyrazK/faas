@@ -37,6 +37,7 @@ func (c *VMMClient) SnapshotBackingCurrent(ctx context.Context, snap SnapshotRef
 		Snapshot: &vmmdpb.SnapshotRef{
 			DeploymentId: snap.DeploymentID, VmstatePath: snap.VMStatePath, FcVersion: snap.FCVersion,
 			StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey, MemBytes: snap.MemBytes,
+			CaptureId: snap.CaptureID, SealedKey: []byte(snap.SealedKey), SealedCache: snap.SealedCache,
 		},
 		BaseKey: baseKey,
 	})

@@ -18,3 +18,8 @@ faas_schedd_secretd_delivery: false
 # imaged pull apps' private images through secretd instead of opening their
 # registry passwords here.
 faas_imaged_secretd_registry_pulls: false
+
+# ADR-20261110120000 (amended 2026-11-15): a daemon listening on every
+# address refuses to start until the host firewall is loaded. Off only for a
+# host whose firewall is not this repo's nftables role.
+faas_require_host_firewall: true

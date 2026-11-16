@@ -14,11 +14,14 @@ def _get_kwargs(
     project: str,
     *,
     workspace_id: str | Unset = UNSET,
+    app: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     params["workspace_id"] = workspace_id
+
+    params["app"] = app
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -83,12 +86,14 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     workspace_id: str | Unset = UNSET,
+    app: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Tear down a remote developer environment.
 
     Args:
         project (str):
         workspace_id (str | Unset):
+        app (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -101,6 +106,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         project=project,
         workspace_id=workspace_id,
+        app=app,
     )
 
     response = client.get_httpx_client().request(
@@ -115,12 +121,14 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     workspace_id: str | Unset = UNSET,
+    app: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Tear down a remote developer environment.
 
     Args:
         project (str):
         workspace_id (str | Unset):
+        app (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,6 +142,7 @@ def sync(
         project=project,
         client=client,
         workspace_id=workspace_id,
+        app=app,
     ).parsed
 
 
@@ -142,12 +151,14 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     workspace_id: str | Unset = UNSET,
+    app: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Tear down a remote developer environment.
 
     Args:
         project (str):
         workspace_id (str | Unset):
+        app (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -160,6 +171,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         project=project,
         workspace_id=workspace_id,
+        app=app,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -172,12 +184,14 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     workspace_id: str | Unset = UNSET,
+    app: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Tear down a remote developer environment.
 
     Args:
         project (str):
         workspace_id (str | Unset):
+        app (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,5 +206,6 @@ async def asyncio(
             project=project,
             client=client,
             workspace_id=workspace_id,
+            app=app,
         )
     ).parsed

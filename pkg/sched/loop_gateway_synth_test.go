@@ -193,6 +193,11 @@ func TestHTTPGatewaySynthOrdinaryServerErrorIsRetryable(t *testing.T) {
 	if out.ResponseStatusCode != http.StatusServiceUnavailable || out.OutcomeCode != "upstream_unavailable" {
 		t.Fatalf("Invoke response classification evidence = status %d code %q", out.ResponseStatusCode, out.OutcomeCode)
 	}
+	// The app's answer reaches last_error and so the dead-letter detail
+	// (prod 2026-11-15: it read only "retryable HTTP 503").
+	if !strings.Contains(err.Error(), "upstream_unavailable") {
+		t.Fatalf("Invoke error %q drops the app's answer", err)
+	}
 }
 
 func TestHTTPGatewaySynthRejectsOversizedResponse(t *testing.T) {

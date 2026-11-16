@@ -1011,6 +1011,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.productControl.StartOverdueHolds(ctx, log)    // ADR-20261018212918
 		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
+		startFeatureFlagLifecycleReconciler(ctx, srv, log)
 		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
@@ -1946,6 +1947,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if verifyErr != nil {
 			return fmt.Errorf("apid: load rollback artifact verifier: %w", verifyErr)
 		}
+		rollbackVerifier.RequireV2(deps.getenv("FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2") == "1")
 		srv.WithRollbackArtifactVerifier(rollbackVerifier)
 		log.Info("apid: rollback artifact verifier ready", "pub", signPubPath)
 	}

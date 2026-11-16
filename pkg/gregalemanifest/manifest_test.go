@@ -1316,7 +1316,7 @@ func TestValidate_DatabaseDependencyRejectsInvalidShape(t *testing.T) {
 		{name: "missing database", deps: []DatabaseDependency{{}}, want: "database is required"},
 		{name: "invalid app", deps: []DatabaseDependency{{Database: "orders", App: "Bad_App"}}, want: "must match"},
 		{name: "invalid scope", deps: []DatabaseDependency{{Database: "orders", Scope: "Production"}}, want: "scope"},
-		{name: "invalid env", deps: []DatabaseDependency{{Database: "orders", EnvironmentKey: "database_url"}}, want: "env"},
+		{name: "invalid env", deps: []DatabaseDependency{{Database: "orders", EnvironmentKey: "database-url"}}, want: "env"},
 		{name: "invalid access", deps: []DatabaseDependency{{Database: "orders", Access: "admin"}}, want: "access"},
 	}
 	for _, tt := range tests {

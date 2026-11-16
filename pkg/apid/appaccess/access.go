@@ -3,6 +3,7 @@ package appaccess
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"net/http"
 	"strings"
@@ -353,6 +354,12 @@ func lookupProblem(r *http.Request, err error) *api.Problem {
 	// A path ID that is no UUID names no resource either (Hunt 14 H14-65).
 	if errors.Is(err, state.ErrNotFound) || state.IsMalformedID(err) {
 		return notFound(r)
+	}
+	// The caller only sees a generic 503; this line is the only record of
+	// why (a gregale logs call failed this way with no trace, 2026-11-16).
+	if !errors.Is(err, context.Canceled) {
+		slog.Default().WarnContext(r.Context(), "appaccess: authorization lookup failed; answering 503",
+			"method", r.Method, "path", r.URL.Path, "err", err)
 	}
 	return api.ErrCapacity("could not authorize application access")
 }

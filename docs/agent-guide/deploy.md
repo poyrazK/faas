@@ -13,7 +13,7 @@ Preview first: the dry run says what Gregale will do with this source and which 
 - Serve the public URL without a Gregale API key:
     gregale app update <app> --no-require-authn
 - Check serving health:
-    gregale app <app> health
+    gregale app health <app>
 
 Notes:
 - A Compose file or several services: see `gregale guide compose-project`.

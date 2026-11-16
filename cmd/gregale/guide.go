@@ -43,7 +43,7 @@ var guidePages = []guidePage{
 			{Do: "Deploy", Command: "gregale deploy --yes"},
 			{Do: "Deploy a published image instead of source", Command: "gregale deploy --image <image>@sha256:<digest> --name <app>"},
 			{Do: "Serve the public URL without a Gregale API key", Command: "gregale app update <app> --no-require-authn"},
-			{Do: "Check serving health", Command: "gregale app <app> health"},
+			{Do: "Check serving health", Command: "gregale app health <app>"},
 		},
 		Notes: []string{
 			"A Compose file or several services: see `gregale guide compose-project`.",
@@ -59,19 +59,25 @@ var guidePages = []guidePage{
 			{Do: "Deploy the project", Command: "gregale deploy --project --yes"},
 			{Do: "Deploy some services only", Command: "gregale deploy --project --only <service>"},
 			{Do: "Open a public service to everyone", Command: "gregale app update <app> --no-require-authn"},
+			{Do: "Restart, health-check or change every app of the project at once", Command: "gregale app restart --project <project> --fresh --wait"},
 			{Do: "Follow every service's logs", Command: "gregale logs --project <project> --follow"},
+			{Do: "Run a command in a fresh instance of a service", Command: "gregale app exec <app> -- <command>"},
 		},
 		Notes: []string{
+			"Plain environment: values are imported only with `x-gregale-env-import: true` at the top of the Compose file; a URL that names a sibling (http://api:8080) is rewritten to its Gregale address without it. Do not copy them into Dockerfiles.",
+			"A gRPC service declares `x-gregale-app-protocol: grpc` on its Compose service.",
+			"Too many files: each service's .dockerignore applies inside its build context; list directories no service builds from (k8s, docs) in .gregaleignore.",
 			"Code that dials a Compose name (redis, db) must read $GREGALE_SERVICE_<NAME>_HOST (raw TCP) or $GREGALE_SERVICE_<NAME>_URL (HTTP); the caller lists the service in depends_on. The dry run names each place.",
 			"A postgres service becomes a managed database bound as DATABASE_URL. Gregale does not run other datastores (redis, mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (Upstash, PlanetScale, Atlas) with an env URL.",
 			"A build target or command for development (target: dev, nodemon, --reload) is deployed as written.",
+			"A gRPC address (PRODUCT_SERVICE_ADDR: products:3550) is rewritten to products.svc.gregale:10081. Set x-gregale-streaming and x-gregale-wake-ahead on a service instead of later app commands.",
 		},
 	},
 	{
 		Task: "health-checks", Title: "Health checks and readiness",
 		Summary: "An instance takes traffic once it passes readiness, and is restarted when it keeps failing liveness.",
 		Steps: []guideStep{
-			{Do: "Check an app's serving health and readiness", Command: "gregale app <app> health"},
+			{Do: "Check an app's serving health and readiness", Command: "gregale app health <app>"},
 			{Do: "Use another health path (or set hosting.health in gregale.yaml)", Command: "gregale app <app> --health-path <path>"},
 			{Do: "Deploy a stateless TCP server (a broker, memcached) from its image", Command: "gregale deploy --image <image>@sha256:<digest> --name <app>"},
 			{Do: "Read why a deploy did not become ready", Command: "gregale logs <app> --deployment <deployment>"},
@@ -97,7 +103,7 @@ var guidePages = []guidePage{
 		},
 		Notes: []string{
 			"A caller that lists the service in depends_on gets $GREGALE_SERVICE_<NAME>_HOST (raw TCP, any declared port) and $GREGALE_SERVICE_<NAME>_URL (HTTP).",
-			"HTTP calls can also use http://<name>.internal:10081.",
+			"http://<name>.internal:10081 resolves only for a service the caller lists in depends_on, or a sibling in its project under the project policy; apps deployed one by one call each other at http://<app>.svc.gregale:10081.",
 			"A private service parks when idle and wakes on a connection; keep one running with `gregale app <app> --min 1`.",
 		},
 	},
@@ -130,7 +136,7 @@ var guidePages = []guidePage{
 			{Do: "Read an app's logs", Command: "gregale logs <app>"},
 			{Do: "Read a failed deployment's build and startup logs", Command: "gregale logs <app> --deployment <deployment>"},
 			{Do: "See an app's state, park reason and recommendations", Command: "gregale inspect <app>"},
-			{Do: "Run a command against the live deployment", Command: "gregale app <app> exec -- <command>"},
+			{Do: "Run a command against the live deployment", Command: "gregale app exec <app> -- <command>"},
 			{Do: "Check the source locally", Command: "gregale doctor"},
 		},
 		Notes: []string{

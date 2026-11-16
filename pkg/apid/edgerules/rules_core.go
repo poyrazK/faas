@@ -178,6 +178,9 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := s.RouteTargetProblem(ctx, acct.ID, app.ID, req.Kind, req.Action); prob != nil {
 		return m, prob
 	}
+	if prob := s.duplicateCORSRuleProblem(ctx, app.ID, req); prob != nil {
+		return m, prob
+	}
 	// Default priority=100, enabled=true when unset.
 	priority := 100
 	if req.Priority != nil {

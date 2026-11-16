@@ -40,6 +40,13 @@ func (f *mcpVerificationFixture) trackRequest() func() {
 	}
 	return func() { f.inFlight.Add(-1) }
 }
+
+// mcpVerificationOpening reports the protocol's opening request: initialize on
+// the legacy revision, server/discover on 2026-07-28, which has no initialize.
+func mcpVerificationOpening(method string) bool {
+	return method == "initialize" || method == "server/discover"
+}
+
 func mcpVerificationRPCResult(raw []byte) (string, json.RawMessage) {
 	var req struct {
 		ID     json.RawMessage `json:"id"`
@@ -103,7 +110,7 @@ func newMCPVerificationFixture(t *testing.T, badInitialize bool, latency time.Du
 		method, body := mcpVerificationRPCResult(raw)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("MCP-Protocol-Version", mcphosting.ProtocolVersion)
-		if method == "initialize" {
+		if mcpVerificationOpening(method) {
 			f.initializes.Add(1)
 			if f.badInitialize {
 				http.Error(w, "initialization unavailable", 500)
@@ -170,7 +177,7 @@ func newMCPVerificationFixture(t *testing.T, badInitialize bool, latency time.Du
 				result.Body = ""
 				result.ContentType = ""
 			}
-			if method == "initialize" && (f.badInitialize || (f.badReplica && result.InstanceID == "instance-b")) {
+			if mcpVerificationOpening(method) && (f.badInitialize || (f.badReplica && result.InstanceID == "instance-b")) {
 				result.HTTPStatus = 500
 				result.Body = "initialization unavailable"
 			}

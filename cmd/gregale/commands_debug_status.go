@@ -114,9 +114,12 @@ func renderDebugStatus(w io.Writer, slug string, resp api.DebugStatusResponse) {
 		_, _ = fmt.Fprintf(tw, "%s\t%s  %s  %d  %s\n", label, debugClock(req.ReceivedAt), requestLine(req.Method, req.Route), req.Status, debugRequestRef(req))
 		label = ""
 	}
-	tracing := "on"
+	// Platform spans and request logs are always recorded (gregale debug
+	// trace shows them); tracing.enabled adds the app's own OTel spans. "off"
+	// read as if traces were unavailable (microservices-demo, 2026-11-16).
+	tracing := "platform spans and request logs on; your app's OTel spans on"
 	if !resp.TracingEnabled {
-		tracing = "off (set tracing.enabled: true for spans and request logs)"
+		tracing = "platform spans and request logs on; your app's OTel spans off (set tracing.enabled: true to collect them)"
 	}
 	_, _ = fmt.Fprintf(tw, "Tracing\t%s\n", tracing)
 	_ = tw.Flush()

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -108,6 +109,12 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 					main.WriteJSONTest(w, api.AppRestartResponse{WakeID: "wake-json-1"})
 					return
 				}
+				// `secrets set --restart` follows the rolling refresh it requested.
+				if tc.restart && r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/runtime-config-restarts/wake-json-1" {
+					now := time.Now()
+					main.WriteJSONTest(w, api.RuntimeConfigRestartStatusResponse{WakeID: "wake-json-1", Status: "completed", RequestedAt: now, CompletedAt: &now})
+					return
+				}
 				if r.Method != tc.method || r.URL.Path != tc.path || r.URL.RawQuery != tc.query {
 					t.Errorf("request = %s %s?%s, want %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery, tc.method, tc.path, tc.query)
 					http.NotFound(w, r)
@@ -154,6 +161,9 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 			wantCalls := 1
 			if tc.restart {
 				wantCalls++
+			}
+			if tc.name == "secrets set with restart" {
+				wantCalls++ // the restart status read
 			}
 			if strings.HasPrefix(tc.path, "/v1/apps/demo/secrets/") && strings.HasSuffix(tc.path, "/rotate") {
 				wantCalls++ // the key-is-set check

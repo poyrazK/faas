@@ -13,7 +13,11 @@ import (
 // error the tables fall back to IDs. Callers fetch it before their primary
 // request.
 func appSlugsByID(client *api.Client) map[string]string {
-	apps, err := client.ListApps(context.Background())
+	return appSlugsByIDContext(context.Background(), client)
+}
+
+func appSlugsByIDContext(ctx context.Context, client *api.Client) map[string]string {
+	apps, err := client.ListApps(ctx)
 	if err != nil {
 		return nil
 	}

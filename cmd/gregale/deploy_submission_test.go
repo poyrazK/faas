@@ -45,6 +45,12 @@ func TestDeploySubmissionPreservesConfigurationUnlessRejected(t *testing.T) {
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			t.Chdir(t.TempDir())
+			// These recovery fixtures explicitly target the linked app. The
+			// separate unlinked-target notice is not part of the Problem body.
+			if _, err := saveProjectContext(".", localProjectContext{Version: standaloneContextVersion, App: "probe-app"}); err != nil {
+				t.Fatal(err)
+			}
+
 			fixture := &submissionFixture{t: t, mode: tc.mode, app: api.AppResponse{ID: "app-1", Slug: "probe-app"}}
 			deployReliabilityCLI(t, fixture.handle)
 			archive := writeDeploySourceArchive(t, map[string]string{"package.json": "{}", "Dockerfile": "FROM scratch\n", "gregale.yaml": submissionManifest})
@@ -403,6 +409,12 @@ func TestDeploySubmissionImageRecoveryOutcome(t *testing.T) {
 	for _, status := range []int{422, 503} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			t.Chdir(t.TempDir())
+			// These recovery fixtures explicitly target the linked app. The
+			// separate unlinked-target notice is not part of the Problem body.
+			if _, err := saveProjectContext(".", localProjectContext{Version: standaloneContextVersion, App: "probe-app"}); err != nil {
+				t.Fatal(err)
+			}
+
 			deployReliabilityCLI(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPost && r.URL.Path == "/v1/apps/probe-app/deployments" {
 					api.WriteProblem(w, api.NewProblem(status, "submission_failed", "Submission failed", "Image submission failed"))

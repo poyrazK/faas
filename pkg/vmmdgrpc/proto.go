@@ -503,6 +503,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 			MemBytes:          snap.GetMemBytes(),
 			CaptureID:         snap.GetCaptureId(),
 			SealedKey:         snap.GetSealedKey(),
+			SealedCache:       snap.GetSealedCache(),
 		}
 	}
 	return wr, nil

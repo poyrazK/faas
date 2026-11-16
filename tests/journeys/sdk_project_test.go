@@ -139,4 +139,59 @@ process.exit(24);`
 		value := jsonBody(t, response)
 		return num(value, "processed") > 0, compact(value)
 	})
+	// Verify exact saved identities from another process, then deploy a broken
+	// worker and a correction. Old rows must never prove the new worker works.
+	environment = append(environment, "GREGALE_APPLICATION_URL="+tg.appURL(apps[0]))
+	verify := filepath.Join(example, "verify.mjs")
+	verified, err := run(verify)
+	if err != nil || str(object(t, verified), "outcome") != "verified" {
+		t.Fatalf("SDK verification failed: %v %s", err, tg.redact(tail(string(verified), 2000)))
+	}
+	if err = os.CopyFS(source, os.DirFS(filepath.Join(example, "source"))); err != nil {
+		t.Fatal(err)
+	}
+	for _, round := range []struct {
+		name    string
+		fault   string
+		outcome string
+	}{
+		{"broken", `{"fail":true,"round":1}`, "failed"},
+		{"corrected", `{"fail":false,"round":2}`, "verified"},
+	} {
+		if err = os.WriteFile(filepath.Join(source, "worker-fault.json"), []byte(round.fault), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// Every source change gets a new reviewed intent and private journal.
+		for i, item := range environment {
+			if strings.HasPrefix(item, "GREGALE_PROJECT_STATE=") {
+				environment[i] = "GREGALE_PROJECT_STATE=" + filepath.Join(work, round.name)
+			}
+		}
+		for _, command := range []string{"preview", "apply"} {
+			output, err = run(driver, command)
+			if err != nil {
+				t.Fatalf("%s %s failed: %v %s", round.name, command, err, tg.redact(tail(string(output), 2000)))
+			}
+		}
+		output, err = run(verify)
+		verification := object(t, output)
+		if str(verification, "outcome") != round.outcome {
+			t.Fatalf("%s verification: %v %s", round.name, err, compact(verification))
+		}
+		if round.outcome == "failed" {
+			found := false
+			workloads, _ := field(verification, "workloads").([]any)
+			for _, row := range workloads {
+				workload, _ := row.(map[string]any)
+				if str(workload, "slug") == apps[1] && str(workload, "code") == "smoke_failed" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("broken worker was not attributed: %s", compact(verification))
+			}
+		} else if err != nil {
+			t.Fatalf("corrected verification exited unsuccessfully: %v", err)
+		}
+	}
 }

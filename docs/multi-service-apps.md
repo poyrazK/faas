@@ -346,6 +346,25 @@ above, and the plan refuses it on Free. A streaming RPC between services, like
 any streamed response, ends after about 15 minutes; clients reconnect and
 resume ([long-lived streams](networking.md#long-lived-streams)).
 
+### Streaming and wake-ahead
+
+Two more app settings can live in Compose instead of follow-up commands:
+
+```yaml
+services:
+  events:
+    build: ./events
+    x-gregale-streaming: true    # as gregale app <app> --streaming-enabled
+    x-gregale-wake-ahead: false  # as gregale app wake-ahead <app> off
+```
+
+They follow the protocol's rules: production deploys apply them, a named
+environment applies them only to services it creates, and a service that
+declares neither keeps its current settings. Streaming needs the Hobby plan or
+above. gRPC does not need streaming turned on. Wake-ahead is already on for
+production project services under the default `project` service policy, so
+most projects only set it to turn it off.
+
 Plain TCP between services (Redis, PostgreSQL and other non-HTTP protocols)
 is off unless your operator has enabled it; see
 [private TCP](networking.md#private-tcp-between-services).
@@ -440,6 +459,12 @@ service HTTPS is enabled; elsewhere an `https` value imports as the `http`
 address, and the plan says so), keeping the path. The service mesh forwards to the service's own port, so the Docker port
 is dropped; a value for a second listener of that service, or for another
 protocol, needs its address set by hand.
+A bare `host:port` value, the form gRPC clients take
+(`PRODUCT_CATALOG_SERVICE_ADDR: productcatalogservice:3550`), is imported as
+`productcatalogservice.svc.gregale:10081` when it names a service the HTTP
+service mesh serves; the mesh speaks HTTP/2 without TLS, so a plaintext gRPC
+channel reaches it. A `host:port` naming a raw TCP service or a datastore
+(`redis:6379`) is not rewritten.
 These service addresses are imported even without `x-gregale-env-import`,
 because they are never credentials and the Docker address cannot work here; every other plain value still needs the opt-in.
 

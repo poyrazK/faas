@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const devLocalTriggerUsage = "usage: gregale dev trigger --local [--path DIR] <cron|invoke> FUNCTION [REQUEST_PATH] [--method M] [--data BODY]"
+const devLocalTriggerUsage = "usage: gregale dev trigger --local [--path DIR] <cron|invoke> FUNCTION [REQUEST_PATH] [--method M] [--data BODY]\n       gregale dev trigger --local [--path DIR] workflow FUNCTION [--data INPUT] [--event NAME]"
 
 // cmdDevTriggerLocal calls a function served by `gregale dev --local` the way
 // a cron or an async invocation reaches it on Gregale: with the platform's
@@ -19,14 +19,15 @@ func cmdDevTriggerLocal(args []string) int {
 	fs := newFlagSet("dev trigger --local", flag.ContinueOnError)
 	sourcePath := fs.String("path", "", "source directory of the running gregale dev --local")
 	method := fs.String("method", "POST", "HTTP method")
-	data := fs.String("data", "", "request body")
+	data := fs.String("data", "", "request body; a workflow run's input, or an event's payload")
+	event := fs.String("event", "", "with workflow: send this event to the function's latest unfinished run")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() < 2 || fs.NArg() > 3 {
 		PrintUsage(osStderr, devLocalTriggerUsage, "dev")
 		return 1
 	}
 	verb, function := fs.Arg(0), fs.Arg(1)
-	source := map[string]string{"cron": "cron", "invoke": "async_invoke"}[verb]
-	if source == "" {
+	source := map[string]string{"cron": "cron", "invoke": "async_invoke", "workflow": "workflow"}[verb]
+	if source == "" || (*event != "" && verb != "workflow") || (verb == "workflow" && fs.NArg() != 2) {
 		PrintUsage(osStderr, devLocalTriggerUsage, "dev")
 		return 1
 	}
@@ -44,7 +45,11 @@ func cmdDevTriggerLocal(args []string) int {
 	if err != nil {
 		return printErr("Could not trigger", err)
 	}
-	body, _ := json.Marshal(devLocalTrigger{Function: function, Source: source, Method: *method, Path: requestPath, Body: *data})
+	trigger := devLocalTrigger{Function: function, Source: source, Method: *method, Path: requestPath, Body: *data}
+	if verb == "workflow" {
+		trigger = devLocalTrigger{Function: function, Workflow: true, Event: *event, Body: *data}
+	}
+	body, _ := json.Marshal(trigger)
 	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+strconv.Itoa(st.Port)+devLocalTriggerPath, bytes.NewReader(body))
 	if err != nil {
 		return printErr("Could not trigger", err)
