@@ -1,6 +1,6 @@
 # Platform-owned shared base for one-shot, networkless repair rehearsal.
 # Publish immutable ext4 artifacts and configure their byte digests explicitly.
-FROM postgres:16@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b
+FROM postgres:16@sha256:2d5c77ae9b0e0944ffb92f8d8fc2fa2edb215cb0976da8bac34df917af417e87
 COPY images/rootfs-skel/ /
 RUN mkdir -p /etc/faas /repair && \
     printf '%s\n' 'postgres:x:999:999:PostgreSQL:/var/lib/postgresql:/bin/sh' >> /etc/passwd && \

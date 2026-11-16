@@ -15,7 +15,7 @@
 #
 # The two-drive scheme still amortizes this base across every python313 app on
 # the box — per-app cost is just the customer's site-packages + handler.
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:fa63d07ad857b4fb4dacb80f3f269116d24e3f27f9ce41feed5c0f617afcaf7e
 # Issue #197 B3.6 (extension): mutable tag pinned via images/Dockerfile.lock.
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt apk add --no-cache bash ca-certificates python-3.13 && \
     mkdir -p /usr/local/bin && \

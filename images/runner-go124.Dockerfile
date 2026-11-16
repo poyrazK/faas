@@ -16,7 +16,7 @@
 # The image is built and published by CI. imaged resolves the immutable
 # per-runtime reference and auto-stages the matching ext4 on first use, so a
 # newly provisioned compute node does not need a hand-copied runtime image.
-FROM cgr.dev/chainguard/bash:latest@sha256:e5528d697cd5fef7f52837bdc573fd4469782064fe19327bd9e83402eb0d7b0d
+FROM cgr.dev/chainguard/bash:latest@sha256:7248e7e2774d86ea698b4e3f72fa4eda392389d321ccfb2e30aaa3c4f0610b0c
 # Issue #197 B3.6 (extension): mutable tag pinned via images/Dockerfile.lock.
 
 # Guest runtime user (uid 1000, spec §4.8). Copying the shared skeleton also
