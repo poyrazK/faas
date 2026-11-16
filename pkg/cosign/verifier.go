@@ -33,7 +33,20 @@ type LocalVerifier struct {
 	// records remembers verifications across restarts; nil keeps them in
 	// memory only (RememberVerifications).
 	records *attestationRecords
+	// requireV2 refuses raw v1 signatures (RequireV2).
+	requireV2 bool
 }
+
+// RequireV2 makes the verifier refuse v1 signatures, which sign only the
+// layer digest and so can be replayed onto another storage key. Turn it on
+// after `signd resign` has converted every stored layer (ADR-20261109170000).
+func (v *LocalVerifier) RequireV2(on bool) *LocalVerifier {
+	v.requireV2 = on
+	return v
+}
+
+// isSignatureV1 reports a raw 64-byte P-256 r||s signature.
+func isSignatureV1(sig []byte) bool { return len(sig) == 64 }
 
 // NewLocalVerifier parses the SPKI PEM at path (mode ≤ 0o444
 // enforced by LoadPublicKeyFile) and wires a LocalVerifier that
@@ -90,6 +103,11 @@ func (v *LocalVerifier) CheckPresent(ctx context.Context, layerKey, sigKey strin
 	_ = sigRC.Close()
 	if err != nil {
 		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
+	}
+	if v.requireV2 && isSignatureV1(sig) {
+		return api.NewProblem(503, "sig_invalid",
+			"unbound signature for cold-boot layer",
+			fmt.Sprintf("signature for layer %q at %q is v1, which does not name its storage key; this verifier requires v2 (re-sign with signd resign)", layerKey, sigKey))
 	}
 	if checkSignatureShape(layerKey, sig) != nil {
 		return api.NewProblem(503, "sig_invalid",
@@ -189,6 +207,14 @@ func (v *LocalVerifier) verify(ctx context.Context, layerKey, sigKey, cacheKey s
 
 	// A v2 signature (ADR-20261109170000) must also name this layer's key,
 	// so a signed layer copied over another key fails here.
+	// A v1 signature covers only the digest, so a signed layer and its
+	// signature copied over another app's key would verify. Once every
+	// stored layer is re-signed, RequireV2 closes that replay.
+	if v.requireV2 && isSignatureV1(sig) {
+		return api.NewProblem(503, "sig_invalid",
+			"unbound signature for cold-boot layer",
+			fmt.Sprintf("signature for layer %q at %q is v1, which does not name its storage key; this verifier requires v2 (re-sign with signd resign)", layerKey, sigKey))
+	}
 	if !verifySignature(v.pub, layerKey, digest, sig) {
 		// Title for human display; Detail is the load-bearing
 		// operator message (Problem.Error() returns code+detail,
