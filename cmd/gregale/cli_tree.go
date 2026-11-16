@@ -54,6 +54,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
 	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
+	{"export", "Verify and compare saved JSON Lines exports offline", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
 	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
 	{"ai", "Configure the AI gateway", "Data"},
@@ -191,6 +192,15 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api spec", "openapi"},
 	{"api consumer", "consumers"},
 	{"api tenant", "platform-tenants"},
+	// ADR 20261114150000: tree names for the short flag commands.
+	{"flag enable", "flags on"},
+	{"flag disable", "flags off"},
+	{"flag rollout set", "flags percent"},
+	{"flag rule create", "flags rule-add"},
+	{"flag rule delete", "flags rule-rm"},
+	{"flag kill set", "flags kill"},
+	{"flag kill unset", "flags unkill"},
+	{"flag stale list", "flags stale"},
 	{"flag", "flags"},
 
 	// Data.
@@ -213,6 +223,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"pipeline access review", "pipeline access"},
 	{"pipeline evolution review", "pipeline evolve"},
 	{"pipeline work update", "pipeline operations"},
+	{"export", "export"},
 	{"pipeline", "pipeline"},
 	{"data-api", "data-api"},
 	{"ai", "ai"},
@@ -480,6 +491,10 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp server monitor check", "mcp monitor provider-check"},
 	{"mcp server retirements ack", "mcp retirements acknowledge-manual"},
 	{"mcp server tasks deploy", "mcp tasks release"},
+	// #7335's Task release intent (prepare/get/approve/reject/revoke a
+	// pinned review) and guarded execution take their action as an argument.
+	{"mcp server tasks review", "mcp tasks intent"},
+	{"mcp server tasks run", "mcp tasks execution"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},
@@ -897,6 +912,10 @@ func rewriteAppPath(args []string) ([]string, error) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
+	if isAppProjectCommand(args[1:]) {
+		// `app restart|health|update --project P` runs per project app.
+		return args, nil
+	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}

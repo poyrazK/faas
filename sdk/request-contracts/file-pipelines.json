@@ -1,0 +1,174 @@
+{
+  "scope": {
+    "base_url": "https://files.test/prefix",
+    "app_slug": "imports",
+    "bucket": "22222222-2222-4222-8222-222222222222",
+    "account_id": "55555555-5555-4555-8555-555555555555",
+    "app_id": "11111111-1111-4111-8111-111111111111"
+  },
+  "key": "imports/66666666-6666-4666-8666-666666666666/input.csv",
+  "event_id": "multipart:33333333-3333-4333-8333-333333333333",
+  "subscription_id": "object-notification:csv<&é>",
+  "invocation_id": "4b4df673-04fb-58b1-87e7-5e75f9dac07e",
+  "source": "row,email\n1,a@example.test\n2,b@example.test\n",
+  "sha256": "df62093285ab2c1e55dc084dd4a33cf533c1a06a8d84c16f3dc1c00bda379098",
+  "payload": {
+    "Records": [
+      {
+        "eventVersion": "2.1",
+        "eventSource": "aws:s3",
+        "awsRegion": "test-1",
+        "eventTime": "2026-11-15T12:00:00Z",
+        "eventName": "ObjectCreated:CompleteMultipartUpload",
+        "s3": {
+          "s3SchemaVersion": "1.0",
+          "configurationId": "csv-upload",
+          "bucket": {
+            "name": "imports",
+            "arn": "arn:gregale:s3:test-1:55555555-5555-4555-8555-555555555555:bucket:22222222-2222-4222-8222-222222222222",
+            "ownerIdentity": {
+              "principalId": "55555555-5555-4555-8555-555555555555"
+            }
+          },
+          "object": {
+            "key": "imports%2F66666666-6666-4666-8666-666666666666%2Finput.csv",
+            "size": 44,
+            "eTag": "df62093285ab2c1e55dc084dd4a33cf533c1a06a8d84c16f3dc1c00bda379098"
+          }
+        }
+      }
+    ]
+  },
+  "cloud_event": {
+    "specversion": "1.0",
+    "source": "gregale.storage",
+    "type": "object.created",
+    "id": "multipart:33333333-3333-4333-8333-333333333333",
+    "accountid": "55555555-5555-4555-8555-555555555555",
+    "data": {
+      "receipt_id": "33333333-3333-4333-8333-333333333333",
+      "app_id": "11111111-1111-4111-8111-111111111111",
+      "bucket_id": "22222222-2222-4222-8222-222222222222",
+      "key": "imports/66666666-6666-4666-8666-666666666666/input.csv",
+      "size_bytes": 44,
+      "etag": "\"df62093285ab2c1e55dc084dd4a33cf533c1a06a8d84c16f3dc1c00bda379098\"",
+      "operation": "complete_multipart_upload",
+      "cause": "customer"
+    }
+  },
+  "contract": {
+    "version": 1,
+    "name": "csv-import",
+    "input": {
+      "type": "object",
+      "properties": {
+        "row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 10000
+        },
+        "fail_once": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "row",
+        "email"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "saved": {
+          "type": "boolean"
+        },
+        "rejection": {
+          "type": "string",
+          "enum": [
+            "invalid_email",
+            "none"
+          ]
+        }
+      },
+      "required": [
+        "row",
+        "saved",
+        "rejection"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "run_id": "33333333-3333-4333-8333-333333333333",
+  "job_id": "22222222-2222-4222-8222-222222222222",
+  "cases": [
+    {
+      "scenario": "success",
+      "outcome": "submitted",
+      "error": null
+    },
+    {
+      "scenario": "unowned",
+      "outcome": "ignored",
+      "error": null
+    },
+    {
+      "scenario": "output",
+      "outcome": "ignored",
+      "error": null
+    },
+    {
+      "scenario": "source_changed",
+      "outcome": null,
+      "error": "source_changed"
+    },
+    {
+      "scenario": "version_required",
+      "outcome": null,
+      "error": "version_required"
+    },
+    {
+      "scenario": "source_missing",
+      "outcome": null,
+      "error": "source_unavailable"
+    },
+    {
+      "scenario": "lost_ack",
+      "outcome": "unresolved",
+      "error": null
+    },
+    {
+      "scenario": "lost_reserve_ack",
+      "outcome": null,
+      "error": "store_failed"
+    },
+    {
+      "scenario": "lost_finish_ack",
+      "outcome": "unresolved",
+      "error": null
+    },
+    {
+      "scenario": "foreign_proof",
+      "outcome": null,
+      "error": "unverified_delivery"
+    },
+    {
+      "scenario": "tampered_body",
+      "outcome": null,
+      "error": "unverified_delivery"
+    },
+    {
+      "scenario": "forged_invocation",
+      "outcome": null,
+      "error": "unverified_delivery"
+    }
+  ]
+}

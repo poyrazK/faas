@@ -180,7 +180,12 @@ change against it.
 0. Eval agents, foreign-repo tasks and graders; record the baseline.
 1. Feature hints in project plans (done: `pkg/featurehints`).
 2. Failure `fix` fields and parked-status display (done; see "As built" below).
-3. Parity gate with the frozen exemption list.
+3. Parity gate with the frozen exemption list (done 2026-11-14: the
+   app-update inventory `cmd/gregale/app_update_cli_surface.go` already
+   reflected over UpdateAppRequest; `deploy_request_cli_surface.go` adds the
+   deploy request and its overrides, and `TestCLIAPIParityExemptionsAreFrozen`
+   holds `docs/cli-api-parity-exemptions.txt` to the known gaps at a ceiling of
+   17 that may only fall. Compose `x-gregale-*` keys are not yet a path).
 4. `gregale guide` and agent-marker hints (done; see "As built" below).
 
 ### As built (2026-11-14)

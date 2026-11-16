@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
-import { createClient, parseReviewedProjectPlan, loadProjectApplicationState, ProjectWorkflowError, type PlanResponse, type ProjectApplyOptions } from '../src/index.js';
+import { createClient, projectVerificationTarget, parseReviewedProjectPlan, loadProjectApplicationState, ProjectWorkflowError, type PlanResponse, type ProjectApplyOptions } from '../src/index.js';
 import { createClient as createPreviewClient } from '../src/preview.js';
 
 const fixture=JSON.parse(readFileSync(new URL('../../../request-contracts/project-workflows.json',import.meta.url),'utf8')) as {preview:PlanResponse;cases:{name:string;scenario:string;outcome:string}[]};
@@ -73,7 +73,7 @@ for(const [surface,factory]of [['public',createClient],['preview',createPreviewC
     else await assert.rejects(client.projects.resumePlanApplication(restored,options),code('acceptance_unknown'));
   }else if(['succeeded','partial','failed','blocked'].includes(item.outcome)&&scenario!=='blocked_plan')result=await client.projects.applyPlan(restored,options);
   else{await assert.rejects(client.projects.applyPlan(restored,options),code(item.outcome));if(scenario==='unknown'){const before=posts;await assert.rejects(client.projects.resumePlanApplication(restored,options),code('acceptance_unknown'));assert.equal(posts,before);}}
-  if(result){assert.equal(result.outcome,item.outcome);assert.ok(Object.isFrozen(result.workloads));assert.ok(result.workloads.length>=2);if(scenario==='unchanged')assert.equal(result.workloads.find(w=>w.slug==='shop-old')!.outcome,'unchanged');}
+  if(result){const target=await projectVerificationTarget(result);assert.equal(target.project_slug,'shop');assert.deepEqual(target.workloads.map(w=>w.deployment_id),result.workloads.map(w=>w.deploymentId));assert.equal(result.outcome,item.outcome);assert.ok(Object.isFrozen(result.workloads));assert.ok(result.workloads.length>=2);if(scenario==='unchanged')assert.equal(result.workloads.find(w=>w.slug==='shop-old')!.outcome,'unchanged');}
   assert.ok(posts<=1);assert.ok(total<=1);if(scenario==='blocked_plan'||scenario==='before_post')assert.equal(posts,0);
   const saved=await loadProjectApplicationState(statePath);assert.equal((await stat(statePath)).mode&0o777,0o600);assert.ok(!JSON.stringify(saved).includes('private-'));assert.ok(!JSON.stringify(plan).includes('private-'));
 });

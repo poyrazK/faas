@@ -12,6 +12,7 @@ from faas_sdk import (
     ProjectPreviewOptions,
     ProjectWorkflowError,
     ReviewedProjectPlan,
+    project_verification_target,
 )
 
 
@@ -71,6 +72,15 @@ async def main():
                     if mode == "apply"
                     else client.resume_project_application(plan, options=options)
                 )
+                with os.fdopen(
+                    os.open(
+                        state / "verification-target.json",
+                        os.O_CREAT | os.O_TRUNC | os.O_WRONLY,
+                        0o600,
+                    ),
+                    "w",
+                ) as file:
+                    json.dump(project_verification_target(result).to_dict(), file)
                 print(
                     json.dumps(
                         {

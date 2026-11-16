@@ -2188,11 +2188,12 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// (spec §9: row goes to AppDeleted, snapshot GC follows on
 	// the grace sweeper). data carries the slug so the
 	// audit row is searchable even after the row soft-deletes.
-	s.audit.Emit(r.Context(), "app.deleted", &acct.ID, map[string]any{
+	deleted := map[string]any{
 		"app_id":             parked.ID,
 		"slug":               parked.Slug,
 		"delete_grace_until": parked.DeleteGraceUntil,
-	})
+	}
+	s.audit.EmitAs(r.Context(), requestAuditActor(r, acct.ID, deleted), "app.deleted", &acct.ID, deleted)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2211,10 +2212,21 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
+	if app.Status == state.AppDeleted {
+		// The configuration read below excludes deleted apps; answer the
+		// final state instead of a 503 that a deploy wait retries forever.
+		api.WriteProblem(w, api.ErrAppDeleted(app.Slug))
+		return
+	}
 	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
 	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
 		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such deployment")
+			return
+		}
 		if err != nil {
+			s.log.Error("read deployment configuration status", "deployment_id", d.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
 			return
 		}

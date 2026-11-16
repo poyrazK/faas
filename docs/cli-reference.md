@@ -49,6 +49,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`domain`](#domain) | Manage custom domains |
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
+| [`export`](#export) | Verify and compare saved JSON Lines exports offline |
 | [`cron`](#cron) | Schedule requests and commands |
 | [`job`](#job) | Manage jobs that run to completion |
 | [`workflow`](#workflow) | Manage durable workflows |
@@ -799,6 +800,16 @@ Waiting never submits another rollback.
 
 With a switch ID in place of --operation, it shows a rollback that restores the database (`gregale rollback status &lt;slug&gt; &lt;switch-id&gt;`).
 
+### rollback switches
+
+List rollbacks that restored or are restoring the database
+
+`gregale rollback switches [--json] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | machine-readable output |  |
+
 
 ## add
 
@@ -1391,7 +1402,7 @@ gregale release runtime v42 --app my-function --target RELEASE_ID --json
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale release rollback [status] [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
+`gregale release rollback [status|switches] [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1421,21 +1432,38 @@ gregale release rollback my-api --to v41 --restore-databases
 
 #### release rollback status
 
-Read an exact rollback operation
+Show, follow or cancel a rollback that restores the database
 
-`gregale release rollback status [--operation <UUID>] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
+`gregale release rollback status [--cancel] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--operation <UUID>] [--json] <slug> <switch-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--operation <UUID>` | accepted rollback operation UUID |  |
-| `--wait` | wait for completion with a committed audit receipt |  |
-| `--timeout <duration>` | wait deadline (default 10m) |  |
+| `--cancel` | cancel the switch; the app keeps its current release and database |  |
+| `--wait` | follow the switch until it ends |  |
+| `--timeout <duration>` | wait deadline (default 60m) |  |
 | `--poll-interval <duration>` | poll interval (default 2s) |  |
-| `--json` | print the operation receipt |  |
+| `--operation <UUID>` | read this rollback operation instead of a switch |  |
+| `--json` | machine-readable output |  |
 
-Waiting never submits another rollback.
+Examples:
 
-With a switch ID in place of --operation, it shows a rollback that restores the database (`gregale release rollback status &lt;slug&gt; &lt;switch-id&gt;`).
+```sh
+gregale release rollback status my-api 6f1c2b0e-7d2a-4f7e-9a51-3c8d2f0b9e41 --wait
+```
+
+A switch can be cancelled until it starts switching the release and the bindings.
+
+With --operation UUID in place of a switch ID, it reads a rollback operation, as `gregale rollback status` does.
+
+#### release rollback switches
+
+List rollbacks that restored or are restoring the database
+
+`gregale release rollback switches [--json] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | machine-readable output |  |
 
 ### release alias
 
@@ -2020,7 +2048,7 @@ Show the current status of one build
 
 List builds and discover build IDs
 
-`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all]`
+`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--stream] [--output <PATH>] [--progress <MODE>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2030,6 +2058,10 @@ List builds and discover build IDs
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--all` | walk every page using --limit and --cursor |  |
+| `--stream` | emit JSON Lines as pages arrive; stdout requires --json --all |  |
+| `--output <PATH>` | publish a new JSON Lines file after all pages complete; requires --all |  |
+| `--progress <MODE>` | export progress on stderr; requires --all --output | one of `off` · `plain` · `ndjson` |
+| `--timeout <DURATION>` | overall list read budget including page requests and retries (positive duration) |  |
 
 ### build provenance
 
@@ -2719,7 +2751,7 @@ Show an app&#39;s settings and status
 
 Change an app&#39;s settings
 
-`gregale app update [--concurrency] [--env <SLUG>] [--visibility <public|internal>] [--size <SIZE>] [--profile <SIZE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--function-concurrency <N>] [--revision-pin-ttl <DURATION>] [--require-signed <true|false>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--ports <[NAME=]tcp|udp:PORT[:internal],...>] [--crawler-policy <wake|cached|block>] [--pre-auth <off|observe|enforce>] [--pre-auth-rps <N>] [--pre-auth-burst <N>] [--release-policy <safe|fast|immediate>] [--release-probe-paths <PATH,PATH>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>] [<app>]`
+`gregale app update [--concurrency] [--env <SLUG>] [--visibility <public|internal>] [--size <SIZE>] [--profile <SIZE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--function-concurrency <N>] [--revision-pin-ttl <DURATION>] [--require-signed <true|false>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--ports <[NAME=]tcp|udp:PORT[:internal],...>] [--crawler-policy <wake|cached|block>] [--pre-auth <off|observe|enforce>] [--pre-auth-rps <N>] [--pre-auth-burst <N>] [--release-policy <safe|fast|immediate>] [--release-probe-paths <PATH,PATH>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--request-rate-limit-rps <N>] [--request-rate-limit-burst <N>] [--cors-default] [--no-cors-default] [--cors-default-origins <ORIGINS>] [--session-affinity] [--no-session-affinity] [--version-affinity-cookie <NAME>] [--version-affinity-managed-cookie] [--no-version-affinity-managed-cookie] [--robots-txt-file <PATH>] [--default-robots-txt] [--favicon-file <PATH>] [--no-favicon] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2780,6 +2812,20 @@ Change an app&#39;s settings
 | `--health-path <PATH>` | set the monitor-facing health path |  |
 | `--health-path-wakes` | allow health probes to wake the app |  |
 | `--no-health-path-wakes` | answer health probes without waking the app |  |
+| `--request-rate-limit-rps <N>` | app-wide request rate limit per second; 0 restores the plan default |  |
+| `--request-rate-limit-burst <N>` | app-wide request burst; 0 restores the plan default |  |
+| `--cors-default` | answer CORS for --cors-default-origins when no CORS edge rule matches |  |
+| `--no-cors-default` | turn the default CORS answer off |  |
+| `--cors-default-origins <ORIGINS>` | comma-separated origins for the default CORS answer; empty clears |  |
+| `--session-affinity` | route a client to the same running instance (best effort) |  |
+| `--no-session-affinity` | turn session affinity off |  |
+| `--version-affinity-cookie <NAME>` | cookie that pins a client to a release; empty turns it off |  |
+| `--version-affinity-managed-cookie` | let Gregale set the version-affinity cookie |  |
+| `--no-version-affinity-managed-cookie` | stop Gregale setting the version-affinity cookie |  |
+| `--robots-txt-file <PATH>` | serve this file as /robots.txt at the edge |  |
+| `--default-robots-txt` | restore the platform&#39;s allow-all /robots.txt |  |
+| `--favicon-file <PATH>` | serve this icon as /favicon.ico at the edge |  |
+| `--no-favicon` | remove the app&#39;s edge favicon |  |
 | `--app-protocol <http1|http2|grpc>` | set the wire-protocol selector | one of `http1` · `http2` · `grpc` |
 | `--public-auth <open|bearer|basic|ip_allowlist|internal_only>` | set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+ | one of `open` · `bearer` · `basic` · `ip_allowlist` · `internal_only` |
 | `--ip-allowlist <CIDR>` | allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist |  |
@@ -2789,10 +2835,11 @@ Change an app&#39;s settings
 
 Check serving health and readiness
 
-`gregale app health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--cursor <CURSOR>] [--env <SLUG>] [--explain] [--errors] [<app>]`
+`gregale app health [--project <PROJECT>] [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--cursor <CURSOR>] [--env <SLUG>] [--explain] [--errors] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <PROJECT>` | check every app of this project instead of one |  |
 | `--check` | single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options |  |
 | `--wait` | wait for a fresh healthy default-scope assessment |  |
 | `--timeout <DURATION>` | maximum wait (default 2m; requires --wait) |  |
@@ -2923,10 +2970,11 @@ gregale app rename my-api my-api-v2
 
 Restart from a snapshot or fresh configuration
 
-`gregale app restart [status] [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
+`gregale app restart [status] [--project <PROJECT>] [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <PROJECT>` | restart every app of this project instead of one |  |
 | `--fresh` | cold-boot replacements with current runtime configuration |  |
 | `--wait` | wait for processing; requires --fresh |  |
 | `--timeout <DURATION>` | client deadline (default 10m) |  |
@@ -3077,7 +3125,7 @@ Watch invocations finish across your account in real time
 
 List invocations
 
-`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all]`
+`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] [--stream] [--output <PATH>] [--progress <MODE>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3085,6 +3133,10 @@ List invocations
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--all` | walk every page using --limit and --cursor |  |
+| `--stream` | emit JSON Lines as pages arrive; stdout requires --json --all |  |
+| `--output <PATH>` | publish a new JSON Lines file after all pages complete; requires --all |  |
+| `--progress <MODE>` | export progress on stderr; requires --all --output | one of `off` · `plain` · `ndjson` |
+| `--timeout <DURATION>` | overall list read budget including page requests and retries (positive duration) |  |
 
 ### invocation get
 
@@ -4630,12 +4682,31 @@ Works until the database&#39;s restorable_until, 7 days after the delete; a purg
 
 Restore a database to a new database
 
-`gregale postgres restore --name <NAME> --point-in-time <TIMESTAMP> <database>`
+`gregale postgres restore --name <NAME> --point-in-time <TIMESTAMP> [--switch <APP>] [--env <SCOPE>] [--yes] [--no-wait] [--timeout <DURATION>] [--poll-interval <DURATION>] <database>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | name for the restored database | required |
 | `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
+| `--switch <APP>` | move this app to the copy, keeping its code |  |
+| `--env <SCOPE>` | with --switch: environment whose bindings move |  |
+| `--yes` | with --switch: switch without prompting |  |
+| `--no-wait` | with --switch: return once the switch starts |  |
+| `--timeout <DURATION>` | with --switch: wait deadline |  |
+| `--poll-interval <DURATION>` | with --switch: poll interval |  |
+
+Examples:
+
+```sh
+gregale postgres restore orders --name orders-before-import --point-in-time 2026-10-30T09:00:00Z
+gregale postgres restore orders --name orders-0900 --point-in-time 2026-10-30T09:00:00Z --switch my-api
+```
+
+With --switch the app moves to the copy without changing its code: it stops serving while it is fenced and drained, then cold starts on the copy.
+
+Writes after the restore point stay only in the source database, which keeps every write.
+
+Follow or cancel the switch with `gregale release rollback status &lt;app&gt; &lt;switch-id&gt;`.
 
 ### postgres branch
 
@@ -4754,6 +4825,60 @@ Examples:
 ```sh
 gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 ```
+
+
+## export
+
+Verify and compare saved JSON Lines exports offline
+
+`gregale export [<subcommand>]`
+
+### export verify
+
+Check a file against its saved completion receipt
+
+`gregale export verify --receipt <RECEIPT> <FILE>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--receipt <RECEIPT>` | saved JSON completion receipt | required |
+
+Examples:
+
+```sh
+gregale export verify builds.jsonl --receipt builds.receipt.json
+gregale --json export verify invocations.jsonl --receipt invocations.receipt.json
+```
+
+Runs offline without login. Compares SHA-256, exact bytes and JSON Lines record count; the receipt path is ignored.
+
+Exit 0 means all three checks matched; exit 1 means mismatch or invalid input. A valid comparison prints verified true or false; invalid input reports an error without a result.
+
+A receipt is an integrity reference, not a signature or a point-in-time API snapshot.
+
+### export diff
+
+Compare saved JSON Lines records by a unique key
+
+`gregale export diff [--key <FIELD>] [--fail-on-change] <BEFORE> <AFTER>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--key <FIELD>` | unique top-level string or number field (default id) |  |
+| `--fail-on-change` | exit 1 when added, removed or changed records exist |  |
+
+Examples:
+
+```sh
+gregale export diff before.jsonl after.jsonl
+gregale --json export diff before.jsonl after.jsonl --key id --fail-on-change
+```
+
+Runs offline. Reports sorted added, removed and changed IDs and counts without row bodies. Duplicate record keys or object fields fail before output.
+
+Row and object-field order are ignored; array order is preserved. Numbers compare as exact decimal values without floating-point conversion.
+
+Comparisons exit 0 unless --fail-on-change is enabled and changes exist, then exit 1 with a result. Invalid input reports an error without a result.
 
 
 ## cron

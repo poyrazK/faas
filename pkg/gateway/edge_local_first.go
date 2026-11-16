@@ -82,14 +82,28 @@ func (h *Handler) localFirstContext(ctx context.Context) context.Context {
 }
 
 // acquireLocalTarget takes a slot on one of this node's ready instances of the
-// picked deployment, if the request is marked for local first and one is free.
+// picked deployment, if the request is marked for local first, one is free,
+// and it is no busier than the least busy instance of the deployment on
+// another node, counting the requests this gateway holds.
+//
+// Local first is a tie-break, not a fill rule. Serving locally while any slot
+// was free kept every request on the entry node until one VM held
+// concurrency_per_vm (80 on Scale) requests, so instances the autoscaler
+// started on other nodes took none (prod 2026-11-14: one instance served 100%
+// while two sat idle). Comparing in-flight requests keeps the local hop while
+// the load is even and moves it to the round-robin pick when it is not. With
+// no instance elsewhere this is the old rule.
 func (h *Handler) acquireLocalTarget(ctx context.Context, app App, pick PickResult, perVM int) (PickResult, func(), bool) {
 	node, _ := ctx.Value(localFirstKey{}).(string)
 	backend, ok := h.spreadBackend()
 	if node == "" || !ok || pick.Target.DeploymentID == "" {
 		return PickResult{}, nil, false
 	}
+	least, elsewhere := h.leastRemoteInflight(backend, app.ID, pick.Target.DeploymentID, node)
 	for _, t := range backend.LocalReadyTargets(app.ID, pick.Target.DeploymentID, node) {
+		if elsewhere && h.vmConcurrency.inflight(t.InstanceID) > least {
+			continue
+		}
 		if release, ok := h.vmConcurrency.tryAcquire(t.InstanceID, string(app.Plan), perVM); ok {
 			local := pick
 			local.Target = t
@@ -97,6 +111,24 @@ func (h *Handler) acquireLocalTarget(ctx context.Context, app App, pick PickResu
 		}
 	}
 	return PickResult{}, nil, false
+}
+
+// leastRemoteInflight returns the fewest requests this gateway holds on any
+// ready instance of deploymentID outside node, and whether there is one.
+func (h *Handler) leastRemoteInflight(backend nodeSpreadBackend, appID, deploymentID, node string) (int, bool) {
+	least, found := 0, false
+	for _, count := range backend.ReadyNodeCounts(appID) {
+		if count.NodeID == node {
+			continue
+		}
+		for _, t := range backend.LocalReadyTargets(appID, deploymentID, count.NodeID) {
+			n := h.vmConcurrency.inflight(t.InstanceID)
+			if !found || n < least {
+				least, found = n, true
+			}
+		}
+	}
+	return least, found
 }
 
 // instanceNodesContext attaches every node of the app for InstanceNodesHeader

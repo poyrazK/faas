@@ -55,8 +55,8 @@ type Store interface {
 	GrantValid(ctx context.Context, appID, nodeID string, at time.Time) (bool, error)
 	UpsertGrant(ctx context.Context, appID, nodeID, grantedByNodeID string, expiresAt time.Time) (time.Time, error)
 	RecordOpen(ctx context.Context, nodeID, appID, via string, entries int) error
-	// CaptureKey returns a live sealed crash capture's app id and sealed
-	// key, or ErrUnknownCapture.
+	// CaptureKey returns a live sealed crash capture's (or sealed snapshot's,
+	// slice 3d-3) app id and sealed key, or ErrUnknownCapture.
 	CaptureKey(ctx context.Context, captureID string) (appID string, sealed []byte, err error)
 	// SidecarEnv returns the sealed direct env of sidecarName in
 	// deploymentID, a deployment of appID (SidecarCiphertexts), or
@@ -102,6 +102,11 @@ type BuildRun struct {
 	Running   bool
 	StartedAt time.Time
 	Node      string
+	// ScopeRecorded says whether the build's deployment recorded the
+	// registry repositories it may pull (slice 3j-4); Scope lists them as
+	// dockerfilebase repository keys.
+	ScopeRecorded bool
+	Scope         []string
 }
 
 // ErrUnknownJob is returned by Store.JobMaterializationLease.
@@ -175,8 +180,14 @@ type Server struct {
 	// RegistryFetch.
 	buildIdentities []*age.X25519Identity
 	registry        *registryFetcher
-	postgresHMAC    []byte
-	postgresProbe   func(context.Context, string, managedpostgres.CredentialAccess, int) error
+	// buildScope checks a build's pulls against its deployment's recorded
+	// registry scope (slice 3j-4).
+	buildScope    BuildRegistryScopeMode
+	postgresHMAC  []byte
+	postgresProbe func(context.Context, string, managedpostgres.CredentialAccess, int) error
+	// internalSvc mints internal-service tokens (slice 3k); nil refuses
+	// MintInternalServiceToken.
+	internalSvc *internalSvcSigner
 }
 
 // WithDeliveryIdentities lets secretd open delivery seal-domain values
@@ -220,6 +231,7 @@ func NewServer(store Store, identities []*age.X25519Identity, appsPerNodeHour in
 		budget: newAppBudget(appsPerNodeHour, time.Hour),
 	}
 	s.registry = newRegistryFetcher(nil, func() time.Time { return s.now() })
+	s.buildScope = BuildRegistryScopeObserve
 	return s
 }
 

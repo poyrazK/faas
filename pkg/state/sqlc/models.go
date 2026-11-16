@@ -158,6 +158,15 @@ type AccountEmailChange struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type AccountHeldLink struct {
+	AccountID     pgtype.UUID
+	HeldAccountID pgtype.UUID
+	HeldOrgID     pgtype.UUID
+	HeldReason    string
+	Signal        string
+	DetectedAt    pgtype.Timestamptz
+}
+
 type AccountMailThrottle struct {
 	AccountID       pgtype.UUID
 	Kind            string
@@ -3079,15 +3088,17 @@ type CiWorkerHealth struct {
 }
 
 type CliAuthCode struct {
-	TokenHash  []byte
-	AccountID  pgtype.UUID
-	Status     string
-	ExpiresAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
-	DeviceHash []byte
-	OrgID      pgtype.UUID
-	ProjectIds []pgtype.UUID
+	TokenHash    []byte
+	AccountID    pgtype.UUID
+	Status       string
+	ExpiresAt    pgtype.Timestamptz
+	ConsumedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	DeviceHash   []byte
+	OrgID        pgtype.UUID
+	ProjectIds   []pgtype.UUID
+	VerifierHash []byte
+	RequesterIp  pgtype.Text
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -4387,6 +4398,7 @@ type Deployment struct {
 	PromotedAt                 pgtype.Timestamptz
 	RollbackReleaseReview      []byte
 	BeforeCheckpointHook       pgtype.Bool
+	BuildRegistryScope         []string
 }
 
 type DeploymentAlias struct {
@@ -5066,6 +5078,16 @@ type EntityOutboxAcceptance struct {
 	AppID       pgtype.UUID
 	Fingerprint string
 	CreatedAt   pgtype.Timestamptz
+}
+
+type EnvironmentApiRoute struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	RouteTemplate string
+	FirstSeen     pgtype.Timestamptz
+	LastSeen      pgtype.Timestamptz
+	RequestCount  int64
 }
 
 type EnvironmentBindingReleaseReceipt struct {
@@ -6104,6 +6126,7 @@ type EventSubscription struct {
 	AcknowledgmentLeaseSeconds int32
 	DeploymentScope            string
 	EnvironmentID              pgtype.UUID
+	ClonePaused                bool
 }
 
 type EventSubscriptionCapacityCommand struct {
@@ -7623,6 +7646,8 @@ type InvocationSend struct {
 	SenderAppID     pgtype.UUID
 	OnCompleteAppID pgtype.UUID
 	CreatedAt       pgtype.Timestamptz
+	WorkflowRunID   pgtype.UUID
+	WorkflowOp      pgtype.Text
 }
 
 type InvocationWorkCancellation struct {
@@ -10006,13 +10031,17 @@ type MeterGatewayUsageEvent struct {
 }
 
 type MeterNetworkCheckpoint struct {
-	InstanceID pgtype.UUID
-	NetTxBytes int64
-	NetRxBytes int64
-	NetTxValid bool
-	NetRxValid bool
-	ObservedAt pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
+	InstanceID          pgtype.UUID
+	NetTxBytes          int64
+	NetRxBytes          int64
+	NetTxValid          bool
+	NetRxValid          bool
+	ObservedAt          pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	InternalTxBytes     int64
+	InternalTxValid     bool
+	InternalTxPending   int64
+	ServiceReplyPending int64
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {
@@ -11448,11 +11477,107 @@ type OutboundAiPriceList struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type OutboundAiPrompt struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Name                string
+	Description         string
+	LiveVersion         pgtype.Int4
+	PreviousLiveVersion pgtype.Int4
+	LatestVersion       int32
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type OutboundAiPromptCanary struct {
+	PromptID                  pgtype.UUID
+	Version                   int32
+	Percent                   int16
+	MaxErrorRateIncrease      int16
+	MaxLatencyIncreasePercent pgtype.Int4
+	MinCalls                  int32
+	WindowMinutes             int16
+	State                     string
+	Reason                    pgtype.Text
+	StartedAt                 pgtype.Timestamptz
+	DecidedAt                 pgtype.Timestamptz
+}
+
+type OutboundAiPromptEvaluation struct {
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	PromptID                pgtype.UUID
+	BaselineVersion         int32
+	CandidateVersion        int32
+	Cases                   []byte
+	JudgeIntegrationID      pgtype.UUID
+	JudgeModel              string
+	MaxLossRate             int16
+	Canary                  []byte
+	State                   string
+	Verdict                 pgtype.Text
+	ErrorCode               pgtype.Text
+	CaseCount               int32
+	Wins                    int32
+	Ties                    int32
+	Losses                  int32
+	CandidateErrors         int32
+	JudgeErrors             int32
+	BaselineCostMillicents  int64
+	CandidateCostMillicents int64
+	BaselineTtfbMsTotal     int64
+	BaselineTtfbCalls       int32
+	CandidateTtfbMsTotal    int64
+	CandidateTtfbCalls      int32
+	CanaryStarted           bool
+	CreatedAt               pgtype.Timestamptz
+	StartedAt               pgtype.Timestamptz
+	FinishedAt              pgtype.Timestamptz
+}
+
+type OutboundAiPromptEvaluationItem struct {
+	EvaluationID            pgtype.UUID
+	CaseIndex               int16
+	Verdict                 string
+	BaselineStatus          pgtype.Int2
+	CandidateStatus         pgtype.Int2
+	BaselineCostMillicents  int64
+	CandidateCostMillicents int64
+	BaselineTtfbMs          pgtype.Int4
+	CandidateTtfbMs         pgtype.Int4
+	BaselineOutputText      string
+	CandidateOutputText     string
+}
+
 type OutboundAiPromptPrefix struct {
 	IntegrationID  pgtype.UUID
 	PrefixHash     []byte
 	SeenAt         pgtype.Timestamptz
 	PreviousSeenAt pgtype.Timestamptz
+}
+
+type OutboundAiPromptVersion struct {
+	PromptID      pgtype.UUID
+	Version       int32
+	Messages      []byte
+	Defaults      []byte
+	Params        []byte
+	RouteID       pgtype.UUID
+	IntegrationID pgtype.UUID
+	Model         pgtype.Text
+	Note          string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type OutboundAiPromptVersionMinute struct {
+	PromptID       pgtype.UUID
+	Version        int32
+	Minute         pgtype.Timestamptz
+	Calls          int64
+	Errors         int64
+	TtfbCalls      int64
+	TtfbMsTotal    int64
+	CostMillicents int64
 }
 
 type OutboundAiQualityAlert struct {
@@ -11543,6 +11668,8 @@ type OutboundAiRequestLog struct {
 	EvaluationState     pgtype.Text
 	EvaluationClaimedAt pgtype.Timestamptz
 	EvaluationScore     pgtype.Int2
+	PromptID            pgtype.UUID
+	PromptVersion       pgtype.Int4
 }
 
 type OutboundAiRoute struct {
@@ -11854,6 +11981,22 @@ type PlanFitNotice struct {
 	Plan       string
 	AppsDigest string
 	NoticedAt  pgtype.Timestamptz
+}
+
+type PlatformAlertNotice struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Kind           string
+	SubjectID      string
+	Detail         []byte
+	CreatedAt      pgtype.Timestamptz
+	Status         string
+	Attempts       int32
+	NextAttemptAt  pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	LastError      string
 }
 
 type PlatformMailAgentRunCapture struct {
@@ -16056,8 +16199,10 @@ type Snapshot struct {
 	// CPU template of the capturing node; a templated snapshot restores on any node class the template supports.
 	CpuTemplate string
 	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
-	CpuModel string
-	StaleAt  pgtype.Timestamptz
+	CpuModel        string
+	StaleAt         pgtype.Timestamptz
+	SealedKey       []byte
+	SealedCaptureID pgtype.UUID
 }
 
 type SnapshotFanoutEvent struct {
@@ -16198,6 +16343,18 @@ type StatusObservationBucket struct {
 	BucketAt     pgtype.Timestamptz
 	Status       string
 	HasTelemetry bool
+}
+
+type StorageObjectDeletion struct {
+	StorageKey    string
+	Reason        string
+	RequestedBy   string
+	RequestedAt   pgtype.Timestamptz
+	State         string
+	NextAttemptAt pgtype.Timestamptz
+	Attempts      int32
+	LastError     string
+	DecidedAt     pgtype.Timestamptz
 }
 
 type StoredWorkflow struct {
@@ -16491,6 +16648,13 @@ type SyntheticCheckRun struct {
 	StatusCode int32
 	LatencyMs  int32
 	ErrorClass string
+}
+
+type TaskToolReleaseIntent struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
 }
 
 type TenantHostname struct {
@@ -17093,6 +17257,12 @@ type WorkflowRunResume struct {
 	PreviousError  pgtype.Text
 	ResumedSteps   []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type WorkflowRunStart struct {
+	RunID        pgtype.UUID
+	StarterAppID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
 }
 
 type WorkflowScheduleCursor struct {

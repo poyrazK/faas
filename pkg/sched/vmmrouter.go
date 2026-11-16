@@ -916,6 +916,23 @@ func (r *VMMRouter) WarmSnapshotSealed(ctx context.Context, nodeID, instance, st
 	return sealer.WarmSnapshotSealed(ctx, instance, storageKey, vmstateStorageKey, captureID)
 }
 
+// PauseAndSnapshotSealed forwards a park capture sealed at the source
+// (ADR-20261110210000 slice 3d-3) to the node's vmmd client.
+func (r *VMMRouter) PauseAndSnapshotSealed(ctx context.Context, nodeID, instance, storageKey, vmstateStorageKey string, beforeCheckpoint bool, captureID string) (SnapshotBytes, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return SnapshotBytes{}, err
+	}
+	sealer, ok := cli.(interface {
+		PauseAndSnapshotSealed(context.Context, string, string, string, bool, string) (SnapshotBytes, error)
+	})
+	if !ok {
+		return SnapshotBytes{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Sealed snapshot unavailable", "vmmd client does not support sealed snapshots")
+	}
+	return sealer.PauseAndSnapshotSealed(ctx, instance, storageKey, vmstateStorageKey, beforeCheckpoint, captureID)
+}
+
 // ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
 // commits the durable WARM -> RUNNING transition separately; this RPC only
 // forwards the vmmd-side Firecracker resume operation.

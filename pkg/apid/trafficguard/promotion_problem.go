@@ -8,6 +8,8 @@ import (
 
 func PromotionProblem(err error) *api.Problem {
 	switch {
+	case errors.Is(err, state.ErrTaskToolRecoveryChanged):
+		return api.NewProblem(409, "task_recovery_changed", "Task recovery changed", "Inspect the retained operation and its owner recovery approval before retrying")
 	case state.IsMCPReadinessRequired(err):
 		return api.NewProblem(409, api.CodeMCPReadinessRequired, "MCP readiness required", "Run server-side readiness probes for the current deployment and policy, or create an audited emergency override.")
 	case errors.Is(err, state.ErrMCPAdmissionPersistence):

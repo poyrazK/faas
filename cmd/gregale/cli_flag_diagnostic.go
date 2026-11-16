@@ -74,11 +74,29 @@ func describeFlagDiagnostic(message string, fs *flag.FlagSet, path string) (stri
 	return diagnostic, advice
 }
 
+// invokedFlagHelpPath retains only a registered command path from the typed
+// tree, before dispatch can fold a verb into a legacy handler. It is scoped to
+// run() and used only for JSON advice; human diagnostics keep their old path.
+var invokedFlagHelpPath string
+
+func flagDiagnosticInvocationPath(args []string) string {
+	commands := offlineCapabilityView().discoverableCommands(visibleCliCommands())
+	manifest := cliTreeManifest(commands)
+	words := leadingTreeWords(args)
+	for len(words) > 0 {
+		if document, ok := jsonHelpLookup(manifest, words); ok {
+			return strings.TrimPrefix(document.Command, "gregale ")
+		}
+		words = words[:len(words)-1]
+	}
+	return ""
+}
+
 func flagDiagnosticHelpArgv(path, name string) []string {
 	argv := []string{"gregale", "--json", "help"}
 	commands := offlineCapabilityView().discoverableCommands(visibleCliCommands())
 	manifest := cliTreeManifest(commands)
-	for _, candidate := range []string{path, flagSetCommandName(name)} {
+	for _, candidate := range []string{invokedFlagHelpPath, path, flagSetCommandName(name)} {
 		candidate = strings.TrimPrefix(spellUsageForTree("gregale "+candidate), "gregale ")
 		words := strings.Fields(cliTreeSpellPath(candidate))
 		document, ok := jsonHelpLookup(manifest, words)

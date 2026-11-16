@@ -506,6 +506,134 @@ and copied options at invocation, so concurrent waits and credential/endpoint
 rotation remain isolated. Existing generated methods and static services retain
 their signatures.
 
+## Typed background jobs and batches
+
+Define a version-1 `job.json` contract with `name`, `input` and `output` schemas
+for an existing Jobs template. Generate input/output types:
+
+```sh
+gregale-job-types job.json typescript job.generated.ts
+# The same command also supports python output.
+```
+
+```ts
+import { createClient, parseJobCheckpoint } from '@gregale/sdk-node';
+import { contract } from './job.generated.js';
+const job = createClient(apiURL, { token }).jobs.defineJob(contract);
+const run = await job.submit([{ id: 'import-42:row-1', value: input }], {
+  timeoutMs: 30_000, idempotencyKey: 'import-42', parallelism: 2, retryMax: 0,
+});
+// Persist before following. No payloads, SDK token or signed URLs are included.
+const saved = JSON.stringify(run.checkpoint);
+const resumed = job.resume(parseJobCheckpoint(JSON.parse(saved)));
+// With only the run ID, reconstruct a checkpoint through owned, bounded reads:
+const attached = await job.resumeById(run.checkpoint.run_id, { timeoutMs: 30_000 });
+const progress = await resumed.wait({ timeoutMs: 120_000, onProgress: console.log });
+for (const item of await resumed.results({ timeoutMs: 30_000 })) {
+  if (item.outcome === 'succeeded') useTypedResult(item.result);
+}
+const retry = await resumed.retryFailed({ timeoutMs: 30_000, idempotencyKey: 'import-42-replay' });
+```
+
+`submit` sends one mutation with the explicit stable key. `acceptance_unknown`
+means a request may have created a run; never replace its key automatically.
+The server retains keys for 24 hours. An interrupted/cancelled submit may also
+leave an accepted run. Use the same logical input/key for explicit recovery in
+that window. `status`, `wait` and `results` validate the exact account/job/run,
+contract fingerprint, input references and replay lineage. `retryFailed` uses the
+native atomic replay endpoint and image guard; successful inputs stay complete.
+
+`wait` returns native aggregate progress (`queued`, `running`, `succeeded`,
+`failed`, `cancelled`, `dead_letter`). `results` returns per-item outcomes,
+including `invalid_result` when bytes are missing, corrupt or schema-invalid.
+Managed artifacts use separate signed GETs, with no SDK token, cookies or
+redirects, and checksums verified again after downloading. External s3/gs
+artifacts require an explicit `JobStore` adapter.
+
+All operations need a positive total `timeoutMs`; a caller `signal` aborts local
+work. Local wait cancellation/deadlines do not cancel the remote job. Use
+`run.cancel({timeoutMs: 10_000})` explicitly. Defaults: 100 polls, 1s poll delay,
+256 API requests, 100 task pages and 1000 items. These are SDK processing budgets;
+server plan/admission limits still apply. Responses and result envelopes are
+bounded to 1 MiB. Signed data reads are bounded by the per-item manifest size.
+
+Runtime helpers are available from `@gregale/sdk-node/jobs/runtime`:
+`runLocalJobBatch(contract, inputs, handler, {timeoutMs, concurrency, maxAttempts})`
+runs without a control-plane client; retries default to one attempt.
+`runJobTask(contract, handler, {timeoutMs, store})` reads the native task identity,
+validates inputs/outputs, uploads result bytes and writes the native output
+manifest. Exit unsuccessfully after an error; the host publishes success after
+successful process exit. Handler context carries a stable `inputId`, `attempt`
+and cooperative `signal`. Enforce idempotent application effects using that ID;
+execution is at least once. Cancellation does not undo committed writes.
+
+The schema subset supports closed objects (`properties`, `required`,
+`additionalProperties: false`), arrays/items, strings, finite numbers, safe
+integers, booleans, null, primitive enums and length/item/numeric bounds. Unknown
+keywords (including `$ref` and `pattern`) are refused. Small inputs fit native
+opaque references; larger inputs use a caller-owned immutable store with digest
+verification. Store adapters own their credentials and cooperative I/O. The
+`localJobStore(directory)` adapter is for tests, with synthetic s3 references.
+
+See the [CSV import example](../../examples/sdk-csv-jobs/README.md) for schemas,
+generated types, PostgreSQL writes, rejection reports and failed-only recovery.
+
+
+Small typed inputs are encoded in the native job history’s `input_ref`. For data
+that should stay in an application-owned store, model an object reference in the
+input schema and fetch it in the handler. Checkpoint files retain only digests
+and identities. Numeric enum values are restricted to safe integers.
+
+## Verify exact project deployments
+
+After apply or recovery, verify release evidence and your application's behavior:
+
+```ts
+import { projectVerificationTarget, parseProjectVerificationTarget } from '@gregale/sdk-node';
+const target = await projectVerificationTarget(application);
+// Save JSON.stringify(target) privately; another process can parse the same IDs.
+const restored = parseProjectVerificationTarget(JSON.parse(savedTarget));
+const report = await client.projects.verifyApplication(restored, {
+  timeoutMs: 120_000, maxPolls: 20, pollDelayMs: 2_000, concurrency: 2,
+  checks: [{ name: 'api-smoke', workload: 'shop-api', async run(context) {
+    // Supply an application URL/auth independently. No SDK credentials are forwarded.
+    const response = await fetch(applicationURL, { signal: context.signal, redirect: 'error' });
+    const body = await response.json(); // Bound application response size in production.
+    return { outcome: body.ok ? 'verified' : 'failed', deployment_id: body.deployment_id };
+  }}],
+});
+```
+
+You can also pass the `ProjectApplicationResult` directly. The portable target
+requires an endpoint, project, environment and exact app/deployment identities;
+see the complete [API/worker/PostgreSQL example](../../examples/sdk-project-application).
+`verified` means the supplied checks and current platform evidence passed.
+`failed`, `blocked` and `inconclusive` retain per-service codes, request IDs,
+health timestamps, bounded release events and suggested next actions. Mixed or
+older serving releases, expired telemetry, absent permissions and missing IDs do
+not produce success. No automatic repair or rollout occurs.
+
+Checks are read-only, repeatable and required by default. Return the deployment ID
+actually observed; echoing the expected ID without observing it proves nothing.
+An unsupported worker needs an identity-aware smoke check. Set
+`requireSmokeChecks: false` explicitly for HTTP platform-health-only checks;
+workers still need functional evidence. Unknown/failed callbacks are inconclusive.
+
+A positive `timeoutMs` bounds reads, delays, checks and progress. `signal` cancels
+and rejects with its reason; a deadline returns a partial report with code
+`deadline`. Defaults: 3 polls per service, 1s delay, 2 concurrent services,
+256 reads, 256 KiB per response and telemetry age at most 120s (also server TTL).
+Limits are configurable within bounded ranges; retries are disabled for these
+reads. `onProgress` receives frozen per-service observations; callback errors use
+`progress_failed`. Synchronous callbacks must return promptly.
+
+Diagnostic text is omitted by default. To include failure reasons and persisted
+log excerpts, pass `redact: text => removeApplicationSecrets(text)`. This is your
+redaction policy: output is capped at 20 strings × 512 characters per service,
+inputs over 4096 characters are omitted; a throwing redactor omits that string.
+Reports are never saved automatically. Treat log contents as untrusted evidence.
+
+
 ### Preview and apply a complete project
 
 `client.projects.previewLocal` prepares the full repository and asks the server
@@ -4649,3 +4777,154 @@ exceeds consumed claims without resetting them. Frozen receipts resolve exact
 retries across Go/Node within Node's safe generation range, with known rejection
 receipts on `EventAcknowledgmentIntentBudgetAdoptionError.receipt`. See
 [budget adoption, exact fences and uncertainty](../../docs/event-acknowledgment-budget-adoption.md#node-selection-adoption-and-replay).
+
+## Application files (preview)
+
+Upload application/customer files with a server-side storage credential and
+bucket grant. This is separate from deployment source archives:
+
+```ts
+import {createClient, pathFileSource, parseFileCheckpoint} from '@gregale/sdk-node/preview';
+const client = createClient(apiURL, {token: storageToken});
+const files = client.storage.files({appSlug: 'imports', bucket: bucketID});
+const source = await pathFileSource('rows.csv');
+const uploaded = await files.upload('imports/new-unique-id/input.csv', source, {
+  timeoutMs: 120_000, maxBytes: 100 * 1024 * 1024, contentType: 'text/csv',
+  onCheckpoint: async checkpoint => saveDurably(checkpoint),
+  onProgress: progress => console.log(progress.confirmed_bytes),
+});
+// After restart, re-open the same source and resume the saved session:
+await files.resume(parseFileCheckpoint(savedJSON), source, {timeoutMs: 120_000});
+const store = await files.jobStore({timeoutMs: 30_000, prefix: 'job-results/'});
+const job = client.jobs.defineJob(contract, {store});
+```
+
+`downloadTo(key, sink, options)` streams bounded chunks; `download` buffers the
+result. `metadata`, `list` (opaque cursor), `delete`, and explicit multipart
+`abort(checkpoint, options)` are available. `put` supports small/empty files and
+create-only `ifNoneMatch: '*'`; persist `onReceipt(id)` before dispatch and call
+`confirm(id, key, size, options)` to recover an uncertain write. A receipt proves
+the attempt committed, rather than the current value of a mutable key.
+
+Local cancellation preserves remote parts. Save checkpoints durably, serialize
+one writer per session, keep the source stable, and use a new key for each logical
+upload. Resume verifies source bytes and reconciles confirmed provider parts.
+Defaults: 100 MiB, 10,000 parts, 60 polls; supported part layouts use at most
+64 MiB per part. Increase `maxBytes` explicitly for larger files. An ETag is
+opaque. The managed JobStore separately verifies SHA-256 of its stored bytes.
+Streaming sinks may have partial output on failure; publish only after success.
+Bucket handles retain their endpoint/token snapshot; recreate a handle after
+changing the parent client's credentials or endpoint.
+
+Browsers import `createFileBucket`, `blobFileSource`, and `FileBroker` from
+`@gregale/sdk-node/preview/browser`. Connect the broker to your authenticated
+application routes. Authorize each server-owned file ID/session/operation; never
+expose a generic signing proxy or Gregale credentials. Checkpoints contain no
+signed URLs. See the [complete browser CSV import example](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+and [design decisions](../../docs/adr/20261115153000-sdk-application-files.md).
+
+## File-triggered typed jobs (preview)
+
+`createFilePipeline` connects native file notifications to an existing typed job:
+
+```ts
+import {createFilePipeline, createNativeFileVerifier, postgresFilePipelineStore}
+  from '@gregale/sdk-node/preview';
+
+const pipeline = createFilePipeline({
+  name: 'csv-files-v1', revision: '1', scope, prefix: 'imports/', suffix: '/input.csv',
+  contract, job, files, jobStore,
+  store: postgresFilePipelineStore((sql, params) => pool.query(sql, params)),
+  verify: createNativeFileVerifier(scope, (id, signal) =>
+    client.invocations.getInvocation({id}, {signal, timeoutMs: 0, retry: false})),
+  authorize: async event => findOwnedUpload(event),
+  map: async (event, bytes, owner, signal) => mapValidatedCSV(event, bytes, owner, signal),
+});
+const result = await pipeline.handle({body, invocationId}, {timeoutMs: 60_000});
+if (result.outcome === 'unresolved') {
+  // Inspect the original acceptance; keep the intent, never auto-repost.
+  await saveRecoveryIdentity(result.receipt.intent.identity);
+}
+// After explicitly identifying the accepted run, match its exact saved inputs:
+await pipeline.reconcile(savedIdentity, inspectedRunId, {timeoutMs: 30_000});
+```
+
+`scope` contains `base_url`, `account_id`, `app_id`, `app_slug`, and `bucket`.
+`authorize` resolves a durable app record and returns `{id, sha256?}` or
+`{id, source_digest?}` (fixed 1 MiB block digest), or null to ignore an unowned
+file. Mutable files require a trusted digest; immutable events select that exact
+version. Missing old versions never read the current object. Mapping is pure
+and receives bounded verified bytes (default 16 MiB); default maximum 1,000 inputs.
+For stored inputs, use the SAME content-addressed `jobStore` as `job`; its URI
+must be stable for a digest. The managed JobStore meets this requirement.
+
+Install exported `filePipelineSchema` separately through your migration runner.
+The SQL query callback must execute one acknowledged AUTOCOMMIT statement,
+outside ambient transactions; configure driver timeouts. Native verification
+needs account-scoped invocation read access. It checks the retained original,
+including replays; pruned proof is refused. HTTP adapters still require a trusted
+gateway/authenticated delivery boundary. Event headers alone are not proof.
+
+Concurrent deliveries share one durable intent. Only its acknowledged creator
+can POST. Saved intents without a checkpoint remain unresolved across restart
+and the API idempotency window. Reconciliation reads Jobs and matches account,
+endpoint, contract and manifest; it never resubmits or requires source bytes.
+Keep receipts while notifications/replays can arrive. Job effects remain at
+least once. Separate input/output filters when enabling native triggers.
+
+The [automatic CSV application](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+includes trigger setup, two-user authorization, delayed delivery, cross-language
+recovery and PostgreSQL/Chrome tests. See [the design](../../docs/adr/20261115210000-sdk-file-triggered-jobs.md).
+
+## Live job and file-pipeline views (preview)
+
+`createLiveJob` provides an authenticated typed snapshot, shared subscriptions,
+Node/browser async iteration, and `useLiveJob` from `@gregale/sdk-node/preview/react`.
+`realtimeLiveJobSource` reuses private retained channels, fresh application-issued
+tickets, reconnects and history-gap recovery. Notifications invalidate a view;
+only native Jobs-confirmed snapshots can establish completion. Report-ready
+also requires an application-verified stored report. Existing Jobs and file
+callers need no migration.
+
+The optional server `createLiveJobBridge` shares bounded Jobs observation while
+viewer leases are active. Replace the live controller on session changes and
+revoke native tickets when revoking application access. See
+[the complete contract and examples](../../docs/sdk-live-jobs.md) and
+[the live CSV dashboard](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).
+
+## Durable typed job pipelines (preview)
+
+`defineJobPipeline` composes typed Jobs using the existing workflow journal and
+durable sleeps. `createJobPipelineClient` provides isolated typed start,
+attach-by-ID, inspect, result and native cancellation. Durable application-owned
+submission receipts prevent duplicate Jobs after driver crashes or uncertain
+acceptance. Both SDKs share receipts and journal values. Verified artifact
+handoffs and `jobPipelineLiveSnapshot` integrate with managed files and the
+existing private live views.
+
+Existing callers keep their APIs. Failed native code workflows cannot currently
+be continued; attach-by-ID reconnects for reading. Cancelling orchestration leaves
+accepted Jobs running until separately cancelled. See
+[usage, limits and recovery](../../docs/sdk-job-pipelines.md) and the
+[three-stage CSV example](../../examples/sdk-csv-jobs/README.md#durable-three-stage-pipeline-preview).
+
+## Approval gates and external input (preview)
+
+Durable typed pipelines can pause for a generated review/reply contract using
+`approval` or `waitForInput` (Python: `wait_for_input`). The application-owned
+PostgreSQL ledger binds exact reviewed inputs, checks current user roles,
+expires decisions using database time, and recovers uncertain native event
+delivery. Existing pipelines remain unchanged until a gate store is configured.
+See [usage, authentication and recovery](../../docs/sdk-pipeline-gates.md) and
+the [reviewed CSV import](../../examples/sdk-csv-jobs/README.md#reviewed-import-preview).
+
+## Typed child pipelines and batches (preview)
+
+Invoke a registered pipeline with `wf.child`, or run ordered inputs through
+`wf.children` with a shared concurrency cap. `PipelineChildren` verifies native
+parent/child provenance, retains uncertain starts for explicit reconciliation,
+and applies captured failure, deadline and parent-stop policies. Recovery uses
+an application-owned PostgreSQL ledger and never automatically repeats unknown
+starts. Existing pipelines opt in through a coordinator; their APIs stay intact.
+See [usage and recovery](../../docs/sdk-pipeline-composition.md) and the
+[reviewed batch CSV example](../../examples/sdk-csv-jobs/README.md#batch-imports-preview).

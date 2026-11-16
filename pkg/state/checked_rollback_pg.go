@@ -75,7 +75,7 @@ func rollbackFacts(ctx context.Context, tx pgx.Tx, app, id string) (Deployment, 
 	return d, err
 }
 func rollbackCurrentMatches(ctx context.Context, tx pgx.Tx, r api.RollbackOperation) error {
-	matches, err := sqlc.New().CheckedRollbackCurrentMatches(ctx, tx, sqlc.CheckedRollbackCurrentMatchesParams{CurrentID: mustPgUUID(r.CurrentDeploymentID), AppID: mustPgUUID(r.AppID), Scope: r.Scope, TargetID: mustPgUUID(r.TargetDeploymentID)})
+	matches, err := sqlc.New().CheckedRollbackCurrentMatches(ctx, tx, sqlc.CheckedRollbackCurrentMatchesParams{CurrentID: mustPgUUID(r.CurrentDeploymentID), AppID: mustPgUUID(r.AppID), Scopes: servingLaneScopes(r.Scope), TargetID: mustPgUUID(r.TargetDeploymentID)})
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	if id != "" {
 		r.ID = id
 	}
-	if _, err := sqlc.New().LockCheckedRollbackScope(ctx, tx, sqlc.LockCheckedRollbackScopeParams{AppID: mustPgUUID(r.AppID), Scope: r.Scope}); err != nil {
+	if _, err := sqlc.New().LockCheckedRollbackScope(ctx, tx, sqlc.LockCheckedRollbackScopeParams{AppID: mustPgUUID(r.AppID), Scopes: servingLaneScopes(r.Scope)}); err != nil {
 		return r, err
 	}
 	if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
@@ -242,7 +242,7 @@ func (s *PgStore) markCheckedRollbackReadyTx(ctx context.Context, tx pgx.Tx, d D
 	if r.Status != "preparing" || d.Status != DeploySnapshotting || d.TrafficPercent != 0 {
 		return ErrCheckedRollbackChanged
 	}
-	if _, err = sqlc.New().LockCheckedRollbackScope(ctx, tx, sqlc.LockCheckedRollbackScopeParams{AppID: mustPgUUID(r.AppID), Scope: r.Scope}); err != nil {
+	if _, err = sqlc.New().LockCheckedRollbackScope(ctx, tx, sqlc.LockCheckedRollbackScopeParams{AppID: mustPgUUID(r.AppID), Scopes: servingLaneScopes(r.Scope)}); err != nil {
 		return err
 	}
 	if err = rollbackCurrentMatches(ctx, tx, r); err != nil {
@@ -293,7 +293,7 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 	if err = checkAppRollbackGraphTx(ctx, tx, r.AppID, r.Scope, d.ID); err != nil {
 		return r, err
 	}
-	if _, err = q.LockCheckedRollbackScope(ctx, tx, sqlc.LockCheckedRollbackScopeParams{AppID: mustPgUUID(r.AppID), Scope: r.Scope}); err != nil {
+	if _, err = q.LockCheckedRollbackScope(ctx, tx, sqlc.LockCheckedRollbackScopeParams{AppID: mustPgUUID(r.AppID), Scopes: servingLaneScopes(r.Scope)}); err != nil {
 		return r, err
 	}
 	if err = rollbackCurrentMatches(ctx, tx, r); err != nil {
@@ -357,7 +357,7 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 		if err = q.CutoverCheckedRollbackTarget(ctx, tx, mustPgUUID(d.ID)); err != nil {
 			return r, mapErr(err)
 		}
-		if err = q.RetireCheckedRollbackSiblings(ctx, tx, sqlc.RetireCheckedRollbackSiblingsParams{AppID: mustPgUUID(r.AppID), Scope: r.Scope, TargetID: mustPgUUID(d.ID)}); err != nil {
+		if err = q.RetireCheckedRollbackSiblings(ctx, tx, sqlc.RetireCheckedRollbackSiblingsParams{AppID: mustPgUUID(r.AppID), Scopes: servingLaneScopes(r.Scope), TargetID: mustPgUUID(d.ID)}); err != nil {
 			return r, err
 		}
 		data, _ := json.Marshal(map[string]any{"request_id": r.ID, "target_deployment_id": r.TargetDeploymentID, "current_deployment_id": r.CurrentDeploymentID, "phase": "complete", "reason": r.Reason, "binding_fences": bindingReleaseFences(ctx), "crossed_releases": checkedRollbackCrossedReleaseIDs(ctx)})

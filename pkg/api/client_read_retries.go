@@ -117,6 +117,20 @@ func (c *Client) readRetryPause(ctx context.Context, response readRetryResponse,
 	return pause, transientReadTransport(err)
 }
 
+// TransientReadError reports a failed idempotent read that is worth repeating:
+// a connection failure or timeout, or a transient 429/502/503/504 problem.
+// Callers that poll a read on their own schedule use it to keep polling.
+func TransientReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return transientReadProblem(apiErr.Problem.Status, apiErr.Problem.Code)
+	}
+	return transientReadTransport(err)
+}
+
 func transientReadProblem(status int, code string) bool {
 	if status == http.StatusTooManyRequests {
 		return code == CodeAPIRateLimited || code == "rate_limited" || code == "http_error"

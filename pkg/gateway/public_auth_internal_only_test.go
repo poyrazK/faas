@@ -142,7 +142,7 @@ func newTestHandlerForInternalSvc(t *testing.T, allowedSvc map[string]ed25519.Pu
 // them).
 func internalOnlyApp() App {
 	return App{
-		ID:   "00000000-0000-0000-0000-00000000abcd",
+		ID:   "app-1", // the app the test tokens are minted for
 		Slug: "test-internal-only",
 		Plan: "scale",
 		PublicAuth: PublicAuthConfig{

@@ -39,6 +39,16 @@ const (
 // credentials. The deadline fences abandoned publishers; it never grants a retry.
 const (
 	ToolPublicationIntentMaxBytes              = 64 << 10
+	TaskToolReleaseIntentMaxBytes              = 64 << 10
+	TaskToolReleaseIntentsPerAccount           = 256
+	TaskToolReleaseAppsMax                     = 35
+	TaskToolReleaseApprovalTTL                 = 15 * time.Minute
+	TaskToolReleaseReceiptWorkerIDsMax         = 1024
+	TaskToolReleaseReceiptRevisionMax          = 9_007_199_254_740_991
+	TaskToolRecoveryObservationTTL             = time.Minute
+	TaskToolRecoveryApprovalTTL                = time.Minute
+	TaskToolExecutionBarrierPollInterval       = 25 * time.Millisecond
+	TaskToolRecoveryHistoryPagesMax            = 10
 	ToolPublicationOutcomeMaxBytes             = 512 << 10
 	ToolPublicationCatalogMaxBytes             = 256 << 10
 	ToolPublicationMaxTools                    = 64
@@ -197,7 +207,7 @@ const (
 	AttentionDismissReasonMax  = 200
 )
 
-// Customer attention signals, round 2 (ADR-20261113180000).
+// Customer attention signals, round 2 (ADR-20261115175928).
 const (
 	// AttentionOOMKills runtime OOM kills of one app within
 	// AttentionOOMWindow open an app_oom signal.
@@ -212,6 +222,12 @@ const (
 	// signal.
 	AttentionJobFailures = 3
 	AttentionJobWindow   = 7 * 24 * time.Hour
+	// The last AttentionCronFailures finished runs of one enabled HTTP cron,
+	// all failed or timed out, the newest within AttentionCronWindow, open a
+	// crons_failing signal (prod 2026-11-15: a cron 404'd every 15 minutes
+	// for days and nothing told the customer).
+	AttentionCronFailures = 5
+	AttentionCronWindow   = 24 * time.Hour
 	// A payment failure within AttentionPaymentWindow with no recovery
 	// since opens a payment_failing signal.
 	AttentionPaymentWindow = 14 * 24 * time.Hour
@@ -2117,6 +2133,38 @@ const (
 	CronCatchUpScanMax     = 1 << 21
 )
 
+// Platform alerts (ADR-20261115194000). An HTTP cron whose newest
+// CronFailurePauseRuns finished runs all failed, the oldest of them at least
+// CronFailurePauseSpan ago, is paused (suspended_reason 'failing') and its
+// account emailed: a cron failing every 15 minutes ran 96 billed failures a
+// day for weeks unnoticed. An app whose error rate (5xx over 2xx+5xx) stayed
+// at or above AppOutageErrorRatePct over AppOutageWindow, on at least
+// AppOutageMinRequests requests, is emailed about unless it has its own
+// enabled error-rate alert rule. One email per app or cron per
+// PlatformAlertCooldown; sent notices are kept PlatformAlertRetention.
+const (
+	CronFailurePauseRuns   = 10
+	CronFailurePauseSpan   = 24 * time.Hour
+	AppOutageErrorRatePct  = 90.0
+	AppOutageWindow        = "15m"
+	AppOutageMinRequests   = 20
+	PlatformAlertCooldown  = 24 * time.Hour
+	PlatformAlertRetention = 30 * 24 * time.Hour
+)
+
+// Default alerts for SLOs and synthetic checks (ADR-20261115194000,
+// amendment 2026-11-16). A check or SLO a customer created alerted nobody
+// unless they also wrote an alert rule with a channel: a store's checkout
+// check failed for hours and its SLO burned at 126x with no one told. With
+// no enabled alert rule naming it, the account is emailed when a check fails
+// its last SyntheticCheckFailingRuns runs, or when an SLO's multi-window
+// burn rate reaches PlatformAlertSLOBurnRate (the fast-burn page threshold,
+// 2% of a 30-day budget in an hour).
+const (
+	SyntheticCheckFailingRuns = 3
+	PlatformAlertSLOBurnRate  = 14.4
+)
+
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
 // decisions (schedule_occurrences) and its manual-run requests
 // (cron_fire_now_requests). It matches the longest plan's invocation result
@@ -2683,6 +2731,16 @@ const (
 	FlagsMaxConfigVersion      = int64(9007199254740991)
 )
 
+// Flag attribute targeting bounds (ADR 20261114150000 §2).
+const (
+	FlagsMaxConditionsPerRule   = 8
+	FlagsMaxConditionValues     = 100
+	FlagsMaxAttributeValueBytes = 128
+	FlagsMaxAppAttributes       = 16
+	// FlagsMaxOwnerBytes bounds a flag's owner (ADR 20261114150000 §4).
+	FlagsMaxOwnerBytes = 128
+)
+
 // Progressive rollout controls are structural bounds, not plan allowances.
 const (
 	FlagsMaxProgressiveStages                = 8
@@ -2793,6 +2851,23 @@ const (
 	// OutboundAISemanticCacheIndexBytesMax bounds one outboundd process's
 	// semantic index across every integration.
 	OutboundAISemanticCacheIndexBytesMax = 64 << 20
+	// Managed prompts (ADR 20261114180740): a version's messages, distinct
+	// variables, stop strings and size (messages, defaults and params); the
+	// largest response_format object; description and note lengths; the
+	// versions one prompt keeps; the push body bound; the stats window; and
+	// the variable sets one evaluation takes. Prompts per account are the
+	// plan's OutboundAIPromptsMax.
+	OutboundAIPromptMessagesMax            = 32
+	OutboundAIPromptVariablesMax           = 50
+	OutboundAIPromptStopMax                = 4
+	OutboundAIPromptTemplateMaxBytes       = 64 << 10
+	OutboundAIPromptResponseFormatMaxBytes = 16 << 10
+	OutboundAIPromptDescriptionMaxLen      = 280
+	OutboundAIPromptNoteMaxLen             = 280
+	OutboundAIPromptVersionsMax            = 200
+	OutboundAIPromptPushBodyMaxBytes       = 128 << 10
+	OutboundAIPromptStatsWindowMinutes     = 1_440
+	OutboundAIPromptEvaluationCasesMax     = 50
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
@@ -3657,6 +3732,11 @@ const (
 	// inside DevSourceCacheTTL, so the patch a cold boot replays never
 	// expires before the build that replaces it.
 	DevBuildCoalesceWindow = 3 * time.Minute
+	// DevEditToLiveTarget is the cached-edit target for `gregale dev`: the
+	// time from a saved edit until it serves. The CLI reports it and apid
+	// derives within_slo from the reported edit-to-live time against it, so
+	// the fleet SLO does not depend on the client's own verdict.
+	DevEditToLiveTarget = 15 * time.Second
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
@@ -3666,6 +3746,13 @@ const (
 	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
 	// the filesystem has less than this free.
 	ArtifactCacheMinFreeBytes int64 = 8 << 30
+	// SnapshotReplicaRefetchMinMargin and SnapshotReplicaRefetchCooldown
+	// bound how snapshothipd takes back a live snapshot the node cache evicted
+	// (ADR-20261115140000): only while the cache keeps this margin (or a tenth
+	// of its budget, if larger) under its budget and above its free floor, and
+	// at most once per snapshot per node per cooldown.
+	SnapshotReplicaRefetchMinMargin int64 = 8 << 30
+	SnapshotReplicaRefetchCooldown        = 6 * time.Hour
 	// ArtifactCacheReservePercent is the share of the cache filesystem kept
 	// free when the cache budget is derived from the disk
 	// (ADR-20261114182830): the free-space floor is this percentage of the
@@ -4073,6 +4160,29 @@ const (
 	// by a scheduler that stopped mid-refresh and is retired.
 	SnapshotRefreshMaxRuntime = 10 * time.Minute
 )
+
+// Clean init snapshot recapture (ADR-20261115113000). schedd's
+// `snapshot_clean_recapture` runtime config is on (a park that finds no init
+// snapshot on its node destroys the used instance and queues a clean boot,
+// prime and capture on that node) or off (that park captures the used
+// instance, as before).
+const (
+	SnapshotCleanRecaptureOff = "off"
+	SnapshotCleanRecaptureOn  = "on"
+	// DefaultSnapshotCleanRecapture is the compiled
+	// `snapshot_clean_recapture`.
+	DefaultSnapshotCleanRecapture = SnapshotCleanRecaptureOn
+	// SnapshotCleanRecaptureMaxAttempts is how many failed clean boots one
+	// queued recapture gets (after 1, 5 and 15 minutes) before it is
+	// dropped; the app's next park queues it again.
+	SnapshotCleanRecaptureMaxAttempts = 3
+)
+
+// ValidSnapshotCleanRecapture reports whether v is a valid
+// `snapshot_clean_recapture`.
+func ValidSnapshotCleanRecapture(v string) bool {
+	return v == SnapshotCleanRecaptureOff || v == SnapshotCleanRecaptureOn
+}
 
 // ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
 func ValidSnapshotRefresh(v string) bool {
@@ -4834,6 +4944,9 @@ type Limits struct {
 	// OutboundAISemanticCacheAllowed lets an AI integration answer calls
 	// whose wording means the same as a cached one (ADR 20261112194947).
 	OutboundAISemanticCacheAllowed bool
+	// OutboundAIPromptsMax bounds an account's managed AI prompts
+	// (ADR 20261114180740).
+	OutboundAIPromptsMax int
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
@@ -6509,7 +6622,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               1,
 		EnvironmentBranches:       1,
 		OutboundRequestsPerDayMax: 100_000,
-		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, OutboundAIAccountRatePerSecondMax: 20,
+		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, OutboundAIAccountRatePerSecondMax: 20, OutboundAIPromptsMax: 0,
 		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        10,
@@ -6931,7 +7044,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               2,
 		EnvironmentBranches:       2,
 		OutboundRequestsPerDayMax: 1_000_000,
-		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, OutboundAIAccountRatePerSecondMax: 40,
+		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, OutboundAIAccountRatePerSecondMax: 40, OutboundAIPromptsMax: 25,
 		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        50,
@@ -7380,7 +7493,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               5,
 		EnvironmentBranches:       5,
 		OutboundRequestsPerDayMax: 10_000_000,
-		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, OutboundAIAccountRatePerSecondMax: 200, OutboundAISemanticCacheAllowed: true,
+		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, OutboundAIAccountRatePerSecondMax: 200, OutboundAIPromptsMax: 100, OutboundAISemanticCacheAllowed: true,
 		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        250,
@@ -7795,7 +7908,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               20,
 		EnvironmentBranches:       20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
-		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, OutboundAIAccountRatePerSecondMax: 1000, OutboundAISemanticCacheAllowed: true,
+		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, OutboundAIAccountRatePerSecondMax: 1000, OutboundAIPromptsMax: 500, OutboundAISemanticCacheAllowed: true,
 		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        1000,
@@ -10426,8 +10539,13 @@ const (
 	// its GOMEMLIMIT, a soft per-process bound. A reload runs two apid
 	// generations in one cgroup (ADR-1736). Production over 14 days
 	// (2026-10-18): steady state 51-94 MB per process, spikes to 257 MB, and
-	// two OOM kills at the previous 256 MB cap (ADR 20261018132058).
-	APIDMemoryMaxMB                 = 512
+	// two OOM kills at the previous 256 MB cap (ADR 20261018132058). At 512 MB
+	// the hand-off guard (45 %, 230 MB) sat inside apid's working range: the
+	// rc.344 deploy found the cgroup at 244 MB, refused the hand-off and fell
+	// back to a restart, an API gap of about 9 s. 1024 MB puts the guard at
+	// 460 MB; GOMEMLIMIT stays per process so steady state does not grow
+	// (ADR-20261116090000).
+	APIDMemoryMaxMB                 = 1024
 	APIDGoMemLimitMB                = 256
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000

@@ -92,7 +92,11 @@ func ProjectEnvironmentConfigEnv(values json.RawMessage) (map[string]string, err
 		return nil, fmt.Errorf("configuration must be a JSON object: %w", err)
 	}
 	for key, raw := range object {
-		if ValidateEnvKey(key) != nil {
+		// ADR-1136 keeps the uppercase grammar on purpose: it is how a
+		// document says which entries are env (LOG_LEVEL) and which stay
+		// document-only (region). App env vars accept mixed case; this
+		// delivery rule, and the snapshot trigger mirroring it, do not.
+		if ValidateSecretKey(key) != nil {
 			continue
 		}
 		raw = bytes.TrimSpace(raw)

@@ -145,8 +145,36 @@ var routeExclude = map[string]bool{
 	"PUT /v1/sales/inquiries/{inquiry}/close":      true,
 
 	// ADR-20261112134100: private staff inbox metadata; public customer counterparts remain documented.
-	"GET /v1/admin/support/notifications":                                         true,
-	"POST /v1/admin/support/tickets/{ticket}/read":                                true,
+	"GET /v1/admin/support/notifications":          true,
+	"POST /v1/admin/support/tickets/{ticket}/read": true,
+	// ADR-20261115175927: the private staff inbox API, now registered literally; the operator console reads it.
+	"GET /v1/admin/support/tickets":                                               true,
+	"GET /v1/admin/support/tickets/{ticket}":                                      true,
+	"GET /v1/admin/support/tickets/{ticket}/messages":                             true,
+	"POST /v1/admin/support/tickets/{ticket}/messages":                            true,
+	"POST /v1/admin/support/tickets/{ticket}/notes":                               true,
+	"GET /v1/admin/support/tickets/{ticket}/events":                               true,
+	"POST /v1/admin/support/tickets/{ticket}/close":                               true,
+	"POST /v1/admin/support/tickets/{ticket}/reopen":                              true,
+	"POST /v1/admin/support/tickets/{ticket}/pause":                               true,
+	"POST /v1/admin/support/tickets/{ticket}/resume":                              true,
+	"POST /v1/admin/support/tickets/{ticket}/triage":                              true,
+	"POST /v1/admin/support/availability":                                         true,
+	"GET /v1/admin/support/policies":                                              true,
+	"POST /v1/admin/support/policies":                                             true,
+	"GET /v1/admin/support/teams":                                                 true,
+	"POST /v1/admin/support/teams":                                                true,
+	"GET /v1/admin/support/staff":                                                 true,
+	"POST /v1/admin/support/staff":                                                true,
+	"GET /v1/admin/support/events":                                                true,
+	"GET /v1/admin/support/report":                                                true,
+	"GET /v1/admin/support/tickets/{ticket}/engineering":                          true,
+	"POST /v1/admin/support/tickets/{ticket}/engineering":                         true,
+	"POST /v1/admin/support/tickets/{ticket}/engineering/preview":                 true,
+	"POST /v1/admin/support/tickets/{ticket}/engineering/publish":                 true,
+	"POST /v1/admin/support/tickets/{ticket}/redactions/preview":                  true,
+	"POST /v1/admin/support/tickets/{ticket}/redactions/apply":                    true,
+	"GET /v1/admin/support/tickets/{ticket}/customer":                             true,
 	"DELETE /v1/apps/{slug}/operation-approval-forms/{id}":                        true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
 	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":                           true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 	"GET /v1/apps/{slug}/operation-approval-forms":                                true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
@@ -490,28 +518,33 @@ var routeExclude = map[string]bool{
 	// must move together; the SDK does not model operator-only
 	// surfaces, and the public OpenAPI spec does not document
 	// them.
-	"GET /v1/admin/obs/overview":                true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/capacity":                true, // operator-only capacity projection
-	"GET /v1/admin/obs/tenants":                 true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/tenants/{id}/360":        true, // operator-only tenant 360 projection
-	"GET /v1/admin/obs/lookup":                  true, // operator-only identifier lookup (ADR-20261112170000)
-	"GET /v1/admin/obs/attention":               true, // operator-only customer attention signals (ADR-20261113123000)
-	"GET /v1/admin/obs/tenants/{id}":            true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/tenants/{id}/activity":   true, // operator-only tenant activity drill-down
-	"GET /v1/admin/obs/apps/{id}":               true, // operator-only app workload drill-down
-	"GET /v1/admin/obs/nodes":                   true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/nodes/{name}/detail":     true, // operator-only node workload drill-down
-	"GET /v1/admin/obs/nodes/{name}/heartbeats": true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/nodes/events":            true, // ADR-091 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
-	"GET /v1/admin/obs/nodes/wake-latency":      true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
-	"GET /v1/admin/obs/anomalies":               true, // ADR-091 — operator-only (PR #2)
-	"GET /v1/admin/obs/audit-log/search":        true, // ADR-091 — operator-only (PR #3)
-	"GET /v1/admin/obs/events":                  true, // ADR-091 — operator-only (PR #3)
-	"GET /v1/admin/obs/traces/{trace_id}":       true, // operator-only exact trace correlation
-	"GET /v1/admin/obs/rate-limits":             true, // ADR-091 — operator-only (PR #2)
-	"GET /v1/admin/obs/builder-heartbeats":      true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
-	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
-	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
+	"GET /v1/admin/obs/overview":                     true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/capacity":                     true, // operator-only capacity projection
+	"GET /v1/admin/obs/tenants":                      true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/tenants/{id}/360":             true, // operator-only tenant 360 projection
+	"GET /v1/admin/obs/lookup":                       true, // operator-only identifier lookup (ADR-20261112170000)
+	"GET /v1/admin/obs/attention":                    true, // operator-only customer attention signals (ADR-20261113123000)
+	"GET /v1/admin/obs/attention/summary":            true, // operator console signal actions (ADR-20261115175927)
+	"GET /v1/admin/obs/attention/{id}/contact-draft": true,
+	"POST /v1/admin/obs/attention/{id}/dismiss":      true,
+	"POST /v1/admin/obs/attention/{id}/contact":      true,
+	"GET /v1/admin/obs/tenants/{id}/health":          true,
+	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
+	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
+	"GET /v1/admin/obs/nodes":                        true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/nodes/{name}/detail":          true, // operator-only node workload drill-down
+	"GET /v1/admin/obs/nodes/{name}/heartbeats":      true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/nodes/events":                 true, // ADR-091 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
+	"GET /v1/admin/obs/nodes/wake-latency":           true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
+	"GET /v1/admin/obs/anomalies":                    true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/audit-log/search":             true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/events":                       true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/traces/{trace_id}":            true, // operator-only exact trace correlation
+	"GET /v1/admin/obs/rate-limits":                  true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/builder-heartbeats":           true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
+	"GET /v1/admin/obs/health":                       true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
+	"GET /v1/admin/obs/incidents":                    true, // operator-only bounded incident correlation inbox
 
 	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
 	"GET /v1/admin/obs/incidents/platform_alert/recurrence":          true, // private retained-episode recurrence diagnostics
@@ -788,6 +821,8 @@ func init() {
 var dtoExclude = map[string]bool{
 	"NormalizedIssueTrackerLink":     true, // internal provider identity canonicalizer; never a wire DTO
 	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
+	// ADR 20261114180740: the body of an app's call to outboundd's /p/{name}, not an apid route.
+	"OutboundAIPromptCallRequest": true,
 
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
@@ -1126,7 +1161,7 @@ var schemaSpecOnly = map[string]bool{
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
-	"FlagRule": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
@@ -1700,11 +1735,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "deployment_response_check.go"),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
+		filepath.Join(root, "pkg", "api", "mcp_access_fingerprint.go"),
 		filepath.Join(root, "pkg", "api", "mcp_admission.go"),
 		filepath.Join(root, "pkg", "api", "mcp_admission_history.go"),
 		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
 		filepath.Join(root, "pkg", "api", "tool_publications.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_releases.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_quarantine.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_retirement.go"),
 		filepath.Join(root, "pkg", "api", "tool_publication_verification.go"),
 		filepath.Join(root, "pkg", "api", "tool_publication_readiness.go"),
 		filepath.Join(root, "pkg", "api", "tool_invocations.go"),
@@ -2033,6 +2072,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "outbound_ai_quality.go"),        // ADR 20261021171712 quality signals
 		filepath.Join(root, "pkg", "api", "outbound_ai_deployments.go"),    // ADR 20261022153155 AI calls by deployment
 		filepath.Join(root, "pkg", "api", "outbound_ai_semantic_cache.go"), // ADR 20261112194947 semantic cache
+		filepath.Join(root, "pkg", "api", "outbound_ai_prompts.go"),        // ADR 20261114180740 managed prompts
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),

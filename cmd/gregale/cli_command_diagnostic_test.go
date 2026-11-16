@@ -95,6 +95,10 @@ func TestCLICommandCorrectionsJSON(t *testing.T) {
 
 func TestCLICommandCorrectionsKeepHumanOutput(t *testing.T) {
 	setupJSONHelp(t)
+	previousTTY := *main.TestOnlyTTY
+	off := false
+	*main.TestOnlyTTY = &off
+	t.Cleanup(func() { *main.TestOnlyTTY = previousTTY })
 	for _, tc := range []struct {
 		args []string
 		want string
