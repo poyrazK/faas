@@ -84,13 +84,16 @@ def sync_detailed(
 
      Compare a freshly computed local release fingerprint with the retained Task intent and revalidate
     native app and requesting-key facts. Observed mismatches permanently mark pending or approved
-    reviews stale. Restoring previous source bytes does not revive approval. This journal update
-    executes no tool, migration, deployment or customer code.
+    reviews stale. Restoring previous source bytes does not revive approval. An execution request
+    atomically claims or guards a separately owner-authorized local operation; only its requesting key
+    may transition it. Guard checks retain app configuration pins while allowing deployment revisions
+    made by the native adapter. Existing native traffic/readiness fences remain mandatory. This endpoint
+    only changes journal metadata and never executes customer code itself.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentCheck): Freshly computed local Task fingerprint supplied for
-            permanent native drift detection.
+        body (TaskToolReleaseIntentCheck): Fresh local fingerprint for drift detection or a
+            separately authorized adapter claim transition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -122,13 +125,16 @@ def sync(
 
      Compare a freshly computed local release fingerprint with the retained Task intent and revalidate
     native app and requesting-key facts. Observed mismatches permanently mark pending or approved
-    reviews stale. Restoring previous source bytes does not revive approval. This journal update
-    executes no tool, migration, deployment or customer code.
+    reviews stale. Restoring previous source bytes does not revive approval. An execution request
+    atomically claims or guards a separately owner-authorized local operation; only its requesting key
+    may transition it. Guard checks retain app configuration pins while allowing deployment revisions
+    made by the native adapter. Existing native traffic/readiness fences remain mandatory. This endpoint
+    only changes journal metadata and never executes customer code itself.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentCheck): Freshly computed local Task fingerprint supplied for
-            permanent native drift detection.
+        body (TaskToolReleaseIntentCheck): Fresh local fingerprint for drift detection or a
+            separately authorized adapter claim transition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -155,13 +161,16 @@ async def asyncio_detailed(
 
      Compare a freshly computed local release fingerprint with the retained Task intent and revalidate
     native app and requesting-key facts. Observed mismatches permanently mark pending or approved
-    reviews stale. Restoring previous source bytes does not revive approval. This journal update
-    executes no tool, migration, deployment or customer code.
+    reviews stale. Restoring previous source bytes does not revive approval. An execution request
+    atomically claims or guards a separately owner-authorized local operation; only its requesting key
+    may transition it. Guard checks retain app configuration pins while allowing deployment revisions
+    made by the native adapter. Existing native traffic/readiness fences remain mandatory. This endpoint
+    only changes journal metadata and never executes customer code itself.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentCheck): Freshly computed local Task fingerprint supplied for
-            permanent native drift detection.
+        body (TaskToolReleaseIntentCheck): Fresh local fingerprint for drift detection or a
+            separately authorized adapter claim transition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -191,13 +200,16 @@ async def asyncio(
 
      Compare a freshly computed local release fingerprint with the retained Task intent and revalidate
     native app and requesting-key facts. Observed mismatches permanently mark pending or approved
-    reviews stale. Restoring previous source bytes does not revive approval. This journal update
-    executes no tool, migration, deployment or customer code.
+    reviews stale. Restoring previous source bytes does not revive approval. An execution request
+    atomically claims or guards a separately owner-authorized local operation; only its requesting key
+    may transition it. Guard checks retain app configuration pins while allowing deployment revisions
+    made by the native adapter. Existing native traffic/readiness fences remain mandatory. This endpoint
+    only changes journal metadata and never executes customer code itself.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentCheck): Freshly computed local Task fingerprint supplied for
-            permanent native drift detection.
+        body (TaskToolReleaseIntentCheck): Fresh local fingerprint for drift detection or a
+            separately authorized adapter claim transition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

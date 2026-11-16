@@ -34,11 +34,15 @@ func requireMCPConditionalParking(ctx context.Context, c *Client) error {
 }
 
 func preflightMCPControlPlane() error {
+	return preflightMCPControlPlaneContext(context.Background())
+}
+
+func preflightMCPControlPlaneContext(ctx context.Context) error {
 	c, err := authedClient()
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return requireMCPConditionalParking(ctx, c)
 }

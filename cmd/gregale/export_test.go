@@ -1921,6 +1921,7 @@ var ToolAuthorizationCallbackForTest = toolAuthorizationCallback
 var RunToolConnectionBrowserCommandForTest = runMCPToolConnectionBrowser
 var RunMCPCatalogMonitor = runMCPCatalogMonitor
 var RunMCPNativeRelease = runMCPNativeRelease
+var RunMCPNativeReleaseContext = runMCPNativeReleaseContext
 var RunMCPNativeRetirement = runMCPNativeRetirement
 var RunMCPResourceWatch = runMCPResourceWatch
 var RunMCPWatch = runMCPWatch

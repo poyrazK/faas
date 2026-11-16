@@ -559,6 +559,8 @@ gregale mcp serve --transport stdio --tools core,build-tools --allow-writes
 | `gregale_prepare_task_tool_deploy` | Save an immutable, expiring native Task stack review under a stable caller-chosen intent ID. Requires write consent; creates no deployment. |
 | `gregale_get_task_tool_deploy` | Read a retained Task review and its last observed approval status after reconnect. |
 | `gregale_check_task_tool_deploy` | Re-review source and native app/key snapshots. Observed drift permanently invalidates approval. Requires write consent for journal updates. |
+| `gregale_apply_task_tool_deploy` | Start one separately owner-authorized local Node Task release with explicit execution consent. Uses the owner's private binding profile and preserves native release gates; duplicates never restart a claimed operation. |
+| `gregale_get_task_tool_operation` | Inspect the retained execution state and last guarded stage after reconnect, without paths or credentials. Interrupted claims require owner reconciliation. |
 | `gregale_apply_tool_deploy` | Start one asynchronous publication attempt from the unchanged reviewed project, using a private source snapshot. Repeated calls return the same receipt without repeating builds or fixtures. |
 | `gregale_get_tool_deploy` | Inspect that attempt's retained receipt and, when its deployment ID is known and bound, fresh native deployment status. Never invokes fixtures or promotes. |
 
@@ -1014,10 +1016,74 @@ Approval is a review decision. `ready_to_apply` and `bindings_verified` remain
 false. Runtime and schema-owner database bindings, retained keys, observer and
 metrics authority still need owner setup and live verification. These tools run
 no customer code, Node, fixtures, migrations, deployment or traffic changes. They
-do not register a published tool version or grant invocation access. Continue with
-the existing owner-operated native Task release workflow; a future agent executor
-must enforce fresh source, native identity, binding and readiness checks itself.
+do not register a published tool version or grant invocation access. Execution
+requires the separate owner authorization and native guards described below.
 See [ADR 20261115082509](adr/20261115082509-task-tool-release-intents.md).
+
+### Owner-authorized Task execution
+
+After approving the exact review, the owner can authorize one local Node Task
+release. This uses a personal non-agent administrator API key. Review approval
+alone does not permit execution.
+
+Prepare a private mode-0600 JSON object mapping the reviewed configuration's
+environment names to their binding values. It needs `MCP_TASK_NAMESPACE`, the
+configured runtime database and owner-key references, separate
+`MCP_TASK_MIGRATION_DATABASE_URL` and `MCP_TASK_OBSERVER_DATABASE_URL` bindings,
+and any configured retained-key or release-policy token references. Supply values
+through owner setup; never send this file or its contents to an agent. The Task
+schema must already be initialized. The runtime, schema-owner and read-only
+observer must be separate non-privileged database roles in the same schema.
+
+```sh
+gregale mcp server tasks execution authorize --id "$INTENT_ID" --operation-id "$OPERATION_ID" --plan release.json --bindings-file /private/task-bindings.json --intent-sha256 "$INTENT_SHA256" --allow-tool-execution
+```
+
+Use a stable 64-character lowercase hex operation ID. Authorization pins a salted
+digest of the local profile, API/account/intent identities and plan path, and
+retains the original review deadline. It cannot renew or replace an existing
+operation. Install the worker's Node dependencies before authorization. The
+owner's installed dependency tree is pinned separately from the offline source
+review; changed dependencies or links outside that tree block execution.
+The copied profile stays under the private Gregale configuration
+directory, outside deployment sources. It cannot override API credentials or
+executable/Node loader settings. Delete retained private files through owner
+maintenance after recovery is no longer needed; native identities remain retained.
+
+The original requesting key can call `gregale_apply_task_tool_deploy` with
+`intent_id`, `operation_id` and `allow_tool_execution=true`. The owner profile
+selects the source and bindings; the tool takes no path, credential or command
+arguments. Poll `gregale_get_task_tool_operation` with `intent_id`, including after
+reconnecting. CLI equivalents are:
+
+```sh
+gregale mcp server tasks execution apply --id "$INTENT_ID" --operation-id "$OPERATION_ID" --allow-tool-execution
+gregale mcp server tasks execution get --id "$INTENT_ID"
+```
+
+The native journal records `authorized`, `running`, `reconcile_required` or
+`completed` and the most recently guarded native stage. Source, binding, app
+configuration or authority changes stop further guarded effects. Supplied
+runtime/migration/observer database bindings receive a read-only role check
+before the existing release adapter runs. Remote app bindings remain owner setup;
+the adapter still requires live namespace, worker and observer evidence.
+
+Repeated apply never restarts a claimed operation. A disconnect permits polling;
+an interrupted or uncertain execution requires owner reconciliation. A process
+death may leave `running`, which also blocks automatic takeover. The private
+native journal is `gregale/task-executions/<API-account digest>/<intent ID>/release.json`
+under the OS configuration directory. Use the existing owner-operated native
+status/recovery/restore/retirement commands with that journal and the original
+plan; inspect effects before continuing. No database rollback or automatic
+cleanup is inferred from failure. The owner can revoke the review to stop future
+guards, independently of local source availability.
+
+Only local personal-account default-environment Node releases are supported.
+Private binding profiles require POSIX file permissions.
+Task execution does not register tool versions or grant invocation authority.
+Root `bindings_verified` and `ready_to_apply` remain false; the nested execution
+record represents a separate bounded permission, not complete stack readiness.
+See [ADR 20261115101539](adr/20261115101539-owner-bound-task-tool-execution.md).
 
 
 ## Hosted tool publishing (preview)

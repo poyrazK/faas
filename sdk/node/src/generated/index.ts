@@ -3236,6 +3236,8 @@ export type { SyntheticCheckResponse } from './models/SyntheticCheckResponse.js'
 export type { SyntheticCheckResults } from './models/SyntheticCheckResults.js';
 export type { SyntheticCheckRun } from './models/SyntheticCheckRun.js';
 export type { TaskToolReleaseApp } from './models/TaskToolReleaseApp.js';
+export type { TaskToolReleaseExecution } from './models/TaskToolReleaseExecution.js';
+export type { TaskToolReleaseExecutionRequest } from './models/TaskToolReleaseExecutionRequest.js';
 export type { TaskToolReleaseIntent } from './models/TaskToolReleaseIntent.js';
 export type { TaskToolReleaseIntentCheck } from './models/TaskToolReleaseIntentCheck.js';
 export type { TaskToolReleaseIntentDecision } from './models/TaskToolReleaseIntentDecision.js';

@@ -3234,6 +3234,8 @@ export type { TCPListenerTLSCertificateStatus } from './TCPListenerTLSCertificat
 export type { TCPListenerTLSConfig } from './TCPListenerTLSConfig.js';
 export type { TCPListenerTLSStatusResponse } from './TCPListenerTLSStatusResponse.js';
 export type { TaskToolReleaseApp } from './TaskToolReleaseApp.js';
+export type { TaskToolReleaseExecution } from './TaskToolReleaseExecution.js';
+export type { TaskToolReleaseExecutionRequest } from './TaskToolReleaseExecutionRequest.js';
 export type { TaskToolReleaseIntent } from './TaskToolReleaseIntent.js';
 export type { TaskToolReleaseIntentCheck } from './TaskToolReleaseIntentCheck.js';
 export type { TaskToolReleaseIntentDecision } from './TaskToolReleaseIntentDecision.js';

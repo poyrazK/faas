@@ -66,17 +66,9 @@ func (e *PrivateExecutor) inspectTaskReleaseIntent(w http.ResponseWriter, r *htt
 		respond(w, record, nil)
 		return
 	}
-	var in api.TaskToolReleaseIntentDecision
-	action := "decide"
-	if owner {
-		err = httpkit.DecodeJSONSized(r, &in, api.TaskToolReleaseIntentMaxBytes)
-	} else {
-		var check api.TaskToolReleaseIntentCheck
-		err = httpkit.DecodeJSONSized(r, &check, api.TaskToolReleaseIntentMaxBytes)
-		in.ReleaseFingerprint, action = check.ReleaseFingerprint, "check"
-	}
-	if err != nil || !toolpublication.ValidID(in.ReleaseFingerprint) {
-		respond(w, nil, state.ErrInvalidArgument)
+	in, action, err := decodeTaskReleaseChange(r, p, record, owner)
+	if err != nil {
+		respond(w, nil, err)
 		return
 	}
 	out, err := journal.ChangeTaskToolReleaseIntent(r.Context(), acct.ID, record.ID, action, in)
@@ -84,6 +76,35 @@ func (e *PrivateExecutor) inspectTaskReleaseIntent(w http.ResponseWriter, r *htt
 		e.opts.Audit(r.Context(), "task_tool_release.intent."+in.Decision, acct.ID, map[string]any{"intent_id": record.ID, "intent_sha256": record.IntentSHA256, "status": out.Status})
 	}
 	taskReleaseRespond(w, out, err)
+}
+
+func decodeTaskReleaseChange(r *http.Request, p httpkit.Principal, record api.TaskToolReleaseIntentRecord, owner bool) (api.TaskToolReleaseIntentDecision, string, error) {
+	var in api.TaskToolReleaseIntentDecision
+	var err error
+	action := "decide"
+	if owner {
+		err = httpkit.DecodeJSONSized(r, &in, api.TaskToolReleaseIntentMaxBytes)
+		if in.Decision == "authorize" {
+			if p.Key == nil {
+				return in, action, state.ErrInvalidArgument
+			}
+			in.AuthorizerKeyID = p.Key.ID
+		}
+	} else {
+		var check api.TaskToolReleaseIntentCheck
+		err = httpkit.DecodeJSONSized(r, &check, api.TaskToolReleaseIntentMaxBytes)
+		in.ReleaseFingerprint, action = check.ReleaseFingerprint, "check"
+		if check.Execution != nil {
+			if p.Key == nil || p.Key.ID != record.RequesterKeyID {
+				return in, action, state.ErrNotFound
+			}
+			in.Execution, action = check.Execution, "execution"
+		}
+	}
+	if err != nil || !toolpublication.ValidID(in.ReleaseFingerprint) {
+		return in, action, state.ErrInvalidArgument
+	}
+	return in, action, nil
 }
 
 func taskReleaseRespond(w http.ResponseWriter, out any, err error) {

@@ -114,6 +114,7 @@ type management struct {
 	configOutcomes               map[string]configOutcomeLookup
 	configRollbacks              map[string]configRollbackLookup
 	toolPublications             map[string]*toolPublication
+	taskExecutions               map[string]bool
 }
 
 // NewServer constructs a management server without making API calls.

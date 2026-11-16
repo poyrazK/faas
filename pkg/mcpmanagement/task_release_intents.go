@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/tasktoolrelease"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
@@ -86,6 +88,15 @@ func validateTaskIntentReceipt(record api.TaskToolReleaseIntentRecord, id string
 		record.ReadyToApply || record.BindingsVerified || record.CreatedAt.IsZero() || !record.ExpiresAt.Equal(expected.ExpiresAt) {
 		return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "Task intent receipt differs from its reviewed identity")
 	}
+	if e := record.Execution; e != nil {
+		if !toolpublication.ValidID(e.OperationID) || !toolpublication.ValidID(e.BindingsSHA256) || uuid.Validate(e.AuthorizerKeyID) != nil || e.AuthorizedAt.Before(record.CreatedAt) || !e.AuthorizedAt.Before(record.ExpiresAt) ||
+			(e.State != "authorized" && e.State != "running" && e.State != "reconcile_required" && e.State != "completed") || e.ClaimSHA256 != "" && !toolpublication.ValidID(e.ClaimSHA256) {
+			return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "invalid Task execution receipt")
+		}
+		if (e.State == "running" || e.State == "completed") && e.ClaimSHA256 == "" || e.State == "authorized" && e.ClaimSHA256 != "" || e.Stage != "" && !slices.Contains([]string{"prepared", "deploying_worker", "deploying_web", "replacements_started", "web_promoted", "draining_previous", "previous_parked", "complete"}, e.Stage) {
+			return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "Task execution state differs from its claim")
+		}
+	}
 	switch record.Status {
 	case "pending", "approved", "rejected", "revoked", "expired", "stale":
 		return tasktoolrelease.View(record, time.Now()), nil
@@ -98,6 +109,7 @@ func taskIntentOutputSchema() map[string]any {
 	props := map[string]any{"version": map[string]any{"type": "integer", "const": 1}, "intent": map[string]any{"type": "object"},
 		"ready_to_apply": map[string]any{"type": "boolean", "const": false}, "bindings_verified": map[string]any{"type": "boolean", "const": false},
 		"status": map[string]any{"type": "string", "enum": []string{"pending", "approved", "rejected", "revoked", "expired", "stale"}}}
+	props["execution"] = taskExecutionOutputSchema()
 	for _, name := range []string{"id", "account_id", "requester_key_id", "intent_sha256", "created_at", "expires_at", "decided_at"} {
 		props[name] = map[string]any{"type": "string"}
 	}

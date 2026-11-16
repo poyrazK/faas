@@ -8,6 +8,8 @@ on:
     # pull request; ci.yml runs this suite nightly and on dispatch.
     paths:
       - 'cmd/gregale/commands_mcp*.go'
+      - 'cmd/gregale/task_execution_bindings.mjs'
+      - 'scripts/ci/task-execution-bindings-check.sh'
       - 'cmd/gregale/templates/mcp-node/**'
       - 'cmd/gregale/templates/mcp-go/**'
       - 'cmd/gregale/templates/mcp-python/**'
@@ -112,6 +114,16 @@ env:
   GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
 
 jobs:
+  task-binding-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Task execution runtime/migration/observer role boundaries
+        run: bash scripts/ci/task-execution-bindings-check.sh
   management-client:
     runs-on: ubuntu-latest
     timeout-minutes: 20

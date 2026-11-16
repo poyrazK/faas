@@ -6154,6 +6154,12 @@ from .synthetic_check_run import SyntheticCheckRun
 from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
 from .task_tool_release_app import TaskToolReleaseApp
 from .task_tool_release_app_role import TaskToolReleaseAppRole
+from .task_tool_release_execution import TaskToolReleaseExecution
+from .task_tool_release_execution_request import TaskToolReleaseExecutionRequest
+from .task_tool_release_execution_request_action import TaskToolReleaseExecutionRequestAction
+from .task_tool_release_execution_request_stage import TaskToolReleaseExecutionRequestStage
+from .task_tool_release_execution_stage import TaskToolReleaseExecutionStage
+from .task_tool_release_execution_state import TaskToolReleaseExecutionState
 from .task_tool_release_intent import TaskToolReleaseIntent
 from .task_tool_release_intent_access_mode import TaskToolReleaseIntentAccessMode
 from .task_tool_release_intent_check import TaskToolReleaseIntentCheck
@@ -12523,6 +12529,12 @@ __all__ = (
     "SyntheticCheckRunErrorClass",
     "TaskToolReleaseApp",
     "TaskToolReleaseAppRole",
+    "TaskToolReleaseExecution",
+    "TaskToolReleaseExecutionRequest",
+    "TaskToolReleaseExecutionRequestAction",
+    "TaskToolReleaseExecutionRequestStage",
+    "TaskToolReleaseExecutionStage",
+    "TaskToolReleaseExecutionState",
     "TaskToolReleaseIntent",
     "TaskToolReleaseIntentAccessMode",
     "TaskToolReleaseIntentCheck",

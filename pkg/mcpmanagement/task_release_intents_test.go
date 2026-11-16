@@ -58,7 +58,7 @@ func TestTaskIntentManagementProtocols(t *testing.T) {
 			// Reads recover the native journal even with write consent disabled.
 			cs, ctx := connectSelectedTestServer(t, backend, Options{APIBase: backend.URL, LocalCLI: executor, Toolsets: []string{ToolsetBuildTools}}, protocol)
 			tools := listedTools(t, ctx, cs)
-			if !tools["gregale_get_task_tool_deploy"] || tools["gregale_prepare_task_tool_deploy"] || tools["gregale_check_task_tool_deploy"] {
+			if !tools["gregale_get_task_tool_deploy"] || tools["gregale_prepare_task_tool_deploy"] || tools["gregale_check_task_tool_deploy"] || tools["gregale_apply_task_tool_deploy"] {
 				t.Fatal("Task journal write consent was bypassed")
 			}
 			publicationCall(t, ctx, cs, "gregale_get_task_tool_deploy", taskReleaseIntentArgs{IntentID: record.ID}, false)
@@ -69,9 +69,13 @@ func TestTaskIntentManagementProtocols(t *testing.T) {
 			publicationCall(t, ctx, cs, "gregale_prepare_task_tool_deploy", prepareTaskReleaseArgs{IntentID: record.ID, PlanPath: path, Reason: record.Intent.Reason}, false)
 			publicationCall(t, ctx, cs, "gregale_check_task_tool_deploy", checkTaskReleaseArgs{IntentID: record.ID, PlanPath: path}, false)
 			for name := range listedTools(t, ctx, cs) {
-				if strings.Contains(name, "task") && (strings.Contains(name, "approve") || strings.Contains(name, "apply")) {
-					t.Fatal("agent received owner or execution authority", name)
+				if strings.Contains(name, "task") && (strings.Contains(name, "approve") || strings.Contains(name, "reject") || strings.Contains(name, "revoke")) {
+					t.Fatal("agent received owner decision authority", name)
 				}
+			}
+			publicationCall(t, ctx, cs, "gregale_apply_task_tool_deploy", applyTaskExecutionArgs{IntentID: record.ID, OperationID: strings.Repeat("d", 64), AllowToolExecution: true}, true)
+			if calls != 2 {
+				t.Fatal("unapproved Task intent dispatched execution", calls)
 			}
 		})
 	}

@@ -29,33 +29,60 @@ type TaskToolReleaseIntent struct {
 	Reason             string               `json:"reason"`
 }
 
-// TaskToolReleaseIntentRecord is an approval journal, not execution authority.
-// BindingsVerified and ReadyToApply remain false in this milestone.
+// TaskToolReleaseIntentRecord retains review approval and optional separately
+// authorized local execution. Root readiness flags are never execution authority.
 type TaskToolReleaseIntentRecord struct {
-	Version          int                   `json:"version"`
-	ID               string                `json:"id"`
-	AccountID        string                `json:"account_id"`
-	RequesterKeyID   string                `json:"requester_key_id"`
-	IntentSHA256     string                `json:"intent_sha256"`
-	Intent           TaskToolReleaseIntent `json:"intent"`
-	Status           string                `json:"status"`
-	CreatedAt        time.Time             `json:"created_at"`
-	ExpiresAt        time.Time             `json:"expires_at"`
-	DecidedAt        *time.Time            `json:"decided_at,omitempty"`
-	BindingsVerified bool                  `json:"bindings_verified"`
-	ReadyToApply     bool                  `json:"ready_to_apply"`
+	Version          int                       `json:"version"`
+	ID               string                    `json:"id"`
+	AccountID        string                    `json:"account_id"`
+	RequesterKeyID   string                    `json:"requester_key_id"`
+	IntentSHA256     string                    `json:"intent_sha256"`
+	Intent           TaskToolReleaseIntent     `json:"intent"`
+	Status           string                    `json:"status"`
+	CreatedAt        time.Time                 `json:"created_at"`
+	ExpiresAt        time.Time                 `json:"expires_at"`
+	DecidedAt        *time.Time                `json:"decided_at,omitempty"`
+	BindingsVerified bool                      `json:"bindings_verified"`
+	ReadyToApply     bool                      `json:"ready_to_apply"`
+	Execution        *TaskToolReleaseExecution `json:"execution,omitempty"`
+}
+
+// TaskToolReleaseExecution is separate, single-use owner authority for the
+// trusted local Task adapter. A running claim is never automatically taken over.
+type TaskToolReleaseExecution struct {
+	OperationID     string    `json:"operation_id"`
+	BindingsSHA256  string    `json:"bindings_sha256"`
+	AuthorizerKeyID string    `json:"authorizer_key_id"`
+	State           string    `json:"state"`
+	AuthorizedAt    time.Time `json:"authorized_at"`
+	ClaimSHA256     string    `json:"claim_sha256,omitempty"`
+	Stage           string    `json:"stage,omitempty"`
+}
+
+// TaskToolReleaseExecutionRequest names bounded adapter operations; ClaimToken
+// is private local executor material and is never returned in a receipt.
+type TaskToolReleaseExecutionRequest struct {
+	Action         string `json:"action"`
+	OperationID    string `json:"operation_id"`
+	BindingsSHA256 string `json:"bindings_sha256"`
+	ClaimToken     string `json:"claim_token,omitempty"`
+	Stage          string `json:"stage,omitempty"`
 }
 
 // TaskToolReleaseIntentCheck supplies a freshly recomputed local fingerprint.
 type TaskToolReleaseIntentCheck struct {
-	ReleaseFingerprint string `json:"release_fingerprint"`
+	ReleaseFingerprint string                           `json:"release_fingerprint"`
+	Execution          *TaskToolReleaseExecutionRequest `json:"execution,omitempty"`
 }
 
 // TaskToolReleaseIntentDecision binds an owner decision to the complete intent.
 type TaskToolReleaseIntentDecision struct {
-	IntentSHA256       string `json:"intent_sha256"`
-	ReleaseFingerprint string `json:"release_fingerprint"`
-	Decision           string `json:"decision"`
+	IntentSHA256       string                           `json:"intent_sha256"`
+	ReleaseFingerprint string                           `json:"release_fingerprint"`
+	Decision           string                           `json:"decision"`
+	Execution          *TaskToolReleaseExecutionRequest `json:"execution,omitempty"`
+	// AuthorizerKeyID is supplied only by the authenticated native handler.
+	AuthorizerKeyID string `json:"-"`
 }
 
 func (c *Client) PrepareTaskToolReleaseIntent(ctx context.Context, id string, in TaskToolReleaseIntent) (TaskToolReleaseIntentRecord, error) {
