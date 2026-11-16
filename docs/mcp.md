@@ -1149,10 +1149,10 @@ Choose one 64-character lowercase hexadecimal handover ID and retain it for
 retries. Obtain the original operation and checkpoint revision from inspection.
 
 ```sh
-gregale mcp server tasks execution recovery-stop \
+gregale mcp server tasks run recovery-stop \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --revision "$REVISION"
-gregale mcp server tasks execution get --id "$INTENT_ID"
+gregale mcp server tasks run get --id "$INTENT_ID"
 ```
 
 Stop permanently fences subsequent executor requests and waits for previously
@@ -1172,7 +1172,7 @@ installed dependencies and credentials must still be available. Qualification
 runs reviewed Node code and live read checks with explicit owner consent:
 
 ```sh
-gregale mcp server tasks execution recovery-qualify \
+gregale mcp server tasks run recovery-qualify \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --revision "$REVISION" --allow-local-checks
 ```
@@ -1186,7 +1186,7 @@ deployment, worker or traffic state. The result includes `qualification_sha256`
 for a separate owner decision:
 
 ```sh
-gregale mcp server tasks execution recovery-approve \
+gregale mcp server tasks run recovery-approve \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --revision "$REVISION" \
   --qualification-sha256 "$QUALIFICATION_SHA256"
