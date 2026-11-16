@@ -5676,7 +5676,7 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 			if l.MemoryMaxMiB < 1 {
 				return 0
 			}
-			memoryMB := api.BillableRAMMB(l.MemoryMaxMiB)
+			memoryMB := api.AppVMMemoryMaxMB(l.MemoryMaxMiB)
 			if l.IsBuilder {
 				memoryMB = api.BuilderMemoryMaxMB(l.MemoryMaxMiB)
 			}

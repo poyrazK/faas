@@ -8412,6 +8412,13 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// AppVMHeadroomMB is how far an app or job VM's cgroup memory.max sits
+	// above BillableRAMMB (ADR-20261116170000). A cold-booting guest touches
+	// all of its RAM, and Firecracker's own mapped pages (~16 MB) did not fit
+	// in PerVMOverheadMB: every 128 MB app OOM-killed on cold boot on prod
+	// (2026-11-15/16). Admission, billing and invariant 2 stay at
+	// BillableRAMMB; only the kill fence moves.
+	AppVMHeadroomMB = 24
 	// DatabaseVMWritebackBurstMB is how far a database VM's memory.max sits
 	// above its memory.high, which is BillableRAMMB (ADR-1027). The VM's
 	// volume writes leave host page cache charged to its cgroup; with only
@@ -14065,6 +14072,13 @@ func (l Limits) AdmissionMB() int {
 // to the overhead constant updates exactly one place.
 func BillableRAMMB(ramMB int) int {
 	return ramMB + PerVMOverheadMB
+}
+
+// AppVMMemoryMaxMB is the per-instance cgroup memory.max of an app or job VM:
+// its billable RAM plus AppVMHeadroomMB for Firecracker's own pages
+// (ADR-20261116170000). Never use it for admission or billing.
+func AppVMMemoryMaxMB(ramMB int) int {
+	return BillableRAMMB(ramMB) + AppVMHeadroomMB
 }
 
 // SnapshotMemoryMaxMB returns the temporary per-instance memory.max used for
