@@ -176,6 +176,7 @@ func TestAdoptRestartSurvivorsKillsARefusedProvenGuest(t *testing.T) {
 	tests := []struct {
 		name     string
 		block    func(*resourceAdoption)
+		fixture  func(*adoptionFixture)
 		adoptErr error
 		killErr  error
 		reason   string
@@ -185,11 +186,14 @@ func TestAdoptRestartSurvivorsKillsARefusedProvenGuest(t *testing.T) {
 		{name: "outside what adoption rebuilds", block: func(b *resourceAdoption) { b.Network.StaticEgressIP = "203.0.113.7" },
 			reason: adoptionRefusedStaticEgress, killed: true},
 		{name: "kill fails", adoptErr: errors.New("bind source gone"), killErr: errors.New("pid reused"), reason: adoptionRefusedAdoptFailed},
-		{name: "not proven", block: func(b *resourceAdoption) { b.Kind = "unknown" }, reason: adoptionRefusedKind},
+		{name: "not proven", fixture: func(f *adoptionFixture) { f.api.State = "NotStarted" }, reason: adoptionRefusedAPIIdentity},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAdoptionFixture(t)
+			if tc.fixture != nil {
+				tc.fixture(f)
+			}
 			block := f.block()
 			if tc.block != nil {
 				tc.block(&block)
@@ -205,7 +209,7 @@ func TestAdoptRestartSurvivorsKillsARefusedProvenGuest(t *testing.T) {
 			if err != nil || rep.Adopted != 0 || rep.Refused[tc.reason] != 1 || len(rep.Verdicts) != 1 {
 				t.Fatalf("adoption = %+v, %v; want refused %s", rep, err, tc.reason)
 			}
-			proven := tc.reason != adoptionRefusedKind
+			proven := tc.reason != adoptionRefusedAPIIdentity
 			if wantKills := map[bool]int{true: 1, false: 0}[proven]; len(kills) != wantKills || (proven && kills[0] != f.process) {
 				t.Fatalf("killed %v, want %d kill of %+v", kills, wantKills, f.process)
 			}
