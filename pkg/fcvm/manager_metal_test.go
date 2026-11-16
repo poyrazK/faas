@@ -405,7 +405,11 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	if _, err := os.Stat("/sys/fs/cgroup"); err != nil {
 		t.Skipf("/sys/fs/cgroup not mounted (Lima/macOS dev): %v", err)
 	}
-	scopeBase := filepath.Join(cgroupRoot, ParentCgroupFor("hobby"), PerInstanceScope("mem"))
+	parent := ParentCgroupFor("hobby")
+	if m.flatTenantCgroups {
+		parent = CgroupMountRoot // ADR-20261109172421 step 6.5
+	}
+	scopeBase := filepath.Join(cgroupRoot, parent, PerInstanceScope("mem"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

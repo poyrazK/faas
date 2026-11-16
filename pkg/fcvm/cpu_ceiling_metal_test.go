@@ -37,7 +37,7 @@ func TestMetalScaleTwoCoreCeiling(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := newMetalVMM(t, 30*time.Second).WithStorage(store)
-	m := NewManager(wire.ExecRunner{}, v, Paths{Kernel: kernel}, fcVersion, nil, nil)
+	m := withMetalFlatTenantCgroups(NewManager(wire.ExecRunner{}, v, Paths{Kernel: kernel}, fcVersion, nil, nil))
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -57,7 +57,11 @@ func TestMetalScaleTwoCoreCeiling(t *testing.T) {
 	const instance = "cpu-ceiling-scale"
 	const appID = "app-" + instance
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
-	scope := filepath.Join(cgroupRoot, ParentCgroupFor(api.PlanScale), PerInstanceScope(instance))
+	parent := ParentCgroupFor(api.PlanScale)
+	if m.flatTenantCgroups {
+		parent = CgroupMountRoot // ADR-20261109172421 step 6.5
+	}
+	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(instance))
 	period := cpuMaxPeriodUS
 	check := func(stage string, wantMillicores int) {
 		t.Helper()
