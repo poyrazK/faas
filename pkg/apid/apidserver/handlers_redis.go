@@ -49,7 +49,7 @@ func (s *server) listRedisCaches(w http.ResponseWriter, r *http.Request, acct st
 	}
 	out := api.ListRedisCachesResponse{Caches: []api.RedisCache{}, Limit: api.ManagedValkeyCachesFor(acct.Plan)}
 	for _, cache := range caches {
-		app, err := s.store.GetApp(r.Context(), cache.AppID)
+		app, err := s.store.AppByID(r.Context(), cache.AppID)
 		if err != nil {
 			continue
 		}
