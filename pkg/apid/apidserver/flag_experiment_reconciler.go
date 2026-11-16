@@ -96,6 +96,9 @@ func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
 		if err := r.advance(xCtx, x, now); err != nil {
 			r.warn(ctx, "flag experiments: advance failed", err, "experiment", x.ID)
 		}
+		if err := r.guard(xCtx, x, now); err != nil {
+			r.warn(ctx, "flag experiments: guardrail check failed", err, "experiment", x.ID)
+		}
 		cancel()
 	}
 }
@@ -147,9 +150,13 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 			minP[v.Variant] = v.Comparison.PValue
 		}
 	}
-	if err := r.store.SaveFlagExperimentProgress(ctx, x.ID, from, minP); err != nil {
-		return err
-	}
+	return r.store.SaveFlagExperimentProgress(ctx, x.ID, from, minP)
+}
+
+// guard fixes the latency threshold and checks the guardrails on the units
+// already recorded. It runs even when a pass failed to read new telemetry,
+// so a slow telemetry read never delays a rollback.
+func (r *flagExperimentReconciler) guard(ctx context.Context, x state.FlagExperiment, now time.Time) error {
 	if err := r.fixLatencyThreshold(ctx, &x); err != nil {
 		return err
 	}

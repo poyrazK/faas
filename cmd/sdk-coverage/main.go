@@ -1110,6 +1110,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/projects/{slug}/environments/{environment}/experiments/{key}":         "DeleteProjectFlagExperiment",
 	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start":     "StartProjectFlagExperiment",
 	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop":      "StopProjectFlagExperiment",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship":      "ShipProjectFlagExperiment",
 	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results":    "ProjectFlagExperimentResults",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":              "RollbackProjectFlags",
 	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":           "ResumeEnvironmentAutomation",

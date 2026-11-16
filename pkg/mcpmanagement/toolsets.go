@@ -146,6 +146,8 @@ var toolsetOf = map[string]string{
 	"gregale_get_rollout":                 ToolsetRelease,
 	"gregale_watch_rollout":               ToolsetRelease,
 	"gregale_list_environments":           ToolsetRelease,
+	"gregale_list_flag_experiments":       ToolsetRelease,
+	"gregale_get_flag_experiment_results": ToolsetRelease,
 	"gregale_get_environment":             ToolsetRelease,
 	"gregale_plan_environment_promotion":  ToolsetRelease,
 	"gregale_apply_environment_promotion": ToolsetRelease,

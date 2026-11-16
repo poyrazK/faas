@@ -383,10 +383,10 @@ func (m *MemStore) FoldFlagExperimentValues(_ context.Context, x FlagExperiment,
 	return nil
 }
 
-// SeedFlagExperimentUnit adds a unit with guardrail counts, and its requests
+// SeedFlagExperimentUnitForTest adds a unit with guardrail counts, and its requests
 // to the variant's latency histogram at latencyMS, for apid tests: MemStore
 // keeps no request telemetry to read units from.
-func (m *MemStore) SeedFlagExperimentUnit(experimentID, customerID, variant string, firstExposed time.Time, requests, errors, tested, slow, latencyMS int64) {
+func (m *MemStore) SeedFlagExperimentUnitForTest(experimentID, customerID, variant string, firstExposed time.Time, requests, errors, tested, slow, latencyMS int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	fe := m.flagEventsLocked()
