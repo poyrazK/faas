@@ -38,12 +38,12 @@ type Evidence struct {
 	// Recent is the app's newest instances in any state, bounded by
 	// api.AppHealthRecentInstanceLimit: the evidence for boot failures that
 	// the active-instance read cannot see.
-	Recent      []state.Instance
-	RecentKnown bool
-	Readiness        map[string]map[string]state.InstanceReadiness
-	Nodes            map[string]state.ComputeNode
-	Metrics          appmetrics.RequestHealth
-	MetricsAllowed   bool
+	Recent         []state.Instance
+	RecentKnown    bool
+	Readiness      map[string]map[string]state.InstanceReadiness
+	Nodes          map[string]state.ComputeNode
+	Metrics        appmetrics.RequestHealth
+	MetricsAllowed bool
 	// AssessWorkers releases worker assessment (the app_health_workers
 	// platform flag); Worker is a worker-mode app's queue evidence
 	// (ADR-20261102091500).
