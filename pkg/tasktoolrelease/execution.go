@@ -1,6 +1,7 @@
 package tasktoolrelease
 
 import (
+	"encoding/json"
 	"slices"
 	"time"
 
@@ -14,6 +15,9 @@ import (
 func Execution(record api.TaskToolReleaseIntentRecord, in api.TaskToolReleaseIntentDecision, fresh bool, now time.Time) (api.TaskToolReleaseIntentRecord, error) {
 	r := in.Execution
 	if r == nil || !toolpublication.ValidID(r.OperationID) || !toolpublication.ValidID(r.BindingsSHA256) || !toolpublication.ValidID(in.ReleaseFingerprint) {
+		return record, ErrInvalid
+	}
+	if r.FenceVersion != 0 && r.FenceVersion != 1 {
 		return record, ErrInvalid
 	}
 	if r.Stage != "" && !slices.Contains([]string{"prepared", "deploying_worker", "deploying_web", "replacements_started", "web_promoted", "draining_previous", "previous_parked", "complete"}, r.Stage) {
@@ -44,13 +48,36 @@ func Execution(record api.TaskToolReleaseIntentRecord, in api.TaskToolReleaseInt
 		return record, ErrChanged
 	}
 	// Copy the nested record so a rejected request cannot mutate shared memory.
-	copy := *e
+	body, _ := json.Marshal(e)
+	var copy api.TaskToolReleaseExecution
+	_ = json.Unmarshal(body, &copy)
 	record.Execution, e = &copy, &copy
 	claim := toolpublication.Digest([]byte(r.ClaimToken))
 	if r.Action == "claim" && e.State != "authorized" {
 		return record, nil // Duplicate calls only inspect, never obtain a new lease.
 	}
 	if r.Action != "claim" && e.ClaimSHA256 != claim {
+		return record, ErrChanged
+	}
+	if r.Action == "executor_exited" {
+		if e.FenceVersion != 1 || e.State == "authorized" {
+			return record, ErrChanged
+		}
+		if e.ExecutorExitedAt == nil {
+			stamp := now.UTC()
+			e.ExecutorExitedAt = &stamp
+		}
+		if e.State == "running" {
+			e.State = "reconcile_required"
+		}
+		if e.Recovery != nil && e.Recovery.SettledAt == nil {
+			stamp := now.UTC()
+			e.Recovery.SettledAt = &stamp
+			e.Recovery.State = "settled"
+		}
+		return record, nil
+	}
+	if e.Recovery != nil || e.ExecutorExitedAt != nil {
 		return record, ErrChanged
 	}
 	if r.Action == "reconcile" && e.State == "running" {
@@ -69,6 +96,7 @@ func Execution(record api.TaskToolReleaseIntentRecord, in api.TaskToolReleaseInt
 	switch r.Action {
 	case "claim":
 		e.State, e.ClaimSHA256 = "running", claim
+		e.FenceVersion = r.FenceVersion
 		e.Stage = "prepared"
 	case "guard":
 		if e.State != "running" {

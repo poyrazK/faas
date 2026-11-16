@@ -6152,12 +6152,20 @@ from .synthetic_check_response_method import SyntheticCheckResponseMethod
 from .synthetic_check_results import SyntheticCheckResults
 from .synthetic_check_run import SyntheticCheckRun
 from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
+from .task_tool_recovery_handover import TaskToolRecoveryHandover
+from .task_tool_recovery_handover_decision import TaskToolRecoveryHandoverDecision
+from .task_tool_recovery_handover_state import TaskToolRecoveryHandoverState
+from .task_tool_recovery_qualification import TaskToolRecoveryQualification
+from .task_tool_recovery_qualification_action import TaskToolRecoveryQualificationAction
+from .task_tool_recovery_request import TaskToolRecoveryRequest
 from .task_tool_release_app import TaskToolReleaseApp
 from .task_tool_release_app_role import TaskToolReleaseAppRole
 from .task_tool_release_execution import TaskToolReleaseExecution
 from .task_tool_release_execution_completed_stages_item import TaskToolReleaseExecutionCompletedStagesItem
+from .task_tool_release_execution_fence_version import TaskToolReleaseExecutionFenceVersion
 from .task_tool_release_execution_request import TaskToolReleaseExecutionRequest
 from .task_tool_release_execution_request_action import TaskToolReleaseExecutionRequestAction
+from .task_tool_release_execution_request_fence_version import TaskToolReleaseExecutionRequestFenceVersion
 from .task_tool_release_execution_request_stage import TaskToolReleaseExecutionRequestStage
 from .task_tool_release_execution_stage import TaskToolReleaseExecutionStage
 from .task_tool_release_execution_state import TaskToolReleaseExecutionState
@@ -12533,12 +12541,20 @@ __all__ = (
     "SyntheticCheckResults",
     "SyntheticCheckRun",
     "SyntheticCheckRunErrorClass",
+    "TaskToolRecoveryHandover",
+    "TaskToolRecoveryHandoverDecision",
+    "TaskToolRecoveryHandoverState",
+    "TaskToolRecoveryQualification",
+    "TaskToolRecoveryQualificationAction",
+    "TaskToolRecoveryRequest",
     "TaskToolReleaseApp",
     "TaskToolReleaseAppRole",
     "TaskToolReleaseExecution",
     "TaskToolReleaseExecutionCompletedStagesItem",
+    "TaskToolReleaseExecutionFenceVersion",
     "TaskToolReleaseExecutionRequest",
     "TaskToolReleaseExecutionRequestAction",
+    "TaskToolReleaseExecutionRequestFenceVersion",
     "TaskToolReleaseExecutionRequestStage",
     "TaskToolReleaseExecutionStage",
     "TaskToolReleaseExecutionState",

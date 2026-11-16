@@ -123,25 +123,38 @@ func (s *PgStore) GetTaskToolReleaseIntent(ctx context.Context, account, id stri
 
 func (s *PgStore) ChangeTaskToolReleaseIntent(ctx context.Context, account, id, action string, in api.TaskToolReleaseIntentDecision) (api.TaskToolReleaseIntentRecord, error) {
 	var record api.TaskToolReleaseIntentRecord
-	tx, err := s.pool.Begin(ctx)
+	tx, body, err := s.lockTaskToolRelease(ctx, account, id)
 	if err != nil {
 		return record, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := toolpublicationdb.New()
-	body, err := q.LockTaskToolReleaseIntent(ctx, tx, toolpublicationdb.LockTaskToolReleaseIntentParams{AccountID: mustPgUUID(account), ID: id})
-	if err != nil {
-		return record, mapErr(err)
-	}
 	if err := json.Unmarshal(body, &record); err != nil {
 		return record, err
 	}
-	configurationOnly := action == "execution" && in.Execution != nil && in.Execution.Action != "claim"
-	fresh, err := taskToolReleaseFresh(ctx, tx, account, record.RequesterKeyID, record.Intent, configurationOnly)
+	configurationOnly := tasktoolrelease.IsRecoveryDecision(in.Decision) || action == "execution" && in.Execution != nil && in.Execution.Action != "claim"
+	freshKey := record.RequesterKeyID
+	if tasktoolrelease.IsRecoveryDecision(in.Decision) {
+		freshKey = in.AuthorizerKeyID
+	}
+	fresh, err := taskToolReleaseFresh(ctx, tx, account, freshKey, record.Intent, configurationOnly)
 	if err != nil {
 		return record, err
 	}
-	if action == "execution" || in.Decision == "authorize" {
+	if tasktoolrelease.IsRecoveryDecision(in.Decision) && in.Recovery != nil {
+		snapshot := in.Recovery.Qualification
+		if snapshot == nil && record.Execution != nil && record.Execution.Recovery != nil {
+			snapshot = record.Execution.Recovery.Qualification
+		}
+		if snapshot != nil {
+			snapshotFresh, snapshotErr := taskToolReleaseFresh(ctx, tx, account, in.AuthorizerKeyID, api.TaskToolReleaseIntent{Apps: snapshot.NativeApps}, false)
+			if snapshotErr != nil {
+				return record, snapshotErr
+			}
+			fresh = fresh && snapshotFresh
+		}
+	}
+	if action == "execution" || in.Decision == "authorize" || tasktoolrelease.IsRecoveryDecision(in.Decision) {
 		owner := in.AuthorizerKeyID
 		if action == "execution" && record.Execution != nil {
 			owner = record.Execution.AuthorizerKeyID
@@ -152,6 +165,9 @@ func (s *PgStore) ChangeTaskToolReleaseIntent(ctx context.Context, account, id, 
 		_, ownerErr := q.LockTaskToolExecutionOwnerKey(ctx, tx, toolpublicationdb.LockTaskToolExecutionOwnerKeyParams{AccountID: mustPgUUID(account), ID: mustPgUUID(owner)})
 		if ownerErr != nil && !errors.Is(mapErr(ownerErr), ErrNotFound) {
 			return record, ownerErr
+		}
+		if tasktoolrelease.IsRecoveryDecision(in.Decision) && ownerErr != nil {
+			return record, ErrConflict
 		}
 		fresh = fresh && ownerErr == nil
 	}

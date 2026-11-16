@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TaskToolRecoveryRequest } from './TaskToolRecoveryRequest.js';
 import type { TaskToolReleaseExecutionRequest } from './TaskToolReleaseExecutionRequest.js';
 /**
  * Owner verdict bound to an immutable Task intent digest and its retained source fingerprint.
@@ -9,7 +10,8 @@ import type { TaskToolReleaseExecutionRequest } from './TaskToolReleaseExecution
 export type TaskToolReleaseIntentDecision = {
   intent_sha256: string;
   release_fingerprint: string;
-  decision: 'approve' | 'reject' | 'revoke' | 'authorize';
+  decision: 'approve' | 'reject' | 'revoke' | 'authorize' | 'recovery_stop' | 'recovery_qualify' | 'recovery_approve' | 'recovery_revoke';
   execution?: TaskToolReleaseExecutionRequest;
+  recovery?: TaskToolRecoveryRequest;
 };
 

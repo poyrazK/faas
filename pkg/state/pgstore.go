@@ -42,6 +42,7 @@ import (
 	ownersql "github.com/onebox-faas/faas/pkg/state/resourceownership/sqlc"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
+	"golang.org/x/sync/semaphore"
 )
 
 // pgCore is what every Postgres store holds: the pool and the probes over
@@ -66,9 +67,10 @@ func newPgCore(pool *pgxpool.Pool) pgCore {
 // is safe for concurrent use.
 type PgStore struct {
 	pgCore
-	trafficAppsSuffix    string
-	trafficScopedBinding bool
-	realtimeEventSchemas *realtimeEventSchemaCache
+	trafficAppsSuffix      string
+	trafficScopedBinding   bool
+	realtimeEventSchemas   *realtimeEventSchemaCache
+	taskToolExecutionSlots *semaphore.Weighted
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
@@ -79,7 +81,11 @@ func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
 	if core.pool != nil {
 		core.pool.Background = configuredBackgroundPool(options)
 	}
-	return &PgStore{pgCore: core, trafficAppsSuffix: configuredTrafficAppsSuffix(options),
+	slots := int64(0)
+	if pool != nil {
+		slots = int64(pool.Config().MaxConns / 2)
+	}
+	return &PgStore{taskToolExecutionSlots: semaphore.NewWeighted(slots), pgCore: core, trafficAppsSuffix: configuredTrafficAppsSuffix(options),
 		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache()}
 }
 

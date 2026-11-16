@@ -44,10 +44,10 @@ try {
     start: async input => JSON.parse(await run(plan.start, input)).workerIDs,
     drain: input => run(plan.drain, input),
   });
-  console.log(JSON.stringify(report));
+  console.log(JSON.stringify({ ...report, executorSettled: true }));
   if (!report.ok) process.exitCode = 1;
 } catch {
-  console.log(JSON.stringify({ ok: false, stage: 'configuration', detail: 'Check release plan, Task bindings, and migration credentials' }));
+  console.log(JSON.stringify({ ok: false, executorSettled: true, stage: 'configuration', detail: 'Check release plan, Task bindings, and migration credentials' }));
   process.exitCode = 1;
 } finally {
   await pool?.end().catch(() => {});
