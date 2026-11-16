@@ -794,7 +794,7 @@ func detectShape(srcDir string) shape {
 			handlerFile = strings.ToLower(name)
 		}
 	}
-	if hasPackageJSON && !(isNodeHandler(handlerFile) && packageJSONStartsNothing(srcDir)) {
+	if hasPackageJSON && (!isNodeHandler(handlerFile) || !packageJSONStartsNothing(srcDir)) {
 		hasAppMarker = true
 	}
 	switch {
