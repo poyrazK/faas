@@ -64,6 +64,34 @@ closed project.
 4. Asserts the spool root mode is `≤ 0750` (spec §11).
 5. Runs `systemctl daemon-reload` after removing the legacy drop-in.
 
+## Write-only archive credentials on compute (ADR-20261110210000 slice 3l)
+
+A compute node only needs to *write* archived logs: vmmd ships its evicted
+log lines. Read-back (`GET /v1/apps/{slug}/logs?archive=1`) is served through
+the API host by the control plane's gateways, and erasure runs in apid on the
+control plane. Credentials that can read the bucket let a rooted compute node
+read every tenant's archived logs, so compute nodes take create-only
+credentials:
+
+1. **IAM.** GCS (keyless): grant the compute service account
+   `roles/storage.objectCreator` on the log bucket and remove anything that
+   reads it (`objectViewer`, `objectUser`, `objectAdmin`, legacy bucket
+   roles). S3 (static keys): a key whose policy allows `s3:PutObject` on the
+   bucket and nothing else. The control plane keeps its read-write grant.
+2. **Ansible.** Set `faas_log_archive_write_only: true` for the compute hosts
+   (`group_vars/compute_nodes`) and converge. The envelope gains
+   `"access": "write-only"`, vmmd ships part objects (one create-only PUT per
+   flush; GCS PUTs carry `x-goog-if-generation-match: 0`, and a 412 on a
+   retry means the part is already there), and gatewayd-internal skips
+   read-back on that node.
+3. **Check.** `vmmd_log_archive_failures_total` stays flat, the node's vmmd
+   journal shows `log archive credentials are write-only`, and `gregale app
+   logs <app> --archive` still returns lines through the API host.
+
+The role refuses `faas_log_archive_write_only` on anything but a
+compute-only host. Back out by unsetting it and converging; restore the read
+grant first if the node must read again.
+
 ## What this role does NOT do
 
 - **No cron purge unit.** The apid shipper's `PurgeInterval`
