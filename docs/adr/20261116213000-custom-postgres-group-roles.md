@@ -70,15 +70,22 @@ The first boot then uses the `migration` binding, and later boots use
 
 - **Always `NOLOGIN`.** A custom role can never authenticate on its own.
 - **Attributes.** `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
-  NOINHERIT`. `BYPASSRLS` is the only attribute a customer may request.
+  INHERIT`. `BYPASSRLS` is the only attribute a customer may request.
+  `INHERIT` matters only between custom roles (below); it never reaches a
+  Gregale login, which is `NOINHERIT` and holds its grants without
+  inheritance.
 - **Names.** A valid unquoted PostgreSQL identifier (`^[a-z_][a-z0-9_]{0,62}$`).
   Names starting with `gregale_`, `pg_`, `neon_` or `cloudsql` are refused,
   as are `public` and the names of any role that already exists in the cluster
   and is not a custom role of this database.
 - **Grants.** Only to the database's own Gregale-issued `migration`,
-  `read_write` and `read_only` logins, `WITH INHERIT FALSE, SET TRUE`, so the
-  login gains the role only through an explicit `SET ROLE`. Grants to
-  `data_api`, `auth`, `session` or another custom role are refused.
+  `read_write` (session logins too) and `read_only` logins, `WITH INHERIT
+  FALSE, SET TRUE`, so the login gains the role only through an explicit
+  `SET ROLE`. Grants to `data_api` and `auth` logins are refused. A custom role
+  may be a member of other custom roles of the same database, with
+  inheritance (`--member-of`): Windmill grants `windmill_user` to
+  `windmill_admin`. Cycles are refused, and a role another role is a member
+  of cannot be deleted first.
   A grant covers the current and future logins of that access mode: the
   credential `Ensure` path re-applies it on issue and rotation.
 - **Ownership.** Objects a custom role creates are owned by it. Deleting the
@@ -103,8 +110,10 @@ It does, however, defeat RLS that Gregale features rely on. Therefore:
 
 ### Plans
 
-Custom roles are available on Hobby and above. Free databases receive
-`403 plan_postgres_custom_roles`.
+Custom roles are available on Hobby and above. Free accounts receive the
+standard `402 plan_feature_gated` problem. The API is dark behind the
+`postgres_custom_roles` platform flag (`403 postgres_custom_roles_unavailable`
+while off) and stays out of the public OpenAPI spec and SDKs until launch.
 
 ### State and reconciliation
 
@@ -122,21 +131,25 @@ Every create, grant, revoke and delete writes an audit event.
 
 - **Neon:** run through the existing `gregale_owner` owner session
   (`ownerDSN`, search path pinned to `pg_catalog,pg_temp`). Before creating a
-  `BYPASSRLS` role, check `rolbypassrls` on `neon_superuser`; projects created
-  before 2023-08-15 lack it and get `postgres_bypass_rls_unavailable`.
-- **Firecracker (ADR-1027):** extend the admin SQL allowlist from
-  `^gregale_(rt|ro|mig)_[0-9a-f]{40}$` to also accept names validated by this
-  ADR's rules for the custom-role operations only. Names stay
-  `pgx.Identifier`-quoted.
+  `BYPASSRLS` role, check that the owner login itself has `BYPASSRLS`;
+  projects created before 2023-08-15 lack it and get
+  `postgres_bypass_rls_unavailable`. PostgreSQL 16 checks every attribute
+  named in `ALTER ROLE` against the caller's own, so an existing role is
+  corrected by altering only what differs.
+- **Firecracker (ADR-1027):** separate admin batches for the custom-role
+  operations accept names validated by this ADR's rules; the login batches
+  keep `rolePattern`. A Data API login's fence runs before the login is
+  created, so a refusal (SQLSTATE `GRB01`) leaves no login behind.
 
 ### Copies, branches and restores
 
-Branches, environment clones, PR previews, restores and snapshot copies must
-carry custom roles and their grants. Neon branches copy the role catalog
-already. `copyroles` already copies role attributes including `bypass_rls`;
-it must accept custom roles as known and re-attach their grants to the target
-database's logins, which have different names. After any copy, the reconcile
-pass runs against the target before its bindings become ready.
+Neon branches and restores copy the role catalog, so a copy keeps the
+roles and their table grants, marked with the source's scope. The control
+plane does not copy the declaration yet: the customer declares the roles
+again on the new database, and the apply adopts the copies (a role marked as
+another scope's custom role is re-marked; any other existing role of that
+name is refused). Copying declarations with environment clones, PR previews
+and restores is a follow-up.
 
 ## Consequences
 
@@ -181,11 +194,10 @@ pass runs against the target before its bindings become ready.
 
 ## Open questions
 
-- Gregale logins are `NOINHERIT` and grants use `INHERIT FALSE`, so a login
-  gets a custom role's privileges only after `SET ROLE`. Windmill 1.875 must be
-  checked to confirm it either runs `SET ROLE` or needs no inherited
-  privileges. Slice 6 settles this before slice 5 ships. If it needs
-  inheritance, `INHERIT TRUE` for roles without `BYPASSRLS` is the fallback
-  (`BYPASSRLS` itself is never inherited).
-- Windmill also creates the `uuid-ossp` extension. It must be on the provider's
-  allowed-extension list for the `migration` login.
+- Settled: Windmill 1.875 switches roles with `SET LOCAL ROLE windmill_user`
+  / `windmill_admin` on its user transactions, and wraps its own role
+  creation in exception handlers, so pre-created roles with `SET`-only grants
+  are enough. It runs its migrations at every start, so its apps bind with
+  the `migration` access mode.
+- Windmill's `uuid-ossp` extension must be allowed for the `migration` login;
+  not yet verified end to end.
