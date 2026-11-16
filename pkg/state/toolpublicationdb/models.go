@@ -37,6 +37,13 @@ type App struct {
 	Status    string
 }
 
+type AppCustomMetric struct {
+	AppID      pgtype.UUID
+	Name       string
+	Value      float64
+	ObservedAt pgtype.Timestamptz
+}
+
 type AppSecret struct {
 	AccountID                        pgtype.UUID
 	AppID                            pgtype.UUID
@@ -61,6 +68,13 @@ type DeploymentMcpReadinessEvidence struct {
 	DeploymentID pgtype.UUID
 	Role         string
 	Evidence     []byte
+}
+
+type Instance struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	State        string
 }
 
 type Org struct {

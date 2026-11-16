@@ -136,8 +136,9 @@ func (c *Client) DecideTaskToolReleaseIntent(ctx context.Context, id string, in 
 
 // TaskToolRecoveryHandover permanently fences the original executor. Settlement
 // requires both the native write barrier and the trusted executor exit receipt.
-// Approval is separate from release approval and does not expose an apply path.
+// Approval is separate from release approval; handover decisions alone permit no traffic write.
 type TaskToolRecoveryHandover struct {
+	Result          *TaskToolRecoveryResult        `json:"result,omitempty"`
 	ID              string                         `json:"id"`
 	OperationID     string                         `json:"operation_id"`
 	Revision        uint64                         `json:"revision"`
@@ -181,3 +182,40 @@ const (
 	TaskExecutionOperationHeader = "X-Gregale-Task-Operation"
 	TaskExecutionClaimHeader     = "X-Gregale-Task-Claim"
 )
+
+// TaskToolRecoveryRestoreRequest is submitted only by the trusted local CLI.
+// Private claim material proves possession of the owner-bound profile; agent
+// tools accept only the public operation/handover/qualification identities.
+type TaskToolRecoveryRestoreRequest struct {
+	ExpectedInstanceIDs     map[string][]string         `json:"expected_instance_ids,omitempty"`
+	OperationID             string                      `json:"operation_id"`
+	HandoverID              string                      `json:"handover_id"`
+	QualificationSHA256     string                      `json:"qualification_sha256"`
+	ClaimToken              string                      `json:"claim_token,omitempty"`
+	BindingsSHA256          string                      `json:"bindings_sha256,omitempty"`
+	EvidenceSHA256          string                      `json:"evidence_sha256,omitempty"`
+	CheckedAt               time.Time                   `json:"checked_at,omitempty"`
+	ExpectedMCPAccessPolicy *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
+}
+
+// TaskToolRecoveryResult is a durable traffic-commit receipt, not runtime health.
+// It is retained after expiry/revocation and never authorizes another write.
+type TaskToolRecoveryResult struct {
+	IntentID                    string    `json:"intent_id"`
+	OperationID                 string    `json:"operation_id"`
+	HandoverID                  string    `json:"handover_id"`
+	QualificationSHA256         string    `json:"qualification_sha256"`
+	Revision                    uint64    `json:"revision"`
+	Action                      string    `json:"action"`
+	TargetDeploymentID          string    `json:"target_deployment_id"`
+	PreviousServingDeploymentID string    `json:"previous_serving_deployment_id"`
+	EvidenceSHA256              string    `json:"evidence_sha256"`
+	CheckedAt                   time.Time `json:"checked_at"`
+	CommittedAt                 time.Time `json:"committed_at"`
+}
+
+func (c *Client) RestoreTaskToolRecovery(ctx context.Context, id string, in TaskToolRecoveryRestoreRequest) (TaskToolReleaseIntentRecord, error) {
+	var out TaskToolReleaseIntentRecord
+	err := c.doWithoutIdempotencyKey(ctx, http.MethodPost, "/v1/task-tool-release-intents/"+url.PathEscape(id)+"/recovery/restore", in, &out)
+	return out, err
+}

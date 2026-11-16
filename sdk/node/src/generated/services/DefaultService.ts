@@ -52,6 +52,7 @@ import type { MCPReadinessSnapshot } from '../models/MCPReadinessSnapshot.js';
 import type { PrivateToolInvocationRequest } from '../models/PrivateToolInvocationRequest.js';
 import type { RestoreMCPReadinessPolicyRequest } from '../models/RestoreMCPReadinessPolicyRequest.js';
 import type { SetMCPReadinessPolicyRequest } from '../models/SetMCPReadinessPolicyRequest.js';
+import type { TaskToolRecoveryRestoreRequest } from '../models/TaskToolRecoveryRestoreRequest.js';
 import type { TaskToolReleaseIntent } from '../models/TaskToolReleaseIntent.js';
 import type { TaskToolReleaseIntentCheck } from '../models/TaskToolReleaseIntentCheck.js';
 import type { TaskToolReleaseIntentDecision } from '../models/TaskToolReleaseIntentDecision.js';
@@ -172,6 +173,40 @@ export class DefaultService {
         403: `Task revalidation requires the requesting publisher or personal owner`,
         404: `No review can be revalidated by this caller`,
         409: `The Task review changed before revalidation completed`,
+      },
+    });
+  }
+  /**
+   * Restore the exact owner-approved web deployment once; requires the requesting key and MFA policy
+   * The trusted local CLI checks retained Task compatibility under the release advisory lock and submits private claim possession plus fresh evidence. Native storage locks the recovery approval, credentials, app snapshots, running generations and observer heartbeat. The ordinary traffic endpoint's approval, policy, readiness, canary, binding, lifecycle and serving-CAS gates remain mandatory. Traffic and approval consumption commit in the same transaction. Exact repeats return the retained commit receipt after expiry or revocation without replaying traffic. A receipt records a historical traffic commit, not current runtime health. No migration, worker retirement or automatic claim takeover is performed.
+   * @returns TaskToolReleaseIntentRecord Native operation including its retained atomic restore receipt
+   * @throws ApiError
+   */
+  public static restoreTaskToolRecovery({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Original Task intent containing the settled owner-approved recovery
+     */
+    id: string,
+    requestBody: TaskToolRecoveryRestoreRequest,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/task-tool-release-intents/{id}/recovery/restore',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid recovery request`,
+        401: `code: unauthorized`,
+        403: `Caller is not the current requesting publisher or lacks traffic authority`,
+        404: `No matching recovery is available to this caller`,
+        409: `Approval, evidence, native generation, runtime, policy or traffic changed`,
+        422: `The ordinary native traffic gate refused this change`,
       },
     });
   }

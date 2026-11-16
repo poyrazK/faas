@@ -19,6 +19,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.task_tool_recovery_qualification import TaskToolRecoveryQualification
+    from ..models.task_tool_recovery_result import TaskToolRecoveryResult
 
 
 T = TypeVar("T", bound="TaskToolRecoveryHandover")
@@ -36,6 +37,10 @@ class TaskToolRecoveryHandover:
     revision: int
     state: TaskToolRecoveryHandoverState
     requested_at: datetime.datetime
+    result: TaskToolRecoveryResult | Unset = UNSET
+    """Durable atomic traffic-commit receipt. It binds the consumed owner approval to the exact deployments and
+    evidence, and remains inspectable after deadline expiry or revocation. It never authorizes another write or
+    certifies current health."""
     settled_at: datetime.datetime | Unset = UNSET
     qualification: TaskToolRecoveryQualification | Unset = UNSET
     """Owner attestation of fresh local checks, exact recovery target and a locked native snapshot. The fixed
@@ -55,6 +60,10 @@ class TaskToolRecoveryHandover:
         state: str = self.state
 
         requested_at = self.requested_at.isoformat()
+
+        result: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.result, Unset):
+            result = self.result.to_dict()
 
         settled_at: str | Unset = UNSET
         if not isinstance(self.settled_at, Unset):
@@ -87,6 +96,8 @@ class TaskToolRecoveryHandover:
                 "requested_at": requested_at,
             }
         )
+        if result is not UNSET:
+            field_dict["result"] = result
         if settled_at is not UNSET:
             field_dict["settled_at"] = settled_at
         if qualification is not UNSET:
@@ -103,6 +114,7 @@ class TaskToolRecoveryHandover:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.task_tool_recovery_qualification import TaskToolRecoveryQualification
+        from ..models.task_tool_recovery_result import TaskToolRecoveryResult
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -114,6 +126,13 @@ class TaskToolRecoveryHandover:
         state = check_task_tool_recovery_handover_state(d.pop("state"))
 
         requested_at = datetime.datetime.fromisoformat(d.pop("requested_at"))
+
+        _result = d.pop("result", UNSET)
+        result: TaskToolRecoveryResult | Unset
+        if isinstance(_result, Unset):
+            result = UNSET
+        else:
+            result = TaskToolRecoveryResult.from_dict(_result)
 
         _settled_at = d.pop("settled_at", UNSET)
         settled_at: datetime.datetime | Unset
@@ -156,6 +175,7 @@ class TaskToolRecoveryHandover:
             revision=revision,
             state=state,
             requested_at=requested_at,
+            result=result,
             settled_at=settled_at,
             qualification=qualification,
             decision=decision,

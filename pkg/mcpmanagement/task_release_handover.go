@@ -18,7 +18,7 @@ func taskHandoverOutputSchema() map[string]any {
 	}}
 	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"id", "operation_id", "revision", "state", "requested_at"}, "properties": map[string]any{
 		"id": id, "operation_id": id, "revision": revision, "state": map[string]any{"type": "string", "enum": []string{"stopping", "settled"}}, "requested_at": date, "settled_at": date,
-		"qualification": q, "decision": map[string]any{"type": "string", "enum": []string{"approved", "revoked"}}, "authorizer_key_id": map[string]any{"type": "string", "format": "uuid"}, "decided_at": date,
+		"qualification": q, "result": taskRecoveryResultSchema(), "decision": map[string]any{"type": "string", "enum": []string{"approved", "revoked"}}, "authorizer_key_id": map[string]any{"type": "string", "format": "uuid"}, "decided_at": date,
 	}}
 }
 
@@ -54,4 +54,18 @@ func validTaskHandoverMetadata(e *api.TaskToolReleaseExecution) bool {
 		q.BindingsSHA256 == e.BindingsSHA256 && toolpublication.ValidID(q.EvidenceSHA256) && q.TargetDeploymentID != "" && q.TargetDeploymentID == e.Receipt.ServingDeploymentID &&
 		q.ExpectedServingDeploymentID != "" && q.ExpectedServingDeploymentID == e.Receipt.WebDeploymentID &&
 		!q.ObservedAt.Before(*h.SettledAt) && q.ExpiresAt.Equal(q.ObservedAt.Add(api.TaskToolRecoveryApprovalTTL))
+}
+
+func taskRecoveryResultSchema() map[string]any {
+	props := map[string]any{"revision": map[string]any{"type": "integer", "minimum": 1, "maximum": api.TaskToolReleaseReceiptRevisionMax}, "action": map[string]any{"type": "string", "const": "restore"}}
+	for _, name := range []string{"intent_id", "operation_id", "handover_id", "qualification_sha256", "evidence_sha256"} {
+		props[name] = map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"}
+	}
+	for _, name := range []string{"target_deployment_id", "previous_serving_deployment_id"} {
+		props[name] = map[string]any{"type": "string", "format": "uuid"}
+	}
+	for _, name := range []string{"checked_at", "committed_at"} {
+		props[name] = map[string]any{"type": "string", "format": "date-time"}
+	}
+	return map[string]any{"type": "object", "additionalProperties": false, "properties": props, "required": []string{"intent_id", "operation_id", "handover_id", "qualification_sha256", "revision", "action", "target_deployment_id", "previous_serving_deployment_id", "evidence_sha256", "checked_at", "committed_at"}}
 }

@@ -56,6 +56,7 @@ var toolsetOf = map[string]string{
 	"gregale_get_task_tool_operation":        ToolsetBuildTools,
 	"gregale_inspect_task_tool_recovery":     ToolsetBuildTools,
 	"gregale_plan_task_tool_recovery":        ToolsetBuildTools,
+	"gregale_apply_task_tool_restore":        ToolsetBuildTools,
 	"gregale_apply_task_tool_deploy":         ToolsetBuildTools,
 	"gregale_plan_tool_deploy":               ToolsetBuildTools,
 	"gregale_plan_uploaded_tool_deploy":      ToolsetBuildTools,
