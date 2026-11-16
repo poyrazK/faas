@@ -1,0 +1,40 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+)
+
+// ListRedisCaches lists the account's managed Redis caches.
+func (c *Client) ListRedisCaches(ctx context.Context) (ListRedisCachesResponse, error) {
+	var out ListRedisCachesResponse
+	err := c.do(ctx, http.MethodGet, "/v1/redis", nil, &out)
+	return out, err
+}
+
+// CreateRedisCache creates a managed Redis cache.
+func (c *Client) CreateRedisCache(ctx context.Context, request CreateRedisCacheRequest) (RedisCache, error) {
+	var out RedisCache
+	err := c.do(ctx, http.MethodPost, "/v1/redis", request, &out)
+	return out, err
+}
+
+// GetRedisCache reads one managed Redis cache.
+func (c *Client) GetRedisCache(ctx context.Context, name string) (RedisCache, error) {
+	var out RedisCache
+	err := c.do(ctx, http.MethodGet, "/v1/redis/"+url.PathEscape(name), nil, &out)
+	return out, err
+}
+
+// DeleteRedisCache deletes a managed Redis cache and its data.
+func (c *Client) DeleteRedisCache(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/redis/"+url.PathEscape(name), nil, nil)
+}
+
+// BindRedisCache writes the cache's connection URL into an app's env.
+func (c *Client) BindRedisCache(ctx context.Context, name string, request BindRedisCacheRequest) (RedisCacheBinding, error) {
+	var out RedisCacheBinding
+	err := c.do(ctx, http.MethodPost, "/v1/redis/"+url.PathEscape(name)+"/bindings", request, &out)
+	return out, err
+}

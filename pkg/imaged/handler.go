@@ -2620,6 +2620,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stateful base image denied")
 		return err
 	}
+	if err := h.managedValkeyImageCheck(ctx, app, ref); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "managed cache image denied")
+		return err
+	}
 
 	// Resolve before verification so a tag names the same immutable source
 	// throughout verification and platform selection. Offline pullers retain

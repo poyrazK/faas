@@ -300,6 +300,33 @@ This ADR keeps the owner's cache-only choice for those.
    covering park → held session → wake, then owner approval to release the
    flag.
 
+## Implementation status
+
+**Slice 1 (control plane), built dark behind the `managed-redis` capability
+(preview).** It differs from the design above in these interim ways, each
+closed by a later slice:
+
+- **The cache app is visible.** It is an ordinary internal app named after
+  the cache, and it counts towards the plan's app limit. It is not yet
+  hidden. imaged refuses any image on it other than `api.ManagedValkeyImage`.
+- **Apps still hold the password.** The proxy does not send `AUTH` yet
+  (slice 2), so a binding writes
+  `redis://default:<password>@<name>.svc.gregale:6379`. apid cannot open
+  sealed app secrets, so the password is not stored. It is derived:
+  HMAC-SHA256 of the cache's app id under apid's host HMAC key, with its own
+  label. The cache VM receives it as the sealed `VALKEY_PASSWORD` app secret,
+  and `valkey-server --requirepass "$VALKEY_PASSWORD"` reads it at boot.
+- **Hobby's largest cache is 448 MB, not 512.** Hobby's largest instance is
+  512 MB, and the VM needs 64 MB on top of `maxmemory`. Pro and Scale get
+  512 MB. `api.ManagedValkeyMaxMemoryFor` derives this from plan RAM.
+- **Server commands are blocked with `rename-command`,** not an ACL user,
+  because the server is configured on the command line only.
+- **Idle is today's rule.** An open session keeps the cache awake up to the
+  session idle timeout. The RESP-aware idle rule is slice 2.
+- **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
+  and adding it would break customers who deploy Valkey themselves. That is
+  left for an owner decision.
+
 ## Rejected alternatives
 
 - **Database nodes (first draft of this ADR).** Owner chose compute nodes.

@@ -569,7 +569,8 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
-	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
+	managedValkeyCaches       sync.Map // app id -> ManagedValkeyCache (ADR-20261116192126)
+	appSlugHolds             map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
 	scenarioPostgres          map[string]rehearsalpg.Resource
 	scenarioObjects           map[string]rehearsalobj.Resource
