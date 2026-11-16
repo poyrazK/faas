@@ -13,6 +13,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -380,27 +382,40 @@ func gitCommandTimeout(args []string) time.Duration {
 // directory instead of hanging.
 func runGitCmd(gitDir string, args ...string) (string, error) {
 	timeout := gitCommandTimeout(args)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.Command("git", args...)
 	cmd.Dir = gitDir
+	// WaitDelay bounds the wait for git's output pipes after git exits or
+	// is killed below; a daemon git started can keep them open.
 	cmd.WaitDelay = gitPipeWaitDelay
 	// Redirect git's progress / pager noise away from the terminal.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat")
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
 	command := "git " + strings.Join(args, " ")
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("%s: %w", command, err)
+	}
 	notice := time.AfterFunc(gitSlowNoticeAfter, func() {
 		_, _ = fmt.Fprintf(osStderr, "Waiting for `%s` in %s (local git metadata; gives up after %s)...\n", command, gitDir, timeout)
 	})
-	out, err := cmd.CombinedOutput()
+	// A timer rather than a context: callers hold no context to pass, and
+	// these are local reads with their own fixed bound.
+	var timedOut atomic.Bool
+	kill := time.AfterFunc(timeout, func() {
+		timedOut.Store(true)
+		_ = cmd.Process.Kill()
+	})
+	err := cmd.Wait()
 	notice.Stop()
-	if ctx.Err() == context.DeadlineExceeded {
+	kill.Stop()
+	if timedOut.Load() {
 		return "", fmt.Errorf("%s did not finish within %s in %s; check that `%s` works there (a stuck core.fsmonitor daemon, a network filesystem or a very large untracked tree can stall it), or deploy from a copy outside the repository: %w",
 			command, timeout, gitDir, command, context.DeadlineExceeded)
 	}
 	if err != nil {
-		return "", fmt.Errorf("%s: %s: %w", command, strings.TrimSpace(string(out)), err)
+		return "", fmt.Errorf("%s: %s: %w", command, strings.TrimSpace(out.String()), err)
 	}
-	return string(out), nil
+	return out.String(), nil
 }
 
 // gitArchiveHEAD runs `git archive HEAD --format=tar.gz -o <outPath>` in
