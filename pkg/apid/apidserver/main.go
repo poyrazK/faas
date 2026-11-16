@@ -2911,7 +2911,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
 	if srv.privateTools != nil {
-		srv.privateTools.StartSourceRetentionCleanup()
+		srv.privateTools.StartSourceRetentionCleanup(ctx)
 	}
 	privateStop := context.AfterFunc(ctx, srv.stopPrivateTools)
 	defer func() { privateStop(); srv.stopPrivateTools() }()

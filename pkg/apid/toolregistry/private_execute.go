@@ -42,6 +42,7 @@ type PrivateExecutor struct {
 	cancel               context.CancelFunc
 	mu                   sync.Mutex
 	sourceCleanupStarted bool
+	sourceCleanupCancel  context.CancelFunc
 	closing              bool
 	active               int
 	workers              sync.WaitGroup
@@ -56,6 +57,9 @@ func (e *PrivateExecutor) Close() {
 	e.mu.Lock()
 	e.closing = true
 	e.cancel()
+	if e.sourceCleanupCancel != nil {
+		e.sourceCleanupCancel()
+	}
 	e.mu.Unlock()
 	e.workers.Wait()
 	if e.opts.HTTP != nil {

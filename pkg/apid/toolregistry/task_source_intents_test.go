@@ -277,8 +277,8 @@ func exerciseHostedSources(t *testing.T, store state.Store, pool *pgxpool.Pool) 
 			t.Fatal("restart lost intent")
 		}
 	}
-	f.executor.StartSourceRetentionCleanup()
-	f.executor.StartSourceRetentionCleanup()
+	f.executor.StartSourceRetentionCleanup(t.Context())
+	f.executor.StartSourceRetentionCleanup(t.Context())
 	f.executor.Close()
 }
 func TestHostedTaskSourceNativeFailClosed(t *testing.T) {

@@ -37,13 +37,17 @@ func (e *PrivateExecutor) HostedTaskSourceIntent() httpkit.AccountHandler {
 			e.prepareHostedTaskSource(w, r, acct, p, journal)
 			return
 		}
-		row, err := journal.GetHostedTaskSourceIntent(r.Context(), acct.ID, r.PathValue("id"))
-		if err == nil && p.Key != nil && p.Key.ID != row.Record.RequesterKeyID && (agentRegistryRequest(r) || !httpkit.APIKeyCarriesScope(*p.Key, api.ScopeAdmin)) {
-			err = state.ErrNotFound
-		}
-		respond(w, row.Record, err)
+		e.inspectHostedTaskSource(w, r, acct, p, journal)
 	}
 }
+func (e *PrivateExecutor) inspectHostedTaskSource(w http.ResponseWriter, r *http.Request, acct state.Account, p httpkit.Principal, journal state.HostedTaskSourceIntentStore) {
+	row, err := journal.GetHostedTaskSourceIntent(r.Context(), acct.ID, r.PathValue("id"))
+	if err == nil && p.Key != nil && p.Key.ID != row.Record.RequesterKeyID && (agentRegistryRequest(r) || !httpkit.APIKeyCarriesScope(*p.Key, api.ScopeAdmin)) {
+		err = state.ErrNotFound
+	}
+	respond(w, row.Record, err)
+}
+
 func (e *PrivateExecutor) prepareHostedTaskSource(w http.ResponseWriter, r *http.Request, acct state.Account, p httpkit.Principal, journal state.HostedTaskSourceIntentStore) {
 	if !e.opts.SourceRetentionEnabled || e.opts.ConnectionRecipients == nil || p.Key == nil {
 		api.WriteProblem(w, api.NewProblem(503, "task_source_retention_disabled", "Task source retention unavailable", "enable native source retention and an independent Account seal identity"))
@@ -82,18 +86,20 @@ func (e *PrivateExecutor) prepareHostedTaskSource(w http.ResponseWriter, r *http
 
 // StartSourceRetentionCleanup is called by apid's service lifecycle, including
 // when new retention is disabled. Tests construct handlers without background work.
-func (e *PrivateExecutor) StartSourceRetentionCleanup() {
+func (e *PrivateExecutor) StartSourceRetentionCleanup(ctx context.Context) {
 	e.mu.Lock()
 	if e.closing || e.sourceCleanupStarted {
 		e.mu.Unlock()
 		return
 	}
 	e.sourceCleanupStarted = true
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	e.sourceCleanupCancel = cancel
 	e.workers.Add(1)
 	e.mu.Unlock()
-	go func() { defer e.workers.Done(); e.sourceRetentionLoop() }()
+	go func() { defer e.workers.Done(); defer cancel(); e.sourceRetentionLoop(cleanupCtx) }()
 }
-func (e *PrivateExecutor) sourceRetentionLoop() {
+func (e *PrivateExecutor) sourceRetentionLoop(ctx context.Context) {
 	journal, ok := e.store.(state.HostedTaskSourceIntentStore)
 	if !ok {
 		return
@@ -101,11 +107,11 @@ func (e *PrivateExecutor) sourceRetentionLoop() {
 	tick := time.NewTicker(api.HostedTaskSourceSweepInterval)
 	defer tick.Stop()
 	for {
-		ctx, cancel := context.WithTimeout(e.ctx, api.HostedTaskSourceCleanupTimeout)
-		_, _ = journal.PurgeExpiredHostedTaskSources(ctx)
+		sweepCtx, cancel := context.WithTimeout(ctx, api.HostedTaskSourceCleanupTimeout)
+		_, _ = journal.PurgeExpiredHostedTaskSources(sweepCtx)
 		cancel()
 		select {
-		case <-e.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-tick.C:
 		}

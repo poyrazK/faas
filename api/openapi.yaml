@@ -361,21 +361,21 @@ paths:
       - mcp-management
       responses:
         '400':
-          description: Invalid or oversized source/review
+          description: The requested hosted source intent identity is malformed.
         '401':
-          description: Authentication required
+          description: Authenticate before inspecting hosted source intent metadata.
         '403':
-          description: Unscoped personal-account authority required
+          description: This source intent requires an unscoped personal-account inspector.
         '404':
-          description: Intent unavailable to this requester
+          description: No hosted source intent is visible to this inspecting principal.
         '409':
-          description: Immutable identity or current native app review changed
+          description: The retained source metadata cannot be inspected in its current form.
         '429':
-          description: Account retention quota reached
+          description: Hosted source intent inspection is currently rate-limited.
         '503':
-          description: Source retention or Account-domain sealing is disabled
+          description: The native source intent journal is temporarily unavailable for inspection.
         '200':
-          description: Original immutable intent metadata; no source bytes or credentials
+          description: Immutable hosted source intent metadata, projected as expired after its fixed retention deadline.
           content:
             application/json:
               schema:
@@ -400,21 +400,22 @@ paths:
               $ref: '#/components/schemas/HostedTaskSourcePrepare'
       responses:
         '400':
-          description: Invalid or oversized source/review
+          description: Authored Task bundles or their review failed bounded source validation.
         '401':
-          description: Authentication required
+          description: Authenticate the requesting publisher before retaining Task source.
         '403':
-          description: Unscoped personal-account authority required
+          description: Preparing retained source requires personal deploy-write authority and the account MFA policy.
         '404':
-          description: Intent unavailable to this requester
+          description: The requesting Task publisher is no longer a fresh authorized key.
         '409':
-          description: Immutable identity or current native app review changed
+          description: The source intent identity, requesting key or native app baseline differs from this preparation.
         '429':
-          description: Account retention quota reached
+          description: The account source retention identity, active-intent or ciphertext quota is exhausted.
         '503':
-          description: Source retention or Account-domain sealing is disabled
+          description: New source retention is disabled or independent Account-domain sealing is unavailable.
         '200':
-          description: Original immutable intent metadata; no source bytes or credentials
+          description: Newly retained or identically replayed Task source intent with its original expiry and no execution
+            authority.
           content:
             application/json:
               schema:
@@ -74633,13 +74634,14 @@ components:
           $ref: '#/components/schemas/TaskReviewLimits'
         migrations_required:
           type: boolean
-          description: Always true for a retained hosted source intent.
+          description: True because deploying the reviewed Task stack still requires its separately authorized migration
+            workflow.
         bindings_verified:
           type: boolean
-          description: Always false; source retention grants no execution authority.
+          description: False because offline source review does not resolve database, key or namespace bindings.
         ready_to_apply:
           type: boolean
-          description: Always false; source retention grants no execution authority.
+          description: False because an offline Task review is not an authorized executable release plan.
     HostedTaskSourceReview:
       description: Canonical hosted source review, including source digests and native app baselines.
       allOf:
@@ -74717,6 +74719,8 @@ components:
             maxItems: 1024
             items:
               $ref: '#/components/schemas/HostedTaskSourceEntry'
+      description: Exact reviewed Node Task bundles submitted for encrypted retention under an immutable caller-chosen
+        identity.
     HostedTaskSourceIntent:
       type: object
       additionalProperties: false
@@ -74771,13 +74775,13 @@ components:
           - expired
         ready_to_apply:
           type: boolean
-          description: Always false; source retention grants no execution authority.
+          description: False because retained source alone has no owner execution authorization.
         bindings_verified:
           type: boolean
-          description: Always false; source retention grants no execution authority.
+          description: False because storing authored Task source does not verify runtime credential bindings.
         owner_authorization_required:
           type: boolean
-          description: Always true for a retained hosted source intent.
+          description: True because a separate owner decision is required before any retained Task source can execute.
     TaskToolReleaseIntent:
       type: object
       additionalProperties: false
