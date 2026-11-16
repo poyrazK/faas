@@ -61,10 +61,7 @@ type adoptionExperimentGuest struct {
 	BindPaths []string `json:"bind_paths"`
 	// BindSources are the host paths the binds were made from.
 	BindSources []string `json:"bind_sources"`
-	// Files are the staged files (writable layer clone, materialised
-	// copies) the record checkpointed.
-	Files []string `json:"files"`
-	Slot  int      `json:"slot"`
+	Slot        int      `json:"slot"`
 }
 
 func adoptionExperimentEnv(t *testing.T) []string {
@@ -231,9 +228,8 @@ func TestMetalAdoptionRestartKeepsAGuestWhoseSourceWasEvicted(t *testing.T) {
 }
 
 // TestMetalAdoptionRestartKillsARefusedGuest: a guest that passes the
-// adoption proof but that the successor then refuses (here its writable layer
-// clone no longer is the recorded file, so "adopt_failed") is killed through
-// its pidfd instead of running on unowned (production fsn-2, 2026-11-12). The
+// adoption proof but that the successor then refuses is killed through its
+// pidfd instead of running on unowned (production fsn-2, 2026-11-12). The
 // refusal stays in the report.
 func TestMetalAdoptionRestartKillsARefusedGuest(t *testing.T) {
 	if os.Getenv("FAAS_ADOPTION_EXPERIMENTS") != "1" {
@@ -256,9 +252,6 @@ func TestMetalAdoptionRestartKillsARefusedGuest(t *testing.T) {
 	if err := json.Unmarshal(waitAdoptionExperimentFile(t, filepath.Join(dir, "guest.json"), 2*time.Minute), &guest); err != nil {
 		t.Fatal(err)
 	}
-	if len(guest.Files) == 0 {
-		t.Fatalf("the guest checkpointed no staged file to replace: %+v", guest)
-	}
 	pidfd, err := unix.PidfdOpen(guest.PID, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -266,9 +259,6 @@ func TestMetalAdoptionRestartKillsARefusedGuest(t *testing.T) {
 	t.Cleanup(func() {
 		adoptionExperimentCleanup(t, guest, pidfd)
 		_ = unix.Close(pidfd)
-		for _, f := range guest.Files {
-			_ = os.Remove(f)
-		}
 		leakcheck.AssertZero(t)
 	})
 	pinned := pinUnitMountNamespace(t, bootUnit)
@@ -279,15 +269,7 @@ func TestMetalAdoptionRestartKillsARefusedGuest(t *testing.T) {
 	for i := 0; i < 100 && exec.Command("systemctl", "is-active", "--quiet", bootUnit).Run() == nil; i++ {
 		time.Sleep(100 * time.Millisecond)
 	}
-	// Another file now at the clone's path: the guest keeps the recorded
-	// inode open, and adoption cannot prove the path is still its file.
-	other := guest.Files[0] + ".other"
-	if err := os.WriteFile(other, []byte("not the recorded clone"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(other, guest.Files[0]); err != nil {
-		t.Fatal(err)
-	}
+	markAdoptionExperimentEgressCircuits(t, dir, instance)
 	_, out := runAdoptionExperimentUnit(t, dir, "adopt", instance, true)
 	t.Logf("successor output:\n%s", out)
 	var result map[string]any
@@ -295,14 +277,45 @@ func TestMetalAdoptionRestartKillsARefusedGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("successor result: %v", result)
-	if result["adopted"] == true || result["refused_reason"] != adoptionRefusedAdoptFailed {
-		t.Fatalf("want the guest refused with %s: %v", adoptionRefusedAdoptFailed, result)
+	if result["adopted"] == true || result["refused_reason"] != adoptionRefusedEgressCircuit {
+		t.Fatalf("want the guest refused with %s: %v", adoptionRefusedEgressCircuit, result)
 	}
 	if detail, _ := result["refused_detail"].(string); !strings.Contains(detail, "killed through its pidfd") {
 		t.Fatalf("refusal does not say the guest was killed: %v", result)
 	}
 	if unix.PidfdSendSignal(pidfd, 0, nil, 0) == nil {
 		t.Fatal("the refused guest is still running")
+	}
+}
+
+// markAdoptionExperimentEgressCircuits rewrites the crashed vmmd's record as
+// if the guest had registered egress circuits, which adoption does not
+// rebuild. The guest still passes the proof, so the successor refuses it only
+// after: the same refusal path a guest whose staged files changed takes, on a
+// host whose layer filesystem cannot reflink and so stages no such file.
+func markAdoptionExperimentEgressCircuits(t *testing.T, dir, instance string) {
+	t.Helper()
+	path := filepath.Join(dir, "journal", resourceRecordName(instance))
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r resourceJournalRecord
+	if err := json.Unmarshal(b, &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Adoption == nil || r.Process == nil {
+		t.Fatalf("the record carries no adoption block or process: %s", b)
+	}
+	r.Adoption.Network.EgressCircuits = true
+	if b, err = json.Marshal(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".edit", b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".edit", path); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -789,8 +802,6 @@ func recordAdoptionExperimentGuest(t *testing.T, dir string, m *Manager, journal
 		case a.Kind == "bind":
 			g.BindPaths = append(g.BindPaths, a.Path)
 			g.BindSources = append(g.BindSources, a.Source)
-		case a.Kind == "clone" || a.Kind == "materialised":
-			g.Files = append(g.Files, a.Path)
 		}
 	}
 	if mnt, err := resourceMountNamespace(); err == nil {

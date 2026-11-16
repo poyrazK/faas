@@ -1381,5 +1381,6 @@ What does not change:
 Validation: `TestAdoptRestartSurvivorsKillsARefusedProvenGuest` (adopt
 failure and scope refusal are killed; a failed kill or an unproven record
 leaves the guest alone) and `TestMetalAdoptionRestartKillsARefusedGuest`
-(a real guest whose writable layer clone was replaced after the crash is
-refused `adopt_failed` and is gone once the successor has started).
+(a real guest whose record the crash left marked with egress circuits passes
+the proof, is refused `egress_circuit` and is gone once the successor has
+started).
