@@ -29,12 +29,12 @@ const maxBody = 16 << 10
 
 // Overview is GET /v1/orgs/{slug}/support-access. Every member sees who
 // gave support access and until when.
-func (h HTTP) Overview(w http.ResponseWriter, r *http.Request, _ state.Account) {
+func (h HTTP) Overview(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	org, ok := h.Org(w, r, authz.OrgActionView)
 	if !ok {
 		return
 	}
-	out, err := h.Service.Overview(r.Context(), org)
+	out, err := h.Service.Overview(r.Context(), org, h.Actor(r, acct))
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read support access"))
 		return

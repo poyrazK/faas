@@ -31,7 +31,7 @@ type Store interface {
 type Deps struct {
 	Store Store
 	// Enabled decides the support_grants platform flag for an organization.
-	Enabled func(orgID string) bool
+	Enabled func(orgID, accountID string) bool
 	// IsOperator reports a platform operator. Operators never grant or
 	// approve access, even to an organization they belong to.
 	IsOperator func(state.Account) bool
@@ -48,7 +48,11 @@ type Service struct{ d Deps }
 
 func New(d Deps) *Service { return &Service{d: d} }
 
-func (s *Service) enabled(orgID string) bool { return s.d.Enabled != nil && s.d.Enabled(orgID) }
+// enabled decides the flag for the organization and the account acting in
+// it: platform flags always decide for an account.
+func (s *Service) enabled(orgID, accountID string) bool {
+	return s.d.Enabled != nil && s.d.Enabled(orgID, accountID)
+}
 
 var reasonRule = fmt.Sprintf("reason must be %d to %d characters", api.SupportReasonMinChars, api.SupportReasonMaxChars)
 
@@ -117,7 +121,7 @@ func (s *Service) Request(ctx context.Context, operator state.Account, orgSlug, 
 	if err != nil {
 		return api.SupportAccessRequest{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Organization not found", "no organization with that slug")
 	}
-	if !s.enabled(org.ID) {
+	if !s.enabled(org.ID, operator.ID) {
 		return api.SupportAccessRequest{}, errDisabled
 	}
 	reason = strings.TrimSpace(reason)
@@ -135,9 +139,9 @@ func (s *Service) Request(ctx context.Context, operator state.Account, orgSlug, 
 	return requestView(org.Slug, operator, req), nil
 }
 
-// Overview lists the organization's grants and requests.
-func (s *Service) Overview(ctx context.Context, org state.Org) (api.SupportAccess, error) {
-	out := api.SupportAccess{Enabled: s.enabled(org.ID), Grants: []api.SupportGrant{}, Requests: []api.SupportAccessRequest{}}
+// Overview lists the organization's grants and requests for viewer.
+func (s *Service) Overview(ctx context.Context, org state.Org, viewer state.Account) (api.SupportAccess, error) {
+	out := api.SupportAccess{Enabled: s.enabled(org.ID, viewer.ID), Grants: []api.SupportGrant{}, Requests: []api.SupportAccessRequest{}}
 	grants, err := s.d.Store.ListSupportGrants(ctx, org.ID)
 	if err != nil {
 		return out, err
@@ -164,7 +168,7 @@ func (s *Service) LiveGrants(ctx context.Context) ([]api.SupportGrant, error) {
 	}
 	out := make([]api.SupportGrant, 0, len(grants))
 	for _, g := range grants {
-		if s.enabled(g.OrgID) {
+		if s.enabled(g.OrgID, g.CreatedBy) {
 			out = append(out, s.View(ctx, g))
 		}
 	}
@@ -172,7 +176,7 @@ func (s *Service) LiveGrants(ctx context.Context) ([]api.SupportGrant, error) {
 }
 
 func (s *Service) newGrant(ctx context.Context, actor state.Account, org state.Org, in api.CreateSupportGrantRequest, requestID string) (state.NewSupportGrant, *api.Problem) {
-	if !s.enabled(org.ID) {
+	if !s.enabled(org.ID, actor.ID) {
 		return state.NewSupportGrant{}, errDisabled
 	}
 	if s.d.IsOperator != nil && s.d.IsOperator(actor) {

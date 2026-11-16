@@ -56,7 +56,7 @@ func (s *server) renderSupportAccessDashboard(w http.ResponseWriter, r *http.Req
 	actor := actorAccount(r, acct)
 	data := dashboard.SupportAccessData{Flash: supportAccessDone[r.URL.Query().Get("done")], Error: supportAccessErrors[r.URL.Query().Get("error")]}
 	for _, org := range s.supportManagedOrgs(r, actor) {
-		access, err := svc.Overview(r.Context(), org)
+		access, err := svc.Overview(r.Context(), org, actor)
 		if err != nil {
 			renderProblem(w, s.log, err)
 			return

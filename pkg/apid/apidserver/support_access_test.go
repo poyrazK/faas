@@ -220,7 +220,7 @@ func TestSupportGrantCreationGuards(t *testing.T) {
 // grant carries the request.
 func TestSupportAccessRequestApproval(t *testing.T) {
 	f := newSupportFixture(t, true)
-	rec := f.env.DoOperator(t, http.MethodPost, "/v1/admin/support-access/requests", api.OperatorSupportAccessRequest{Org: "acme", Reason: "your deploys fail at build"}, nil)
+	rec := f.env.DoOperator(t, http.MethodPost, "/v1/admin/support-access/requests", api.OperatorSupportAccessRequest{Org: "acme", Reason: "your deploys fail at build"}, map[string]string{"Idempotency-Key": "support-request-1"})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("request = %d %s, want 201", rec.Code, rec.Body.String())
 	}

@@ -31,8 +31,8 @@ const supportActionMailKind = "support_access_action"
 // write, as for every other provider mutation.
 const supportStepUpTTL = 5 * time.Minute
 
-func (s *server) supportGrantsEnabled(orgID string) bool {
-	return s.platformFlagFor(platformflags.SupportGrants, platformflags.Subject{OrgID: orgID})
+func (s *server) supportGrantsEnabled(orgID, accountID string) bool {
+	return s.platformFlagFor(platformflags.SupportGrants, platformflags.Subject{AccountID: accountID, OrgID: orgID})
 }
 
 func (s *server) supportAccessService() *supportaccess.Service {
@@ -160,7 +160,7 @@ func (s *server) verifySupportRequest(r *http.Request, grantID string) (state.Ac
 	if err != nil {
 		return state.Account{}, state.SupportGrant{}, api.ErrCapacity("could not check the support grant")
 	}
-	if !s.supportGrantsEnabled(grant.OrgID) {
+	if !s.supportGrantsEnabled(grant.OrgID, grant.CreatedBy) {
 		return state.Account{}, state.SupportGrant{}, forbidden("Support access is not available",
 			"support access grants are turned off for this organization")
 	}
