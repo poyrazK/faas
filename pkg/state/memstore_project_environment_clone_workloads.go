@@ -138,6 +138,13 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 	if err := m.requireCloneEventSubscriptionsCapturedLocked(projectID, op.SourceEnvironment, captured); err != nil {
 		return nil, err
 	}
+	notificationRecords := make([]projectCloneWorkloadRecord, 0, len(records))
+	for _, record := range records {
+		notificationRecords = append(notificationRecords, record)
+	}
+	if err := requireCloneNotificationDestinations(notificationRecords); err != nil {
+		return nil, err
+	}
 	var keys []string
 	for _, record := range records {
 		for key := range cloneLayerArtifacts(record) {

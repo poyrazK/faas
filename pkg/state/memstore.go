@@ -507,6 +507,9 @@ type MemStore struct {
 	objectVersionProtection       map[string]ObjectVersionProtection
 	objectLifecyclePolicies       map[string]ObjectLifecyclePolicy
 	objectNotifications           map[string]api.ObjectBucketNotifications
+	// objectNotificationClonePaused holds the buckets whose notifications a
+	// full clone copied paused (ADR-20261104120000 amendment 2026-11-16).
+	objectNotificationClonePaused map[string]bool
 	objectLifecycleScans          map[string]ObjectLifecycleScan
 	objectDeletions               map[string]ObjectDeletion
 	objectVersionReferences       map[string]ObjectVersionIdentity

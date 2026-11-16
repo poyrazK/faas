@@ -49619,6 +49619,7 @@ CREATE TABLE public.object_bucket_notifications (
     revision bigint NOT NULL,
     rules jsonb NOT NULL,
     managed_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
+    clone_paused boolean DEFAULT false NOT NULL,
     CONSTRAINT object_bucket_notifications_revision_check CHECK ((revision > 0)),
     CONSTRAINT object_bucket_notifications_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 1000))),
     CONSTRAINT object_compute_trigger_ownership_check CHECK (public.object_compute_trigger_ownership_valid(rules, managed_rules))
