@@ -6197,6 +6197,13 @@ from .task_tool_release_receipt_parked import TaskToolReleaseReceiptParked
 from .task_tool_release_receipt_pending_submission import TaskToolReleaseReceiptPendingSubmission
 from .task_tool_release_receipt_previous_deployments import TaskToolReleaseReceiptPreviousDeployments
 from .task_tool_release_receipt_stage import TaskToolReleaseReceiptStage
+from .task_tool_retirement import TaskToolRetirement
+from .task_tool_retirement_decision import TaskToolRetirementDecision
+from .task_tool_retirement_request import TaskToolRetirementRequest
+from .task_tool_retirement_request_action import TaskToolRetirementRequestAction
+from .task_tool_retirement_request_expected_instance_ids import TaskToolRetirementRequestExpectedInstanceIds
+from .task_tool_retirement_result import TaskToolRetirementResult
+from .task_tool_retirement_state import TaskToolRetirementState
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
 from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
@@ -12598,6 +12605,13 @@ __all__ = (
     "TaskToolReleaseReceiptPendingSubmission",
     "TaskToolReleaseReceiptPreviousDeployments",
     "TaskToolReleaseReceiptStage",
+    "TaskToolRetirement",
+    "TaskToolRetirementDecision",
+    "TaskToolRetirementRequest",
+    "TaskToolRetirementRequestAction",
+    "TaskToolRetirementRequestExpectedInstanceIds",
+    "TaskToolRetirementResult",
+    "TaskToolRetirementState",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
     "TCPListenerTLSCertificateStatus",

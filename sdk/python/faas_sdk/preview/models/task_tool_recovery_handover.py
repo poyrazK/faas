@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ..models.task_tool_quarantine import TaskToolQuarantine
     from ..models.task_tool_recovery_qualification import TaskToolRecoveryQualification
     from ..models.task_tool_recovery_result import TaskToolRecoveryResult
+    from ..models.task_tool_retirement import TaskToolRetirement
 
 
 T = TypeVar("T", bound="TaskToolRecoveryHandover")
@@ -38,6 +39,10 @@ class TaskToolRecoveryHandover:
     revision: int
     state: TaskToolRecoveryHandoverState
     requested_at: datetime.datetime
+    retirement: TaskToolRetirement | Unset = UNSET
+    """Separate fixed owner approval for atomic native conditional parking. Pending means a park request committed;
+    retired also requires native drain and absent or expired Task registrations. Restore and quarantine approvals do
+    not authorize retirement."""
     quarantine: TaskToolQuarantine | Unset = UNSET
     """Separate fixed owner approval and one admitted candidate claim-fence attempt. Applying is uncertain until
     read-only Task-database evidence is observed. It cannot renew or reuse restore authority."""
@@ -64,6 +69,10 @@ class TaskToolRecoveryHandover:
         state: str = self.state
 
         requested_at = self.requested_at.isoformat()
+
+        retirement: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retirement, Unset):
+            retirement = self.retirement.to_dict()
 
         quarantine: dict[str, Any] | Unset = UNSET
         if not isinstance(self.quarantine, Unset):
@@ -104,6 +113,8 @@ class TaskToolRecoveryHandover:
                 "requested_at": requested_at,
             }
         )
+        if retirement is not UNSET:
+            field_dict["retirement"] = retirement
         if quarantine is not UNSET:
             field_dict["quarantine"] = quarantine
         if result is not UNSET:
@@ -126,6 +137,7 @@ class TaskToolRecoveryHandover:
         from ..models.task_tool_quarantine import TaskToolQuarantine
         from ..models.task_tool_recovery_qualification import TaskToolRecoveryQualification
         from ..models.task_tool_recovery_result import TaskToolRecoveryResult
+        from ..models.task_tool_retirement import TaskToolRetirement
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -137,6 +149,13 @@ class TaskToolRecoveryHandover:
         state = check_task_tool_recovery_handover_state(d.pop("state"))
 
         requested_at = datetime.datetime.fromisoformat(d.pop("requested_at"))
+
+        _retirement = d.pop("retirement", UNSET)
+        retirement: TaskToolRetirement | Unset
+        if isinstance(_retirement, Unset):
+            retirement = UNSET
+        else:
+            retirement = TaskToolRetirement.from_dict(_retirement)
 
         _quarantine = d.pop("quarantine", UNSET)
         quarantine: TaskToolQuarantine | Unset
@@ -193,6 +212,7 @@ class TaskToolRecoveryHandover:
             revision=revision,
             state=state,
             requested_at=requested_at,
+            retirement=retirement,
             quarantine=quarantine,
             result=result,
             settled_at=settled_at,

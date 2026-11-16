@@ -12,18 +12,22 @@ import (
 // Decorate the existing Problem only for an opted-in stream or typed local flag rule.
 // RawMessage retains all existing field values, including numeric precision.
 func writeJSONProblemForError(w io.Writer, problem api.Problem, code int, cause error) error {
+	return writeJSONProblemForErrorWithCLI(w, problem, code, cause, nil)
+}
+
+func writeJSONProblemForErrorWithCLI(w io.Writer, problem api.Problem, code int, cause error, advice *cliFlagDiagnostic) error {
 	var stream *listStreamError
 	hasStream := errors.As(cause, &stream)
 	rule := listFlagRuleDiagnosticForError(cause)
 	var serverError *APIError
 	if errors.As(cause, &serverError) {
-		rule = nil
+		rule, advice = nil, nil
 	}
 	if !hasStream && rule == nil {
-		return writeJSONProblemWithExit(w, problem, code)
+		return writeJSONProblemWithCLI(w, problem, code, advice)
 	}
 	var encoded bytes.Buffer
-	if err := writeJSONProblemWithExit(&encoded, problem, code); err != nil {
+	if err := writeJSONProblemWithCLI(&encoded, problem, code, advice); err != nil {
 		return err
 	}
 	if !hasStream {

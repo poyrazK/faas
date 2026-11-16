@@ -1121,11 +1121,45 @@ the POST. Legacy operations without checkpoints report missing evidence.
 
 The report distinguishes recorded completion from current observations. A
 `running` entry reports `running_or_interrupted`, because it does not establish
-that the local executor lives. The plan lists `resume`, `restore` and `retire`,
+that the local executor lives. The plan lists `resume`, `restore`, `quarantine` and `retire`,
 each either `blocked` with specific reasons or `requires_owner_checks`. An
 observed zero-live boundary after promotion can support owner review of a lost
 park reply, while missing old workers block restoration. Changed journals,
 foreign generations and uncertain submissions block affected actions.
+
+Recovery inspection also validates the versioned handover and the retained
+restore, quarantine and retirement journals. Its optional `lifecycle` summary
+separates immutable history from fresh native observations: `restore`,
+`quarantine` and `retirement` describe each phase, while `executor_fenced` and
+`handover_state` show whether the old executor can still act. Classification can
+be `executor_exited`, `handover_pending`, `executor_fenced`, `restored`,
+`quarantine_applying`, `quarantined`, `retirement_pending` or `retired`.
+Unconsumed qualifications show `qualified`, `approved`, `approval_expired` or
+`revoked`; consumed results keep their historical state after expiry/revocation.
+
+Both inspection and planning include a `next_step` for these operations, with
+specific blockers and `requires_original_bindings`. A changed journal or future
+timestamp recommends `inspect_again`. A stopping handover recommends
+`observe_handover`; an admitted quarantine or committed park recommends
+`observe_quarantine` or `observe_retirement`. Native zero-live evidence alone
+cannot complete retirement because inspection cannot read the Task database.
+These local observations use the original trusted adapter and bindings through
+the existing quarantine/retire tool or CLI; they may record native observation
+metadata but never repeat the original SQL fence or park. A known candidate
+identity/generation change during pending retirement requires owner reconciliation.
+
+`apply_retirement` refers to `gregale_apply_task_tool_retire`; its owner steps
+use `execution retire-qualify` and `execution retire-approve`.
+
+Fresh qualification, approval and apply recommendations retain every separate
+owner/local/runtime check. Expired or revoked unused qualifications require owner
+reconciliation and cannot be renewed. Fenced/exited executors always block
+`resume`. Retained restore/quarantine/retirement results block reapplication;
+`retired` recommends `prepare_new_release`, meaning a new review and authorization
+rather than reusing the old claim. Neither historical classification nor a next
+step certifies current health or grants execution. Invalid identities, digests,
+revisions or unsupported journal states are rejected. Existing operations without
+lifecycle metadata retain conservative legacy inspection guidance.
 
 Plans expire after one minute and include `evidence_sha256` and
 `recovery_plan_id`. They always return `read_only=true`, `ready_to_apply=false`
@@ -1206,8 +1240,9 @@ Use `recovery-revoke` with the same identity, revision and qualification digest 
 revoke the recovery decision, including after app drift or expiry. Current owner
 authority is required for these decisions. Root `ready_to_apply` and
 `bindings_verified` remain false. A settled approved handover can now be consumed
-by the one-time restore flow below. Resume and candidate retirement remain
-separate milestones. See
+by the one-time restore flow below. The original executor stays permanently fenced. Candidate quarantine and
+retirement use their separate approvals below; a later deployment needs a new
+release review. See
 [ADR 20261115123000](adr/20261115123000-task-recovery-handover-owner-qualification.md).
 
 
@@ -6764,8 +6799,52 @@ an unclaimed approval, including after source drift or expiry. Revocation does
 not undo fences or cancel an already admitted SQL attempt. Read-only observation
 of an admitted attempt remains possible afterward. The original executor stays
 permanently fenced. Use `gregale_get_task_tool_operation` to inspect durable
-results; completed results need no local private files. Retirement remains a
-separate owner-approved milestone. Live staging acceptance remains skipped.
+results; completed results need no local private files. Retirement requires the separate owner approval described below. Live staging acceptance remains skipped.
+
+### Agent retirement after observed candidate quarantine
+
+After the native quarantine has a retained result, separately qualify and approve
+retirement using an owner credential and the original binding profile:
+
+```sh
+gregale mcp server tasks execution retire-qualify \
+  --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
+  --handover-id "$HANDOVER_ID" --allow-local-checks
+# Review the new retirement qualification_sha256.
+gregale mcp server tasks execution retire-approve \
+  --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
+  --handover-id "$HANDOVER_ID" --qualification-sha256 "$RETIREMENT_SHA256"
+```
+
+The local agent tool `gregale_apply_task_tool_retire` accepts only `intent_id`,
+`operation_id`, `handover_id`, the retirement `qualification_sha256` and explicit
+`allow_tool_execution=true`. It requires `build-tools` and write consent. Its CLI
+equivalent is `gregale mcp server tasks execution retire` with the same identity
+flags and `--allow-tool-execution`. Restore and quarantine approvals do not grant
+retirement authority. Qualification lasts one minute and cannot be renewed.
+
+Before parking, the fixed adapter uses observer credentials to recheck the exact
+candidate claim fences and retained compatibility under the release lock. Native
+checks require the restored web, policy, replacement workers, observer heartbeat,
+unchanged app snapshots and running VM generation. Candidate startup receipts must
+attest claim fencing and a shutdown deadline below the native worker stop grace.
+The dedicated retirement route uses conditional parking with no fallback. Native
+approval consumption and park intent commit together as `retirement_pending`.
+
+Pending repeats only inspect the recorded transition. They never repeat parking,
+even after a later wake. `retired` is recorded only after native instances drain
+and the observer sees the exact Task registrations absent or expired. A timeout or
+lost reply stays pending; inspect `gregale_get_task_tool_operation` and repeat the
+same retirement to observe it. Retained completion needs no private local files.
+Use `retire-revoke` with the same identities/digest to block an unused approval.
+Expiry or revocation does not undo committed parking and still permits read-only
+shutdown reconciliation. Worker generation/transition changes stop completion.
+
+Task observations and native state do not share a database transaction. A result
+records historical shutdown evidence, not current service health. Fences remain;
+active Tasks finish or abort through normal worker shutdown and lease expiry.
+Retirement adds no Task cancellation, migration, traffic or admission change.
+Live staging acceptance remains skipped.
 
 ### Quarantining and retiring recovered candidate workers
 

@@ -95,6 +95,7 @@ type TaskToolReleaseExecutionRequest struct {
 
 // TaskToolReleaseIntentCheck supplies a freshly recomputed local fingerprint.
 type TaskToolReleaseIntentCheck struct {
+	Retirement         *TaskToolRetirementRequest       `json:"retirement,omitempty"`
 	Quarantine         *TaskToolQuarantineRequest       `json:"quarantine,omitempty"`
 	ReleaseFingerprint string                           `json:"release_fingerprint"`
 	Execution          *TaskToolReleaseExecutionRequest `json:"execution,omitempty"`
@@ -102,6 +103,7 @@ type TaskToolReleaseIntentCheck struct {
 
 // TaskToolReleaseIntentDecision binds an owner decision to the complete intent.
 type TaskToolReleaseIntentDecision struct {
+	Retirement         *TaskToolRetirementRequest       `json:"retirement,omitempty"`
 	Quarantine         *TaskToolQuarantineRequest       `json:"quarantine,omitempty"`
 	IntentSHA256       string                           `json:"intent_sha256"`
 	ReleaseFingerprint string                           `json:"release_fingerprint"`
@@ -140,6 +142,7 @@ func (c *Client) DecideTaskToolReleaseIntent(ctx context.Context, id string, in 
 // requires both the native write barrier and the trusted executor exit receipt.
 // Approval is separate from release approval; handover decisions alone permit no traffic write.
 type TaskToolRecoveryHandover struct {
+	Retirement      *TaskToolRetirement            `json:"retirement,omitempty"`
 	Quarantine      *TaskToolQuarantine            `json:"quarantine,omitempty"`
 	Result          *TaskToolRecoveryResult        `json:"result,omitempty"`
 	ID              string                         `json:"id"`

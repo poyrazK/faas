@@ -688,6 +688,38 @@ credentials, and Gregale API key strings are redacted, including nested error
 fields. This protects recognized credentials, not arbitrary secrets in user
 messages. Successful command output remains on stdout.
 
+Flag-parser errors also include a CLI-local `cli` object. Its `kind` distinguishes
+`unknown_flag`, `missing_value`, `invalid_value`, `misplaced_global_flag` and
+unclassified `invalid_flag` errors. When available, `flag`, `suggested_flags`,
+`expected_type`, `value_marker`, `allowed_values` and `placement` describe
+registered options, without supplied values or saved defaults. Expected types
+are `boolean`, `integer`, `number`, `duration`, `enum` and `value` (a documented
+format with no narrower parser type). Command-specific limits still apply.
+
+For example, `gregale --json deploy --naem demo` returns exit `1` and one
+`validation_failed` Problem (category `invalid_request`) whose `cli.suggested_flags` is `["--name"]` and whose
+`cli.help_argv` is `["gregale", "--json", "help", "deploy"]`. Follow that argument
+array to discover the flag; the CLI never applies or executes the suggestion.
+Ambiguous typos have no suggestion. `help_argv` uses a validated visible command
+or falls back to root JSON help, without API requests. Prefix-only globals use
+`placement: "before_command"`; a command-local resource `--profile` retains its
+local meaning. Errors outside these flag-parser and JSON-input syntax paths omit `cli`. Human diagnostics,
+Problem codes, exit codes and stdout/stderr routing stay unchanged.
+
+Unknown commands at the root, in the shared nested-command renderer and in
+the invocation family expose `cli.kind: "unknown_command"`. Unknown JSON help
+topics use `unknown_help_topic`. For example,
+`gregale --json invocation lsit` returns `suggested_commands` containing
+`["gregale", "invocation", "list"]`, and `help_argv` containing
+`["gregale", "--json", "help", "invocation", "list"]`.
+Corrections contain only visible canonical command words; they do not preserve
+targets, flags or values from the failed invocation. A command path can still
+require arguments: inspect its help before constructing a new invocation.
+Ambiguous, unrelated and hidden names get no correction. Help falls back to
+the deepest visible parent or root. Advice uses offline capability state and
+never executes a command. Human diagnostics and existing Problem codes remain
+unchanged; API errors omit this metadata.
+
 Successful `--json` output takes one of two shapes, and a command keeps its
 shape across releases:
 
@@ -710,6 +742,22 @@ columns count Unicode characters, and a tab counts as one character. LF and
 CRLF files are supported. Truncated JSON points at the end of the input.
 The same location appears in JSON error details. Diagnostics omit payload
 contents, and valid input keeps its original bytes and numeric precision.
+
+With `--json`, these shared-reader syntax failures additionally expose
+`cli.kind: "invalid_json"`, `cli.flag` and `cli.location`. Location contains
+`source` (`inline`, `file` or `stdin`), one-based `line` and `column`, plus
+`path` for a file. Paths retain their supplied spelling; a file called
+`stdin` or `inline` is explicitly a file. Known credential-bearing paths
+and filenames that are not valid UTF-8 omit `path`; an omitted path is not
+an instruction to open a redacted filename. Filename control characters
+remain escaped in the JSON document.
+
+For `gregale --json invocation run demo --payload @request.json`, a syntax
+failure can include `"cli":{"kind":"invalid_json","flag":"--payload",
+"location":{"source":"file","path":"request.json","line":12,"column":9}}`
+alongside its existing `help_argv`. Wrapped errors retain the location.
+Read/permission failures and API errors do not get a syntax location. No
+payload excerpt is included, and invalid input fails before submission.
 
 Shared command errors use these exit codes. JSON error objects on stderr
 include `category` and `exit_code` alongside the server's unchanged `code`:
@@ -849,6 +897,116 @@ partial stdout and retain normal error/signal behavior.
 The receipt is an integrity reference, not a signature or API snapshot. Page
 count cannot be reconstructed from JSON Lines. Results describe bytes read;
 verification does not lock concurrent writers, repair files or replay exports.
+
+## Compare saved exports offline
+
+Compare two JSON Lines inventories by a unique top-level field:
+
+```sh
+gregale export diff before.jsonl after.jsonl
+gregale --json export diff before.jsonl after.jsonl --key id --fail-on-change
+```
+
+The default key is `id`; `--key FIELD` selects a literal top-level field, including
+names containing dots. Keys must be nonempty strings or JSON numbers. Duplicate
+record keys or object fields are refused. Numeric and string keys are distinct.
+Every row must be one UTF-8 JSON object. Empty files, CRLF and a final row without
+a newline are accepted. Invalid rows identify the input and line without echoing
+contents. Unpaired Unicode surrogate escapes are refused.
+
+Row and object-field order do not affect the result; array order does. Numbers
+compare as exact decimal values without floating-point conversion or expanding
+large exponents. `1`, `1.0` and `1e0` are equal, and large integers retain their
+full precision. Each indexed record retains its key and digest; memory grows
+with the unique keys and largest record.
+
+Stdout reports added, removed and changed IDs plus before/after/unchanged counts.
+IDs use deterministic typed lexical order; numeric IDs use exact canonical
+coefficient/exponent notation. Human IDs are JSON-escaped. Effective JSON mode,
+including `FAAS_JSON=1`, emits `schema_version: 1`, `key`, `has_changes`, `summary`,
+`added`, `removed` and `changed`. Zero/false values and empty arrays are explicit.
+Row bodies and input paths are not included in the report.
+
+Use `--explain` to identify fields within records present in both files:
+
+```sh
+gregale --json export diff before.jsonl after.jsonl --explain --fail-on-change
+```
+
+JSON mode adds `explanations`, an array of `{id, changes}` entries in the same
+order as `changed`. Each change has `path` and `kind` (`added`, `removed`, or
+`changed`). Paths use JSON Pointer escaping: `~` becomes `~0`, `/` becomes `~1`,
+and the empty field name is `/`. Changes sort by escaped path. For example:
+
+```json
+{"id":"build-1","changes":[{"path":"/status","kind":"changed"}]}
+```
+
+Object fields are compared recursively. Arrays, scalar/object replacements, and
+added or removed objects are reported once at their containing field; array
+indices and descendants of those objects are omitted. Empty objects and null
+remain distinct from missing fields. Semantic equality, including equivalent
+number spellings and object-field order, still produces no change.
+
+Only changed IDs get explanations; added and removed records stay in the existing
+ID arrays. Enabled explanations are `[]` when no records changed, including empty
+inventories. Human mode appends field paths and kinds with JSON escaping for
+control characters. IDs and field names are intentional result data; field values
+and input paths are omitted. No additional file read or API request is made.
+Explain mode retains object field names and digests across the indexes, so memory
+also grows with indexed object fields. Arrays retain one digest. Without the flag,
+or with `--explain=false`, the existing JSON and human report bytes are unchanged.
+Repeated Boolean flags keep normal last-value-wins behavior.
+
+Use repeatable `--ignore-path POINTER` options to exclude volatile object fields:
+
+```sh
+gregale --json export diff before.jsonl after.jsonl \
+  --ignore-path /updated_at --ignore-path /metrics/read_count \
+  --explain --fail-on-change
+```
+
+Pointers are exact object-member paths, using the same `~0` and `~1` escaping as
+explanations. Dots, percent signs and `*` are literal field-name characters, with
+no wildcard, URI-fragment or JSONPath interpretation. `/` selects an empty field
+name; the empty root pointer, malformed escapes and invalid UTF-8 are refused.
+The effective selected key and all paths beneath it are protected. Policies are
+validated before file reads, including after repeated `--key` options settle.
+
+Fields are excluded from both record digests and explanations. A selected object
+or array field is excluded as a whole, including its presence or absence.
+Missing fields and paths through scalar values have no effect. Surviving object
+containers remain: excluding `/meta/time` does not make `meta: {}` equal to absent
+or null `meta`. Arrays remain atomic; selecting an element beneath an existing
+array is an error before any report. Numeric tokens can name object fields.
+When exclusions overlap, a selected parent field covers its descendants.
+
+Repeated paths are deduplicated and sorted. JSON reports include the explicit
+policy in optional `ignored_paths`; human reports show a JSON-escaped `Ignored
+paths:` line. The policy stays visible even for an empty inventory or a path
+that matches no field. Without exclusions, this field/line is omitted and report
+bytes are unchanged. Added and removed records and their IDs are never hidden;
+`--fail-on-change` uses the remaining comparison after exclusions.
+
+Every input record is fully validated before filtering. Excluded values cannot
+hide malformed JSON/Unicode, duplicate object fields, invalid or duplicate IDs.
+No extra file read, file rewrite, API call or value output is added. Without
+explanations, the extra object tree exists only while processing one record;
+explanations retain the remaining field-name/digest trees in their indexes.
+Exclusion paths and field names are intentional report data. These comparisons
+describe the selected projection; use explicit export verification to check raw
+bytes against an integrity receipt.
+
+Comparisons exit 0 by default. `--fail-on-change` exits 1 after printing a complete
+report when additions, removals or changes exist. `--fail-on-change=false`
+disables that behavior; repeated flags retain normal last-value-wins handling.
+Invalid inputs use normal stderr Problems/human errors with no report. An output
+failure can leave partial stdout and retains normal error/signal behavior.
+
+Both files are read-only regular files; no login or API requests are needed.
+Raw `-` is refused; use `./-` for a file with that name. Files can change during
+reading; a diff is not a point-in-time snapshot or origin attestation. Use
+`export verify` with saved receipts separately when integrity checks are needed.
 
 ## List pagination
 

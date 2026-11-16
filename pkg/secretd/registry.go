@@ -239,8 +239,15 @@ func (f *registryFetcher) authorize(ctx context.Context, challenge string, auth 
 		return "", 0, errors.New("registry asked for credentials without a bearer realm")
 	}
 	realm, err := url.Parse(ch.Realm())
-	if err != nil || realm.Scheme != "https" && realm.Scheme != "http" {
+	if err != nil || realm.Host == "" {
 		return "", 0, errors.New("registry token realm is not a url")
+	}
+	// The registry picks the realm, and the token request carries the app's
+	// reusable Basic credential: never let it downgrade that to cleartext.
+	// secretd always answers with a credential, so there is no anonymous
+	// http case to allow (oci.RegistryClient enforces the same rule).
+	if !strings.EqualFold(realm.Scheme, "https") {
+		return "", 0, errors.New("registry token realm must use https to receive credentials")
 	}
 	tok, err := oci.FetchToken(ctx, f.hc, registryUserAgent, ch, auth)
 	if err != nil {

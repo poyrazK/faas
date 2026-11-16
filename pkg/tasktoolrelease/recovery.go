@@ -6,6 +6,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
@@ -35,6 +37,8 @@ type RecoveryAction struct {
 // RecoveryReport is a bounded, read-only observation and optionally a plan.
 // Hashes bind this report's bytes; no apply endpoint consumes them as authority.
 type RecoveryReport struct {
+	Lifecycle                  *RecoveryLifecycle          `json:"lifecycle,omitempty"`
+	NextStep                   *RecoveryNextStep           `json:"next_step,omitempty"`
 	Version                    int                         `json:"version"`
 	Kind                       string                      `json:"kind"`
 	IntentID                   string                      `json:"intent_id"`
@@ -97,7 +101,10 @@ func InspectRecovery(ctx context.Context, c *api.Client, id string, plan bool, n
 		return finishRecovery(out, record, plan), nil
 	}
 	e := record.Execution
-	if !toolpublication.ValidID(e.OperationID) || !toolpublication.ValidID(e.BindingsSHA256) || !slices.Contains([]string{"authorized", "running", "reconcile_required", "completed"}, e.State) {
+	if !ValidRecoveryMetadata(record) || !toolpublication.ValidID(e.OperationID) || !toolpublication.ValidID(e.BindingsSHA256) || uuid.Validate(e.AuthorizerKeyID) != nil || e.AuthorizedAt.Before(record.CreatedAt) || !e.AuthorizedAt.Before(record.ExpiresAt) || e.ClaimSHA256 != "" && !toolpublication.ValidID(e.ClaimSHA256) || !slices.Contains([]string{"authorized", "running", "reconcile_required", "completed"}, e.State) {
+		return out, ErrInvalid
+	}
+	if (e.State == "running" || e.State == "completed") && e.ClaimSHA256 == "" || e.State == "authorized" && e.ClaimSHA256 != "" {
 		return out, ErrInvalid
 	}
 	out.OperationID, out.ExecutionState = e.OperationID, e.State
@@ -105,7 +112,7 @@ func InspectRecovery(ctx context.Context, c *api.Client, id string, plan bool, n
 		recoveryFact(&out, "receipt", "unknown", "checkpoint_missing")
 		return finishRecovery(out, record, plan), nil
 	}
-	if ValidateReceipt(record, *e.Receipt) != nil {
+	if ValidateReceipt(record, *e.Receipt) != nil || !slices.Equal(e.CompletedStages, ReceiptStages(*e.Receipt)) {
 		return out, ErrInvalid
 	}
 	copyBytes, _ := json.Marshal(e.Receipt)
@@ -171,9 +178,22 @@ func finishRecovery(out RecoveryReport, record api.TaskToolReleaseIntentRecord, 
 			out.Classification = "completion_recorded"
 		}
 	}
+	out.Lifecycle = recoveryLifecycle(record, out.ObservedAt)
+	if out.Lifecycle != nil {
+		out.Classification = recoveryClassification(out.Lifecycle)
+		state, code := "passed", "recorded_recovery_timeline"
+		if !recoveryTimelineVerified(record, out.ObservedAt) {
+			state, code = "unknown", "recovery_timestamp_in_future"
+		}
+		recoveryFact(&out, "recovery_timeline", state, code)
+	}
+	actions := recoveryActions(out, record)
+	if out.Lifecycle != nil {
+		out.NextStep = recoveryNextStep(out, record, actions)
+	}
 	if plan {
 		out.Kind = "recovery_plan"
-		out.Actions = recoveryActions(out, record)
+		out.Actions = actions
 	}
 	b, _ := json.Marshal(out)
 	out.EvidenceSHA256 = toolpublication.Digest(b)
@@ -185,6 +205,9 @@ func finishRecovery(out RecoveryReport, record api.TaskToolReleaseIntentRecord, 
 
 func recoveryActions(report RecoveryReport, record api.TaskToolReleaseIntentRecord) []RecoveryAction {
 	common := []string{}
+	if report.Lifecycle != nil && !recoveryPassed(report, "recovery_timeline") {
+		common = append(common, "recovery_timeline_unverified")
+	}
 	if !recoveryPassed(report, "receipt") {
 		common = append(common, "checkpoint_missing")
 	}
@@ -205,8 +228,9 @@ func recoveryActions(report RecoveryReport, record api.TaskToolReleaseIntentReco
 		}
 	}
 	out := []RecoveryAction{}
-	for _, action := range []string{"resume", "restore", "retire"} {
+	for _, action := range []string{"resume", "restore", "quarantine", "retire"} {
 		blockers := slices.Clone(common)
+		blockers = append(blockers, recoveryLifecycleBlockers(record, action, report.ObservedAt)...)
 		if !recoveryPassed(report, "observer_fresh") {
 			blockers = append(blockers, "observer_not_verified")
 		}
@@ -227,7 +251,7 @@ func recoveryActions(report RecoveryReport, record api.TaskToolReleaseIntentReco
 			if !recoveryPassed(report, "web_candidate_serving") || !recoveryPassed(report, "deployment/baseline") {
 				blockers = append(blockers, "captured_baseline_or_candidate_traffic_unavailable")
 			}
-		case "retire":
+		case "quarantine", "retire":
 			if !recoveryPassed(report, "web_baseline_serving") || !recoveryPassed(report, "deployment/baseline") {
 				blockers = append(blockers, "baseline_not_restored")
 			}
@@ -253,7 +277,7 @@ func recoveryActions(report RecoveryReport, record api.TaskToolReleaseIntentReco
 				blockers = append(blockers, roleFact(app, "generation"))
 			}
 			if app.Role == "worker" && recoveryDeploymentID(report, "worker") != "" {
-				if action == "resume" && !recoveryPassed(report, roleFact(app, "instances")) {
+				if (action == "resume" || action == "quarantine") && !recoveryPassed(report, roleFact(app, "instances")) {
 					blockers = append(blockers, roleFact(app, "instances"))
 				}
 				if action == "retire" && !recoveryPassed(report, roleFact(app, "instances")) && !recoveryPassed(report, roleFact(app, "zero_live")) {

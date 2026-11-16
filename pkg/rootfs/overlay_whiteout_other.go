@@ -12,6 +12,9 @@ import (
 // historical staging semantics for local tests while production Linux builds
 // use the real marker implementation.
 func applyOverlayWhiteout(parent, victimName string, markerPaths ...string) error {
+	if err := validateWhiteoutVictim(victimName); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(filepath.Join(parent, victimName)); err != nil {
 		return err
 	}

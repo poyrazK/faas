@@ -3252,6 +3252,9 @@ export type { TaskToolReleaseIntentCheck } from './models/TaskToolReleaseIntentC
 export type { TaskToolReleaseIntentDecision } from './models/TaskToolReleaseIntentDecision.js';
 export type { TaskToolReleaseIntentRecord } from './models/TaskToolReleaseIntentRecord.js';
 export type { TaskToolReleaseReceipt } from './models/TaskToolReleaseReceipt.js';
+export type { TaskToolRetirement } from './models/TaskToolRetirement.js';
+export type { TaskToolRetirementRequest } from './models/TaskToolRetirementRequest.js';
+export type { TaskToolRetirementResult } from './models/TaskToolRetirementResult.js';
 export type { TCPListenerResponse } from './models/TCPListenerResponse.js';
 export type { TCPListenerTLSCertificateStatus } from './models/TCPListenerTLSCertificateStatus.js';
 export type { TCPListenerTLSConfig } from './models/TCPListenerTLSConfig.js';

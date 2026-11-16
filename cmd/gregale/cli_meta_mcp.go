@@ -250,9 +250,12 @@ func mcpCLICommand() cliCommand {
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
-			{Name: "execution", Short: "Authorize, inspect or plan recovery for a guarded Task release", Positionals: []string{"<authorize|apply|get|guard|inspect|plan-recovery>"}, Notes: []string{"Execution authority is separate from review approval. Only the requesting key can apply. Inspect and plan-recovery use native GET APIs and require no local files or bindings. Recovery plans never grant execution; existing claims never automatically restart."}, Flags: []cliFlag{
+			{Name: "execution", Short: "Authorize, inspect or plan recovery for a guarded Task release", Positionals: []string{"<authorize|apply|get|guard|inspect|plan-recovery|retire-qualify|retire-approve|retire-revoke|retire>"}, Notes: []string{"Execution authority is separate from review approval. Only the requesting key can apply. Inspect and plan-recovery use native GET APIs and require no local files or bindings. Recovery plans include lifecycle progress and the next step, never grant execution, and never resume fenced executors or repeat committed recovery work. Retirement requires retained restore/quarantine results, separate owner qualification/approval and execution consent. Pending retirement only reconciles shutdown."}, Flags: []cliFlag{
 				{Name: "id", Short: "exact reviewed intent identity", Value: "ID", Req: true},
 				{Name: "operation-id", Short: "immutable owner-selected execution identity", Value: "ID"},
+				{Name: "handover-id", Short: "settled recovery identity for retirement", Value: "ID"},
+				{Name: "qualification-sha256", Short: "separate retirement qualification digest", Value: "SHA256"},
+				{Name: "allow-local-checks", Short: "allow reviewed local checks for retire-qualify", Bool: true},
 				{Name: "plan", Short: "owner-reviewed plan, authorize only", Value: "PATH"},
 				{Name: "bindings-file", Short: "private owner binding JSON, authorize only", Value: "PATH"},
 				{Name: "intent-sha256", Short: "owner-reviewed digest, authorize only", Value: "SHA256"},

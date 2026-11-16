@@ -32,9 +32,9 @@ func (f *taskRestoreFixture) quarantineCall(t *testing.T, in api.TaskToolRelease
 	toolregistry.NewPrivateExecutor(f.store, toolregistry.PrivateExecutionOptions{}).TaskReleaseIntent()(w, r, f.account)
 	return w
 }
-func quarantineNativeFixture(t *testing.T, s state.Store) (*taskRestoreFixture, api.TaskToolReleaseIntentDecision) {
+func quarantineNativeFixture(t *testing.T, s state.Store, customize ...func(string, *state.App)) (*taskRestoreFixture, api.TaskToolReleaseIntentDecision) {
 	t.Helper()
-	f := newTaskRestoreFixture(t, s)
+	f := newTaskRestoreFixture(t, s, customize...)
 	w := f.call(t, f.request, f.traffic)
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &f.record) != nil {
 		t.Fatalf("restore prerequisite: %d %s", w.Code, w.Body)

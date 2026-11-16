@@ -97,8 +97,24 @@ API failures with progress/correlation, and SIGINT cancelling the active read.
 export receipts are verified offline by a built CLI; tampered files and malformed
 inputs fail without extra API requests or content leakage.
 
+`TestExportDiffIsolatedCLI` extends row 156: offline keyed inventory comparison,
+exact numeric changes, deterministic reports, opt-in CI failure and malformed
+input refusal without API access or row-body leakage.
+
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
+
+`TestJSONInputLocationsIsolatedCLI` extends row 156: malformed file input
+returns a typed source/line/column, then returned offline help is followed,
+with zero API requests and no invocation submission.
+
+`TestCLICommandCorrectionsIsolatedCLI` extends row 156: misspelled invocation
+commands and help topics return canonical argument arrays; following help makes
+zero requests and never replays the failed invocation.
+
+`TestCLIFlagCorrectionsIsolatedCLI` extends row 156: a misspelled deploy flag
+returns structured advice, and its help argument array discovers the suggested
+flag from another directory, with zero requests and no deployment submission.
 
 `TestJSONHelpGlobalFlagsIsolatedCLI` extends row 156: it discovers global
 connection/automation options without API requests, then constructs and runs a
@@ -180,3 +196,15 @@ input diagnostics: inline/file/stdin sources, human and JSON errors, CRLF
 locations, omitted payload values and zero API calls on malformed input.
 `TestJSONInputValidPayloadIsolatedAPI` verifies that the built CLI still sends
 valid input with large numbers and Unicode text intact.
+
+`TestExportDiffExplainIsolatedCLI` extends row 156: offline JSON Pointer field
+explanations, human and environment JSON, exact integer drift, whole-field
+subtree changes, empty explanations, opt-in/false behavior, CI exits, help,
+invalid-input privacy, unchanged files and zero API requests. A core-only pass
+does not qualify the built-CLI journey.
+
+`TestExportDiffIgnoreIsolatedCLI` extends row 156: explicit exact-path exclusions,
+visible deduplicated policy, ignored-only CI success, remaining exact-number
+drift and explanations, human/environment JSON, protected IDs, record additions,
+invalid excluded data, help, unchanged inputs and zero API requests. Core tests
+do not establish built-CLI journey qualification.

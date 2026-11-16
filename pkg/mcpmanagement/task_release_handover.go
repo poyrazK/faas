@@ -1,9 +1,7 @@
 package mcpmanagement
 
 import (
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
 func taskHandoverOutputSchema() map[string]any {
@@ -18,42 +16,8 @@ func taskHandoverOutputSchema() map[string]any {
 	}}
 	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"id", "operation_id", "revision", "state", "requested_at"}, "properties": map[string]any{
 		"id": id, "operation_id": id, "revision": revision, "state": map[string]any{"type": "string", "enum": []string{"stopping", "settled"}}, "requested_at": date, "settled_at": date,
-		"qualification": q, "quarantine": taskQuarantineOutputSchema(q), "result": taskRecoveryResultSchema(), "decision": map[string]any{"type": "string", "enum": []string{"approved", "revoked"}}, "authorizer_key_id": map[string]any{"type": "string", "format": "uuid"}, "decided_at": date,
+		"qualification": q, "quarantine": taskQuarantineOutputSchema(q), "retirement": taskRetirementOutputSchema(q), "result": taskRecoveryResultSchema(), "decision": map[string]any{"type": "string", "enum": []string{"approved", "revoked"}}, "authorizer_key_id": map[string]any{"type": "string", "format": "uuid"}, "decided_at": date,
 	}}
-}
-
-// Metadata validation never treats an old qualification or verdict as live authority.
-func validTaskHandoverMetadata(e *api.TaskToolReleaseExecution) bool {
-	if e.FenceVersion != 0 && e.FenceVersion != 1 {
-		return false
-	}
-	if e.ExecutorExitedAt != nil && (e.FenceVersion != 1 || e.ExecutorExitedAt.Before(e.AuthorizedAt) || e.State == "authorized" || e.State == "running") {
-		return false
-	}
-	h := e.Recovery
-	if h == nil {
-		return true
-	}
-	if e.FenceVersion != 1 || e.Receipt == nil || !toolpublication.ValidID(h.ID) || h.OperationID != e.OperationID || h.Revision != e.Receipt.Revision || h.RequestedAt.Before(e.AuthorizedAt) {
-		return false
-	}
-	if h.State == "stopping" {
-		return h.SettledAt == nil && e.ExecutorExitedAt == nil && h.Qualification == nil && h.Decision == ""
-	}
-	if h.State != "settled" || h.SettledAt == nil || e.ExecutorExitedAt == nil || h.SettledAt.Before(h.RequestedAt) || h.SettledAt.Before(*e.ExecutorExitedAt) {
-		return false
-	}
-	if h.Decision != "" && (h.Decision != "approved" && h.Decision != "revoked" || uuid.Validate(h.AuthorizerKeyID) != nil || h.DecidedAt == nil) {
-		return false
-	}
-	if h.Qualification == nil {
-		return h.Decision == ""
-	}
-	q := h.Qualification
-	return q.HandoverID == h.ID && q.OperationID == e.OperationID && q.Revision == h.Revision && q.Action == "restore" &&
-		q.BindingsSHA256 == e.BindingsSHA256 && toolpublication.ValidID(q.EvidenceSHA256) && q.TargetDeploymentID != "" && q.TargetDeploymentID == e.Receipt.ServingDeploymentID &&
-		q.ExpectedServingDeploymentID != "" && q.ExpectedServingDeploymentID == e.Receipt.WebDeploymentID &&
-		!q.ObservedAt.Before(*h.SettledAt) && q.ExpiresAt.Equal(q.ObservedAt.Add(api.TaskToolRecoveryApprovalTTL))
 }
 
 func taskRecoveryResultSchema() map[string]any {

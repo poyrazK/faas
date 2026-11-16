@@ -1758,6 +1758,9 @@ var RemoveTestFaultRules = removeTestFaultRules
 var RenderAccountSLO = renderAccountSLO
 var RenderAppBindingInventory = renderAppBindingInventory
 var RenderAppMetrics = renderAppMetrics
+
+// RenderServiceMap exposes the service-map text output.
+var RenderServiceMap = renderServiceMap
 var RenderAppSLO = renderAppSLO
 var RenderApplyRescue = renderApplyRescue
 var RenderStoredWorkflowLiveGate = renderStoredWorkflowLiveGate
@@ -2906,6 +2909,9 @@ func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, i
 
 // TaskQuarantineGateForTest exposes the fixed adapter to subprocess contract tests.
 func TaskQuarantineGateForTest() string { return mcpTaskQuarantineGate }
+
+// TaskRetirementGateForTest exposes the fixed read-only adapter.
+func TaskRetirementGateForTest() string { return mcpTaskRetirementGate }
 
 var RememberInitApp = rememberInitApp
 var LinkedDefaultAppName = linkedDefaultAppName
