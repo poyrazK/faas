@@ -22,6 +22,7 @@ import (
 var ungatedCommands = map[string]string{
 	"add":          "provisions resources; each verb is owned by its resource's capability",
 	"menu":         "guided entry point",
+	"export":       "verifies saved list exports offline; any account's own files",
 	"start":        "first-deploy guide",
 	"capabilities": "reports what is released",
 	"dashboard":    "opens the dashboard",

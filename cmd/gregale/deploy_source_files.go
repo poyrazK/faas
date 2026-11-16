@@ -178,7 +178,9 @@ func validateDeploySourceFiles(o deploySourceFilesOptions, explicit map[string]b
 		return errors.New("--explain-files requires --dry-run")
 	}
 	allowed := map[string]bool{"dry-run": true, "explain-files": true, "path": true, "source": true, "worktree": true, "json": true,
-		"app": true, "function": true, "runtime": true, "handler": true, "secret-scan": true, "secrets-file": true, "project": true, "project-slug": true, "name": true}
+		"app": true, "function": true, "runtime": true, "handler": true, "secret-scan": true, "secrets-file": true, "project": true, "project-slug": true, "name": true,
+		// Inspection never runs doctor, so --no-doctor is already satisfied.
+		"no-doctor": true}
 	var unsupported []string
 	for flag := range explicit {
 		if !allowed[flag] {
@@ -187,7 +189,7 @@ func validateDeploySourceFiles(o deploySourceFilesOptions, explicit map[string]b
 	}
 	if len(unsupported) > 0 {
 		sort.Strings(unsupported)
-		return fmt.Errorf("local file inspection does not support %s; select a local directory with --path", strings.Join(unsupported, ", "))
+		return fmt.Errorf("--explain-files only lists the files a deploy would send and does not take %s; drop it, or run the deploy without --explain-files", strings.Join(unsupported, ", "))
 	}
 	if o.function && o.app {
 		return errors.New("--function and --app are mutually exclusive")

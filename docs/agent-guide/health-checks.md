@@ -3,7 +3,7 @@
 An instance takes traffic once it passes readiness, and is restarted when it keeps failing liveness.
 
 - Check an app's serving health and readiness:
-    gregale app <app> health
+    gregale app health <app>
 - Use another health path (or set hosting.health in gregale.yaml):
     gregale app <app> --health-path <path>
 - Deploy a stateless TCP server (a broker, memcached) from its image:

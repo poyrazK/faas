@@ -105,6 +105,13 @@ type usageBucket struct {
 	bytes     uint64
 	requests  uint64
 	coldBoots uint64
+	// serviceReply is the bytes the instance sent back to another app's
+	// service call (billing review R8-2 slice 3).
+	serviceReply uint64
+}
+
+func (b usageBucket) empty() bool {
+	return b.bytes == 0 && b.requests == 0 && b.coldBoots == 0 && b.serviceReply == 0
 }
 
 // NewEgressSink returns a sink with the real time clock. Use
@@ -196,6 +203,31 @@ func (s *EgressSink) RecordEdgeBytes(appID string, n int64) {
 	inst.mu.Unlock()
 }
 
+// RecordServiceReplyBytes adds n bytes the instance sent in reply to a
+// service call from another app (billing review R8-2 slice 3). The guest's
+// veth counted them as egress; meterd leaves them out of billed egress when
+// [meter] internal_egress_unbilled is on. They are not response bytes to an
+// end user, so they do not add to the bucket's bytes.
+func (s *EgressSink) RecordServiceReplyBytes(instanceID string, n int64) {
+	if instanceID == "" || n <= 0 {
+		return
+	}
+	minute := s.now().UTC().Truncate(time.Minute).Unix()
+	s.mu.Lock()
+	inst, ok := s.instances[instanceID]
+	if !ok {
+		inst = &instanceBuckets{usage: make(map[int64]usageBucket, BucketsToKeep)}
+		s.instances[instanceID] = inst
+	}
+	inst.mu.Lock()
+	s.mu.Unlock()
+	bucket := inst.usage[minute]
+	bucket.serviceReply += uint64(n)
+	inst.usage[minute] = bucket
+	inst.lastTouch = s.now()
+	inst.mu.Unlock()
+}
+
 func (s *EgressSink) RecordRequest(instanceID string, coldBoot bool) {
 	if instanceID == "" {
 		return
@@ -260,18 +292,19 @@ func (s *EgressSink) DrainRecords() []Record {
 		// preserved because minute keys are immutable.
 		var drained uint64
 		for minute, bucket := range inst.usage {
-			if bucket.bytes == 0 && bucket.requests == 0 && bucket.coldBoots == 0 {
+			if bucket.empty() {
 				continue
 			}
 			out = append(out, Record{
-				InstanceID: id,
-				AppID:      inst.appID,
-				Minute:     time.Unix(minute, 0).UTC(),
-				Bytes:      bucket.bytes,
-				Requests:   bucket.requests,
-				ColdBoots:  bucket.coldBoots,
+				InstanceID:        id,
+				AppID:             inst.appID,
+				Minute:            time.Unix(minute, 0).UTC(),
+				Bytes:             bucket.bytes,
+				Requests:          bucket.requests,
+				ColdBoots:         bucket.coldBoots,
+				ServiceReplyBytes: bucket.serviceReply,
 			})
-			drained += bucket.bytes + bucket.requests + bucket.coldBoots
+			drained++
 		}
 		// Wipe the bucket map: a future Record on a different
 		// minute-key populates a fresh entry on a different key, so
@@ -307,7 +340,7 @@ func (s *EgressSink) RestoreRecords(records []Record) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, record := range records {
-		if record.InstanceID == "" || (record.Bytes == 0 && record.Requests == 0 && record.ColdBoots == 0) {
+		if record.InstanceID == "" || (record.Bytes == 0 && record.Requests == 0 && record.ColdBoots == 0 && record.ServiceReplyBytes == 0) {
 			continue
 		}
 		inst, ok := s.instances[record.InstanceID]
@@ -321,6 +354,7 @@ func (s *EgressSink) RestoreRecords(records []Record) {
 		bucket.bytes += record.Bytes
 		bucket.requests += record.Requests
 		bucket.coldBoots += record.ColdBoots
+		bucket.serviceReply += record.ServiceReplyBytes
 		inst.usage[minute] = bucket
 		inst.lastTouch = now
 		inst.mu.Unlock()
@@ -336,16 +370,17 @@ func (s *EgressSink) Snapshot() []Record {
 	for id, inst := range s.instances {
 		inst.mu.Lock()
 		for minute, bucket := range inst.usage {
-			if bucket.bytes == 0 && bucket.requests == 0 && bucket.coldBoots == 0 {
+			if bucket.empty() {
 				continue
 			}
 			out = append(out, Record{
-				InstanceID: id,
-				AppID:      inst.appID,
-				Minute:     time.Unix(minute, 0).UTC(),
-				Bytes:      bucket.bytes,
-				Requests:   bucket.requests,
-				ColdBoots:  bucket.coldBoots,
+				InstanceID:        id,
+				AppID:             inst.appID,
+				Minute:            time.Unix(minute, 0).UTC(),
+				Bytes:             bucket.bytes,
+				Requests:          bucket.requests,
+				ColdBoots:         bucket.coldBoots,
+				ServiceReplyBytes: bucket.serviceReply,
 			})
 		}
 		inst.mu.Unlock()
@@ -374,4 +409,8 @@ type Record struct {
 	Bytes     uint64    `json:"bytes"`  // cumulative within the bucket
 	Requests  uint64    `json:"requests"`
 	ColdBoots uint64    `json:"cold_boots"`
+	// ServiceReplyBytes (billing review R8-2 slice 3) is the bytes the
+	// instance sent in reply to other apps' service calls. Older gateways
+	// never write it to the replay ledger.
+	ServiceReplyBytes uint64 `json:"service_reply_bytes,omitempty"`
 }

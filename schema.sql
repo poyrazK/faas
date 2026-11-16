@@ -32588,7 +32588,7 @@ CREATE TABLE public.app_config_revisions (
     CONSTRAINT app_config_revisions_batch_key_chk CHECK (((source = ANY (ARRAY['baseline'::text, 'env.batch'::text, 'config.rollback'::text, 'config.guard_restore'::text])) = (config_key = ''::text))),
     CONSTRAINT app_config_revisions_batch_source_chk CHECK ((source = ANY (ARRAY['baseline'::text, 'env.set'::text, 'env.delete'::text, 'env.batch'::text, 'secret.set'::text, 'secret.delete'::text, 'secret.rotate'::text, 'config.rollback'::text, 'config.guard_restore'::text]))),
     CONSTRAINT app_config_revisions_check1 CHECK (((source = ANY (ARRAY['config.rollback'::text, 'config.guard_restore'::text])) = (restored_revision IS NOT NULL))),
-    CONSTRAINT app_config_revisions_config_key_check CHECK (((config_key = ''::text) OR ((config_key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(config_key) <= 128)))),
+    CONSTRAINT app_config_revisions_config_key_v2_check CHECK (((config_key = ''::text) OR ((config_key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (length(config_key) <= 128)))),
     CONSTRAINT app_config_revisions_restored_revision_check CHECK (((restored_revision IS NULL) OR (restored_revision >= 1))),
     CONSTRAINT app_config_revisions_revision_check CHECK ((revision >= 1)),
     CONSTRAINT app_config_revisions_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
@@ -32744,7 +32744,7 @@ CREATE TABLE public.app_environment_secret_ref_suppressions (
     scope text NOT NULL,
     key text NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT app_environment_secret_ref_suppressions_key_check CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(key) <= 128))),
+    CONSTRAINT app_environment_secret_ref_suppressions_key_v2_check CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (octet_length(key) <= 128))),
     CONSTRAINT app_environment_secret_ref_suppressions_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
 );
 
@@ -32762,7 +32762,7 @@ CREATE TABLE public.app_environment_secret_refs (
     key text NOT NULL,
     secret_name text NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT app_environment_secret_refs_key_check CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(key) <= 128))),
+    CONSTRAINT app_environment_secret_refs_key_v2_check CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (octet_length(key) <= 128))),
     CONSTRAINT app_environment_secret_refs_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text)),
     CONSTRAINT app_environment_secret_refs_secret_name_check CHECK (((secret_name ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(secret_name) <= 128)))
 );
@@ -32808,7 +32808,7 @@ CREATE TABLE public.app_envs (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
     scope text DEFAULT 'default'::text NOT NULL,
-    CONSTRAINT app_envs_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT app_envs_key_shape_v2 CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (length(key) <= 128))),
     CONSTRAINT app_envs_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))
 );
 
@@ -48995,6 +48995,10 @@ CREATE TABLE public.meter_network_checkpoints (
     net_rx_valid boolean DEFAULT false NOT NULL,
     observed_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    internal_tx_bytes bigint DEFAULT 0 NOT NULL,
+    internal_tx_valid boolean DEFAULT false NOT NULL,
+    internal_tx_pending bigint DEFAULT 0 NOT NULL,
+    service_reply_pending bigint DEFAULT 0 NOT NULL,
     CONSTRAINT meter_network_checkpoints_net_rx_bytes_check CHECK ((net_rx_bytes >= 0)),
     CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
 );
@@ -52325,7 +52329,7 @@ CREATE TABLE public.platform_alert_notices (
     last_error text DEFAULT ''::text NOT NULL,
     CONSTRAINT platform_alert_notices_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT platform_alert_notices_detail_check CHECK ((jsonb_typeof(detail) = 'object'::text)),
-    CONSTRAINT platform_alert_notices_kind_check CHECK ((kind = ANY (ARRAY['app_outage'::text, 'cron_failing_paused'::text]))),
+    CONSTRAINT platform_alert_notices_kind_v2_check CHECK ((kind = ANY (ARRAY['app_outage'::text, 'cron_failing_paused'::text, 'check_failing'::text, 'slo_burn'::text]))),
     CONSTRAINT platform_alert_notices_last_error_check CHECK ((length(last_error) <= 512)),
     CONSTRAINT platform_alert_notices_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'skipped'::text, 'failed'::text]))),
     CONSTRAINT platform_alert_notices_subject_id_check CHECK (((subject_id <> ''::text) AND (length(subject_id) <= 128)))
@@ -61106,6 +61110,23 @@ CREATE TABLE public.synthetic_checks (
     CONSTRAINT synthetic_checks_path_chk CHECK (((char_length(path) <= 512) AND (path ~ '^/([^/[:space:]\\][^[:space:]\\]*)?$'::text))),
     CONSTRAINT synthetic_checks_status_chk CHECK (((expected_status IS NULL) OR ((expected_status >= 100) AND (expected_status <= 599)))),
     CONSTRAINT synthetic_checks_timeout_chk CHECK (((timeout_ms >= 1000) AND (timeout_ms <= 30000)))
+);
+
+
+--
+-- Name: task_tool_release_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_tool_release_intents (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    status text NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT task_tool_release_intents_check CHECK (((((payload ->> 'id'::text) = id) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND ((payload ->> 'status'::text) = status)) IS TRUE)),
+    CONSTRAINT task_tool_release_intents_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT task_tool_release_intents_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 131072))),
+    CONSTRAINT task_tool_release_intents_payload_check1 CHECK ((payload @> '{"ready_to_apply": false, "bindings_verified": false}'::jsonb)),
+    CONSTRAINT task_tool_release_intents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'revoked'::text, 'expired'::text, 'stale'::text])))
 );
 
 
@@ -70651,11 +70672,35 @@ ALTER TABLE ONLY public.meter_gateway_usage_events
 
 
 --
+-- Name: meter_network_checkpoints meter_network_checkpoints_internal_tx_bytes_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_internal_tx_bytes_check CHECK ((internal_tx_bytes >= 0)) NOT VALID;
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_internal_tx_pending_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_internal_tx_pending_check CHECK ((internal_tx_pending >= 0)) NOT VALID;
+
+
+--
 -- Name: meter_network_checkpoints meter_network_checkpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.meter_network_checkpoints
     ADD CONSTRAINT meter_network_checkpoints_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_service_reply_pending_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_service_reply_pending_check CHECK ((service_reply_pending >= 0)) NOT VALID;
 
 
 --
@@ -76016,6 +76061,14 @@ ALTER TABLE ONLY public.synthetic_checks
 
 ALTER TABLE ONLY public.synthetic_checks
     ADD CONSTRAINT synthetic_checks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_tool_release_intents task_tool_release_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_tool_release_intents
+    ADD CONSTRAINT task_tool_release_intents_pkey PRIMARY KEY (account_id, id);
 
 
 --
@@ -112091,6 +112144,14 @@ ALTER TABLE ONLY public.synthetic_check_runs
 
 ALTER TABLE ONLY public.synthetic_checks
     ADD CONSTRAINT synthetic_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_tool_release_intents task_tool_release_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_tool_release_intents
+    ADD CONSTRAINT task_tool_release_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

@@ -34,6 +34,14 @@ type App struct {
 	ProjectID pgtype.UUID
 	OrgID     pgtype.UUID
 	Slug      string
+	Status    string
+}
+
+type AppCustomMetric struct {
+	AppID      pgtype.UUID
+	Name       string
+	Value      float64
+	ObservedAt pgtype.Timestamptz
 }
 
 type AppSecret struct {
@@ -62,10 +70,24 @@ type DeploymentMcpReadinessEvidence struct {
 	Evidence     []byte
 }
 
+type Instance struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	State        string
+}
+
 type Org struct {
 	ID                     pgtype.UUID
 	PersonalOrg            bool
 	PersonalOwnerAccountID pgtype.UUID
+}
+
+type TaskToolReleaseIntent struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
 }
 
 type ToolGrant struct {

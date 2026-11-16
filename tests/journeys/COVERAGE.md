@@ -104,6 +104,10 @@ input refusal without API access or row-body leakage.
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
+`TestCLIFlagCorrectionsIsolatedCLI` extends row 156: a misspelled deploy flag
+returns structured advice, and its help argument array discovers the suggested
+flag from another directory, with zero requests and no deployment submission.
+
 `TestJSONHelpGlobalFlagsIsolatedCLI` extends row 156: it discovers global
 connection/automation options without API requests, then constructs and runs a
 profile-scoped, read-only invocation list from another working directory.

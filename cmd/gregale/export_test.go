@@ -1161,7 +1161,7 @@ var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
 
-// ReleaseGateRequest builds a release gate create request from its flags.
+// ReleaseGateRequest builds a release gate add request from its flags.
 var ReleaseGateRequest = releaseGateRequest
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
@@ -1921,6 +1921,7 @@ var ToolAuthorizationCallbackForTest = toolAuthorizationCallback
 var RunToolConnectionBrowserCommandForTest = runMCPToolConnectionBrowser
 var RunMCPCatalogMonitor = runMCPCatalogMonitor
 var RunMCPNativeRelease = runMCPNativeRelease
+var RunMCPNativeReleaseContext = runMCPNativeReleaseContext
 var RunMCPNativeRetirement = runMCPNativeRetirement
 var RunMCPResourceWatch = runMCPResourceWatch
 var RunMCPWatch = runMCPWatch
@@ -2903,6 +2904,9 @@ func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, i
 	return waitPrivatePublicationVerification(ctx, c, id, in)
 }
 
+// TaskQuarantineGateForTest exposes the fixed adapter to subprocess contract tests.
+func TaskQuarantineGateForTest() string { return mcpTaskQuarantineGate }
+
 var RememberInitApp = rememberInitApp
 var LinkedDefaultAppName = linkedDefaultAppName
 
@@ -2952,3 +2956,5 @@ func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretCl
 	report, err := s.syncPairs(ctx, client, app, path, list, fp, "developer config")
 	return report.Written, err
 }
+
+var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal

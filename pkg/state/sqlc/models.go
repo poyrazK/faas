@@ -10031,13 +10031,17 @@ type MeterGatewayUsageEvent struct {
 }
 
 type MeterNetworkCheckpoint struct {
-	InstanceID pgtype.UUID
-	NetTxBytes int64
-	NetRxBytes int64
-	NetTxValid bool
-	NetRxValid bool
-	ObservedAt pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
+	InstanceID          pgtype.UUID
+	NetTxBytes          int64
+	NetRxBytes          int64
+	NetTxValid          bool
+	NetRxValid          bool
+	ObservedAt          pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	InternalTxBytes     int64
+	InternalTxValid     bool
+	InternalTxPending   int64
+	ServiceReplyPending int64
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {
@@ -16644,6 +16648,13 @@ type SyntheticCheckRun struct {
 	StatusCode int32
 	LatencyMs  int32
 	ErrorClass string
+}
+
+type TaskToolReleaseIntent struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
 }
 
 type TenantHostname struct {

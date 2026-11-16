@@ -73,6 +73,25 @@ func TestNativeInitialCopyStallPersistsAndRecovers(t *testing.T) {
 	if code, _ := alertCondition(stalled, time.Now()); code != "sync_blocked" {
 		t.Fatal("stalled copy did not open an incident", code)
 	}
+	// Make loss of the witnessed sender deterministic while COPY still lacks
+	// source access. The real continuity reconciler must gate reads, retain the
+	// durable stall clock, and let the same copy finish after credentials recover.
+	witness, err := loadSourceSlot(t.Context(), f.pipeline, f.target)
+	if err != nil || witness == nil {
+		t.Fatal("initial copy has no stream witness", err)
+	}
+	witness.Peer, witness.Confirmed = "retired-copy-sender", "0/0"
+	if err = saveSourceSlot(t.Context(), f.pipeline, f.target, *witness); err != nil {
+		t.Fatal(err)
+	}
+	f.tick(t)
+	if f.pipeline.State != "copying" || f.pipeline.Reason != "initial_copy_stalled" {
+		t.Fatal("stream qualification lost stalled copy progress", f.pipeline.State, f.pipeline.Reason)
+	}
+	var gated bool
+	if err = f.target.QueryRow(t.Context(), `SELECT NOT readable AND schema_phase='verifying' AND schema_change=$2 AND (source_slot->>'Pending')::boolean FROM gregale_pipeline.mirrors WHERE pipeline_id=$1`, f.pipeline.ID, sourceContinuityFence(f.pipeline)).Scan(&gated); err != nil || !gated {
+		t.Fatal("initial copy bypassed stream qualification", gated, err)
+	}
 	f.engine.pinSource = original
 	f.await(t, "live")
 	if f.pipeline.Reason != "" {

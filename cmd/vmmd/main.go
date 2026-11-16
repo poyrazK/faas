@@ -108,6 +108,12 @@ type signalAdapter struct {
 	*fcvm.Manager
 }
 
+// vmmdgrpc reports an instance its bridges cannot reach through this method
+// (reportTrafficUnreachable); the adapter must keep exposing it.
+var _ interface {
+	ReportLivenessFailed(ctx context.Context, instanceID, reason string)
+} = signalAdapter{}
+
 // vmmd checks snapshot keys against the instance's deployment through this
 // lookup; a wrapper that hid it would turn the check off (bug hunt H95).
 var _ vmmdgrpc.InstanceDeploymentLookup = signalAdapter{}

@@ -22,9 +22,9 @@ func startPlatformAlerts(ctx context.Context, store any, m mail.Sender, prom any
 	}
 	c := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "meterd_platform_alert_notices_total",
-		Help: "Platform alert emails (app_outage, cron_failing_paused) by outcome: sent, skipped (app gone or no verified recipient), retry or failed. ADR-20261115194000.",
+		Help: "Platform alert emails (app_outage, cron_failing_paused, check_failing, slo_burn) by outcome: sent, skipped (app gone or no verified recipient), retry or failed. ADR-20261115194000.",
 	}, []string{"kind", "outcome"})
-	for _, kind := range []string{string(state.PlatformAlertAppOutage), string(state.PlatformAlertCronFailingPaused)} {
+	for _, kind := range []string{string(state.PlatformAlertAppOutage), string(state.PlatformAlertCronFailingPaused), string(state.PlatformAlertCheckFailing), string(state.PlatformAlertSLOBurn)} {
 		for _, o := range []string{platformalerts.OutcomeSent, platformalerts.OutcomeSkipped, platformalerts.OutcomeRetry, platformalerts.OutcomeFailed} {
 			c.WithLabelValues(kind, o).Add(0)
 		}

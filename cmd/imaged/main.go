@@ -387,15 +387,19 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("imaged: build signer: %w", err)
 		}
 		// ADR-20261109170000: v2 signatures bind each layer to its storage
-		// key. Operators turn them on once every verifier reads v2.
+		// key, so a signed layer copied over another app's key fails
+		// verification. Every verifier reads v2 since v0.1.18-rc.333, so v2
+		// is the default; v1 stays as an explicit rollback only.
+		v2 := true
 		switch format := os.Getenv("FAAS_ARTIFACT_SIGNATURE_FORMAT"); format {
-		case "", "v1":
-		case "v2":
-			signer.WithSignatureV2(true)
+		case "", "v2":
+		case "v1":
+			v2 = false
 		default:
 			return fmt.Errorf("imaged: FAAS_ARTIFACT_SIGNATURE_FORMAT=%q: want v1 or v2", format)
 		}
-		log.Info("imaged: artifact signature format", "v2", os.Getenv("FAAS_ARTIFACT_SIGNATURE_FORMAT") == "v2")
+		signer.WithSignatureV2(v2)
+		log.Info("imaged: artifact signature format", "v2", v2)
 		local = signer
 	}
 	layerSigner, closeSigner, err := artifactSignerFromEnv(ctx, os.Getenv, local, storageBackend, log)

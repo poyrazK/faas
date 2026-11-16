@@ -491,6 +491,10 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp server monitor check", "mcp monitor provider-check"},
 	{"mcp server retirements ack", "mcp retirements acknowledge-manual"},
 	{"mcp server tasks deploy", "mcp tasks release"},
+	// #7335's Task release intent (prepare/get/approve/reject/revoke a
+	// pinned review) and guarded execution take their action as an argument.
+	{"mcp server tasks review", "mcp tasks intent"},
+	{"mcp server tasks run", "mcp tasks execution"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},

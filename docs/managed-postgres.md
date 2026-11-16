@@ -887,6 +887,11 @@ times, lease expiry, and stable stale-admission reasons: `identity_unknown`,
 `shutdown_unconfirmed`, `coverage_incomplete`, `observation_stale`, or
 `final_correction_pending` (the final correction tail is overdue: its deadline,
 `correction_required_at`, passed more than `usage.stale_after_seconds` ago).
+`final_window_pending` is advisory and leaves the resource non-blocking: a deleted
+database owes only the window it was deleted in, which closed less than
+`usage.stale_after_seconds` ago. Admission waits for it only while the account's
+recorded month is at or above 90% of any monthly ceiling
+([ADR-20261115190000](adr/20261115190000-managed-postgres-final-window-headroom-grace.md)).
 Shared restores use their root's evidence. Unknown
 legacy tombstones have no confirmed terminal deadline. A disabled policy reports
 no blockers, while retaining identity and coverage metadata. Empty reasons do not

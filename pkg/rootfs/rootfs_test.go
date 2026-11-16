@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -151,6 +152,61 @@ func TestApplyLayerRejectsEmptyWhiteout(t *testing.T) {
 	dst := t.TempDir()
 	if err := ApplyLayerGz(dst, gzLayer(t, []entry{{name: ".wh."}})); err == nil {
 		t.Fatal("empty whiteout should be rejected")
+	}
+}
+
+// A ".wh..." entry passes the archive-name traversal guard as a literal
+// basename, but stripping ".wh." leaves "..". It must be refused before it
+// can delete the staging directory's parent (Codex finding, 2026-11-16).
+func TestApplyLayerRejectsParentWhiteout(t *testing.T) {
+	for _, name := range []string{".wh...", ".wh..", "sub/.wh...", "./.wh..."} {
+		for _, preserve := range []bool{false, true} {
+			parent := t.TempDir()
+			sentinel := filepath.Join(parent, "shared-base")
+			if err := os.WriteFile(sentinel, []byte("kernel"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			dst := filepath.Join(parent, "staging")
+			if err := os.MkdirAll(filepath.Join(dst, "sub"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if preserve {
+				var buf bytes.Buffer
+				tw := tar.NewWriter(&buf)
+				if werr := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg}); werr != nil {
+					t.Fatal(werr)
+				}
+				if werr := tw.Close(); werr != nil {
+					t.Fatal(werr)
+				}
+				err = ApplyLayerWithOverlayWhiteouts(dst, tar.NewReader(&buf))
+			} else {
+				err = ApplyLayerGz(dst, gzLayer(t, []entry{{name: name}}))
+			}
+			if err == nil {
+				t.Errorf("%s (preserve=%v): whiteout of %q accepted", name, preserve, strings.TrimPrefix(filepath.Base(name), ".wh."))
+			}
+			if _, statErr := os.Stat(sentinel); statErr != nil {
+				t.Fatalf("%s (preserve=%v): file beside staging was deleted: %v", name, preserve, statErr)
+			}
+			if _, statErr := os.Stat(filepath.Join(dst, "sub")); statErr != nil {
+				t.Fatalf("%s (preserve=%v): staging subtree was deleted: %v", name, preserve, statErr)
+			}
+		}
+	}
+}
+
+func TestValidateWhiteoutVictim(t *testing.T) {
+	for _, bad := range []string{"", ".", "..", "a/b", "a\x00b"} {
+		if err := validateWhiteoutVictim(bad); err == nil {
+			t.Errorf("validateWhiteoutVictim(%q) = nil, want error", bad)
+		}
+	}
+	for _, good := range []string{"a", ".hidden", "...", "..a", "a\\b", ".wh.x"} {
+		if err := validateWhiteoutVictim(good); err != nil {
+			t.Errorf("validateWhiteoutVictim(%q) = %v, want nil", good, err)
+		}
 	}
 }
 
