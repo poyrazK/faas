@@ -140,9 +140,7 @@ until the copy is ready and its credentials are verified:
    release the rollback undoes. Besides the releases the rollback crosses, it
    undoes the release command of the release that replaced the target, which
    ran while the target still served: rolling back to the previous release
-   undoes that release's migration
-   ([ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md)
-   amendment 4). A database already restored to that point
+   undoes that release's migration. A database already restored to that point
    under that name is reused.
 2. **Stage and verify.** Gregale issues credentials on the copy for every
    binding the app has in the scope, and checks them over SQL.
