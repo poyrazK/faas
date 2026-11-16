@@ -566,7 +566,7 @@ func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.Cre
 		return managedpostgres.CredentialMaterial{}, err
 	}
 	// Declared custom roles, and the Data API fence (ADR-20261116213000).
-	fence, grants, err := customRoleLoginSQL(p.cfg.Database, role, scope, req.Access, req.CustomRoles)
+	fence, grants, err := customRoleLoginSQL(p.cfg.Database, role, scope, req.Access, req.CustomRoles.Names())
 	if err != nil {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrInvalid
 	}

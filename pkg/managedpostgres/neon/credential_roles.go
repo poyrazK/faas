@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -70,7 +69,7 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
 		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID,
-		customRoles: slices.Clone(request.CustomRoles)}
+		customRoles: request.CustomRoles.Names()}
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {

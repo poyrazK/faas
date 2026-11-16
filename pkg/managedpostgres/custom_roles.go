@@ -201,16 +201,34 @@ func DesiredCustomRoles(roles []CustomRole) []CustomRoleSpec {
 	return out
 }
 
+// CustomRoleGrants is a sorted, comma-separated list of custom role names.
+// It is a string so CredentialRequest stays comparable.
+type CustomRoleGrants string
+
+// NewCustomRoleGrants sorts and joins role names.
+func NewCustomRoleGrants(names ...string) CustomRoleGrants {
+	sorted := slices.Clone(names)
+	sort.Strings(sorted)
+	return CustomRoleGrants(strings.Join(slices.Compact(sorted), ","))
+}
+
+// Names splits the list; empty yields none.
+func (g CustomRoleGrants) Names() []string {
+	if g == "" {
+		return nil
+	}
+	return strings.Split(string(g), ",")
+}
+
 // CustomRoleGrantsFor names the declared roles a login of access receives.
-func CustomRoleGrantsFor(roles []CustomRole, access CredentialAccess) []string {
+func CustomRoleGrantsFor(roles []CustomRole, access CredentialAccess) CustomRoleGrants {
 	var out []string
 	for _, role := range roles {
 		if role.State != CustomRoleDeleting && role.grantsTo(access) {
 			out = append(out, role.Name)
 		}
 	}
-	sort.Strings(out)
-	return out
+	return NewCustomRoleGrants(out...)
 }
 
 // customRoleCycle reports whether making name a member of parents would make

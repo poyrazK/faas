@@ -215,17 +215,17 @@ func (s *CustomRoleService) apply(ctx context.Context, database Database, backen
 
 // customRoleGrants names the declared roles a login of access on database
 // receives when issued. Stores without declarations grant none.
-func customRoleGrants(ctx context.Context, databases Store, database Database, access CredentialAccess) ([]string, error) {
+func customRoleGrants(ctx context.Context, databases Store, database Database, access CredentialAccess) (CustomRoleGrants, error) {
 	store, ok := databases.(CustomRoleStore)
 	if !ok {
-		return nil, nil
+		return "", nil
 	}
 	roles, err := store.ListCustomRoles(ctx, database.AccountID, database.ID)
 	if errors.Is(err, ErrNotFound) {
-		return nil, nil
+		return "", nil
 	}
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	return CustomRoleGrantsFor(roles, access), nil
 }

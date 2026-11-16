@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -166,7 +165,7 @@ func TestCutoverCrashReplaysSameCredentialAndLateWorkerCannotPublish(t *testing.
 	}
 	*now = now.Add(time.Minute + time.Second)
 	c, err = s.Reconcile(ctx, r.AccountID, c.ID)
-	if err != nil || !reflect.DeepEqual(p.lastIssueRequest, first) || p.issueCalls != 2 {
+	if err != nil || p.lastIssueRequest != first || p.issueCalls != 2 {
 		t.Fatalf("replay changed provider identity: %+v %v", c, err)
 	}
 	claim, err := store.ClaimCutover(ctx, r.AccountID, c.ID, "stale-worker", *now, now.Add(time.Minute))

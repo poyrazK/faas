@@ -66,7 +66,7 @@ func TestCustomRoleBatchesRunWindmillStyleRoles(t *testing.T) {
 		t.Fatalf("provision: %v", err)
 	}
 	issue := func(key string, access managedpostgres.CredentialAccess, custom ...string) (managedpostgres.CredentialMaterial, error) {
-		m, err := p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: resourceID, IdentityKey: key, Access: access, CustomRoles: custom})
+		m, err := p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: resourceID, IdentityKey: key, Access: access, CustomRoles: managedpostgres.NewCustomRoleGrants(custom...)})
 		if err == nil {
 			roles = append(roles, m.Username)
 		}

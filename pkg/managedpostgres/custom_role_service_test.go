@@ -108,14 +108,14 @@ func TestCustomRoleServiceDeclaresAppliesAndFences(t *testing.T) {
 		Scope: "production", EnvironmentKey: "DATABASE_URL", Access: CredentialReadWrite}); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.provider.lastIssueRequest.CustomRoles; !slices.Equal(got, []string{"windmill_admin", "windmill_user"}) {
+	if got := f.provider.lastIssueRequest.CustomRoles.Names(); !slices.Equal(got, []string{"windmill_admin", "windmill_user"}) {
 		t.Fatalf("read_write login custom roles = %v", got)
 	}
 	if _, err := f.bindings.Create(ctx, CreateBindingRequest{AccountID: "account-a", DatabaseID: f.database.ID, AppID: "app-a",
 		Scope: "production", EnvironmentKey: "READ_URL", Access: CredentialReadOnly}); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.provider.lastIssueRequest.CustomRoles; len(got) != 0 {
+	if got := f.provider.lastIssueRequest.CustomRoles; got != "" {
 		t.Fatalf("read_only login got custom roles %v", got)
 	}
 
