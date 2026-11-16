@@ -93,6 +93,9 @@ type Querier interface {
 	// Registers an event name while the environment holds fewer than max_names.
 	AddFlagEventName(ctx context.Context, db DBTX, arg AddFlagEventNameParams) (int64, error)
 	AddFlagEventUsage(ctx context.Context, db DBTX, arg AddFlagEventUsageParams) (AddFlagEventUsageRow, error)
+	// Adds the experiment rule's requests in (from, until] to each variant's
+	// latency histogram (5% log buckets, flags.LatencyBucket).
+	AddFlagExperimentLatency(ctx context.Context, db DBTX, arg AddFlagExperimentLatencyParams) error
 	// A customer seen with another variant than its first is marked crossed and
 	// left out of results.
 	// The arrays are parallel: the select list unnests them in step.
@@ -2280,9 +2283,26 @@ type Querier interface {
 	FlagEventNamesKnown(ctx context.Context, db DBTX, arg FlagEventNamesKnownParams) ([]string, error)
 	FlagExperimentArms(ctx context.Context, db DBTX, experimentID pgtype.UUID) ([]FlagExperimentArmsRow, error)
 	FlagExperimentCrossedUnits(ctx context.Context, db DBTX, experimentID pgtype.UUID) (int64, error)
-	// First and last exposure per verified customer and variant to the
-	// experiment's rule in request telemetry received in (from, until].
+	// First exposure and guardrail request counts per verified customer and
+	// variant to the experiment's rule in request telemetry received in
+	// (from, until]. A request is latency-tested once the experiment has a
+	// latency threshold (latency_threshold_ms >= 0); platform refusals are not
+	// server errors (ADR 20261116190208 §1).
 	FlagExperimentExposures(ctx context.Context, db DBTX, arg FlagExperimentExposuresParams) ([]FlagExperimentExposuresRow, error)
+	// Per-variant sums the delta method needs for the server error rate
+	// (errors over requests) and the slow request share (slow over
+	// latency-tested requests), with customers as units.
+	FlagExperimentGuardrailArms(ctx context.Context, db DBTX, experimentID pgtype.UUID) ([]FlagExperimentGuardrailArmsRow, error)
+	FlagExperimentLatency(ctx context.Context, db DBTX, experimentID pgtype.UUID) ([]FlagExperimentLatencyRow, error)
+	// Per-variant count, non-zero count, sum and sum of squares of unit values
+	// (folded closed days plus open days from open_from_day), clamped to the
+	// 1st and 99th percentile once there are min_units units
+	// (ADR 20261116190208 §2).
+	FlagExperimentMeanArms(ctx context.Context, db DBTX, arg FlagExperimentMeanArmsParams) ([]FlagExperimentMeanArmsRow, error)
+	// Adds the metric event's values of closed days (from_day..through_day) to
+	// each unit, counting a day when it ends at or after the unit's first
+	// exposure.
+	FoldFlagExperimentValues(ctx context.Context, db DBTX, arg FoldFlagExperimentValuesParams) (int64, error)
 	// ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
 	// ticket, so any change after it moves the generation the guarded thaw
 	// compares. selected is true when the thaw a ticket would allow is the one
@@ -8121,6 +8141,8 @@ type Querier interface {
 	// longer declares; rolling the deploy back enables them again.
 	SetEventSubscriptionEnabled(ctx context.Context, db DBTX, arg SetEventSubscriptionEnabledParams) (int64, error)
 	SetExclusiveCaptureBarrier(ctx context.Context, db DBTX, arg SetExclusiveCaptureBarrierParams) error
+	SetFlagExperimentLatencyThreshold(ctx context.Context, db DBTX, arg SetFlagExperimentLatencyThresholdParams) error
+	SetFlagExperimentValueThrough(ctx context.Context, db DBTX, arg SetFlagExperimentValueThroughParams) error
 	SetFunctionMigrationCapturePermission(ctx context.Context, db DBTX, arg SetFunctionMigrationCapturePermissionParams) (int64, error)
 	SetFunctionMigrationDestination(ctx context.Context, db DBTX, arg SetFunctionMigrationDestinationParams) (int64, error)
 	SetFunctionMigrationRecoveryPermission(ctx context.Context, db DBTX, arg SetFunctionMigrationRecoveryPermissionParams) (int64, error)

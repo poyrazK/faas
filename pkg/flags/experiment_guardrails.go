@@ -289,6 +289,19 @@ func describeLift(kind string, c Comparison) string {
 	return fmt.Sprintf("%+.2f percentage points (%+.1f%% relative), interval [%+.2f, %+.2f] points", 100*c.Lift, 100*c.RelativeLift, 100*c.Low, 100*c.High)
 }
 
+// GuardrailSetting is one guardrail's owner setting: Disabled turns it
+// off, MaxIncrease is its tolerance.
+type GuardrailSetting struct {
+	Disabled    bool    `json:"disabled,omitempty"`
+	MaxIncrease float64 `json:"max_increase,omitempty"`
+}
+
+// GuardrailSettings are an experiment's guardrails.
+type GuardrailSettings struct {
+	ServerErrorRate GuardrailSetting `json:"server_error_rate"`
+	P95Latency      GuardrailSetting `json:"p95_latency"`
+}
+
 // Stop reasons.
 const (
 	StopManual          = "manual"
