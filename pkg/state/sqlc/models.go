@@ -8761,6 +8761,22 @@ type ManagedPostgresCreationReceipt struct {
 	CleanupStartedAt   pgtype.Timestamptz
 }
 
+type ManagedPostgresCustomRole struct {
+	DatabaseID   pgtype.UUID
+	AccountID    pgtype.UUID
+	Name         string
+	BypassRls    bool
+	GrantedTo    []string
+	MemberOf     []string
+	State        string
+	Revision     int64
+	LastError    string
+	AttemptCount int32
+	RetryAt      pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type ManagedPostgresCutover struct {
 	ID                       pgtype.UUID
 	AccountID                pgtype.UUID
