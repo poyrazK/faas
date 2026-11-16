@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -104,7 +106,7 @@ func TestSupportGrantAdmitsOperatorToCoveredRoutesOnly(t *testing.T) {
 	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/deployments/source-ref", map[string]any{"repo": "acme/shop", "ref": "main"}); code != http.StatusForbidden || !strings.Contains(body, "No connected repository") {
 		t.Fatalf("support deploy of an unconnected app = %d %s, want 403", code, body)
 	}
-	if err := f.store.UpsertGithubInstallBinding(t.Context(), state.GitHubBinding{AppID: f.shop.ID, AccountID: f.owner.ID, InstallID: 7, RepoFullName: "acme/shop", ProductionBranch: "main"}); err != nil {
+	if err := f.store.UpsertGithubInstallBinding(t.Context(), state.GitHubBinding{AppID: f.shop.ID, AccountID: f.owner.ID, BindingID: uuid.NewString(), InstallID: 7, RepoFullName: "acme/shop", ProductionBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
 	// Only the connected repository at its production branch: a SHA or a

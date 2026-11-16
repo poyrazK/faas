@@ -234,8 +234,11 @@ func (s *server) checkSupportSourceRef(r *http.Request, body []byte) *api.Proble
 		return api.ErrValidation("invalid JSON body")
 	}
 	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
-	if err != nil {
+	if errors.Is(err, state.ErrNotFound) {
 		return nil // the app lookup answers not-found next
+	}
+	if err != nil {
+		return api.ErrCapacity("could not read the app")
 	}
 	binding, err := s.store.GitHubBindingForApp(r.Context(), app.ID)
 	if err != nil || binding.RepoFullName == "" || binding.ProductionBranch == "" {
