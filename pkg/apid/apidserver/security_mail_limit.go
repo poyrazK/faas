@@ -78,10 +78,22 @@ var credentialMailSlot = state.MailSlotLimit{
 	MaxPerWindow: api.CredentialNoticeMailsPerHour,
 }
 
+// supportActionMailSlot sends owners and admins at most one "support used
+// its access" mail per SupportActionMailInterval (ADR-20261116163508); the
+// activity log has every action.
+var supportActionMailSlot = state.MailSlotLimit{
+	Window:       time.Hour,
+	MaxPerWindow: int(time.Hour / api.SupportActionMailInterval),
+	MinInterval:  api.SupportActionMailInterval,
+}
+
 // securityMailLimitFor is the per-account cap for one kind of security mail.
 func securityMailLimitFor(kind string) state.MailSlotLimit {
 	if kind == credentialNoticeKind {
 		return credentialMailSlot
+	}
+	if kind == supportActionMailKind {
+		return supportActionMailSlot
 	}
 	return securityMailSlot
 }

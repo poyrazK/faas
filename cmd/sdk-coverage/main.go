@@ -317,8 +317,19 @@ var routeExclude = map[string]bool{
 	// unregistered routes to every account it is not released to, so it stays
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
-	"POST /v1/agents":                                 true,
-	"POST /v1/agent-callbacks":                        true,
+	"POST /v1/agents": true,
+	// ADR-20261116163508 customer-granted support access: dark behind the
+	// support_grants platform flag, so it stays out of the public OpenAPI spec
+	// and generated SDKs until launch. Mirror across this list AND
+	// scripts/ci/speccompliance::routeExclude .
+	"GET /v1/orgs/{slug}/support-access":                        true,
+	"POST /v1/orgs/{slug}/support-access/grants":                true,
+	"POST /v1/orgs/{slug}/support-access/grants/{id}/revoke":    true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/approve": true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/decline": true,
+	"POST /v1/admin/support-access/requests":                    true, // operator-only
+	"GET /v1/admin/support-access/grants":                       true, // operator-only
+	true,
 	"POST /v1/agent-callbacks/{token}":                true,
 	"POST /v1/agent-callbacks/revocations":            true,
 	"GET /v1/agent-tools/.well-known/rap-toolset":     true,

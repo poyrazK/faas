@@ -101,7 +101,27 @@ func guardOrgAccessTx(ctx context.Context, tx pgx.Tx) error {
 	return lockOrgAccess(ctx, tx, fence)
 }
 
+// lockSupportGrant fences a support request on its grant rather than on a
+// membership (ADR-20261116163508). A read-only snapshot cannot take the
+// share lock; the grant check is the same either way.
+func lockSupportGrant(ctx context.Context, tx pgx.Tx, f OrgAccessFence, lock bool) error {
+	params := accesssql.LockSupportGrantParams{ID: mustPgUUID(f.SupportGrantID), OrgID: mustPgUUID(f.OrgID)}
+	var err error
+	if lock {
+		_, err = accesssql.New().LockSupportGrant(ctx, tx, params)
+	} else {
+		_, err = accesssql.New().CheckSupportGrant(ctx, tx, accesssql.CheckSupportGrantParams(params))
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return rejectOrgAccess(ctx)
+	}
+	return err
+}
+
 func checkOrgAccessSnapshot(ctx context.Context, tx pgx.Tx, f OrgAccessFence) error {
+	if f.SupportGrantID != "" {
+		return lockSupportGrant(ctx, tx, f, false)
+	}
 	row, err := accesssql.New().Snapshot(ctx, tx, accesssql.SnapshotParams{OrgID: mustPgUUID(f.OrgID), AccountID: mustPgUUID(f.AccountID)})
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && row.AccessRevision != f.Revision {
 		return rejectOrgAccess(ctx)
@@ -110,6 +130,9 @@ func checkOrgAccessSnapshot(ctx context.Context, tx pgx.Tx, f OrgAccessFence) er
 }
 
 func lockOrgAccess(ctx context.Context, tx pgx.Tx, f OrgAccessFence) error {
+	if f.SupportGrantID != "" {
+		return lockSupportGrant(ctx, tx, f, true)
+	}
 	q := accesssql.New()
 	row, err := q.LockMembership(ctx, tx, accesssql.LockMembershipParams{OrgID: mustPgUUID(f.OrgID), AccountID: mustPgUUID(f.AccountID)})
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && row.AccessRevision != f.Revision {
