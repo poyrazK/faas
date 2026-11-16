@@ -9135,6 +9135,12 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			"snapshot_ms", snapMS, "budget_ms", snapBudget.Milliseconds(),
 			"err", err)
 	}
+	// A transient capture error keeps the prime's retry (dispatchPrime);
+	// any other platform capture failure activates without a snapshot.
+	if err != nil && outcome == wire.InitSnapshotOutcomeSnapshotFailed && !retryableSnapshotPrimeError(err) &&
+		!allowReuse && state.HasSnapshotPrimeAttempt(ctx) {
+		return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)
+	}
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
 		// cold-boots (ADR-005). The app still has a cold-bootable rootfs (§6.2-3).
