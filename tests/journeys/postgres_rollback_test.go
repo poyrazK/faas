@@ -8,10 +8,10 @@ import (
 
 // pgJourneysDatabases is how many databases the PostgreSQL journeys hold at
 // once when they run together: TestManagedPostgres,
-// TestManagedPostgresRollbackRestore and TestManagedPostgresRollbackCancelled
-// two each (a database and its restored copy), TestStatelessAgent and the
-// Data API journey one each.
-const pgJourneysDatabases = 8
+// TestManagedPostgresRollbackRestore, TestManagedPostgresRollbackCancelled
+// and TestManagedPostgresRestoreSwitch two each (a database and its restored
+// copy), TestStatelessAgent and the Data API journey one each.
+const pgJourneysDatabases = 10
 
 // pgSwitchWait bounds a rollback that restores the database: the restore,
 // the drain (at most ten minutes) and the switch.

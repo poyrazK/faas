@@ -31,4 +31,22 @@ if grep -F -- 'instances add-tags faas-compute-node-1' "$work/plan" | grep -Fq -
 fi
 grep -Fq -- '--source-ranges=0.0.0.0/0 --target-tags=gregale-custom-domain-edge' "$work/plan"
 grep -Fq -- '--source-ranges=::/0 --target-tags=gregale-custom-domain-edge' "$work/plan"
+# Without GCP_NETWORK the rules keep joining the 'default' VPC.
+grep -F -- 'firewall-rules create gregale-custom-domains-v4' "$work/plan" | grep -Fq -- '--network=default'
+
+# Prod 2026-11-16: gregale-prod's VPC is 'gregale', but every rule was created
+# on --network=default, where it never admits the fleet's traffic.
+GCP_PROJECT_ID=project-5ae37259-04cf-4070-bef GCP_OPERATOR_ACCOUNT=hpk.working@gmail.com \
+  GCP_CONTROL_INSTANCE=faas-control-plane GCP_NETWORK=gregale PATH="$work:$PATH" \
+  bash "$root/scripts/ops/gcp_public_beta_converge.sh" --phase access > "$work/plan-network"
+for rule in gregale-custom-domains-v4 gregale-custom-domains-v6 gregale-cloudflare-origin-v4 gregale-iap-ssh; do
+  grep -F -- "firewall-rules create $rule " "$work/plan-network" | grep -Fq -- '--network=gregale' || {
+    echo "$rule was not created on GCP_NETWORK" >&2
+    exit 1
+  }
+done
+if grep -Fq -- '--network=default' "$work/plan-network"; then
+  echo 'a rule still names the default network with GCP_NETWORK set' >&2
+  exit 1
+fi
 echo 'custom-domain GCP access plan: OK'

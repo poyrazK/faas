@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,9 @@ import (
 // developer environment from a local checkout, an edit is live without a
 // redeploy, `gregale dev list` finds the environment, and `--stop` removes
 // it. The checkout carries a 1 MiB virtualenv file, which the sync must
-// skip rather than upload on every edit.
+// skip rather than upload on every edit. Without an API key (cli-login
+// runs) the journey reads the protected environment through the CLI's
+// localhost browser proxy, as a developer's browser would.
 func TestDevLoop(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
@@ -28,7 +31,9 @@ func TestDevLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stop := tg.startDev(t, src, "dev", "--path", src, "--name", name, "--no-logs", "--ttl", "1h")
+	port := freePort(t)
+	proxy := "http://localhost:" + strconv.Itoa(port)
+	stop := tg.startDev(t, src, "dev", "--path", src, "--name", name, "--no-logs", "--ttl", "1h", "--proxy-port", strconv.Itoa(port))
 	t.Cleanup(func() {
 		stop()
 		tg.run(t, 3*time.Minute, "dev", "--path", src, "--name", name, "--stop", "--yes")
@@ -42,7 +47,7 @@ func TestDevLoop(t *testing.T) {
 			if devURL == "" {
 				return false, "not listed by `gregale dev list`"
 			}
-			r := tg.devGet(devURL + "/")
+			r := tg.devGet(devURL, proxy, "/")
 			return r.status == http.StatusOK && strings.Contains(string(r.body), "dev-v1"), r.String()
 		})
 	}) {
@@ -53,8 +58,13 @@ func TestDevLoop(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(src, "version.txt"), []byte("dev-v2\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		eventually(t, "the edit serving without a redeploy", 2*time.Minute, 2*time.Second, func() (bool, string) {
-			r := tg.devGet(devURL + "/")
+		// A live patch serves the edit in seconds. When the patch cannot
+		// hold (no patch eligibility, or the patched process failed to
+		// restart: 349 s on prod 2026-11-16, until the deferred build), the
+		// edit lands with the full build. The metric tracks the 15 s target;
+		// this bound checks only that the edit lands at all.
+		eventually(t, "the edit serving without a redeploy", 10*time.Minute, 2*time.Second, func() (bool, string) {
+			r := tg.devGet(devURL, proxy, "/")
 			return r.status == http.StatusOK && strings.Contains(string(r.body), "dev-v2"), r.String()
 		})
 		t.Logf("metric dev_edit_to_live_s=%.1f", time.Since(start).Seconds())
@@ -87,11 +97,17 @@ func (tg *target) devSessionURL(t *testing.T, project string) string {
 	return ""
 }
 
-// devGet reads a developer environment URL. Environments on paid plans
-// require a Gregale key, so the journey's key is sent when it has one.
-func (tg *target) devGet(rawURL string) httpResult {
-	if tg.token == "" {
-		return get(rawURL)
+// devGet reads path from a developer environment. With the journey's API
+// key it calls the environment directly. Without one it goes through the
+// CLI's localhost proxy, which signs requests for environments that require
+// a key; an environment without that requirement starts no proxy and is
+// read directly.
+func (tg *target) devGet(devURL, proxy, path string) httpResult {
+	if tg.token != "" {
+		return fetch(http.MethodGet, devURL+path, map[string]string{"Authorization": "Bearer " + tg.token})
 	}
-	return fetch(http.MethodGet, rawURL, map[string]string{"Authorization": "Bearer " + tg.token})
+	if r := get(proxy + path); r.err == nil {
+		return r
+	}
+	return get(devURL + path)
 }

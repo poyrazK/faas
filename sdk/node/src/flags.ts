@@ -65,6 +65,18 @@ export function matchFlagConditions(conditions: FlagCondition[] | undefined, att
 const CUSTOMER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FLAG_KEY = /^[a-z][a-z0-9_-]{0,63}$/;
+/** Conversion event names (ADR 20261115163113). */
+const EVENT_NAME = /^[a-z][a-z0-9_.-]{0,63}$/;
+const EVENT_BATCH = 100;
+const EVENT_QUEUE_MAX = 1000;
+const EVENT_FLUSH_MS = 5000;
+const EVENT_MAX_ABS_VALUE = 1_000_000_000_000;
+/** Capabilities this SDK advertises to the runtime endpoint. */
+export const GREGALE_FLAG_SDK_CAPABILITIES = 'subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1';
+/** One conversion event as sent to the runtime events endpoint. */
+interface QueuedFlagEvent { name: string; customer_id: string; value?: number; at: string }
+/** Options for track(). value is an integer, such as cents. */
+export interface FlagTrackOptions { value?: number }
 
 export function flagBucket(seed: string, key: string, customer: string): number {
   return createHash('sha256').update(`${seed}\0${key}\0${customer}`).digest().readUInt32BE(0) % 10000;
@@ -185,10 +197,16 @@ export class GregaleFlags {
   private readonly timeoutMs: number;
   private readonly refreshMs: number;
   private readonly apiURL: URL;
+  private readonly eventsURL: URL;
   private readonly identityURL: URL;
+  private events: QueuedFlagEvent[] = [];
+  private eventsDropped = 0;
+  private flushing?: Promise<void>;
+  private eventTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: GregaleFlagsOptions) {
     this.apiURL = new URL('/v1/runtime/flags', options.apiURL);
+    this.eventsURL = new URL('/v1/runtime/flags/events', options.apiURL);
     if (this.apiURL.protocol !== 'https:') throw new Error('Flags API requires HTTPS');
     this.identityURL = new URL(options.identityEndpoint ?? process.env.FAAS_WORKLOAD_IDENTITY_ENDPOINT ?? '');
     if (this.identityURL.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(this.identityURL.hostname)) throw new Error('Workload identity endpoint must be loopback HTTP');
@@ -204,8 +222,14 @@ export class GregaleFlags {
     // Application startup remains available with explicit fallback behavior.
     await this.refresh().catch(() => {});
     if (!this.timer) { this.timer = setInterval(() => { void this.refresh().catch(() => {}); }, this.refreshMs); this.timer.unref(); }
+    if (!this.eventTimer) { this.eventTimer = setInterval(() => { void this.flush().catch(() => {}); }, EVENT_FLUSH_MS); this.eventTimer.unref(); }
   }
-  close(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
+  /** Stops background refresh and event delivery; call flush() first to send queued events. */
+  close(): void {
+    if (this.timer) clearInterval(this.timer);
+    if (this.eventTimer) clearInterval(this.eventTimer);
+    this.timer = undefined; this.eventTimer = undefined;
+  }
   refresh(): Promise<void> {
     if (this.refreshing) return this.refreshing;
     this.refreshing = this.load().finally(() => { this.refreshing = undefined; });
@@ -213,17 +237,65 @@ export class GregaleFlags {
   }
   private async load(): Promise<void> {
     const signal = AbortSignal.timeout(this.timeoutMs);
-    const identity = await this.fetchImpl(this.identityURL, { signal, redirect: 'error', cache: 'no-store' });
-    if (!identity.ok) throw new Error('Flags workload identity unavailable');
-    const token = await boundedJSON(identity, 16_384) as { access_token?: string };
-    if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error('Invalid workload identity');
-    const response = await this.fetchImpl(this.apiURL, { signal, redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token.access_token}`, 'X-Faas-Flags-Capabilities': 'subject-targeting-v1, attribute-targeting-v1, kill-v1' } });
+    const token = await this.identityToken(signal);
+    const response = await this.fetchImpl(this.apiURL, { signal, redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'X-Faas-Flags-Capabilities': GREGALE_FLAG_SDK_CAPABILITIES } });
     if (!response.ok) throw new Error(`Flags refresh failed (${response.status})`);
     // Configuration is bounded to 256 KiB; the runtime envelope adds scope/version.
     const next = validateBundle(await boundedJSON(response, 262_144 + 1024));
     if (this.bundle && (next.environment_id !== this.bundle.environment_id || next.version < this.bundle.version)) throw new Error('Flags configuration scope or version regressed');
     this.bundle = next;
     this.refreshedAt = this.now();
+  }
+  private async identityToken(signal: AbortSignal): Promise<string> {
+    const identity = await this.fetchImpl(this.identityURL, { signal, redirect: 'error', cache: 'no-store' });
+    if (!identity.ok) throw new Error('Flags workload identity unavailable');
+    const token = await boundedJSON(identity, 16_384) as { access_token?: string };
+    if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error('Invalid workload identity');
+    return token.access_token;
+  }
+  /** Records a conversion event for this request's verified customer, for experiments
+   * (ADR 20261115163113). Call within runRequest. Returns false, and counts the event in
+   * droppedEvents(), when there is no verified customer, the name or value is invalid, or the
+   * local queue is full. Events are sent in batches every 5 s; await flush() before exit. */
+  track(name: string, options: FlagTrackOptions = {}): boolean {
+    const request = this.requests.getStore();
+    const value = options.value ?? 0;
+    if (!request?.customer || !EVENT_NAME.test(name) || !Number.isSafeInteger(value) || Math.abs(value) > EVENT_MAX_ABS_VALUE || this.events.length >= EVENT_QUEUE_MAX) {
+      this.eventsDropped += 1;
+      return false;
+    }
+    const event: QueuedFlagEvent = { name, customer_id: request.customer, at: new Date(this.now()).toISOString() };
+    if (value !== 0) event.value = value;
+    this.events.push(event);
+    if (this.events.length >= EVENT_BATCH) void this.flush().catch(() => {});
+    return true;
+  }
+  /** Events dropped locally or refused by the API since this client started. */
+  droppedEvents(): number { return this.eventsDropped; }
+  /** Sends queued events now. A failed batch is dropped and counted, never retried forever. */
+  flush(): Promise<void> {
+    if (this.flushing) return this.flushing;
+    this.flushing = this.sendEvents().finally(() => { this.flushing = undefined; });
+    return this.flushing;
+  }
+  private async sendEvents(): Promise<void> {
+    while (this.events.length > 0) {
+      const batch = this.events.splice(0, EVENT_BATCH);
+      try {
+        const signal = AbortSignal.timeout(this.timeoutMs);
+        const token = await this.identityToken(signal);
+        const response = await this.fetchImpl(this.eventsURL, {
+          method: 'POST', signal, redirect: 'error', cache: 'no-store',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Faas-Flags-Capabilities': GREGALE_FLAG_SDK_CAPABILITIES },
+          body: JSON.stringify({ events: batch }),
+        });
+        if (!response.ok) { this.eventsDropped += batch.length; continue; }
+        const result = await boundedJSON(response, 16_384) as { accepted?: number };
+        if (typeof result.accepted === 'number' && result.accepted < batch.length) this.eventsDropped += batch.length - result.accepted;
+      } catch {
+        this.eventsDropped += batch.length;
+      }
+    }
   }
   /** Call only on requests delivered by Gregale's gateway, which replaces reserved headers.
    * Refresh on resume when stale; a bounded refresh failure uses explicit fallbacks. */

@@ -98,8 +98,16 @@ func validCachedIssueSourceMaps(cached CacheEntry, directory string) bool {
 	if err != nil || set.Digest != cached.Toolchain.IssueSourceMapsDigest {
 		return false
 	}
-	digest, err := hashFile(cached.Path)
-	return err == nil && digest == cached.Toolchain.IssueSourceMapsImageSHA256
+	// The lease is a hard link to the artifact the lookup verified, so its
+	// digest is the one the lookup checked.
+	digest := cached.Digest
+	if digest == "" {
+		var err error
+		if digest, err = hashFile(cached.Path); err != nil {
+			return false
+		}
+	}
+	return digest == cached.Toolchain.IssueSourceMapsImageSHA256
 }
 
 func buildIssueSourceMapMetadata(in *api.PublishIssueSourceMapsRequest) string {
