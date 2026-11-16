@@ -26,7 +26,6 @@ func (tr htmlNavigationTransport) RoundTrip(r *http.Request) (*http.Response, er
 // cross-origin Location as proof a browser can leave a strict-CSP form.
 func browserNavigationTarget(t *testing.T, response *http.Response) *url.URL {
 	t.Helper()
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK || response.Header.Get("Location") != "" {
 		t.Fatalf("browser POST did not finish with an HTML document: %d", response.StatusCode)
 	}
@@ -95,6 +94,7 @@ func TestAntigravityBrowserSignInAndCallback(t *testing.T) {
 			flow.client.Transport = htmlNavigationTransport{flow.client.Transport}
 
 			start := f.submitConsent(flow, url.Values{"request_id": {flow.requestID}, "csrf": {flow.csrf}, "decision": {"start-login"}}, f.server.URL)
+			defer start.Body.Close()
 			login := browserNavigationTarget(t, start)
 			if login.Scheme != "https" || login.Host != "console.example" || login.Path != "/cli-auth" || login.Query().Get("return") != "mcp" {
 				t.Fatal("browser did not get the native sign-in destination")
@@ -118,7 +118,9 @@ func TestAntigravityBrowserSignInAndCallback(t *testing.T) {
 			if csrf == "" || csrf == flow.csrf {
 				t.Fatal("review did not rotate CSRF")
 			}
-			callback := browserNavigationTarget(t, f.consent(flow, decision, "", f.server.URL, csrf, false))
+			consent := f.consent(flow, decision, "", f.server.URL, csrf, false)
+			defer consent.Body.Close()
+			callback := browserNavigationTarget(t, consent)
 			if callback.Scheme+"://"+callback.Host+callback.Path != antigravityCallback || callback.Query().Get("state") != "client-state" || callback.Query().Get("iss") != f.resource {
 				t.Fatal("browser callback lost its registered destination, state or issuer")
 			}
@@ -155,7 +157,9 @@ func TestOAuthNavigationEscapesDestinationAndKeepsNonBrowserRedirect(t *testing.
 			setPrivateHeaders(response)
 			redirectOAuthBrowser(response, req, target, `Return to <untrusted>`)
 			if accept == "text/html" {
-				if got := browserNavigationTarget(t, response.Result()).String(); got != target {
+				result := response.Result()
+				defer result.Body.Close()
+				if got := browserNavigationTarget(t, result).String(); got != target {
 					t.Fatal("HTML encoding changed the navigation target")
 				}
 				if strings.Contains(response.Body.String(), "<untrusted>") {
