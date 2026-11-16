@@ -286,6 +286,7 @@ type SandboxSession struct {
 	TemplateID          pgtype.UUID
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.UUID
+	Browser             bool
 }
 
 type SandboxSessionUsage struct {

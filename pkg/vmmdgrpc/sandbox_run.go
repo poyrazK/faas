@@ -315,7 +315,7 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		BaseKey: start.GetBaseKey(), LayerKey: start.GetLayerKey(), VcpuCount: int(start.GetVcpuCount()),
 		MemSizeMiB: int(start.GetMemSizeMib()), CPUMillicores: int(start.GetCpuMillicores()), Network: start.GetNetworkMode(),
 		ImageKey: start.GetImageKey(), StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(),
-		ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond,
+		ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond, Browser: start.GetBrowser(),
 	}
 	// A schedd from before network modes sends none.
 	if wake.Network == "" {
@@ -339,6 +339,9 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 	// the platform sandbox layer carries none.
 	if (wake.StartCmd != "" || wake.ReadyCmd != "") && wake.ImageKey == "" {
 		return fcvm.SandboxWakeRequest{}, invalid("start_cmd and ready_cmd need image_key")
+	}
+	if wake.Browser && wake.ImageKey != "" {
+		return fcvm.SandboxWakeRequest{}, invalid("browser goes with a preset session, not image_key")
 	}
 	if wake.ReadyTimeout < 0 || wake.ReadyTimeout > time.Duration(api.SandboxTemplateReadyTimeoutSecMax)*time.Second ||
 		wake.ReadyCmd != "" && wake.ReadyTimeout == 0 {
@@ -379,7 +382,7 @@ func (s *Server) CaptureSandboxSnapshot(ctx context.Context, req *vmmdpb.Capture
 	wake, problem := sandboxStartFromProto(&vmmdpb.RunSandboxStart{Instance: req.GetInstance(), SandboxId: req.GetCaptureId(),
 		AccountId: req.GetAccountId(), Plan: req.GetPlan(), BaseKey: req.GetBaseKey(), LayerKey: req.GetLayerKey(),
 		ImageKey: req.GetImageKey(), VcpuCount: req.GetVcpuCount(), MemSizeMib: req.GetMemSizeMib(),
-		CpuMillicores: req.GetCpuMillicores(), NetworkMode: req.GetNetworkMode()})
+		CpuMillicores: req.GetCpuMillicores(), NetworkMode: req.GetNetworkMode(), Browser: req.GetBrowser()})
 	if problem == nil {
 		if req.GetNamespace() != storagekey.SandboxSnapshotNamespace(wake.AccountID, wake.ImageKey != "") {
 			problem = api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid sandbox capture",

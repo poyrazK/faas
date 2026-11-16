@@ -18132,6 +18132,7 @@
     "table": "sandbox_sessions",
     "columns": [
       "account_id",
+      "browser",
       "close_requested_at",
       "closed_at",
       "created_at",

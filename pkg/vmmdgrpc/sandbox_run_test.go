@@ -219,6 +219,11 @@ func TestRunSandboxRefusals(t *testing.T) {
 			r.GetStart().SandboxId = ""
 			return r
 		}(), codes.InvalidArgument},
+		{"browser with an image", true, func() *vmmdpb.RunSandboxRequest {
+			r := sandboxRunStart()
+			r.GetStart().Browser, r.GetStart().ImageKey = true, "jobs/11111111-1111-1111-1111-111111111111.ext4"
+			return r
+		}(), codes.InvalidArgument},
 		{"unknown network", true, func() *vmmdpb.RunSandboxRequest {
 			r := sandboxRunStart()
 			r.GetStart().NetworkMode = "open"
@@ -499,7 +504,7 @@ func TestRunSandboxPassesTheWebNetworkMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := sandboxRunStart()
-	start.GetStart().NetworkMode = api.SandboxNetworkWeb
+	start.GetStart().NetworkMode, start.GetStart().Browser = api.SandboxNetworkWeb, true
 	if err := stream.Send(start); err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +513,7 @@ func TestRunSandboxPassesTheWebNetworkMode(t *testing.T) {
 	}
 	vmm.mu.Lock()
 	defer vmm.mu.Unlock()
-	if len(vmm.woken) != 1 || vmm.woken[0].Network != api.SandboxNetworkWeb {
-		t.Fatalf("woken %+v; want one web-mode wake", vmm.woken)
+	if len(vmm.woken) != 1 || vmm.woken[0].Network != api.SandboxNetworkWeb || !vmm.woken[0].Browser {
+		t.Fatalf("woken %+v; want one web-mode browser wake", vmm.woken)
 	}
 }

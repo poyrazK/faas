@@ -100,6 +100,11 @@ type SandboxWakeRequest struct {
 	StartCmd     string
 	ReadyCmd     string
 	ReadyTimeout time.Duration
+	// Browser starts the sandbox browser as the session's start and ready
+	// commands, after a cold boot or a restore (ADR-20261116182615 §1). Its
+	// commands are vmmd's; a session with commands of its own or an image
+	// drive cannot have it.
+	Browser bool
 	// Snapshot restores the session from a warm snapshot CaptureSandboxSnapshot
 	// took of the same drives and machine (ADR-20261027090013 §12), and
 	// falls back to a cold boot (ADR-005). It was captured before the
@@ -150,6 +155,9 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 	} else if req.StartCmd != "" || req.ReadyCmd != "" {
 		return nil, errors.New("fcvm: sandbox commands need an image drive")
 	}
+	if req.Browser && (req.ImageKey != "" || req.StartCmd != "" || req.ReadyCmd != "") {
+		return nil, errors.New("fcvm: the sandbox browser goes with a preset session, without commands of its own")
+	}
 	inst, err := m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, sandboxNetwork: network,
 		sandboxManifest: manifest, AccountID: req.AccountID, Plan: req.Plan,
@@ -173,13 +181,63 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		return destroy(err)
 	}
 	// A cold boot ran the commands from its manifest; a restore's snapshot
-	// was captured before them.
-	if inst.Method == WakeRestore && (req.StartCmd != "" || req.ReadyCmd != "") {
+	// was captured before them. The browser's commands have no manifest, so
+	// they run here after either.
+	switch {
+	case req.Browser:
+		if err := startSandboxTemplate(ctx, dialer, sandboxBrowserCommands(req)); err != nil {
+			return destroy(err)
+		}
+	case inst.Method == WakeRestore && (req.StartCmd != "" || req.ReadyCmd != ""):
 		if err := startSandboxTemplate(ctx, dialer, req); err != nil {
 			return destroy(err)
 		}
 	}
 	return inst, nil
+}
+
+// The sandbox browser's commands (ADR-20261116182615 §1): gregale-browser
+// in agent-base starts Chromium and its CDP relay; its --wait polls the
+// relay. vmmd owns them; no caller supplies them.
+const (
+	sandboxBrowserStartCmd     = "gregale-browser"
+	sandboxBrowserReadyCmd     = "gregale-browser --wait 2"
+	sandboxBrowserReadyTimeout = 45 * time.Second
+	// sandboxBrowserPrewarmTimeout bounds the capture's prewarm.
+	sandboxBrowserPrewarmTimeout = 90 * time.Second
+	// sandboxBrowserPrewarmOutputBytes bounds the prewarm's output, which
+	// nobody reads.
+	sandboxBrowserPrewarmOutputBytes = 64 << 10
+)
+
+// sandboxBrowserCommands is req with the browser's commands.
+func sandboxBrowserCommands(req SandboxWakeRequest) SandboxWakeRequest {
+	req.StartCmd, req.ReadyCmd, req.ReadyTimeout = sandboxBrowserStartCmd, sandboxBrowserReadyCmd, sandboxBrowserReadyTimeout
+	return req
+}
+
+// prewarmSandboxBrowser runs gregale-browser --prewarm in a capture's VM:
+// it starts Chromium, waits for it, stops it and deletes its profile, so
+// Chromium's files are in the snapshot's page cache and nothing that runs is
+// (ADR-20261116182615 §2).
+func prewarmSandboxBrowser(ctx context.Context, dialer SandboxDialer, instance string) error {
+	ctx, cancel := context.WithTimeout(ctx, sandboxBrowserPrewarmTimeout+sandboxTemplateStartSlack)
+	defer cancel()
+	conn, err := dialer.DialSandbox(ctx, instance)
+	if err != nil {
+		return fmt.Errorf("fcvm: sandbox %s browser prewarm: %w", instance, err)
+	}
+	defer func() { _ = conn.Close() }()
+	var res sandboxproto.ExecResult
+	op := sandboxproto.Request{Op: sandboxproto.OpExec, Argv: []string{sandboxBrowserStartCmd, "--prewarm"},
+		TimeoutMillis: sandboxBrowserPrewarmTimeout.Milliseconds(), MaxOutputBytes: sandboxBrowserPrewarmOutputBytes}
+	if err := sandboxproto.Do(ctx, conn, op, func(uint32, []byte) error { return nil }, &res); err != nil {
+		return fmt.Errorf("fcvm: sandbox %s browser prewarm: %w", instance, err)
+	}
+	if res.ExitCode != 0 || res.TimedOut || res.Signal != 0 {
+		return fmt.Errorf("fcvm: sandbox %s browser prewarm exited %d (signal %d, timed out %v)", instance, res.ExitCode, res.Signal, res.TimedOut)
+	}
+	return nil
 }
 
 // sandboxTemplateStartSlack is the time template_start may take beyond the

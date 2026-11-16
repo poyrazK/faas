@@ -15077,7 +15077,12 @@ type RunSandboxStart struct {
 	// CaptureSandboxSnapshot made of the same drives, machine and network
 	// mode; a failed restore cold-boots (ADR-005), and booted reports which.
 	// An older vmmd ignores it and cold-boots.
-	Snapshot      *AgentRunSnapshot `protobuf:"bytes,17,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	Snapshot *AgentRunSnapshot `protobuf:"bytes,17,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	// browser starts the sandbox browser as the session's start command and
+	// waits for it as its ready command, after a cold boot or a restore
+	// (ADR-20261116182615 §1). vmmd owns both commands; it is refused with
+	// start_cmd. An older vmmd ignores it.
+	Browser       bool `protobuf:"varint,18,opt,name=browser,proto3" json:"browser,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -15231,6 +15236,13 @@ func (x *RunSandboxStart) GetSnapshot() *AgentRunSnapshot {
 	return nil
 }
 
+func (x *RunSandboxStart) GetBrowser() bool {
+	if x != nil {
+		return x.Browser
+	}
+	return false
+}
+
 // CaptureSandboxSnapshotRequest is the session machine to capture, without
 // its session or template commands; namespace and capture_id name its
 // storage keys.
@@ -15248,6 +15260,10 @@ type CaptureSandboxSnapshotRequest struct {
 	NetworkMode   string                 `protobuf:"bytes,10,opt,name=network_mode,json=networkMode,proto3" json:"network_mode,omitempty"`
 	Namespace     string                 `protobuf:"bytes,11,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	CaptureId     string                 `protobuf:"bytes,12,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
+	// browser captures the browser shape: vmmd prewarms Chromium (starts,
+	// waits for, stops it and deletes its profile) before the capture, so
+	// nothing that runs is in the snapshot (ADR-20261116182615 §2).
+	Browser       bool `protobuf:"varint,13,opt,name=browser,proto3" json:"browser,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -15364,6 +15380,13 @@ func (x *CaptureSandboxSnapshotRequest) GetCaptureId() string {
 		return x.CaptureId
 	}
 	return ""
+}
+
+func (x *CaptureSandboxSnapshotRequest) GetBrowser() bool {
+	if x != nil {
+		return x.Browser
+	}
+	return false
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),
@@ -23107,7 +23130,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05close\x18\x03 \x01(\v2$.onebox.faas.vmmd.v1.RunSandboxCloseH\x00R\x05close\x12R\n" +
 	"\rpersist_grant\x18\x04 \x01(\v2+.onebox.faas.vmmd.v1.RunSandboxPersistGrantH\x00R\fpersistGrant\x12[\n" +
 	"\x10persist_recorded\x18\x05 \x01(\v2..onebox.faas.vmmd.v1.RunSandboxPersistRecordedH\x00R\x0fpersistRecordedB\a\n" +
-	"\x05frame\"\xdc\x04\n" +
+	"\x05frame\"\xf6\x04\n" +
 	"\x0fRunSandboxStart\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -23130,7 +23153,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\tstart_cmd\x18\x0e \x01(\tR\bstartCmd\x12\x1b\n" +
 	"\tready_cmd\x18\x0f \x01(\tR\breadyCmd\x12(\n" +
 	"\x10ready_timeout_ms\x18\x10 \x01(\x03R\x0ereadyTimeoutMs\x12A\n" +
-	"\bsnapshot\x18\x11 \x01(\v2%.onebox.faas.vmmd.v1.AgentRunSnapshotR\bsnapshot\"\x8b\x03\n" +
+	"\bsnapshot\x18\x11 \x01(\v2%.onebox.faas.vmmd.v1.AgentRunSnapshotR\bsnapshot\x12\x18\n" +
+	"\abrowser\x18\x12 \x01(\bR\abrowser\"\xa5\x03\n" +
 	"\x1dCaptureSandboxSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -23148,7 +23172,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	" \x01(\tR\vnetworkMode\x12\x1c\n" +
 	"\tnamespace\x18\v \x01(\tR\tnamespace\x12\x1d\n" +
 	"\n" +
-	"capture_id\x18\f \x01(\tR\tcaptureId\"\x12\n" +
+	"capture_id\x18\f \x01(\tR\tcaptureId\x12\x18\n" +
+	"\abrowser\x18\r \x01(\bR\abrowser\"\x12\n" +
 	"\x10RunSandboxFreeze\"\x11\n" +
 	"\x0fRunSandboxClose\"\xe8\x04\n" +
 	"\x0fRunSandboxEvent\x12?\n" +

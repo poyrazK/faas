@@ -59448,6 +59448,7 @@ CREATE TABLE public.sandbox_sessions (
     image_ref text,
     image_job_id uuid,
     template_id uuid,
+    browser boolean DEFAULT false NOT NULL,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_image_ref_check CHECK (((image_ref IS NULL) OR ((char_length(image_ref) >= 1) AND (char_length(image_ref) <= 512)))),
@@ -59486,6 +59487,13 @@ COMMENT ON COLUMN public.sandbox_sessions.image_job_id IS 'ADR-20261027090013: t
 --
 
 COMMENT ON COLUMN public.sandbox_sessions.template_id IS 'ADR-20261027090013: the sandbox template the session boots; NULL for a preset or image session, or once the template is deleted.';
+
+
+--
+-- Name: COLUMN sandbox_sessions.browser; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sandbox_sessions.browser IS 'ADR-20261116182615: the session boots with the sandbox browser running (gregale-browser) and CDP on port 9222.';
 
 
 --

@@ -11149,6 +11149,10 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxBrowserRAMMBMin is the least RAM a session created with
+	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
+	// 1 GB for ordinary pages.
+	SandboxBrowserRAMMBMin = 1024
 	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
 	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
 	// it. A browser touches many domains per page, so it is above the per-run
