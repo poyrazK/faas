@@ -72,8 +72,8 @@ func TestServiceRequestRecordsRequestMetrics(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/hipstershop.CartService/GetCart", nil)
 	for _, status := range []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusServiceUnavailable} {
 		h.RecordServiceRequest(req, ServiceRequestObservation{
-			AccountID: "33333333-3333-4333-8333-333333333333",
-			Target:    Target{AppID: app, DeploymentID: deployment, InstanceID: "i-1"},
+			AccountID:  "33333333-3333-4333-8333-333333333333",
+			Target:     Target{AppID: app, DeploymentID: deployment, InstanceID: "i-1"},
 			ReceivedAt: time.Now(), LatencyMS: 12, Status: status,
 		})
 	}
