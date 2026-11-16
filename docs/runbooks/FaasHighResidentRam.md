@@ -1,26 +1,37 @@
 # FaasHighResidentRam / FaasHighResidentRamWarn
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
-Metric: `fcvm_resident_ram_pct` (emitted by schedd at `/metrics/fcvm`).
-Spec: §12 (resident_ram_pct ≤ 100 target, > 80 warn, > 92 page).
+Metric: `fcvm_admission_ram_pct` (emitted by schedd at `/metrics/fcvm`).
+Spec: §12 (resident_ram_pct ≤ 100 target, > 80 warn, > 92 page), read as
+the memory admission counts (ADR-909 amendment 4).
 
 ## Symptom
 
-The sum of `(ram_mb + 8)` across live instances, expressed as a percent
-of the 47,600 MB tenant budget, has crossed the §12 threshold.
+The memory RAM admission counts on a node, as a percent of that node's
+admission ceiling, has crossed the §12 threshold:
+
+- under measured admission (schedd's default, ADR-909), the node's
+  measured memory (`schedd_node_memory_measured_mb`);
+- under reservation admission (`measured_admission = false`), the
+  bookings, Σ(ram_mb + 8) over live instances.
 
 - Warn tier (`FaasHighResidentRamWarn`) trips at > 80% for 10 m.
 - Page tier (`FaasHighResidentRam`) trips at > 92% for 5 m.
 
+Bookings alone (`fcvm_resident_ram_pct`) do not page. Under measured
+admission they may reach `MeasuredAdmissionMaxOvercommitPercent` (250%) of
+the ceiling by design; a node at 136% booked had 34% of its memory in use.
+
 ## Verify
 
 ```bash
-curl -fsS http://127.0.0.1:9103/metrics/fcvm | grep fcvm_resident_ram_pct
-curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=fcvm_resident_ram_pct'
+curl -fsS http://127.0.0.1:9103/metrics/fcvm | grep -E 'fcvm_(admission|resident)_ram_pct'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=fcvm_admission_ram_pct'
 ```
 
-`fcvm_resident_ram_pct` should track the per-app instance RAM + 8 MB
-overhead. A persistent 90%+ reading under no load is a gauge wiring bug.
+`fcvm_admission_ram_pct` should track `schedd_node_memory_measured_mb` over
+the node's ceiling. It reads NaN until the node's first fresh measurement.
+A persistent 90%+ reading under no load is a gauge wiring bug.
 
 ## Check
 
@@ -32,6 +43,7 @@ journalctl -u schedd -u vmmd --since '-15m' --no-pager | grep -E 'admit|reject'
 Prometheus views for the same incident:
 
 ```promql
+max(fcvm_admission_ram_pct)
 max(fcvm_resident_ram_pct)
 sum by (tenant_tier) (rate(schedd_eviction_fired_total{reason="ram_pressure"}[5m]))
 ```
@@ -70,9 +82,11 @@ amtool silence add \
 
 ## Recover
 
-The invariant §6.2/2 (Σ(ram_mb+8) ≤ 47,600 MB) is hard-enforced; the
-alert is the operator's leading indicator that a wake will start
-failing admission. Eviction policy is per-tenant — see the
+Invariant §6.2/2 is hard-enforced: under measured admission a node's
+measured memory stays under its ceiling and Σ(ram_mb + 8) under 2.5 times
+it, and schedd evicts when measured memory crosses the ceiling. The alert is
+the operator's leading indicator that wakes on the node will start failing
+admission or being evicted. Eviction policy is per-tenant — see the
 [eviction runbook](../ops/eviction.md) for the ordering and dry run.
 
 The warn tier is also the compute-host scale-out trigger. Confirm the peer
