@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	csrf "github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	csrf "github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
