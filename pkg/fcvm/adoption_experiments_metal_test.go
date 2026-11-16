@@ -61,7 +61,10 @@ type adoptionExperimentGuest struct {
 	BindPaths []string `json:"bind_paths"`
 	// BindSources are the host paths the binds were made from.
 	BindSources []string `json:"bind_sources"`
-	Slot        int      `json:"slot"`
+	// Files are the staged files (writable layer clone, materialised
+	// copies) the record checkpointed.
+	Files []string `json:"files"`
+	Slot  int      `json:"slot"`
 }
 
 func adoptionExperimentEnv(t *testing.T) []string {
@@ -227,6 +230,82 @@ func TestMetalAdoptionRestartKeepsAGuestWhoseSourceWasEvicted(t *testing.T) {
 	adoptionRestartKeepsTheGuest(t, true)
 }
 
+// TestMetalAdoptionRestartKillsARefusedGuest: a guest that passes the
+// adoption proof but that the successor then refuses (here its writable layer
+// clone no longer is the recorded file, so "adopt_failed") is killed through
+// its pidfd instead of running on unowned (production fsn-2, 2026-11-12). The
+// refusal stays in the report.
+func TestMetalAdoptionRestartKillsARefusedGuest(t *testing.T) {
+	if os.Getenv("FAAS_ADOPTION_EXPERIMENTS") != "1" {
+		t.Skip("set FAAS_ADOPTION_EXPERIMENTS=1 on a dedicated acceptance host")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("requires root and dedicated Linux KVM")
+	}
+	metalImages(t)
+	dir, err := os.MkdirTemp("/var/tmp", "faas-adoption-restart-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	instance := uuid.NewString()
+	bootUnit, _ := runAdoptionExperimentUnit(t, dir, "boot", instance, false)
+	var guest adoptionExperimentGuest
+	if err := json.Unmarshal(waitAdoptionExperimentFile(t, filepath.Join(dir, "guest.json"), 2*time.Minute), &guest); err != nil {
+		t.Fatal(err)
+	}
+	if len(guest.Files) == 0 {
+		t.Fatalf("the guest checkpointed no staged file to replace: %+v", guest)
+	}
+	pidfd, err := unix.PidfdOpen(guest.PID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		adoptionExperimentCleanup(t, guest, pidfd)
+		_ = unix.Close(pidfd)
+		for _, f := range guest.Files {
+			_ = os.Remove(f)
+		}
+		leakcheck.AssertZero(t)
+	})
+	pinned := pinUnitMountNamespace(t, bootUnit)
+	defer func() { _ = pinned.Close() }()
+	if out, err := exec.Command("systemctl", "kill", "--signal=SIGKILL", bootUnit).CombinedOutput(); err != nil {
+		t.Fatalf("crash the old vmmd: %v: %s", err, out)
+	}
+	for i := 0; i < 100 && exec.Command("systemctl", "is-active", "--quiet", bootUnit).Run() == nil; i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	// Another file now at the clone's path: the guest keeps the recorded
+	// inode open, and adoption cannot prove the path is still its file.
+	other := guest.Files[0] + ".other"
+	if err := os.WriteFile(other, []byte("not the recorded clone"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(other, guest.Files[0]); err != nil {
+		t.Fatal(err)
+	}
+	_, out := runAdoptionExperimentUnit(t, dir, "adopt", instance, true)
+	t.Logf("successor output:\n%s", out)
+	var result map[string]any
+	if err := json.Unmarshal(waitAdoptionExperimentFile(t, filepath.Join(dir, "adopt.json"), 10*time.Second), &result); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("successor result: %v", result)
+	if result["adopted"] == true || result["refused_reason"] != adoptionRefusedAdoptFailed {
+		t.Fatalf("want the guest refused with %s: %v", adoptionRefusedAdoptFailed, result)
+	}
+	if detail, _ := result["refused_detail"].(string); !strings.Contains(detail, "killed through its pidfd") {
+		t.Fatalf("refusal does not say the guest was killed: %v", result)
+	}
+	if unix.PidfdSendSignal(pidfd, 0, nil, 0) == nil {
+		t.Fatal("the refused guest is still running")
+	}
+}
+
 func adoptionRestartKeepsTheGuest(t *testing.T, evictBase bool) {
 	if os.Getenv("FAAS_ADOPTION_EXPERIMENTS") != "1" {
 		t.Skip("set FAAS_ADOPTION_EXPERIMENTS=1 on a dedicated acceptance host")
@@ -350,6 +429,11 @@ func adoptionExperimentAdoptRole(t *testing.T, dir string) {
 	if err != nil {
 		res["error"] = "adopt: " + err.Error()
 		return
+	}
+	for _, v := range rep.Verdicts {
+		if v.Instance == g.Instance && !v.Adoptable {
+			res["refused_reason"], res["refused_detail"] = v.Reason, v.Detail
+		}
 	}
 	res["adopted"] = rep.Adopted == 1 && m.HasInstanceOwnership(g.Instance)
 	pid, ok := m.InstancePID(g.Instance)
@@ -705,6 +789,8 @@ func recordAdoptionExperimentGuest(t *testing.T, dir string, m *Manager, journal
 		case a.Kind == "bind":
 			g.BindPaths = append(g.BindPaths, a.Path)
 			g.BindSources = append(g.BindSources, a.Source)
+		case a.Kind == "clone" || a.Kind == "materialised":
+			g.Files = append(g.Files, a.Path)
 		}
 	}
 	if mnt, err := resourceMountNamespace(); err == nil {
