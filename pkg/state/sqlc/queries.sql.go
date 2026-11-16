@@ -82924,12 +82924,13 @@ WITH previous AS (
  AND payload::jsonb->>'wake_id'=$2::text
  ORDER BY (state IN ('pending','processing')) DESC,id DESC LIMIT 1 FOR UPDATE
 ), retried AS (
- UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp(),
+ UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp()+make_interval(secs=>$3::double precision),
  claimed_by=NULL,claimed_at=NULL,lease_until=NULL,delivered_at=NULL,last_error=NULL
  WHERE id IN (SELECT id FROM previous) AND state IN ('delivered','dead_letter') RETURNING id,payload
 ), inserted AS (
- INSERT INTO notification_outbox(channel,payload)
- SELECT 'runtime_config_restart',json_build_object('app_id',$1::text,'wake_id',$2::text)::text
+ INSERT INTO notification_outbox(channel,payload,available_at)
+ SELECT 'runtime_config_restart',json_build_object('app_id',$1::text,'wake_id',$2::text)::text,
+ clock_timestamp()+make_interval(secs=>$3::double precision)
  WHERE NOT EXISTS (SELECT 1 FROM previous) RETURNING id,payload
 )
 SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbox_id',id,'_notification_payload',payload)::text)
@@ -82937,14 +82938,21 @@ SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbo
 `
 
 type QueueManagedPostgresRotationRefreshParams struct {
-	AppID  string
-	WakeID string
+	AppID            string
+	WakeID           string
+	WakeDelaySeconds float64
 }
 
 // App and binding locks serialize publication, retries and old-worker repair.
 // Replay terminal handoffs under the same wake ID until retirement is proven.
+// Like every runtime_config_restart, the row opens to replay only after the
+// wake delay: every schedd's replay worker polls the outbox, and a row that
+// opened at once could be claimed by a peer before the app's owner claimed the
+// live notification. The owner's claim then found the row leased, and the
+// peer's deferral returned it to a replay the owner never won (production
+// 2026-11-16: a credential rotation's restart stayed pending for hours).
 func (q *Queries) QueueManagedPostgresRotationRefresh(ctx context.Context, db DBTX, arg QueueManagedPostgresRotationRefreshParams) error {
-	_, err := db.Exec(ctx, queueManagedPostgresRotationRefresh, arg.AppID, arg.WakeID)
+	_, err := db.Exec(ctx, queueManagedPostgresRotationRefresh, arg.AppID, arg.WakeID, arg.WakeDelaySeconds)
 	return err
 }
 
