@@ -206,7 +206,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag experiment get", "flags experiments get"},
 	{"flag experiment start", "flags experiments start"},
 	{"flag experiment stop", "flags experiments stop"},
-	{"flag experiment ship", "flags experiments ship"},
+	{"flag experiment promote", "flags experiments ship"},
 	{"flag experiment delete", "flags experiments delete"},
 	{"flag experiment result get", "flags experiments results"},
 	{"flag", "flags"},

@@ -675,10 +675,10 @@ worse), `keep_running`, `fix_allocation` (sample ratio mismatch), `decide`
 a variant on its own. To ship:
 
 ```bash
-gregale flag experiment ship checkout-v2 new --project shop
+gregale flag experiment promote checkout-v2 new --project shop
 ```
 
-`ship` publishes the rule serving that variant to every customer it matches
+`promote` publishes the rule serving that variant to every customer it matches
 and stops the experiment. MCP agents read the same results and recommendation
 with `gregale_list_flag_experiments` and
 `gregale_get_flag_experiment_results` (release toolset).

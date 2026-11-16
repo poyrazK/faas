@@ -137,7 +137,7 @@ out. Gregale never ships a winner on its own.
 **Shipping.** `POST .../experiments/{key}/ship {"variant": "b"}` stops a
 running experiment, if it is still running, and publishes the rule serving
 that variant, through the same code path as the guardrail rollback, with the
-caller as actor. `gregale flag experiment ship <key> <variant>` calls it.
+caller as actor. `gregale flag experiment promote <key> <variant>` calls it.
 
 **MCP.** Two read-only management tools, `gregale_list_flag_experiments` and
 `gregale_get_flag_experiment_results`, return the same results and

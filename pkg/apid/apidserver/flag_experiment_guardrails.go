@@ -141,13 +141,13 @@ func flagExperimentCommands(rec flags.Recommendation, x state.FlagExperiment, pr
 	running := x.Status == flags.ExperimentRunning
 	switch rec.Action {
 	case flags.RecommendShipVariant:
-		return []string{fmt.Sprintf("gregale flag experiment ship %s %s %s", x.Key, rec.Variant, where)}
+		return []string{fmt.Sprintf("gregale flag experiment promote %s %s %s", x.Key, rec.Variant, where)}
 	case flags.RecommendKeepControl, flags.RecommendFixAllocation:
 		if running {
 			return []string{fmt.Sprintf("gregale flag experiment stop %s %s", x.Key, where)}
 		}
 	case flags.RecommendDecide:
-		return []string{fmt.Sprintf("gregale flag experiment ship %s %s %s", x.Key, x.Control, where)}
+		return []string{fmt.Sprintf("gregale flag experiment promote %s %s %s", x.Key, x.Control, where)}
 	}
 	return nil
 }

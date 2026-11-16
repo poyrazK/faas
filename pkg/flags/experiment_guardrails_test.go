@@ -99,6 +99,27 @@ func TestCompareRatioClusteredVariance(t *testing.T) {
 	}
 }
 
+// A variant that fails every request, against a control that never fails,
+// has zero per-customer variance in both arms; it must still breach.
+func TestEvaluateGuardrailTotalOutage(t *testing.T) {
+	c, v := RatioArm{Variant: "control"}, RatioArm{Variant: "new"}
+	for i := 0; i < 200; i++ {
+		c.Units, c.Den, c.DenSq = c.Units+1, c.Den+10, c.DenSq+100
+		v.Units, v.Num, v.Den = v.Units+1, v.Num+10, v.Den+10
+		v.NumSq, v.DenSq, v.NumDen = v.NumSq+100, v.DenSq+100, v.NumDen+100
+	}
+	got := EvaluateGuardrail(GuardrailInput{Name: GuardrailServerErrorRate, Tolerance: 0.005, Control: "control",
+		Arms: []RatioArm{c, v}, Alpha: 0.01, MinUnits: 100, MinRequests: 1000})
+	if got.Status != GuardrailBreached {
+		t.Fatalf("total outage = %+v; want breached", got)
+	}
+	same := EvaluateGuardrail(GuardrailInput{Name: GuardrailServerErrorRate, Tolerance: 0.005, Control: "control",
+		Arms: []RatioArm{c, {Variant: "new", Units: c.Units, Den: c.Den, DenSq: c.DenSq}}, Alpha: 0.01, MinUnits: 100, MinRequests: 1000})
+	if same.Status != GuardrailOK {
+		t.Fatalf("both arms error-free = %+v; want ok", same)
+	}
+}
+
 func TestGuardrailAAFalseBreachRate(t *testing.T) {
 	rng := xorshift(0x9e3779b97f4a7c15)
 	const runs, batches, perBatch = 200, 20, 100

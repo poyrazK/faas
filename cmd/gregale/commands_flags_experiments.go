@@ -181,11 +181,17 @@ func printFlagsExperimentResults(res api.FlagExperimentResults) {
 		}
 		return fmt.Sprintf("%.2f%%", 100*v)
 	}
-	diff := func(v float64) string {
+	num := func(v float64) string {
 		if mean {
 			return fmt.Sprintf("%+.4g", v)
 		}
-		return fmt.Sprintf("%+.2f pts", 100*v)
+		return fmt.Sprintf("%+.2f", 100*v)
+	}
+	diff := func(v float64) string {
+		if mean {
+			return num(v)
+		}
+		return num(v) + " pts"
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
 	header := "VARIANT\tCUSTOMERS\tCONVERTED\tRATE\tLIFT\t95% INTERVAL\tP-VALUE\tSTATUS"
@@ -199,7 +205,7 @@ func printFlagsExperimentResults(res api.FlagExperimentResults) {
 		lift, interval, p := "-", "-", "-"
 		if v.Lift != nil {
 			lift = diff(*v.Lift)
-			interval = fmt.Sprintf("[%s, %s]", diff(*v.Low), diff(*v.High))
+			interval = fmt.Sprintf("[%s, %s]", num(*v.Low), num(*v.High))
 			p = fmt.Sprintf("%.3g", *v.PValue)
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n", v.Variant, v.Exposed, v.Converted, rate(v.Rate), lift, interval, p, v.Status)
@@ -210,6 +216,9 @@ func printFlagsExperimentResults(res api.FlagExperimentResults) {
 	}
 	printFlagsExperimentGuardrails(res)
 	r := res.Recommendation
+	if r.Action == "" {
+		return
+	}
 	_, _ = fmt.Fprintf(osStdout, "\nRecommendation (%s): %s\n", r.Action, r.Summary)
 	for _, cmd := range r.Commands {
 		_, _ = fmt.Fprintf(osStdout, "  %s\n", cmd)

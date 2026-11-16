@@ -93,8 +93,8 @@ func TestFlagExperimentGuardrailBreachRollsBackToControl(t *testing.T) {
 	}
 	now := time.Now()
 	for i := 0; i < 150; i++ {
-		f.mem.SeedFlagExperimentUnitForTest(x.ID, uuid.NewString(), "legacy", now, 20, 0, 0, 0, 100)
-		f.mem.SeedFlagExperimentUnitForTest(x.ID, uuid.NewString(), "new", now, 20, 10, 0, 0, 100)
+		f.mem.SeedFlagExperimentUnitForTest(x.ID, uuid.NewString(), "legacy", now, 20, int64(i%2), 0, 0, 100)
+		f.mem.SeedFlagExperimentUnitForTest(x.ID, uuid.NewString(), "new", now, 20, int64(8+i%5), 0, 0, 100)
 	}
 
 	apidserver.RunFlagExperimentPass(*f.e.S(), now)

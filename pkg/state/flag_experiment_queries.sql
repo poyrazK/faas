@@ -110,9 +110,9 @@ LIMIT sqlc.arg(max_rows)::int;
 SELECT t.platform_tenant_id::uuid AS customer_id, (e->>'value')::text AS variant,
        min(t.received_at)::timestamptz AS first_at,
        sum(t.count)::bigint AS requests,
-       (sum(t.count) FILTER (WHERE t.status >= 500 AND NOT t.platform_refusal))::bigint AS errors,
-       (sum(t.count) FILTER (WHERE sqlc.arg(latency_threshold_ms)::int >= 0))::bigint AS latency_requests,
-       (sum(t.count) FILTER (WHERE sqlc.arg(latency_threshold_ms)::int >= 0 AND t.latency_ms > sqlc.arg(latency_threshold_ms)::int))::bigint AS slow_requests
+       COALESCE(sum(t.count) FILTER (WHERE t.status >= 500 AND NOT t.platform_refusal), 0)::bigint AS errors,
+       COALESCE(sum(t.count) FILTER (WHERE sqlc.arg(latency_threshold_ms)::int >= 0), 0)::bigint AS latency_requests,
+       COALESCE(sum(t.count) FILTER (WHERE sqlc.arg(latency_threshold_ms)::int >= 0 AND t.latency_ms > sqlc.arg(latency_threshold_ms)::int), 0)::bigint AS slow_requests
 FROM request_telemetry t
 JOIN apps a ON a.id = t.app_id
 JOIN deployments d ON d.id = t.deployment_id

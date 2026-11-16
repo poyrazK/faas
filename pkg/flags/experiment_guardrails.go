@@ -67,7 +67,24 @@ func CompareRatio(control, variant RatioArm, tau, alpha float64) (Comparison, er
 		return Comparison{}, errNoVariance
 	}
 	v := control.ratioVariance() + variant.ratioVariance()
+	// When every customer of an arm has the same rate (no errors at all, or
+	// a variant failing every request) the delta-method variance is 0 and no
+	// difference could ever be detected. The binomial variance of the
+	// smoothed request-level rate bounds it from below.
+	if floor := control.binomialFloor() + variant.binomialFloor(); v < floor {
+		v = floor
+	}
 	return compareNormal(variant.Variant, control.Ratio(), variant.Ratio(), v, tau, alpha)
+}
+
+// binomialFloor is the variance of the arm's rate as if its requests were
+// independent, with the rate smoothed to (Num+1)/(Den+2) so it is never 0.
+func (a RatioArm) binomialFloor() float64 {
+	if a.Den <= 0 {
+		return 0
+	}
+	p := (a.Num + 1) / (a.Den + 2)
+	return p * (1 - p) / (a.Den + 2)
 }
 
 // GuardrailInput is one guardrail's data and settings.

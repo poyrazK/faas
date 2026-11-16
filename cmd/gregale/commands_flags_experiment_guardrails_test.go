@@ -37,7 +37,7 @@ func TestFlagExperimentGuardrailAndShipCommands(t *testing.T) {
 					Variants: []api.FlagExperimentGuardrailVariant{{Variant: "new", ControlRate: 0.01, VariantRate: 0.011, Difference: &d, Low: &dl, High: &dh, Status: "ok"}}}},
 				Latency: []api.FlagExperimentLatency{{Variant: "legacy", Requests: 90000, P95MS: 180}, {Variant: "new", Requests: 91000, P95MS: 175}},
 				Recommendation: api.FlagExperimentRecommendation{Action: "ship_variant", Variant: "new", Summary: "new is better than legacy",
-					Commands: []string{"gregale flag experiment ship revenue new --project shop --environment production"}}})
+					Commands: []string{"gregale flag experiment promote revenue new --project shop --environment production"}}})
 		case "POST " + base + "/revenue/ship":
 			_ = json.NewDecoder(r.Body).Decode(&shipped)
 			x.Status, x.StopReason = "stopped", "shipped"
@@ -73,17 +73,17 @@ func TestFlagExperimentGuardrailAndShipCommands(t *testing.T) {
 
 	code, out, _ = run("flag", "experiment", "result", "get", "revenue", "--project", "shop")
 	for _, want := range []string{"MEAN", "2250", "+250", "server_error_rate", "+0.10 pts", "control's p95 of 180 ms", "p95 latency new: 175 ms",
-		"Recommendation (ship_variant)", "gregale flag experiment ship revenue new"} {
+		"Recommendation (ship_variant)", "gregale flag experiment promote revenue new"} {
 		if code != 0 || !strings.Contains(out, want) {
 			t.Fatalf("results = %d %q; want %q", code, out, want)
 		}
 	}
 
-	code, out, _ = run("flag", "experiment", "ship", "revenue", "new", "--project", "shop")
+	code, out, _ = run("flag", "experiment", "promote", "revenue", "new", "--project", "shop")
 	if code != 0 || shipped.Variant != "new" || !strings.Contains(out, "flags version 7") {
 		t.Fatalf("ship = %d %q; request %+v", code, out, shipped)
 	}
-	if code, _, errOut := run("flag", "experiment", "ship", "revenue", "--project", "shop"); code != 1 || !strings.Contains(errOut, "VARIANT") {
+	if code, _, errOut := run("flag", "experiment", "promote", "revenue", "--project", "shop"); code != 1 || !strings.Contains(errOut, "VARIANT") {
 		t.Fatalf("ship without a variant = %d %q", code, errOut)
 	}
 }
