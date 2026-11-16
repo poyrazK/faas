@@ -21810,9 +21810,9 @@ SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d
 -- name: CheckedRollbackCurrentMatches :one
 SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(current_id) AND d.app_id=sqlc.arg(app_id)
  AND d.deleted_at IS NULL
- AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.traffic_percent=100
+ AND d.scope=ANY(sqlc.arg(scopes)::text[]) AND d.status='live' AND d.traffic_percent=100
  AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps) AND d.rollout_state NOT IN ('pending','rolling_out'))
- AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope)
+ AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=sqlc.arg(app_id) AND d.scope=ANY(sqlc.arg(scopes)::text[])
  AND d.status='live' AND d.id<>sqlc.arg(current_id) AND d.id<>sqlc.arg(target_id)
  AND (d.traffic_percent>0 OR d.rollout_state IN ('pending','rolling_out')));
 
@@ -21893,7 +21893,7 @@ UPDATE deployments d SET traffic_percent=0,status=CASE WHEN EXISTS(SELECT 1 FROM
  JOIN project_release_sets rs ON rs.id=rm.release_id WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>clock_timestamp()))
  OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
  THEN 'live' ELSE 'superseded' END
- WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.id<>sqlc.arg(target_id);
+ WHERE d.app_id=sqlc.arg(app_id) AND d.scope=ANY(sqlc.arg(scopes)::text[]) AND d.status='live' AND d.id<>sqlc.arg(target_id);
 
 -- name: RetainCheckedRollbackPredecessor :exec
 INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
@@ -21934,7 +21934,7 @@ SELECT pg_notify('deployment_changed',jsonb_build_object('kind','service_rollout
  (SELECT status FROM deployments WHERE id=sqlc.arg(current_id)::uuid))::text);
 
 -- name: LockCheckedRollbackScope :many
-SELECT id FROM deployments WHERE app_id=sqlc.arg(app_id) AND scope=sqlc.arg(scope) ORDER BY id FOR UPDATE;
+SELECT id FROM deployments WHERE app_id=sqlc.arg(app_id) AND scope=ANY(sqlc.arg(scopes)::text[]) ORDER BY id FOR UPDATE;
 
 -- name: LockAlertRollbackFireApp :many
 SELECT a.id FROM apps a JOIN alert_rules r ON r.app_id=a.id AND r.account_id=a.account_id
