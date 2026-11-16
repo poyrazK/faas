@@ -688,6 +688,24 @@ credentials, and Gregale API key strings are redacted, including nested error
 fields. This protects recognized credentials, not arbitrary secrets in user
 messages. Successful command output remains on stdout.
 
+Flag-parser errors also include a CLI-local `cli` object. Its `kind` distinguishes
+`unknown_flag`, `missing_value`, `invalid_value`, `misplaced_global_flag` and
+unclassified `invalid_flag` errors. When available, `flag`, `suggested_flags`,
+`expected_type`, `value_marker`, `allowed_values` and `placement` describe
+registered options, without supplied values or saved defaults. Expected types
+are `boolean`, `integer`, `number`, `duration`, `enum` and `value` (a documented
+format with no narrower parser type). Command-specific limits still apply.
+
+For example, `gregale --json deploy --naem demo` returns exit `1` and one
+`validation_failed` Problem (category `invalid_request`) whose `cli.suggested_flags` is `["--name"]` and whose
+`cli.help_argv` is `["gregale", "--json", "help", "deploy"]`. Follow that argument
+array to discover the flag; the CLI never applies or executes the suggestion.
+Ambiguous typos have no suggestion. `help_argv` uses a validated visible command
+or falls back to root JSON help, without API requests. Prefix-only globals use
+`placement: "before_command"`; a command-local resource `--profile` retains its
+local meaning. Other validation and API errors omit `cli`. Human diagnostics,
+Problem codes, exit codes and stdout/stderr routing stay unchanged.
+
 Successful `--json` output takes one of two shapes, and a command keeps its
 shape across releases:
 
