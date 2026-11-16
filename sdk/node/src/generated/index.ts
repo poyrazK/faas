@@ -3111,6 +3111,7 @@ export type { SessionListResponse } from './models/SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './models/SessionsRevokeAllResponse.js';
 export type { SetAccountEgressAllowlistExtraRequest } from './models/SetAccountEgressAllowlistExtraRequest.js';
 export type { SetApplicationStandardLocalIntentRequest } from './models/SetApplicationStandardLocalIntentRequest.js';
+export type { SetAppProtectionRequest } from './models/SetAppProtectionRequest.js';
 export type { SetAppStaticEgressIPRequest } from './models/SetAppStaticEgressIPRequest.js';
 export type { SetBindingReleasePolicyRequest } from './models/SetBindingReleasePolicyRequest.js';
 export type { SetCanaryRouteGateRequest } from './models/SetCanaryRouteGateRequest.js';
