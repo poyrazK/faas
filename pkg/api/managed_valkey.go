@@ -20,8 +20,9 @@ const (
 	ManagedValkeyCapability = "managed-redis"
 
 	// ManagedValkeyImage is the only image a managed cache app runs. It is
-	// digest-pinned; a new Valkey release is a reviewed change here.
-	ManagedValkeyImage = "docker.io/valkey/valkey:8.1.4-alpine@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
+	// digest-pinned (valkey/valkey:8.1.4-alpine); a new Valkey release is a
+	// reviewed change here. Deploy references carry a digest and no tag.
+	ManagedValkeyImage = "docker.io/valkey/valkey@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
 
 	// ManagedValkeyPort is the port a cache listens on at its service address.
 	ManagedValkeyPort = 6379

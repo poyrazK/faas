@@ -59,7 +59,7 @@ func TestManagedValkeyServerCommand(t *testing.T) {
 			t.Errorf("script lacks %q: %s", want, script)
 		}
 	}
-	if !strings.HasPrefix(ManagedValkeyImage, "docker.io/valkey/valkey:") || !strings.Contains(ManagedValkeyImage, "@sha256:") {
+	if !strings.HasPrefix(ManagedValkeyImage, "docker.io/valkey/valkey@") || !strings.Contains(ManagedValkeyImage, "@sha256:") {
 		t.Fatalf("image is not digest-pinned: %s", ManagedValkeyImage)
 	}
 }
@@ -67,5 +67,11 @@ func TestManagedValkeyServerCommand(t *testing.T) {
 func TestManagedValkeyURL(t *testing.T) {
 	if got := ManagedValkeyURL("sessions", "pw"); got != "redis://default:pw@sessions.svc.gregale:6379" {
 		t.Fatalf("url = %s", got)
+	}
+}
+
+func TestManagedValkeyImageIsADeployableReference(t *testing.T) {
+	if !ValidDeploymentImage(ManagedValkeyImage) {
+		t.Fatalf("deploy admission rejects %s", ManagedValkeyImage)
 	}
 }
