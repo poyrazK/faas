@@ -46,7 +46,8 @@ func cmdFlagsExperiments(args []string) int {
 	case "ship":
 		want, needs = 2, " an experiment KEY and the VARIANT to ship"
 	}
-	if *project == "" || len(positionals) != want {
+	// Literal counts, so the positional guard sees the check before any call.
+	if *project == "" || (want == 0 && len(positionals) != 0) || (want == 1 && len(positionals) != 1) || (want == 2 && len(positionals) != 2) {
 		PrintUsage(os.Stderr, fmt.Sprintf("gregale %s needs --project%s", cliTreeSpellPath("flags experiments "+verb), needs), "flags")
 		return 1
 	}

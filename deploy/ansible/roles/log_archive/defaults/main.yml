@@ -14,3 +14,13 @@ faas_log_archive_auth_mode: "gcp_metadata"
 # {"key_id": "...", "secret": "..."} merged into the envelope. Empty for
 # keyless GCS (gcp_metadata).
 faas_log_archive_credentials_src: ""
+# ADR-20261110210000 slice 3l, compute-only hosts: true marks the envelope
+# "access": "write-only". vmmd then ships part objects with create-only
+# PUTs and never reads the bucket, and gatewayd-internal leaves archive
+# read-back to the control plane. Set it once the host's credentials can only
+# create objects (GCS: the compute service account holds
+# roles/storage.objectCreator on the log bucket and nothing that reads it;
+# S3: a key whose policy allows s3:PutObject alone), so a rooted node cannot
+# read other tenants' archived logs. Control-plane hosts keep read-write:
+# apid erases archived logs and their gateways serve read-back.
+faas_log_archive_write_only: false

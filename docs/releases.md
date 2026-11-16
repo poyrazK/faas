@@ -118,7 +118,7 @@ gregale rollback my-api --to v41 --restore-databases
 ```
 
 ```text
-This rollback undoes release commands that ran after its target last served:
+This rollback undoes the release commands that ran since its target's schema:
   v42  succeeded  started 2026-10-23T12:03:10Z
 orders is restored to 2026-10-23T12:03:10Z as a new database; writes to orders after that moment stay only in orders.
 my-api stops serving while it switches (usually under a minute, then a cold start).
@@ -137,7 +137,10 @@ until the copy is ready and its credentials are verified:
 
 1. **Restore.** The database the release commands migrate is restored, as a
    new database named `<name>-before-v<revision>`, to the start of the earliest
-   release the rollback undoes. A database already restored to that point
+   release the rollback undoes. Besides the releases the rollback crosses, it
+   undoes the release command of the release that replaced the target, which
+   ran while the target still served: rolling back to the previous release
+   undoes that release's migration. A database already restored to that point
    under that name is reused.
 2. **Stage and verify.** Gregale issues credentials on the copy for every
    binding the app has in the scope, and checks them over SQL.

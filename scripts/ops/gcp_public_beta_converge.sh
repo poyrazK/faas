@@ -8,6 +8,9 @@ project="${GCP_PROJECT_ID:-project-5ae37259-04cf-4070-bef}"
 operator="${GCP_OPERATOR_ACCOUNT:-hpk.working@gmail.com}"
 region="${GCP_REGION:-europe-west3}"
 control="${GCP_CONTROL_INSTANCE:-faas-control-plane}"
+# The VPC that new firewall rules join. gregale-prod uses "gregale"; a rule
+# created on another network never admits the fleet's traffic.
+network="${GCP_NETWORK:-default}"
 backup_bucket="${GCP_BACKUP_BUCKET:-gregale-pg-backups-5ae37259}"
 artifact_bucket="${GCP_ARTIFACT_BUCKET:-gregale-artifacts-5ae37259}"
 backup_sa="gregale-backup@${project}.iam.gserviceaccount.com"
@@ -80,7 +83,7 @@ ensure_origin_firewall_rule() {
       --source-ranges="$ranges" --target-tags="$target_tag" \
       --allow=tcp:80,tcp:443 --priority=800 --quiet
   else
-    run gcloud compute firewall-rules create "$name" --project="$project" --network=default \
+    run gcloud compute firewall-rules create "$name" --project="$project" --network="$network" \
       --direction=INGRESS --priority=800 --action=ALLOW --rules=tcp:80,tcp:443 \
       --source-ranges="$ranges" --target-tags="$target_tag" --quiet
   fi
@@ -345,7 +348,7 @@ PY
     ensure_origin_firewall_rule "$custom_v6" ::/0 "$custom_tag"
   fi
   if ! exists gcloud compute firewall-rules describe gregale-iap-ssh --project="$project"; then
-    run gcloud compute firewall-rules create gregale-iap-ssh --project="$project" --network=default \
+    run gcloud compute firewall-rules create gregale-iap-ssh --project="$project" --network="$network" \
       --direction=INGRESS --priority=900 --action=ALLOW --rules=tcp:22 \
       --source-ranges=35.235.240.0/20 --target-tags=gregale-admin --quiet
   fi

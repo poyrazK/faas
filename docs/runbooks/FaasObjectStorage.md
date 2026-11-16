@@ -93,6 +93,9 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
   `FaasObjectStorageInventoryQuietBacklog` means that verification is past
   23.5 h, and the bucket answers 503 at 24 h; check the sweep as for the
   backlog above. `class="quiet"` reads 0 unless the switch is `on`.
+  A bucket in all-version accounting is never quiet: every GCS bucket starts
+  in it (ADR-20261107214517), so on a GCS-only platform the switch changes
+  nothing and `shadow` has nothing to count.
 - **Inventory drift.** A quiet bucket's listing counted different bytes or
   keys than the one before it, so something wrote to it without passing
   admission: root on a compute node using the gateway credential, an operator
