@@ -6160,6 +6160,13 @@ from .synthetic_check_response_method import SyntheticCheckResponseMethod
 from .synthetic_check_results import SyntheticCheckResults
 from .synthetic_check_run import SyntheticCheckRun
 from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
+from .task_tool_quarantine import TaskToolQuarantine
+from .task_tool_quarantine_decision import TaskToolQuarantineDecision
+from .task_tool_quarantine_request import TaskToolQuarantineRequest
+from .task_tool_quarantine_request_action import TaskToolQuarantineRequestAction
+from .task_tool_quarantine_request_expected_instance_ids import TaskToolQuarantineRequestExpectedInstanceIds
+from .task_tool_quarantine_result import TaskToolQuarantineResult
+from .task_tool_quarantine_state import TaskToolQuarantineState
 from .task_tool_recovery_handover import TaskToolRecoveryHandover
 from .task_tool_recovery_handover_decision import TaskToolRecoveryHandoverDecision
 from .task_tool_recovery_handover_state import TaskToolRecoveryHandoverState
@@ -12561,6 +12568,13 @@ __all__ = (
     "SyntheticCheckResults",
     "SyntheticCheckRun",
     "SyntheticCheckRunErrorClass",
+    "TaskToolQuarantine",
+    "TaskToolQuarantineDecision",
+    "TaskToolQuarantineRequest",
+    "TaskToolQuarantineRequestAction",
+    "TaskToolQuarantineRequestExpectedInstanceIds",
+    "TaskToolQuarantineResult",
+    "TaskToolQuarantineState",
     "TaskToolRecoveryHandover",
     "TaskToolRecoveryHandoverDecision",
     "TaskToolRecoveryHandoverState",

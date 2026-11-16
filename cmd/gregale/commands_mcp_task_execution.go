@@ -192,6 +192,9 @@ func cmdMCPTaskExecution(args []string) int {
 		return printErr("Task execution", errors.New("use execution authorize|apply|get|guard|inspect|plan-recovery"))
 	}
 	action := args[0]
+	if action == "quarantine" || strings.HasPrefix(action, "quarantine-") {
+		return cmdMCPTaskQuarantine(args)
+	}
 	if action == "restore" || action == "restore-hook" {
 		return cmdMCPTaskRestore(args)
 	}

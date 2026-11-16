@@ -84,6 +84,9 @@ func decodeTaskReleaseChange(r *http.Request, p httpkit.Principal, record api.Ta
 	action := "decide"
 	if owner {
 		err = httpkit.DecodeJSONSized(r, &in, api.TaskToolReleaseIntentMaxBytes)
+		if in.Quarantine != nil && (in.Execution != nil || in.Recovery != nil) {
+			return in, action, state.ErrInvalidArgument
+		}
 		if in.Decision == "authorize" || tasktoolrelease.IsRecoveryDecision(in.Decision) {
 			if p.Key == nil {
 				return in, action, state.ErrInvalidArgument
@@ -94,6 +97,12 @@ func decodeTaskReleaseChange(r *http.Request, p httpkit.Principal, record api.Ta
 		var check api.TaskToolReleaseIntentCheck
 		err = httpkit.DecodeJSONSized(r, &check, api.TaskToolReleaseIntentMaxBytes)
 		in.ReleaseFingerprint, action = check.ReleaseFingerprint, "check"
+		if check.Quarantine != nil {
+			if p.Key == nil || p.Key.ID != record.RequesterKeyID || check.Execution != nil {
+				return in, action, state.ErrNotFound
+			}
+			in.Quarantine, action = check.Quarantine, "quarantine"
+		}
 		if check.Execution != nil {
 			if p.Key == nil || p.Key.ID != record.RequesterKeyID {
 				return in, action, state.ErrNotFound

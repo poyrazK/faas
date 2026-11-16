@@ -2904,6 +2904,9 @@ func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, i
 	return waitPrivatePublicationVerification(ctx, c, id, in)
 }
 
+// TaskQuarantineGateForTest exposes the fixed adapter to subprocess contract tests.
+func TaskQuarantineGateForTest() string { return mcpTaskQuarantineGate }
+
 var RememberInitApp = rememberInitApp
 var LinkedDefaultAppName = linkedDefaultAppName
 

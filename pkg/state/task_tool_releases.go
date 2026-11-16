@@ -167,6 +167,13 @@ func (m *MemStore) ChangeTaskToolReleaseIntent(ctx context.Context, account, id,
 	if !ok {
 		return record, ErrNotFound
 	}
+	if tasktoolrelease.IsQuarantineChange(action, in) {
+		out, err := m.changeTaskQuarantineLocked(ctx, account, record, in)
+		if err == nil {
+			m.taskToolReleaseIntents[account+":"+id] = cloneTaskToolRelease(out)
+		}
+		return cloneTaskToolRelease(out), err
+	}
 	configurationOnly := tasktoolrelease.IsRecoveryDecision(in.Decision) || action == "execution" && in.Execution != nil && in.Execution.Action != "claim"
 	freshKey := record.RequesterKeyID
 	if tasktoolrelease.IsRecoveryDecision(in.Decision) {

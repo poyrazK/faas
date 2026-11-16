@@ -986,6 +986,31 @@ func (q *Queries) StoreToolOAuthAuthorization(ctx context.Context, db DBTX, arg 
 	return err
 }
 
+const taskQuarantineClockFresh = `-- name: TaskQuarantineClockFresh :one
+SELECT ($1::timestamptz>clock_timestamp()
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=$2::uuid AND k.account_id=$3 AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
+AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=$4::uuid AND k.account_id=$3 AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())))::boolean AS fresh
+`
+
+type TaskQuarantineClockFreshParams struct {
+	ExpiresAt      pgtype.Timestamptz
+	OwnerKeyID     pgtype.UUID
+	AccountID      pgtype.UUID
+	RequesterKeyID pgtype.UUID
+}
+
+func (q *Queries) TaskQuarantineClockFresh(ctx context.Context, db DBTX, arg TaskQuarantineClockFreshParams) (bool, error) {
+	row := db.QueryRow(ctx, taskQuarantineClockFresh,
+		arg.ExpiresAt,
+		arg.OwnerKeyID,
+		arg.AccountID,
+		arg.RequesterKeyID,
+	)
+	var fresh bool
+	err := row.Scan(&fresh)
+	return fresh, err
+}
+
 const toolGrantEntries = `-- name: ToolGrantEntries :many
 SELECT g.payload AS grant_payload,p.payload AS publication_payload
 FROM tool_grants g JOIN tool_publications p ON p.account_id=g.account_id AND p.id=g.version
