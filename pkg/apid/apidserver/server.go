@@ -2044,6 +2044,10 @@ func (s *server) handler() http.Handler {
 	// capability hides the route until launch.
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresPreviews)))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresBindings))))
+	// Custom group roles (ADR-20261116213000).
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/roles", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresCustomRoles))))
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/roles/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.putManagedPostgresCustomRole)))))
+	mux.HandleFunc("DELETE /v1/postgres/databases/{id}/roles/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.deleteManagedPostgresCustomRole))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresConnectionBudget))))
 	// Private workload reporting surface; customer API keys cannot publish evidence.
 	mux.HandleFunc("POST /v1/runtime/data-api/connection-observations", s.reportDataAPIRuntimeConnections)

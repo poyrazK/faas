@@ -2445,3 +2445,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261116163708: Hosted read-only Task recovery inspection](20261116163708-hosted-task-recovery-inspection.md) — accepted; opt-in original-requester agent keys inspect native Task checkpoints and recovery guidance without local files, cross-key delegation or execution authority.
 
 - [ADR-20261116183545: Durable hosted Task source intents](20261116183545-hosted-task-source-intents.md)
+- [ADR-20261116213000: Custom Postgres group roles](20261116213000-custom-postgres-group-roles.md) — proposed; customers declare NOLOGIN group roles (BYPASSRLS allowed, refused on Data API/Auth databases, Hobby+) granted to their own Gregale logins, created by the platform admin path, so tools like Windmill run on managed Postgres.

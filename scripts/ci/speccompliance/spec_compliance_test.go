@@ -271,6 +271,10 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases: behind the preview-databases
 	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
 	"PUT /v1/postgres/databases/{id}/previews": true,
+	// ADR-20261116213000 custom Postgres roles (postgres_custom_roles flag).
+	"GET /v1/postgres/databases/{id}/roles":           true,
+	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
+	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -893,18 +897,22 @@ var dtoExclude = map[string]bool{
 	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
 	"ManagedPostgresPreviewOwner":       true, // ADR-20261102123523 preview-databases capability; documented at launch
 	"SetManagedPostgresPreviewsRequest": true, // ADR-20261102123523 preview-databases capability; documented at launch
-	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
-	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
-	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
-	"MigrationDependencyReport":         true, // Private guest task protocol, not an HTTP DTO.
-	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
-	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
-	"RecordRolloutHoldRequest":          true, // ADR-1447 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
-	"RecordRolloutHoldResponse":         true, // ADR-1447 loopback-only meterd ↔ apid hold route
-	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
-	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
-	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
-	"CanaryRouteHealthRecoveryResponse": true, // loopback-only worker result
+	// ADR-20261116213000 postgres_custom_roles flag; documented at launch.
+	"ManagedPostgresCustomRole":           true,
+	"ManagedPostgresCustomRoleList":       true,
+	"PutManagedPostgresCustomRoleRequest": true,
+	"RealtimeLimits":                      true, // internal plan policy, not a wire DTO
+	"ExecutionSnapshotShape":              true, // internal snapshot compatibility key, not a wire DTO
+	"ResolvedExecutionRequest":            true, // sealed scheduler intent, not a public DTO
+	"MigrationDependencyReport":           true, // Private guest task protocol, not an HTTP DTO.
+	"ResolvedCreateAppTaskRequest":        true, // validated state admission input, not a public DTO
+	"RecoverDeploymentRolloutRequest":     true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldRequest":            true, // ADR-1447 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldResponse":           true, // ADR-1447 loopback-only meterd ↔ apid hold route
+	"AlertRuleRow":                        true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	"RouteCapturedOperation":              true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
+	"CanaryRouteHealthRecoveryRequest":    true, // loopback-only fresh check and recovery contract
+	"CanaryRouteHealthRecoveryResponse":   true, // loopback-only worker result
 	// Canary and smoke reports are emitted through app-task stdout for the CLI
 	// to decode; these structs are not standalone HTTP request/response DTOs.
 	"ServiceBindingProbeCheck":  true,

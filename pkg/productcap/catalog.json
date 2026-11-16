@@ -4224,6 +4224,27 @@
       ]
     },
     {
+      "id": "postgres-custom-roles",
+      "name": "Postgres custom roles",
+      "category": "data",
+      "description": "Declare NOLOGIN group roles, BYPASSRLS included, that a database's own logins can SET ROLE to, so tools such as Windmill run on managed Postgres.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/postgres-custom-roles",
+      "acceptance_test": "pkg/managedpostgres/custom_role_service_test.go::TestCustomRoleServiceDeclaresAppliesAndFences",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/postgres/databases/{}/roles"
+      ],
+      "cli": [
+        "postgres roles"
+      ]
+    },
+    {
       "id": "postgres-cutovers",
       "name": "Postgres cutovers",
       "category": "data",

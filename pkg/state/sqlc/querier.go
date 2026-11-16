@@ -6304,6 +6304,12 @@ type Querier interface {
 	QueueLeasesByInstance(ctx context.Context, db DBTX, appID pgtype.UUID) ([]QueueLeasesByInstanceRow, error)
 	// App and binding locks serialize publication, retries and old-worker repair.
 	// Replay terminal handoffs under the same wake ID until retirement is proven.
+	// Like every runtime_config_restart, the row opens to replay only after the
+	// wake delay: every schedd's replay worker polls the outbox, and a row that
+	// opened at once could be claimed by a peer before the app's owner claimed the
+	// live notification. The owner's claim then found the row leased, and the
+	// peer's deferral returned it to a replay the owner never won (production
+	// 2026-11-16: a credential rotation's restart stayed pending for hours).
 	QueueManagedPostgresRotationRefresh(ctx context.Context, db DBTX, arg QueueManagedPostgresRotationRefreshParams) error
 	QueuePollCandidates(ctx context.Context, db DBTX, arg QueuePollCandidatesParams) ([]string, error)
 	QueuePollLegacyClaims(ctx context.Context, db DBTX, arg QueuePollLegacyClaimsParams) ([]QueuePollLegacyClaimsRow, error)

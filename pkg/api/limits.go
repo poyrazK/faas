@@ -1142,6 +1142,11 @@ const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonSc
 // arrive (ADR-20261031110037).
 const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 
+// ManagedPostgresRotationRefreshWakeDelay is how long a credential rotation's
+// restart row stays closed to outbox replay, so the app's owning scheduler
+// claims the live notification before a peer's replay worker can.
+const ManagedPostgresRotationRefreshWakeDelay = 5 * time.Second
+
 // ManagedPostgresNeonMillicentsPerEgressGB is what Neon charges Gregale per GB
 // (10^9 bytes, Neon's unit) of data transfer past its plan's organization
 // allowance ($0.10, neon.com/pricing on 2026-11-02, ADR-20261102072425).
@@ -1221,6 +1226,19 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 		return 0
 	}
 	return limits.PreviewApps * databases.DatabasesMax
+}
+
+// ManagedPostgresCustomRolesMax is how many custom group roles one managed
+// database may declare (ADR-20261116213000): none on Free, 16 on Hobby and
+// above. Unknown plans fail closed.
+func ManagedPostgresCustomRolesMax(p Plan) int {
+	if _, ok := LimitsFor(p); !ok || p == PlanFree {
+		return 0
+	}
+	if _, managed := ManagedPostgresLimitsFor(p); !managed {
+		return 0
+	}
+	return 16
 }
 
 // ManagedPostgresAllowanceBranchTTLMax is the longest TTL a branch may carry
