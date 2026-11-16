@@ -2613,7 +2613,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if explicit["preview"] {
 			planFlag = "--preview"
 		}
-		if *diff || *dryRun || *serverDiff || *createOnly || *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+		if *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+			return printErr("Invalid flags", errors.New(planFlag+" previews a single app; for a project run: gregale deploy --project --dry-run"))
+		}
+		if *diff || *dryRun || *serverDiff || *createOnly {
 			return printErr("Invalid flags", errors.New(planFlag+" cannot be combined with deploy mutation or project preview flags"))
 		}
 		if *tarball != "" || *templateName != "" || *repo != "" || *githubSnippet {
