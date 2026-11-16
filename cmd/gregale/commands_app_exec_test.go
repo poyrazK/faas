@@ -226,7 +226,7 @@ func TestCmdAppExecShellRequiresOneCommandString(t *testing.T) {
 	if code := main.CmdAppExec("my-app", []string{"--shell", "--", "echo", "hello"}); code == 0 {
 		t.Fatal("multi-argument shell command unexpectedly succeeded")
 	}
-	if !strings.Contains(errOut(), "usage: gregale app <slug> exec") {
+	if !strings.Contains(errOut(), "usage: gregale app exec <slug>") {
 		t.Fatalf("stderr = %q", errOut())
 	}
 }
