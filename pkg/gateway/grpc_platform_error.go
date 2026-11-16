@@ -198,3 +198,51 @@ func (w *grpcPlatformErrorWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) 
 }
 
 func (w *grpcPlatformErrorWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// grpcObservedStatus is the status request telemetry, metrics and health
+// record for a gRPC response. gRPC answers a failed call with HTTP 200 and a
+// non-zero grpc-status trailer, so the HTTP status alone counted every failed
+// RPC as a success (microservices-demo, 2026-11-16: failing Python services
+// logged as 200). A non-zero status maps to its HTTP equivalent
+// (grpc-gateway's table); ok is false for a success or a non-gRPC response.
+func grpcObservedStatus(h http.Header) (int, bool) {
+	if !isGRPCContentType(h.Get("Content-Type")) {
+		return 0, false
+	}
+	value := h.Get(http.TrailerPrefix + "Grpc-Status")
+	if value == "" {
+		value = h.Get("Grpc-Status") // Trailers-Only, or a declared trailer
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || code == 0 {
+		return 0, false
+	}
+	return httpStatusForGRPC(code), true
+}
+
+func httpStatusForGRPC(code int) int {
+	switch code {
+	case 1: // CANCELLED
+		return statusClientClosedRequest
+	case 3, 9, 11: // INVALID_ARGUMENT, FAILED_PRECONDITION, OUT_OF_RANGE
+		return http.StatusBadRequest
+	case 4: // DEADLINE_EXCEEDED
+		return http.StatusGatewayTimeout
+	case 5: // NOT_FOUND
+		return http.StatusNotFound
+	case 6, 10: // ALREADY_EXISTS, ABORTED
+		return http.StatusConflict
+	case 7: // PERMISSION_DENIED
+		return http.StatusForbidden
+	case 8: // RESOURCE_EXHAUSTED
+		return http.StatusTooManyRequests
+	case 12: // UNIMPLEMENTED
+		return http.StatusNotImplemented
+	case 14: // UNAVAILABLE
+		return http.StatusServiceUnavailable
+	case 16: // UNAUTHENTICATED
+		return http.StatusUnauthorized
+	default: // UNKNOWN, INTERNAL, DATA_LOSS and anything unrecognised
+		return http.StatusInternalServerError
+	}
+}

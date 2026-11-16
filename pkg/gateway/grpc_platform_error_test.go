@@ -118,6 +118,35 @@ func TestGRPCWrapperKeepsInnerStatusForTelemetry(t *testing.T) {
 	}
 }
 
+// A failed RPC is HTTP 200 on the wire; telemetry, metrics and health must
+// record it as the failure its grpc-status says.
+func TestObservedStatusCountsFailedGRPCCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header map[string]string
+		want   int
+	}{
+		{"unavailable trailer", map[string]string{"Content-Type": "application/grpc", http.TrailerPrefix + "Grpc-Status": "14"}, http.StatusServiceUnavailable},
+		{"trailers-only internal", map[string]string{"Content-Type": "application/grpc+proto", "Grpc-Status": "13"}, http.StatusInternalServerError},
+		{"not found", map[string]string{"Content-Type": "application/grpc", http.TrailerPrefix + "Grpc-Status": "5"}, http.StatusNotFound},
+		{"ok", map[string]string{"Content-Type": "application/grpc", http.TrailerPrefix + "Grpc-Status": "0"}, http.StatusOK},
+		{"plain http 200", map[string]string{"Content-Type": "text/plain", "Grpc-Status": "14"}, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/svc/M", nil)
+			rec := &statusRecorder{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK, request: req}
+			req = req.WithContext(withResponseRecorder(req.Context(), rec))
+			rec.WriteHeader(http.StatusOK)
+			for k, v := range tc.header {
+				rec.Header()[k] = []string{v}
+			}
+			if got := observedStatus(req, http.StatusOK); got != tc.want {
+				t.Fatalf("observedStatus = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGRPCPercentEncode(t *testing.T) {
 	if got := grpcPercentEncode("a%b\nc é"); got != "a%25b%0Ac %C3%A9" {
 		t.Fatalf("grpcPercentEncode = %q", got)
