@@ -9903,6 +9903,14 @@ type ManagedRealtimeWorkerHeartbeat struct {
 	Lost         bool
 }
 
+type ManagedValkeyCach struct {
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	MemoryMb       int32
+	EvictionPolicy string
+	CreatedAt      pgtype.Timestamptz
+}
+
 type McpBridgeLease struct {
 	Bridge    string
 	Holder    string
