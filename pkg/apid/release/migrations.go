@@ -79,6 +79,38 @@ func CrossingProblem(target state.Deployment, runs []state.ReleaseRun, databases
 	return api.ErrRollbackCrossesRelease(deploymentRef(target), crossed, restore)
 }
 
+// SwitchRuns is what a rollback that restores the database undoes: the runs
+// it crosses (ADR-1448) and the release command of the deployment that
+// replaced target. That command ran while target served, so ADR-1448 does
+// not count it, but a rollback to the previous release is how a customer
+// undoes a bad migration (ADR-20261023181931 amendment, 2026-11-16). A
+// release a completed switch already undid stays out, as in RollbackGuard.
+func SwitchRuns(ctx context.Context, store any, appID string, target state.Deployment, crossed []state.ReleaseRun) ([]state.ReleaseRun, error) {
+	finder, ok := store.(state.ReleaseRunReplacingStore)
+	if !ok {
+		return crossed, nil
+	}
+	replacing, found, err := finder.ReleaseRunReplacing(ctx, appID, target.ID)
+	if err != nil {
+		return nil, fmt.Errorf("find the release that replaced the rollback target: %w", err)
+	}
+	if !found || slices.ContainsFunc(crossed, func(r state.ReleaseRun) bool { return r.DeploymentID == replacing.DeploymentID }) {
+		return crossed, nil
+	}
+	if switches, ok := store.(state.DatabaseSwitchStore); ok {
+		undone, err := switches.ReleasesUndoneByDatabaseSwitches(ctx, appID, target.Scope)
+		if err != nil {
+			return nil, fmt.Errorf("list releases undone by database switches: %w", err)
+		}
+		if slices.Contains(undone, replacing.DeploymentID) {
+			return crossed, nil
+		}
+	}
+	// It started no later than target stopped serving, so before every
+	// crossed run: the runs stay oldest first.
+	return append([]state.ReleaseRun{replacing}, crossed...), nil
+}
+
 // SwitchRestore is where a rollback that restores the database restores it
 // to (ADR-20261023181931): the start of the earliest crossed release,
 // truncated to the second, under ADR-1448's suggested copy name.

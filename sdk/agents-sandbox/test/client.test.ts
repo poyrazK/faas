@@ -34,6 +34,7 @@ class FakeGregale {
   ports: Record<string, unknown>[] = [];
   deleted = 0;
   background = new Map<string, { out: string; polls: number; finishAfter: number }>();
+  browserUp = false;
 
   fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = new URL(String(input));
@@ -87,6 +88,9 @@ class FakeGregale {
           const long = script.includes('server');
           this.background.set(handle, { out: long ? 'listening\n' : `ran ${script}\n`, polls: 0, finishAfter: long ? 4 : 0 });
           return json(202, { handle, exit_code: 0, wall_time_ms: 0 });
+        }
+        if (script === 'gregale-browser --wait 1') {
+          return json(200, { stdout: '', stderr: '', exit_code: this.browserUp ? 0 : 1, wall_time_s: 1 });
         }
         if (script.startsWith('tar ')) {
           const name = /-cf \/workspace\/(\S+)/.exec(script)![1]!;
@@ -266,6 +270,23 @@ test('ports carry their token outside the session state', async () => {
   assert.equal(session.state.exposedPorts, undefined);
   const serialized = JSON.stringify(await client.serializeSessionState(session.state));
   assert.ok(!serialized.includes('secret') && !serialized.includes('sbx-'));
+});
+
+test('the browser starts once and is reached over a private CDP port', async () => {
+  const { fake, client } = setup();
+  const session = await client.create();
+  const browser = await session.startBrowser();
+  const scripts = fake.commands.map((c) => `${c.cmd[2]}${(c as { background?: boolean }).background ? ' &' : ''}`);
+  assert.deepEqual(scripts, ['gregale-browser --wait 1', 'gregale-browser &', 'gregale-browser --wait 30']);
+  assert.deepEqual(fake.ports, [{ port: 9222, visibility: 'private' }]);
+  assert.equal(browser.cdpUrl, `https://9222-${ID}.preview.test`);
+  assert.deepEqual(browser.headers, { Authorization: 'Bearer sbxp1.secret' });
+  assert.equal(JSON.stringify(session.state).includes('secret'), false);
+
+  fake.browserUp = true;
+  fake.commands.length = 0;
+  await session.startBrowser();
+  assert.deepEqual(fake.commands.map((c) => c.cmd[2]), ['gregale-browser --wait 1'], 'a running browser is not started again');
 });
 
 test('state serializes to its identity and resumes only on this API', async () => {

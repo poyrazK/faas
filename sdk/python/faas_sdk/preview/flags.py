@@ -19,6 +19,7 @@ import time
 from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -29,7 +30,13 @@ GREGALE_FLAG_CONTEXT_HEADER = "X-Faas-Platform-Tenant-Id"
 GREGALE_FLAG_PROPAGATION_HEADER = "X-Faas-Flag-Context"
 GREGALE_CLIENT_COUNTRY_HEADER = "X-Faas-Client-Country"
 GREGALE_CLIENT_UA_FAMILY_HEADER = "X-Faas-Client-Ua-Family"
-_FLAG_CAPABILITIES = "subject-targeting-v1, attribute-targeting-v1, kill-v1"
+_FLAG_CAPABILITIES = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1"
+# Conversion events for experiments (ADR 20261115163113).
+_EVENT_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+_EVENT_BATCH = 100
+_EVENT_QUEUE_MAX = 1000
+_EVENT_FLUSH_S = 5.0
+_EVENT_MAX_ABS_VALUE = 1_000_000_000_000
 GREGALE_FLAG_KILLS_HEADER = "X-Faas-Flag-Kills"
 _APP_ATTRIBUTE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _ATTRIBUTE_NAME = re.compile(r"^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$")
@@ -717,6 +724,11 @@ class GregaleFlags:
         query.append(("audience", "gregale:flags"))
         self._identity_url = urlunsplit((identity.scheme, identity.netloc, identity.path, urlencode(query), ""))
         self._api_url = urljoin(api_url.rstrip("/") + "/", "/v1/runtime/flags")
+        self._events_url = urljoin(api_url.rstrip("/") + "/", "/v1/runtime/flags/events")
+        self._events: list[dict[str, Any]] = []
+        self._events_dropped = 0
+        self._flush_lock = asyncio.Lock()
+        self._flush_task: asyncio.Task[None] | None = None
         self._refresh_ms = refresh_ms
         self._max_stale_ms = max_stale_ms
         self._timeout_ms = timeout_ms
@@ -746,17 +758,24 @@ class GregaleFlags:
             pass
         if self._refresh_task is None or self._refresh_task.done():
             self._refresh_task = asyncio.create_task(self._refresh_loop())
+        if self._flush_task is None or self._flush_task.done():
+            self._flush_task = asyncio.create_task(self._flush_loop())
 
     async def close(self) -> None:
-        """Stop background refresh and close an internally owned HTTP client."""
-        task = self._refresh_task
+        """Send queued events, stop background work and close an internally owned HTTP client."""
+        try:
+            await self.flush()
+        except Exception:
+            pass
+        for task in (self._refresh_task, self._flush_task):
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         self._refresh_task = None
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        self._flush_task = None
         if self._owns_client and self._client is not None:
             await self._client.aclose()
             self._client = None
@@ -811,13 +830,85 @@ class GregaleFlags:
                     raise ValueError("Flags response too large")
         return json.loads(content)
 
-    async def _load(self) -> None:
+    async def _identity_token(self) -> str:
         identity = await self._get_json(self._identity_url, _MAX_IDENTITY_BYTES)
         if not isinstance(identity, Mapping):
             raise ValueError("Invalid workload identity")
         token = identity.get("access_token")
         if not isinstance(token, str) or not token or len(token) > 8192:
             raise ValueError("Invalid workload identity")
+        return token
+
+    def track(self, name: str, value: int = 0) -> bool:
+        """Record a conversion event for this request's verified customer (experiments).
+
+        Call inside run_request. Returns False, and counts the event in
+        dropped_events(), when the request has no verified customer, the name or
+        value is invalid, or the local queue is full. Events are sent in batches
+        every 5 s; close() or flush() sends the rest.
+        """
+        request = self._request.get()
+        if (
+            request is None
+            or not request.customer
+            or not isinstance(name, str)
+            or not _EVENT_NAME.match(name)
+            or not _is_int(value)
+            or abs(value) > _EVENT_MAX_ABS_VALUE
+            or len(self._events) >= _EVENT_QUEUE_MAX
+        ):
+            self._events_dropped += 1
+            return False
+        at = datetime.fromtimestamp(self._now() / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        event: dict[str, Any] = {"name": name, "customer_id": request.customer, "at": at}
+        if value:
+            event["value"] = value
+        self._events.append(event)
+        return True
+
+    def dropped_events(self) -> int:
+        """Events dropped locally or refused by the API since this client started."""
+        return self._events_dropped
+
+    async def flush(self) -> None:
+        """Send queued events now. A failed batch is dropped and counted, never retried."""
+        async with self._flush_lock:
+            while self._events:
+                batch = self._events[:_EVENT_BATCH]
+                del self._events[:_EVENT_BATCH]
+                try:
+                    token = await self._identity_token()
+                    response = await self._http_client().post(
+                        self._events_url,
+                        json={"events": batch},
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "X-Faas-Flags-Capabilities": _FLAG_CAPABILITIES,
+                        },
+                        timeout=self._timeout_ms / 1000,
+                        follow_redirects=False,
+                    )
+                    if not response.is_success:
+                        self._events_dropped += len(batch)
+                        continue
+                    accepted = response.json().get("accepted")
+                    if _is_int(accepted) and accepted < len(batch):
+                        self._events_dropped += len(batch) - accepted
+                except Exception:
+                    self._events_dropped += len(batch)
+
+    async def _flush_loop(self) -> None:
+        while True:
+            await asyncio.sleep(_EVENT_FLUSH_S)
+            try:
+                await self.flush()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                continue
+
+    async def _load(self) -> None:
+        token = await self._identity_token()
         raw_bundle = await self._get_json(
             self._api_url,
             _MAX_BUNDLE_BYTES + 1024,

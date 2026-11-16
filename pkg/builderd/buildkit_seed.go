@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // BuildKitSeedEnv turns on the per-node BuildKit seed (ADR-20261030122204):
@@ -209,6 +212,23 @@ func (s *buildkitSeedStore) pruneLocked(keep string) {
 		}
 		_ = os.Remove(filepath.Join(s.dir, name))
 	}
+}
+
+// buildKitSeedHasRoom reports whether the drive filesystem can take a seed:
+// the build-drive floor plus api.BuildKitSeedReserveBytes. Like a build drive,
+// a seed run first asks the node's artifact cache for that room
+// (ADR-20261030122204): the cache keeps the disk nearly full, and its oldest
+// artifacts can be fetched again, while a missing seed costs every Railpack
+// build its builder image step. Reclaiming is best effort; the free space
+// decides.
+func buildKitSeedHasRoom(ctx context.Context, dir string, reclaim BuildDriveSpaceReclaimer, available func(string) (uint64, error)) (bool, error) {
+	need := uint64(BuildDriveMinFreeBytes) + uint64(api.BuildKitSeedReserveBytes)
+	_ = reclaimDriveSpaceTo(ctx, dir, need, reclaim, available)
+	free, err := available(dir)
+	if err != nil {
+		return false, err
+	}
+	return free >= need, nil
 }
 
 // removeBuildKitSeeds drops the seeds kept beside driveDir.

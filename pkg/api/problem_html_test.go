@@ -4,9 +4,27 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestAuthRateLimitBrowserHintShowsRetryWindow(t *testing.T) {
+	for _, seconds := range []int{-1, 0, 45, 3600} {
+		t.Run(strconv.Itoa(seconds), func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "https://gregale.dev/cli-auth", nil)
+			request.Header.Set("Accept", "text/html")
+			response := httptest.NewRecorder()
+			WriteProblemForRequest(response, request, ErrAuthRateLimited(seconds))
+			if seconds <= 0 {
+				seconds = 60
+			}
+			if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != strconv.Itoa(seconds) || !strings.Contains(response.Body.String(), "Try again in "+strconv.Itoa(seconds)+" seconds") {
+				t.Fatal("browser rate-limit page must explain the same retry window as its header")
+			}
+		})
+	}
+}
 
 type problemHTMLResponseRecorder struct {
 	*httptest.ResponseRecorder

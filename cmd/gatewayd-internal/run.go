@@ -2723,6 +2723,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		log.Warn("gatewayd-internal: log archive config parse failed; archive read-back disabled", "err", archiveCfgErr)
 	case !archiveCfg.Enabled():
 		log.Info("gatewayd-internal: log archive disabled (FAAS_LOG_ARCHIVE_BUCKET unset); archive read-back will return 503")
+	case archiveCfg.WriteOnly:
+		// ADR-20261110210000 slice 3l: this node's archive credentials
+		// only create objects. Archive read-back belongs to the control
+		// plane's gateways (the API host); here it answers 503.
+		log.Info("gatewayd-internal: log archive credentials are write-only on this node; archive read-back is served by the control plane")
 	default:
 		s3c, s3Err := logarchive.NewS3Client(
 			archiveCfg.Endpoint, archiveCfg.Region, archiveCfg.Bucket,
@@ -4771,7 +4776,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if upstreams == nil {
 				upstreams = serviceDiscoveryUpstreams
 			}
-			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort} {
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort, gateway.SandboxWebDNSPort} {
 				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 				if dnsErr != nil {
 					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
@@ -4783,6 +4788,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// resolve package registries and git hosts only.
 				if dnsPort == gateway.SandboxRegistriesDNSPort {
 					dnsHandler.WithAllowedNamesOnly(api.SandboxRegistryHost)
+				}
+				// ADR-20261112121456 §2: web-mode sandbox sessions resolve
+				// public names only, never Gregale's internal ones.
+				if dnsPort == gateway.SandboxWebDNSPort {
+					dnsHandler.WithAllowedNamesOnly(api.SandboxWebHost)
 				}
 				if chaosMatchRecorder != nil {
 					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)

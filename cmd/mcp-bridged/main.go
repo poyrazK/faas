@@ -56,15 +56,16 @@ func (r *redirectList) Set(value string) error {
 }
 
 type flags struct {
-	allowPrivateToolInvocation, allowToolInvocation, allowToolPublishing               *bool
-	listen, apiBase, resourceURL, stateBridge, stateKeyFile, cliPath, uploadDir, tools *string
-	metricsListen, adminSocket                                                         *string
-	timeout                                                                            *time.Duration
-	redirects                                                                          redirectList
+	allowPrivateToolInvocation, allowToolInvocation, allowToolPublishing, allowTaskInspection *bool
+	listen, apiBase, resourceURL, stateBridge, stateKeyFile, cliPath, uploadDir, tools        *string
+	metricsListen, adminSocket                                                                *string
+	timeout                                                                                   *time.Duration
+	redirects                                                                                 redirectList
 }
 
 func registerFlags(fs *flag.FlagSet) *flags {
 	f := &flags{
+		allowTaskInspection:        fs.Bool("allow-task-inspection", false, "enable read-only Task recovery inspection by its original account agent key; no execution or cross-key delegation"),
 		allowToolPublishing:        fs.Bool("allow-tool-publishing", false, "enable reviewed hosted Node tool publication with deployment authority and separate consent"),
 		allowPrivateToolInvocation: fs.Bool("allow-private-tool-invocation", false, "enable owner-bound private tools with separate consent; also requires --allow-tool-invocation"),
 		allowToolInvocation:        fs.Bool("allow-tool-invocation", false, "enable exact-grant open-tool invocation with independent connection consent"),
@@ -85,16 +86,16 @@ func registerFlags(fs *flag.FlagSet) *flags {
 }
 
 type config struct {
-	allowPrivateToolInvocation, allowToolInvocation, allowToolPublishing        bool
-	listen, apiBase, resourceURL, stateBridge, stateKeyFile, cliPath, uploadDir string
-	metricsListen, adminSocket                                                  string
-	toolsets                                                                    []string
-	timeout                                                                     time.Duration
-	redirects                                                                   []string
+	allowPrivateToolInvocation, allowToolInvocation, allowToolPublishing, allowTaskInspection bool
+	listen, apiBase, resourceURL, stateBridge, stateKeyFile, cliPath, uploadDir               string
+	metricsListen, adminSocket                                                                string
+	toolsets                                                                                  []string
+	timeout                                                                                   time.Duration
+	redirects                                                                                 []string
 }
 
 func (f *flags) config() (config, error) {
-	cfg := config{allowPrivateToolInvocation: *f.allowPrivateToolInvocation, allowToolPublishing: *f.allowToolPublishing, allowToolInvocation: *f.allowToolInvocation, listen: *f.listen, apiBase: strings.TrimRight(*f.apiBase, "/"), resourceURL: *f.resourceURL, stateBridge: *f.stateBridge, stateKeyFile: *f.stateKeyFile, cliPath: *f.cliPath, uploadDir: *f.uploadDir, metricsListen: *f.metricsListen, adminSocket: *f.adminSocket, timeout: *f.timeout, redirects: append([]string(nil), f.redirects...)}
+	cfg := config{allowTaskInspection: *f.allowTaskInspection, allowPrivateToolInvocation: *f.allowPrivateToolInvocation, allowToolPublishing: *f.allowToolPublishing, allowToolInvocation: *f.allowToolInvocation, listen: *f.listen, apiBase: strings.TrimRight(*f.apiBase, "/"), resourceURL: *f.resourceURL, stateBridge: *f.stateBridge, stateKeyFile: *f.stateKeyFile, cliPath: *f.cliPath, uploadDir: *f.uploadDir, metricsListen: *f.metricsListen, adminSocket: *f.adminSocket, timeout: *f.timeout, redirects: append([]string(nil), f.redirects...)}
 	if cfg.resourceURL == "" {
 		// The platform's API host, resolved as every daemon does
 		// (FAAS_PLATFORM_DOMAIN, else FAAS_APPS_DOMAIN).
@@ -158,7 +159,7 @@ func serve(ctx context.Context, log *slog.Logger, cfg config) error {
 	telemetry := mcpmanagement.NewTelemetry()
 	service, err := mcpmanagement.NewHTTPService(mcpmanagement.HTTPOptions{
 		Lifecycle: lifecycle, Telemetry: telemetry, AuditLogger: log, Onboarding: "browser", APIBase: cfg.apiBase, ResourceURL: cfg.resourceURL,
-		RedirectURIs: cfg.redirects, Version: wire.Version, Timeout: cfg.timeout, AllowToolInvocation: cfg.allowToolInvocation, AllowPrivateToolInvocation: cfg.allowPrivateToolInvocation, AllowToolPublishing: cfg.allowToolPublishing, AllowWrites: true, Toolsets: cfg.toolsets,
+		RedirectURIs: cfg.redirects, Version: wire.Version, Timeout: cfg.timeout, AllowToolInvocation: cfg.allowToolInvocation, AllowPrivateToolInvocation: cfg.allowPrivateToolInvocation, AllowToolPublishing: cfg.allowToolPublishing, AllowTaskInspection: cfg.allowTaskInspection, AllowWrites: true, Toolsets: cfg.toolsets,
 		StateStore: store, Hosted: true, AgentKeys: true, AgentKeyToolsetSelection: true, ClientMetadataDocuments: true, UploadDir: cfg.uploadDir, CLIRunner: mcpmanagement.HostedCLIRunner(cfg.cliPath, cfg.apiBase, cfg.uploadDir),
 	})
 	if err != nil {

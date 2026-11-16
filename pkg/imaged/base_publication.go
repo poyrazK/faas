@@ -82,6 +82,26 @@ func GatedRuntimeBases() []string {
 	return out
 }
 
+// cachedBaseGeneration reads the cache marker of baseKey as a vmmd
+// configured for generation reads it. A routed vmmd keeps the generation in
+// its own cache file (ADR-20261116190000), which can only name generation;
+// a caller that has not routed be (vmmd's checks) reads that file first and
+// the file under the logical name otherwise.
+func cachedBaseGeneration(be storage.StorageBackend, cache *storage.LocalCacheBackend, rel, baseKey, generation string) (string, bool, error) {
+	if _, routed := cache.GenerationRoute(rel); !routed && !cache.RoutesLocally(rel) {
+		genCache, genRel, err := storage.CacheBackendForKey(be, storagekey.BaseGeneration(baseKey, generation))
+		if err != nil {
+			return "", false, err
+		}
+		if genCache != nil {
+			if cached, ok, err := genCache.CachedGeneration(genRel); err != nil || (ok && cached == generation) {
+				return cached, ok, err
+			}
+		}
+	}
+	return cache.CachedGeneration(rel)
+}
+
 // JudgeBaseAdoption reads baseKey's cache marker on this node and its shared
 // publications: the generation's own keys first, then the legacy logical key,
 // in the order vmmd's ensureBaseGeneration adopts them. Shared copies are
@@ -97,7 +117,7 @@ func JudgeBaseAdoption(ctx context.Context, be storage.StorageBackend, baseKey, 
 		return adoption, fmt.Errorf("imaged: judge base %q: %w", baseKey, err)
 	}
 	if cache != nil {
-		cached, ok, err := cache.CachedGeneration(rel)
+		cached, ok, err := cachedBaseGeneration(be, cache, rel, baseKey, generation)
 		if err != nil {
 			return adoption, fmt.Errorf("imaged: judge base %q: read cache generation: %w", baseKey, err)
 		}

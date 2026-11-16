@@ -1377,6 +1377,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("vmmd: DNS-gated egress disabled by FAAS_EGRESS_DNS_GATING=off")
 		mgr.WithDNSGatedEgress(false)
 	}
+	// ADR-20261112121456 §3: web-mode sandbox sessions need the tenant egress
+	// gateway; a development or test fleet may let them use the node's own
+	// address instead.
+	if strings.TrimSpace(os.Getenv("FAAS_SANDBOX_WEB_NODE_EGRESS")) == "1" {
+		log.Warn("vmmd: web-mode sandbox sessions may leave from this node's own address (FAAS_SANDBOX_WEB_NODE_EGRESS=1)")
+		mgr.WithSandboxWebNodeEgress(true)
+	}
 	// ADR-477: journal survivors remain quarantined. The legacy name reaper
 	// is only available to portable wiring without a journal.
 	preparedCleanupCtx, preparedCleanupCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -1575,6 +1582,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("vmmd: %w", err)
 	}
 	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
+	// ADR-20261116190000: this vmmd is the only one on the node now, so the
+	// base generations it does not boot need no eviction pin. The cache
+	// reclaims them under pressure; running guests keep their own links.
+	if unpinned, err := imaged.UnpinOtherBaseGenerations(storageBackend, baseGenerations, routedBases); err != nil {
+		log.Warn("vmmd: unpin other runtime base generations", "err", err)
+	} else if unpinned > 0 {
+		log.Info("vmmd: unpinned runtime base generations this release does not boot", "entries", unpinned)
+	}
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
 	// first restore after this start does not hash a base in its wake path,
@@ -1932,7 +1947,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// closed instead of failing VM hosting; plaintext TCP is never used.
 	relayDial, relayTargetErr := outboundRelayTarget(os.Getenv)
 	if relayTargetErr != nil {
-		log.Error("vmmd: outbound relay disabled", "err", relayTargetErr)
+		log.Log(ctx, outboundRelayDisabledLevel(relayTargetErr), "vmmd: outbound relay disabled", "err", relayTargetErr)
 		relayDial = nil
 	}
 	relayRecv, relayRecvErr := StartOutboundRelayReceiver(ctx, log, mgr, identitySigner, relayDial, jailer)

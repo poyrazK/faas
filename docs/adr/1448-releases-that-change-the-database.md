@@ -20,7 +20,7 @@ Rollbacks have three entry points: `POST /v1/apps/{slug}/rollback` (CLI and API;
 
 A deployment's `serving_ended_at` is when it last stopped serving traffic. It is cleared while the deployment serves again. A rollback to target T crosses every release task of another deployment in T's scope that started after T last served: after `serving_ended_at`, or after T was created if T never served. Any started task counts, including failed ones, because a failed migration may still have committed changes. T's code has never run against what those tasks did.
 
-The release that replaced T started while T was serving, so the usual rollback (to the previous release, by the first-wake 5xx worker or `gregale rollback`) crosses nothing.
+The release that replaced T started while T was serving, so the usual rollback (to the previous release, by the first-wake 5xx worker or `gregale rollback`) crosses nothing. A rollback that restores the database still undoes that release's command (ADR-20261023181931 amendment 4).
 
 ### The guard
 

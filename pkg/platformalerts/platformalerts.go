@@ -56,7 +56,9 @@ const (
 // (5xx over 2xx and 5xx; client 3xx/4xx are not evidence of an outage).
 var (
 	outageErrorRateQuery = fmt.Sprintf(
-		`sum by (app) (rate(gateway_request_duration_seconds_count{class="5xx"}[%[1]s])) / sum by (app) (rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%[1]s])) * 100`,
+		// "> 0" drops an idle app instead of answering 0/0 = NaN for it
+		// (prod rc.347: one idle app failed every detection pass).
+		`sum by (app) (rate(gateway_request_duration_seconds_count{class="5xx"}[%[1]s])) / (sum by (app) (rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%[1]s])) > 0) * 100`,
 		api.AppOutageWindow)
 	outageRequestsQuery = fmt.Sprintf(
 		`sum by (app) (increase(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%s]))`, api.AppOutageWindow)

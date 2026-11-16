@@ -2919,7 +2919,8 @@ var LinkedDefaultAppName = linkedDefaultAppName
 // gregale dev findings (2026-11-15).
 var DevSourceFingerprint = devSourceFingerprint
 var DevLocalEnvExcludes = devLocalEnvExcludes
-var PackedCredentialFiles = packedCredentialFiles
+var DeployCredentialExcludes = deployCredentialExcludes
+var WithoutExcludedFindings = withoutExcludedFindings
 var ShouldExcludeWithRules = func(srcDir, rel string, isDir, dockerfile bool) bool {
 	return loadPackRules(srcDir, dockerfile).exclude(rel, isDir)
 }
@@ -2964,3 +2965,8 @@ func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretCl
 }
 
 var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal
+
+// UncommittedProjectFile exposes the HEAD-deploy project-file check.
+func UncommittedProjectFile(porcelain, repoRoot, sourceDir string) (string, bool) {
+	return uncommittedProjectFile(porcelain, repoRoot, sourceDir)
+}

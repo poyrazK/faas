@@ -17,6 +17,7 @@ type cliFlagDiagnostic struct {
 	AllowedValues     []string          `json:"allowed_values,omitempty"`
 	Placement         string            `json:"placement,omitempty"`
 	HelpArgv          []string          `json:"help_argv"`
+	Arguments         *cliArgumentCount `json:"arguments,omitempty"`
 	Location          *cliInputLocation `json:"location,omitempty"`
 }
 

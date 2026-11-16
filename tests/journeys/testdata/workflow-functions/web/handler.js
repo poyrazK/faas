@@ -14,6 +14,12 @@ export default {
       return relay(await fetch(api() + "/" + id + "/events", { method: "POST", headers: json,
         body: JSON.stringify({ event: "approved", payload: { ok: true } }) }));
     }
-    return relay(await fetch(api() + "/" + id + "?wait=20"));
+    if (url.pathname === "/wait") {
+      return relay(await fetch(api() + "/" + id + "?wait=20"));
+    }
+    // Health and the deploy's smoke probe: every other path answers 200.
+    // The long-poll fallthrough threw on a missing run id and the smoke
+    // failed the deploy with HTTP 500 (2026-11-16 journeys).
+    return Response.json({ ok: true });
   },
 };

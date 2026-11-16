@@ -470,6 +470,8 @@ type ObsNodeDetailResponse struct {
 }
 
 type ObsNodeDrainStatus struct {
+	// TotalInstances counts the instances listed beside it. On the node
+	// detail that is the VMs resident on the node (state.ResidentStates).
 	TotalInstances   int       `json:"total_instances"`
 	LiveInstances    int       `json:"live_instances"`
 	RunningInstances int       `json:"running_instances"`

@@ -5,18 +5,60 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
 
 	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
+	"github.com/onebox-faas/faas/pkg/outbound"
 )
 
 type fakeTokenRPC struct {
-	calls int
-	err   error
-	now   *time.Time
+	calls    int
+	err      error
+	now      *time.Time
+	workflow *secretdpb.MintWorkflowIdentityRequest
+}
+
+func (f *fakeTokenRPC) MintWorkflowIdentity(_ context.Context, in *secretdpb.MintWorkflowIdentityRequest, _ ...grpc.CallOption) (*secretdpb.MintWorkflowIdentityResponse, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.workflow = in
+	return &secretdpb.MintWorkflowIdentityResponse{Token: "wf-" + in.GetRunId()}, nil
+}
+
+// Slice 3k-2: a workflow identity is minted by secretd per attempt, with the
+// body's hash and never the body.
+func TestRemoteInternalSvcMinterWorkflow(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	rpc := &fakeTokenRPC{now: &now}
+	m := newRemoteInternalSvcMinter(rpc)
+	identity := outbound.WorkflowIdentity{AccountID: "acct", AppID: "app", RunID: "run-1", StepName: "s", Attempt: 2, AttemptToken: "at"}
+	request := outbound.WorkflowOutboundRequest{IntegrationID: "int", Method: "POST", Path: "/v1/x", PathTemplate: "/v1/x", QueryTemplate: map[string]string{"q": "v"}}
+	body := []byte(`{"secret":"never leaves"}`)
+	for range 2 {
+		if tok, err := m.MintWorkflow(identity, request, body); err != nil || tok != "wf-run-1" {
+			t.Fatalf("mint = %q, %v", tok, err)
+		}
+	}
+	if rpc.calls != 2 {
+		t.Fatalf("secretd calls = %d, want one per attempt", rpc.calls)
+	}
+	got := rpc.workflow
+	if got.GetBodySha256() != outbound.WorkflowBodySHA256(body) || got.GetAppId() != "app" || got.GetAttempt() != 2 || got.GetQueryTemplate()["q"] != "v" {
+		t.Fatalf("request = %+v", got)
+	}
+	if strings.Contains(got.String(), "never leaves") {
+		t.Fatal("the body reached secretd")
+	}
+	rpc.err = errors.New("permission denied")
+	if _, err := m.MintWorkflow(identity, request, body); err == nil {
+		t.Fatal("a refused mint returned a token")
+	}
 }
 
 func (f *fakeTokenRPC) MintInternalServiceToken(_ context.Context, in *secretdpb.MintInternalServiceTokenRequest, _ ...grpc.CallOption) (*secretdpb.MintInternalServiceTokenResponse, error) {

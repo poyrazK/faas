@@ -380,6 +380,11 @@ if [[ -n "$ACCEPTANCE_NODE" ]]; then
 	# (a valid slug is at most 40 characters).
 	node_tag="$(printf '%s' "${ACCEPTANCE_NODE%%.*}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | cut -c1-10)"
 	node_report="$workdir/node.json"
+	# The node activated before this step started. Placement prefers the node
+	# with the most headroom, which after the previous node's drain is rarely
+	# this one (rc.347: fsn-3 built a canary app and placed none of six), so
+	# an instance the node itself started since now also proves it serves.
+	canary_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	canary_deadline=$((SECONDS + 20 * 60))
 	i=0
 	while ((i < NODE_CANARY_MAX_DEPLOYMENTS && SECONDS < canary_deadline)); do
@@ -415,7 +420,7 @@ if [[ -n "$ACCEPTANCE_NODE" ]]; then
 		done
 		node_exit=0
 		"$GREGALECTL_BIN" release-acceptance verify-node --node "$ACCEPTANCE_NODE" \
-			--slugs "$(IFS=,; echo "${slugs[*]}")" >"$node_report" || node_exit=$?
+			--slugs "$(IFS=,; echo "${slugs[*]}")" --since "$canary_since" >"$node_report" || node_exit=$?
 		if (( node_exit == 0 )); then
 			printf 'node canary passed: release=%s node=%s deployments=%s\n' \
 				"$RELEASE_SHA" "$ACCEPTANCE_NODE" "${#slugs[@]}"
