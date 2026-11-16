@@ -1932,7 +1932,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// closed instead of failing VM hosting; plaintext TCP is never used.
 	relayDial, relayTargetErr := outboundRelayTarget(os.Getenv)
 	if relayTargetErr != nil {
-		log.Error("vmmd: outbound relay disabled", "err", relayTargetErr)
+		log.Log(ctx, outboundRelayDisabledLevel(relayTargetErr), "vmmd: outbound relay disabled", "err", relayTargetErr)
 		relayDial = nil
 	}
 	relayRecv, relayRecvErr := StartOutboundRelayReceiver(ctx, log, mgr, identitySigner, relayDial, jailer)
