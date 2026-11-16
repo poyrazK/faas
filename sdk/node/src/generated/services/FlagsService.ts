@@ -533,7 +533,7 @@ export class FlagsService {
   }
   /**
    * List an environment's flag experiments.
-   * Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers that later send a conversion event (ADR 20261115163113).
+   * Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers that later send a conversion event.
    * @returns FlagExperimentList The environment's experiments, newest first.
    * @throws ApiError
    */
@@ -834,7 +834,7 @@ export class FlagsService {
   }
   /**
    * Report conversion events for flag experiments.
-   * Requires the same workload identity as getRuntimeFlags (ADR 20261115163113). Account, app and environment come from the token. Each event names the verified customer of the request it belongs to; events for customers that are not active platform tenants of the account are dropped. Accepted events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never billed.
+   * Requires the same workload identity as getRuntimeFlags. Account, app and environment come from the token. Each event names the verified customer of the request it belongs to; events for customers that are not active platform tenants of the account are dropped. Accepted events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never billed.
    * @returns FlagEventsResponse What happened to each event of the batch, and the month's usage.
    * @throws ApiError
    */

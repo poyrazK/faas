@@ -86,11 +86,11 @@ def sync_detailed(
 ) -> Response[FlagEventsResponse | Problem]:
     """Report conversion events for flag experiments.
 
-     Requires the same workload identity as getRuntimeFlags (ADR 20261115163113). Account, app and
-    environment come from the token. Each event names the verified customer of the request it belongs
-    to; events for customers that are not active platform tenants of the account are dropped. Accepted
-    events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are
-    dropped and counted, never billed.
+     Requires the same workload identity as getRuntimeFlags. Account, app and environment come from the
+    token. Each event names the verified customer of the request it belongs to; events for customers
+    that are not active platform tenants of the account are dropped. Accepted events count against the
+    plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never
+    billed.
 
     Args:
         x_faas_flags_capabilities (str | Unset):
@@ -124,11 +124,11 @@ def sync(
 ) -> FlagEventsResponse | Problem | None:
     """Report conversion events for flag experiments.
 
-     Requires the same workload identity as getRuntimeFlags (ADR 20261115163113). Account, app and
-    environment come from the token. Each event names the verified customer of the request it belongs
-    to; events for customers that are not active platform tenants of the account are dropped. Accepted
-    events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are
-    dropped and counted, never billed.
+     Requires the same workload identity as getRuntimeFlags. Account, app and environment come from the
+    token. Each event names the verified customer of the request it belongs to; events for customers
+    that are not active platform tenants of the account are dropped. Accepted events count against the
+    plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never
+    billed.
 
     Args:
         x_faas_flags_capabilities (str | Unset):
@@ -157,11 +157,11 @@ async def asyncio_detailed(
 ) -> Response[FlagEventsResponse | Problem]:
     """Report conversion events for flag experiments.
 
-     Requires the same workload identity as getRuntimeFlags (ADR 20261115163113). Account, app and
-    environment come from the token. Each event names the verified customer of the request it belongs
-    to; events for customers that are not active platform tenants of the account are dropped. Accepted
-    events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are
-    dropped and counted, never billed.
+     Requires the same workload identity as getRuntimeFlags. Account, app and environment come from the
+    token. Each event names the verified customer of the request it belongs to; events for customers
+    that are not active platform tenants of the account are dropped. Accepted events count against the
+    plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never
+    billed.
 
     Args:
         x_faas_flags_capabilities (str | Unset):
@@ -193,11 +193,11 @@ async def asyncio(
 ) -> FlagEventsResponse | Problem | None:
     """Report conversion events for flag experiments.
 
-     Requires the same workload identity as getRuntimeFlags (ADR 20261115163113). Account, app and
-    environment come from the token. Each event names the verified customer of the request it belongs
-    to; events for customers that are not active platform tenants of the account are dropped. Accepted
-    events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are
-    dropped and counted, never billed.
+     Requires the same workload identity as getRuntimeFlags. Account, app and environment come from the
+    token. Each event names the verified customer of the request it belongs to; events for customers
+    that are not active platform tenants of the account are dropped. Accepted events count against the
+    plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never
+    billed.
 
     Args:
         x_faas_flags_capabilities (str | Unset):

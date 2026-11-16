@@ -81,7 +81,7 @@ def sync_detailed(
     """List an environment's flag experiments.
 
      Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers
-    that later send a conversion event (ADR 20261115163113).
+    that later send a conversion event.
 
     Args:
         slug (str):
@@ -116,7 +116,7 @@ def sync(
     """List an environment's flag experiments.
 
      Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers
-    that later send a conversion event (ADR 20261115163113).
+    that later send a conversion event.
 
     Args:
         slug (str):
@@ -146,7 +146,7 @@ async def asyncio_detailed(
     """List an environment's flag experiments.
 
      Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers
-    that later send a conversion event (ADR 20261115163113).
+    that later send a conversion event.
 
     Args:
         slug (str):
@@ -179,7 +179,7 @@ async def asyncio(
     """List an environment's flag experiments.
 
      Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers
-    that later send a conversion event (ADR 20261115163113).
+    that later send a conversion event.
 
     Args:
         slug (str):
