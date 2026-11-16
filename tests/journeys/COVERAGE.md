@@ -192,3 +192,9 @@ input diagnostics: inline/file/stdin sources, human and JSON errors, CRLF
 locations, omitted payload values and zero API calls on malformed input.
 `TestJSONInputValidPayloadIsolatedAPI` verifies that the built CLI still sends
 valid input with large numbers and Unicode text intact.
+
+`TestExportDiffExplainIsolatedCLI` extends row 156: offline JSON Pointer field
+explanations, human and environment JSON, exact integer drift, whole-field
+subtree changes, empty explanations, opt-in/false behavior, CI exits, help,
+invalid-input privacy, unchanged files and zero API requests. A core-only pass
+does not qualify the built-CLI journey.

@@ -57,6 +57,10 @@ func canonicalExportDiffNumber(value string) string {
 }
 
 func readExportDiffValue(decoder *json.Decoder) (exportDiffValue, error) {
+	return readExportDiffValueMode(decoder, false)
+}
+
+func readExportDiffValueMode(decoder *json.Decoder, explain bool) (exportDiffValue, error) {
 	token, err := decoder.Token()
 	if err != nil {
 		return exportDiffValue{}, errors.New("invalid JSON value")
@@ -72,7 +76,7 @@ func readExportDiffValue(decoder *json.Decoder) (exportDiffValue, error) {
 		return exportDiffScalar('z', ""), nil
 	case json.Delim:
 		if value == '{' {
-			return readExportDiffObject(decoder)
+			return readExportDiffObjectMode(decoder, explain)
 		}
 		if value == '[' {
 			return readExportDiffArray(decoder)
@@ -81,7 +85,7 @@ func readExportDiffValue(decoder *json.Decoder) (exportDiffValue, error) {
 	return exportDiffValue{}, errors.New("invalid JSON value")
 }
 
-func readExportDiffObject(decoder *json.Decoder) (exportDiffValue, error) {
+func readExportDiffObjectMode(decoder *json.Decoder, explain bool) (exportDiffValue, error) {
 	members := make(map[string]exportDiffValue)
 	for decoder.More() {
 		token, err := decoder.Token()
@@ -92,11 +96,13 @@ func readExportDiffObject(decoder *json.Decoder) (exportDiffValue, error) {
 		if _, duplicate := members[name]; duplicate {
 			return exportDiffValue{}, errors.New("duplicate JSON object field")
 		}
-		child, err := readExportDiffValue(decoder)
+		child, err := readExportDiffValueMode(decoder, explain)
 		if err != nil {
 			return exportDiffValue{}, err
 		}
-		child.members = nil // Nested bodies are unnecessary once their digest exists.
+		if !explain {
+			child.members = nil // The default index needs only the record digest.
+		}
 		members[name] = child
 	}
 	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
