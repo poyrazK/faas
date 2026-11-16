@@ -977,7 +977,7 @@ func TestDeployZeroConfig_409SameAccount_GETProbeAndPATCH(t *testing.T) {
 
 	// --require-authn is the flag that triggers the PATCH on
 	// the existing-app branch (preserve #560 UX).
-	if code := cmdDeployTarball([]string{"--require-authn", "--name", "demo"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--require-authn", "--name", "demo", "--yes"}); code != 0 {
 		t.Fatalf("zero-config deploy 409-same-account exit = %d, want 0", code)
 	}
 	if stub.gotCalls["getapp"] == 0 {

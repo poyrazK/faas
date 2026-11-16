@@ -22,6 +22,10 @@ func (s *PgStore) BeginAppParkTransitionIfDeployment(ctx context.Context, appID 
 		return AppParkTransition{}, false, fmt.Errorf("state: begin app park transition: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	retirement, err := s.prepareTaskRetirementPark(ctx, tx, appID, deploymentID)
+	if err != nil {
+		return AppParkTransition{}, false, err
+	}
 
 	var current AppStatus
 	var transitionID, wakeTransitionID string
@@ -55,6 +59,9 @@ func (s *PgStore) BeginAppParkTransitionIfDeployment(ctx context.Context, appID 
 	}
 
 	transitionID = uuid.NewString()
+	if retirement != nil {
+		transitionID = retirement.Execution.Recovery.Retirement.ParkTransitionID
+	}
 	if wakeTransitionID != "" {
 		if _, err := tx.Exec(ctx, `
 			update app_wake_transitions set superseded_at = now()
@@ -77,6 +84,9 @@ func (s *PgStore) BeginAppParkTransitionIfDeployment(ctx context.Context, appID 
 		 where id = $1::uuid
 	`, appID, string(AppEvictedCold), transitionID); err != nil {
 		return AppParkTransition{}, false, fmt.Errorf("state: update app park status: %w", err)
+	}
+	if err := s.completeTaskRetirementPark(ctx, tx, retirement); err != nil {
+		return AppParkTransition{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppParkTransition{}, false, fmt.Errorf("state: commit app park transition: %w", err)

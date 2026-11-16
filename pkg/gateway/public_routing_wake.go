@@ -120,6 +120,9 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 }
 
 func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, wakeWaitExpired bool, err error) {
+	if h.clientLeftDuringWake(r, app) {
+		return
+	}
 	h.logFleetCapacityRefusal(app.ID, err)
 	// The visitor gets a generic detail (publicWakeFailure); operators keep
 	// the scheduler's cause, as on the ordinary wake path.

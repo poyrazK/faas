@@ -347,7 +347,8 @@ func (s *server) replayVisibleAccountDeadLetters(r *http.Request, acct state.Acc
 		case err == nil:
 			replayed++
 			return replayed < limit, nil
-		case errors.Is(err, state.ErrNotFound), errors.Is(err, state.ErrKeyedReplayExpired):
+		case errors.Is(err, state.ErrNotFound), errors.Is(err, state.ErrKeyedReplayExpired),
+			errors.Is(err, state.ErrQueueBindingRetired): // revived with its binding (ADR-20261113180000)
 			return true, nil
 		case state.IsQueueCapError(err):
 			if capped == nil {

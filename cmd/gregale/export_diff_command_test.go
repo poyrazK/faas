@@ -45,7 +45,7 @@ func TestExportDiffCLIContracts(t *testing.T) {
 				before = "{\"secret\":credential-secret}\n"
 				want = 1
 			case "invalid-after":
-				after = "{}\n{\"secret\":credential-secret}\n"
+				after = "{\"id\":\"valid-first\"}\n{\"secret\":credential-secret}\n"
 				want = 1
 			case "duplicate":
 				before = "{\"id\":\"credential-secret\"}\n{\"id\":\"credential-secret\"}\n"

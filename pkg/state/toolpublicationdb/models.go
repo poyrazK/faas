@@ -29,11 +29,22 @@ type ApiKeyProjectLimit struct {
 }
 
 type App struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	ProjectID pgtype.UUID
-	OrgID     pgtype.UUID
-	Slug      string
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	OrgID            pgtype.UUID
+	Slug             string
+	Status           string
+	Manifest         []byte
+	WorkloadClass    string
+	ParkTransitionID pgtype.UUID
+}
+
+type AppCustomMetric struct {
+	AppID      pgtype.UUID
+	Name       string
+	Value      float64
+	ObservedAt pgtype.Timestamptz
 }
 
 type AppSecret struct {
@@ -54,6 +65,7 @@ type Deployment struct {
 	Scope          pgtype.Text
 	Status         string
 	TrafficPercent int32
+	CreatedAt      pgtype.Timestamptz
 }
 
 type DeploymentMcpReadinessEvidence struct {
@@ -62,10 +74,24 @@ type DeploymentMcpReadinessEvidence struct {
 	Evidence     []byte
 }
 
+type Instance struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	State        string
+}
+
 type Org struct {
 	ID                     pgtype.UUID
 	PersonalOrg            bool
 	PersonalOwnerAccountID pgtype.UUID
+}
+
+type TaskToolReleaseIntent struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
 }
 
 type ToolGrant struct {

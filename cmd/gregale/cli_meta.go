@@ -209,6 +209,8 @@ type cliSub struct {
 	// FlagsAfterPositionals marks leaf commands that take a positional
 	// argument before parsing their flags, such as `tcp <slug> tls NAME --tls-mode`.
 	FlagsAfterPositionals bool
+	// output registers an optional JSON output contract; human renderers ignore it.
+	output cliOutputKind
 }
 
 // withNotes attaches help notes to a subcommand built by a helper.
@@ -2246,7 +2248,7 @@ var cliCommands = []cliCommand{
 		CompletionPositions: buildCLICompletionPositions(),
 		Subcommands: []cliSub{
 			{Name: statusLiteral, Short: "Show the current status of one build", Positionals: []string{"<id>"}},
-			{Name: "list", Short: "List builds and discover build IDs", Flags: []cliFlag{
+			{Name: "list", output: cliOutputBuildList, Short: "List builds and discover build IDs", Flags: []cliFlag{
 				{Name: "app", Short: "filter to one app", Value: "SLUG"},
 				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "running", "succeeded", "failed", "cancelled"}},
 				{Name: "limit", Short: "page size (1..200)", Value: "N"},
@@ -2255,6 +2257,8 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "stream", Short: "emit JSON Lines as pages arrive; stdout requires --json --all", Bool: true},
 				{Name: "output", Short: "publish a new JSON Lines file after all pages complete; requires --all", Value: "PATH"},
+				{Name: "progress", Short: "export progress on stderr; requires --all --output", Value: "MODE", ClosedSet: []string{"off", "plain", "ndjson"}},
+				{Name: "timeout", Short: "overall list read budget including page requests and retries (positive duration)", Value: "DURATION"},
 			}},
 			{Name: "provenance", Short: "Show the build provenance attestation", Positionals: []string{"<id>"}},
 			{Name: "sbom", Short: "Show the build SBOM", Positionals: []string{"<id>"}},
@@ -3735,12 +3739,32 @@ var cliCommands = []cliCommand{
 	},
 	{
 		Name: "flags", DocSlug: "flags", Short: "Roll out feature flags to selected customers",
+		Examples: []string{
+			"gregale flag create new-export --project exports",
+			"gregale flag rollout set new-export 10 --project exports",
+			"gregale flag rule create new-export --id pilot --group pilot-customers --project exports",
+			"gregale flag rule create new-export --id eu-pro --attr country=DE,FR --attr plan=pro --project exports",
+			"gregale flag kill set new-export --project exports",
+			"gregale flag stale list --project exports",
+		},
 		Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}},
 		Subcommands: []cliSub{
+			{Name: "list", Short: "List flags with their state, default and rule count", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "create", Short: "Create an enabled boolean or variant flag", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "variants", Short: "comma-separated variant keys; weights split evenly", Value: "a,b"}, {Name: "default", Short: "default value (default false, or the first variant)", Value: "value"}, {Name: "description", Short: "flag description", Value: "TEXT"}, {Name: "owner", Short: "who decides about the flag: a team or an email", Value: "TEXT"}, {Name: "expires", Short: "expiry date, or never to clear", Value: "YYYY-MM-DD"}}},
+			{Name: "set", Short: "Change a flag's default, description, owner or expiry", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "default", Short: "default value", Value: "value"}, {Name: "description", Short: "flag description", Value: "TEXT"}, {Name: "owner", Short: "who decides about the flag: a team or an email", Value: "TEXT"}, {Name: "expires", Short: "expiry date, or never to clear", Value: "YYYY-MM-DD"}}},
+			{Name: "on", Short: "Enable a flag", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "off", Short: "Disable a flag (a boolean flag's default becomes false)", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "stale", Short: "List flags that are expired, stale, unused or without an owner", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "all", Short: "list every flag"}}},
+			{Name: "kill", Short: "Serve the code fallback for a flag from the next request", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "unkill", Short: "Revive a killed flag", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "percent", Short: "Roll a flag out to a percentage of customers (0 removes it)", Positionals: []string{"<key>", "<percent>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "rule-add", Short: "Add a targeting rule before the percentage rollout", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "id", Short: "rule ID", Value: "ID", Req: true}, {Name: "customer", Short: "platform customer UUID (repeatable)", Value: "UUID"}, {Name: "group", Short: "customer group", Value: "NAME"}, {Name: "attr", Short: "attribute condition: NAME=V1,V2 (in), NAME!=V1,V2 (not in), NAME$=SUFFIX (ends with); NAME is country, ua_family or an app attribute (repeatable)", Value: "COND"}, {Name: "percent", Short: "percentage of matching customers", Value: "number"}, {Name: "value", Short: "value served (default true, or weighted variants)", Value: "value"}}},
+			{Name: "rule-rm", Short: "Remove a targeting rule", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "id", Short: "rule ID", Value: "ID", Req: true}}},
+			{Name: "rm", Short: "Remove a flag", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 			{Name: "get", Short: "Read current flag configuration", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 			{Name: "apply", Short: "Publish a versioned configuration", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "file", Short: "JSON update bundle", Value: "path", Req: true}}},
 			{Name: "history", Short: "List immutable configuration versions", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "before-version", Short: "page before this version", Value: "number"}}},
-			{Name: "inspect", Short: "Explain a customer's decision", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "subject-id", Short: "authenticated application subject (requires --customer-id)", Value: "ID"}, {Name: "fallback-variant", Short: "named-variant fallback", Value: "NAME"}, {Name: "version", Short: "historical configuration version", Value: "number"}}},
+			{Name: "inspect", Short: "Explain a customer's decision", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "subject-id", Short: "authenticated application subject (requires --customer-id)", Value: "ID"}, {Name: "fallback-variant", Short: "named-variant fallback", Value: "NAME"}, {Name: "attr", Short: "simulated request attribute NAME=VALUE (repeatable)", Value: "NAME=VALUE"}, {Name: "version", Short: "historical configuration version", Value: "number"}}},
 			{Name: "rollback", Short: "Publish an earlier configuration", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "version", Short: "version to restore", Value: "number", Req: true}, {Name: "expected-version", Short: "current version", Value: "number", Req: true}}},
 			{Name: "requests", Short: "Inspect request evidence by flag value", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "value", Short: "true or false", Value: "bool"}, {Name: "variant", Short: "filter by named variant", Value: "NAME"}, {Name: "used", Short: "true or false exposure", Value: "bool"}, {Name: "since", Short: "lookback (default 24h)", Value: "duration"}, {Name: "cursor", Short: "next-page cursor", Value: "cursor"}}},
 			{Name: "outcomes", Short: "Inspect flag decision outcomes", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "rule-id", Short: "filter to a targeting rule", Value: "ID"}, {Name: "config-version", Short: "filter to one configuration version", Value: "number"}, {Name: "since", Short: "lookback (default 24h)", Value: "duration"}}},
@@ -4777,7 +4801,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
 			}},
-			{Name: "resume-automation", Short: "Enable the crons a full clone copied paused into a stage", Notes: []string{"Only crons the source ran are enabled; ones the source had disabled, or changed since, stay as they are."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
+			{Name: "resume-automation", Short: "Enable the automation a full clone copied paused into a stage", Notes: []string{"Enables the crons and event subscriptions the clone copied paused.", "Only ones the source ran are enabled; ones the source had disabled, or changed since, stay as they are.", "Refused, changing nothing, when the enabled event subscriptions would pass the plan's cap."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
 				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
 			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging", "gregale env pull --app my-api --dry-run --json"}, Flags: []cliFlag{
@@ -4975,13 +4999,15 @@ var cliCommands = []cliCommand{
 		DocSlug: "invocations",
 		Short:   "List, inspect and wait on invocations across your account",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List invocations", Flags: []cliFlag{
+			{Name: "list", output: cliOutputInvocationList, Short: "List invocations", Flags: []cliFlag{
 				{Name: "limit", Short: "page size (1-100, default 50)", Value: "N"},
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "stream", Short: "emit JSON Lines as pages arrive; stdout requires --json --all", Bool: true},
 				{Name: "output", Short: "publish a new JSON Lines file after all pages complete; requires --all", Value: "PATH"},
+				{Name: "progress", Short: "export progress on stderr; requires --all --output", Value: "MODE", ClosedSet: []string{"off", "plain", "ndjson"}},
+				{Name: "timeout", Short: "overall list read budget including page requests and retries (positive duration)", Value: "DURATION"},
 			}},
 			{Name: "get", Short: "Show or recover one invocation", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "replay", Short: "re-issue failed unkeyed work"},
@@ -6345,6 +6371,7 @@ var cliCommands = []cliCommand{
 					{Name: "mode", Short: "delivery mode", Value: "MODE", ClosedSet: []string{"pull", "push"}},
 					{Name: "workload-class", Short: "consumer workload class", Value: "CLASS", ClosedSet: []string{"worker", "job", "http"}},
 					{Name: "max-concurrency", Short: "maximum concurrent deliveries", Value: "N"},
+					{Name: "enabled", Short: "turn delivery on or off", Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				}},
 				{Name: "rm", Short: "Retire a queue binding", Positionals: []string{"<slug>", "<binding-id>"}},
 			}},

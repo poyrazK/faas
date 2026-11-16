@@ -138,7 +138,7 @@ func diffExportFilesMode(beforePath, afterPath, key string, explain bool) (expor
 	if err != nil {
 		return exportDiffReport{}, err
 	}
-	defer beforeFile.Close()
+	defer func() { _ = beforeFile.Close() }()
 	before, err := readExportDiffIndexMode(beforeFile, key, "before", explain)
 	if err != nil {
 		return exportDiffReport{}, err
@@ -147,7 +147,7 @@ func diffExportFilesMode(beforePath, afterPath, key string, explain bool) (expor
 	if err != nil {
 		return exportDiffReport{}, err
 	}
-	defer afterFile.Close()
+	defer func() { _ = afterFile.Close() }()
 	after, err := readExportDiffIndexMode(afterFile, key, "after", explain)
 	if err != nil {
 		return exportDiffReport{}, err

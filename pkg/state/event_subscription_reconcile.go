@@ -56,6 +56,9 @@ func (m *MemStore) SetEventSubscriptionEnabled(_ context.Context, id, accountID,
 		if subscription.AccountID != canonicalMemUUID(accountID) || subscription.AppID != canonicalMemUUID(appID) {
 			return ErrNotFound
 		}
+		if subscription.Enabled != enabled {
+			subscription.ClonePaused = false
+		}
 		subscription.Enabled = enabled
 		subscription.UpdatedAt = time.Now().UTC()
 		m.eventSubscriptions[key] = subscription
@@ -69,9 +72,17 @@ func (m *MemStore) SetEventSubscriptionEnabled(_ context.Context, id, accountID,
 func (m *MemStore) EventSubscriptionQuotaCounts(_ context.Context, appID string) (int, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, ok := m.eventSubscriptionAppLocked(appID); !ok {
+		return 0, 0, ErrNotFound
+	}
+	perApp, perAccount := m.eventSubscriptionQuotaCountsLocked(appID)
+	return perApp, perAccount, nil
+}
+
+func (m *MemStore) eventSubscriptionQuotaCountsLocked(appID string) (int, int) {
 	app, ok := m.eventSubscriptionAppLocked(appID)
 	if !ok {
-		return 0, 0, ErrNotFound
+		return 0, 0
 	}
 	var perApp, perAccount int
 	for _, subscription := range m.eventSubscriptions {
@@ -86,5 +97,5 @@ func (m *MemStore) EventSubscriptionQuotaCounts(_ context.Context, appID string)
 			perApp++
 		}
 	}
-	return perApp, perAccount, nil
+	return perApp, perAccount
 }

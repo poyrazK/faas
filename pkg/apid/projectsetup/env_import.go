@@ -118,17 +118,34 @@ func RewrittenEnvNotes(service string, imported []string, plan EnvImport) []stri
 	var notes []string
 	for _, key := range imported {
 		if host, ok := plan.Rewritten[key]; ok {
-			if parsed, err := url.Parse(plan.Values[key]); err == nil {
-				note := fmt.Sprintf("%s: %s calls %s; imported with %s as its address", service, key, host, parsed.Host)
-				if plan.Plaintext[key] {
-					note += " over " + parsed.Scheme + ", because private service HTTPS is not enabled on this installation"
-				}
-				notes = append(notes, note)
+			address, scheme := rewrittenAddress(plan.Values[key])
+			if address == "" {
+				continue
 			}
+			note := fmt.Sprintf("%s: %s calls %s; imported with %s as its address", service, key, host, address)
+			if plan.Plaintext[key] && scheme != "" {
+				note += " over " + scheme + ", because private service HTTPS is not enabled on this installation"
+			}
+			notes = append(notes, note)
 		}
 	}
 	slices.Sort(notes)
 	return notes
+}
+
+// rewrittenAddress is the host[:port] an imported value now calls, and its
+// URL scheme if it has one. A bare host:port (gRPC *_ADDR values) parses as
+// a URL whose "scheme" is the host and whose Host is empty, which left the
+// dry-run note reading "imported with  as its address".
+func rewrittenAddress(value string) (address, scheme string) {
+	value = strings.TrimSpace(value)
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		return parsed.Host, parsed.Scheme
+	}
+	if host, port, err := net.SplitHostPort(value); err == nil && host != "" {
+		return net.JoinHostPort(host, port), ""
+	}
+	return "", ""
 }
 
 // secureScheme reports an https or wss URL.

@@ -334,6 +334,68 @@ Back out a node by setting its switch to false and converging: the role
 stages the identity again; restart vmmd to load it. With the CD variable on,
 unset it first.
 
+## Seal park and warm snapshots at the source (slice 3d-3)
+
+Off by default. With it on, vmmd publishes a park or warm capture only as
+age-encrypted `.age` twins and returns the capture key sealed to the runtime
+recipient; imaged records it on the snapshot row (`snapshots.sealed_key`,
+`sealed_capture_id`); a wake hands it back and vmmd opens it through
+secretd's `OpenCaptureKey` (cached per node for 10 minutes). A node's
+object-store credentials then neither read another app's snapshot memory
+nor rewrite it undetected. A snapshot that cannot be opened cold boots
+(ADR-005).
+
+1. **Before.** Every vmmd runs a release with `SnapshotRef.sealed_cache`
+   (a vmmd without it treats a sealed snapshot as a crash capture and fails
+   the wake instead of cold booting). On a node with the runtime identity
+   retired (slice 3e), vmmd must open keys through secretd
+   (`faas_vmmd_secretd_open`). Run `make test-metal` and `make leakcheck`
+   on a native KVM host, and measure the restore p95 on the reference node
+   with sealing on: it must stay under 350 ms.
+2. **Turn on.** Set `FAAS_SCHEDD_SEAL_SNAPSHOTS=1` for schedd and restart
+   it. Check: schedd logs `schedd: park and warm snapshots sealed at the
+   source`; new rows carry a key
+   (`select count(*) filter (where sealed_key is not null), count(*) from
+   snapshots where not stale and created_at > now() - interval '1 hour'`);
+   `faas_secretd_opens_total{rpc="OpenCaptureKey"}` rises with sealed wakes.
+   Plaintext rows are recaptured sealed at their next park instead of being
+   reused; until then they stay plaintext.
+3. **Not covered.** Captures under Application Standard native admission
+   (measured) and the execution runtime catalog stay plaintext. Encrypted
+   memory does not compress or share pages across snapshots: watch
+   `snapshot_fleet_avg_mb`.
+
+Turn it off by unsetting the variable: new captures are plaintext again and
+sealed rows still restore while the runtime recipient's identity is served.
+## Internal-service tokens from secretd (slice 3k)
+
+Compute schedds normally sign the internal-service tokens they attach for
+internal_only apps (ADR-119) with the cluster key, which every compute node
+can open. With slice 3k they ask secretd instead, for each app they own or
+hold a grant for, and need no cluster key.
+
+1. **Control plane.** The control domain identity must be staged on the
+   control plane (`/etc/faas/secrets/domains/control.age`, which the CP
+   schedd already reads). Converge secretd_service. The unit gains
+   `FAAS_SECRETD_CONTROL_IDENTITY`, and after a restart secretd mints. Check:
+   from a compute node, a dispatch to an internal_only app still succeeds
+   after step 2, and
+   `faas_secretd_opens_total{rpc="MintInternalServiceToken"}` rises.
+2. **One compute node.** Set `FAAS_SCHEDD_INTERNAL_SVC_MINTER=secretd` for
+   its schedd. It needs `FAAS_SCHEDD_SECRETD_TARGET`. Workflow outbound
+   (`FAAS_WORKFLOW_OUTBOUND_ENABLED=1`) refuses to start on such a schedd.
+   Restart schedd. Check:
+   - The journal shows `schedd: internal-service tokens minted by secretd`.
+   - Internal_only cron and trigger dispatches still pass.
+   - `faas_secretd_refusals_total{rpc="MintInternalServiceToken"}` stays
+     flat. A rise means the node dispatches for an app it neither owns nor
+     holds a grant for.
+3. **Gateways.** From this release on, both internal-only gates refuse a
+   token minted for another app, with audit reason `app_mismatch`. A legacy
+   token without an `app_id` passes as before.
+
+Back out a node by unsetting the variable and restarting schedd.
+
 ## Rotation
 
 The runtime domain rotates as before (`docs/runbooks/seal-domain-key-escrow.md`).

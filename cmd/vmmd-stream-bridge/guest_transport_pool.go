@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/http2"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/bridgecompletion"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -95,16 +96,25 @@ func (t *guestH2CRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 		closed := t.closed
 		t.mu.RUnlock()
 
-		if conn != nil && conn.CanTakeNewRequest() {
+		if conn != nil && prewarmUsable(conn) {
 			resp, err := conn.RoundTrip(req)
-			if err != nil && !conn.CanTakeNewRequest() {
-				t.mu.Lock()
-				if t.prewarm == conn {
-					t.prewarm = nil
-				}
-				t.mu.Unlock()
+			if err == nil {
+				return resp, nil
 			}
-			return resp, err
+			if prewarmUsable(conn) {
+				return resp, err
+			}
+			t.dropPrewarm(conn)
+			if !errNotEstablished(err) {
+				return resp, err
+			}
+			// The guest closed the prewarmed connection before it carried a
+			// request, so this request never left the bridge. Send it on a
+			// fresh connection instead of failing it.
+			return t.base.RoundTrip(req)
+		}
+		if conn != nil {
+			t.dropPrewarm(conn)
 		}
 		if !prewarming || prewarmDone == nil || closed {
 			return t.base.RoundTrip(req)
@@ -120,6 +130,35 @@ func (t *guestH2CRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	}
 }
 
+// prewarmUsable reports whether the prewarmed connection can carry a request.
+// CanTakeNewRequest alone is not enough: x/net/http2 keeps reporting true for
+// a connection that closed before its first request ("let it take a request
+// (which will fail)"), and the prewarm has only carried a Ping. A guest that
+// resets that connection (guest-init resets every off-guest connection right
+// after a restore) left the bridge failing every request with
+// errClientConnNotEstablished for the instance's whole life.
+func prewarmUsable(conn *http2.ClientConn) bool {
+	return conn.CanTakeNewRequest() && !conn.State().Closed
+}
+
+// errNotEstablished matches x/net/http2's unexported
+// errClientConnNotEstablished: the connection closed before this request was
+// written, so a retry on a new connection cannot duplicate it.
+func errNotEstablished(err error) bool {
+	return err != nil && err.Error() == "http2: client conn could not be established"
+}
+
+// dropPrewarm unpublishes and closes a prewarmed connection that can no longer
+// carry requests; later requests use the transport's own pool.
+func (t *guestH2CRoundTripper) dropPrewarm(conn *http2.ClientConn) {
+	t.mu.Lock()
+	if t.prewarm == conn {
+		t.prewarm = nil
+	}
+	t.mu.Unlock()
+	_ = conn.Close()
+}
+
 func (t *guestH2CRoundTripper) prewarmConnection(ctx context.Context) error {
 	if t == nil {
 		return nil
@@ -131,7 +170,7 @@ func (t *guestH2CRoundTripper) prewarmConnection(ctx context.Context) error {
 			t.mu.Unlock()
 			return net.ErrClosed
 		}
-		if t.prewarm != nil && t.prewarm.CanTakeNewRequest() {
+		if t.prewarm != nil && prewarmUsable(t.prewarm) {
 			t.mu.Unlock()
 			return nil
 		}
@@ -191,7 +230,7 @@ func (t *guestH2CRoundTripper) finishPrewarm(warmed *http2.ClientConn) {
 	if warmed != nil {
 		if t.closed {
 			closeConn = warmed
-		} else if t.prewarm == nil || !t.prewarm.CanTakeNewRequest() {
+		} else if t.prewarm == nil || !prewarmUsable(t.prewarm) {
 			old = t.prewarm
 			t.prewarm = warmed
 		} else {
@@ -424,4 +463,18 @@ func guestDialTimeout() time.Duration {
 		return guestHeadroomDialTimeout
 	}
 	return dialTimeout
+}
+
+// markGuestTransportError tags the bridge's own 502 for a failed guest
+// connection with the exchange ID, so vmmd can tell it from a 502 the guest
+// returned, log it, and replace a bridge whose guest connection keeps
+// failing. A request that ran out of its own time (ctx done) is not a
+// transport fault and stays untagged: a slow app must not cost the bridge.
+func markGuestTransportError(w http.ResponseWriter, r *http.Request, ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	if id := r.Header.Get(bridgecompletion.ExchangeHeader); id != "" {
+		w.Header().Set(bridgecompletion.GuestErrorHeader, id)
+	}
 }

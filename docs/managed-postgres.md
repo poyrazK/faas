@@ -199,15 +199,22 @@ customers out until the owner has tested production
 
    ```bash
    gregalectl flags default --key managed_postgres --value true --reason "GA" --yes
+   gregalectl flags default --key database_rollbacks --value true --reason "GA" --yes
    ```
+
+   `database_rollbacks` is GA as well, but a stored definition wins over the
+   tier default: a platform that closed it during the preview keeps it closed
+   until this second command.
 
 `gregalectl flags disable --capability managed-postgres --reason "<why>" --yes`
 hides managed PostgreSQL again. Existing databases keep running, and the
 credentials apps already hold keep working.
 
-Rollbacks that restore the database are a separate preview,
-`database-rollbacks`. An account that used them through a `postgres_restore`
-rule needs `database_rollbacks` allowed as well.
+Rollbacks that restore the database and `gregale postgres restore --switch`
+belong to `database-rollbacks`, which is GA
+([ADR-20261031091607 amendment 1](adr/20261031091607-managed-postgres-ga.md)).
+An account that used them through a `postgres_restore` rule needs
+`database_rollbacks` allowed as well while that flag stays closed.
 
 ## Provider health
 
@@ -880,6 +887,11 @@ times, lease expiry, and stable stale-admission reasons: `identity_unknown`,
 `shutdown_unconfirmed`, `coverage_incomplete`, `observation_stale`, or
 `final_correction_pending` (the final correction tail is overdue: its deadline,
 `correction_required_at`, passed more than `usage.stale_after_seconds` ago).
+`final_window_pending` is advisory and leaves the resource non-blocking: a deleted
+database owes only the window it was deleted in, which closed less than
+`usage.stale_after_seconds` ago. Admission waits for it only while the account's
+recorded month is at or above 90% of any monthly ceiling
+([ADR-20261115190000](adr/20261115190000-managed-postgres-final-window-headroom-grace.md)).
 Shared restores use their root's evidence. Unknown
 legacy tombstones have no confirmed terminal deadline. A disabled policy reports
 no blockers, while retaining identity and coverage metadata. Empty reasons do not

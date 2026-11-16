@@ -3088,15 +3088,17 @@ type CiWorkerHealth struct {
 }
 
 type CliAuthCode struct {
-	TokenHash  []byte
-	AccountID  pgtype.UUID
-	Status     string
-	ExpiresAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
-	DeviceHash []byte
-	OrgID      pgtype.UUID
-	ProjectIds []pgtype.UUID
+	TokenHash    []byte
+	AccountID    pgtype.UUID
+	Status       string
+	ExpiresAt    pgtype.Timestamptz
+	ConsumedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	DeviceHash   []byte
+	OrgID        pgtype.UUID
+	ProjectIds   []pgtype.UUID
+	VerifierHash []byte
+	RequesterIp  pgtype.Text
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -5078,6 +5080,16 @@ type EntityOutboxAcceptance struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type EnvironmentApiRoute struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	RouteTemplate string
+	FirstSeen     pgtype.Timestamptz
+	LastSeen      pgtype.Timestamptz
+	RequestCount  int64
+}
+
 type EnvironmentBindingReleaseReceipt struct {
 	ReleaseID  pgtype.UUID
 	GraphID    pgtype.UUID
@@ -6114,6 +6126,7 @@ type EventSubscription struct {
 	AcknowledgmentLeaseSeconds int32
 	DeploymentScope            string
 	EnvironmentID              pgtype.UUID
+	ClonePaused                bool
 }
 
 type EventSubscriptionCapacityCommand struct {
@@ -10018,13 +10031,17 @@ type MeterGatewayUsageEvent struct {
 }
 
 type MeterNetworkCheckpoint struct {
-	InstanceID pgtype.UUID
-	NetTxBytes int64
-	NetRxBytes int64
-	NetTxValid bool
-	NetRxValid bool
-	ObservedAt pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
+	InstanceID          pgtype.UUID
+	NetTxBytes          int64
+	NetRxBytes          int64
+	NetTxValid          bool
+	NetRxValid          bool
+	ObservedAt          pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	InternalTxBytes     int64
+	InternalTxValid     bool
+	InternalTxPending   int64
+	ServiceReplyPending int64
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {
@@ -11964,6 +11981,22 @@ type PlanFitNotice struct {
 	Plan       string
 	AppsDigest string
 	NoticedAt  pgtype.Timestamptz
+}
+
+type PlatformAlertNotice struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Kind           string
+	SubjectID      string
+	Detail         []byte
+	CreatedAt      pgtype.Timestamptz
+	Status         string
+	Attempts       int32
+	NextAttemptAt  pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	LastError      string
 }
 
 type PlatformMailAgentRunCapture struct {
@@ -16166,8 +16199,10 @@ type Snapshot struct {
 	// CPU template of the capturing node; a templated snapshot restores on any node class the template supports.
 	CpuTemplate string
 	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
-	CpuModel string
-	StaleAt  pgtype.Timestamptz
+	CpuModel        string
+	StaleAt         pgtype.Timestamptz
+	SealedKey       []byte
+	SealedCaptureID pgtype.UUID
 }
 
 type SnapshotFanoutEvent struct {
@@ -16308,6 +16343,18 @@ type StatusObservationBucket struct {
 	BucketAt     pgtype.Timestamptz
 	Status       string
 	HasTelemetry bool
+}
+
+type StorageObjectDeletion struct {
+	StorageKey    string
+	Reason        string
+	RequestedBy   string
+	RequestedAt   pgtype.Timestamptz
+	State         string
+	NextAttemptAt pgtype.Timestamptz
+	Attempts      int32
+	LastError     string
+	DecidedAt     pgtype.Timestamptz
 }
 
 type StoredWorkflow struct {
@@ -16601,6 +16648,13 @@ type SyntheticCheckRun struct {
 	StatusCode int32
 	LatencyMs  int32
 	ErrorClass string
+}
+
+type TaskToolReleaseIntent struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
 }
 
 type TenantHostname struct {

@@ -22,15 +22,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Secretd_VerifyPostgresCutover_FullMethodName = "/onebox.faas.secretd.v1.Secretd/VerifyPostgresCutover"
-	Secretd_OpenAppSecrets_FullMethodName        = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
-	Secretd_GrantPeer_FullMethodName             = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
-	Secretd_OpenCaptureKey_FullMethodName        = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
-	Secretd_OpenSidecarEnv_FullMethodName        = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
-	Secretd_OpenLogDrainHeader_FullMethodName    = "/onebox.faas.secretd.v1.Secretd/OpenLogDrainHeader"
-	Secretd_OpenTriggerConfig_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenTriggerConfig"
-	Secretd_OpenEdgeHeaderSecret_FullMethodName  = "/onebox.faas.secretd.v1.Secretd/OpenEdgeHeaderSecret"
-	Secretd_RegistryFetch_FullMethodName         = "/onebox.faas.secretd.v1.Secretd/RegistryFetch"
+	Secretd_VerifyPostgresCutover_FullMethodName    = "/onebox.faas.secretd.v1.Secretd/VerifyPostgresCutover"
+	Secretd_OpenAppSecrets_FullMethodName           = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
+	Secretd_GrantPeer_FullMethodName                = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
+	Secretd_OpenCaptureKey_FullMethodName           = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
+	Secretd_OpenSidecarEnv_FullMethodName           = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
+	Secretd_OpenLogDrainHeader_FullMethodName       = "/onebox.faas.secretd.v1.Secretd/OpenLogDrainHeader"
+	Secretd_OpenTriggerConfig_FullMethodName        = "/onebox.faas.secretd.v1.Secretd/OpenTriggerConfig"
+	Secretd_OpenEdgeHeaderSecret_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenEdgeHeaderSecret"
+	Secretd_RegistryFetch_FullMethodName            = "/onebox.faas.secretd.v1.Secretd/RegistryFetch"
+	Secretd_MintInternalServiceToken_FullMethodName = "/onebox.faas.secretd.v1.Secretd/MintInternalServiceToken"
 )
 
 // SecretdClient is the client API for Secretd service.
@@ -84,6 +85,12 @@ type SecretdClient interface {
 	// registry the app holds a credential for; owner or grant authorizes.
 	// The first frame is the head, then body chunks.
 	RegistryFetch(ctx context.Context, in *RegistryFetchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RegistryFetchResponse], error)
+	// MintInternalServiceToken signs the short-lived internal-service token
+	// schedd attaches when it dispatches to an internal_only app (ADR-119),
+	// for the named app only (ADR-20261110210000 slice 3k). The cluster
+	// signing key stays on the control plane, so a compute node can no longer
+	// mint a token for an app it neither owns nor holds a grant for.
+	MintInternalServiceToken(ctx context.Context, in *MintInternalServiceTokenRequest, opts ...grpc.CallOption) (*MintInternalServiceTokenResponse, error)
 }
 
 type secretdClient struct {
@@ -193,6 +200,16 @@ func (c *secretdClient) RegistryFetch(ctx context.Context, in *RegistryFetchRequ
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Secretd_RegistryFetchClient = grpc.ServerStreamingClient[RegistryFetchResponse]
 
+func (c *secretdClient) MintInternalServiceToken(ctx context.Context, in *MintInternalServiceTokenRequest, opts ...grpc.CallOption) (*MintInternalServiceTokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MintInternalServiceTokenResponse)
+	err := c.cc.Invoke(ctx, Secretd_MintInternalServiceToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretdServer is the server API for Secretd service.
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
@@ -244,6 +261,12 @@ type SecretdServer interface {
 	// registry the app holds a credential for; owner or grant authorizes.
 	// The first frame is the head, then body chunks.
 	RegistryFetch(*RegistryFetchRequest, grpc.ServerStreamingServer[RegistryFetchResponse]) error
+	// MintInternalServiceToken signs the short-lived internal-service token
+	// schedd attaches when it dispatches to an internal_only app (ADR-119),
+	// for the named app only (ADR-20261110210000 slice 3k). The cluster
+	// signing key stays on the control plane, so a compute node can no longer
+	// mint a token for an app it neither owns nor holds a grant for.
+	MintInternalServiceToken(context.Context, *MintInternalServiceTokenRequest) (*MintInternalServiceTokenResponse, error)
 	mustEmbedUnimplementedSecretdServer()
 }
 
@@ -280,6 +303,9 @@ func (UnimplementedSecretdServer) OpenEdgeHeaderSecret(context.Context, *OpenEdg
 }
 func (UnimplementedSecretdServer) RegistryFetch(*RegistryFetchRequest, grpc.ServerStreamingServer[RegistryFetchResponse]) error {
 	return status.Error(codes.Unimplemented, "method RegistryFetch not implemented")
+}
+func (UnimplementedSecretdServer) MintInternalServiceToken(context.Context, *MintInternalServiceTokenRequest) (*MintInternalServiceTokenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MintInternalServiceToken not implemented")
 }
 func (UnimplementedSecretdServer) mustEmbedUnimplementedSecretdServer() {}
 func (UnimplementedSecretdServer) testEmbeddedByValue()                 {}
@@ -457,6 +483,24 @@ func _Secretd_RegistryFetch_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Secretd_RegistryFetchServer = grpc.ServerStreamingServer[RegistryFetchResponse]
 
+func _Secretd_MintInternalServiceToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MintInternalServiceTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).MintInternalServiceToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_MintInternalServiceToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).MintInternalServiceToken(ctx, req.(*MintInternalServiceTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Secretd_ServiceDesc is the grpc.ServiceDesc for Secretd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -495,6 +539,10 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenEdgeHeaderSecret",
 			Handler:    _Secretd_OpenEdgeHeaderSecret_Handler,
+		},
+		{
+			MethodName: "MintInternalServiceToken",
+			Handler:    _Secretd_MintInternalServiceToken_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
