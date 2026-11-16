@@ -337,6 +337,12 @@ from .app_private_network_attachment_status import AppPrivateNetworkAttachmentSt
 from .app_private_network_node_status import AppPrivateNetworkNodeStatus
 from .app_private_network_node_status_fabric_status import AppPrivateNetworkNodeStatusFabricStatus
 from .app_private_network_node_status_route_status import AppPrivateNetworkNodeStatusRouteStatus
+from .app_protection_item_status import AppProtectionItemStatus
+from .app_protection_item_status_item import AppProtectionItemStatusItem
+from .app_protection_item_status_kind import AppProtectionItemStatusKind
+from .app_protection_item_status_state import AppProtectionItemStatusState
+from .app_protection_response import AppProtectionResponse
+from .app_protection_response_state import AppProtectionResponseState
 from .app_publish_event_request import AppPublishEventRequest
 from .app_publish_event_response import AppPublishEventResponse
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
@@ -7155,6 +7161,12 @@ __all__ = (
     "AppPrivateNetworkNodeStatus",
     "AppPrivateNetworkNodeStatusFabricStatus",
     "AppPrivateNetworkNodeStatusRouteStatus",
+    "AppProtectionItemStatus",
+    "AppProtectionItemStatusItem",
+    "AppProtectionItemStatusKind",
+    "AppProtectionItemStatusState",
+    "AppProtectionResponse",
+    "AppProtectionResponseState",
     "AppPublishEventRequest",
     "AppPublishEventResponse",
     "AppRegistryCredentialListResponse",

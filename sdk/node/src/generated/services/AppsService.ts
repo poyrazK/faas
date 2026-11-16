@@ -17,6 +17,7 @@ import type { ApplyAppScalingRequest } from '../models/ApplyAppScalingRequest.js
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
 import type { AppOperationPreview } from '../models/AppOperationPreview.js';
+import type { AppProtectionResponse } from '../models/AppProtectionResponse.js';
 import type { AppReleaseReview } from '../models/AppReleaseReview.js';
 import type { AppResourceInventoryResponse } from '../models/AppResourceInventoryResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
@@ -2838,6 +2839,31 @@ export class AppsService {
       path: {
         'slug': slug,
         'id': id,
+      },
+    });
+  }
+  /**
+   * Show the app's production protection
+   * Reports whether the app is enrolled in production protection and the state of each protection object: the availability and latency SLOs, the health check, the account email channel, the alert rules and the availability release gate. An app created before protection was available reports state none.
+   * @returns AppProtectionResponse The app's production protection.
+   * @throws ApiError
+   */
+  public static getAppProtection({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppProtectionResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/protection',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        404: `code: not_found`,
       },
     });
   }

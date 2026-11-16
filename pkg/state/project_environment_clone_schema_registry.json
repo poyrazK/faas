@@ -7678,7 +7678,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": ["capture", "materialize"],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app",
       "live": [
@@ -21969,6 +21972,28 @@
       "next_attempt_at",
       "status",
       "subject_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_protection",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_protection_objects",
+    "columns": [
+      "app_id",
+      "created_at",
+      "item",
+      "object_id",
+      "written"
     ],
     "kind": "operational"
   }

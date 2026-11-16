@@ -24037,6 +24037,21 @@ paths:
       responses:
         '204':
           description: The SLO was deleted.
+  /v1/apps/{slug}/protection:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: getAppProtection
+      summary: Show the app's production protection
+      description: "Reports whether the app is enrolled in production protection and the state of each protection object: the availability and latency SLOs, the health check, the account email channel, the alert rules and the availability release gate. An app created before protection was available reports state none."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's production protection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppProtectionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/synthetics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -101367,6 +101382,41 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean, description: 'false pauses the check; true resumes it.' }
+    AppProtectionResponse:
+      description: 'An app''s production protection.'
+      type: object
+      required: [state, protected, items]
+      properties:
+        state:
+          type: string
+          enum: ['on', 'off', none]
+          description: 'on when the app is enrolled, off when its owner turned protection off, none when the app was never enrolled.'
+        protected:
+          type: boolean
+          description: 'True when the app is enrolled and every protection object is active.'
+        items:
+          type: array
+          description: 'Every protection object in a fixed order; empty when state is none.'
+          items: { $ref: '#/components/schemas/AppProtectionItemStatus' }
+    AppProtectionItemStatus:
+      description: 'One production protection object.'
+      type: object
+      required: [item, kind, name, state]
+      properties:
+        item:
+          type: string
+          enum: [availability_slo, latency_slo, health_check, email_channel, availability_burn_alert, latency_burn_alert, health_alert, availability_gate]
+        kind:
+          type: string
+          enum: [slo, synthetic_check, notification_channel, alert_rule, release_gate]
+        name: { type: string, example: availability }
+        state:
+          type: string
+          enum: [active, pending]
+          description: 'active when the object was created; pending while the app waits for its first healthy deploy.'
+        object_id:
+          type: string
+          description: 'The created object''s id, or a release gate''s name. Present when state is active.'
     SyntheticCheckResponse:
       description: 'One synthetic check definition.'
       type: object

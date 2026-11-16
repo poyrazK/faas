@@ -33440,6 +33440,36 @@ CREATE TABLE public.app_private_network_attachments (
 
 
 --
+-- Name: app_protection; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_protection (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    state text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_protection_state_check CHECK ((state = ANY (ARRAY['on'::text, 'off'::text])))
+);
+
+
+--
+-- Name: app_protection_objects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_protection_objects (
+    app_id uuid NOT NULL,
+    item text NOT NULL,
+    object_id text NOT NULL,
+    written jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_protection_objects_item_check CHECK ((item = ANY (ARRAY['availability_slo'::text, 'latency_slo'::text, 'health_check'::text, 'email_channel'::text, 'availability_burn_alert'::text, 'latency_burn_alert'::text, 'health_alert'::text, 'availability_gate'::text]))),
+    CONSTRAINT app_protection_objects_object_id_check CHECK (((object_id <> ''::text) AND (length(object_id) <= 128))),
+    CONSTRAINT app_protection_objects_written_check CHECK ((jsonb_typeof(written) = 'object'::text))
+);
+
+
+--
 -- Name: app_registry_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -63664,6 +63694,22 @@ ALTER TABLE ONLY public.app_private_network_attachments
 
 
 --
+-- Name: app_protection_objects app_protection_objects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection_objects
+    ADD CONSTRAINT app_protection_objects_pkey PRIMARY KEY (app_id, item);
+
+
+--
+-- Name: app_protection app_protection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection
+    ADD CONSTRAINT app_protection_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_registry_credentials app_registry_credentials_app_registry_uq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -77609,6 +77655,13 @@ CREATE INDEX app_private_network_attachments_account_idx ON public.app_private_n
 --
 
 CREATE INDEX app_private_network_attachments_network_idx ON public.app_private_network_attachments USING btree (account_id, network_id);
+
+
+--
+-- Name: app_protection_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_protection_account_idx ON public.app_protection USING btree (account_id);
 
 
 --
@@ -97552,6 +97605,30 @@ ALTER TABLE ONLY public.app_private_network_attachments
 
 ALTER TABLE ONLY public.app_private_network_attachments
     ADD CONSTRAINT app_private_network_attachments_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_protection app_protection_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection
+    ADD CONSTRAINT app_protection_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_protection app_protection_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection
+    ADD CONSTRAINT app_protection_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_protection_objects app_protection_objects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection_objects
+    ADD CONSTRAINT app_protection_objects_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.app_protection(app_id) ON DELETE CASCADE;
 
 
 --

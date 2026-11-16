@@ -1973,6 +1973,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/slos/{id}":    "GetSLO",
 	"DELETE /v1/apps/{slug}/slos/{id}": "DeleteSLO",
 	// ADR-748 synthetic checks are named after the resource noun.
+	"GET /v1/apps/{slug}/protection":                 "GetAppProtection",
 	"GET /v1/apps/{slug}/synthetics":                 "ListSyntheticChecks",
 	"POST /v1/apps/{slug}/synthetics":                "CreateSyntheticCheck",
 	"GET /v1/apps/{slug}/synthetics/{id}":            "GetSyntheticCheck",

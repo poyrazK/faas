@@ -183,6 +183,8 @@ export type { AppPrivateNetworkAttachment } from './AppPrivateNetworkAttachment.
 export type { AppPrivateNetworkAttachmentRequest } from './AppPrivateNetworkAttachmentRequest.js';
 export type { AppPrivateNetworkAttachmentResponse } from './AppPrivateNetworkAttachmentResponse.js';
 export type { AppPrivateNetworkNodeStatus } from './AppPrivateNetworkNodeStatus.js';
+export type { AppProtectionItemStatus } from './AppProtectionItemStatus.js';
+export type { AppProtectionResponse } from './AppProtectionResponse.js';
 export type { AppPublishEventRequest } from './AppPublishEventRequest.js';
 export type { AppPublishEventResponse } from './AppPublishEventResponse.js';
 export type { AppRegistryCredentialListResponse } from './AppRegistryCredentialListResponse.js';

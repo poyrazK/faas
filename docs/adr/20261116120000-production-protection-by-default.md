@@ -42,14 +42,15 @@ for it, which the customer can see, edit or remove like any other.
 ### 1. Which apps
 
 An app is enrolled when it is **created** while the `protection_baseline`
-platform flag is on for its account. Enrollment is stored on the app
-(`apps.protection`: `on`, `off`, or `none`); apps that existed before the
+platform flag is on for its account. Enrollment is stored in its own table,
+`app_protection` (`state`: `on` or `off`; no row means `none`), so the wide
+`apps` row and its many readers are unchanged; apps that existed before the
 flag stay `none` and keep today's behaviour. They can opt in with
 `gregale app protection on`. There is no backfill.
 
 The baseline is applied when all of these hold, which mirrors ADR-1446:
 
-- `apps.protection = 'on'`;
+- the app's `app_protection.state` is `on`;
 - the app is request-mode, public (not `internal`) and not a PR preview;
 - it has a live deployment in the default scope, which has passed its
   health check. Named project environments are out of scope.
@@ -121,7 +122,7 @@ and object, so support can explain where an alert came from.
 ### 5. Turning it off
 
 `gregale app protection off` (and `protection: off` in `gregale.yaml`) sets
-`apps.protection = 'off'` and deletes the baseline objects that are still
+`app_protection.state` to `off` and deletes the baseline objects that are still
 unedited. Edited objects stay, because they are now the customer's.
 `protection on` re-applies the baseline. Both are audited.
 
@@ -171,7 +172,7 @@ outage detector fires, so the baseline alert arrives first.
 
 ## Slices
 
-1. `apps.protection`, `app_protection_objects`, the flag, `ProtectionBaseline*`
+1. `app_protection`, `app_protection_objects`, the flag, `ProtectionBaseline*`
    constants, `GET /v1/apps/{slug}/protection`.
 2. Reconciler creating SLOs, channel, alert rules and gate; outage-notice
    suppression (§7).
