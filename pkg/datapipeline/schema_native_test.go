@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,7 +38,7 @@ func assertNativeSchemaEvolution(t *testing.T, ctx context.Context, store *Postg
 		t.Fatalf("missing supported preview: %+v", p)
 	}
 	first := pending.SchemaChange.ID
-	if status, body := old.request("GET", "alice", "id=eq.1&select=id,total", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+	if status, body := old.request("GET", "alice", "id=eq.1&select=id,total", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 		t.Fatalf("pending schema exposed rows: %d %s", status, body)
 	}
 	var added bool
@@ -67,16 +66,7 @@ func assertNativeSchemaEvolution(t *testing.T, ctx context.Context, store *Postg
 	// Losing the catalog lease before target commit must roll back every column
 	// and the receipt, even though the approval itself is valid.
 	approved := get()
-	publisher, err := pgxpool.New(ctx, source.Config().ConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var schemaOwner string
-	if err = target.QueryRow(ctx, `SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='orders'`).Scan(&schemaOwner); err != nil {
-		t.Fatal(err)
-	}
-	err = applySchema(ctx, approved, publisher, target, schemaOwner, *approved.SchemaChange, func(context.Context) error { return ErrConflict })
-	publisher.Close()
+	err := assertNativeSchemaLeaseFence(t, ctx, approved, source, target)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatal("stale lease committed remote DDL", err)
 	}
@@ -152,7 +142,7 @@ func assertNativeSchemaEvolution(t *testing.T, ctx context.Context, store *Postg
 	if fresh.fingerprint == "" || fresh.fingerprint == old.fingerprint {
 		t.Fatal("runtime contract did not refresh")
 	}
-	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,extra_note,also_note,during_refresh", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,extra_note,also_note,during_refresh", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 		t.Fatalf("reads reopened before refresh acknowledgement: %d %s", status, body)
 	}
 	ready = true

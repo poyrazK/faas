@@ -3,6 +3,7 @@ package apidserver
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -32,6 +33,9 @@ func (h *cliAuthHandlers) cliApprovalRefused(w http.ResponseWriter, r *http.Requ
 		"window_sec": int(api.RecentSignInWindow.Seconds()),
 	})
 	next := cliAuthPath + "?code=" + url.QueryEscape(rawCode)
+	if port := cliAuthLoopbackPort(r.FormValue("port"), rawCode); port != 0 {
+		next += "&port=" + strconv.Itoa(port)
+	}
 	if r.FormValue("return") == "mcp" {
 		next += "&return=mcp"
 	}

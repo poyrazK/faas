@@ -45,7 +45,7 @@ jobs:
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
-      GO_VERSION: '1.26.10'
+      GO_VERSION: '1.26.11'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

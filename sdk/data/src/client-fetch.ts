@@ -8,6 +8,8 @@ export type DataResponseInfo = Readonly<{
 export type DataClientBaseOptions = {
   url: string
   fetch?: typeof globalThis.fetch
+  /** Use matching generated types: lossless gives decimal strings; exact gives ExactNumber values. */
+  numericMode?: import('./numeric.js').NumericMode
   /** Opt in to an exact serving-contract match before each REST/RPC operation. */
   expectedSchemaFingerprint?: string
   /** Called per HTTP response. Callback failures do not affect requests. */

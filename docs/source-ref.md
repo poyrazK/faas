@@ -2,28 +2,28 @@
 
 A one-shot, CI-friendly deploy that pins a build to a specific
 Git ref on a GitHub repo. Designed for runners that have no
-browser and no GitHub App install token of their own — the
-control plane resolves everything from the account's existing
-`github_installations` row.
+browser and no GitHub App install token of their own — Gregale
+resolves everything from the GitHub App installation already
+connected to your account.
 
 ## Prerequisites
 
-- `FAAS_API` — control plane URL.
+- `FAAS_API` — the API URL (`https://api.gregale.dev`, the default).
 - `FAAS_TOKEN` — a deploy-time API key (the `deploy` scope, or
   admin).
 - `gregale connect` completed once on a workstation (browser
-  available) so the control plane already has the GitHub App
-  install row for the account. This is the only step that needs
+  available) so Gregale already has the GitHub App installation
+  for the account. This is the only step that needs
   a browser — see `gregale connect --help`.
 
 No `GREGALE_INSTALL_TOKEN_*` env vars are required. Both
 `gregale deploy --repo` and `gregale scan --repo` resolve the durable
-installation and fetch source through the control plane.
+installation and fetch source through Gregale.
 
 ## Worked example: pin to a SHA in CI
 
 ```bash
-FAAS_API=https://api.faas.example \
+FAAS_API=https://api.gregale.dev \
 FAAS_TOKEN=$FAAS_TOKEN \
 gregale deploy --repo onebox-faas/hello --ref $(git rev-parse HEAD)
 ```
@@ -59,8 +59,7 @@ installation identity through the build. Imaged checks the branch again after
 readiness validation and just before promotion. If it moved or was deleted, the
 candidate fails with `source_ref_stale`; if GitHub cannot be checked, promotion
 fails closed with `source_ref_unavailable`. A tag or commit SHA stays pinned to
-the resolved commit and skips this branch check. See
-[ADR-316](adr/316-source-ref-branch-freshness-before-promotion.md).
+the resolved commit and skips this branch check.
 The first-party GitHub Action attaches the originating branch when a push
 workflow deploys its event SHA, so the same final check protects slow Actions
 builds. Explicit refs and release tags remain pinned choices.
@@ -75,22 +74,17 @@ gregale deploy --repo OWNER/NAME --ref "$GITHUB_SHA" \
 `--source-branch` requires a full 40-character SHA and should be omitted for
 an intentional pinned rollback or tag deployment.
 
-In split-box fleets, compute-side imaged performs the final check over the
-private `githubd.faas:50053` mTLS route provisioned by the manifest and Ansible.
-
 For App-driven push deployments, Gregale checks that the webhook's commit is
 still the branch head before it fetches source and checks again after scanning,
 immediately before reconciliation. If the branch has advanced, the older
-delivery is ignored without changing project state. See
-[ADR-313](adr/313-github-push-head-recheck.md). Once a GitHub deployment is accepted, its
+delivery is ignored without changing project state. Once a GitHub deployment is accepted, its
 per-app revision also prevents an older in-flight GitHub build from becoming
 live after a newer deployment was accepted for the same environment. A manual
 `--repo --ref` request is an explicit deployment choice, including an older
 SHA for rollback; its accepted revision takes part in the same promotion
-order. See [ADR-311](adr/311-github-push-freshness-and-promotion-fence.md).
+order.
 The final branch-head check also prevents a webhook build from promoting when
-its branch advanced but the newer delivery has not yet been accepted. See
-[ADR-316](adr/316-source-ref-branch-freshness-before-promotion.md).
+its branch advanced but the newer delivery has not yet been accepted.
 
 To queue the deployment without waiting for the build, pass
 `--no-wait`. This returns the deployment id and URL as soon as the
@@ -112,9 +106,9 @@ keeps stdout machine-readable and omits this preflight block.
 | Server response | What it means | What to do |
 |---|---|---|
 | `409 source_ref_stale` | `source_branch` moved away from the pinned `ref` commit before the source was accepted, or the branch moved during the build. | Let the newer branch commit deploy, or explicitly deploy a pinned SHA without `source_branch` when a rollback is intended. |
-| `503 source_ref_unavailable` | Transient githubd or codeload blip. Server sets `Retry-After: 30`. | Back off and retry; the CLI surfaces the hint on stderr. |
-| `404 github_install_not_found` | The account has no `github_installations` row. | Run `gregale connect` on a workstation once, then re-run CI. |
-| `413 source_too_large` | Repo tarball exceeds the per-plan `SourceTarballMaxMB` cap (Free/Hobby 100 MB, Pro/Scale 250 MB). | Trim history (`git gc`), use a sparse checkout, or upgrade plan. |
+| `503 source_ref_unavailable` | Transient GitHub or Gregale fetch failure. Server sets `Retry-After: 30`. | Back off and retry; the CLI surfaces the hint on stderr. |
+| `404 github_install_not_found` | The account has no GitHub App installation. | Run `gregale connect` on a workstation once, then re-run CI. |
+| `413 source_too_large` | Repo tarball exceeds the per-plan source size cap (Free/Hobby 100 MB, Pro/Scale 250 MB). | Trim history (`git gc`), use a sparse checkout, or upgrade plan. |
 | Local `Invalid --ref`, or server `400 invalid_ref` | The ref has invalid syntax, or the remote branch, tag, or SHA cannot be resolved. | Pin to a SHA or a real branch / tag. |
 | `429 plan_limit_*` | Per-plan concurrency / RAM cap reached. | Wait for a slot, or upgrade. |
 
@@ -128,7 +122,7 @@ gregale deploy --repo onebox-faas/hello --ref "$GITHUB_SHA" \
 ```
 
 The CLI scopes that logical key to the source-ref transport before sending it
-to apid, so a replay folds to the original build row without colliding with a
+to Gregale, so a replay folds to the original build without colliding with a
 different deploy transport.
 
 The source-ref path reads `gregale.yaml`, `gregale.yml`, or `gregale.toml` from
@@ -166,7 +160,7 @@ local/tarball deploy whose source can be inspected before mutation.
   environments, and manual dispatch is limited to those branches. Existing
   projects with `production_trigger=webhook` keep the App push deploy path.
 - **Not a git deploy-key fetch.** The server uses the GitHub App
-  install token (ADR-012, ADR-020); the control plane never
+  install token; the control plane never
   sees the customer's PAT. The install token is scoped to a
   single `StreamSourceRef` RPC and discarded before the response
   is returned.
@@ -175,8 +169,9 @@ local/tarball deploy whose source can be inspected before mutation.
 
 - `POST /v1/apps/{slug}/deployments/source-ref`
 - Body: `{"repo": "OWNER/NAME", "ref": "<branch|tag|sha>", "format": "tarball", "no_triggers": false, "source_branch": "<branch>"}` (`source_branch` is optional and requires `ref` to be a full commit SHA)
-- Auth chain: `authLimited → requireMFA → requireScope(ScopesDeployWriteSurface) → idempotent → handler`
-- SDK binding: `pkg/api.Client.DeployFromSourceRef` (Go) /
+- Auth: an API key with the `deploy` scope, or admin. Send an
+  `Idempotency-Key` header to make retries safe.
+- SDKs: `DeployFromSourceRef` (Go) /
   `DeploymentsService.createDeploymentFromSourceRef` (Node).
 
 ## GitHub Actions
@@ -282,7 +277,7 @@ that have not configured an OIDC subject binding yet.
 Under the trust policy Gregale creates for a connected repository, the bearer
 can deploy only the `app` the Action names, which must be bound to that
 repository, and only from runs on its deploy branches or `v*` release tags.
-Pull request runs cannot deploy (ADR-20261101100000; see
+Pull request runs cannot deploy (see
 [OIDC token exchange](auth.md#oidc-token-exchange)).
 
 ### Repository discovery for automation
@@ -309,24 +304,7 @@ If no GitHub App installation exists, the API returns
   policy API so the App push listener does not submit a second production
   deployment. The App continues to process PR preview events.
 
-See ADR-093 for the design rationale and the explicit
-non-goals.
-
-## Webhook secrets (push-to-deploy)
-
-The push-to-deploy loop is wired end-to-end. GitHub App webhook
-deliveries are signed with the App's single webhook secret, so both
-`gatewayd-internal` and `githubd` must receive the same
-`FAAS_GITHUB_WEBHOOK_SECRET`. `githubd` verifies the signature before
-persisting the delivery to its durable inbox and acknowledging GitHub;
-the worker then routes `push` and `pull_request` events asynchronously.
-
-The older installation-scoped secret API remains only as a compatibility
-fallback for non-GitHub senders that provide an explicit installation
-header. It is not the normal GitHub App delivery path.
-
 ## See also
 
-- `docs/adr/092-headless-source-ref-deploy.md` — design rationale.
-- `docs/runbooks/GithubWebhookSecretRotation.md` — operator rotation flow.
-- `docs/cli-setup.md` — shell completion + man page install.
+- [Deploy from your repository](deploys.md)
+- [CLI guide](cli-setup.md) — shell completion and man pages.

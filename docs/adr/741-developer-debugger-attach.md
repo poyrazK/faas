@@ -168,3 +168,25 @@ functions killed or replaced a worker held at a breakpoint.
   env path only. The developer marker itself is platform identity and is
   covered by a schedd unit test; a metal case for a production app that sets
   `FAAS_DEV_DEBUG` (expect no inspector) is still to be added.
+
+## Amendment (2026-11-11): findings from testing on prod
+
+- **Audit per session, not per tunnel.** Each target-discovery poll the CLI's
+  two-second cache missed opened a short tunnel, and each wrote an
+  attached/detached pair: about two audit rows a second while
+  `chrome://inspect` was open. The gateway now coalesces tunnels per account,
+  app and key into one session: `dev.debugger.attached` when the first opens,
+  `dev.debugger.detached` 60 s after the last closes, carrying the session's
+  duration and tunnel count. Sessions are tracked per gateway process, like
+  the session cap.
+- **Refusal code.** A tunnel to an app that is not a developer environment is
+  refused with 409 `dev_debug_not_developer_environment` (was the generic
+  `validation_failed`).
+- **Prod evidence for the developer marker.** A regular production app with
+  `FAAS_DEV_DEBUG=node`, and also with a spoofed
+  `FAAS_DEVELOPER_ENVIRONMENT=1` secret, booted without an inspector and
+  guest-init logged "dev debug ignored: not a developer environment". This
+  covers the test gap above until the metal case exists.
+- **Sync uploads.** `gregale dev` syncs through the CLI's upload client (five
+  minutes, as `gregale deploy`), whose response-header wait now follows that
+  timeout; a cold first sync failed at the 30 s JSON wait.

@@ -1,12 +1,14 @@
 import { PostgrestClient } from '@supabase/postgrest-js'
 
 import { authenticatedFetch, dataAPIBase, type DataClientOptions } from './client-fetch.js'
+import { exactClient } from './exact-numeric.js'
+import { numericFetch } from './numeric.js'
 
 export type { DataClientOptions, DataResponseInfo } from './client-fetch.js'
 
 /** Application tokens authenticate data access; account-management keys do not. */
 export function createDataClient<Database>(options: DataClientOptions): PostgrestClient<Database> {
-  const send = authenticatedFetch(options)
+  const send = numericFetch(authenticatedFetch(options), options.numericMode)
   const restEndpoint = `${dataAPIBase(options.url)}/rest/v1`
   const expectedFingerprint = options.expectedSchemaFingerprint
   if (expectedFingerprint !== undefined && (typeof expectedFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(expectedFingerprint))) throw new Error('Expected schema fingerprint must be 64 lowercase hexadecimal characters')
@@ -15,12 +17,17 @@ export function createDataClient<Database>(options: DataClientOptions): Postgres
   const endpoint = expectedFingerprint === undefined ? restEndpoint : `${restEndpoint.slice(0, -'/rest/v1'.length)}/__gregale/contract/${expectedFingerprint}/rest/v1`
   // The generated contract retains the PostgREST schema shape and supports
   // .schema('api'), typed inserts, filters, relationships and projections.
-  return new PostgrestClient<Database>(endpoint, { fetch: send })
+  const client = new PostgrestClient<Database>(endpoint, { fetch: send })
+  return options.numericMode === 'exact' ? exactClient(client) : client
 }
 
 export { PostgrestError } from '@supabase/postgrest-js'
+export { parseLosslessJSON } from './numeric.js'
+export type { NumericMode } from './numeric.js'
 export { createStorageClient, StorageError } from './storage.js'
 export type { StorageBucket, StorageClient, StorageObject, StorageUploadBody } from './storage.js'
+export type { UploadSession, ResumableUploadOptions, StorageUploads } from './storage-uploads.js'
+export { UploadSessionStartError } from './storage-uploads.js'
 export { classifyDataError } from './errors.js'
 export type { ClassifiedDataError, DataErrorCategory, DataErrorRecovery } from './errors.js'
 export { validatedRpc, RpcValidationError } from './rpc.js'
@@ -28,7 +35,7 @@ export type { ValidatedRpcResult } from './rpc.js'
 export { validateRpcResponse, RpcResponseValidationError } from './response.js'
 export type { ValidatedRpcResponse } from './response.js'
 export { jsonText, jsonValue, selectJson } from './json.js'
-export type { Json, JsonPath, JsonProjection } from './json.js'
+export type { Json, ExactJson, JsonPath, JsonProjection } from './json.js'
 export { validateJson, JsonValidationError } from './validation.js'
 export type { JsonParser, ValidatedJson } from './validation.js'
 
@@ -56,3 +63,5 @@ export type { CursorScope, CursorPagerOptions, CursorPageResult } from './cursor
 export { createMutationJournal, MutationJournalError, MUTATION_JOURNAL_LIMITS } from './mutation-journal.js'
 export type { MutationJournalContext, JournalOperation, MutationJournalState, MutationJournalEntry, MutationJournalStore, MutationJournalErrorCode, JournalReconciliation } from './mutation-journal.js'
 export { createIndexedDBMutationStore } from './indexeddb-mutation-store.js'
+
+export { ExactNumber, parseExactJSON, stringifyExactJSON } from './exact-numeric.js'

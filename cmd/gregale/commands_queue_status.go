@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -143,6 +144,9 @@ func renderQueueStatus(report queueStatusReport) {
 	if report.Queue.OldestPendingAgeSeconds != nil {
 		_, _ = fmt.Fprintf(osStdout, "oldest_age: %ds\n", *report.Queue.OldestPendingAgeSeconds)
 	}
+	if line := queueBacklogBySourceLine(report.Queue.BacklogBySource); line != "" {
+		_, _ = fmt.Fprintf(osStdout, "waiting:    %s\n", line)
+	}
 	if report.ScalingPolicy != nil || report.MaxConcurrency > 0 {
 		_, _ = fmt.Fprintf(osStdout, "scaling:    %s", queueScalingBounds(report))
 		if report.ScalingPolicy != nil && report.ScalingPolicy.Target != nil {
@@ -195,4 +199,23 @@ func queueScalingBounds(report queueStatusReport) string {
 		return fmt.Sprintf("min=%d max=%d", minInstances, maxInstances)
 	}
 	return fmt.Sprintf("min=%d max=%d (max_concurrency)", minInstances, report.MaxConcurrency)
+}
+
+// queueBacklogBySourceLine renders the app's waiting work per source in a
+// stable order, e.g. "async_invoke=812 inbound_webhook=40 queue=3". Queue
+// depth counts queue messages only; async invocations, inbound webhooks and
+// event deliveries waiting for the scheduler show here.
+func queueBacklogBySourceLine(backlog map[string]int64) string {
+	sources := make([]string, 0, len(backlog))
+	for source, n := range backlog {
+		if n > 0 {
+			sources = append(sources, source)
+		}
+	}
+	sort.Strings(sources)
+	parts := make([]string, 0, len(sources))
+	for _, source := range sources {
+		parts = append(parts, fmt.Sprintf("%s=%d", terminalSafe(source), backlog[source]))
+	}
+	return strings.Join(parts, " ")
 }

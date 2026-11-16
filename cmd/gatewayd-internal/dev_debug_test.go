@@ -130,6 +130,8 @@ func newDevDebugFixture(t *testing.T) *devDebugFixture {
 	f := &devDebugFixture{key: key, devApp: devApp, prodApp: prodApp, targets: &fakeDebugTargets{}, audit: &recordingDebugAudit{}}
 	auth := mwauth.New(store, nil, nil, f.audit, slog.New(slog.NewTextHandler(io.Discard, nil)), middleware.NewLimiter(middleware.AuthLimitConfig{}), nil)
 	tunnel := &devDebugTunnel{auth: auth, log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		// No detach grace in the fixture: the session ends with its tunnel.
+		audits: devDebugAudits{after: func(_ time.Duration, f func()) func() bool { go f(); return func() bool { return false } }},
 		forward: func(_ context.Context, conn net.Conn, target gateway.Target) error {
 			f.mu.Lock()
 			f.ports = append(f.ports, target.Port)
@@ -242,5 +244,60 @@ func TestDevDebugTunnelRequiresWebSocket(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("plain GET = %d, want 400", response.StatusCode)
+	}
+}
+
+// adr: 741 — tunnels coalesce into one audited debugging session per account,
+// app and key. Debuggers poll target discovery about every second; auditing
+// each short tunnel wrote two rows a second on prod (2026-11-11).
+func TestDevDebugAuditsCoalesceTunnelsIntoSessions(t *testing.T) {
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	var pending []func()
+	audits := devDebugAudits{
+		now: func() time.Time { return now },
+		after: func(_ time.Duration, f func()) func() bool {
+			i := len(pending)
+			pending = append(pending, f)
+			return func() bool { pending[i] = nil; return true }
+		},
+	}
+	fire := func() {
+		for i, f := range pending {
+			if f != nil {
+				pending[i] = nil
+				f()
+			}
+		}
+	}
+	var events []string
+	var lastDetach map[string]any
+	emit := func(_ context.Context, kind string, data map[string]any) {
+		events = append(events, kind)
+		if kind == "dev.debugger.detached" {
+			lastDetach = data
+		}
+	}
+	key := devDebugAuditKey{accountID: "acct", appID: "app", keyID: "key"}
+	for i := 0; i < 20; i++ { // a discovery poll every second
+		closeTunnel := audits.open(context.Background(), key, map[string]any{"app_id": "app"}, emit)
+		now = now.Add(500 * time.Millisecond)
+		closeTunnel()
+		now = now.Add(500 * time.Millisecond)
+	}
+	if len(events) != 1 || events[0] != "dev.debugger.attached" {
+		t.Fatalf("events during polling = %v, want one attached", events)
+	}
+	now = now.Add(-500*time.Millisecond + devDebugAuditGrace)
+	fire()
+	if len(events) != 2 || events[1] != "dev.debugger.detached" || lastDetach["tunnels"] != 20 {
+		t.Fatalf("events = %v detach = %v, want one detached covering 20 tunnels", events, lastDetach)
+	}
+	if got := lastDetach["duration_ms"]; got != int64(19500) {
+		t.Fatalf("duration_ms = %v, want 19500 (first open to last close)", got)
+	}
+	// A different key is its own session.
+	audits.open(context.Background(), devDebugAuditKey{accountID: "acct", appID: "app", keyID: "other"}, map[string]any{}, emit)()
+	if len(events) != 3 || events[2] != "dev.debugger.attached" {
+		t.Fatalf("another key's tunnel: events = %v, want a new attached", events)
 	}
 }

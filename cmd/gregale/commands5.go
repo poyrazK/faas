@@ -288,10 +288,10 @@ func cmdStatus(args []string) int {
 // flow as `gregale secrets set`; `--restart` opts into an immediate
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
-	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() {
+	if len(args) == 0 || (args[0] == "clone-status" || args[0] == "resume-automation") && !fullEnvironmentCloneCLI() {
 		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
 		if fullEnvironmentCloneCLI() {
-			usage = "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <create|clone-status|resume-automation|pull|push|diff|history|rollback>"
 		}
 		PrintUsage(os.Stderr, usage, "env")
 		return 1
@@ -305,6 +305,8 @@ func cmdEnv(args []string) int {
 		return envCreate(args[1:])
 	case "clone-status":
 		return envCloneStatus(args[1:])
+	case "resume-automation":
+		return envResumeAutomation(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":
@@ -324,91 +326,6 @@ func cmdEnv(args []string) int {
 	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
 }
 
-func envPull(args []string) int {
-	fs := newFlagSet("env pull", flag.ContinueOnError)
-	app := fs.String("app", "", "app slug")
-	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
-	out := fs.String("o", ".env", "output file (default .env)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if rejectUnexpectedFlagArgs(fs) {
-		return 1
-	}
-	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
-	if resolveErr == nil {
-		*app = resolvedApp
-	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
-		return printErr("Could not read local project context", resolveErr)
-	}
-	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--env <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
-		return 1
-	}
-	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
-	if scopeErr != nil {
-		return printErr("Could not read local project context", scopeErr)
-	}
-	*scope = resolvedScope
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	resp, err := client.ListSecretsWithScope(context.Background(), *app, *scope)
-	if err != nil {
-		return printErr("List failed", err)
-	}
-	existing, readErr := os.ReadFile(*out)
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return printErr("Could not read existing .env", readErr)
-	}
-	present := envAssignmentKeys(existing)
-	var b strings.Builder
-	if len(existing) > 0 {
-		b.Write(existing)
-		if existing[len(existing)-1] != '\n' {
-			b.WriteByte('\n')
-		}
-	}
-	added := 0
-	for _, s := range resp.Secrets {
-		if _, ok := present[s.Key]; ok {
-			continue
-		}
-		// KEY-only template: the G2 boundary (§11) means the server
-		// never returns plaintext, so we intentionally write an empty
-		// value. The customer fills values by hand before `env push`.
-		fmt.Fprintf(&b, "%s=\n", s.Key)
-		added++
-	}
-	if err := os.WriteFile(*out, []byte(b.String()), 0o600); err != nil {
-		return printErr("Could not write .env", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeJSON(struct {
-			AppSlug       string `json:"app_slug"`
-			Scope         string `json:"scope"`
-			OutputPath    string `json:"output_path"`
-			RemoteKeys    int    `json:"remote_key_count"`
-			AddedKeys     int    `json:"added_key_count"`
-			PreservedKeys int    `json:"preserved_key_count"`
-			KeyOnly       bool   `json:"key_only"`
-		}{*app, scopeOrDefault(*scope), *out, len(resp.Secrets), added, len(present), true}))
-	}
-	if len(resp.Secrets) == 0 && len(existing) == 0 {
-		PrintOK(osStdout, "Wrote empty %s (%s has no secrets)", *out, *app)
-		return 0
-	}
-	if len(existing) == 0 {
-		PrintOK(osStdout, "Wrote %d key(s) to %s (values intentionally blank — fill by hand)",
-			len(resp.Secrets), *out)
-	} else {
-		PrintOK(osStdout, "Added %d missing key(s) to %s; existing values and local keys were preserved",
-			added, *out)
-	}
-	return 0
-}
-
 func envAssignmentKeys(data []byte) map[string]struct{} {
 	keys := make(map[string]struct{})
 	for _, raw := range strings.Split(string(data), "\n") {
@@ -416,8 +333,11 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if pair, err := parseSecretsPair(line); err == nil {
-			keys[pair.Key] = struct{}{}
+		if pair, err := parseSecretsPair(stripDotenvExport(line)); err == nil {
+			key := strings.TrimSpace(pair.Key)
+			if api.ValidateSecretKey(key) == nil {
+				keys[key] = struct{}{}
+			}
 		}
 	}
 	return keys
@@ -823,7 +743,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app scale <slug> [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
@@ -839,6 +759,9 @@ func cmdAppScale(slug string, args []string) int {
 	planOutput := fs.String("out", "", "write a reusable reviewed plan to a new JSON file (requires --plan)")
 	applyPlan := fs.String("apply", "", "apply a saved scale plan JSON file")
 	confirmPlan := fs.Bool("confirm", false, "confirm applying the saved plan (requires --apply)")
+	// app scale applies without a prompt; --yes is accepted so scripts that
+	// pass it to every mutating command do not fail (prod 2026-11-15).
+	_ = fs.Bool("yes", false, "accepted for scripts; app scale applies without a prompt")
 	environment := fs.String("environment", "", "edit this project environment's workload settings")
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
@@ -1104,7 +1027,7 @@ func cmdAppScale(slug string, args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := appClient.UpdateApp(context.Background(), slug, req)
 	if err != nil {
-		return printErr("Scale failed", err)
+		return printErr("Scale failed", explainPerInstanceConcurrencyRefusal(err, explicit["per-instance-concurrency"]))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -1184,6 +1107,9 @@ func cmdAppDispatch(args []string) int {
 	}
 	if args[0] == subWait && hasSelectorFlag(args[1:]) {
 		return cmdAppWaitSelected(args[1:])
+	}
+	if isAppProjectCommand(args) {
+		return cmdAppProject(args)
 	}
 	slug := args[0]
 	if code, ok := cmdAppConditions(slug, args[1:]); ok {
@@ -1403,7 +1329,7 @@ func cmdDashboard(args []string) int {
 //	status       queue doctor view (depth, scaling, bindings, and liveness)
 //	peek         inspect up to N rows without draining
 //	dead-letter  rows that exhausted attempts
-//	ack          release a leased row
+//	ack          acknowledge a processed message's result
 //	setup        configure a simple push workload with queue-depth scaling
 //	bindings     manage first-class queue bindings
 func cmdQueueDispatch(args []string) int {
@@ -1417,8 +1343,8 @@ func cmdQueueDispatch(args []string) int {
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n"+
-			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
+			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
+			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		return 1
@@ -1454,8 +1380,8 @@ func cmdQueueDispatch(args []string) int {
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n"+
-			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
+			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
+			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		maybeSuggestSub(sug)
@@ -1528,9 +1454,12 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	mode := fs.String("mode", "", "delivery mode: pull|push")
 	workloadClass := fs.String("workload-class", "", "workload class: worker|job|http (http requires push and a function)")
 	maxConcurrency := fs.Int("max-concurrency", 0, "maximum concurrent deliveries")
+	// queue setup keeps a disabled binding disabled; this turns it back on
+	// (ADR-20261113180000, R5-9).
+	enabled := fs.String("enabled", "", "turn delivery on or off: true|false")
 	flags, pos := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || len(pos) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
+	if err := fs.Parse(flags); err != nil || len(pos) != 2 || (*enabled != "" && *enabled != "true" && *enabled != "false") {
+		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N] [--enabled true|false]", "queue")
 		return 1
 	}
 	req := api.UpdateQueueBindingRequest{}
@@ -1551,6 +1480,10 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	})
 	if maxConcurrencySet {
 		req.MaxConcurrency = maxConcurrency
+	}
+	if *enabled != "" {
+		on := *enabled == "true"
+		req.Enabled = &on
 	}
 	row, err := client.UpdateQueueBinding(context.Background(), pos[0], pos[1], req)
 	if err != nil {
@@ -1574,6 +1507,7 @@ func cmdQueueSend(args []string) int {
 	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key and an unnamed queue)")
 	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
 	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys")
+	groupKey := fs.String("group-key", "", "deliver messages with this key one at a time, in send order (preview)")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -1583,12 +1517,15 @@ func cmdQueueSend(args []string) int {
 		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--group-key KEY | --work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
 		return 1
 	}
 	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
 	if err != nil {
 		return printErr("Invalid queue work", err)
+	}
+	if *groupKey != "" && work != nil {
+		return printErr("Invalid queue work", errors.New("--group-key cannot be combined with --work-policy"))
 	}
 	slug := pos[0]
 	body, err := resolveQueuePayload(*payload)
@@ -1603,7 +1540,7 @@ func cmdQueueSend(args []string) int {
 	if *environment == "" {
 		warning = unconsumedQueueWarning(context.Background(), client, slug, *queueName)
 	}
-	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Environment: *environment, Payload: body, QueueName: *queueName, Work: work})
+	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Environment: *environment, Payload: body, QueueName: *queueName, Work: work, GroupKey: *groupKey})
 	if err != nil {
 		return printErr("Queue send failed", err)
 	}

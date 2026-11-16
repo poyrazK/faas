@@ -151,7 +151,7 @@ SDK's `tracing` package gives the same request, HTTP client and database
 spans without an OpenTelemetry dependency:
 
 ```go
-import "github.com/poyrazK/faas/sdk/go/preview/tracing"
+import "github.com/gregale-dev/gregale-go/preview/tracing"
 
 func main() {
 	shutdown := tracing.Start()

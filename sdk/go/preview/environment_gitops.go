@@ -1,6 +1,6 @@
 package preview
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 // Environment GitOps wire contracts. Client methods are inherited from the
 // embedded API client and retain the reviewed digest/generation/plan hash.

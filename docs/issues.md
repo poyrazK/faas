@@ -58,7 +58,7 @@ issues.close()
 Go:
 
 ```go
-// Imports include context, os, time, and faas "github.com/poyrazK/faas/sdk/go".
+// Imports include context, os, time, and faas "github.com/gregale-dev/gregale-go".
 issues, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 	BaseURL: os.Getenv("GREGALE_API_URL"),
 	App:     "exports",

@@ -172,7 +172,7 @@ func TestStatusReportsOOMKills(t *testing.T) {
 			if out.OOMKillsTotal != 3 || len(out.OOMKills) != 2 || out.OOMKills[0].PeakMB != 600 {
 				t.Fatalf("OOM kills = %d %+v", out.OOMKillsTotal, out.OOMKills)
 			}
-			if !strings.Contains(out.OOMFix, "512 MB plan") || !strings.Contains(out.OOMFix, "608 MB") {
+			if !strings.Contains(out.OOMFix, "from 512 MB") || !strings.Contains(out.OOMFix, "608 MB") {
 				t.Fatalf("OOM fix = %q, want the plan and the peak plus 8 MB", out.OOMFix)
 			}
 		})

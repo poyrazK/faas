@@ -126,6 +126,12 @@ func cmdAuditEventsList(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeNDJSON(resp.Events))
 	}
+	if len(resp.Events) == 0 {
+		// An empty result printed nothing at all, which read as a broken
+		// command (Hunt 34 H34-4).
+		_, _ = fmt.Fprintln(osStdout, "No audit events match.")
+		return 0
+	}
 	for _, e := range resp.Events {
 		// Subject may be empty when --include-anonymous surfaced a
 		// subject=NULL row; print "-" so the column stays aligned.

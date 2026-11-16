@@ -57,7 +57,7 @@ func newFakeCA(t *testing.T) *fakeCA {
 		t.Fatal(err)
 	}
 	cert, _ := x509.ParseCertificate(der)
-	return &fakeCA{t: t, key: key, cert: cert, now: time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)}
+	return &fakeCA{t: t, key: key, cert: cert, now: time.Now().UTC().Truncate(time.Hour).Add(-time.Hour)}
 }
 
 func (f *fakeCA) CA() string { return edgecert.CALetsEncryptStaging }

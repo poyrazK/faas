@@ -62,6 +62,7 @@ sdk/auth/dist/
 # Manifest-derived Ansible inventory (generated; never hand-edit)
 /deploy/ansible/.generated/
 .cache/ansible/
+/deploy/ansible/.cache/
 
 # CLIs (build output)
 /gregalectl

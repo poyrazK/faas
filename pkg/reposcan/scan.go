@@ -153,6 +153,9 @@ type Workload struct {
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
 	SourceSHA256 string
+	// SourceHosts are literals in this workload's source that dial another
+	// service by its Compose name (detectSourceHosts).
+	SourceHosts []api.PlanSourceHost
 	// DependsOn contains service names declared by Compose's depends_on or by
 	// .gregale/project.yaml (ADR-20261025093331). The graph orders admission;
 	// explicit conditions also gate release.
@@ -184,6 +187,11 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// Streaming (x-gregale-streaming) and WakeAhead (x-gregale-wake-ahead)
+	// are explicit app settings from Compose. Nil keeps an existing app's
+	// setting and the platform default for a new one.
+	Streaming *bool `json:",omitempty"`
+	WakeAhead *bool `json:",omitempty"`
 	// RenamedFrom is the service's previous name (Compose
 	// x-gregale-renamed-from). A deploy updates that name's app in place
 	// instead of removing it and creating a new one (ADR-20261029090000).
@@ -542,6 +550,7 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		}
 		workloads[i].SourceSHA256 = digest
 	}
+	detectSourceHosts(fsys, workloads, managed)
 	sortStableByName(workloads)
 	sortManagedByName(managed)
 

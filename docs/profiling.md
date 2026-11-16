@@ -89,11 +89,11 @@ Go applications opt in during startup with the Go SDK's collector, which
 uses only the standard library:
 
 ```sh
-go get github.com/poyrazK/faas/sdk/go@latest
+go get github.com/gregale-dev/gregale-go@latest
 ```
 
 ```go
-import "github.com/poyrazK/faas/sdk/go/preview/profiling"
+import "github.com/gregale-dev/gregale-go/preview/profiling"
 
 // appContext lasts until application shutdown.
 profiling.Start(appContext)
@@ -999,7 +999,7 @@ snapshots do not extend retention for raw requests or CPU profile samples.
 Go applications can attach a static declared route label to handler execution:
 
 ```go
-import "github.com/poyrazK/faas/sdk/go/preview/profiling"
+import "github.com/gregale-dev/gregale-go/preview/profiling"
 
 mux.Handle("GET /orders/{id}", profiling.RouteHandler("GET /orders/{id}", handler))
 ```

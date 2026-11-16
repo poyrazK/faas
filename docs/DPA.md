@@ -1,11 +1,7 @@
 # Data Processing Addendum (DPA)
 
 <!--
-  This addendum is part of the Terms of Service: it binds every customer
-  that accepts them, so it names no customer, date or jurisdiction and has
-  no placeholders. pkg/legal's TestDPAHasNoPlaceholders fails on any template
-  braces or bracketed ALL-CAPS text. ansible ships this file to /etc/faas/dpa.md
-  (FAAS_DPA_PATH) and the docs site vendors it, so both copies match.
+  Maintainer notes (not shown to customers): docs/ops/legal-documents-operator-notes.md.
 -->
 
 **Parties:** Gregale ("Processor") and the customer that accepted the
@@ -43,7 +39,7 @@ keeping (tax invoices: 7 years).
 - Routing inbound HTTP requests to the appropriate microVM
   instance.
 - Aggregating per-minute usage (RAM-seconds + request count) for
-  billing purposes (spec §10).
+  billing purposes.
 - Sending transactional email related to the service (account
   changes, billing alerts, deletion grace notice).
 - Only on Controller's instruction (Pro and Scale): restoring a copy
@@ -65,12 +61,12 @@ keeping (tax invoices: 7 years).
 
 - Account data: email address, billing-provider customer ID, plan tier.
 - App data: app slug, deployment artifacts, runtime env vars
-  (sealed at rest with the host X25519 key, spec §11/G2).
+  (sealed at rest with the host X25519 key).
 - Usage data: per-minute aggregate of (app, instance, request
   count, RAM-seconds). No request bodies or response bodies are
   retained beyond the in-flight transit window.
 - Operational logs: request path, status code, host IP, timing —
-  retained for 30 days for security incident response (spec §11).
+  retained for 30 days for security incident response.
 - Application logs: what Controller's applications write to standard
   output and standard error, which can contain any personal data an
   application chooses to log. Held in memory while an instance runs,
@@ -132,7 +128,7 @@ Processor shall:
 - Make available to Controller all information necessary to
   demonstrate compliance with Article 28 GDPR.
 
-## 6. Data subject rights (spec §11 / G6)
+## 6. Data subject rights
 
 Controller may at any time exercise the following rights on behalf
 of data subjects via the documented Gregale endpoints:
@@ -187,8 +183,8 @@ upcoming changes.
   email address, and the login handle — and the optional name and
   avatar URL — at `POST /v1/auth/github/callback`. No repo list,
   no contact list, no org list. Scopes are `read:user user:email`.
-- **GitHub App** (deploys from GitHub): the `githubd` daemon is the only
-  outbound caller to `api.github.com`. It fetches the source of
+- **GitHub App** (deploys from GitHub): a single Processor service is the
+  only outbound caller to `api.github.com`. It fetches the source of
   repositories a customer connects to build their deployments, posts
   Checks results keyed by commit SHA and exchanges installation tokens.
   Inbound webhooks at `POST /webhooks/github` are HMAC-SHA-256 verified
@@ -205,7 +201,7 @@ new sub-processor. Controller may object on reasonable
 data-protection grounds; the parties shall work in good faith to
 resolve the objection before the change takes effect.
 
-## 8. Security measures (spec §11)
+## 8. Security measures
 
 Processor implements the technical and organisational measures
 required by Art. 32 GDPR, including:
@@ -222,16 +218,16 @@ required by Art. 32 GDPR, including:
 - virtio-rng on every guest so restored snapshots don't reuse RNG
   state.
 - Customer secrets sealed at rest with the host X25519 key
-  (pkg/secretbox, ADR-020). Plaintext VALUES never touch PG.
+  so plaintext values are never stored in the database.
 - Crash snapshots encrypted on the capturing host before they are
   stored (age, a fresh X25519 key per snapshot sealed to the fleet
   key), so no unencrypted copy is ever written to storage; a decrypted
   copy exists only on the host running a fork of the snapshot, for that
-  fork, and is deleted with it (ADR-733).
+  fork, and is deleted with it.
 - Production forks run with all outbound network access blocked and
   are never routed production traffic; opening one requires a key
   with secret-read scope and MFA, and every create, access and delete
-  is written to the audit log (ADR-732).
+  is written to the audit log.
 - TLS 1.3 in transit; HSTS + Strict CSP on the dashboard.
 
 Full security checklist lives at https://gregale.dev/docs/security.

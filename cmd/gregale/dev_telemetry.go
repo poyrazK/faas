@@ -27,7 +27,7 @@ const (
 	devPhaseReady       = "ready"
 	devPhaseRoute       = "route"
 	devPhaseFailed      = "failed"
-	devEditToLiveTarget = 15 * time.Second
+	devEditToLiveTarget = api.DevEditToLiveTarget
 )
 
 var devPhaseOrder = []string{
@@ -367,6 +367,19 @@ func (t *devPhaseTracker) render(w io.Writer) {
 	slo := "met"
 	if !receipt.WithinSLO {
 		slo = "breached"
+	}
+	// The phases are what each step reported; edit-to-live is this CLI's wall
+	// clock. Waiting between them (build queue, upload acceptance, rollout)
+	// belongs to no phase, and a 2m23s edit-to-live over phases summing to
+	// 54s read as if the numbers were wrong (prod, 2026-11-11). Say so.
+	var phased int64
+	for _, timing := range timings {
+		if timing.Status != devPhaseFailed {
+			phased += timing.DurationMS
+		}
+	}
+	if gap := receipt.EditToLiveMS - phased; gap >= time.Second.Milliseconds() {
+		parts = append(parts, fmt.Sprintf("waiting=%s", formatDevPhaseDuration(gap)))
 	}
 	parts = append(parts, fmt.Sprintf("edit-to-live=%s", formatDevPhaseDuration(receipt.EditToLiveMS)))
 	parts = append(parts, fmt.Sprintf("slo<=%s (%s)", formatDevPhaseDuration(receipt.SLOTargetMS), slo))

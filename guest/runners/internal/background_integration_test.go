@@ -152,7 +152,11 @@ func startBackgroundFunction(t *testing.T, plan api.Plan, slots int, h2 bool, so
 	}
 	go func() { _ = srv.Serve(ln) }()
 	f.base = "http://" + ln.Addr().String()
-	f.client = &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{}}
+	// The timeout only bounds a hung request. A request's first answer also
+	// waits for the Node worker to start, which took over 2 s on a loaded CI
+	// runner (TestBackgroundResponseEndsBeforeExecution, #7191); no test
+	// relies on it firing.
+	f.client = &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{}}
 	if h2 {
 		f.client.Transport = &http2.Transport{AllowHTTP: true, DialTLSContext: func(ctx context.Context, _, addr string, _ *tls.Config) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "tcp", addr)

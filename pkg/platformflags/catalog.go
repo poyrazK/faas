@@ -61,6 +61,13 @@ const (
 	// AppHealthMemory warns in app health when an app's guests ran short of
 	// memory (ADR-20261102124306) for the accounts it releases.
 	AppHealthMemory = "app_health_memory"
+	// PostgresChanges releases database-change workers (ADR-20261112140000):
+	// the postgres-changes API and the manifest block that captures Postgres
+	// row changes into a worker's queue.
+	PostgresChanges = "postgres_changes"
+	// QueueMessageGroups releases the group_key queue send field
+	// (ADR-20261112193306).
+	QueueMessageGroups = "queue_message_groups"
 	// PostgresPoolSizing stamps GREGALE_POSTGRES_POOL_MAX, the pool size an
 	// instance can use, on the deployments imaged builds for the accounts it
 	// releases (ADR-20261104141122).
@@ -256,7 +263,7 @@ var catalog = []Spec{
 	{
 		Key:         GuestTracing,
 		Label:       "Guest request tracing",
-		Description: "Release in-guest request tracing to accounts: apps may turn tracing on. vmmd's trace receiver still needs FAAS_GUEST_TRACING_ENABLED on the node; the flag only releases the setting.",
+		Description: "Release in-guest request tracing to accounts: apps may turn tracing on. vmmd's trace receiver is on by default on every node with a state store (FAAS_GUEST_TRACING_ENABLED=0 turns it off on a node).",
 		ADR:         "ADR-958",
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan},
@@ -343,6 +350,25 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		RetireBy:    "2027-03-31",
+	},
+	{
+		Key:         PostgresChanges,
+		Capability:  "postgres-changes",
+		Label:       "Postgres change workers",
+		Description: "Capture Postgres row changes into a worker's queue: the postgres-changes API, CLI and gregale.yaml block, with Gregale installing capture on managed databases. Off, the API refuses and deploys skip the block, as before. schedd also needs FAAS_COMMIT_RELAY_ENABLED.",
+		ADR:         "ADR-20261112140000",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-06-30",
+	},
+	{
+		Key:         QueueMessageGroups,
+		Label:       "Ordered queue message groups",
+		Description: "Accept group_key on queue sends: messages with the same key are delivered one at a time in send order, on push and pull consumers, through the built-in gregale-ordered work policy. Off, a send with group_key is refused, as before.",
+		ADR:         "ADR-20261112193306",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-06-30",
 	},
 	{
 		Key:         AppHealthMemory,

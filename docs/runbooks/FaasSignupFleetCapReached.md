@@ -1,5 +1,7 @@
 # FaasSignupFleetCapReached
 
+## Symptom
+
 The platform created `api.SignupAccountsPerDay` (2,000) accounts in the last
 24 hours, so apid refuses every new sign-up with a 429 until the oldest of
 them ages out (ADR-20261104145353; metric `apid_signups_capped_total{scope="fleet"}`,

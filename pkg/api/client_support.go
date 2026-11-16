@@ -14,6 +14,54 @@ type SupportTicketListOptions struct {
 	Search string
 }
 
+type SupportNotificationListOptions struct {
+	Before int64
+	Unread bool
+}
+
+func supportNotificationsPath(base string, options SupportNotificationListOptions) string {
+	query := url.Values{}
+	if options.Before != 0 {
+		query.Set("before", strconv.FormatInt(options.Before, 10))
+	}
+	if options.Unread {
+		query.Set("unread", "true")
+	}
+	if len(query) == 0 {
+		return base
+	}
+	return base + "?" + query.Encode()
+}
+
+// ListSupportNotifications calls GET /v1/support/notifications.
+func (c *Client) ListSupportNotifications(ctx context.Context, options SupportNotificationListOptions) (SupportNotificationPage, error) {
+	var out SupportNotificationPage
+	err := c.do(ctx, http.MethodGet, supportNotificationsPath("/v1/support/notifications", options), nil, &out)
+	return out, err
+}
+
+// ListOrgSupportNotifications calls GET /v1/orgs/{org}/support/notifications.
+func (c *Client) ListOrgSupportNotifications(ctx context.Context, organization string, options SupportNotificationListOptions) (SupportNotificationPage, error) {
+	var out SupportNotificationPage
+	err := c.do(ctx, http.MethodGet, supportNotificationsPath("/v1/orgs/"+url.PathEscape(organization)+"/support/notifications", options), nil, &out)
+	return out, err
+}
+
+// MarkSupportTicketRead calls POST /v1/support/tickets/{ticket}/read. Only updates
+// through request.ThroughSequence are marked; a later notification stays unread.
+func (c *Client) MarkSupportTicketRead(ctx context.Context, ticket string, request SupportReadRequest) (SupportReadResult, error) {
+	var out SupportReadResult
+	err := c.do(ctx, http.MethodPost, "/v1/support/tickets/"+url.PathEscape(ticket)+"/read", request, &out)
+	return out, err
+}
+
+// MarkOrgSupportTicketRead calls POST /v1/orgs/{org}/support/tickets/{ticket}/read.
+func (c *Client) MarkOrgSupportTicketRead(ctx context.Context, organization, ticket string, request SupportReadRequest) (SupportReadResult, error) {
+	var out SupportReadResult
+	err := c.do(ctx, http.MethodPost, orgSupportTicketsPath(organization)+"/"+url.PathEscape(ticket)+"/read", request, &out)
+	return out, err
+}
+
 func supportListPath(base string, options SupportTicketListOptions) string {
 	query := url.Values{}
 	if options.Cursor != "" {

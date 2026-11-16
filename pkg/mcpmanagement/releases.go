@@ -54,17 +54,24 @@ type releasePlan struct {
 	LocalSource             *localSourcePlan                   `json:"local_source,omitempty"`
 	EnvChange               *envChangePlan                     `json:"env_change,omitempty"`
 	Provision               *provisionPlan                     `json:"provision,omitempty"`
-	localReceipt            any
-	failure                 *planFailure
-	configReceipt           *api.EnvBatchResponse
-	localInFlight           bool
-	appHash                 [32]byte
-	latestID                string
-	attempted               bool
-	result                  *api.DeploymentResponse
-	promoted                *api.DeploymentResponse
-	promotionAttempted      bool
-	review                  *api.AppReleaseReview
+	// AgentBudget is what the change would cost the calling agent and
+	// whether a person would be asked first (ADR-20261111114059,
+	// amendment 2026-11-13); absent for credentials no budget limits.
+	AgentBudget        *api.AgentBudgetPreview `json:"agent_budget,omitempty"`
+	localReceipt       any
+	failure            *planFailure
+	configReceipt      *api.EnvBatchResponse
+	localInFlight      bool
+	appHash            [32]byte
+	latestID           string
+	attempted          bool
+	result             *api.DeploymentResponse
+	promoted           *api.DeploymentResponse
+	promotionAttempted bool
+	review             *api.AppReleaseReview
+	// budgeted: the credential pays from an agent budget, so a priced
+	// change is previewed. Not persisted.
+	budgeted bool
 }
 
 type planDeployArgs struct {

@@ -1,5 +1,5 @@
 # Gregale FaaS — build & ops entrypoints (spec §Commands).
-# Go 1.26 with the patched 1.26.10 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
+# Go 1.26 with the patched 1.26.11 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
 
 GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)
@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd signd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd signd secretd neond hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -482,7 +482,12 @@ migration-lint: ## Expand/contract lint of the migrations added since BASE (defa
 release-safety-check-test: ## Unit tests of the version-skew check, migration linter and post-deploy SLO gate
 	python3 scripts/ci/check_migration_expand_contract_test.py
 	python3 scripts/ci/slo_gate_test.py
+	python3 scripts/migrations_land_test.py
 	$(GO) test -count=1 ./scripts/ci/versionskew
+
+.PHONY: migrations-land
+migrations-land: ## Merge origin/main into a migration-carrying branch: take main's digest, move this branch's migrations after main's, regenerate schema.sql + sqlc (DATABASE_URL or a throwaway Postgres); stages, never commits
+	python3 scripts/migrations_land.py
 
 .PHONY: agent-eval-test
 agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
@@ -533,6 +538,22 @@ environment-preflight-action-check: ## Verify the OIDC capability and promotion 
 canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against a fixture receiver
 	bash scripts/ops/canary_alert_test.sh
 
+.PHONY: canary-heartbeat-test
+canary-heartbeat-test: ## Verify scheduled-canary heartbeat eligibility, transport failures and credential redaction
+	python3 scripts/ops/canary_heartbeat_test.py
+
+.PHONY: canary-transport-test
+canary-transport-test: ## Verify bounded canary SSH preflight and independent notification fallback
+	python3 scripts/ops/canary_transport_test.py
+
+.PHONY: post-deployment-monitoring-test
+post-deployment-monitoring-test: ## Verify deployment-monitoring transport, evidence retention and recovery ordering
+	python3 scripts/ci/post_deployment_monitoring_test.py
+
+.PHONY: monitoring-qualification-test
+monitoring-qualification-test: ## Verify manual notification qualification, cleanup, evidence binding and receipt semantics
+	python3 scripts/ops/monitoring_qualification_test.py
+
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live beside the verifier in .claude/ci/coverage_floor.py.
 # Reads every coverage/cover-shard*.out and unions repeated source blocks,
@@ -552,6 +573,24 @@ coverage-floor: ## Assert ship-blocking package floors across all coverage/cover
 .PHONY: test-property
 test-property: ## Property-based invariant tests (no KVM, no DB needed). §6.2 invariants land here.
 	$(GO) test -race -count=1 -timeout=10m ./tests/property/...
+
+# Mutation testing (cmd/mutate): flip one operator at a time and check that a
+# test notices. Survivors are lines tests execute but do not pin down. Slow —
+# every mutant recompiles the package — so it runs weekly in
+# .github/workflows/mutation.yml, not in PR CI. Locally, narrow it with
+# MUTATE_SHARD=i/n, or MUTATE_FLAGS=-list to see mutants without running them.
+MUTATE_WORKERS ?= 2
+MUTATE_SHARD   ?= 1/1
+MUTATE_FLAGS   ?=
+MUTATE = $(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) run ./cmd/mutate -workers $(MUTATE_WORKERS) -shard $(MUTATE_SHARD) -testflags=$(GO_TEST_LDFLAGS) $(MUTATE_FLAGS)
+
+.PHONY: test-mutation-billing
+test-mutation-billing: ## Mutation testing of pkg/billing against its own tests (MUTATE_SHARD=i/n, MUTATE_WORKERS=n, MUTATE_FLAGS=-list|-json f)
+	$(MUTATE) -pkg ./pkg/billing
+
+.PHONY: test-mutation-ledger
+test-mutation-ledger: ## Mutation testing of the schedd admission ledger (pkg/sched/admission*.go) against its tests + tests/property
+	$(MUTATE) -pkg ./pkg/sched -files 'admission*.go' -tests 'admission*_test.go,*ledger*_test.go,flexible_reserve_test.go,stage_capacity_test.go,vcpu_combined_test.go,frozen_test.go,cpu_admission_test.go,state_machine_edges_test.go' -also ./tests/property
 
 .PHONY: coverage
 coverage: ## Aggregate coverage/cover-shard*.out and print a sorted table per package.
@@ -1110,6 +1149,7 @@ check-compute-edges: ## ADR-1343 §5: probe every compute node's app edge and tu
 .PHONY: systemd-hardening-check
 systemd-hardening-check: ## Static release gate for production systemd isolation directives
 	bash scripts/ci/check_systemd_hardening.sh $(CURDIR)
+	bash scripts/ci/check_systemd_hardening_test.sh
 
 .PHONY: canary-artifact-retention-test
 canary-artifact-retention-test: ## Test bounded validation-artifact inventory, safety proofs, and cleanup
@@ -1122,6 +1162,7 @@ go-cache-retention-test: ## Test the acceptance-host Go build cache trim (disk h
 .PHONY: serving-probe-test
 serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
 	python3 scripts/ops/faas_serving_probe_test.py
+	python3 scripts/ops/serving_probe_coverage_test.py
 
 .PHONY: cgroup-metrics-test
 cgroup-metrics-test: ## Test the per-slice cgroup metrics collector (ADR-20261023124955)
@@ -1134,6 +1175,15 @@ postgres-activity-metrics-test: ## Test the control-plane PostgreSQL activity co
 .PHONY: obs-gate-test
 obs-gate-test: ## Test the observability go/no-go check (ADR-20261023124955 §7)
 	python3 scripts/ops/obs_gate_test.py
+
+.PHONY: notification-receiver-metrics-test
+notification-receiver-metrics-test: ## Test receiver transport observations and counter-reset handling
+	python3 scripts/ops/notification_receiver_metrics_test.py
+	python3 scripts/ops/notification_drill_test.py
+
+.PHONY: notification-delivery-check
+notification-delivery-check: ## Qualify local receipt, recovery, receiver failure and watchdog loss with pinned monitoring binaries
+	bash scripts/ci/check_notification_delivery.sh $(CURDIR)
 
 .PHONY: gcp-public-beta-policy-test
 gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
@@ -1239,6 +1289,7 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/cp_state_restore.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/kernel_patch_reboot.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143
@@ -1458,7 +1509,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/mcpmanagement/statepg/queries.sql pkg/mcpmanagement/statepg/schema.sql "$$tmp/pkg/mcpmanagement/statepg/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/apid/support pkg/edgecert/certpg pkg/signd/signpg pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/state/toolpublicationdb pkg/referrals pkg/apid/support pkg/edgecert/certpg pkg/signd/signpg pkg/secretd/secretpg pkg/neond/neondpg pkg/releasehistory pkg/state/accountrisk pkg/state/signupfacts pkg/state/abusestrikes pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/dataapibudget pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \
@@ -1477,7 +1528,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/managedpostgres/connectioncapacity"; \
 	  cp pkg/managedpostgres/connectioncapacity/queries.sql pkg/managedpostgres/connectioncapacity/schema.sql "$$tmp/pkg/managedpostgres/connectioncapacity/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/apid/support/sqlc pkg/edgecert/certpg/sqlc pkg/signd/signpg/sqlc pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
+	  for package in pkg/state/toolpublicationdb pkg/referrals/sqlc pkg/state/accountrisk/sqlc pkg/state/signupfacts/sqlc pkg/state/abusestrikes/sqlc pkg/apid/support/sqlc pkg/edgecert/certpg/sqlc pkg/signd/signpg/sqlc pkg/secretd/secretpg/sqlc pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/dataapibudget/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1554,7 +1605,7 @@ spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
 	# would double the wall time without adding signal.
 	@$(GO) test -count=1 -run TestSpecCompliance ./scripts/ci/speccompliance
-	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/compliance/subprocessors.md docs/plans.md || \
+	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/egress-denylist.md docs/compliance/subprocessors.md docs/plans.md || \
 	  (echo "spec-check: drift (spec or generated docs) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
 
@@ -1589,12 +1640,13 @@ images-lock-update: ## Operator-only: resolve current registry digests, update D
 	@echo "images-lock-update: not implemented in CI; run scripts/ci/images_lock_update.py locally"
 
 .PHONY: denylist-md
-denylist-md: ## Regenerate docs/denylist.md from the shared egress catalog (ADR-034 §Consequences)
+denylist-md: ## Regenerate docs/denylist.md (operators) and docs/egress-denylist.md (customers) from the shared egress catalog
 	# Pure-Go generator — no template strings, no timestamps. Deterministic
 	# order (v4 by prefix asc, v6 by prefix asc, SMTP by port asc) so the
 	# git diff stays reviewable.
 	@$(GO) run ./cmd/denylist-md > docs/denylist.md
-	@echo "denylist-md: docs/denylist.md regenerated"
+	@$(GO) run ./cmd/denylist-md -customer > docs/egress-denylist.md
+	@echo "denylist-md: docs/denylist.md and docs/egress-denylist.md regenerated"
 
 .PHONY: subprocessor-md
 subprocessor-md: ## Regenerate docs/compliance/subprocessors.md from docs/compliance/subprocessors.json

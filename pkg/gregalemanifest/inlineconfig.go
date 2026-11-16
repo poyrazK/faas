@@ -340,7 +340,8 @@ func stringOrList(key string, v any) ([]string, error) {
 func normalizeNested(key string, v any) any {
 	// env keys are variable names, and input/output are JSON Schema whose
 	// keywords (additionalProperties, minLength) must keep their spelling.
-	if key == "env" || key == "input" || key == "output" {
+	// A workflow trigger's filter and input are customer JSON as well.
+	if key == "env" || key == "input" || key == "output" || key == "filter" {
 		return v
 	}
 	switch t := v.(type) {

@@ -883,3 +883,103 @@ func parseUUID(t *testing.T, s string) [16]byte {
 	copy(b[:], u[:])
 	return b
 }
+
+// adr: 127 — a detector pass resolves only what it could judge: an
+// observation of a superseded deployment, or of a route the current
+// deployment served in the window. A route that went quiet stays open; on
+// prod an unfixed 15x slowdown resolved minutes after it was found, once its
+// traffic aged out of the window.
+func TestPgStoreResolveRegressionsNotSeenOnlyJudgedRoutes(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	appID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	current := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	superseded := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	factor, zero := pgtype.Numeric{}, pgtype.Numeric{}
+	if err := factor.Scan("2.00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := zero.Scan("0"); err != nil {
+		t.Fatal(err)
+	}
+	for _, obs := range []struct {
+		dep   pgtype.UUID
+		route string
+	}{{current, "GET /quiet"}, {current, "GET /measured"}, {superseded, "GET /quiet"}} {
+		if err := store.UpsertRegressionObservation(ctx, sqlc.UpsertRegressionObservationParams{
+			AppID: appID, DeploymentID: obs.dep, Route: obs.route, P95Ms: 400, P95BaseMs: 200, AffectedCount: 150,
+			RegressionFactor: factor, Kind: "latency", ErrorRatePct: zero, ErrorRateBasePct: zero,
+		}); err != nil {
+			t.Fatalf("UpsertRegressionObservation: %v", err)
+		}
+	}
+	resolved, err := store.ResolveRegressionObservationsNotSeenSince(ctx, sqlc.ResolveRegressionObservationsNotSeenSinceParams{
+		AppID: appID, LastDetectedAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		CurrentDeploymentID: current, MeasuredRoutes: []string{"GET /measured"},
+	})
+	if err != nil {
+		t.Fatalf("ResolveRegressionObservationsNotSeenSince: %v", err)
+	}
+	got := map[string]bool{}
+	for _, row := range resolved {
+		got[row.DeploymentID.String()+" "+row.Route] = true
+	}
+	want := map[string]bool{current.String() + " GET /measured": true, superseded.String() + " GET /quiet": true}
+	if len(got) != len(want) {
+		t.Fatalf("resolved %v, want %v (the current deployment's quiet route stays open)", got, want)
+	}
+	for key := range want {
+		if !got[key] {
+			t.Fatalf("resolved %v, want %v", got, want)
+		}
+	}
+}
+
+// Hunt 34 H34-17: the automatic 5xx rollbacks leave out a release's 5xx on
+// method+route+status triples its predecessor also returned in the baseline
+// window. A new status, method or route, or a predecessor failure outside the
+// window, still counts.
+func TestPgStoreRequestTelemetry_KnownServerErrors(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID, releaseID := seedLiveDeploy(t, store, ctx)
+	baseline, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:known-5xx-baseline", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	now := time.Now().UTC()
+	insert := func(deploymentID, method, route string, status, count int32, at time.Time) {
+		t.Helper()
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        route, Method: method, Status: status, LatencyMs: 10,
+			ReceivedAt: pgtype.Timestamptz{Time: at, Valid: true}, Count: count,
+			UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+		}); err != nil {
+			t.Fatalf("InsertRequestTelemetry %s %s %d: %v", method, route, status, err)
+		}
+	}
+	baselineAt := now.Add(-2 * time.Hour)
+	insert(baseline.ID, "GET", "/boom", 500, 3, baselineAt)
+	insert(baseline.ID, "GET", "/status", 503, 1, baselineAt)
+	insert(baseline.ID, "GET", "/", 200, 100, baselineAt)
+	insert(baseline.ID, "GET", "/old", 500, 9, now.Add(-48*time.Hour))
+	insert(releaseID, "GET", "/boom", 500, 5, now)
+	insert(releaseID, "GET", "/status", 503, 2, now)
+	insert(releaseID, "GET", "/status", 502, 4, now)
+	insert(releaseID, "POST", "/boom", 500, 7, now)
+	insert(releaseID, "GET", "/new", 500, 6, now)
+	insert(releaseID, "GET", "/old", 500, 1, now)
+	insert(releaseID, "GET", "/", 200, 40, now)
+
+	got, err := store.RequestTelemetryKnownServerErrors(ctx, appID, releaseID, now.Add(-time.Minute), now.Add(time.Minute),
+		baseline.ID, now.Add(-24*time.Hour), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("RequestTelemetryKnownServerErrors: %v", err)
+	}
+	if got != 7 {
+		t.Fatalf("known server errors = %d, want 7 (GET /boom 500 and GET /status 503)", got)
+	}
+}

@@ -239,41 +239,6 @@ func runSignalHandlers(ctx context.Context, manifest api.AppManifest, sup *Super
 	}
 }
 
-// reapOne drains ONE ready zombie via syscall.Wait4 with
-// WNOHANG. A return value of -1 with errno=ECHILD means "no
-// children" — that's the steady state after the supervisor's
-// fork() returns; we tolerate it silently because the tick
-// continues. Any other errno is warn-logged so a real reap
-// failure surfaces in the boot log without aborting guest-init.
-//
-// We use the raw syscall.Wait4 rather than syscall.Waitid so
-// this code can run on Linux 4.x guest kernels without depending
-// on the Waitid wrapper (some embedded kernels disable it).
-func reapOne(log *slog.Logger) {
-	var status syscall.WaitStatus
-	pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
-	if err != nil {
-		if errors.Is(err, syscall.ECHILD) {
-			return // no children to reap — steady state
-		}
-		if log != nil {
-			log.Warn("guest-init: reap failed", "err", err)
-		}
-		return
-	}
-	if pid <= 0 {
-		return // no child was ready — also steady state
-	}
-	if log != nil {
-		log.Debug("guest-init: reaped child",
-			"pid", pid,
-			"exited", status.Exited(),
-			"signaled", status.Signaled(),
-			"signal", status.Signal(),
-			"exit_status", status.ExitStatus())
-	}
-}
-
 // MaxAppManifestStopGracePeriodFallback is the default grace
 // window used when AppManifest.StopGracePeriod is unset (the
 // common case today). Matches the gross cap from commit 5 and

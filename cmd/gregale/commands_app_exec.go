@@ -225,7 +225,7 @@ func validJSONScalar(value string) bool {
 func printAppExecUsage() {
 	PrintUsage(
 		osStderr,
-		"usage: gregale app <slug> exec [--shell] [--detach] [--timeout-seconds N] [--max-output-bytes N] [--operation-policy NAME --operation-key JSON] [--equivalence-key KEY] [--idempotency-key KEY] [--poll-interval D] [--wait-timeout D] -- <command> [args...]\n       gregale app <slug> exec -i [-t] [--shell] [--timeout-seconds N] [--wait-timeout D] [-- <command> [args...]]   (interactive; default command /bin/sh)",
+		"usage: gregale app exec <slug> [--shell] [--detach] [--timeout-seconds N] [--max-output-bytes N] [--operation-policy NAME --operation-key JSON] [--equivalence-key KEY] [--idempotency-key KEY] [--poll-interval D] [--wait-timeout D] -- <command> [args...]\n       gregale app exec <slug> -i [-t] [--shell] [--timeout-seconds N] [--wait-timeout D] [-- <command> [args...]]   (interactive; default command /bin/sh)",
 		"apps",
 	)
 }

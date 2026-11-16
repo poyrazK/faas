@@ -52,3 +52,25 @@ func TestManagedPostgresPlanExcessBodyV1(t *testing.T) {
 		})
 	}
 }
+
+// ADR-20261110184700 amendment 2026-11-12: the reminder a week before the
+// deletion names the date in its subject and needs one.
+func TestManagedPostgresPlanExcessReminderBodyV1(t *testing.T) {
+	deleteAt := time.Date(2026, 12, 10, 12, 0, 0, 0, time.UTC)
+	n := mail.ManagedPostgresPlanExcessNotice{Reason: mail.ManagedPostgresPlanExcessDatabaseLimit, DatabaseName: "events", ServiceClass: "development",
+		DeleteAt: deleteAt, Reminder: true}
+	subject, body, ok := mail.ManagedPostgresPlanExcessBodyV1("owner@example.test", n)
+	if !ok || subject != "Your database events will be deleted on 2026-12-10" {
+		t.Fatalf("subject %q, ok %v", subject, ok)
+	}
+	for _, want := range []string{"Reminder:", "events, one of your newest, is suspended", "still suspended", "on 2026-12-10 12:00 UTC, it is deleted",
+		"gregale postgres recover for 7 days", "delete another database"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body lacks %q:\n%s", want, body)
+		}
+	}
+	n.DeleteAt = time.Time{}
+	if _, _, ok := mail.ManagedPostgresPlanExcessBodyV1("owner@example.test", n); ok {
+		t.Fatal("a reminder without a deletion date rendered")
+	}
+}

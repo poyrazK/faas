@@ -13,5 +13,13 @@ export type ProjectEnvironmentBranchWorkload = {
    */
   source_deployment_id: string;
   status: string;
+  /**
+   * The workload's stable address in the branch, which a reset keeps. Its first request starts it.
+   */
+  url?: string;
+  /**
+   * The address of this incarnation of the branch; a reset gives it a new one.
+   */
+  environment_url?: string;
 };
 

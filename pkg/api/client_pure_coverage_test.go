@@ -73,6 +73,22 @@ func TestClient_UploadHTTP_ReturnsDeployWhenSet(t *testing.T) {
 	}
 }
 
+// The upload client waits for response headers as long as its deploy
+// timeout: it kept the 30s JSON wait, so a cold `gregale dev` first sync the
+// server took longer to accept failed with "timeout awaiting response
+// headers" (prod, 2026-11-11).
+func TestClient_UploadTransportWaitsForHeadersUpToDeployTimeout(t *testing.T) {
+	c := NewClientWithDeployTimeout("https://api.example.com", "tok", 5*time.Minute)
+	wrapped, ok := c.deployHTTP.Transport.(agentReasonTransport)
+	if !ok {
+		t.Fatalf("upload transport = %T, want agentReasonTransport", c.deployHTTP.Transport)
+	}
+	transport, ok := wrapped.next.(*http.Transport)
+	if !ok || transport.ResponseHeaderTimeout != 5*time.Minute {
+		t.Fatalf("upload ResponseHeaderTimeout = %v, want 5m", transport.ResponseHeaderTimeout)
+	}
+}
+
 // --- SetCompletionCache / CompletionCache --------------------------
 
 func TestClient_SetCompletionCache_ReturnsReceiver(t *testing.T) {

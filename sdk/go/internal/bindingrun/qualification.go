@@ -3,7 +3,7 @@ package bindingrun
 import (
 	"context"
 	"errors"
-	"github.com/poyrazK/faas/sdk/go/internal/api"
+	"github.com/gregale-dev/gregale-go/internal/api"
 	"slices"
 	"time"
 )

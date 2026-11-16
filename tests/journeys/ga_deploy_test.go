@@ -100,6 +100,20 @@ func TestDockerfileTarballAndSecretReload(t *testing.T) {
 		}
 		return jsonBody(t, r)
 	}
+	// pollSecret is secretHash for eventually: a 503 while the restart's
+	// replacement instance takes over is retried, not fatal, and logged so a
+	// gap after `env set --restart` stays visible (2026-11-15 journey run).
+	pollSecret := func(t *testing.T, want func(map[string]any) bool, describe func(map[string]any) string) (bool, string) {
+		t.Helper()
+		r := get(base + "/secret?key=E2E_HOT")
+		if r.status != http.StatusOK {
+			t.Logf("GET /secret not ready yet: %s", r)
+			return false, "GET /secret: " + r.String()
+		}
+		doc := jsonBody(t, r)
+		return want(doc), describe(doc)
+	}
+	seen := func(doc map[string]any) string { return "app sees " + compact(doc) }
 	sha := func(v string) string {
 		sum := sha256.Sum256([]byte(v))
 		return hex.EncodeToString(sum[:])
@@ -109,8 +123,7 @@ func TestDockerfileTarballAndSecretReload(t *testing.T) {
 	s.step("initial_secret_with_restart", func(t *testing.T) {
 		tg.ok(t, 5*time.Minute, "env", "set", "--app", slug, "E2E_HOT="+first, "--restart")
 		eventually(t, "first value delivered", 3*time.Minute, 3*time.Second, func() (bool, string) {
-			doc := secretHash(t)
-			return str(doc, "sha256") == sha(first), "app sees " + compact(doc)
+			return pollSecret(t, func(doc map[string]any) bool { return str(doc, "sha256") == sha(first) }, seen)
 		})
 		// `env set --restart` returns once the fresh instance serves, while the
 		// rolling refresh is still retiring the instance it replaced. A write
@@ -129,8 +142,9 @@ func TestDockerfileTarballAndSecretReload(t *testing.T) {
 	s.step("hot_reload_without_restart", func(t *testing.T) {
 		tg.ok(t, 4*time.Minute, "env", "set", "--app", slug, "E2E_HOT="+second, "--wait-for-ack", "--timeout", "3m")
 		eventually(t, "second value served from the reload snapshot", 2*time.Minute, 3*time.Second, func() (bool, string) {
-			doc := secretHash(t)
-			return str(doc, "sha256") == sha(second) && str(doc, "source") == "reload", "app sees " + compact(doc)
+			return pollSecret(t, func(doc map[string]any) bool {
+				return str(doc, "sha256") == sha(second) && str(doc, "source") == "reload"
+			}, seen)
 		})
 		if now := str(secretHash(t), "pid"); now != pid {
 			t.Errorf("the app restarted (pid %s -> %s); the rotation should have reloaded in process", pid, now)
@@ -139,9 +153,10 @@ func TestDockerfileTarballAndSecretReload(t *testing.T) {
 	s.check("revocation", func(t *testing.T) {
 		tg.ok(t, 4*time.Minute, "env", "unset", "--app", slug, "E2E_HOT", "--wait-for-ack", "--timeout", "3m")
 		eventually(t, "revoked secret gone from the app", 2*time.Minute, 3*time.Second, func() (bool, string) {
-			doc := secretHash(t)
-			present, _ := field(doc, "present").(bool)
-			return !present, "app still sees " + compact(doc)
+			return pollSecret(t, func(doc map[string]any) bool {
+				present, _ := field(doc, "present").(bool)
+				return !present
+			}, func(doc map[string]any) string { return "app still sees " + compact(doc) })
 		})
 	})
 }

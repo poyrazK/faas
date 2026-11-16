@@ -22,13 +22,18 @@ type cpuPolicyTestVMM struct {
 	guestCPULimitCalls []cpuLimitCall
 	cpuLimitErr        error
 	writeCgroup        bool
+	// onCPULimit runs before UpdateCPULimit answers.
+	onCPULimit func(Lease)
 }
 
 func (v *cpuPolicyTestVMM) UpdateCPULimit(_ context.Context, lease Lease, cpuMillicores int) error {
 	v.mu.Lock()
 	v.cpuLimitCalls = append(v.cpuLimitCalls, cpuLimitCall{instance: lease.Instance, cpu: cpuMillicores})
-	err := v.cpuLimitErr
+	err, hook := v.cpuLimitErr, v.onCPULimit
 	v.mu.Unlock()
+	if hook != nil {
+		hook(lease)
+	}
 	if err != nil {
 		return err
 	}

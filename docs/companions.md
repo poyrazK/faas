@@ -16,10 +16,10 @@ companions:
 
 The built-in presets are `opentelemetry`, `sentry`, and
 `datadog-dogstatsd`. A preset supplies a stable name, port, environment
-defaults, and an operator-qualified digest-pinned image. Explicit fields
-override the defaults. If a Gregale installation has not configured the
-preset image, deployment fails with `companion_preset_unavailable`; use a
-custom digest-pinned `image` or ask the operator to enable that preset.
+defaults, and a digest-pinned image that Gregale maintains. Explicit fields
+override the defaults. If a preset is not available for your account yet,
+deployment fails with `companion_preset_unavailable`; use a custom
+digest-pinned `image` instead.
 
 ## Custom companions
 
@@ -49,6 +49,31 @@ example 8000 for gunicorn). Without an explicit port, Gregale compares the
 application's port with the helpers' once the build has decided it. A
 collision then fails the deployment with
 `workloads "main" and "<name>" both claim port <port>`.
+
+## Command and arguments
+
+`cmd` works like an image's `CMD`: it replaces the image's default arguments
+and keeps its `ENTRYPOINT`. For an image with an entrypoint, list only the
+arguments. The entrypoint of `hashicorp/http-echo` is `/http-echo`, so:
+
+```yaml
+companions:
+  - name: echo
+    image: docker.io/hashicorp/http-echo@sha256:<64-hex-digest>
+    cmd: ["-listen=:5678", "-text=hello"]
+    port: 5678
+```
+
+`cmd: ["/http-echo", "-listen=:5678", "-text=hello"]` would run
+`/http-echo /http-echo -listen=:5678 -text=hello`, and http-echo exits with
+`Too many arguments!`. For an image without an entrypoint, `cmd` is the whole
+command. `gregale doctor --image <ref>` prints an image's entrypoint and
+default command.
+
+A companion is essential unless it sets `essential: false`. When an essential
+companion exits and its restarts run out, the instance stops, and a
+deployment fails with `app exited during startup` and the companion's last
+output.
 
 ## Writable paths
 

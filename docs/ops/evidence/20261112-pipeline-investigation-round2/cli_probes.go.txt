@@ -1,0 +1,41 @@
+package main_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+	main "github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+func TestInvestigationRound2CLIRejectsEquivalentConnectionUUID(t *testing.T) {
+	main.ResetJSONOut(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "local-test")
+	id := "aabbccdd-1122-4333-8444-5566778899aa"
+	uppercase := strings.ToUpper(id)
+	parsed, err := uuid.Parse(uppercase)
+	if err != nil || parsed.String() != id {
+		t.Fatal("invalid probe UUID")
+	}
+	requests, checks := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/v1/data/connections" {
+			requests++
+			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: id, Revision: 1}}})
+			return
+		}
+		checks++
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	code := main.CmdPipeline([]string{"connection", "tables", uppercase, "--tables", "orders", "--wait=false"})
+	if code == 0 || requests != 1 || checks != 0 {
+		t.Fatalf("finding changed: exit=%d lists=%d checks=%d", code, requests, checks)
+	}
+	t.Logf("valid uppercase UUID matching owned source %s -> exit=%d source-not-found before any check request", id, code)
+}

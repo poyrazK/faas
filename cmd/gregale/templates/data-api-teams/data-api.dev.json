@@ -63,6 +63,11 @@
         "node",
         "--test",
         "../workers/order-webhooks.test.mjs"
+      ],
+      [
+        "node",
+        "--test",
+        "../workers/data-jobs.test.mjs"
       ]
     ]
   }

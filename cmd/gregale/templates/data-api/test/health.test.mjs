@@ -202,3 +202,27 @@ test('readiness reports the runtime version the image was built from', async t =
   await writeFile(file, '{"version":"0123456789abcdef"}')
   assert.equal(readRuntimeVersion(file), '0123456789abcdef')
 })
+
+test('DAPI026 invalidation cancels old probes and disqualifies old refresh reads', async t => {
+  let releaseProbe, releaseRefresh, calls = 0, ready = true
+  const seen = new Promise(resolve => { releaseProbe = resolve })
+  const held = new Promise(resolve => { releaseRefresh = resolve })
+  const admin = http.createServer((req, res) => {
+    if (++calls === 1) { releaseProbe(); return }
+    res.writeHead(503); res.end()
+  })
+  await new Promise(resolve => admin.listen(0, '127.0.0.1', resolve))
+  t.after(() => { admin.closeAllConnections(); admin.close() })
+  const config = { coordinatedRefresh: true, refreshStatus: () => ready ? held : Promise.resolve({ paused: false }), poolObservation: async () => ({ state: 'unknown' }) }
+  const health = createHealth(config, admin.address().port, admin.address().port)
+  const old = health.snapshot(() => ({}))
+  await seen
+  health.invalidate()
+  const current = await health.snapshot(() => ({}))
+  assert.equal(current.ready, false)
+  assert.equal(current.checks.sql, 'unready')
+  assert.equal(current.checks.refresh, 'unavailable')
+  ready = false; releaseRefresh({ paused: false })
+  assert.equal((await old).ready, false)
+  assert.equal((await health.snapshot(() => ({}))).checks.refresh, 'active')
+})

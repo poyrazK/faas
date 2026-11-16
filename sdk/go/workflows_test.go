@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 func workflowRequest(t *testing.T, name string, journal []faas.WorkflowJournalEntry, input any) []byte {

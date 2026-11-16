@@ -16,6 +16,9 @@ var errDedupeUnsupported = errors.New("storage: block dedupe unsupported")
 // r is an unread regular file on the same reflink-capable filesystem. It
 // reports the cloned length; ok is false when the caller must copy instead.
 func cloneSpool(tmp *os.File, r any, key string) (written int64, ok bool) {
+	if source, ok := r.(DriveDeltaSource); ok {
+		r = source.File
+	}
 	src, isFile := r.(*os.File)
 	if !isFile || !isSparseArtifactKey(key) {
 		return 0, false

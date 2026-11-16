@@ -147,7 +147,7 @@
       "id": "github-checks-api",
       "category": "developer-platform",
       "vendor": "GitHub",
-      "service": "GitHub App: repository access for deploys, Checks API and install-token exchange (outbound from githubd)",
+      "service": "GitHub App: repository access for deploys, Checks API and install-token exchange",
       "data_categories": [
         "source archives of repositories the customer connects, fetched to build deployments",
         "commit metadata (SHA, branch, author) for deploys and Checks",

@@ -233,6 +233,7 @@ var categoryLabels = map[string]string{
 	api.AgentApprovalCredentials: "Credentials",
 	api.AgentApprovalBilling:     "Billing",
 	api.AgentApprovalBudget:      "Over budget",
+	api.AgentApprovalUndo:        "Undo its changes",
 }
 
 // budgetCostLine is a budget request's added cost; empty otherwise.

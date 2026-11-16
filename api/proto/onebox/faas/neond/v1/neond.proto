@@ -1,0 +1,45 @@
+// neond — the holder of Gregale's Neon API keys (ADR-20261112160000).
+//
+// apid's Neon backend keeps all of its Neon logic and forwards each Neon API
+// request to neond over a unix socket. neond admits only the method and path
+// shapes the backend makes, refuses deleting a live database's project or
+// branch, rate-limits destructive calls, picks the key, calls Neon and
+// returns the status and body. apid holds no Neon key.
+//
+// Wire discipline mirrors the other daemons: checked-in *.pb.go generated
+// with paths=source_relative.
+
+syntax = "proto3";
+
+package onebox.faas.neond.v1;
+
+option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/neond/v1;neondpb";
+
+service Neond {
+  // Forward sends one Neon API request. PERMISSION_DENIED: the method and
+  // path are not on the allow-list, or the policy refuses the call.
+  // RESOURCE_EXHAUSTED: the destructive-call rate limit is spent.
+  // UNAVAILABLE: Neon could not be reached. A Neon error status is not a
+  // gRPC error: it is returned in status for the caller to map.
+  rpc Forward(ForwardRequest) returns (ForwardResponse);
+}
+
+message ForwardRequest {
+  // HTTP method: GET, POST, PATCH or DELETE.
+  string method = 1;
+  // Path relative to the Neon API base, starting with "/", escaped.
+  string path = 2;
+  // Encoded query string, without "?".
+  string raw_query = 3;
+  // JSON request body; empty for none.
+  bytes body = 4;
+}
+
+message ForwardResponse {
+  // Neon's HTTP status.
+  int32 status = 1;
+  // Neon's response body, at most 4 MiB.
+  bytes body = 2;
+  // Neon's Retry-After header, when it sent one.
+  string retry_after = 3;
+}

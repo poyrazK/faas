@@ -534,6 +534,9 @@ func RetentionLoopRequestTelemetry(ctx context.Context, db retentionExecer, inte
 					log.Error("request ID journal retention failed", "err", journalErr)
 				}
 			}
+			if _, coverageErr := RetentionOnceAnalyticsCoverage(ctx, db); coverageErr != nil && log != nil {
+				log.Error("analytics coverage retention failed", "err", coverageErr)
+			}
 			rollupRows, rollupErr := RetentionOnceRequestAnalyticsMinutes(ctx, db)
 			switch {
 			case rollupErr == nil:

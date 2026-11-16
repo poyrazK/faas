@@ -98,7 +98,7 @@ SDK provides middleware and a transport:
 ```go
 import (
     "net/http"
-    faas "github.com/poyrazK/faas/sdk/go"
+    faas "github.com/gregale-dev/gregale-go"
 )
 
 client := &http.Client{Transport: preview.DevBridgePropagationTransport{}}

@@ -88,6 +88,8 @@ func upgradeOptionsFor(acct state.Account) []dashboard.UpgradeOption {
 // render nothing so a stale bookmark cannot inject copy.
 func upgradeNoticeFor(flag string) string {
 	switch flag {
+	case "referral_unavailable":
+		return "That salesperson code could not be applied. It must be an active sales code for your first paid purchase, with no existing referral. Try again or continue without a code."
 	case "error":
 		return "We could not start checkout with the billing provider. Nothing was charged — please try again in a minute."
 	case "unavailable":
@@ -149,6 +151,10 @@ func (s *server) renderUpgrade(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := s.upgradePageData(r, acct)
+	if referral, referralErr := s.sales.CheckoutState(r.Context(), acct); referralErr == nil {
+		data.SalespersonCodeAvailable = referral.Eligible
+		data.ExistingReferralCode = referral.Code
+	}
 	// Keep subscription posts the same form as an upgrade.
 	if data.Available || data.ScheduledChange != "" {
 		tok, err := middleware.IssueForAuthenticated(s.sessions, dashboardUpgradeAction, acct.ID)
@@ -251,6 +257,10 @@ func (s *server) dashboardUpgrade(w http.ResponseWriter, r *http.Request) {
 	plan := api.Plan(strings.ToLower(strings.TrimSpace(r.FormValue("plan"))))
 	if !plan.Valid() || !plan.IsPaid() {
 		http.Redirect(w, r, "/dashboard/upgrade?upgrade=invalid_plan", http.StatusSeeOther)
+		return
+	}
+	if problem := s.sales.PrepareCheckout(r.Context(), acct, plan, r.FormValue("salesperson_code")); problem != nil {
+		http.Redirect(w, r, "/dashboard/upgrade?plan="+string(plan)+"&upgrade=referral_unavailable", http.StatusSeeOther)
 		return
 	}
 	if plan == acct.Plan {

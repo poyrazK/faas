@@ -116,10 +116,8 @@ func TestMCPReadinessOAuthProbes(t *testing.T) {
 				result := `{}`
 				code := 200
 				switch msg.Method {
-				case "initialize":
-					result = fmt.Sprintf(`{"protocolVersion":%q,"capabilities":{"tools":{}}}`, api.MCPProtocolVersion)
-				case "notifications/initialized":
-					code = 202
+				case "server/discover":
+					result = fmt.Sprintf(`{"supportedVersions":[%q],"capabilities":{"tools":{}}}`, api.MCPProtocolVersion)
 				case "ping":
 					if mode == "changed" {
 						cfg.Revision = uuid.NewString()

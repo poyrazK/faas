@@ -18,13 +18,14 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class GithubService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List this account's GitHub deployment connections.
    * @returns GitHubAccountConnections Deployment installations and a fresh management CSRF token; credentials are never returned.
    * @throws ApiError
    */
   public static listGitHubAccountConnections(): CancelablePromise<GitHubAccountConnections> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/install/connections',
     });
@@ -44,7 +45,7 @@ export class GithubService {
     installationId: number,
     requestBody: GitHubConnectionManageRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/install/connections/{installationID}',
       path: {
@@ -72,7 +73,7 @@ export class GithubService {
     installationId: number,
     requestBody: GitHubConnectionManageRequest,
   }): CancelablePromise<GitHubConnectionVerification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/install/connections/{installationID}/verify',
       path: {
@@ -107,7 +108,7 @@ export class GithubService {
   }: {
     requestBody: InstallBindRequest,
   }): CancelablePromise<Array<RepoResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/install/repos/list',
       body: requestBody,
@@ -144,7 +145,7 @@ export class GithubService {
      */
     installationId?: number,
   }): CancelablePromise<Array<RepoResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/github/repos',
       query: {
@@ -181,7 +182,7 @@ export class GithubService {
      */
     slug: string,
   }): CancelablePromise<GitHubInstallStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/github',
       path: {
@@ -222,7 +223,7 @@ export class GithubService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<GitHubInstallStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/github',
       path: {
@@ -264,7 +265,7 @@ export class GithubService {
      */
     slug: string,
   }): CancelablePromise<GitHubDeploymentPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/github/deployment-policy',
       path: {
@@ -303,7 +304,7 @@ export class GithubService {
     slug: string,
     requestBody: GitHubDeploymentPolicyPatch,
   }): CancelablePromise<GitHubDeploymentPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/github/deployment-policy',
       path: {
@@ -347,7 +348,7 @@ export class GithubService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<InstallBindResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/github/bind',
       path: {
@@ -393,7 +394,7 @@ export class GithubService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<GitHubInstallStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/github/sync',
       path: {
@@ -439,7 +440,7 @@ export class GithubService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<GitHubActivityRetryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/github/activity/retry',
       path: {
@@ -478,7 +479,7 @@ export class GithubService {
      */
     slug: string,
   }): CancelablePromise<GitHubInstallStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/install/bind',
       path: {
@@ -517,7 +518,7 @@ export class GithubService {
     slug: string,
     requestBody: InstallBindRequest,
   }): CancelablePromise<InstallBindResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/install/bind',
       path: {
@@ -560,7 +561,7 @@ export class GithubService {
     slug: string,
     requestBody: GitHubInstallMutationRequest,
   }): CancelablePromise<GitHubInstallStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/install/bind',
       path: {
@@ -594,7 +595,7 @@ export class GithubService {
      */
     slug: string,
   }): CancelablePromise<GitHubInstallStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/install',
       path: {
@@ -627,7 +628,7 @@ export class GithubService {
     slug: string,
     requestBody: GitHubInstallMutationRequest,
   }): CancelablePromise<GitHubInstallStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/install/sync',
       path: {
@@ -663,7 +664,7 @@ export class GithubService {
     slug: string,
     requestBody: GitHubInstallMutationRequest,
   }): CancelablePromise<GitHubActivityRetryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/install/activity/retry',
       path: {
@@ -696,7 +697,7 @@ export class GithubService {
      */
     organization: string,
   }): CancelablePromise<Array<GitHubInstallationSummary>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/github/installations',
       path: {

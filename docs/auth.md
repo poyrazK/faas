@@ -37,7 +37,7 @@ Runs read access, and existing `deploy:write` keys retain submit/cancel access.
 Both scopes remain account-wide; they do not bind a key to an individual run.
 
 For an agent that uses Gregale's hosted MCP server without a browser, such as
-one in CI, mint an agent key (ADR-20261029085359):
+one in CI, mint an agent key:
 
 ```sh
 gregale key create ci-agent --scopes agent,deploy:write
@@ -182,8 +182,7 @@ permissions; see [the Action guide](../.github/actions/environment-preflight/REA
 `capability: preview-read` grants only `previews:read`: the status of one app's
 PR previews (`GET /v1/preview/{slug}` and its environment), and nothing else.
 Under a policy Gregale created it is issued to any run of the repository,
-pull request runs included, for an app bound to it
-([ADR-20261102203228](adr/20261102203228-ci-reads-its-preview-status.md)).
+pull request runs included, for an app bound to it.
 
 For GitHub Actions, first-use account lookup accepts both the legacy
 `repo:OWNER/REPO:...` subject and GitHub's immutable
@@ -192,8 +191,7 @@ names only to locate an existing GitHub App binding. It verifies and pins the
 complete signed subject, including immutable IDs, in the trust policy.
 
 A trust policy Gregale creates on first use, and every exchange under one,
-accepts only the `gregale` audience (plus any audience the operator lists in
-`FAAS_OIDC_EXCHANGE_AUDIENCES`, comma-separated), so a GitHub token minted for
+accepts only the `gregale` audience, so a GitHub token minted for
 another relying party cannot deploy. The token's `repository_owner_id` and
 `repository_id` claims must equal the IDs the repository binding recorded; a
 repository recreated under the same name has to be bound again. Other branches
@@ -201,7 +199,7 @@ and workflows of a bound repository are admitted only under a policy Gregale
 created: a trust policy the account wrote is authoritative.
 
 Under a policy Gregale created, a deploy bearer follows what the GitHub App
-itself deploys (ADR-20261101100000):
+itself deploys:
 
 - The run must be on a branch Gregale deploys from that repository (the
   production branch, or a project deploy branch) or on a `v*` release tag, and

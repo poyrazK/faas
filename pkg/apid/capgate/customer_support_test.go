@@ -11,7 +11,7 @@ func TestCustomerSupportIsOwnedPreviewAndStaffRoutesStayPrivate(t *testing.T) {
 		t.Fatal(e)
 	}
 	gate := New(catalog, nil)
-	for _, path := range []string{"/v1/support/tickets", "/v1/support/tickets/abc/reopen", "/v1/orgs/acme/support/tickets"} {
+	for _, path := range []string{"/v1/support/tickets", "/v1/support/tickets/abc/reopen", "/v1/orgs/acme/support/tickets", "/dashboard/support", "/dashboard/support/abc", "/dashboard/orgs/acme/support/abc"} {
 		owner, ok := gate.Capability(path)
 		if !ok || owner != "customer-support" {
 			t.Fatalf("unowned support route %s: %s %v", path, owner, ok)
@@ -22,5 +22,8 @@ func TestCustomerSupportIsOwnedPreviewAndStaffRoutesStayPrivate(t *testing.T) {
 	}
 	if owner, ok := gate.Capability("/v1/admin/support/tickets"); ok {
 		t.Fatalf("private staff route unexpectedly customer gated: %s", owner)
+	}
+	if owner, ok := gate.Capability("/dashboard/admin/support/abc"); ok {
+		t.Fatalf("private staff page unexpectedly customer gated: %s", owner)
 	}
 }

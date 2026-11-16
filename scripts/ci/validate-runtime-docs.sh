@@ -8,12 +8,32 @@
 
 set -euo pipefail
 
+# The documents that carry the operator contract. node24 and python313 are
+# published customer pages, so their operator sections live in docs/ops
+# (ADR-20261028200304); the customer pages are still held to the deny-list.
 runtime_docs=(
-  docs/runtimes/node24.md
-  docs/runtimes/python313.md
+  docs/ops/runtime-node24-operator-notes.md
+  docs/ops/runtime-python313-operator-notes.md
   docs/runtimes/go124.md
   docs/runtimes/binary.md
 )
+customer_runtime_docs=(
+  docs/runtimes/node24.md
+  docs/runtimes/python313.md
+)
+
+for doc in "${customer_runtime_docs[@]}"; do
+  if [[ ! -f "$doc" ]]; then
+    echo "::error::runtime customer page is missing: $doc"
+    exit 1
+  fi
+  if grep -Einq \
+    'pre-PR-2|fallback staging|mkfs\.ext4|scp .*\.ext4|hand[- ]copied runtime|stage the .*\.ext4|manual runtime staging' \
+    "$doc"; then
+    echo "::error::$doc contains a forbidden manual runtime staging instruction"
+    exit 1
+  fi
+done
 
 for doc in "${runtime_docs[@]}"; do
   if [[ ! -f "$doc" ]]; then

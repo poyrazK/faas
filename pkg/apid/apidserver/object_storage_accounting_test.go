@@ -64,8 +64,9 @@ func TestObjectStorageAccountingAPIGates(t *testing.T) {
 	if r := e.do(t, "POST", sign, map[string]any{"method": "GET", "key": "file"}, nil); r.Code != 402 {
 		t.Fatal("budgeted GET", r.Code)
 	}
-	if r := e.do(t, "DELETE", path+"/"+bucket.ID+"/objects?key=file", nil, nil); r.Code != 409 {
-		t.Fatal("pending signed PUT did not fence deletion", r.Code)
+	// The fence answers as retryable unsettled work (#6754).
+	if r := e.do(t, "DELETE", path+"/"+bucket.ID+"/objects?key=file", nil, nil); r.Code != 503 || !strings.Contains(r.Body.String(), "object_storage_busy") {
+		t.Fatal("pending signed PUT did not fence deletion", r.Code, r.Body.String())
 	}
 }
 

@@ -8,6 +8,7 @@ package apidserver_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -68,9 +69,10 @@ func TestCompanyProjectOperationsReachableUnderTheOrganizationPath(t *testing.T)
 	if rec := e.Do(t, http.MethodGet, base, nil, admin); rec.Code != http.StatusOK {
 		t.Fatalf("organization project read = %d %s", rec.Code, rec.Body)
 	}
-	// Unreviewed operations stay refused under the organization path.
-	if rec := e.Do(t, http.MethodGet, base+"/environments/production/gitops", nil, admin); rec.Code != http.StatusForbidden {
-		t.Fatalf("unreviewed GitOps read = %d %s, want 403", rec.Code, rec.Body)
+	// GitOps is reviewed for company projects (ADR-20261112230000): the read
+	// reaches its handler, which reports the environment has no Git source.
+	if rec := e.Do(t, http.MethodGet, base+"/environments/production/gitops", nil, admin); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "environment_git_source_not_found") {
+		t.Fatalf("company GitOps read = %d %s, want the handler's no-source 404", rec.Code, rec.Body)
 	}
 	// Another company's slug never resolves this project.
 	if rec := e.Do(t, http.MethodGet, "/v1/orgs/elsewhere/projects/"+project.Slug+"/environments/production/secrets", nil, admin); rec.Code != http.StatusNotFound {

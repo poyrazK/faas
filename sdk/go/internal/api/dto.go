@@ -104,6 +104,7 @@ type CreateAppRequest struct {
 	RestartPolicy          string                `json:"restart_policy,omitempty"`
 	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Warmup                 *WarmupHook           `json:"warmup,omitempty"`
 	Pause                  string                `json:"pause,omitempty"`
 	Profiling              *ProfilingConfig      `json:"profiling,omitempty"`
 	Tracing                *TracingConfig        `json:"tracing,omitempty"`
@@ -154,6 +155,7 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Warmup           *WarmupHook           `json:"warmup,omitempty"`
 	// Pause replaces the declared pause value; "" restores the default.
 	Pause            *string          `json:"pause,omitempty"`
 	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
@@ -1566,8 +1568,10 @@ type QueueReceiveResponse struct {
 	ID             string          `json:"id"`
 	Payload        json.RawMessage `json:"payload"`
 	Result         json.RawMessage `json:"result,omitempty"`
-	TraceID        string          `json:"trace_id,omitempty"`
-	Traceparent    string          `json:"traceparent,omitempty"`
+	// State is how the message settled: completed, failed or cancelled.
+	State       string `json:"state,omitempty"`
+	TraceID     string `json:"trace_id,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
 }
 
 // DelayedTaskResponse is the create/get/list shape for delayed tasks.
@@ -1907,7 +1911,7 @@ type AccountSLOResponse struct {
 // fails on any spec-route/method drift, which is the contract
 // we're upholding here. The redeclaration (rather than type-aliasing)
 // is forced by the separate-module layout: sdk/go is its own Go
-// module (module github.com/poyrazK/faas/sdk/go) and cannot import
+// module (module github.com/gregale-dev/gregale-go) and cannot import
 // pkg/api (which lives in module github.com/onebox-faas/faas).
 
 // CreateOrgRequest is the body of POST /v1/orgs.

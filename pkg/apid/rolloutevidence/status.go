@@ -87,7 +87,7 @@ func (r Reader) Status(ctx context.Context, app state.App, since, retention time
 	if err != nil {
 		return out, err
 	}
-	if rolloutInWindow(rollout, start) {
+	if rolloutInWindow(rollout, start) && !rollbackSuperseded(rollout, serving) {
 		out.Rollout = &rollout
 	}
 	if r.Regressions != nil {
@@ -194,6 +194,17 @@ func weightedP95(rows []sqlc.RequestTelemetryLatencyWeightsByRouteRow) int {
 		}
 	}
 	return int(sorted[len(sorted)-1].LatencyMs)
+}
+
+// rollbackSuperseded reports a rolled-back canary whose stable release no
+// longer serves: a newer release has gone live since, so the rollback is
+// history, not the app's state (prod 2026-11-15: debug status headlined an
+// old rollback over a newer live release).
+func rollbackSuperseded(rollout api.DebugRolloutExplanation, serving []string) bool {
+	if rollout.State != api.DebugRolloutAborted || rollout.StableDeploymentID == "" || len(serving) == 0 {
+		return false
+	}
+	return !slices.Contains(serving, rollout.StableDeploymentID)
 }
 
 // verdict picks the worst condition, in order: failing, rolled back,

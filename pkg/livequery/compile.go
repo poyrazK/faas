@@ -155,9 +155,17 @@ func resultColumns(ctx context.Context, conn *pgx.Conn, fields []pgconn.FieldDes
 		oids[i] = f.DataTypeOID
 	}
 	rows, err := conn.Query(ctx, `
-		SELECT t.oid, coalesce(b.typname, t.typname)::text
-		FROM pg_type t LEFT JOIN pg_type b ON t.typtype = 'd' AND b.oid = t.typbasetype
-		WHERE t.oid = ANY($1)`, oids)
+		WITH RECURSIVE resolved(origin, oid, arrays, depth) AS (
+		  SELECT oid, oid, 0, 0 FROM pg_type WHERE oid = ANY($1)
+		  UNION ALL
+		  SELECT r.origin, CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.typelem END,
+		    r.arrays + CASE WHEN t.typtype = 'd' THEN 0 ELSE 1 END, r.depth + 1
+		  FROM resolved r JOIN pg_type t ON t.oid = r.oid
+		  WHERE r.depth < 64 AND (t.typtype = 'd' OR (t.typelem <> 0 AND t.typinput = 'array_in'::regproc))
+		)
+		SELECT r.origin, (repeat('_', r.arrays) || CASE WHEN t.typtype='e' THEN 'text' ELSE t.typname END)::text
+		FROM resolved r JOIN pg_type t ON t.oid = r.oid
+		WHERE t.typtype <> 'd' AND NOT (t.typelem <> 0 AND t.typinput = 'array_in'::regproc)`, oids)
 	if err != nil {
 		return nil, fmt.Errorf("livequery: result column types: %w", err)
 	}

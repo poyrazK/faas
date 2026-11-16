@@ -438,7 +438,7 @@ func (m *MemStore) RequestAgentApproval(_ context.Context, request AgentApproval
 	if !m.hasKeyLocked(request.KeyID) {
 		return AgentApproval{}, ErrNotFound
 	}
-	if !slices.Contains(api.AgentApprovalCategories, request.Category) && request.Category != api.AgentApprovalBudget {
+	if !slices.Contains(api.AgentApprovalCategories, request.Category) && request.Category != api.AgentApprovalBudget && request.Category != api.AgentApprovalUndo {
 		return AgentApproval{}, ErrConflict
 	}
 	now := time.Now()

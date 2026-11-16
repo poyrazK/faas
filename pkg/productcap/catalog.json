@@ -27,6 +27,7 @@
         "/signup",
         "=/v1/account",
         "/v1/account/email",
+        "/v1/account/health",
         "/v1/account/mfa",
         "/v1/account/rate-limits",
         "/v1/account/security-activity",
@@ -161,6 +162,28 @@
       ],
       "cli": [
         "ai"
+      ]
+    },
+    {
+      "id": "ai-prompts",
+      "name": "AI managed prompts",
+      "category": "data",
+      "description": "Version prompts apps call by name, with canaries, rollback and evaluations.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/ai-gateway",
+      "acceptance_test": "pkg/apid/outboundai/prompts_test.go::TestPromptAPILifecycle",
+      "parent": "ai-gateway",
+      "routes": [
+        "/v1/outbound/ai-prompt-evaluations",
+        "/v1/outbound/ai-prompts"
+      ],
+      "cli": [
+        "ai prompts"
       ]
     },
     {
@@ -641,7 +664,6 @@
       "description": "Accept a request at the edge and run it asynchronously.",
       "maturity": "preview",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -1243,6 +1265,8 @@
       "docs_url": "/docs/customer-support",
       "acceptance_test": "pkg/apid/apidserver/customer_support_test.go::TestCustomerSupportAuthenticatedRoutes",
       "routes": [
+        "/dashboard/orgs/{}/support",
+        "/dashboard/support",
         "/v1/orgs/{}/support",
         "/v1/support"
       ]
@@ -1344,8 +1368,8 @@
       "id": "database-rollbacks",
       "name": "Rollbacks that restore the database",
       "category": "data",
-      "description": "Roll an app back with its managed databases restored to that release's point in time.",
-      "maturity": "preview",
+      "description": "Roll an app back with its managed databases restored to that release's point in time, or restore a database and move the app to the copy without changing its code.",
+      "maturity": "ga",
       "plans": [
         "hobby",
         "pro",
@@ -2221,7 +2245,10 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_project_environment_branches_test.go::TestEnvironmentBranchPublishesParentBuilds",
       "parent": "environments",
       "routes": [
-        "/v1/projects/{}/environments/{}/branches"
+        "/v1/projects/{}/environments/{}/branches",
+        "/v1/projects/{}/environments/{}/branch",
+        "/v1/projects/{}/environments/{}/branch/extend",
+        "/v1/projects/{}/environments/{}/branch/reset"
       ],
       "cli": [
         "projects environments branch"
@@ -3269,6 +3296,26 @@
       ]
     },
     {
+      "id": "mcp-hosted-tool-invocations",
+      "name": "Hosted granted tool invocation",
+      "category": "runtime",
+      "description": "Invoke exact owner-granted open or private tool versions through personal hosted connections with separate consent, static or managed OAuth credentials with guided public-client setup, durable single-dispatch receipts and cancellation without replay.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#hosted-invocation-with-tool-grants",
+      "acceptance_test": "pkg/apid/toolregistry/delegated_invocations_test.go::TestDelegatedToolInvocationsPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/delegated-tool-invocations",
+        "/v1/delegated-tool-connections",
+        "/v1/tool-oauth-connections"
+      ]
+    },
+    {
       "id": "mcp-hosting",
       "name": "MCP hosting",
       "category": "runtime",
@@ -3366,6 +3413,62 @@
       "routes": [
         "/v1/apps/{}/mcp-task-compatibility",
         "/v1/deployments/{}/mcp-task-hold"
+      ]
+    },
+    {
+      "id": "mcp-tool-grants",
+      "name": "Scoped published-tool grants",
+      "category": "runtime",
+      "description": "Delegate exact private tool versions to personal agent connections with expiry, revocation and native project boundaries.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#scoped-tool-grants",
+      "acceptance_test": "pkg/apid/toolregistry/grants_test.go::TestToolGrantsPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/tool-grants"
+      ]
+    },
+    {
+      "id": "mcp-tool-invocations",
+      "name": "Registered MCP tool invocation",
+      "category": "runtime",
+      "description": "Invoke one exact private registered tool version with explicit consent, durable single-dispatch tracking and honest cancellation outcomes.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#invoke-published-tools",
+      "acceptance_test": "pkg/apid/toolregistry/invocations_test.go::TestToolInvocationsPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/tool-invocations"
+      ]
+    },
+    {
+      "id": "mcp-tool-registry",
+      "name": "Private MCP tool registry",
+      "category": "runtime",
+      "description": "Retain publication attempts and discover exact private tool versions with publisher-attested runtime schemas and native deployment identity.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#private-tool-registry",
+      "acceptance_test": "pkg/apid/toolregistry/handlers_test.go::TestToolRegistryPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/tool-publications",
+        "/v1/task-tool-release-intents",
+        "/v1/tool-registry"
       ]
     },
     {
@@ -4073,6 +4176,29 @@
         "/v1/orgs/{}/postgres/bindings",
         "/v1/postgres/bindings",
         "/v1/postgres/databases/{}/bindings"
+      ]
+    },
+    {
+      "id": "postgres-changes",
+      "name": "Postgres change workers",
+      "category": "async",
+      "description": "Capture Postgres row changes into a worker's queue, on managed databases or ones you run.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/postgres-changes",
+      "acceptance_test": "pkg/commitmanaged/changes_test.go::TestChangesSourceDeliversToWorkerQueue",
+      "routes": [
+        "/v1/apps/{}/postgres-changes"
+      ],
+      "settings": [
+        "manifest.postgres_changes"
+      ],
+      "cli": [
+        "postgres-changes"
       ]
     },
     {
@@ -5250,6 +5376,24 @@
       ]
     },
     {
+      "id": "sales-referrals",
+      "name": "Sales and referrals",
+      "category": "account",
+      "description": "Staff sales pipeline, attributed signup links and customer referral codes.",
+      "maturity": "internal",
+      "plans": [],
+      "operator_flag": "FAAS_SALES_ENABLED",
+      "docs_url": "/docs/adr/20261103180000-sales-referrals",
+      "acceptance_test": "pkg/apid/apidserver/sales_test.go::TestSalesRoutesDefaultOff",
+      "routes": [
+        "/dashboard/referral-assets",
+        "/dashboard/referrals",
+        "/dashboard/sales",
+        "/v1/referrals",
+        "/v1/sales"
+      ]
+    },
+    {
       "id": "scale-to-zero",
       "name": "Scale to zero",
       "category": "runtime",
@@ -5562,7 +5706,8 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_lifecycle_test.go::TestAppAfterRestoreLifecycleRoundTrip",
       "settings": [
         "app.after_restore",
-        "app.before_checkpoint"
+        "app.before_checkpoint",
+        "app.warmup"
       ]
     },
     {

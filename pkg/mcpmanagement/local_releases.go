@@ -135,7 +135,11 @@ func (m *management) planDirDeploy(ctx context.Context, dir string, args planLoc
 		if args.CreateOnly {
 			effect = "Create app " + args.App + " without deploying."
 		}
-		return m.savePlan(&releasePlan{Action: "local_deploy", AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, App: args.App, Scope: api.DefaultEnvScope, Reason: args.Reason, TrafficEffect: effect, ExpiresAt: time.Now().Add(releasePlanTTL), LocalSource: source})
+		p := &releasePlan{Action: "local_deploy", AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, App: args.App, Scope: api.DefaultEnvScope, Reason: args.Reason, TrafficEffect: effect, ExpiresAt: time.Now().Add(releasePlanTTL), LocalSource: source}
+		if m.budgeted(account) && !args.CreateOnly {
+			p.AgentBudget = m.previewDeploySettings(ctx, dir, args.App, true)
+		}
+		return m.savePlan(p)
 	case err != nil:
 		return nil, err
 	case args.CreateOnly:
@@ -148,8 +152,12 @@ func (m *management) planDirDeploy(ctx context.Context, dir string, args planLoc
 	if health.AppID != app.ID {
 		return nil, invalid("invalid_response", "API returned inconsistent app or health identity")
 	}
+	var budget *api.AgentBudgetPreview
+	if m.budgeted(account) {
+		budget = m.previewDeploySettings(ctx, dir, args.App, false)
+	}
 	if len(health.ServingDeploymentIDs) == 0 {
-		return m.savePlan(&releasePlan{Action: "local_deploy", AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, AppID: app.ID, App: args.App, Scope: api.DefaultEnvScope, Reason: args.Reason, TrafficEffect: "Deploy the first serving release of " + args.App + ".", ExpiresAt: time.Now().Add(releasePlanTTL), LocalSource: source, latestID: health.LatestDeploymentID})
+		return m.savePlan(&releasePlan{Action: "local_deploy", AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, AppID: app.ID, App: args.App, Scope: api.DefaultEnvScope, Reason: args.Reason, TrafficEffect: "Deploy the first serving release of " + args.App + ".", ExpiresAt: time.Now().Add(releasePlanTTL), LocalSource: source, latestID: health.LatestDeploymentID, AgentBudget: budget})
 	}
 	// A serving app gets the image releases' plan, so wait and atomic
 	// promotion work unchanged; staging never moves traffic.
@@ -158,6 +166,7 @@ func (m *management) planDirDeploy(ctx context.Context, dir string, args planLoc
 		return nil, err
 	}
 	p.LocalSource, p.TrafficEffect = source, "Upload the directory and stage a new revision at 0% traffic. Explicit promotion sends 100% to it only if the original serving release is unchanged."
+	p.AgentBudget = budget
 	return m.savePlan(p)
 }
 

@@ -168,3 +168,10 @@ Anything else falls back to today's build path with no behavior change.
    while the build runs, measures edit-to-patch on its own clock (immune to
    server clock skew), prints it, and records a `patch` phase in the receipt
    and sync history.
+
+## Amendment (2026-10-14): ADR-20261021221906 coalesces the convergence build
+
+The developer build no longer runs after every live-patched sync. ADR-20261021221906
+holds it back until the developer stops saving and lets the next sync
+replace it, so a burst of saves builds once; a booting instance still replays
+the newest patch, and a patch that fails to apply starts the build at once.

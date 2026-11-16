@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,14 +15,16 @@ import (
 // SetupRequest is immutable customer intent, containing no credentials.
 // Empty DatabaseID requests a new dedicated mirror.
 type SetupRequest struct {
-	Name               string
-	SourceConnectionID string
-	DatabaseID         string
-	Region             string
-	Tables             []string
-	ReadSubjects       []string
-	DataAPIName        string
-	AuthAppID          string
+	FreshnessTargetSeconds int64                    `json:"FreshnessTargetSeconds,omitempty"`
+	Serving                *api.DataPipelineServing `json:"Serving,omitempty"`
+	Name                   string
+	SourceConnectionID     string
+	DatabaseID             string
+	Region                 string
+	Tables                 []string
+	ReadSubjects           []string
+	DataAPIName            string
+	AuthAppID              string
 }
 
 func normalizeSetupIDs(r SetupRequest) SetupRequest {
@@ -88,14 +91,15 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 	if target == "" {
 		target = uuid.NewString()
 	}
-	normalized := normalize(api.CreateDataPipelineRequest{Name: r.Name, SourceConnectionID: r.SourceConnectionID, DatabaseID: target, Tables: r.Tables, ReadSubjects: r.ReadSubjects})
-	if err := ValidateCreate(normalized); err != nil {
+	input := api.CreateDataPipelineRequest{FreshnessTargetSeconds: r.FreshnessTargetSeconds, Serving: r.Serving, Name: r.Name, SourceConnectionID: r.SourceConnectionID, DatabaseID: target, Tables: r.Tables, ReadSubjects: r.ReadSubjects}
+	if err := ValidateCreate(input); err != nil {
 		return Setup{}, err
 	}
 	if len(r.Region) > 63 || (r.DatabaseID != "" && r.Region != "") {
 		return Setup{}, ErrInvalid
 	}
-	r.Tables, r.ReadSubjects = normalized.Tables, normalized.ReadSubjects
+	normalized := normalize(input)
+	r.Tables, r.ReadSubjects, r.Serving = normalized.Tables, normalized.ReadSubjects, normalized.Serving
 	if (r.DataAPIName == "") != (r.AuthAppID == "") || (r.DataAPIName != "" && (!api.ValidAppSlug(r.DataAPIName) || api.IsReservedAppSlug(r.DataAPIName) || !validID(r.AuthAppID))) {
 		return Setup{}, ErrInvalid
 	}
@@ -131,7 +135,7 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 	// current credentials, compatibility and capacity before provisioning.
 	selection := check.DataConnectionCheck
 	selection.Fresh, selection.State = true, "passed"
-	if checkSelection(selection, r.Tables) != nil {
+	if ValidateServingSelection(selection, r.Tables, r.Serving) != nil {
 		return Setup{}, ErrCheckRequired
 	}
 	setup := Setup{ID: uuid.NewString(), AccountID: account, Request: r, DatabaseID: target}
@@ -156,10 +160,15 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 }
 
 func setupMirrorName(name, id string) string {
-	generated := name + "-mirror-" + id[:8]
+	return MirrorName(name) + "-" + id[:8]
+}
+
+// MirrorName keeps generated names valid for managed Postgres as well as pipeline slugs.
+func MirrorName(name string) string {
+	generated := name + "-mirror"
 	// Pipeline slugs may start with a digit; managed database names may not.
-	if name[0] >= '0' && name[0] <= '9' {
-		generated = "p-" + generated
+	if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
+		generated = "p-" + generated + "-db"
 	}
 	return generated
 }
@@ -260,7 +269,7 @@ func (s *Service) advanceSetup(ctx context.Context, job *Setup) error {
 			job.Phase = "starting"
 		}
 	case "starting":
-		p, err := s.Create(ctx, job.AccountID, api.CreateDataPipelineRequest{Name: job.Request.Name, SourceConnectionID: job.Request.SourceConnectionID, DatabaseID: job.DatabaseID, Tables: job.Request.Tables, ReadSubjects: job.Request.ReadSubjects})
+		p, err := s.Create(ctx, job.AccountID, api.CreateDataPipelineRequest{FreshnessTargetSeconds: job.Request.FreshnessTargetSeconds, Name: job.Request.Name, SourceConnectionID: job.Request.SourceConnectionID, DatabaseID: job.DatabaseID, Tables: job.Request.Tables, ReadSubjects: setupCreationSubjects(job.Request), Serving: job.Request.Serving})
 		if errors.Is(err, ErrCheckRequired) {
 			job.Phase = "checking_mirror"
 			return nil
@@ -301,11 +310,11 @@ func (s *Service) setupCheck(ctx context.Context, job Setup, database string) (b
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return false, err
 	}
-	if err == nil && check.ConnectionRevision == connection.Revision && check.DatabaseID == database && check.Fresh && setupCapacityEvidenceFresh(check.DataConnectionCheck, time.Now()) {
+	if err == nil && check.ConnectionRevision == connection.Revision && check.DatabaseID == database && check.Fresh && setupCapacityEvidenceFresh(check.DataConnectionCheck, time.Now()) && setupCheckCovers(check.DataConnectionCheck, job.Request.Tables) {
 		if check.State != "passed" {
 			return false, &blocked{code: "connection_check_blocked"}
 		}
-		if err = sourceSetupCheck(check.DataConnectionCheck, job.Request.Tables); err != nil {
+		if err = sourceServingSetupCheck(check.DataConnectionCheck, job.Request.Tables, job.Request.Serving); err != nil {
 			return false, err
 		}
 		if database != "" && (check.Capacity == nil || check.Capacity.State != "ready") {
@@ -313,11 +322,25 @@ func (s *Service) setupCheck(ctx context.Context, job Setup, database string) (b
 		}
 		return true, nil
 	}
-	_, err = s.Store.RequestCheck(ctx, job.AccountID, connection.ID, connection.Revision, database)
+	_, err = s.Store.RequestCheck(ctx, job.AccountID, connection.ID, connection.Revision, database, api.RequestDataConnectionCheck{Tables: job.Request.Tables})
 	if errors.Is(err, ErrCheckBusy) {
 		return false, nil
 	}
 	return false, err
+}
+
+// An unrelated discovery page is not negative evidence for a saved selection.
+// Exact requests cover missing/unsupported tables too, so genuine blockers stay visible.
+func setupCheckCovers(check api.DataConnectionCheck, tables []string) bool {
+	if slices.Equal(check.RequestedTables, tables) {
+		return true
+	}
+	for _, name := range tables {
+		if !slices.ContainsFunc(check.Tables, func(table api.DataSourceTable) bool { return table.Name == name }) {
+			return false
+		}
+	}
+	return true
 }
 
 func setupErrorCode(err error) string {

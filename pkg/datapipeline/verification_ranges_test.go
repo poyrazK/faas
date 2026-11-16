@@ -37,7 +37,7 @@ func TestVerificationCompositeRangesSplitAndTrackReplicaWrites(t *testing.T) {
 	}
 	relations := []relation{r}
 	intent, spec := verificationID(p, relations)
-	storage, err := verificationSourceStorage(ctx, pool, relations)
+	_, storage, err := verificationStorage(ctx, p, pool, target, relations)
 	if err != nil {
 		t.Fatal(err)
 	}

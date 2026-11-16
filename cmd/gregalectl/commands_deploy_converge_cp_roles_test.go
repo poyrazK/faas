@@ -124,10 +124,79 @@ func TestControlPlaneEnvironmentHashCoversInventoryAndVarsOnly(t *testing.T) {
 	}
 }
 
-// Every control-plane role entry carries the selection condition, so a
-// --roles convergence skips exactly the roles it did not name; the compute
-// play, which node_join imports, carries none.
-func TestBootstrapControlPlaneRolesCarryTheSelection(t *testing.T) {
+// CD stages the seal-domain keys beside the vars file and names them by
+// absolute path. Two runners (/opt/actions-runner, /opt/actions-runner-2)
+// and two work directories (cp-converge, host-config) must not move the
+// contract or the environment: on rc.343 and rc.344 they did, and every
+// full release converged every control-plane role.
+func TestControlPlaneHashesIgnoreTheVarsDirectory(t *testing.T) {
+	root := t.TempDir()
+	inventoryRoot := filepath.Join(root, "inventory-root")
+	inventory := []manifestAnsibleFile{{Path: filepath.Join(inventoryRoot, "inventory", "hosts.ini"), Body: []byte("[control_plane]\ncp\n")}}
+	ansibleDir := filepath.Join(root, "ansible")
+	writeContractTree(t, ansibleDir, map[string]string{
+		"bootstrap.yml":                 "- name: cp\n  hosts: control_plane\n  roles:\n    - role: postgres\n",
+		"control_plane_converge.yml":    "- import_playbook: bootstrap.yml\n",
+		"roles/postgres/tasks/main.yml": "- debug: {}\n",
+	})
+	stage := func(work, recipient string) string {
+		vars := filepath.Join(work, "vars.yml")
+		body := "faas_seal_domains_managed: true\n" +
+			"faas_seal_domain_outbound_identity_src: \"" + filepath.Join(work, "seal-domains", "outbound.age") + "\"\n" +
+			"# outbound recipient: " + recipient + "\n"
+		if err := os.MkdirAll(work, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(vars, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return vars
+	}
+	hashes := func(vars string) (string, string) {
+		t.Helper()
+		contract, err := controlPlaneBootstrapContractHash(ansibleDir, inventoryRoot, inventory, vars)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env, err := controlPlaneEnvironmentHash(inventoryRoot, inventory, vars)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return contract, env
+	}
+	c1, e1 := hashes(stage(filepath.Join(root, "actions-runner", "_work", "_temp", "cp-converge"), "age1aaa"))
+	c2, e2 := hashes(stage(filepath.Join(root, "actions-runner-2", "_work", "_temp", "host-config"), "age1aaa"))
+	if c1 != c2 {
+		t.Errorf("contract depends on the vars directory: %s != %s", c1, c2)
+	}
+	if e1 != e2 {
+		t.Errorf("environment depends on the vars directory: %s != %s", e1, e2)
+	}
+	// A rotated key still reaches both hashes through its recipient.
+	c3, e3 := hashes(stage(filepath.Join(root, "actions-runner", "_work", "_temp", "cp-converge"), "age1bbb"))
+	if c3 == c1 || e3 == e1 {
+		t.Errorf("a rotated recipient must change the contract and the environment")
+	}
+	// A path outside the vars directory is content, and stays in the hash.
+	vars := stage(filepath.Join(root, "w"), "age1aaa")
+	if err := os.WriteFile(vars, []byte("x_src: \"/etc/faas/other.age\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, ea := hashes(vars)
+	if err := os.WriteFile(vars, []byte("x_src: \"/etc/faas/moved.age\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, eb := hashes(vars); ea == eb {
+		t.Errorf("a path outside the vars directory must stay an input")
+	}
+}
+
+// Every role entry carries its lane's selection condition, so a --roles
+// convergence skips exactly the roles it did not name: the control-plane
+// play faas_cp_converge_roles (ADR-20261030150000), the compute play, which
+// node_join imports, faas_join_converge_roles (ADR-20261115120000). Neither
+// carries the other's.
+func TestBootstrapRolesCarryTheirLaneSelection(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "bootstrap.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -136,8 +205,8 @@ func TestBootstrapControlPlaneRolesCarryTheSelection(t *testing.T) {
 	if err := yaml.Unmarshal(body, &plays); err != nil {
 		t.Fatal(err)
 	}
-	selection := regexp.MustCompile(`^faas_cp_converge_roles \| default\(none\) is none or '([a-z0-9_]+)' in faas_cp_converge_roles$`)
-	sawControlPlane := false
+	lanes := map[string]string{"control_plane": "faas_cp_converge_roles", "compute_nodes": "faas_join_converge_roles"}
+	saw := map[string]bool{}
 	for _, play := range plays {
 		hosts, _ := play["hosts"].(string)
 		roles, _ := play["roles"].([]any)
@@ -154,29 +223,31 @@ func TestBootstrapControlPlaneRolesCarryTheSelection(t *testing.T) {
 					conditions = append(conditions, s)
 				}
 			}
-			var selected []string
-			for _, c := range conditions {
-				if m := selection.FindStringSubmatch(c); m != nil {
-					selected = append(selected, m[1])
-				} else if strings.Contains(c, "faas_cp_converge_roles") {
-					t.Errorf("%s: role %s has a malformed selection condition %q", hosts, name, c)
+			for group, variable := range lanes {
+				selection := regexp.MustCompile(`^` + variable + ` \| default\(none\) is none or '([a-z0-9_]+)' in ` + variable + `$`)
+				var selected []string
+				for _, c := range conditions {
+					if m := selection.FindStringSubmatch(c); m != nil {
+						selected = append(selected, m[1])
+					} else if strings.Contains(c, variable) {
+						t.Errorf("%s: role %s has a malformed selection condition %q", hosts, name, c)
+					}
 				}
-			}
-			switch hosts {
-			case "control_plane":
-				sawControlPlane = true
-				if len(selected) != 1 || selected[0] != name {
-					t.Errorf("control-plane role %s must carry its own selection condition; conditions = %q", name, conditions)
-				}
-			default:
-				if len(selected) != 0 {
-					t.Errorf("%s role %s must not carry the control-plane selection", hosts, name)
+				if hosts == group {
+					saw[group] = true
+					if len(selected) != 1 || selected[0] != name {
+						t.Errorf("%s role %s must carry its own %s condition; conditions = %q", group, name, variable, conditions)
+					}
+				} else if len(selected) != 0 {
+					t.Errorf("%s role %s must not carry the %s selection", hosts, name, variable)
 				}
 			}
 		}
 	}
-	if !sawControlPlane {
-		t.Fatal("bootstrap.yml has no control_plane play")
+	for group := range lanes {
+		if !saw[group] {
+			t.Fatalf("bootstrap.yml has no %s play with roles", group)
+		}
 	}
 }
 

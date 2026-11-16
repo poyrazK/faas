@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -69,7 +71,26 @@ func (s *server) queueState(w http.ResponseWriter, r *http.Request, acct state.A
 		resp.OldestPendingAt = &t
 		resp.OldestPendingAgeSeconds = &age
 	}
+	resp.BacklogBySource = s.invocationBacklogBySource(r, app.ID)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// invocationBacklogBySource is best effort: queue state still answers when
+// the counters cannot be read.
+func (s *server) invocationBacklogBySource(r *http.Request, appID string) map[string]int64 {
+	reader, ok := s.store.(state.InvocationBacklogReader)
+	if !ok {
+		return nil
+	}
+	backlog, err := reader.InvocationBacklogBySource(r.Context(), appID)
+	if err != nil {
+		slog.Default().Warn("queue state backlog read failed", "app_id", appID, "err", err)
+		return nil
+	}
+	if len(backlog) == 0 {
+		return nil
+	}
+	return backlog
 }
 
 // queuePeek returns up to `limit` pending rows (oldest first) WITHOUT
@@ -93,6 +114,10 @@ func (s *server) queuePeek(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 	}
 	before := r.URL.Query().Get("before")
+	if !validQueueCursor(before) {
+		api.WriteProblem(w, api.ErrValidation("before must be a message id from a previous page"))
+		return
+	}
 	rows, err := s.store.QueuePeek(r.Context(), app.ID, limit, before)
 	if err != nil {
 		slog.Default().Error("queue peek read failed", "app_id", app.ID, "err", err)
@@ -133,6 +158,10 @@ func (s *server) queueDeadLetter(w http.ResponseWriter, r *http.Request, acct st
 		}
 	}
 	before := r.URL.Query().Get("before")
+	if !validQueueCursor(before) {
+		api.WriteProblem(w, api.ErrValidation("before must be a message id from a previous page"))
+		return
+	}
 	rows, err := s.store.QueueDeadLetter(r.Context(), app.ID, limit, before)
 	if err != nil {
 		slog.Default().Error("queue dead-letter read failed", "app_id", app.ID, "err", err)
@@ -158,4 +187,14 @@ func (s *server) queueDeadLetter(w http.ResponseWriter, r *http.Request, acct st
 		out.NextBefore = rows[len(rows)-1].ID
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// validQueueCursor accepts an empty cursor or a message UUID. A malformed
+// cursor reached the store, which answered 500 (ADR-20261112200000).
+func validQueueCursor(before string) bool {
+	if before == "" {
+		return true
+	}
+	parsed, err := uuid.Parse(before)
+	return err == nil && parsed != uuid.Nil
 }

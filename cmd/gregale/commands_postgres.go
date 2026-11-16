@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -33,12 +33,6 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresUsage(args[1:])
 	case "overage":
 		return cmdPostgresOverage(args[1:])
-	case "diagnostics":
-		return cmdPostgresDiagnostics(args[1:])
-	case "usage-import":
-		return cmdPostgresUsageImport(args[1:])
-	case "reconcile":
-		return cmdPostgresReconcile(args[1:])
 	case subCreate:
 		return cmdPostgresCreate(args[1:])
 	case subGet:
@@ -393,7 +387,7 @@ func cmdPostgresCreate(args []string) int {
 	args = normalizePostgresArgs(args)
 	fs := newFlagSet("postgres create", flag.ContinueOnError)
 	region := fs.String("region", "", "provider-neutral region (required)")
-	major := fs.Int("postgres-major", 16, "PostgreSQL major version")
+	major := fs.Int("postgres-major", api.ManagedPostgresDefaultMajor, "PostgreSQL major version")
 	serviceClass := fs.String("class", "development", "service class: development|burstable|production")
 	availability := fs.String("availability", "single_zone", "availability: single_zone|high_availability")
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")
@@ -569,12 +563,23 @@ func cmdPostgresRestore(args []string) int {
 	fs := newFlagSet("postgres restore", flag.ContinueOnError)
 	name := fs.String("name", "", "name for the restored database (required)")
 	pointInTime := fs.String("point-in-time", "", "RFC3339 restore timestamp (required)")
+	switchApp := fs.String("switch", "", "move this app to the restored copy, keeping its code")
+	scope := fs.String("env", "", "with --switch: the environment whose bindings move (default default)")
+	confirmed := fs.Bool("yes", false, "with --switch: switch without prompting")
+	noWait := fs.Bool("no-wait", false, "with --switch: return once the switch starts")
+	timeout := fs.Duration("timeout", databaseSwitchDefaultTimeout, "with --switch: wait deadline")
+	interval := fs.Duration("poll-interval", 2*time.Second, "with --switch: poll interval")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *name == "" || *pointInTime == "" {
-		PrintUsage(os.Stderr, "usage: gregale postgres restore DATABASE_ID --name NAME --point-in-time RFC3339", "postgres")
+	const usage = "usage: gregale postgres restore DATABASE_ID --name NAME --point-in-time RFC3339 [--switch APP [--env SCOPE] [--yes] [--no-wait]]"
+	if fs.NArg() != 1 || *name == "" || *pointInTime == "" || *timeout <= 0 || *interval <= 0 || (*switchApp == "" && (*scope != "" || *confirmed || *noWait)) {
+		PrintUsage(os.Stderr, usage, "postgres")
 		return 1
+	}
+	if *switchApp != "" {
+		return cmdPostgresRestoreSwitch(postgresRestoreSwitch{database: fs.Arg(0), name: *name, pointInTime: *pointInTime, app: *switchApp,
+			scope: *scope, confirmed: *confirmed, noWait: *noWait, timeout: *timeout, interval: *interval})
 	}
 	client, err := authedClient()
 	if err != nil {

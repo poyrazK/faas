@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,31 @@ func TestEnvironmentBranchCopiesParentDatabases(t *testing.T) {
 	if copied, err := service.Get(ctx, acct.ID, binding.DatabaseID); err != nil || !copied.InBranchAllowance() || copied.ExpiresAt.Before(branch.ExpiresAt) {
 		t.Fatalf("branch copy = %+v, %v; want it in the branch allowance, ending at or after %s", copied, err, branch.ExpiresAt)
 	}
+	// Extending the branch moves its copy's end with it, inside the 7 days
+	// that keep the copy in the allowance; past them the extend is refused.
+	extend := func(ttl string) *httptest.ResponseRecorder {
+		req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/pr-9/branch/extend", "shop", []byte(`{"ttl":"`+ttl+`"}`))
+		req.SetPathValue("environment", "pr-9")
+		srv.extendProjectEnvironmentBranch(rec, req, acct)
+		return rec
+	}
+	if rec := extend("72h"); rec.Code != http.StatusOK {
+		t.Fatalf("extend 72h: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	extended, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copied, err := service.Get(ctx, acct.ID, binding.DatabaseID); err != nil || !copied.ExpiresAt.Equal(extended.ExpiresAt) || !copied.InBranchAllowance() {
+		t.Fatalf("copy after extend = %+v, %v; want it to end with the branch at %s, in the allowance", copied, err, extended.ExpiresAt)
+	}
+	if rec := extend("192h"); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), api.CodeEnvironmentBranchLifetime) {
+		t.Fatalf("extend past 7 days with a copy: status=%d body=%s; want 409 %s", rec.Code, rec.Body.String(), api.CodeEnvironmentBranchLifetime)
+	}
+	if after, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-9"); err != nil || !after.ExpiresAt.Equal(extended.ExpiresAt) {
+		t.Fatalf("a refused extend moved the branch: %+v, %v", after, err)
+	}
+	branch = extended
 	if ready, err := store.EnvironmentBranchDataReady(ctx, branchDeployment); err != nil || !ready {
 		t.Fatalf("data ready = %v, %v", ready, err)
 	}

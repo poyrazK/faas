@@ -117,3 +117,30 @@ CREATE TABLE support_admin_events (
  data jsonb NOT NULL CHECK(jsonb_typeof(data)='object' AND octet_length(data::text)<=65536),
  created_at timestamptz NOT NULL CHECK(isfinite(created_at))
 );
+CREATE TABLE support_notifications (
+ id uuid PRIMARY KEY,
+ sequence bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
+ event_id uuid NOT NULL REFERENCES support_events(id) ON DELETE CASCADE,
+ ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+ recipient_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ audience text NOT NULL CHECK(audience IN ('customer','staff')),
+ kind text NOT NULL CHECK(kind IN ('staff_reply','customer_reply','ticket_created','assigned')),
+ created_at timestamptz NOT NULL CHECK(isfinite(created_at)),
+ read_at timestamptz CHECK(read_at IS NULL OR isfinite(read_at)),
+ email_state text NOT NULL CHECK(email_state IN ('queued','inflight','accepted','failed','skipped')),
+ attempts integer NOT NULL DEFAULT 0 CHECK(attempts>=0),
+ lease_id uuid,
+ lease_until timestamptz CHECK(lease_until IS NULL OR isfinite(lease_until)),
+ available_at timestamptz NOT NULL CHECK(isfinite(available_at)),
+ destination_hash bytea CHECK(destination_hash IS NULL OR octet_length(destination_hash)=32),
+ UNIQUE(event_id,recipient_id,audience)
+);
+CREATE INDEX support_notifications_recipient_idx ON support_notifications(recipient_id,audience,ticket_id,sequence);
+CREATE INDEX support_notifications_unread_idx ON support_notifications(recipient_id,audience,sequence) WHERE read_at IS NULL;
+CREATE INDEX support_notifications_ready_idx ON support_notifications(available_at,id) WHERE email_state IN ('queued','inflight');
+CREATE INDEX support_notifications_age_idx ON support_notifications(created_at,id);
+CREATE TABLE support_ticket_snapshots (
+ ticket_id uuid PRIMARY KEY REFERENCES support_tickets(id) ON DELETE CASCADE,
+ captured_at timestamptz NOT NULL CHECK(isfinite(captured_at)),
+ snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object' AND octet_length(snapshot::text)<=32768)
+);

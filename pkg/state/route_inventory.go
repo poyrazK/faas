@@ -42,6 +42,9 @@ type discoveredRouteCloudEvent struct {
 	Data            discoveredRouteEventData `json:"data"`
 	AccountID       string                   `json:"accountid"`
 	Producer        string                   `json:"producer,omitempty"`
+	// EnvironmentID is the stage whose deployment first served the route;
+	// empty is production (ADR-20261104120000).
+	EnvironmentID string `json:"environmentid,omitempty"`
 }
 
 type discoveredRouteNotice struct {
@@ -55,8 +58,10 @@ type discoveredRouteNotice struct {
 
 // apiRouteDiscoveredPayloads returns the canonical event-fanout envelope and
 // the smaller account-scoped SSE notice for one first-seen route. The event
-// ID is stable for the account/app/template so fanout retries stay idempotent.
-func apiRouteDiscoveredPayloads(accountID, appID, route string, firstSeen time.Time) (eventPayload, noticePayload []byte, err error) {
+// ID is stable for the account/app/template (and stage) so fanout retries
+// stay idempotent; a stage's first sighting is a distinct event from
+// production's.
+func apiRouteDiscoveredPayloads(accountID, appID, environmentID, route string, firstSeen time.Time) (eventPayload, noticePayload []byte, err error) {
 	method, path, ok := strings.Cut(strings.TrimSpace(route), " ")
 	if !ok || method == "" || path == "" {
 		return nil, nil, nil
@@ -65,11 +70,16 @@ func apiRouteDiscoveredPayloads(accountID, appID, route string, firstSeen time.T
 	eventData := discoveredRouteEventData{
 		AppID: appID, RouteTemplate: route, Method: method, Path: path, FirstSeen: firstSeen,
 	}
-	eventID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:api-route-discovered\x00"+accountID+"\x00"+appID+"\x00"+route)).String()
+	name := "gregale:api-route-discovered\x00" + accountID + "\x00" + appID + "\x00" + route
+	if environmentID != "" {
+		name += "\x00" + environmentID
+	}
+	eventID := uuid.NewSHA1(uuid.NameSpaceURL, []byte(name)).String()
 	envelope := discoveredRouteCloudEvent{
 		SpecVersion: "1.0", ID: eventID, Source: discoveredRouteEventSource,
 		Type: discoveredRouteEventType, Time: firstSeen, DataContentType: "application/json",
 		Data: eventData, AccountID: accountID, Producer: eventcontract.AppProducer(appID),
+		EnvironmentID: environmentID,
 	}
 	eventPayload, err = json.Marshal(envelope)
 	if err != nil {
@@ -123,7 +133,18 @@ func (m *MemStore) recordDiscoveredRouteLocked(event APIConsumerUsageEvent) []by
 	if _, already := m.discoveryReceipts[event.EventID]; already {
 		return nil
 	}
-	prefix := discoveredRouteKey(event.AccountID, event.AppID, "")
+	environmentID, ok := m.discoveredRouteEnvironmentLocked(event)
+	if !ok {
+		m.discoveryReceipts[event.EventID] = struct{}{}
+		return nil
+	}
+	// A stage's inventory sits beside production's under its own key prefix,
+	// which production's prefix (app, then NUL) never matches.
+	inventory := event.AppID
+	if environmentID != "" {
+		inventory += "\x01" + environmentID
+	}
+	prefix := discoveredRouteKey(event.AccountID, inventory, "")
 	key := prefix + route
 	if route != discoveredRouteOverflow {
 		if _, exists := m.discoveredAPIRoutes[key]; !exists {
@@ -158,11 +179,39 @@ func (m *MemStore) recordDiscoveredRouteLocked(event APIConsumerUsageEvent) []by
 	if _, enrolled := m.scenarioActionPolicies[event.AppID]; !newRoute || enrolled {
 		return nil
 	}
-	eventPayload, _, err := apiRouteDiscoveredPayloads(event.AccountID, event.AppID, route, when)
+	eventPayload, _, err := apiRouteDiscoveredPayloads(event.AccountID, event.AppID, environmentID, route, when)
 	if err != nil {
 		return nil
 	}
 	return eventPayload
+}
+
+// discoveredRouteEnvironmentLocked mirrors discoveredRouteEnvironmentTx: the
+// stage of the deployment that served the route, "" for production, and
+// false when that stage no longer exists.
+func (m *MemStore) discoveredRouteEnvironmentLocked(event APIConsumerUsageEvent) (string, bool) {
+	deploymentID := discoveredDeploymentFor(event)
+	d, ok := m.deployments[deploymentID]
+	app, appOK := m.apps[event.AppID]
+	if deploymentID == "" || !ok || !appOK || d.AppID != event.AppID || app.AccountID != event.AccountID ||
+		IsProductionScope(d.Scope) || app.ProjectID == "" {
+		return "", true
+	}
+	id := m.projectEnvironmentIDLocked(app.ProjectID, d.Scope)
+	return id, id != ""
+}
+
+// discoveredDeploymentFor is the deployment that served the discovered route:
+// the gateway's dedicated field, else the audit record's deployment from
+// gateways that predate it.
+func discoveredDeploymentFor(event APIConsumerUsageEvent) string {
+	if event.DiscoveredDeploymentID != "" {
+		return event.DiscoveredDeploymentID
+	}
+	if event.Audit != nil {
+		return event.Audit.DeploymentID
+	}
+	return ""
 }
 
 func (m *MemStore) ListDiscoveredAPIRoutes(_ context.Context, accountID, appID string, limit int) ([]DiscoveredAPIRoute, bool, error) {

@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -43,6 +44,8 @@ const (
 	adoptionExperimentRoleEnv = "FAAS_ADOPTION_EXPERIMENT_ROLE"
 	adoptionExperimentDirEnv  = "FAAS_ADOPTION_EXPERIMENT_DIR"
 	adoptionExperimentIDEnv   = "FAAS_ADOPTION_EXPERIMENT_INSTANCE"
+	// adoptionExperimentBaseEnv replaces FAAS_TEST_BASE_ROOTFS for the boot role.
+	adoptionExperimentBaseEnv = "FAAS_ADOPTION_EXPERIMENT_BASE"
 )
 
 // adoptionExperimentGuest is what the old vmmd records for its successor.
@@ -56,7 +59,9 @@ type adoptionExperimentGuest struct {
 	OldMntNS  uint64   `json:"old_mnt_ns"`
 	NetnsIno  uint64   `json:"netns_ino"`
 	BindPaths []string `json:"bind_paths"`
-	Slot      int      `json:"slot"`
+	// BindSources are the host paths the binds were made from.
+	BindSources []string `json:"bind_sources"`
+	Slot        int      `json:"slot"`
 }
 
 func adoptionExperimentEnv(t *testing.T) []string {
@@ -68,6 +73,25 @@ func adoptionExperimentEnv(t *testing.T) []string {
 		}
 	}
 	return env
+}
+
+// pinUnitMountNamespace holds unit's main process mount namespace open, so it
+// outlives the process and its inode number is not reused.
+func pinUnitMountNamespace(t *testing.T, unit string) *os.File {
+	t.Helper()
+	out, err := exec.Command("systemctl", "show", "--property=MainPID", "--value", unit).Output()
+	if err != nil {
+		t.Fatalf("main pid of %s: %v", unit, err)
+	}
+	pid := strings.TrimSpace(string(out))
+	if pid == "" || pid == "0" {
+		t.Fatalf("%s has no main process", unit)
+	}
+	f, err := os.Open(filepath.Join("/proc", pid, "ns", "mnt"))
+	if err != nil {
+		t.Fatalf("pin the mount namespace of %s: %v", unit, err)
+	}
+	return f
 }
 
 // runAdoptionExperimentUnit runs this test binary in role inside a transient
@@ -190,6 +214,20 @@ func TestMetalAdoptionExperiments(t *testing.T) {
 // channels re-bound), then destroys it through the ordinary teardown.
 // Leakcheck must be clean afterwards with no manual cleanup.
 func TestMetalAdoptionRestartKeepsTheGuest(t *testing.T) {
+	adoptionRestartKeepsTheGuest(t, false)
+}
+
+// TestMetalAdoptionRestartKeepsAGuestWhoseSourceWasEvicted is production
+// fsn-2's 2026-11-12 refusal: the cache evicted the base drive a running
+// guest was bound from, the successor could not reopen the source path and
+// refused the guest ("adopt_failed"), and the unowned guest ran on and failed
+// the next rollout's clean-adoption check. The successor must take the
+// recorded inode through the guest's own bind and adopt it.
+func TestMetalAdoptionRestartKeepsAGuestWhoseSourceWasEvicted(t *testing.T) {
+	adoptionRestartKeepsTheGuest(t, true)
+}
+
+func adoptionRestartKeepsTheGuest(t *testing.T, evictBase bool) {
 	if os.Getenv("FAAS_ADOPTION_EXPERIMENTS") != "1" {
 		t.Skip("set FAAS_ADOPTION_EXPERIMENTS=1 on a dedicated acceptance host")
 	}
@@ -205,10 +243,23 @@ func TestMetalAdoptionRestartKeepsTheGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	instance := uuid.NewString()
-	bootUnit, _ := runAdoptionExperimentUnit(t, dir, "boot", instance, false)
+	var bootEnv []string
+	privateBase := ""
+	if evictBase {
+		// A private copy stands in for the cache file the cache evicts.
+		privateBase = filepath.Join(dir, "base.ext4")
+		if out, err := exec.Command("cp", "--sparse=always", os.Getenv("FAAS_TEST_BASE_ROOTFS"), privateBase).CombinedOutput(); err != nil {
+			t.Fatalf("copy the base drive: %v: %s", err, out)
+		}
+		bootEnv = append(bootEnv, adoptionExperimentBaseEnv+"="+privateBase)
+	}
+	bootUnit, _ := runAdoptionExperimentUnit(t, dir, "boot", instance, false, bootEnv...)
 	var guest adoptionExperimentGuest
 	if err := json.Unmarshal(waitAdoptionExperimentFile(t, filepath.Join(dir, "guest.json"), 2*time.Minute), &guest); err != nil {
 		t.Fatal(err)
+	}
+	if evictBase && !slices.Contains(guest.BindSources, privateBase) {
+		t.Fatalf("the guest is not bound from %s (bind sources %v), so eviction is not exercised", privateBase, guest.BindSources)
 	}
 	pidfd, err := unix.PidfdOpen(guest.PID, 0)
 	if err != nil {
@@ -222,11 +273,23 @@ func TestMetalAdoptionRestartKeepsTheGuest(t *testing.T) {
 		_ = unix.Close(pidfd)
 		leakcheck.AssertZero(t)
 	})
+	// Pin the old vmmd's mount namespace until the successor has run, as
+	// production's host processes do. Otherwise the kernel recycles its inode
+	// number for the successor's namespace and jail teardown, which compares
+	// the two, passes by luck: it refused every adopted jail on fsn-2
+	// (2026-11-12) while this test stayed green.
+	pinned := pinUnitMountNamespace(t, bootUnit)
+	defer func() { _ = pinned.Close() }()
 	if out, err := exec.Command("systemctl", "kill", "--signal=SIGKILL", bootUnit).CombinedOutput(); err != nil {
 		t.Fatalf("crash the old vmmd: %v: %s", err, out)
 	}
 	for i := 0; i < 100 && exec.Command("systemctl", "is-active", "--quiet", bootUnit).Run() == nil; i++ {
 		time.Sleep(100 * time.Millisecond)
+	}
+	if evictBase {
+		if err := os.Remove(privateBase); err != nil {
+			t.Fatalf("evict the base drive: %v", err)
+		}
 	}
 	_, out := runAdoptionExperimentUnit(t, dir, "adopt", instance, true)
 	t.Logf("successor output:\n%s", out)
@@ -235,6 +298,9 @@ func TestMetalAdoptionRestartKeepsTheGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("successor result: %v", result)
+	if result["successor_mnt_ns_differs"] != true {
+		t.Fatalf("the successor ran in the old vmmd's mount namespace, so teardown's namespace check is not exercised: %v", result)
+	}
 	if result["adopted"] != true || result["same_pid"] != true || result["api_after_adoption"] != "Running" || result["destroyed"] != true {
 		t.Fatalf("restart did not keep and then cleanly tear down the guest: %v", result)
 	}
@@ -295,6 +361,9 @@ func adoptionExperimentAdoptRole(t *testing.T, dir string) {
 	}
 	if ns, err := resourceNetworkNamespaceAt(g.Netns); err == nil && ns != nil {
 		res["netns_binding_after_adoption"] = ns.File.Inode == g.NetnsIno
+	}
+	if mnt, err := resourceMountNamespace(); err == nil {
+		res["successor_mnt_ns_differs"] = mnt.Namespace != g.OldMntNS
 	}
 	if err := m.Destroy(ctx, g.Instance); err != nil {
 		res["destroy_error"] = err.Error()
@@ -410,7 +479,11 @@ func adoptionExperimentBoot(t *testing.T, dir, instance string) {
 	if os.Getenv("FAAS_ADOPTION_PIPE_CONSOLE") != "1" {
 		m.vmm.(*JailerVMM).WithFileConsole()
 	}
-	req := WakeRequest{Instance: instance, BaseKey: os.Getenv("FAAS_TEST_BASE_ROOTFS"), LayerKey: os.Getenv("FAAS_TEST_LAYER_ROOTFS"), VcpuCount: 1, MemSizeMiB: 512, Plan: api.PlanPro}
+	base := os.Getenv("FAAS_TEST_BASE_ROOTFS")
+	if private := os.Getenv(adoptionExperimentBaseEnv); private != "" {
+		base = private
+	}
+	req := WakeRequest{Instance: instance, BaseKey: base, LayerKey: os.Getenv("FAAS_TEST_LAYER_ROOTFS"), VcpuCount: 1, MemSizeMiB: 512, Plan: api.PlanPro}
 	inst, err := m.Wake(ctx, req)
 	if err != nil {
 		t.Fatal(err)
@@ -631,6 +704,7 @@ func recordAdoptionExperimentGuest(t *testing.T, dir string, m *Manager, journal
 			g.JailRoot = a.Path
 		case a.Kind == "bind":
 			g.BindPaths = append(g.BindPaths, a.Path)
+			g.BindSources = append(g.BindSources, a.Source)
 		}
 	}
 	if mnt, err := resourceMountNamespace(); err == nil {

@@ -216,7 +216,7 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 		// branch. resolveEntryPath performs the stronger containment and
 		// symlink-ancestor checks once the archive name has passed this
 		// traversal guard.
-		if !strings.Contains(archiveName, "..") {
+		if !hasParentComponent(archiveName) {
 			// codeql[go/path-injection] false-positive: resolveEntryPath rejects
 			// absolute names, then clamps every ancestor symlink inside dst.
 			replaceWhiteouts := opts.preserveWhiteouts && (supportedOverlayEntry(hdr.Typeflag) || opaque || strings.HasPrefix(filepath.Base(archiveName), whiteoutPrefix))
@@ -253,8 +253,11 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 			case strings.HasPrefix(base, whiteoutPrefix):
 				// Delete the named sibling from lower layers.
 				victimName := strings.TrimPrefix(base, whiteoutPrefix)
-				if victimName == "" {
-					return fmt.Errorf("rootfs: invalid empty whiteout %q", hdr.Name)
+				// The traversal guard above saw the archive basename, not the
+				// name left after stripping the prefix: ".wh..." passes it but
+				// names "..", which would delete the staging directory's parent.
+				if err := validateWhiteoutVictim(victimName); err != nil {
+					return fmt.Errorf("rootfs: invalid whiteout %q: %w", hdr.Name, err)
 				}
 				if opts.preserveWhiteouts {
 					if err := applyOverlayWhiteout(filepath.Dir(target), victimName); err != nil {
@@ -396,6 +399,21 @@ const (
 	whiteoutPrefix = ".wh."
 	whiteoutOpaque = ".wh..wh..opq"
 )
+
+// validateWhiteoutVictim checks the sibling name an OCI whiteout deletes. It
+// must be one ordinary path component: a whiteout only hides an entry in its
+// own directory, so ".", "..", separators and NULs are never valid.
+func validateWhiteoutVictim(name string) error {
+	switch {
+	case name == "":
+		return errors.New("empty whiteout target")
+	case name == "." || name == "..":
+		return fmt.Errorf("whiteout target %q is not an entry name", name)
+	case strings.ContainsAny(name, "/\x00"):
+		return fmt.Errorf("whiteout target %q is not a single path component", name)
+	}
+	return nil
+}
 
 func isRuntimeMountpointPath(name string) bool {
 	for strings.HasPrefix(name, "./") {
@@ -735,6 +753,21 @@ const maxSymlinkHops = 40
 // regular-file entry landing on an existing symlink must clobber the link,
 // not write through it. Every ANCESTOR component is resolved and clamped
 // inside root by resolveWithin.
+// hasParentComponent reports whether a tar entry name has a ".." path
+// component. Only a whole component can climb out of a directory: a name
+// that merely contains two dots, such as usr/share/man/man1/..1.gz,
+// "foo..bar" or "...", is an ordinary file name that real base images ship.
+// Matching the substring instead rejected every image carrying such a file
+// (Hunt 34 H34-47).
+func hasParentComponent(name string) bool {
+	for _, part := range strings.Split(name, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 func resolveEntryPath(root, name string) (string, error) {
 	return resolveLayerEntryPath(root, name, false)
 }

@@ -68,7 +68,27 @@ func cmdDebugCapture(args []string) int {
 	return showProfileCapture(ctx, client, positional[0], capture, *output, *top)
 }
 
-const profileCapturesUsage = "usage: gregale debug captures <slug> [<capture-id>] [--output DIR] [--top N] [--delete]"
+const profileCapturesUsage = "usage: gregale debug captures [list|show|delete] <slug> [<capture-id>] [--output DIR] [--top N] [--delete]"
+
+// profileCapturesVerb accepts the verbs the command's help names ("List,
+// show or delete"): `captures list my-app` treated "list" as the app slug and
+// answered "Not found". A lone word stays a slug, so an app named "list" is
+// still reachable as `captures list`. ok is false for a verb with the wrong
+// number of arguments.
+func profileCapturesVerb(positional []string) (rest []string, del, ok bool) {
+	if len(positional) < 2 {
+		return positional, false, true
+	}
+	switch positional[0] {
+	case "list", "ls":
+		return positional[1:], false, len(positional) == 2
+	case "show", "get":
+		return positional[1:], false, len(positional) == 3
+	case "delete", "rm":
+		return positional[1:], true, len(positional) == 3
+	}
+	return positional, false, true
+}
 
 // cmdDebugCaptures lists an app's captures, shows one, or deletes one with
 // --delete, freeing its share of the account's capture storage (ADR-1155).
@@ -81,6 +101,12 @@ func cmdDebugCaptures(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	positional, verbDelete, ok := profileCapturesVerb(positional)
+	if !ok {
+		PrintUsage(osStderr, profileCapturesUsage, debugCmdDocsTopic)
+		return 1
+	}
+	*del = *del || verbDelete
 	if len(positional) < 1 || len(positional) > 2 || *del && len(positional) != 2 {
 		PrintUsage(osStderr, profileCapturesUsage, debugCmdDocsTopic)
 		return 1

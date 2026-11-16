@@ -3,7 +3,7 @@
 // ADR-1155). Collection is driven by the deployment's continuous profiling
 // configuration and by on-demand captures; otherwise the collector is dormant.
 //
-// Customers import the public copy, github.com/poyrazK/faas/sdk/go/preview/profiling:
+// Customers import the public copy, github.com/gregale-dev/gregale-go/preview/profiling:
 // this module is not go-gettable. This copy serves the platform's own
 // fixtures; keep the two collectors' behavior the same.
 package guestprofiling

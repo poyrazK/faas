@@ -9,6 +9,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class RunsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Submit a server-managed Runs DAG.
    * Stores a bounded dependency graph encrypted with the host age identity
@@ -38,7 +39,7 @@ export class RunsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedExecutionWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/execution-workflows',
       headers: {
@@ -82,7 +83,7 @@ export class RunsService {
      */
     workflowId: string,
   }): CancelablePromise<ExecutionWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/execution-workflows/{workflow_id}',
       path: {

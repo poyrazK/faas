@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -15,6 +15,7 @@ from ..models.app_log_drain_analytics_response_window import (
     AppLogDrainAnalyticsResponseWindow,
     check_app_log_drain_analytics_response_window,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_log_drain_analytics_bucket import AppLogDrainAnalyticsBucket
@@ -36,6 +37,14 @@ class AppLogDrainAnalyticsResponse:
     buckets: list[AppLogDrainAnalyticsBucket]
     summary: AppLogDrainAnalyticsSummary
     """Aggregate customer-safe delivery analytics over the requested window."""
+    requested_from: datetime.datetime | Unset = UNSET
+    """Original requested lower bound before expanding to the recorded hourly observations."""
+    window_aligned: bool | Unset = UNSET
+    """True when hourly observations changed the effective bounds; from/to match the counter observation times."""
+    complete: bool | Unset = UNSET
+    """Whether every reported counter delta has a valid baseline without missing hourly samples."""
+    coverage_gaps: list[str] | Unset = UNSET
+    """Missing baseline or hourly sample evidence; unknown deltas are omitted from totals."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +65,18 @@ class AppLogDrainAnalyticsResponse:
 
         summary = self.summary.to_dict()
 
+        requested_from: str | Unset = UNSET
+        if not isinstance(self.requested_from, Unset):
+            requested_from = self.requested_from.isoformat()
+
+        window_aligned = self.window_aligned
+
+        complete = self.complete
+
+        coverage_gaps: list[str] | Unset = UNSET
+        if not isinstance(self.coverage_gaps, Unset):
+            coverage_gaps = self.coverage_gaps
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -69,6 +90,14 @@ class AppLogDrainAnalyticsResponse:
                 "summary": summary,
             }
         )
+        if requested_from is not UNSET:
+            field_dict["requested_from"] = requested_from
+        if window_aligned is not UNSET:
+            field_dict["window_aligned"] = window_aligned
+        if complete is not UNSET:
+            field_dict["complete"] = complete
+        if coverage_gaps is not UNSET:
+            field_dict["coverage_gaps"] = coverage_gaps
 
         return field_dict
 
@@ -97,6 +126,19 @@ class AppLogDrainAnalyticsResponse:
 
         summary = AppLogDrainAnalyticsSummary.from_dict(d.pop("summary"))
 
+        _requested_from = d.pop("requested_from", UNSET)
+        requested_from: datetime.datetime | Unset
+        if isinstance(_requested_from, Unset):
+            requested_from = UNSET
+        else:
+            requested_from = datetime.datetime.fromisoformat(_requested_from)
+
+        window_aligned = d.pop("window_aligned", UNSET)
+
+        complete = d.pop("complete", UNSET)
+
+        coverage_gaps = cast(list[str], d.pop("coverage_gaps", UNSET))
+
         app_log_drain_analytics_response = cls(
             log_drain_id=log_drain_id,
             window=window,
@@ -105,6 +147,10 @@ class AppLogDrainAnalyticsResponse:
             to=to,
             buckets=buckets,
             summary=summary,
+            requested_from=requested_from,
+            window_aligned=window_aligned,
+            complete=complete,
+            coverage_gaps=coverage_gaps,
         )
 
         app_log_drain_analytics_response.additional_properties = d

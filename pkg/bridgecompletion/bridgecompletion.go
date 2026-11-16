@@ -29,6 +29,12 @@ const (
 	// reached the guest and has no completion to wait for, so the caller
 	// fails only that request instead of fencing the bridge.
 	RefusedHeader = "X-Faas-Bridge-Exchange-Refused"
+	// GuestErrorHeader echoes the exchange ID on the 502 the bridge answers
+	// when its connection to the guest failed, as opposed to a 502 the guest
+	// itself returned. vmmd logs it and replaces a bridge whose guest
+	// connection keeps failing. The guest never sees the exchange ID, so it
+	// cannot forge the echo.
+	GuestErrorHeader = "X-Faas-Bridge-Guest-Error"
 )
 
 // exchange is one tracked exchange; done closes when the handler returns.

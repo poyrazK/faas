@@ -258,7 +258,13 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		return gateway.App{}, false, nil
 	}
 	resolved.PinnedDeploymentID = deployment.ID
+	// The scope the deployment was built for, not the URL's environment
+	// slug: a production URL can serve a legacy "default" row, whose cold
+	// admission must read the default lane's scoped configuration.
 	resolved.PinnedDeploymentScope = environment.Slug
+	if deployment.Scope != "" {
+		resolved.PinnedDeploymentScope = deployment.Scope
+	}
 	resolved.PublicEnvironmentID = environment.ID
 	return resolved, true, nil
 }
@@ -314,7 +320,7 @@ func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, envi
 			return state.Deployment{}, false, err
 		}
 	}
-	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
+	deployment, err := r.liveEnvironmentDeployment(ctx, app.ID, environment.Slug)
 	if errors.Is(err, state.ErrNotFound) {
 		return state.Deployment{}, false, nil
 	}
@@ -322,6 +328,35 @@ func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, envi
 		return state.Deployment{}, false, err
 	}
 	return deployment, true, nil
+}
+
+// liveEnvironmentDeployment finds the live deployment an environment URL
+// serves when no release graph pins one. A stage matches its own scope. The
+// production environment also covers the legacy default lane: direct and
+// project deploys still store production rows as scope "default" while named
+// production is dark, so matching "production" alone answered 404 for every
+// production environment URL `environment get` printed (Hunt 34 H34-27).
+// The choice follows state.ProductionRoutingDeployments: a traffic-bearing
+// named row first, then the legacy lane, then a dark named row.
+func (r pgRouter) liveEnvironmentDeployment(ctx context.Context, appID, slug string) (state.Deployment, error) {
+	if !state.IsProductionScope(slug) {
+		return r.store.LiveDeploymentForScope(ctx, appID, slug)
+	}
+	named, namedErr := r.store.LiveDeploymentForScope(ctx, appID, "production")
+	if namedErr != nil && !errors.Is(namedErr, state.ErrNotFound) {
+		return state.Deployment{}, namedErr
+	}
+	if namedErr == nil && named.TrafficPercent > 0 {
+		return named, nil
+	}
+	legacy, legacyErr := r.store.LiveDeploymentForScope(ctx, appID, state.DefaultEnvScope)
+	if legacyErr == nil {
+		return legacy, nil
+	}
+	if errors.Is(legacyErr, state.ErrNotFound) && namedErr == nil {
+		return named, nil
+	}
+	return state.Deployment{}, legacyErr
 }
 
 func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
@@ -1100,6 +1135,9 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyAppDelete,
 		db.NotifyAccountDeleted,
 		db.NotifyTrafficSecurityChanged,
+		// ADR 20261114150000 §3: a published flag configuration may kill
+		// or revive a flag; the per-deployment kill cache is wholesale.
+		db.NotifyFeatureFlagsChanged,
 	}
 	// With resync: a LISTEN reconnect or a full hub buffer loses notifications
 	// (ADR-1344 §5 rule 3), and the route and app caches have no TTL.
@@ -1210,6 +1248,9 @@ func flushAfterMissedNotifications(inv invalidator, log *slog.Logger) {
 	if refresher, ok := inv.(interface{ RequestTrafficRevocationRefresh() }); ok {
 		refresher.RequestTrafficRevocationRefresh()
 	}
+	if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
+		kills.InvalidateFlagKills()
+	}
 }
 
 func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw string, log *slog.Logger) (db.DeploymentRouteChangedPayload, bool) {
@@ -1314,6 +1355,10 @@ func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node 
 // require both app_id and instance_id and malformed payloads are logged.
 func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
+	case db.NotifyFeatureFlagsChanged:
+		if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
+			kills.InvalidateFlagKills()
+		}
 	case db.NotifyTrafficSecurityChanged:
 		if _, err := db.ParseTrafficSecurityChangedPayload(n.Payload); err != nil {
 			log.Warn("gatewayd: invalid traffic security notification", "err", err)
@@ -1392,6 +1437,20 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// Phase 4's MigrateInstanceOwner which stamps node_id
 		// before the gateway's RUNNING emission from the wake
 		// path lands).
+		//
+		// Track boots in progress so a request answered at capacity while
+		// another gateway's boot holds the slot waits for that boot rather
+		// than 503ing after the flat settle wait (prod 2026-11-15).
+		if boots, ok := inv.(interface {
+			NoteInstanceBooting(appID, instanceID string)
+			NoteInstanceSettled(appID, instanceID string)
+		}); ok {
+			if p.State == "waking" || p.State == "cold_booting" {
+				boots.NoteInstanceBooting(p.AppID, p.InstanceID)
+			} else {
+				boots.NoteInstanceSettled(p.AppID, p.InstanceID)
+			}
+		}
 		switch p.State {
 		case "running":
 			// RUNNING may have been produced by another gateway process,

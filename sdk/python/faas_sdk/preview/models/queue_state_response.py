@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.queue_state_response_plan import QueueStateResponsePlan, check_queue_state_response_plan
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.queue_state_response_backlog_by_source import QueueStateResponseBacklogBySource
+
 
 T = TypeVar("T", bound="QueueStateResponse")
 
@@ -30,6 +34,9 @@ class QueueStateResponse:
     """Oldest pending row's created_at; null when the queue is empty."""
     oldest_pending_age_seconds: int | None | Unset = UNSET
     """Convenience field — seconds since oldest_pending_at; null when the queue is empty."""
+    backlog_by_source: QueueStateResponseBacklogBySource | Unset = UNSET
+    """Every pending or in-delivery invocation of the app per source (async_invoke, inbound_webhook, queue, ...),
+    so async work waiting for the scheduler is visible beside the queue's depth. Omitted when nothing waits."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +66,10 @@ class QueueStateResponse:
         else:
             oldest_pending_age_seconds = self.oldest_pending_age_seconds
 
+        backlog_by_source: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.backlog_by_source, Unset):
+            backlog_by_source = self.backlog_by_source.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,11 +86,15 @@ class QueueStateResponse:
             field_dict["oldest_pending_at"] = oldest_pending_at
         if oldest_pending_age_seconds is not UNSET:
             field_dict["oldest_pending_age_seconds"] = oldest_pending_age_seconds
+        if backlog_by_source is not UNSET:
+            field_dict["backlog_by_source"] = backlog_by_source
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.queue_state_response_backlog_by_source import QueueStateResponseBacklogBySource
+
         d = dict(src_dict)
         app_slug = d.pop("app_slug")
 
@@ -119,6 +134,13 @@ class QueueStateResponse:
 
         oldest_pending_age_seconds = _parse_oldest_pending_age_seconds(d.pop("oldest_pending_age_seconds", UNSET))
 
+        _backlog_by_source = d.pop("backlog_by_source", UNSET)
+        backlog_by_source: QueueStateResponseBacklogBySource | Unset
+        if isinstance(_backlog_by_source, Unset):
+            backlog_by_source = UNSET
+        else:
+            backlog_by_source = QueueStateResponseBacklogBySource.from_dict(_backlog_by_source)
+
         queue_state_response = cls(
             app_slug=app_slug,
             plan=plan,
@@ -128,6 +150,7 @@ class QueueStateResponse:
             generated_at=generated_at,
             oldest_pending_at=oldest_pending_at,
             oldest_pending_age_seconds=oldest_pending_age_seconds,
+            backlog_by_source=backlog_by_source,
         )
 
         queue_state_response.additional_properties = d

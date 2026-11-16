@@ -18,10 +18,14 @@ type DevServer struct {
 	// Framework names what was detected, for messages ("Next.js",
 	// "dev script", "Django", ...).
 	Framework string
+	// HMRFramework identifies a known Node development server that can own
+	// source reload locally. Empty means the command needs CLI supervision.
+	// Keep Framework as "dev script" for package-manager commands.
+	HMRFramework string
 }
 
-// devServerNodeFramework is a Node.js development server started without a
-// dev script. Order matters: meta-frameworks built on Vite come first.
+// devServerNodeFramework identifies a Node.js development command, including
+// direct dev scripts. Order matters: meta-frameworks built on Vite come first.
 type devServerNodeFramework struct {
 	name    string
 	deps    []string // every one must be declared
@@ -67,15 +71,16 @@ func nodeDevServer(fsys fs.FS) (DevServer, bool) {
 	if json.Unmarshal([]byte(readFile(fsys, "package.json")), &pkg) != nil {
 		return DevServer{}, false
 	}
-	if strings.TrimSpace(pkg.Scripts["dev"]) != "" {
-		// Railpack starts the production app with the same package manager,
-		// so the runtime image has it.
-		return DevServer{Command: nodePackageManager(fsys, pkg.PackageManager) + " run dev", Framework: "dev script"}, true
-	}
 	declared := func(dep string) bool {
 		_, prod := pkg.Dependencies[dep]
 		_, dev := pkg.DevDependencies[dep]
 		return prod || dev
+	}
+	script := strings.TrimSpace(pkg.Scripts["dev"])
+	server := DevServer{}
+	if script != "" {
+		// Preserve the user's script and the package manager used by Railpack.
+		server = DevServer{Command: nodePackageManager(fsys, pkg.PackageManager) + " run dev", Framework: "dev script"}
 	}
 	for _, fw := range devServerNodeFrameworks {
 		matched := true
@@ -83,10 +88,37 @@ func nodeDevServer(fsys fs.FS) (DevServer, bool) {
 			matched = matched && declared(dep)
 		}
 		if matched {
-			return DevServer{Command: fw.command, Framework: fw.name}, true
+			if script == "" {
+				return DevServer{Command: fw.command, Framework: fw.name, HMRFramework: fw.name}, true
+			}
+			if nodeHMRScript(script, fw.command) {
+				server.HMRFramework = fw.name
+				break
+			}
 		}
 	}
+	if script != "" {
+		return server, true
+	}
 	return DevServer{}, false
+}
+
+// Only recognise simple direct invocations. Shell wrappers, assignments and
+// pipelines can change what actually runs; retain supervised reload for those.
+func nodeHMRScript(script, command string) bool {
+	if strings.ContainsAny(script, "\r\n&|;<>$`\\\"'(){}[]*?!#~") {
+		return false
+	}
+	args, expected := strings.Fields(script), strings.Fields(command)
+	if len(args) == 0 || args[0] != expected[0] {
+		return false
+	}
+	// Vite's dev and serve aliases also power SvelteKit. A preview or build
+	// command must never become an HMR owner just because Vite is installed.
+	if expected[0] == "vite" {
+		return len(args) == 1 || args[1] == "dev" || args[1] == "serve" || strings.HasPrefix(args[1], "-")
+	}
+	return len(args) >= 2 && args[1] == expected[1]
 }
 
 func pythonDevServer(fsys fs.FS) (DevServer, bool) {

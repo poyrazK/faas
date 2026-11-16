@@ -89,6 +89,24 @@ type SupportMessage struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type SupportNotification struct {
+	ID              pgtype.UUID
+	Sequence        pgtype.Int8
+	EventID         pgtype.UUID
+	TicketID        pgtype.UUID
+	RecipientID     pgtype.UUID
+	Audience        string
+	Kind            string
+	CreatedAt       pgtype.Timestamptz
+	ReadAt          pgtype.Timestamptz
+	EmailState      string
+	Attempts        int32
+	LeaseID         pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	AvailableAt     pgtype.Timestamptz
+	DestinationHash []byte
+}
+
 type SupportOutbox struct {
 	ID          pgtype.UUID
 	TicketID    pgtype.UUID
@@ -159,4 +177,10 @@ type SupportTicket struct {
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 	ResolvedAt pgtype.Timestamptz
+}
+
+type SupportTicketSnapshot struct {
+	TicketID   pgtype.UUID
+	CapturedAt pgtype.Timestamptz
+	Snapshot   []byte
 }

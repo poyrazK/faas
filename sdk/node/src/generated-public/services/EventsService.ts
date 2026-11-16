@@ -32,6 +32,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class EventsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Inspect the recovery policy
    * Returns the current app policy and scheduler evaluation status. An unconfigured app has a disabled version-zero policy.
@@ -46,7 +47,7 @@ export class EventsService {
      */
     slug: string,
   }): CancelablePromise<WorkflowRecoveryPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy',
       path: {
@@ -79,7 +80,7 @@ export class EventsService {
      */
     requestBody: SetWorkflowRecoveryPolicyRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/recovery-policy',
       path: {
@@ -113,7 +114,7 @@ export class EventsService {
     slug: string,
     requestBody: WorkflowRecoveryPolicyEvaluationRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyEvaluation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/evaluate',
       path: {
@@ -149,7 +150,7 @@ export class EventsService {
      */
     requestBody: SetWorkflowRecoveryPolicyRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyChangePreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/change-preview',
       path: {
@@ -187,7 +188,7 @@ export class EventsService {
      */
     requestBody: ControlWorkflowRecoveryPolicyRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/control',
       path: {
@@ -225,7 +226,7 @@ export class EventsService {
     failureId: string,
     requestBody: WorkflowInitialRecoveryReviewRequest,
   }): CancelablePromise<WorkflowInitialRecoveryReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-failures/{failureID}/recovery-reviews',
       path: {
@@ -267,7 +268,7 @@ export class EventsService {
      */
     actionId: string,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent',
       path: {
@@ -304,7 +305,7 @@ export class EventsService {
     actionId: string,
     requestBody: WorkflowInitialEvidenceRepairRequest,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent/repair',
       path: {
@@ -341,7 +342,7 @@ export class EventsService {
      */
     actionId: string,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence',
       path: {
@@ -378,7 +379,7 @@ export class EventsService {
     actionId: string,
     requestBody: WorkflowInitialEvidenceRepairRequest,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/repair',
       path: {
@@ -410,7 +411,7 @@ export class EventsService {
      */
     reviewId: string,
   }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence',
       path: {
@@ -441,7 +442,7 @@ export class EventsService {
     reviewId: string,
     requestBody: WorkflowInitialEvidenceRepairRequest,
   }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence/repair',
       path: {
@@ -471,7 +472,7 @@ export class EventsService {
      */
     reviewId: string,
   }): CancelablePromise<WorkflowInitialRecoveryReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}',
       path: {
@@ -507,7 +508,7 @@ export class EventsService {
     reviewId: string,
     requestBody: WorkflowInitialRecoveryReviewDecisionRequest,
   }): CancelablePromise<WorkflowInitialRecoveryReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/decision',
       path: {
@@ -549,7 +550,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<WorkflowInitialRecoveryReviews> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/initial-recovery-reviews',
       path: {
@@ -596,7 +597,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<WorkflowInitialFailures> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-failures',
       path: {
@@ -634,7 +635,7 @@ export class EventsService {
      */
     failureId: string,
   }): CancelablePromise<WorkflowInitialRecoveryPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview',
       path: {
@@ -698,7 +699,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<WorkflowRecoveryHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/history',
       path: {
@@ -755,7 +756,7 @@ export class EventsService {
      */
     createdBefore?: string,
   }): CancelablePromise<WorkflowRecoveryReport> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/report',
       path: {
@@ -794,7 +795,7 @@ export class EventsService {
      */
     stallAfterSeconds?: number,
   }): CancelablePromise<WorkflowRecoveryPolicyHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/health',
       path: {
@@ -825,7 +826,7 @@ export class EventsService {
      */
     slug: string,
   }): CancelablePromise<WorkflowRecoveryAutomaticQueue> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/queue',
       path: {
@@ -863,7 +864,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<WorkflowRecoveryPolicyReviews> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews',
       path: {
@@ -900,7 +901,7 @@ export class EventsService {
      */
     reviewId: string,
   }): CancelablePromise<WorkflowRecoveryPolicyReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}',
       path: {
@@ -936,7 +937,7 @@ export class EventsService {
     reviewId: string,
     requestBody: WorkflowRecoveryReviewDecisionRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision',
       path: {
@@ -983,7 +984,7 @@ export class EventsService {
      */
     requestBody: SuppressWorkflowRecoveryAutomaticActionRequest,
   }): CancelablePromise<WorkflowRecoveryAutomaticAction> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress',
       path: {
@@ -1021,7 +1022,7 @@ export class EventsService {
      */
     reviewId: string,
   }): CancelablePromise<WorkflowRecoveryReviewStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status',
       path: {

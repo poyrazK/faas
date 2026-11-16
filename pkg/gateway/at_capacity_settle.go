@@ -44,20 +44,34 @@ func (h *Handler) settleAtCapacity(ctx context.Context, app App, limits api.Limi
 			h.log.Warn("gateway: live target reconciliation after an at-capacity admission failed", "app_id", app.ID, "err", err)
 		}
 	}
-	wait := time.NewTimer(atCapacitySettleWait)
-	defer wait.Stop()
+	start := time.Now()
+	settle := start.Add(atCapacitySettleWait)
+	// A boot another gateway or producer started holds the slot: wait for it
+	// up to the app's cold-wake budget, as a request joining this gateway's
+	// own wake would, instead of answering 503 after the flat settle wait.
+	join := start.Add(WakeAdmissionPolicyForAppWithWakeLimits(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.WakeMaxQueueDepth, app.WakeMaxQueueWaitSeconds).MaxWait)
+	tracker, _ := h.backend.(bootInProgressReader)
 	poll := time.NewTicker(atCapacitySettlePoll)
 	defer poll.Stop()
 	for {
 		if picked := pick(); picked.OK {
 			return picked, nil
 		}
+		now := time.Now()
+		if !now.Before(settle) && (tracker == nil || !now.Before(join) || !tracker.BootInProgress(app.ID)) {
+			return PickResult{}, ErrInstanceSlotsSettling
+		}
 		select {
 		case <-ctx.Done():
 			return PickResult{}, ctx.Err()
-		case <-wait.C:
-			return PickResult{}, ErrInstanceSlotsSettling
 		case <-poll.C:
 		}
 	}
+}
+
+// bootInProgressReader is implemented by PGBackend: it reports whether an
+// instance of the app was announced waking or cold booting and has not
+// reached another state yet.
+type bootInProgressReader interface {
+	BootInProgress(appID string) bool
 }

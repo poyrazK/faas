@@ -55,6 +55,14 @@ stays open.
 
 ## Public gRPC
 
+The Gregale gateways preserve gRPC trailers. The hosting front also needs to
+support them: Cloudflare's public Tunnel hostnames do not support gRPC.
+On Gregale's current Tunnel app front, successful calls can deliver messages
+without the final `grpc-status`, causing standard clients to fail. Enabling
+the zone gRPC toggle alone does not establish support. Ask the operator for a
+verified direct-origin route before relying on public gRPC through this front.
+gRPC-Web requests are not translated.
+
 When Gregale itself refuses a gRPC call, before it reaches your app, the
 client receives a gRPC status, not an HTTP error page. Examples are a missing
 bearer token, a rate limit, a timed-out wake, or maintenance. `grpc-message`
@@ -77,7 +85,8 @@ carries the reason and the stable problem code, for example
 | anything else | `UNKNOWN` |
 
 Your app's own gRPC responses, including their `grpc-status` trailers, pass
-through unchanged. gRPC-Web requests are not translated.
+through the Gregale gateways unchanged; the front limitation above still
+applies.
 
 ## Long-lived streams
 
@@ -175,9 +184,8 @@ With this setting, each canonical `_URL` uses `https://<service>.internal`;
 the `_HTTPS_URL` companion remains available with the same value. Plain HTTP
 calls from that caller are rejected by the service proxy, so client retries do
 not silently downgrade. The transport needs private HTTPS and workload CA
-trust on the compute path: until the operator enables the
-`private-service-https` capability, Gregale refuses the setting with that
-reason ([ADR-20261029230000](adr/20261029230000-private-service-https-capability.md)). Omitted transport keeps existing
+trust: where private service HTTPS is not enabled for your account yet,
+Gregale refuses the setting and says so. Omitted transport keeps existing
 workloads' stored choice and defaults new workloads to HTTP; set the extension
 to `http` to explicitly return to the legacy endpoint. The app API exposes the
 same choice as `service_binding_transport` for standalone apps. `gregale
@@ -186,11 +194,9 @@ bindings <app>` reports the effective transport.
 The same declared edges are exposed as service bindings by the app API and by
 `gregale app binding public-api`, alongside database, object-storage, queue,
 and outbound integration bindings. New project workloads use the `project`
-caller policy
-([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)):
+caller policy:
 they may call every service in their own project without listing it. A
-project service's `depends_on` bindings name only its own project's services
-([ADR-20261030131528](adr/20261030131528-project-bindings-name-project-services.md)):
+project service's `depends_on` bindings name only its own project's services:
 a bound name never resolves to an app outside the project, and a call to a
 service outside the project gets 403 unless the caller sets
 `x-gregale-service-policy: account`. A target's `x-gregale-allow-callers` list
@@ -210,13 +216,11 @@ services:
 ```
 
 A repository without Compose declares the same policy, per-service
-visibility and `depends_on` in the root `gregale.yaml` `project:` block (formerly `.gregale/project.yaml`)
-([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md));
+visibility and `depends_on` in the root `gregale.yaml` `project:` block (formerly `.gregale/project.yaml`);
 a Compose declaration wins where both set a policy.
 
 An undeclared sibling has no injected URL; call it at
-`http://<name>.internal:10081`
-([ADR-20261022160248](adr/20261022160248-project-internal-aliases.md)) or
+`http://<name>.internal:10081` or
 `http://<app-slug>.svc.gregale:10081`. For an intentional same-account escape
 hatch, set `x-gregale-service-policy: account` on the caller. Under the
 `declared` policy the CLI reports service bindings as `enforced`; under
@@ -347,7 +351,7 @@ verification age is ten minutes; `--allow-unsupported` explicitly waives
 queue/outbound probe coverage and keeps it partial. These policy flags require
 `--require-bindings` on promotion. Promotion creates no probes or restarts.
 The gate protects committed platform observations at promotion; later changes
-and upstream outages still require monitoring. See [ADR-529](adr/529-binding-gated-promotion.md).
+and upstream outages still require monitoring.
 
 Evidence stays separate per deployment, binding and scope. A passing serving
 revision cannot hide a failed or unprobed candidate. The CLI requires the server
@@ -394,8 +398,7 @@ resolve its errors or scheduler clock/polling problems, and retry after a fresh
 healthy poll. A healthy idle queue needs no delivered message. External pull
 consumers retain partial coverage because their liveness is not observed by the
 scheduler. Polling health establishes control-plane readiness; it does not
-prove guest queue access or message delivery. See
-[ADR-523](adr/523-queue-binding-readiness.md).
+prove guest queue access or message delivery.
 
 A stored release policy can explicitly require scheduler readiness for individual
 push queue bindings while retaining strict verification for other dependencies:
@@ -430,8 +433,7 @@ or explicitly cleared. CLI and SDK writes use the dedicated
 `PUT .../bindings/release-policy-with-queues` route, so older servers return 404
 before mutation. Older write routes reject implicit removal of these
 requirements. A local `bindings check --queue-require ...` reads the same
-readiness evidence without changing the stored policy. See
-[ADR-1346](adr/1346-binding-runtime-audiences-and-queue-release-requirements.md).
+readiness evidence without changing the stored policy.
 
 To prepare all dependencies for an enforced release policy with one command,
 preview the plan and then run it for the same candidate:
@@ -470,8 +472,7 @@ plan and completed results alongside `preflight` when later work fails. Deadline
 errors use `error_code: verification_timeout` and retain any admitted task ID.
 
 The final result is an observation; traffic promotion rechecks policy and
-evidence under its transaction locks. See
-[ADR-1347](adr/1347-unified-binding-policy-verification.md).
+evidence under its transaction locks.
 
 Human output identifies blockers and remediation. JSON includes `passed`, the
 applied policy, scope and deployment, per-binding coverage, runtime counts,
@@ -509,8 +510,7 @@ blocker even with `--allow-unsupported`.
 Probes use normal TLS verification. Operator-environment credentials, missing
 probe policies and installations without an outbound probe gateway keep
 unsupported coverage. A successful probe establishes only the configured
-endpoint. See
-[ADR-522](adr/522-outbound-binding-verification.md).
+endpoint.
 
 Each declared outbound dependency can carry a request deadline and retry
 policy. For a project workload, put it beside `depends_on`:
@@ -545,8 +545,7 @@ An omitted list preserves legacy same-account reachability; `[]` denies every
 internal caller. The list accepts at most 100 logical app slugs, not generated
 PR preview names. In a project, a name in the list (or in
 `x-gregale-allow-call-scopes`) is a Compose service of the target's project,
-even when that service has a project-prefixed slug
-([ADR-20261022120205](adr/20261022120205-project-prefixed-app-slugs.md)). An
+even when that service has a project-prefixed slug. An
 app outside the project matches by its slug only when no service of the
 target's project has that name. A deleted service keeps its name until it is
 purged (7 days after the delete, while it can still be restored): its siblings'
@@ -633,19 +632,15 @@ project source instead. Binding declarations do not expose services publicly.
 Bound services can also be called through the short private alias
 `http://billing.internal:10081`. Gregale's node-local DNS answers that name
 only for a VM whose app declares a `billing` binding, or, under the `project`
-service policy, whose project has a `billing` service
-([ADR-20261022160248](adr/20261022160248-project-internal-aliases.md)). A
+service policy, whose project has a `billing` service. A
 direct request to the service proxy with `Host: billing.internal` gets the same
 check, so bypassing DNS cannot grant access. The existing same-account,
 target allowlist, and preview checks still run before any target is woken.
 Unbound `.internal` names are passed to the configured upstream DNS resolver;
 Gregale does not claim the customer's entire private namespace. The existing
-`*.svc.gregale` endpoint and default generated URLs remain unchanged for
-rolling-upgrade compatibility; callers may opt into HTTPS-first URLs after the
-listener and trust are ready. The private HTTPS listener is not enabled on
-every installation, and `_HTTPS_URL` answers only where it is: the operator
-enables the `private-service-https` capability once every compute node runs
-it. Where it is, guest-init builds a per-workload bundle in `/tmp`, exports
+`*.svc.gregale` endpoint and default generated URLs stay as they are; callers
+may opt into HTTPS-first URLs. Private service HTTPS is not enabled for every
+account yet, and `_HTTPS_URL` answers only where it is. Where it is, Gregale builds a per-workload bundle in `/tmp`, exports
 `GREGALE_SERVICE_CA_BUNDLE`, and configures common TLS clients (`SSL_CERT_FILE`,
 Python Requests, and curl) to trust the private endpoint when the image includes
 a standard system CA bundle. Node receives the CA through its additive
@@ -655,11 +650,7 @@ verifier. For example, `curl https://billing.internal/` and
 `requests.get("https://billing.internal/")` verify TLS normally; verification
 is never disabled. The raw CA also remains available at
 `/etc/faas/service-proxy-ca.crt` for explicit client-specific selection.
-The legacy generated binding URLs remain unchanged. See [ADR-274](adr/274-additive-https-service-binding-urls.md)
-for the explicit HTTPS canary variable, [ADR-272](adr/272-private-https-service-bindings.md)
-for listener rollout, and [ADR-273](adr/273-workload-scoped-service-ca-trust.md)
-for guest trust and CA requirements. See [ADR-275](adr/275-https-service-binding-canary.md)
-for caller-side verification.
+The legacy generated binding URLs remain unchanged.
 
 `gregale app binding verify <app> <service>` runs a platform-owned HTTPS canary
 inside a disposable task guest attached to the caller's deployment. Use
@@ -674,11 +665,8 @@ workload-scoped CA bundle, and exercise the same binding and target
 authorization path as a real request. The final routing check only consults
 the healthy endpoint registry: it does not wake an idle target or invoke its
 handler. The probe has no HTTP fallback.
-By default the generated URL remains the legacy HTTP endpoint. [ADR-274](adr/274-additive-https-service-binding-urls.md)
-keeps the explicit HTTPS canary companion, while [ADR-276](adr/276-https-first-service-binding-transport.md)
-lets a caller opt into HTTPS as the canonical `_URL`. See [ADR-272](adr/272-private-https-service-bindings.md)
-for listener rollout, [ADR-273](adr/273-workload-scoped-service-ca-trust.md) for guest trust, and
-[ADR-275](adr/275-https-service-binding-canary.md) for caller verification. The alias is never a public ingress
+By default the generated URL is the HTTP endpoint. The `_HTTPS_URL` companion
+stays available, and a caller can opt into HTTPS as the canonical `_URL`. The alias is never a public ingress
 hostname.
 
 To test an app's managed PostgreSQL binding, run
@@ -717,7 +705,6 @@ plus the app configuration stamp. Credential cutover invalidates older evidence
 even before rotation stamps the app configuration. Rotation cleanup preserves
 that identity. Object-storage metadata and evidence require `storage:manage`
 or admin, matching the existing compute-binding inventory permission boundary.
-See [ADR-526](adr/526-object-storage-binding-verification.md).
 
 The CLI rejects a passing result when task admission selected a different
 deployment or scope from the inventory selection. Batch results include the
@@ -737,8 +724,7 @@ Service probe evidence includes private dependency revisions for target identity
 service authorization, project preview policy and test-run membership. Changes
 invalidate service evidence and binding-gated promotion approvals together. This
 conservatively invalidates service probes across the account; target metadata and
-revision tokens stay private. Run verification again after such changes. See
-[ADR-596](adr/596-service-binding-dependency-evidence.md).
+revision tokens stay private. Run verification again after such changes.
 
 Verification is point-in-time connectivity from a fresh task guest, not an
 acknowledgement that resident application VMs adopted current credentials.
@@ -1000,16 +986,14 @@ used exactly as they are on the public edge.
 Preview provisioning creates the bound app and the transitive `depends_on`
 workloads present at the PR head. When the bound app's service policy is
 `project`, it also creates every other callable workload of the project:
-workers, jobs and scheduled workloads join only as declared dependencies
-([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)).
+workers, jobs and scheduled workloads join only as declared dependencies.
 A dependency that is absent from that set can still resolve to the production
 app, so the gateway applies the project's production-dependency policy.
 
 A PR preview of an app bound without a project has no project policy. It
 calls only the previews of its own pull request's preview set, named by their
 production slugs, and every call to a production app is refused with
-`preview_production_dependency_denied`
-([ADR-20261105090226](adr/20261105090226-previews-without-a-project-stay-in-their-set.md)).
+`preview_production_dependency_denied`.
 `gregale dev` sessions keep account-wide resolution.
 
 All projects use `preview_service_policy: deny` by default. A denied call returns
@@ -1086,7 +1070,7 @@ node key rotation, the previous key stays published for the assertion's
 
 Verification must check the signature, issuer `gregale.svc`, audience equal to
 the target app's platform-injected `FAAS_APP_ID`, and the token time window.
-For Go `net/http` services, `pkg/servicecaller` provides middleware with a
+For Go `net/http` services, the `servicecaller` package provides middleware with a
 five-second JWKS cache, single-flight refresh, and an immediate refresh when a
 new signing-key ID appears:
 
@@ -1182,7 +1166,7 @@ gregale app APP_ID --visibility public
 ```
 
 A Compose project sets this for you: a new app for a service without `ports:`
-is created internal, as Docker publishes nothing for it (ADR-20261022131852).
+is created internal, as Docker publishes nothing for it.
 The plan shows `visibility=internal`. The choice is made once, when the app is
 created; later syncs keep whatever visibility the app has, so publish such a
 service with `--visibility public`. PR previews inherit their app's visibility.
@@ -1195,7 +1179,7 @@ the gateway route cache.
 
 Internal services scale to zero like any other app. A service call to a parked
 target is held at the node-local proxy while the snapshot is restored, then
-forwarded — the same wake-blocking contract the public edge offers (ADR-196).
+forwarded — the same wake-blocking contract the public edge offers.
 The restore is coalesced with any concurrent public request for that app, so a
 burst of internal callers costs one restore rather than one per caller. Set
 client timeouts above the platform wake budget plus your own handler time, and
@@ -1209,7 +1193,7 @@ wake queue carries `Retry-After`; a target at its plan concurrency ceiling
 reports `service has no healthy replicas`. Internal wakes appear in the wake
 timeline with trigger `service.mesh`, distinct from public `gateway` traffic.
 
-Internal calls honour the target's wire protocol (ADR-197). An app configured
+Internal calls honour the target's wire protocol. An app configured
 `app_protocol: grpc` or `http2` is reached over the H2C guest bridge, and the
 node-local listener accepts H2C prior knowledge, so a workload can use an
 ordinary gRPC client against `http://APP_SLUG.svc.gregale:10081`. Response
@@ -1271,7 +1255,7 @@ reload support or acknowledgements invalidate the check at the traffic write.
 An optional adoption read failure produces incomplete/unknown adoption and a
 sanitized warning; it blocks strict checks. Application acknowledgements are
 self-attestations and do not independently prove readiness, ongoing health or
-actual credential use. See [ADR-502](adr/502-binding-application-adoption.md).
+actual credential use.
 ### Stored binding release enforcement
 
 Enable verification enforcement for an app's deployment scope after establishing
@@ -1369,7 +1353,6 @@ service abort succeeds only at `rollout_state=aborted` and handoff phase
 wait use GETs only, never run verification, and preserve the last status on a
 timeout. Add `--json` for the exact deployment response. A restart of the
 Gregale API resumes the durable request; a missing pinned predecessor cannot be replaced silently.
-See [ADR-600](adr/600-binding-checked-service-handoffs.md).
 
 Completed deployments can be restored through an exact binding-checked rollback:
 
@@ -1391,14 +1374,12 @@ Both waits use read-only operation polling. A changed current release fails the
 operation rather than selecting another deployment. Service completion includes
 gateway acknowledgement and draining. A timeout keeps the last status and binding
 blockers visible; an interrupt exits 130. Add `--json` for the operation receipt.
-See [ADR-601](adr/601-binding-checked-historical-rollback.md) for transaction boundaries.
 
 ## Private TCP between services
 
-Private TCP is off unless your Gregale operator has turned it on for the
-nodes your services run on. Until then, `*.svc.gregale` answers with the
+Private TCP is not enabled for every account yet. Until it is, `*.svc.gregale` answers with the
 HTTP-only address and only HTTP calls on port 10081 reach a service; raw TCP
-connections to other ports are refused. Ask your operator before you rely on
+connections to other ports are refused. Contact support before you rely on
 it, and keep a datastore your services share outside Gregale or behind an HTTP
 API until it is on.
 
@@ -1444,6 +1425,19 @@ them at the service address, but they never get a public
 `--port-<name>` hostname or a public raw TCP listener. Only TCP entries are
 supported; UDP and port ranges are skipped with a warning. Through the app
 API, set `"internal": true` on an entry in `ports`.
+
+An app deployed without Compose declares its ports with the CLI. Each entry is
+`[NAME=]tcp|udp:PORT`, with `:internal` for a listener that stays private; an
+entry without a name is named `tcp-<port>` or `udp-<port>`. The list replaces
+the app's declared ports, and `--ports none` clears them:
+
+```bash
+gregale app my-api --ports tcp:7000,udp:5353,cache=tcp:6379:internal
+```
+
+A raw TCP listener (`gregale app listener create`) and a UDP listener
+(`gregale app listener create my-api --protocol udp`) need a declared port with the same name and
+guest port.
 
 Each declared dependency also receives `GREGALE_SERVICE_<NAME>_HOST`, the bare
 host for non-HTTP clients:
@@ -1664,9 +1658,8 @@ The API routes are `POST .../release-sets/staging` with
 `{ "manifest": <prepared manifest>, "ttl_seconds": 600 }`, and
 `GET` / `DELETE .../release-sets/staging/{stage}`. They enforce existing account,
 project and environment scope, MFA and deploy/read permissions. Mutation retries
-support `Idempotency-Key`. This scheduler lifecycle change requires dedicated
-native KVM `test-metal` and `leakcheck` acceptance before deployment; see
-[ADR-1351](adr/1351-checked-project-service-staging.md).
+support `Idempotency-Key`. Release-set staging is not enabled for every account
+yet.
 
 ### Push queue binding completion canaries
 
@@ -1696,17 +1689,13 @@ Canaries use normal queue/runtime limits, retained revision pins and one executi
 The shipped `queue-worker` starter handles the reserved canary before business
 jobs and rejects malformed or undeclared probes. Opt-in remains an exact
 deployment override plus explicit publication consent; its README includes the
-API setup and durable verification commands. The
-[native queue acceptance journey](ops/queue-bindings-native-acceptance.md)
-exercises this starter, real delivery/restore, scheduler recovery and release
-fences. Supported native execution remains required for qualification.
+API setup and durable verification commands.
 
 Ordinary durable dispatch does not perform a separate canary lookup. The existing
 ledger ownership read also identifies registered canaries, and only those
 invocations undergo full completion-canary validation. Caller-controlled source,
 payload and headers cannot skip these checks; cancelled and expired canaries
-remain registered until ordinary retention removes them. See
-[ADR-1354](adr/1354-ledger-backed-canary-dispatch-authority.md).
+remain registered until ordinary retention removes them.
 
 ### Parallel binding qualification
 
@@ -1727,8 +1716,7 @@ snapshots. Results stay in plan order. Failed or interrupted runs stop new
 admissions and wait for cleanup of work they created; preexisting queue canaries
 remain available to their original owners. After all members finish, graph
 verification rechecks current evidence against the original snapshots. Evidence
-expiry and the atomic checks at activation remain unchanged. See
-[ADR-1353](adr/1353-bounded-parallel-binding-verification.md).
+expiry and the atomic checks at activation remain unchanged.
 
 ### Durable single-app binding verification
 
@@ -1774,8 +1762,7 @@ proof can subsequently expire or change; activation still performs its atomic
 policy and freshness checks. Runs are limited to 128 steps and eight unfinished
 unexpired receipts per app, use normal queue/runtime capacity, and are pruned after
 one day of expiry on the next creation for that app. This workflow currently covers
-one app; graph verification retains its existing prepared-manifest workflow. See
-[ADR-1355](adr/1355-durable-single-app-binding-verification-runs.md).
+one app; graph verification retains its existing prepared-manifest workflow.
 
 ### Durable project graph verification
 
@@ -1813,8 +1800,7 @@ and binding checks. Graph receipts use the existing 100-member and per-member
 admission bounds, at most eight active graph runs per project/environment, and
 normal runtime/queue capacity. Receipt requests are limited to 1 MiB. Receipts
 older than one day after expiry are pruned on the next creation for the project.
-GitOps candidate holds retain their existing checked workflow. See
-[ADR-1356](adr/1356-durable-project-binding-verification-runs.md).
+GitOps candidate holds retain their existing checked workflow.
 
 ### Review a binding verification plan
 
@@ -1867,13 +1853,13 @@ SDK create-from-review helpers accept an explicit ready review, caller-supplied 
 
 A creation error preserves the original cause and UUID plus whether creation was invoked; this does not prove acceptance. Use the separate reconciliation helper to GET that same ID once and validate the receipt against the same review/options. A failed or missing read does not prove noncreation. Reconciliation permits terminal or expired matching receipts and performs no resume, admission, renewal or cancellation. Run a confirmed resumable receipt explicitly with the existing runner.
 
-CLI creation failures with `--json` include `run_id`, app or project/environment, `passed=false`, `status=creation_failed`, `create_attempted`, `error` and recovery guidance. Inspect the same ID with `verification-runs status` after uncertainty. See [ADR-1362](adr/1362-reviewed-verification-creation-helpers.md).
+CLI creation failures with `--json` include `run_id`, app or project/environment, `passed=false`, `status=creation_failed`, `create_attempted`, `error` and recovery guidance. Inspect the same ID with `verification-runs status` after uncertainty.
 
 ### Retry transient verification status reads
 
 Durable runners retry temporary polling GET failures and HTTP 502/503/504 up to three additional times per read. Backoff uses equal jitter with exponential delay from 250 ms, capped at two seconds, and obeys the original receipt expiry and caller cancellation/deadline. Lifecycle writes, diagnostics, permanent HTTP failures and malformed or mismatched successful responses retain their existing recovery behavior. Exhaustion returns the existing recovery error and diagnostic enrichment.
 
-Set `--status-read-retries 0` on durable CLI verify or receipt resume to disable; values through eight are supported. Go options use `StatusReadRetries` (nil defaults to three, pointer to zero disables), Node uses `statusReadRetries`, and Python uses `status_read_retries`. Progress callbacks receive root `retrying` events with `retry_attempt` and `retry_delay_ms`. No new receipt, renewed expiry or duplicate admission is introduced. See [ADR-1363](adr/1363-bounded-verification-status-read-retries.md).
+Set `--status-read-retries 0` on durable CLI verify or receipt resume to disable; values through eight are supported. Go options use `StatusReadRetries` (nil defaults to three, pointer to zero disables), Node uses `statusReadRetries`, and Python uses `status_read_retries`. Progress callbacks receive root `retrying` events with `retry_attempt` and `retry_delay_ms`. No new receipt, renewed expiry or duplicate admission is introduced.
 
 ### Discover retained verification receipts
 
@@ -1881,19 +1867,19 @@ Use `gregale app binding verification list APP --json` or `gregale environment r
 
 Pages default to 20 entries (maximum 100), newest first by creation time and UUID. Use `--limit`, `--cursor`, `--deployment UUID` and `--status pending|passed|cancelled|expired`. App lists additionally accept `--scope` and `--include-members`; by default they omit graph members. Project lists show root receipts and match deployment filters against reviewed members. Included app members expose their original `graph_run_id`.
 
-Reuse filters with `next_cursor`; `observed_at` freezes expiry evaluation across pages. Newer creations do not shift existing page boundaries. Concurrent state changes and retention pruning can remove matches, so pages are not a historical snapshot or permanent audit log. Existing receipt cleanup is unchanged. Inspect the selected UUID with status/diagnostics before choosing a recovery action. See [ADR-1364](adr/1364-verification-run-discovery.md).
+Reuse filters with `next_cursor`; `observed_at` freezes expiry evaluation across pages. Newer creations do not shift existing page boundaries. Concurrent state changes and retention pruning can remove matches, so pages are not a historical snapshot or permanent audit log. Existing receipt cleanup is unchanged. Inspect the selected UUID with status/diagnostics before choosing a recovery action.
 
 ### Waiting for final binding qualification
 
 Durable app and graph runners now keep observing the original receipt when completion returns HTTP 202 with recognized `qualification` conditions. Progress callbacks receive `waiting_for_qualification` and public condition codes/selectors. This covers runtime refresh, consumer readiness and valid application acknowledgment observations that are still settling. Failed or malformed evidence, unknown conditions and review drift still stop the run.
 
-Waiting uses the existing polling interval, caller stop controls and original expiry. It admits no replacement tasks or queue messages and never renews a receipt. CLI verify/resume inherits the shared runner behavior and existing timeout cleanup policy. HTTP 200 with passed status still requires the authoritative final preflight. See [ADR-1365](adr/1365-verification-qualification-waiting.md).
+Waiting uses the existing polling interval, caller stop controls and original expiry. It admits no replacement tasks or queue messages and never renews a receipt. CLI verify/resume inherits the shared runner behavior and existing timeout cleanup policy. HTTP 200 with passed status still requires the authoritative final preflight.
 
 ### Recovering lost admission and completion responses
 
 Durable runners reconcile eligible transport failures and HTTP 502/503/504 by reading the original receipt. Admission proceeds only when that read proves the exact reviewed step owns a valid resource. Completion succeeds only when fresh status confirms the root and all graph members passed with finished resources. Pending completion, missing ownership, failed resources or review drift stop with the original receipt ID and error cause retained.
 
-Progress reports `reconciling` with `operation: admission` or `operation: completion`; admission events identify the selected member and step. Reads use `--status-read-retries` and share the original deadline and caller stop controls. The uncertain write is never automatically replayed. Create, initial resume and cancellation keep their existing explicit recovery behavior. See [ADR-1366](adr/1366-verification-write-reconciliation.md).
+Progress reports `reconciling` with `operation: admission` or `operation: completion`; admission events identify the selected member and step. Reads use `--status-read-retries` and share the original deadline and caller stop controls. The uncertain write is never automatically replayed. Create, initial resume and cancellation keep their existing explicit recovery behavior.
 
 ### Binding CLI progress and stopped-run recovery
 
@@ -1908,13 +1894,13 @@ gregale environment release-sets verification resume project production RUN_ID -
 
 `binding_verification_progress` events include root/member IDs, step/resource status, `waiting_for_qualification` conditions, read retries and `reconciling` operations. Graph events also identify project and environment. During execution, cleanup failures use `binding_verification_notice` with code `cleanup_failed`. Pre-execution argument/authentication failures retain the normal CLI error contract.
 
-Stopped app reports and graph result envelopes include `recovery` with the original root ID, last status/operation, `last_qualification` and exact status/diagnostics commands. These conditions are the last observed wait, with its original check time; they do not assert current qualification. Human summaries show the same recovery context. Turning progress off does not discard it. Creation still announces its recovery ID before the request, using a structured `creating` event in NDJSON mode. Progress output is best effort and never changes execution or timeout cleanup. See [ADR-1367](adr/1367-binding-cli-progress.md).
+Stopped app reports and graph result envelopes include `recovery` with the original root ID, last status/operation, `last_qualification` and exact status/diagnostics commands. These conditions are the last observed wait, with its original check time; they do not assert current qualification. Human summaries show the same recovery context. Turning progress off does not discard it. Creation still announces its recovery ID before the request, using a structured `creating` event in NDJSON mode. Progress output is best effort and never changes execution or timeout cleanup.
 
 ### Recovering an uncertain verification creation
 
 Durable app/graph CLI verification now reconciles eligible creation transport failures and HTTP 502/503/504 by reading the original caller-selected UUID. It continues only when the receipt matches the reviewed selection, manifest, member identities, consent, concurrency, plans and lifetime and remains usable. A missing receipt, expired/cancelled state, failed resource or changed selection stops with the original creation error and recovery ID. Creation is never automatically posted twice, and no replacement UUID or review is generated.
 
-Recovery is capped at five seconds, the original caller deadline/stop controls and the requested TTL measured from the attempt. `--status-read-retries` bounds extra transient GET attempts; zero allows the initial reconciliation GET without retries. Existing progress modes emit `reconciling` with `operation: creation` and `retrying` when needed. `--json --progress ndjson` keeps the final report on stdout and events on stderr. The normal runner then resumes the same confirmed receipt under its original expiry. See [ADR-1368](adr/1368-verification-creation-reconciliation.md).
+Recovery is capped at five seconds, the original caller deadline/stop controls and the requested TTL measured from the attempt. `--status-read-retries` bounds extra transient GET attempts; zero allows the initial reconciliation GET without retries. Existing progress modes emit `reconciling` with `operation: creation` and `retrying` when needed. `--json --progress ndjson` keeps the final report on stdout and events on stderr. The normal runner then resumes the same confirmed receipt under its original expiry.
 
 ### Adopt rotated PostgreSQL pools in application code
 

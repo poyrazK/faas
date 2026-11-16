@@ -75,11 +75,9 @@ func testGuardedActivationKeepsScope(t *testing.T, store state.Store, scope stri
 		return d
 	}
 	previous, candidate := live(scope), live(scope)
-	otherScope := "production"
-	if scope == "production" {
-		otherScope = "default"
-	}
-	other := live(otherScope)
+	// default and production are one serving lane (#7068), so the
+	// untouched lane is a separate environment scope.
+	other := live("staging")
 	guarded := store.(state.DeploymentActivationGuardStore)
 	for range 2 {
 		if err := guarded.MarkDeploymentLiveIfServing(ctx, previous.ID, candidate.ID); err != nil {

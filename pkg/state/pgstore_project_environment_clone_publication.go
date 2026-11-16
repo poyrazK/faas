@@ -153,6 +153,12 @@ func verifyClonePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironm
 	if err := verifyCloneScopedPolicyPublicationDB(ctx, tx, op); err != nil {
 		return err
 	}
+	if err := verifyCloneCronPublicationDB(ctx, tx, op); err != nil {
+		return err
+	}
+	if err := verifyCloneEventSubscriptionPublicationDB(ctx, tx, op); err != nil {
+		return err
+	}
 	return verifyCloneProjectConfigTx(ctx, tx, op, resources)
 }
 

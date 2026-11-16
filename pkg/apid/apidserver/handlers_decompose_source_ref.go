@@ -25,12 +25,17 @@ func (s *server) scanProjectSourceRef(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, problem)
 		return
 	}
-	installID, problem := s.projectScanInstallation(r, acct, req)
+	installOwner, problem := s.requestInstallOwner(r, acct)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	scanRequest, cleanup, problem := s.projectSourceRefMultipart(r, acct, req, installID)
+	installID, problem := s.projectScanInstallation(r, installOwner, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	scanRequest, cleanup, problem := s.projectSourceRefMultipart(r, acct, installOwner, req, installID)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -86,17 +91,17 @@ func validateProjectSourceRefScanRequest(req api.ProjectSourceRefScanRequest) *a
 	return nil
 }
 
-func (s *server) projectScanInstallation(r *http.Request, acct state.Account, req api.ProjectSourceRefScanRequest) (int64, *api.Problem) {
+func (s *server) projectScanInstallation(r *http.Request, installOwner string, req api.ProjectSourceRefScanRequest) (int64, *api.Problem) {
 	if req.InstallID > 0 {
-		return s.requireOwnedGitHubInstallation(r.Context(), acct.ID, req.InstallID)
+		return s.requireOwnedGitHubInstallation(r.Context(), installOwner, req.InstallID)
 	}
-	return s.resolveRepositoryInstallation(r.Context(), acct.ID, req.Repo)
+	return s.resolveRepositoryInstallation(r.Context(), installOwner, req.Repo)
 }
 
-func (s *server) projectSourceRefMultipart(r *http.Request, acct state.Account, req api.ProjectSourceRefScanRequest, installID int64) (*http.Request, func(), *api.Problem) {
+func (s *server) projectSourceRefMultipart(r *http.Request, acct state.Account, installOwner string, req api.ProjectSourceRefScanRequest, installID int64) (*http.Request, func(), *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	maxBytes := int64(limits.SourceTarballMaxMB) * 1024 * 1024
-	stream, problem := s.streamSourceTarball(r.Context(), acct, installID, req.Repo, req.Ref, maxBytes)
+	stream, problem := s.streamSourceTarball(r.Context(), installOwner, installID, req.Repo, req.Ref, maxBytes)
 	if problem != nil {
 		return nil, func() {}, problem
 	}

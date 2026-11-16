@@ -1,0 +1,285 @@
+package datapipeline
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
+)
+
+// PASS means the investigated behavior was reproduced, not that it is correct.
+// These probes are loaded through an overlay and do not join ordinary tests.
+func TestInvestigationRound2DisconnectSkipsApprovedReaderRevocation(t *testing.T) {
+	service, store, p, _ := schemaPipelineFixture(t)
+	ctx := t.Context()
+	before := []string{"alice", "bob"}
+	encoded, _ := json.Marshal(before)
+	if _, err := store.pool.Exec(ctx, `UPDATE data_pipelines SET read_subjects=$2 WHERE id=$1`, p.ID, encoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Readers(ctx, p.AccountID, p.ID, p.Revision, "preview", "", []string{"bob"}); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := store.Get(ctx, p.AccountID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.Readers(ctx, p.AccountID, p.ID, preview.Revision, "approve", preview.ReaderChange.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := store.Get(ctx, p.AccountID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Control(ctx, p.AccountID, p.ID, approved.Revision, "delete"); err != nil {
+		t.Fatal(err)
+	}
+	leased, err := store.Claim(ctx, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leased.ReaderChange.State != "approved" {
+		t.Fatal("missing approved revocation")
+	}
+	remote := pgtest.OpenDatabase(t)
+	if _, err = remote.Exec(ctx, `CREATE SCHEMA gregale_pipeline;
+ CREATE TABLE gregale_pipeline.mirrors(pipeline_id uuid PRIMARY KEY,generation bigint NOT NULL,tables text[],readable boolean DEFAULT true,retiring boolean DEFAULT false);
+ CREATE TABLE public.orders(id integer PRIMARY KEY);INSERT INTO public.orders VALUES(1);
+ ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.Exec(ctx, "COMMENT ON TABLE public.orders IS "+literal(marker(leased))+";CREATE POLICY gregale_pipeline_read ON public.orders FOR SELECT USING ("+readerPredicate(before)+")"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.Exec(ctx, `INSERT INTO gregale_pipeline.mirrors(pipeline_id,generation,tables) VALUES($1,$2,$3)`, leased.ID, leased.Generation, leased.Tables); err != nil {
+		t.Fatal(err)
+	}
+	engine := Engine{
+		Target: func(ctx context.Context, _ string, _ string, run func(*pgx.Conn, string) error) error {
+			connection, err := remote.Acquire(ctx)
+			if err != nil {
+				return err
+			}
+			defer connection.Release()
+			return run(connection.Conn(), "faas")
+		},
+		openSource: func(ctx context.Context, _ string) (*pgxpool.Pool, error) {
+			return pgxpool.NewWithConfig(ctx, remote.Config().Copy())
+		},
+	}
+	ob := engine.Reconcile(ctx, leased, "local-test", func(context.Context) error { return nil })
+	if ob.State != "deleted" || ob.ReaderChange != nil {
+		t.Fatalf("finding changed: %+v", ob)
+	}
+	if err = store.Finish(ctx, leased, ob); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.Get(ctx, p.AccountID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.State != "deleted" || saved.ReaderChange.State != "approved" || !slices.Equal(saved.ReadSubjects, before) {
+		t.Fatalf("finding changed: %+v", saved)
+	}
+	role := "pipeline_audit_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err = remote.Exec(ctx, "CREATE ROLE "+ident(role)+" NOLOGIN NOINHERIT;GRANT USAGE ON SCHEMA public TO "+ident(role)+";GRANT SELECT ON public.orders TO "+ident(role)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = remote.Exec(context.WithoutCancel(ctx), "DROP OWNED BY "+ident(role)+";DROP ROLE "+ident(role))
+	})
+	tx, err := remote.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, "SET LOCAL ROLE "+ident(role)+`;SELECT set_config('request.jwt.claims','{"sub":"alice"}',true)`); err != nil {
+		t.Fatal(err)
+	}
+	var visible int
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM public.orders`).Scan(&visible); err != nil {
+		t.Fatal(err)
+	}
+	if visible != 1 {
+		t.Fatalf("finding changed: removed subject sees %d rows", visible)
+	}
+	t.Logf("approved removal of alice followed by disconnect -> terminal %s, reader change still %s, alice still sees %d retained row", saved.State, saved.ReaderChange.State, visible)
+}
+
+func TestInvestigationRound2VerifyAcceptedAfterPauseRequest(t *testing.T) {
+	_, store, p, _ := schemaPipelineFixture(t)
+	ctx := t.Context()
+	if _, err := store.pool.Exec(ctx, `UPDATE data_pipelines SET state='live',reason='',schema_change='{}',schema_approval='',observed_revision=revision,observed_at=clock_timestamp() WHERE id=$1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := store.Control(ctx, p.AccountID, p.ID, p.Revision, "pause")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify, err := store.Control(ctx, p.AccountID, p.ID, paused.Revision, "verify")
+	if err != nil {
+		t.Fatal("finding changed: verification rejected", err)
+	}
+	if verify.DesiredState != "paused" || !verify.VerifyRequested || verify.Verification != "pending" || verify.VerificationProgress.ID != "" {
+		t.Fatalf("finding changed: %+v", verify)
+	}
+	leased, err := store.Claim(ctx, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Persist the same pause observation produced by the engine's paused path,
+	// which preserves the pending verification without starting a verification run.
+	ob := pipelineObservation(leased)
+	ob.State, ob.Reason = "paused", ""
+	if err = store.Finish(ctx, leased, ob); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.Get(ctx, p.AccountID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.VerifyRequested || saved.VerificationProgress.ID != "" {
+		t.Fatalf("finding changed: %+v", saved)
+	}
+	err = store.CancelVerification(ctx, p.AccountID, p.ID, saved.Revision, strings.Repeat("a", 64))
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("finding changed: cancellation=%v", err)
+	}
+	t.Logf("pause then verify before pause acknowledgement -> desired=%s observed=%s verification=%s requested=%v run ID empty; cancellation rejected", saved.DesiredState, saved.State, saved.Verification, saved.VerifyRequested)
+}
+
+func TestInvestigationRound2QueuedVerificationCannotBeCancelledWithoutSource(t *testing.T) {
+	_, store, p, _ := schemaPipelineFixture(t)
+	ctx := t.Context()
+	if _, err := store.pool.Exec(ctx, `UPDATE data_pipelines SET state='live',reason='',schema_change='{}',schema_approval='',observed_revision=revision,observed_at=clock_timestamp() WHERE id=$1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	requested, err := store.Control(ctx, p.AccountID, p.ID, p.Revision, "verify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased, err := store.Claim(ctx, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := pgtest.OpenDatabase(t)
+	engine := Engine{Target: func(ctx context.Context, _ string, _ string, run func(*pgx.Conn, string) error) error {
+		connection, err := remote.Acquire(ctx)
+		if err != nil {
+			return err
+		}
+		defer connection.Release()
+		return run(connection.Conn(), "faas")
+	}}
+	ob := engine.reconcileUnavailable(ctx, leased, func(context.Context) error { return nil })
+	if ob.State != "blocked" || ob.Reason != "credential_unavailable" {
+		t.Fatalf("unexpected fixture outcome: %+v", ob)
+	}
+	if err = store.Finish(ctx, leased, ob); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.Get(ctx, p.AccountID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.VerifyRequested || saved.VerificationProgress.ID != "" || saved.Verification != "pending" {
+		t.Fatalf("finding changed: %+v", saved)
+	}
+	if err = store.CancelVerification(ctx, p.AccountID, p.ID, saved.Revision, strings.Repeat("a", 64)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("finding changed: cancel=%v", err)
+	}
+	if _, err = store.Control(ctx, p.AccountID, p.ID, saved.Revision, "verify"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("finding changed: retry=%v", err)
+	}
+	t.Logf("verification accepted at revision %d then source key unavailable -> still pending without run ID at revision %d; cancel and fresh verification both conflict", requested.Revision, saved.Revision)
+}
+
+func TestInvestigationRound2VerificationDiscardsPrimaryKeyOrder(t *testing.T) {
+	pool := pgtest.OpenDatabase(t)
+	ctx := t.Context()
+	if _, err := pool.Exec(ctx, `CREATE TABLE public.reverse_key(tenant integer,sequence integer,payload text,PRIMARY KEY(sequence,tenant));
+ INSERT INTO public.reverse_key SELECT i%100,i,repeat('x',64) FROM generate_series(1,100000)i;ANALYZE public.reverse_key`); err != nil {
+		t.Fatal(err)
+	}
+	r, table, err := inspectSourceTable(ctx, pool, "reverse_key")
+	if err != nil || !table.Supported {
+		t.Fatal(table, err)
+	}
+	explain := func(r relation) (string, float64) {
+		t.Helper()
+		query, args := verificationQuery(r, nil, nil)
+		var result []byte
+		if err := pool.QueryRow(ctx, "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+query, args...).Scan(&result); err != nil {
+			t.Fatal(err)
+		}
+		var plan []struct {
+			Time float64 `json:"Execution Time"`
+		}
+		if err := json.Unmarshal(result, &plan); err != nil {
+			t.Fatal(err)
+		}
+		return string(result), plan[0].Time
+	}
+	actual, actualMS := explain(r)
+	alternate := r
+	alternate.Columns = []column{r.Columns[1], r.Columns[0], r.Columns[2]}
+	aligned, alignedMS := explain(alternate)
+	if !strings.Contains(actual, `"Node Type": "Sort"`) || !strings.Contains(actual, `"Node Type": "Seq Scan"`) || strings.Contains(aligned, `"Node Type": "Seq Scan"`) || !strings.Contains(aligned, `"Index Name": "reverse_key_pkey"`) {
+		t.Fatal("finding changed: inspect recorded query plans", actual, aligned)
+	}
+	t.Logf("source PRIMARY KEY(sequence,tenant), verifier key order=(%s,%s): sequential scan + source-key sort of 100000 rows %.2f ms; using actual primary-key order uses the existing index %.2f ms (small bounded bookkeeping sorts remain)", primaryColumns(r)[0].Name, primaryColumns(r)[1].Name, actualMS, alignedMS)
+}
+
+func TestInvestigationRound2InitialCopyHasNoStallAlert(t *testing.T) {
+	now := time.Now().UTC()
+	zero := int64(0)
+	p := Pipeline{DataPipeline: api.DataPipeline{DesiredState: "running", State: "copying", Revision: 1, ObservedRevision: 1, ObservationFresh: true, ObservedAt: now.Format(time.RFC3339Nano), CreatedAt: now.Add(-24 * time.Hour).Format(time.RFC3339Nano), Tables: []string{"orders"}, TablesReady: 0, RetainedWALBytes: &zero}}
+	code, recovered := alertCondition(p, now)
+	health := pipelineHealth(p.DataPipeline, now)
+	if code != "" || recovered || health.Code != "initial_copy" || health.State != "pending" {
+		t.Fatalf("finding changed: alert=%s health=%+v", code, health)
+	}
+	t.Logf("24-hour-old initial copy, current monitoring, 0/1 ready and no WAL pressure -> alert=%q health=%s/%s; initial copy records no per-table progress age", code, health.State, health.Code)
+}
+
+func TestInvestigationRound2LateHookInstallationNeedsRuntimeRestart(t *testing.T) {
+	pool := pgtest.OpenDatabase(t)
+	ctx := t.Context()
+	role := "pipeline_runtime_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := pool.Exec(ctx, "CREATE ROLE "+ident(role)+" LOGIN NOINHERIT"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), "DROP OWNED BY "+ident(role)+";DROP ROLE "+ident(role))
+	})
+	script := filepath.Join(os.Getenv("PIPELINE_INVESTIGATION_EVIDENCE"), "late-hook-probe.mjs")
+	// pgx retains the originally parsed DSN even after pgtest changes Database.
+	// Construct both URLs with the actual disposable database explicitly.
+	adminURL, err := url.Parse(pool.Config().ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminURL.Path, adminURL.RawPath = "/"+pool.Config().ConnConfig.Database, ""
+	readerURL := *adminURL
+	readerURL.User = url.User(role)
+	command := exec.CommandContext(ctx, "node", script)
+	command.Env = append(os.Environ(), "PROBE_ADMIN_DSN="+adminURL.String(), "PROBE_READER_DSN="+readerURL.String())
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("runtime probe: %v\n%s", err, output)
+	}
+	t.Log(strings.TrimSpace(string(output)))
+}

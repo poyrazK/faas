@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 // ADR-735: receivers can decode a change and retrieve its retained observation.

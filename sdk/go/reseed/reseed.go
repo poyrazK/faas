@@ -10,7 +10,7 @@
 //
 // Import the package for its side effect to register the process:
 //
-//	import _ "github.com/poyrazK/faas/sdk/go/reseed"
+//	import _ "github.com/gregale-dev/gregale-go/reseed"
 //
 // and reseed any generator your program owns in an OnRestore callback:
 //

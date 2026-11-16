@@ -469,6 +469,23 @@ func (m *vmConcurrencyManager) record(plan string, delta int64) {
 	}
 }
 
+// inflight returns the requests this gateway holds on an instance now. It
+// never creates a gate, so reading an idle instance leaves the map unchanged.
+func (m *vmConcurrencyManager) inflight(instanceID string) int {
+	if m == nil || instanceID == "" {
+		return 0
+	}
+	m.mu.Lock()
+	g := m.gates[instanceID]
+	m.mu.Unlock()
+	if g == nil {
+		return 0
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.inflight
+}
+
 func (m *vmConcurrencyManager) tryAcquire(instanceID, plan string, limit int) (func(), bool) {
 	if m == nil || instanceID == "" || limit <= 0 {
 		return nil, false

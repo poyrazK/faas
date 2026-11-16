@@ -708,6 +708,10 @@ const (
 	// fabric teardown can converge after the network row is gone.
 	NotifyPrivateNetworkChanged = "private_network_changed"
 	NotifyDeploymentChanged     = "deployment_changed"
+	// NotifyFeatureFlagsChanged fires on every published flag configuration
+	// (trigger on feature_flag_versions, payload: environment id). gatewayd
+	// empties its X-Faas-Flag-Kills cache (ADR 20261114150000 §3).
+	NotifyFeatureFlagsChanged = "feature_flags_changed"
 	// NotifyEnvironmentWorkloadImage is a durable apid-to-imaged handoff
 	// for a held GitOps candidate. The deployment row carries its authority;
 	// receiving this event never authorizes priming or live activation.

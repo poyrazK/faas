@@ -1,0 +1,4 @@
+ok  	github.com/onebox-faas/faas/pkg/datapipeline	591.015s
+ok  	github.com/onebox-faas/faas/pkg/apid/datapipelines	28.758s
+ok  	github.com/onebox-faas/faas/pkg/apid/apidsource	0.374s
+ok  	github.com/onebox-faas/faas/pkg/dashboard	0.563s

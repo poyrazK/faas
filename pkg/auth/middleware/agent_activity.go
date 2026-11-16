@@ -24,6 +24,8 @@ const maxAgentActivityPath = 512
 // agentActivityNote carries what the approval gate learned about a request
 // to the recorder: the approval it went through on.
 type agentActivityNote struct {
+	// id is the activity row's id, which the undo record names.
+	id         string
 	approvalID string
 	// binding is taken before the handler reads the body on routes that
 	// charge the agent budget (ADR-20261111114059).
@@ -61,7 +63,15 @@ type activityWriter struct {
 	// onHijack records the row when a handler takes the connection over: a
 	// WebSocket handler returns only when the connection ends.
 	onHijack func()
+	// keepBody keeps the first maxUndoResponseBody bytes of the answer for
+	// the undo capture (ADR-20261112080601).
+	keepBody bool
+	body     []byte
 }
+
+// maxUndoResponseBody bounds the answer kept for an undo capture: it needs
+// ids and revisions, which come first and small.
+const maxUndoResponseBody = 64 << 10
 
 func (a *activityWriter) WriteHeader(status int) {
 	if a.status == 0 {
@@ -74,7 +84,32 @@ func (a *activityWriter) Write(b []byte) (int, error) {
 	if a.status == 0 {
 		a.status = http.StatusOK
 	}
+	if a.keepBody && len(a.body) < maxUndoResponseBody {
+		a.body = append(a.body, b[:min(len(b), maxUndoResponseBody-len(a.body))]...)
+	}
 	return a.ResponseWriter.Write(b)
+}
+
+// AgentUndoPending is an undo capture begun before an agent's write
+// (ADR-20261112080601).
+type AgentUndoPending interface {
+	// Finish records how to reverse the write, once it answered status with
+	// body; activityID names the activity row.
+	Finish(ctx context.Context, status int, body []byte, activityID string) error
+}
+
+// finishAgentUndo records the undo of a write that answered. It reads the
+// resource as the write left it, so it runs before the next request of the
+// agent can change it; a failure only loses the undo, never the answer.
+func (m *Middleware) finishAgentUndo(r *http.Request, undo AgentUndoPending, aw *activityWriter, activityID string) {
+	if undo == nil || aw.status == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 3*time.Second)
+	defer cancel()
+	if err := undo.Finish(ctx, aw.status, aw.body, activityID); err != nil && m.Log != nil {
+		m.Log.Warn("agent_undo.record_failed", "path", r.URL.Path, "error", err.Error())
+	}
 }
 
 // Unwrap lets http.ResponseController reach the server's writer.
@@ -119,7 +154,7 @@ func (m *Middleware) recordAgentActivity(r *http.Request, acct state.Account, ke
 	// Postgres text also refuses NUL.
 	path = strings.ReplaceAll(strings.ToValidUTF8(path, ""), "\x00", "")
 	row := state.AgentActivity{
-		KeyID: key.ID, AccountID: acct.ID, OrgID: key.OrgID, Method: r.Method, Path: path,
+		ID: note.id, KeyID: key.ID, AccountID: acct.ID, OrgID: key.OrgID, Method: r.Method, Path: path,
 		Status: status, ApprovalID: note.approvalID, CreatedAt: time.Now().UTC(),
 		Reason: api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader)),
 	}

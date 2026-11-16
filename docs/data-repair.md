@@ -156,7 +156,7 @@ report = check_data_repair_capture(writer_connection, **options)
 async_report = await acheck_data_repair_capture(async_writer_connection, **options)
 ```
 
-The Go import is `github.com/poyrazK/faas/sdk/go` (package `faas`). Go leases a
+The Go import is `github.com/gregale-dev/gregale-go` (package `faas`). Go leases a
 connection from `*sql.DB`; Node requires a pool that returns an idle, exclusive
 connection. Python requires an exclusively leased idle/autocommit
 psycopg-compatible connection and rejects an active caller transaction before

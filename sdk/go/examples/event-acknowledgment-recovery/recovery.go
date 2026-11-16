@@ -7,7 +7,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/preview"
+	"github.com/gregale-dev/gregale-go/preview"
 )
 
 // RecoverCallbacks sends saved callbacks only. Keep db/client available until

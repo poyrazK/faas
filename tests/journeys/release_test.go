@@ -89,7 +89,10 @@ func TestHealthGate(t *testing.T) {
 		watch := watchContinuity(base + "/")
 		tg.deploySlots <- struct{}{}
 		res := tg.exec(t, tg.token, t.TempDir(), deployLimit+5*time.Minute, "deploy", "--name", slug,
+			// An undeclared /healthz is TCP readiness (ADR-079 amendment 2), so
+			// the release names it: a declared path keeps strict HTTP readiness.
 			"--path", probeSource(t, "broken"), "--wait", "--timeout", deployLimit.String(),
+			"--healthcheck-path", "/healthz",
 			"--yes", "--no-require-authn", "--reason", "e2e-journeys run "+tg.runID)
 		<-tg.deploySlots
 		watch.stop()

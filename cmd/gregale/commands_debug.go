@@ -949,7 +949,9 @@ func renderDebugRequestMetadata(w io.Writer, r api.DebugTelemetryRequestItem) {
 func renderDebugCoverage(w io.Writer, resp api.DebugCoverageResponse) {
 	_, _ = fmt.Fprintf(w, "Debugger coverage · window %s → %s\n", resp.WindowStart, resp.WindowEnd)
 	_, _ = fmt.Fprintf(w, "app %s · since %s · plan retention %d days\n", resp.AppID, resp.Since, resp.PlanRetentionDays)
-	_, _ = fmt.Fprintf(w, "telemetry rows: %d · represented requests: %d · errors: %d\n", resp.TelemetryRows, resp.RepresentedRequests, resp.ErrorRequests)
+	// ErrorRequests counts every status >= 400; `debug status` counts server
+	// errors (5xx) only, so an unlabelled "errors" read as a contradiction.
+	_, _ = fmt.Fprintf(w, "telemetry rows: %d · represented requests: %d · 4xx/5xx responses: %d\n", resp.TelemetryRows, resp.RepresentedRequests, resp.ErrorRequests)
 	if resp.RequestsNotRetained != nil && *resp.RequestsNotRetained > 0 {
 		_, _ = fmt.Fprintf(w, "not kept: at least %d requests counted by analytics; the plan's per-minute debugger limit turned them away\n", *resp.RequestsNotRetained)
 	}
@@ -1278,8 +1280,13 @@ func renderDebugCompareTable(w io.Writer, resp api.DebugCompareResponse) {
 	_, _ = fmt.Fprintf(tw, "Mirror: %s\n", resp.Mirror)
 	_, _ = fmt.Fprintln(tw, "ROUTE\tSOURCE_P50\tSOURCE_P95\tSOURCE_P99\tSOURCE_N\tMIRROR_P50\tMIRROR_P95\tMIRROR_P99\tMIRROR_N\tP95_DELTA")
 	for _, r := range resp.Routes {
-		delta := r.MirrorP95 - r.SourceP95
-		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%+d\n",
+		// A side with no samples has no p95; its zero is not a measurement,
+		// and "-846" read as the mirror being 846 ms faster.
+		delta := "-"
+		if r.SourceN > 0 && r.MirrorN > 0 {
+			delta = fmt.Sprintf("%+d", r.MirrorP95-r.SourceP95)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
 			r.Route, r.SourceP50, r.SourceP95, r.SourceP99, r.SourceN,
 			r.MirrorP50, r.MirrorP95, r.MirrorP99, r.MirrorN, delta)
 	}

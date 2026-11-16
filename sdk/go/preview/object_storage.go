@@ -1,6 +1,6 @@
 package preview
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 // The bucket catalog advertises the configured transfer contract.
 type (

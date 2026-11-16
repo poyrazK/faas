@@ -20,15 +20,20 @@ class MagicLinkSignupRequest:
 
     """
 
+    referral_code: str | Unset = UNSET
     email: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        referral_code = self.referral_code
+
         email = self.email
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if referral_code is not UNSET:
+            field_dict["referral_code"] = referral_code
         if email is not UNSET:
             field_dict["email"] = email
 
@@ -37,9 +42,12 @@ class MagicLinkSignupRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        referral_code = d.pop("referral_code", UNSET)
+
         email = d.pop("email", UNSET)
 
         magic_link_signup_request = cls(
+            referral_code=referral_code,
             email=email,
         )
 

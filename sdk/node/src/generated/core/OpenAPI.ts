@@ -3,11 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiRequestOptions } from './ApiRequestOptions.js';
+import type { CancelablePromise } from './CancelablePromise.js';
 
 type Resolver<T> = (options: ApiRequestOptions) => Promise<T>;
 type Headers = Record<string, string>;
 
 export type OpenAPIConfig = {
+  FETCH?: typeof fetch;
+  REQUEST?: <T>(options: ApiRequestOptions) => CancelablePromise<T>;
   BASE: string;
   VERSION: string;
   WITH_CREDENTIALS: boolean;
@@ -19,7 +22,7 @@ export type OpenAPIConfig = {
   ENCODE_PATH?: ((path: string) => string) | undefined;
 };
 
-export const OpenAPI: OpenAPIConfig = {
+export const createOpenAPIConfig = (): OpenAPIConfig => ({
   BASE: 'https://api.gregale.dev',
   VERSION: '1.0.0',
   WITH_CREDENTIALS: false,
@@ -29,4 +32,6 @@ export const OpenAPI: OpenAPIConfig = {
   PASSWORD: undefined,
   HEADERS: undefined,
   ENCODE_PATH: undefined,
-};
+});
+
+export const OpenAPI: OpenAPIConfig = createOpenAPIConfig();

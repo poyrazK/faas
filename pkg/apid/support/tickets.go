@@ -136,7 +136,7 @@ func (x *session) mutate(key, ticket, op string, in Change) (any, error) {
 		return nil, conflict("ticket revision changed; reload before applying this action")
 	}
 	claim := op == "triage" && !t.AssigneeID.Valid && uid(in.AssigneeID) == uid(x.actor.ID)
-	if x.role != "" && x.role != "manager" && id(t.AssigneeID) != x.actor.ID && !claim {
+	if x.role != "" && x.role != "manager" && t.AssigneeID != uid(x.actor.ID) && !claim {
 		return nil, forbidden()
 	}
 	if e = x.admission(t.ScopeKey, false); e != nil {
@@ -340,13 +340,25 @@ func (x *session) list(p q.TicketListParams) (any, error) {
 	}
 	pub := api.SupportTicketPage{Items: []api.SupportTicket{}, NextCursor: next}
 	priv := StaffPage{Items: []StaffTicket{}, NextCursor: next}
+	ids := make([]pgtype.UUID, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	counts, e := x.unreadCounts(ids)
+	if e != nil {
+		return nil, e
+	}
 	for _, t := range rows {
 		var st ticketState
 		if e = json.Unmarshal(t.State, &st); e != nil {
 			return nil, e
 		}
-		pub.Items = append(pub.Items, publicTicket(t, st, x.now))
-		priv.Items = append(priv.Items, staffTicket(t, st, x.now))
+		public := publicTicket(t, st, x.now)
+		public.UnreadCount = counts[id(t.ID)]
+		private := staffTicket(t, st, x.now)
+		private.Ticket.UnreadCount = public.UnreadCount
+		pub.Items = append(pub.Items, public)
+		priv.Items = append(priv.Items, private)
 	}
 	if x.role != "" {
 		return priv, nil
@@ -358,10 +370,18 @@ func (x *session) get(ticket string) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	if x.role != "" {
-		return staffTicket(t, st, x.now), nil
+	unread, e := x.unreadCount(ticket)
+	if e != nil {
+		return nil, e
 	}
-	return publicTicket(t, st, x.now), nil
+	if x.role != "" {
+		out := staffTicket(t, st, x.now)
+		out.Ticket.UnreadCount = unread
+		return out, nil
+	}
+	out := publicTicket(t, st, x.now)
+	out.UnreadCount = unread
+	return out, nil
 }
 func (x *session) messages(ticket string, after int64) (any, error) {
 	t, _, e := x.ticket(ticket)

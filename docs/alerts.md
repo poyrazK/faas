@@ -119,7 +119,7 @@ For dashboards and SLOs, use the app metrics endpoint and correlate alert event 
 ## Notification channels
 
 Channels deliver alerts to Slack, PagerDuty or email without a webhook
-receiver of your own (ADR-749). Add a channel once per account, then send a
+receiver of your own. Add a channel once per account, then send a
 test:
 
 ```bash
@@ -256,7 +256,7 @@ To avoid alerts on tiny numbers, a baseline rule does not fire when:
 
 The webhook payload adds `baseline` (the usual value), `baseline_days`, and
 `ratio` (observed divided by baseline) to the usual fields. Baseline rules are a
-preview (ADR-744) and may not be enabled for your account.
+preview and may not be enabled for your account.
 
 ## Log alerts
 
@@ -358,6 +358,28 @@ held by route health" create them with `gt 0` over 15 minutes. Each needs its
 feature released for the account: production route monitoring for incidents,
 the route health canary guard for holds.
 
+## AI budget alerts
+
+`ai_budget_alerts` counts the AI budget thresholds crossed within the window
+by the AI gateway integrations bound to the app: 80% and 100% of an
+integration's daily token or cost budget or monthly cost budget, and of the
+per end user, per tag and app budgets. Another app's own budget is not
+counted. Rules on it reach your notification channels (email, Slack and the
+rest), so you hear about a spent budget without a webhook receiver; the app's
+`outbound.ai_budget.threshold` webhook is still sent.
+
+```bash
+gregale alert create --app shop --name "AI budget" \
+  --metric ai_budget_alerts --comparison gt --threshold 0 --window-spec 15m \
+  --channel OPS_EMAIL_ID
+```
+
+A firing notification lists up to five crossings with the integration, the
+budget, how much of it was used and, for a per end user or per tag budget,
+whose. The rule is notification-only and accepts windows `5m`, `15m`, `1h`,
+`6h` and `24h`. The preset "AI budget threshold" creates it with `gt 0` over
+15 minutes. It needs the AI gateway enabled for the account.
+
 ## SLO alerts
 
 `slo_budget_burn` and `slo_budget_remaining_pct` watch one of the app's own
@@ -392,7 +414,7 @@ for retention coverage and the distinction between backlog and formation rate.
 
 ## Custom metric alerts
 
-Where custom metric history is enabled (preview, ADR-745), you can alert on a
+Where custom metric history is enabled (preview), you can alert on a
 number you push yourself — orders waiting, failed payments, documents awaiting
 OCR. Name the metric with `custom_metric_name` (`--custom-metric` in the CLI):
 

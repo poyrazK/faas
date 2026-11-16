@@ -2,7 +2,9 @@ package apidserver
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -82,7 +84,9 @@ func (s *server) createSyntheticCheck(w http.ResponseWriter, r *http.Request, ac
 		"check_id": row.ID, "app_id": app.ID, "name": row.Name, "method": row.Method, "path": row.Path,
 		"interval_seconds": row.IntervalSeconds,
 	})
-	writeJSON(w, http.StatusCreated, s.syntheticCheckResponse(app, row))
+	resp := s.syntheticCheckResponse(app, row)
+	resp.Warning = joinSyntheticWarnings(resp.Warning, syntheticCheckKeepWarmWarning(acct.Plan, app, row.IntervalSeconds))
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // getSyntheticCheck serves GET /v1/apps/{slug}/synthetics/{id}.
@@ -163,5 +167,60 @@ func (s *server) syntheticCheckResponse(app state.App, row state.SyntheticCheck)
 		URL:            appURLForDomain(app.Slug, s.domain) + row.Path,
 		ExpectedStatus: row.ExpectedStatus, TimeoutMS: row.TimeoutMS, IntervalSeconds: row.IntervalSeconds,
 		Enabled: row.Enabled, CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339),
+		Warning: syntheticCheckAuthWarning(app, row.ExpectedStatus),
 	}
+}
+
+func joinSyntheticWarnings(warnings ...string) string {
+	out := make([]string, 0, len(warnings))
+	for _, w := range warnings {
+		if w != "" {
+			out = append(out, w)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// syntheticCheckKeepWarmWarning says when a check's probes come at least as
+// often as the app parks: each probe resets the idle timer, so the app never
+// scales to zero and runs (and is billed) around the clock. The shortest
+// interval (5 min) is under the default 10-minute idle timeout, which the
+// interval error's "shorter intervals would keep the app awake" implied was
+// not the case (prod 2026-11-15: a 5-minute check kept an app warm 25 min+).
+func syntheticCheckKeepWarmWarning(plan api.Plan, app state.App, intervalSeconds int) string {
+	if app.MinInstances > 0 || intervalSeconds <= 0 {
+		return ""
+	}
+	limits, ok := api.LimitsFor(plan)
+	if !ok {
+		return ""
+	}
+	idle := limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS)
+	if idle <= 0 || intervalSeconds > idle {
+		return ""
+	}
+	return fmt.Sprintf("Probes every %d minutes come before this app's %d-second idle timeout ends, so the app never scales to zero and runs (and is billed) around the clock. "+
+		"Use a longer interval, or accept the always-on cost.", intervalSeconds/60, idle)
+}
+
+// syntheticCheckAuthWarning names the platform auth that refuses a probe: the
+// runner sends no credential (ADR-748), so on such an app every run fails
+// with 401 or 403 unless the check expects exactly that.
+func syntheticCheckAuthWarning(app state.App, expected int) string {
+	if expected == http.StatusUnauthorized || expected == http.StatusForbidden {
+		return ""
+	}
+	var gate string
+	switch {
+	case app.PublicAuthMode == api.AppPublicAuthModeBearer || app.RequireAuthn:
+		gate = "bearer auth"
+	case app.PublicAuthMode == api.AppPublicAuthModeBasic:
+		gate = "basic auth"
+	case app.ConsumerAuthMode == state.ConsumerAuthModeRequired:
+		gate = "required API consumer keys"
+	default:
+		return ""
+	}
+	return "This app uses " + gate + " and synthetic probes send no credential, so every run will fail with 401 or 403. " +
+		"Point the check at a public path the app serves without auth, or set --expect-status 401 to check reachability only."
 }

@@ -47,6 +47,10 @@ export type EventSubscriptionResponse = {
    */
   ordered?: boolean;
   enabled: boolean;
+  /**
+   * Project environment slug whose events the subscription receives; omitted is production.
+   */
+  environment?: string;
   created_at: string;
   updated_at: string;
 };

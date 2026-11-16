@@ -1278,3 +1278,68 @@ func TestHandleInvalidationWithdrawsFrozenInstance(t *testing.T) {
 		t.Fatalf("frozen instance was evicted (quarantined): %v", inv.evicted)
 	}
 }
+
+// ADR-20261031193635 stable branch URLs: a branch's slot host routes to the
+// environment of the branch holding the slot, so the URL survives a reset.
+func TestPgRouter_EnvironmentBranchSlotHostSurvivesReset(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "branch-slot-host@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "shop", ScanSource: state.ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	branchOf := func(t *testing.T) state.ProjectEnvironmentBranch {
+		t.Helper()
+		_, branch, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
+			AccountID: account.ID, ProjectID: project.ID, ParentSlug: "production", Slug: "pr-1",
+			ExpiresAt: time.Now().Add(time.Hour), EgressMode: state.EnvironmentBranchEgressLive, MaxDepth: api.EnvironmentBranchMaxDepth,
+		}, api.MustLimitsFor(account.Plan))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return branch
+	}
+	router := pgRouter{store: store, appsSuffix: ".gregale.dev", deploySuffix: ".gregale.dev"}
+	branch := branchOf(t)
+	host := gateway.BuildEnvironmentHost(".gregale.dev", branch.SlotID, app.ID)
+	if !router.IsDynamicRouteHost(host) {
+		t.Fatal("slot URL was not marked dynamic")
+	}
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "pr-1", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err := router.ResolveHost(ctx, host)
+	if err != nil || !ok || resolved.PinnedDeploymentID != first.ID || resolved.PinnedDeploymentScope != "pr-1" {
+		t.Fatalf("slot route = %+v ok=%v err=%v; want %s", resolved, ok, err, first.ID)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteProjectEnvironmentBranch(ctx, account.ID, project.ID, "pr-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, host); err != nil || ok {
+		t.Fatalf("slot route of a deleted branch = ok %v err %v; want 404", ok, err)
+	}
+	again := branchOf(t)
+	if again.SlotID != branch.SlotID {
+		t.Fatalf("slot after reset = %s; want %s", again.SlotID, branch.SlotID)
+	}
+	second, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "pr-1", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err = router.ResolveHost(ctx, host)
+	if err != nil || !ok || resolved.PinnedDeploymentID != second.ID {
+		t.Fatalf("slot route after reset = %+v ok=%v err=%v; want %s", resolved, ok, err, second.ID)
+	}
+}

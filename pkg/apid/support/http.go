@@ -73,6 +73,12 @@ func (x *session) writeEndpoint(r *http.Request, endpoint string, body []byte) (
 	key := r.Header.Get("Idempotency-Key")
 	ticket := r.PathValue("ticket")
 	switch endpoint {
+	case "read":
+		var in api.SupportReadRequest
+		if e := decode(body, &in); e != nil {
+			return nil, e
+		}
+		return x.markRead(ticket, in)
 	case "create":
 		var in api.CreateSupportTicketRequest
 		if e := decode(body, &in); e != nil {
@@ -171,6 +177,8 @@ func listParams(r *http.Request) (q.TicketListParams, error) {
 func (x *session) readEndpoint(r *http.Request, endpoint string) (any, error) {
 	ticket := r.PathValue("ticket")
 	switch endpoint {
+	case "notifications":
+		return x.notifications(r)
 	case "list":
 		p, e := listParams(r)
 		if e != nil {

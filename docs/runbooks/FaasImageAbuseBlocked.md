@@ -25,8 +25,8 @@ imaged scanned a built image and matched an ADR-368 abuse signature rule.
 
 ## Recover
 
-- Deliberate abuse: hold the account (`gregale admin abuse-hold place --note
-  "<rule> in <file>" <account_uuid>`) and follow
+- Deliberate abuse: hold the account (`gregalectl accounts abuse-hold place
+  --account-id <account_uuid> --note "<rule> in <file>" --yes`) and follow
   [tenant-abuse.md](tenant-abuse.md).
 - Compromised dependency: tell the customer which package and file matched.
   Their redeploy passes once it's removed.

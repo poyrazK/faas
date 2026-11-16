@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -94,11 +95,14 @@ func (s *server) customMetricSeries(ctx context.Context, appID, name, labels, ki
 		if s.log != nil {
 			s.log.Warn("apid: custom metric series query failed", "err", strings.ReplaceAll(err.Error(), "\n", " "))
 		}
-		out.Source, out.Points = appmetrics.SourceDegradedPrefix+appmetrics.TelemetryDegradedReason(err), nil
+		out.Source, out.Points = appmetrics.SourceDegradedPrefix+appmetrics.TelemetryDegradedReason(err), []api.CustomMetricSeriesPoint{}
 		return out
 	}
 	for _, sr := range series {
 		for _, v := range sr.Values {
+			if math.IsNaN(v.Value) || math.IsInf(v.Value, 0) {
+				continue
+			}
 			out.Points = append(out.Points, api.CustomMetricSeriesPoint{At: time.Unix(v.Timestamp, 0).UTC(), Value: v.Value})
 		}
 	}

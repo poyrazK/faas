@@ -82,10 +82,19 @@ func recoveryPublication(ctx context.Context, p Pipeline, source *pgxpool.Pool, 
 		return &blocked{"table_addition_source_changed", false}
 	}
 	action := "DROP TABLE "
+	member := tableIdent(r.Table)
 	if include {
-		action = "ADD TABLE ONLY "
+		_, table, inspectErr := inspectPipelineTable(ctx, p, tx, r.Table)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		if !table.Supported {
+			return &blocked{"source_serving_contract_changed", true}
+		}
+		action = "ADD TABLE "
+		member = publicationTable(p, table)
 	}
-	if _, err = tx.Exec(ctx, "ALTER PUBLICATION "+ident(pipelineName(p))+" "+action+tableIdent(r.Table)); err != nil {
+	if _, err = tx.Exec(ctx, "ALTER PUBLICATION "+ident(pipelineName(p))+" "+action+member); err != nil {
 		return err
 	}
 	if err = current(ctx); err != nil {

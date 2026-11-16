@@ -88,6 +88,7 @@ func (s *server) populateDataAPIWorkspace(r *http.Request, acct state.Account, a
 		}
 	}
 	s.populateDataAPIUsageAndAccess(r, acct, app, data)
+	s.populateDataAPIOperations(r, acct, app, data)
 	id := r.URL.Query().Get("task")
 	if id == "" || !s.appTaskAPIEnabled {
 		return

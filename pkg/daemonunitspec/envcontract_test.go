@@ -22,7 +22,7 @@ var envLiteral = regexp.MustCompile(`"(FAAS_[A-Z0-9_]+)"`)
 var daemonDirs = []string{
 	"cmd/apid", "cmd/bridged", "cmd/schedd", "cmd/vmmd", "cmd/imaged", "cmd/builderd",
 	"cmd/meterd", "cmd/githubd", "cmd/gatewayd-internal", "cmd/gatewayd-public", "cmd/s3-gatewayd", "cmd/mcp-bridged", "cmd/maild", "cmd/mail-report", "cmd/mail-metrics", "cmd/mail-feedback",
-	"cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge", "cmd/vmmd-tcp-bridge", "cmd/vmmd-udp-bridge", "cmd/realtimed", "cmd/profiled", "cmd/outboundd", "cmd/agentd", "cmd/edgednsd", "cmd/signd",
+	"cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge", "cmd/vmmd-tcp-bridge", "cmd/vmmd-udp-bridge", "cmd/realtimed", "cmd/profiled", "cmd/outboundd", "cmd/agentd", "cmd/edgednsd", "cmd/signd", "cmd/secretd", "cmd/neond",
 }
 
 func repoRoot(t *testing.T) string {
@@ -85,7 +85,7 @@ func scanLiterals(t *testing.T, root string, dirs []string) map[string]map[strin
 // imports them, so their env reads belong to apid, not "shared". List a
 // package here only if no other daemon imports it (pkg/apid/apidsource is
 // also used by githubd and stays shared).
-var apidOwnedPkgs = []string{"pkg/apid/apidserver/", "pkg/apid/durable/", "pkg/apid/receivers/", "pkg/apid/release/"}
+var apidOwnedPkgs = []string{"pkg/apid/apidserver/", "pkg/apid/devloop/", "pkg/apid/durable/", "pkg/apid/receivers/", "pkg/apid/release/"}
 
 func ownerOf(rel string) string {
 	for _, prefix := range apidOwnedPkgs {

@@ -12,8 +12,9 @@ import (
 )
 
 type devLocalAppPlan struct {
-	command   string
-	framework string
+	command         string
+	framework       string
+	frameworkReload bool
 }
 
 // Explicit function declarations and conventional handlers retain the existing
@@ -68,7 +69,7 @@ func planDevLocalApp(root, command string) (devLocalAppPlan, error) {
 		return devLocalAppPlan{}, err
 	}
 	if server, ok := frameworkprofile.DevServerCommand(os.DirFS(root)); ok {
-		return devLocalAppPlan{command: localDevServerCommand(server), framework: server.Framework}, nil
+		return devLocalAppPlan{command: localDevServerCommand(server), framework: server.Framework, frameworkReload: server.HMRFramework != ""}, nil
 	}
 	if profile.StartCommand == "" || (profile.Family != "node" && profile.Family != "python" && profile.Family != "go") {
 		return devLocalAppPlan{}, errors.New("no local HTTP app command found; add a dev/start script, set dev.watch.command in gregale.yaml, or pass --watch-command (the server must listen on $PORT)")
@@ -77,9 +78,16 @@ func planDevLocalApp(root, command string) (devLocalAppPlan, error) {
 }
 
 // Framework servers do not all read PORT. Bind detected commands explicitly;
-// the CLI owns source reload, so Python does not need a second reloader.
+// recognised Node servers own HMR; Python retains CLI-supervised reload.
 func localDevServerCommand(server frameworkprofile.DevServer) string {
-	switch server.Framework {
+	framework, command := server.Framework, server.Command
+	if server.HMRFramework != "" {
+		framework = server.HMRFramework
+		if server.Framework == "dev script" && strings.HasPrefix(command, "npm ") {
+			command += " --" // npm consumes flags unless explicitly forwarded
+		}
+	}
+	switch framework {
 	case "FastAPI":
 		return "python3 -m " + strings.TrimSuffix(server.Command, " --reload") + " --host 127.0.0.1 --port $PORT"
 	case "Flask":
@@ -87,11 +95,11 @@ func localDevServerCommand(server frameworkprofile.DevServer) string {
 	case "Django":
 		return "python3 manage.py runserver 127.0.0.1:$PORT --noreload"
 	case "Next.js":
-		return server.Command + " --hostname 127.0.0.1 --port $PORT"
+		return command + " --hostname 127.0.0.1 --port $PORT"
 	case "Vite", "SvelteKit":
-		return server.Command + " --host 127.0.0.1 --port $PORT --strictPort"
-	case "Astro", "Nuxt":
-		return server.Command + " --host 127.0.0.1 --port $PORT"
+		return command + " --host 127.0.0.1 --port $PORT --strictPort"
+	case "Astro", "Nuxt", "React Router", "Remix":
+		return command + " --host 127.0.0.1 --port $PORT"
 	default:
 		return server.Command
 	}

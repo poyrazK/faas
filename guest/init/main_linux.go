@@ -97,8 +97,18 @@ func main() {
 	}
 	if err := boot(); err != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
+		drainConsole(os.Stderr)
 		os.Exit(1)
 	}
+}
+
+// drainConsole waits until the console has transmitted what guest-init wrote
+// to f (tcdrain). PID 1's exit panics the kernel at once, and the panic dump
+// cut guest-init's reason line short on the serial console: "guest-init: app
+// [    3.600487] Kernel panic - not syncing: Attempted to kill init!" (Hunt 34
+// H34-35). Not a terminal: nothing to wait for.
+func drainConsole(f *os.File) {
+	_ = unix.IoctlSetInt(int(f.Fd()), unix.TCSBRK, 1)
 }
 
 func boot() error {
@@ -326,15 +336,6 @@ func boot() error {
 		slog.Default().Warn("vsock liveness listener unavailable", "err", err)
 	}
 
-	// Wave 0 PR-C / ADR-047: stateless-runtime advisory. FAN_CLASS_NOTIF
-	// on a closed set of state-shaped paths; debounced batches shipped
-	// over AF_VSOCK DGRAM (port=1025, msg_type=2) to the host. Returns
-	// are tolerated — a guest without CONFIG_FANOTIFY=y still boots,
-	// the contract is "no signal" not "won't boot".
-	if err := runStatelessAdvisory(slog.Default()); err != nil {
-		slog.Default().Warn("stateless advisory unavailable", "err", err)
-	}
-
 	// Issue #667 / ADR-078 (consolidated follow-up PR): the
 	// tail-events unix-socket proxy. The proxy at
 	// /run/guest-init/tail-events.sock is the runner-facing entry
@@ -378,6 +379,13 @@ func boot() error {
 	_ = f.Close()
 	if err != nil {
 		return err
+	}
+	// ADR-047 (amended 2026-11-12): watch state-shaped directories,
+	// including data/ and db/ under the app's working directory, and ship
+	// each written path once over vsock port 1025. Tolerated — the
+	// contract is "no signal", not "won't boot".
+	if err := runStatelessAdvisory(slog.Default(), manifest.EffectiveWorkingDir()); err != nil {
+		slog.Default().Warn("stateless advisory unavailable", "err", err)
 	}
 	if manifest.EffectivePort() == api.ProfileBridgePort() {
 		// The bridge would take the app's own port; an older imaged may
@@ -530,6 +538,9 @@ func boot() error {
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: app restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
+	supRef.OnCleanExit = func() {
+		fmt.Fprintf(os.Stderr, "guest-init: app exited cleanly (status 0, policy=%s); a clean exit is not restarted\n", policy)
+	}
 	// ADR-051 Phase 4: characterize the workload by observing the
 	// first cold boot. Runs in parallel with sup.Run() so the
 	// PID-fd walk finds the customer's listener without blocking
@@ -650,7 +661,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
-	env = StampRestoreReseedEnv(env)
+	env = StampRestoreReseedEnv(env, argv...)
 	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
@@ -1234,6 +1245,21 @@ func runBuildOnce(m api.BuildManifest) error {
 	// mount policy. The VM plus this outer namespace remain the isolation
 	// boundary.
 	buildkitRoot := builderDriveMount + "/upper/build/.buildkit"
+	// ADR-20261030122204: a seeded build keeps BuildKit's root on drive2,
+	// which already holds the platform images. A build falls back to drive1
+	// when drive2 is unusable; the seed run cannot.
+	seedMounted := false
+	if wantBuildKitSeed(m) {
+		root, seedErr := mountBuildKitSeed()
+		switch {
+		case seedErr == nil:
+			buildkitRoot, seedMounted = root, true
+		case m.BuildKitSeedOnly:
+			return writeAndPoweroff(m, fmt.Errorf("mount buildkit seed drive: %w", seedErr), "")
+		default:
+			fmt.Fprintf(os.Stderr, "guest-init: buildkit seed drive unusable, keeping BuildKit on the builder drive: %v\n", seedErr)
+		}
+	}
 	if err := os.MkdirAll(buildkitRoot, 0o777); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir buildkit root: %w", err), "")
 	}
@@ -1315,10 +1341,19 @@ func runBuildOnce(m api.BuildManifest) error {
 		"--oci-worker-snapshotter", buildkitSnapshotter(m),
 		"--oci-worker-net", "host",
 	}
+	// ADR-20261110210000 slice 3j-3: vmmd may serve this build its app's
+	// private registries as loopback mirrors; the guest holds no password.
+	privateMirrors, mirrorErr := buildRegistryMirrors(m)
+	if mirrorErr != nil {
+		return writeAndPoweroff(m, mirrorErr, "")
+	}
+	if mirrorErr := startBuildRegistryForwarders(privateMirrors); mirrorErr != nil {
+		return writeAndPoweroff(m, mirrorErr, "")
+	}
 	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
 	// before Docker Hub, which limits anonymous pulls per IP.
-	if len(m.DockerHubMirrors) > 0 {
-		config, err := buildkitMirrorConfig(m.DockerHubMirrors)
+	if len(m.DockerHubMirrors) > 0 || len(privateMirrors) > 0 {
+		config, err := buildkitRegistryConfig(m.DockerHubMirrors, privateMirrors)
 		if err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("buildkit mirror config: %w", err), "")
 		}
@@ -1505,6 +1540,14 @@ func runBuildOnce(m api.BuildManifest) error {
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
 	stopBuildkit()
+	if seedMounted {
+		if seedErr := unmountBuildKitSeed(); seedErr != nil {
+			if m.BuildKitSeedOnly && err == nil {
+				err = fmt.Errorf("unmount buildkit seed drive: %w", seedErr)
+			}
+			fmt.Fprintf(os.Stderr, "guest-init: unmount buildkit seed drive: %v\n", seedErr)
+		}
+	}
 	if m.DependencyCache && !deferCacheExport(m) {
 		cachePath := filepath.Join(m.OutDir, "cache")
 		removed, cacheErr := removeOversizedDependencyCache(cachePath, api.MaxExportedLayerBytes)
@@ -2454,6 +2497,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string, timings *
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
 		Timings:         timings,
+		BuildKitSeeded:  buildKitSeedUsed(),
 	}
 	if runErr == nil && !m.CacheExportOnly {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)

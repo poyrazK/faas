@@ -12,10 +12,39 @@ func responseForbidsSharedCaching(header http.Header) bool {
 		return true
 	}
 	for _, value := range header.Values("Cache-Control") {
-		low := strings.ToLower(value)
-		if strings.Contains(low, "no-store") || strings.Contains(low, "private") {
-			return true
+		for _, directive := range cacheControlDirectives(value) {
+			name, _, _ := strings.Cut(directive, "=")
+			switch strings.ToLower(strings.TrimSpace(name)) {
+			case "no-cache", "no-store", "private":
+				// There is no origin revalidation path. A no-cache response
+				// cannot be replayed, even while the rule's TTL is fresh.
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func cacheControlDirectives(value string) []string {
+	var result []string
+	start := 0
+	quoted, escaped := false, false
+	for i := 0; i < len(value); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if quoted && value[i] == '\\' {
+			escaped = true
+			continue
+		}
+		if value[i] == '"' {
+			quoted = !quoted
+		}
+		if value[i] == ',' && !quoted {
+			result = append(result, value[start:i])
+			start = i + 1
+		}
+	}
+	return append(result, value[start:])
 }

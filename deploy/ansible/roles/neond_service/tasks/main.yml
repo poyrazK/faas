@@ -1,0 +1,218 @@
+---
+# neond_service — install and run neond (ADR-20261112160000). It holds the
+# Neon API keys and forwards apid's Neon calls under an allow-list and a
+# delete policy, so it runs on the control plane only, as its own OS user.
+- name: neond_service — require a control-plane host and a broker only with neond
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+      - (faas_neond_destructive_per_hour | int) > 0
+      - (faas_neond_destructive_per_subject_per_hour | int) > 0
+    fail_msg: >-
+      neond runs on a control-plane (or single-box) host, and
+      faas_neond_destructive_per_hour ({{ faas_neond_destructive_per_hour }})
+      and faas_neond_destructive_per_subject_per_hour
+      ({{ faas_neond_destructive_per_subject_per_hour }}) must be positive
+      integers.
+  when: faas_neond_enabled | bool
+
+- name: neond_service — require a Neon organization ID shape
+  ansible.builtin.assert:
+    that:
+      - faas_neond_org_id is match('^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')
+    fail_msg: >-
+      faas_neond_org_id is {{ faas_neond_org_id }}: set it to the Neon
+      organization ID (org-...), or leave it empty to keep every call on the
+      admin key.
+  when: faas_neond_enabled | bool and faas_neond_org_id | length > 0
+
+- name: neond_service — refuse the apid broker without neond
+  ansible.builtin.assert:
+    that:
+      - faas_neond_enabled | bool
+    fail_msg: >-
+      faas_neond_broker points apid at neond, which faas_neond_enabled keeps
+      off; apid would fail every Neon call. Turn neond on first.
+  when: faas_neond_broker | bool
+
+- name: neond_service — inspect the Neon admin key
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/neon-admin.key
+  register: faas_neond_admin_key
+  when: faas_neond_enabled | bool
+
+- name: neond_service — require the Neon admin key
+  ansible.builtin.assert:
+    that:
+      - faas_neond_admin_key.stat.exists
+      - faas_neond_admin_key.stat.pw_name == 'root'
+      - faas_neond_admin_key.stat.mode in ['0400', '0600']
+    fail_msg: >-
+      neond reads the Neon key from /etc/faas/secrets/neon-admin.key, which
+      must exist, belong to root and be mode 0400 or 0600. Write the key
+      apid uses today there (see the role README), then rerun.
+  when: faas_neond_enabled | bool
+
+# The user exists everywhere the role runs so pg_ident's faas-neond line maps
+# a real user; it has no shell, no home and no password.
+- name: neond_service — create the faas-neond user
+  ansible.builtin.user:
+    name: faas-neond
+    group: faas
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+  when: faas_neond_enabled | bool
+
+- name: neond_service — install systemd unit
+  ansible.builtin.copy:
+    src: faas-neond.service
+    dest: /etc/systemd/system/faas-neond.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-neond
+
+- name: neond_service — create unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-neond.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Project keys are sealed to the neon seal domain, which the seal_domains
+# role stages (faas_seal_domain_neon_identity_src) before this role runs.
+- name: neond_service — inspect the neon seal domain identity
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/domains/neon.age
+  register: faas_neond_seal_identity
+  when: faas_neond_enabled | bool and faas_neond_org_id | length > 0
+
+- name: neond_service — require the neon seal domain for project keys
+  ansible.builtin.assert:
+    that:
+      - faas_neond_seal_identity.stat.exists
+    fail_msg: >-
+      faas_neond_org_id turns on project keys, which neond seals to the neon
+      seal domain: create it with `gregalectl seal-domain init --domain neon`,
+      set faas_seal_domain_neon_identity_src and run the seal_domains role
+      first.
+  when: faas_neond_enabled | bool and faas_neond_org_id | length > 0
+
+- name: neond_service — install configuration drop-in
+  ansible.builtin.template:
+    src: 50-faas-neond.conf.j2
+    dest: /etc/systemd/system/faas-neond.service.d/50-faas-neond.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_neond_enabled | bool
+  notify: restart faas-neond
+
+# Without the drop-in the unit has no listener and no key; CD's start step
+# reads its absence as "neond off".
+- name: neond_service — remove the drop-in while neond is off
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-neond.service.d/50-faas-neond.conf
+    state: absent
+  when: not (faas_neond_enabled | bool)
+  register: faas_neond_dropin_removed
+
+- name: neond_service — stop neond while it is off
+  ansible.builtin.systemd_service:
+    name: faas-neond.service
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  when: not (faas_neond_enabled | bool) and faas_neond_dropin_removed is changed
+
+# Start neond before pointing apid at it, so apid's restart finds the socket.
+# A release older than neond has no binary: CD's "Restart configured Neon key
+# holder" step starts neond once one does.
+- name: neond_service — apply neond configuration before wiring apid
+  ansible.builtin.meta: flush_handlers
+
+- name: neond_service — inspect the active release's neond
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/neond
+  register: faas_neond_binary
+  when: faas_neond_enabled | bool
+
+- name: neond_service — refuse the apid broker before the release ships neond
+  ansible.builtin.assert:
+    that:
+      - faas_neond_binary.stat.exists
+    fail_msg: >-
+      faas_neond_broker is set but the active release has no neond binary;
+      apid would fail every Neon call. Deploy a release with neond first.
+  when: faas_neond_broker | bool
+
+- name: neond_service — start neond
+  ansible.builtin.systemd_service:
+    name: faas-neond.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: faas_neond_enabled | bool and faas_neond_binary.stat.exists
+
+- name: neond_service — wait for neond's socket
+  ansible.builtin.wait_for:
+    path: /run/faas/neond.sock
+    timeout: 30
+  when: faas_neond_enabled | bool and faas_neond_binary.stat.exists
+
+- name: neond_service — require a valid apid key variable name
+  ansible.builtin.assert:
+    that:
+      - faas_neond_apid_key_env is match('^[A-Z][A-Z0-9_]{0,127}$')
+    fail_msg: "faas_neond_apid_key_env ({{ faas_neond_apid_key_env }}) must be an environment variable name."
+  when: faas_neond_broker | bool
+
+- name: neond_service — look for a Neon key left in apid's environment
+  ansible.builtin.command:
+    argv: [grep, -c, "^{{ faas_neond_apid_key_env }}=.", /etc/faas/sealed.env]
+  register: faas_neond_apid_key_left
+  changed_when: false
+  failed_when: faas_neond_apid_key_left.rc > 1
+  when: faas_neond_broker | bool
+
+# With the broker on, apid holds no Neon key (ADR-20261112160000 slice 3);
+# apid itself refuses to start with both. Refusing here keeps apid running
+# on the release it has until the key is gone.
+- name: neond_service — refuse the apid broker while apid still holds a Neon key
+  ansible.builtin.assert:
+    that:
+      - faas_neond_apid_key_left.rc == 1
+    fail_msg: >-
+      /etc/faas/sealed.env still sets {{ faas_neond_apid_key_env }}. With
+      faas_neond_broker on, neond holds the Neon key and apid must not: remove
+      that line and converge again (docs/runbooks/FaasNeond.md, "Cut apid
+      over"). Do not restart apid in between.
+  when: faas_neond_broker | bool
+
+- name: neond_service — create apid's drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_neond_broker | bool
+
+- name: neond_service — point apid's Neon backend at neond
+  ansible.builtin.template:
+    src: zz-faas-neond-broker.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-neond-broker.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_neond_broker | bool
+  notify: restart faas-apid for neond
+
+- name: neond_service — remove apid's neond wiring when the broker is off
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d/zz-faas-neond-broker.conf
+    state: absent
+  when: not (faas_neond_broker | bool)
+  notify: restart faas-apid for neond

@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
@@ -316,6 +317,7 @@ func cmdApp(args []string) int {
 	onlyDeclaredRoutes := fs.Bool("only-declared-routes", false, "reject paths not declared by the OpenAPI document (or explicit route list) before wake")
 	noOnlyDeclaredRoutes := fs.Bool("no-only-declared-routes", false, "disable the declared-route pre-wake gate")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
+	portsFlag := fs.String("ports", "", "TCP/UDP listeners: comma-separated [NAME=]tcp|udp:PORT[:internal], or none to clear")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
 	preAuthMode := fs.String("pre-auth", "", "pre-auth source limit mode: off|observe|enforce")
 	preAuthRPS := fs.Int("pre-auth-rps", 0, "pre-auth requests per second per source")
@@ -325,6 +327,7 @@ func cmdApp(args []string) int {
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
 	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
 	noHealthPathWakes := fs.Bool("no-health-path-wakes", false, "answer health probes at the edge without waking")
+	settingFlags := registerAppSettingFlags(fs)
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -643,6 +646,13 @@ func cmdApp(args []string) int {
 		v := *headWakes
 		req.HeadWakes = &v
 	}
+	if explicit["ports"] {
+		ports, err := parseAppPortsFlag(*portsFlag)
+		if err != nil {
+			return printErr("Invalid --ports", err)
+		}
+		req.Ports = &ports
+	}
 	if explicit["crawler-policy"] {
 		v := *crawlerPolicy
 		switch v {
@@ -785,6 +795,9 @@ func cmdApp(args []string) int {
 	if explicit["overflow-node"] {
 		v := *overflowNode
 		req.OverflowNode = &v
+	}
+	if err := settingFlags.apply(explicit, &req); err != nil {
+		return printErr("Invalid flags", err)
 	}
 
 	// Any update flag sets a field of req; none means a read. Listing fields
@@ -997,7 +1010,7 @@ func cmdApp(args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
-		return printErr("Could not update app", err)
+		return printErr("Could not update app", explainPerInstanceConcurrencyRefusal(err, explicit["per-instance-concurrency"]))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -1008,6 +1021,11 @@ func cmdApp(args []string) int {
 	}
 	if hint := functionConcurrencyDeployHint(req, updated); hint != "" {
 		fmt.Fprintln(os.Stderr, hint)
+	}
+	if explicit["min"] && *min > 0 && updated.Status == "evicted_cold" {
+		// As `app scale` does (Hunt 14 H14-94): a parked app's floor holds
+		// only after its next wake (Hunt 34 H34-11).
+		PrintOK(osStdout, "%s", parkedMinInstancesNote(slug, *min))
 	}
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure: the customer just updated an app
@@ -1670,6 +1688,17 @@ func errNegativePerInstanceConcurrency(value int) error {
 	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the plan's concurrency per VM); got %d", value)
 }
 
+// explainPerInstanceConcurrencyRefusal turns the API's dark-launch refusal of
+// per_instance_concurrency, which answers like an unknown field so an N-1
+// apid and this one agree (ADR-20261022203523), into what it means for the
+// caller: the setting is not enabled for this account yet.
+func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
+	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
+		return fmt.Errorf("--per-instance-concurrency is in early access and not enabled for this account; leave it unset to use the plan's concurrency per VM (%w)", err)
+	}
+	return err
+}
+
 const manifestTriggerCleanupTimeout = 10 * time.Second
 
 func manifestCronKey(schedule, path string) string {
@@ -2026,6 +2055,11 @@ type deployExecution struct {
 	compactProgress  bool // Guided sessions own their review and progress display.
 	streamLogsOnJSON bool
 	developerSource  *devSourceSyncState
+	// devBuildNow opts developer-source syncs out of build coalescing
+	// (ADR-20261021221906); untilDevPatched finishes a sync whose build was deferred
+	// behind its live patch, and reports false to follow the build instead.
+	devBuildNow     bool
+	untilDevPatched func(context.Context, api.DeploymentResponse) (int, bool)
 	// overrideEnv carries non-secret values that belong only to the new
 	// deployment revision. MCP hosting uses it to pin a candidate catalog.
 	overrideEnv map[string]string
@@ -2202,6 +2236,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	healthcheckPath := fs.String("healthcheck-path", "", "startup readiness HTTP path (for example /readyz)")
 	healthcheckGRPC := fs.Bool("healthcheck-grpc", false, "use standard gRPC health for startup readiness")
 	healthcheckGRPCService := fs.String("healthcheck-grpc-service", "", "service name for --healthcheck-grpc; empty checks the overall server")
+	readinessPath := fs.String("readiness-path", "", "steady-state readiness HTTP path: an instance that fails it leaves routing until it passes, without a restart (for example /ready)")
 	// Issue #556 PR-A: per-deployment traffic-split weight. Sentinel
 	// value -1 = "unset" — `fs.Int` doesn't have a
 	// pointer type, so the explicit `fs.Visit` check below
@@ -2267,6 +2302,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// CreateApp, upload, deployment, or other write is allowed after the
 	// authenticated client is acquired.
 	dryRun := fs.Bool("dry-run", false, "run deploy preflight without uploading or changing remote state")
+	explainFiles := fs.Bool("explain-files", false, "with --dry-run, inspect local payload files and exclusion rules without login or remote calls")
 	// --plan is the local, no-auth preview for the simple stateless app path.
 	// Unlike --dry-run/--diff it does not compare remote state or call apid; it
 	// only resolves framework, listener, resource, and state defaults.
@@ -2344,6 +2380,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *explainFiles {
+		return cmdDeploySourceFiles(ctx, deploySourceFilesOptions{path: *sourcePath, source: *sourceMode, worktree: *worktree,
+			function: *function, app: *app, project: *projectDeploy || *projectSlug != "", runtime: *runtime,
+			secretScan: *secretScan, secretsFile: *secretsFile, dryRun: *dryRun, json: jsonOutput || *diffJSON}, explicit)
+	}
 	if explicit["rollout"] {
 		if err := applyRolloutFlag(*rolloutChoice, explicit, safeDeploy, canaryPreset); err != nil {
 			return printErr("Invalid rollout policy", err)
@@ -2583,7 +2624,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if explicit["preview"] {
 			planFlag = "--preview"
 		}
-		if *diff || *dryRun || *serverDiff || *createOnly || *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+		if *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+			return printErr("Invalid flags", errors.New(planFlag+" previews a single app; for a project run: gregale deploy --project --dry-run"))
+		}
+		if *diff || *dryRun || *serverDiff || *createOnly {
 			return printErr("Invalid flags", errors.New(planFlag+" cannot be combined with deploy mutation or project preview flags"))
 		}
 		if *tarball != "" || *templateName != "" || *repo != "" || *githubSnippet {
@@ -2633,6 +2677,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if healthcheck != nil && (*diff || *dryRun || *simplePlan || projectRequested || *githubSnippet || *createOnly) {
 		return printErr("Invalid flags", errors.New("startup healthcheck flags require a single-app deployment; they cannot be combined with preview, --github, --project, or --create-only"))
+	}
+	readiness, readinessErr := resolveDeployReadiness(*readinessPath, explicit)
+	if readinessErr != nil {
+		return printErr("Invalid --readiness-path", readinessErr)
+	}
+	if readiness != nil && (*diff || *dryRun || *simplePlan || projectRequested || *githubSnippet || *createOnly || *repo != "") {
+		return printErr("Invalid flags", errors.New("--readiness-path needs a single-app source or --image deployment; for --repo, --project or --github set hosting.readiness_probe in gregale.yaml"))
 	}
 	if explicit["app-protocol"] && !api.IsValidAppProtocol(*appProtocol) {
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeAppProtocolInvalid,
@@ -3840,7 +3891,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, NoTriggers: *noTriggers,
+		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, ReadinessProbe: readiness, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude, OverrideFreeze: *overrideFreeze,
 		ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
 	}
@@ -3865,6 +3916,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if workflowErr != nil {
 			return printErr("Workflow manifest validation failed", workflowErr)
 		}
+		previewWorkflows = memberWorkflows(ctx, slug, previewWorkflows)
 		// Project deploys have a different preview contract from a
 		// single-app diff: the apply path is driven by ScanProject, so
 		// preview must use that same planner and render the complete
@@ -3884,6 +3936,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
 		opts.Preview = newCLIPreview("remote comparison", slug, "", source, changes, "Compares current remote settings; build execution and readiness are not verified. State can change before deployment.")
 		deploymentPreviewTargetSources(opts.Preview, contextDir, *name != "", explicit["environment"])
+		opts.TargetLinked = sourceLinkedTo(contextDir, slug)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec
@@ -4076,6 +4129,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err != nil {
 			return printErr("Workflow manifest validation failed", err)
 		}
+		workflowDefs = memberWorkflows(ctx, slug, workflowDefs)
 		sidecarDefs, err = loadExtensionSidecarsManifestForDeploy(ctx, client, sourceDir)
 		if err != nil {
 			return printErr("Extension manifest validation failed", err)
@@ -4090,6 +4144,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if !*createOnly {
 		if err := preflightDeploySessionStorage(client); err != nil {
 			return printErr("Could not save deploy session", err)
+		}
+	}
+	// A datastore image is refused after the app exists, which left an
+	// empty app counting toward the app quota (prod 2026-11-15: --image
+	// redis). Refuse it here, before anything is created.
+	if *image != "" {
+		if hint, denied := statefuldenylist.Match(*image); denied {
+			return printErr("Stateless-only platform", fmt.Errorf("image %s runs a datastore, which loses its data when the app parks; %s. Nothing was created or deployed", *image, hint))
 		}
 	}
 	resolvedApp := api.AppResponse{}
@@ -4128,6 +4190,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			existingReq := createReq
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
+			}
+			if !*createOnly {
+				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
+					return code
+				}
 			}
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 		}
@@ -4184,6 +4251,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !jsonOutput {
 			PrintOK(osStdout, "Configured %d secret(s) before deployment", len(deploySecrets))
 		}
+	}
+	// After the app exists and --secrets-file values are sealed, so a first
+	// deploy is checked and the file's names count (deploy-path review P10).
+	if !projectRequested {
+		warnMissingRequiredSecrets(ctx, client, slug, manifestScope, sourceDir)
 	}
 
 	// Issue #791 PR-C / ADR-090: gregale.yaml triggers are staged after
@@ -4295,6 +4367,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestQueueBindings(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest queue bindings failed", err)
 	}
+	if err := deployManifestPostgresChanges(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest postgres_changes failed", err)
+	}
 	if err := deployManifestLabels(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest labels failed", err)
 	}
@@ -4337,6 +4412,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			OverrideEnv:              execution.overrideEnv,
 			LivenessProbe:            execution.livenessProbe,
+			ReadinessProbe:           readiness,
 			OverrideFreeze:           *overrideFreeze,
 			ReleaseAt:                releaseAt,
 			ReleaseNotify:            releaseNotify,
@@ -4348,7 +4424,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if developerSync != nil {
 			var deployErr error
 			sourceSyncStarted := time.Now()
-			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann, developerSync)
+			devAnn := ann
+			devAnn.DevBuildNow = execution.devBuildNow
+			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, devAnn, developerSync)
 			if execution.onSourceSync != nil {
 				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
 			}
@@ -4415,6 +4493,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if issueMaps != nil && !jsonOutput {
 			PrintOK(osStdout, "Source maps ready: %d map(s) for deployment %s (%s)", issueMaps.MapCount, issueMaps.DeploymentID, issueMaps.ManifestSHA256)
+		}
+		if execution.untilDevPatched != nil && dep.DevPatch != nil && dep.DevPatch.BuildDeferredUntil != nil {
+			if code, handled := execution.untilDevPatched(ctx, dep); handled {
+				return code
+			}
 		}
 		if jsonOutput && !streamLogsOnJSON {
 			// Legacy multipart uploads do not calculate the digest while
@@ -4498,7 +4581,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		OverrideFreeze:           *overrideFreeze,
 		ReleaseAt:                releaseAt,
 		ReleaseNotify:            releaseNotify,
-		Overrides:                deployHealthcheckOverrides(healthcheck),
+		Overrides:                deployProbeOverrides(healthcheck, readiness),
 		Workflows:                workflowDefs,
 		Companions:               sidecarDefs,
 		TrafficPercent:           optTrafficPercent(*trafficPercent),
@@ -4859,10 +4942,16 @@ func cmdPark(args []string) int {
 		}))
 	}
 	PrintOK(osStdout, "Parked (cold)")
-	if app, getErr := client.GetApp(context.Background(), args[0]); getErr == nil && (inspectExecutionMode(app) == api.ExecutionModeWorker || app.WorkloadClass == "worker") {
+	app, getErr := client.GetApp(context.Background(), args[0])
+	if getErr == nil && (inspectExecutionMode(app) == api.ExecutionModeWorker || app.WorkloadClass == "worker") {
 		// A parked worker pool does not autoscale on its backlog (H8-23):
 		// say how it comes back (Hunt 32 H32-32).
 		PrintWarn(osStderr, "%s is a worker pool: it stays parked, whatever its queue backlog, until `gregale app wake %s`", args[0], args[0])
+	}
+	if getErr == nil && app.MinInstances > 0 {
+		// The floor holds only for an active app (H5-54): parking a floored
+		// app parks it until the next wake, with no word (Hunt 34 H34-11).
+		PrintWarn(osStderr, "%s keeps no warm instances while parked: its floor of %d is neither held nor billed until its next request or `gregale app wake %s`", args[0], app.MinInstances, args[0])
 	}
 	return 0
 }
@@ -6159,19 +6248,32 @@ func cmdKeys(args []string) int {
 // `gregale keys grace-window`.
 func cmdKeysRotate(args []string) int {
 	fs := newFlagSet("keys rotate", flag.ContinueOnError)
+	revokeOld := fs.Bool("revoke-old", false, "revoke the old key now instead of after the grace window (use when the key leaked)")
+	graceDays := fs.Int("grace-days", -1, "days the old key keeps working, for this rotation only (0 to 30; default: the account's grace window)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale key rotate <key-id>", "keys")
+		PrintUsage(os.Stderr, "usage: gregale key rotate <key-id> [--revoke-old | --grace-days N]", "keys")
 		return 1
+	}
+	if *revokeOld && *graceDays >= 0 {
+		return printErr("Invalid flags", fmt.Errorf("--revoke-old and --grace-days are mutually exclusive"))
+	}
+	if *revokeOld {
+		*graceDays = 0
 	}
 	id := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.RotateKey(context.Background(), id)
+	var resp api.RotateKeyResponse
+	if *graceDays >= 0 {
+		resp, err = client.RotateKeyWithGrace(context.Background(), id, *graceDays)
+	} else {
+		resp, err = client.RotateKey(context.Background(), id)
+	}
 	if err != nil {
 		return printErr("Rotate failed", err)
 	}
@@ -6181,7 +6283,12 @@ func cmdKeysRotate(args []string) int {
 	PrintOK(osStdout, "Rotated key. New plaintext (shown ONCE):\n  %s", resp.KeyPlaintext)
 	PrintProgress(osStdout, "  new id:        %s", resp.Key.ID)
 	PrintProgress(osStdout, "  old key id:    %s", resp.OldKeyID)
-	PrintProgress(osStdout, "  old key grace: %s", resp.OldKeyExpiresAt)
+	if *graceDays == 0 {
+		PrintProgress(osStdout, "  old key:       revoked now")
+		return 0
+	}
+	PrintProgress(osStdout, "  old key works until %s", resp.OldKeyExpiresAt)
+	PrintProgress(osStdout, "If the old key leaked, revoke it now: gregale key delete %s", resp.OldKeyID)
 	return 0
 }
 
@@ -6960,12 +7067,16 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	// patterns. The summary is what makes `gregale logs <slug>
 	// --explain` actionable — the customer no longer has to read the
 	// whole stream to know which error fired.
-	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
+	explain := fs.Bool("explain", false, "summarize failures and error patterns; --json requires an unfiltered --deployment snapshot")
 	app := fs.String("app", "", appSlugFlagUsage)
 	projectSlug := fs.String("project", "", "read every service of this project together, each line prefixed with its service")
 	projectServices := fs.String("service", "", "with --project, only these services (comma-separated)")
 	if err := parseAppLogFlags(fs, args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
+		// The parser already wrote its single JSON Problem. Keep the
+		// existing synopsis for human output and unreported local errors.
+		if diagnostic, ok := fs.Output().(*jsonFlagErrorWriter); !ok || !diagnostic.wrote {
+			PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
+		}
 		return 1
 	}
 	if *projectSlug != "" {
@@ -7131,8 +7242,10 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		return cmdLogsInteractive(slug)
 	}
 	if *explain && jsonOutput {
-		PrintUsage(osStderr, "--explain cannot be combined with --json (explanation is human-readable); drop --explain: with --json, `logs --deployment ID` returns a failed deployment's log records and failure reason", "logs")
-		return 2
+		if err := validateJSONLogExplanation(fs, *deployment, *follow); err != nil {
+			PrintUsage(osStderr, err.Error(), "logs")
+			return 2
+		}
 	}
 	if fs.NArg() > 1 {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all] (slug defaults to linked project context)", "logs")
@@ -7270,6 +7383,9 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		logsClient, clientErr := authedClient()
 		if clientErr != nil {
 			return printErr("Not logged in", clientErr)
+		}
+		if *explain && jsonOutput {
+			return runDeploymentLogExplanation(context.Background(), logsClient, slug, deploymentRef)
 		}
 		resolved, resolveErr := resolveDeploymentRef(context.Background(), logsClient, slug, deploymentRef)
 		if resolveErr != nil {
@@ -7409,9 +7525,8 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	// common path doesn't pay for the map). The collector runs the
 	// stream through, captures error-level lines + pattern counts,
 	// and emits a 3-line summary on stream end. The summary lives
-	// here (not in a separate file) because it shares the SSE loop
-	// and pulling it out would force the collector across the
-	// channel boundary — over-engineered for the surface size.
+	// in a shared model so bounded deployment snapshots and the
+	// existing stream summary use the same severity and pattern rules.
 	var collector *explainCollector
 	if explain {
 		collector = newExplainCollector(slug, deployment)
@@ -7583,288 +7698,6 @@ func consumeLogStream(ctx context.Context, events <-chan api.Event, errs <-chan 
 			}
 		}
 	}
-}
-
-// explainCollector aggregates log lines for the --explain summary.
-// One instance per cmdLogs invocation. Allocation: per-line (a
-// map[string]int for pattern counts + per-level counters). The
-// memory footprint is bounded by the stream length (typical wake
-// log is <1k lines); on longer streams the pattern-count map
-// stays bounded because the buckets are normalised to a 64-byte
-// prefix (see observe()).
-type explainCollector struct {
-	slug       string
-	deployment string
-	errorCount int
-	warnCount  int
-	infoCount  int
-	patterns   map[string]int
-	lastError  string
-}
-
-// explainLogRecord is the production app-log SSE data envelope. Line is a
-// pointer so a JSON object without a line field can still fall through to the
-// legacy text parser instead of being treated as an empty log line.
-type explainLogRecord struct {
-	Line     *string         `json:"line"`
-	Stream   string          `json:"stream"`
-	Level    json.RawMessage `json:"level"`
-	Severity json.RawMessage `json:"severity"`
-}
-
-// newExplainCollector constructs the per-invocation collector.
-// The patterns map is allocated lazily on first observe() — most
-// log lines are info/warn, and we only count errors.
-func newExplainCollector(slug, deployment string) *explainCollector {
-	return &explainCollector{
-		slug:       slug,
-		deployment: deployment,
-		patterns:   map[string]int{},
-	}
-}
-
-// observe ingests one SSE data line. Production streams carry a JSON
-// envelope with a raw guest line plus optional structured severity; older
-// streams use the legacy `{ts} {level} {message}` shape. The latter remains
-// byte-compatible while the former gets a conservative stdout/stderr
-// fallback when no level was classified server-side.
-func (c *explainCollector) observe(line string) {
-	trimmed := strings.TrimSpace(line)
-	if strings.HasPrefix(trimmed, "{") {
-		var record explainLogRecord
-		if err := json.Unmarshal([]byte(trimmed), &record); err == nil && record.Line != nil {
-			msg := *record.Line
-			level := explainStructuredLevel(record.Level, record.Severity)
-			if level == "" {
-				if nestedLevel, nestedMessage := explainNestedStructuredLine(msg); nestedLevel != "" {
-					level, msg = nestedLevel, nestedMessage
-				}
-			}
-			if level == "" {
-				level = explainFallbackLevel(record.Stream, msg)
-			}
-			c.observeLevel(level, msg)
-			return
-		}
-	}
-	// Split into at most 3 parts: ts, level, message.
-	parts := strings.SplitN(line, " ", 3)
-	if len(parts) < 3 {
-		return
-	}
-	c.observeLevel(parts[1], parts[2])
-}
-
-// observeLevel updates the summary counters for an already-canonical level.
-// Keeping this bookkeeping in one place prevents structured and legacy rows
-// from drifting apart.
-func (c *explainCollector) observeLevel(level, msg string) {
-	switch level {
-	case "error":
-		c.errorCount++
-		c.lastError = msg
-		// Pattern bucket: first 64 bytes of the message. Enough
-		// to coalesce the same error fired 100x into one bucket,
-		// small enough to keep the map bounded. UTF-8 safe: a
-		// naive byte-slice on a multi-byte rune (e.g. an emoji
-		// or CJK character) would split the rune and produce an
-		// invalid prefix that flush() can't render. Back off to
-		// the last rune boundary when the 64th byte lands in the
-		// middle of a sequence.
-		prefix := msg
-		if len(prefix) > 64 {
-			prefix = prefix[:64]
-			for len(prefix) > 0 {
-				if r, size := utf8.DecodeLastRuneInString(prefix); r == utf8.RuneError && size == 1 {
-					prefix = prefix[:len(prefix)-1]
-				} else {
-					break
-				}
-			}
-		}
-		c.patterns[prefix]++
-	case "warn":
-		c.warnCount++
-	case "info":
-		c.infoCount++
-	}
-}
-
-// explainStructuredLevel maps the string and numeric severity encodings used
-// by common guest loggers (Pino/Zap/Cloud Logging) to the CLI's three-level
-// vocabulary. If both fields are present, the most severe recognized value
-// wins.
-func explainStructuredLevel(fields ...json.RawMessage) string {
-	best := ""
-	for _, raw := range fields {
-		value := strings.TrimSpace(string(raw))
-		if value == "" || value == "null" {
-			continue
-		}
-		level := ""
-		if strings.HasPrefix(value, "\"") {
-			var text string
-			if json.Unmarshal([]byte(value), &text) == nil {
-				level = explainNormalizeLevel(text)
-			}
-		} else if number, err := strconv.Atoi(value); err == nil {
-			level = explainNormalizeNumericLevel(number)
-		}
-		if explainLevelRank(level) > explainLevelRank(best) {
-			best = level
-		}
-	}
-	return best
-}
-
-func explainNormalizeLevel(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "trace", "debug", "info", "notice":
-		return "info"
-	case "warn", "warning":
-		return "warn"
-	case "error", "err", "fatal", "critical", "alert", "emergency":
-		return "error"
-	default:
-		return ""
-	}
-}
-
-func explainNormalizeNumericLevel(value int) string {
-	switch {
-	case value >= 10 && value <= 30:
-		return "info"
-	case value == 40:
-		return "warn"
-	case value >= 50:
-		return "error"
-	default:
-		return ""
-	}
-}
-
-func explainLevelRank(level string) int {
-	switch level {
-	case "error":
-		return 2
-	case "warn":
-		return 1
-	case "info":
-		return 0
-	default:
-		return -1
-	}
-}
-
-// explainNestedStructuredLine handles a guest line that is itself a JSON log
-// object when the server did not attach its additive outer level field.
-func explainNestedStructuredLine(line string) (string, string) {
-	if !strings.HasPrefix(strings.TrimSpace(line), "{") {
-		return "", line
-	}
-	var record struct {
-		Level    json.RawMessage `json:"level"`
-		Severity json.RawMessage `json:"severity"`
-		Msg      string          `json:"msg"`
-		Message  string          `json:"message"`
-		Error    string          `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(line), &record); err != nil {
-		return "", line
-	}
-	level := explainStructuredLevel(record.Level, record.Severity)
-	if level == "" {
-		return "", line
-	}
-	for _, message := range []string{record.Msg, record.Message, record.Error} {
-		if message != "" {
-			return level, message
-		}
-	}
-	return level, line
-}
-
-// explainFallbackLevel gives raw guest output a useful, deterministic level
-// when no structured field was emitted. Explicit error/warning words win;
-// stderr is otherwise a warning and stdout (or an unknown stream) is info.
-func explainFallbackLevel(stream, msg string) string {
-	lower := strings.ToLower(msg)
-	for _, keyword := range []string{"fatal", "panic", "error", "failed", "failure"} {
-		if strings.Contains(lower, keyword) {
-			return "error"
-		}
-	}
-	for _, keyword := range []string{"warn", "warning"} {
-		if strings.Contains(lower, keyword) {
-			return "warn"
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(stream), "stderr") {
-		return "warn"
-	}
-	return "info"
-}
-
-// flush emits the 3-line summary on stream end. Output shape:
-//
-//	── explain: <slug> (deployment <id>) ──
-//	error:  <lastError or "none">
-//	levels: error=N warn=N info=N
-//	top:    pattern1 (Nx) | pattern2 (Nx) | pattern3 (Nx)
-//
-// The summary is printed on os.Stdout (not os.Stderr) so a
-// `gregale logs <slug> --explain > out.txt` captures both the
-// stream AND the summary. Error path (when there's no failure)
-// prints "(none)" so the script-friendly shape is preserved.
-func (c *explainCollector) flush(w io.Writer) {
-	_, _ = fmt.Fprintf(w, "\n── explain: %s", c.slug)
-	if c.deployment != "" {
-		_, _ = fmt.Fprintf(w, " (deployment %s)", c.deployment)
-	}
-	_, _ = fmt.Fprintln(w, " ──")
-	if c.lastError == "" {
-		_, _ = fmt.Fprintln(w, "error:  (none)")
-	} else {
-		_, _ = fmt.Fprintf(w, "error:  %s\n", c.lastError)
-	}
-	_, _ = fmt.Fprintf(w, "levels: error=%d warn=%d info=%d\n", c.errorCount, c.warnCount, c.infoCount)
-	top := topPatterns(c.patterns, 3)
-	if len(top) == 0 {
-		_, _ = fmt.Fprintln(w, "top:    (no error patterns)")
-	} else {
-		_, _ = fmt.Fprintf(w, "top:    %s\n", strings.Join(top, " | "))
-	}
-}
-
-// topPatterns returns the top-N error patterns by count, formatted
-// as "pattern (Nx)". Stable sort: ties resolve to alphabetical
-// order so the output is deterministic. Empty input → empty slice.
-func topPatterns(patterns map[string]int, n int) []string {
-	if len(patterns) == 0 {
-		return nil
-	}
-	type kv struct {
-		k string
-		v int
-	}
-	pairs := make([]kv, 0, len(patterns))
-	for k, v := range patterns {
-		pairs = append(pairs, kv{k, v})
-	}
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i].v != pairs[j].v {
-			return pairs[i].v > pairs[j].v
-		}
-		return pairs[i].k < pairs[j].k
-	})
-	if len(pairs) > n {
-		pairs = pairs[:n]
-	}
-	out := make([]string, len(pairs))
-	for i, p := range pairs {
-		out[i] = fmt.Sprintf("%s (N%d)", p.k, p.v)
-	}
-	return out
 }
 
 // streamDeployLogs opens GET /v1/deployments/{id}/logs?follow=1 and

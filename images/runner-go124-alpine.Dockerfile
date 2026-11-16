@@ -24,8 +24,12 @@ FROM mirror.gcr.io/library/golang:1.24-alpine@sha256:757779acac4af1b349a20f357c7
 # Issue #197 B3.6 (extension): mutable tag pinned via images/Dockerfile.lock.
 
 # Guest runtime user (uid 1000, spec §4.8).
+# zlib floor: CVE-2026-4738 (CRITICAL, fixed in Alpine zlib 1.4-r0; issue
+# #6727). The pinned base ships zlib 1.3.1-r2 and `apk upgrade` alone keeps
+# whatever the layer cache holds, as runner-node22.Dockerfile explains; the
+# explicit floor fails the build instead of shipping the vulnerable one.
 RUN apk upgrade --no-cache && \
-    apk add --no-cache bash && \
+    apk add --no-cache bash 'zlib>=1.4-r0' && \
     rm -rf /usr/local/go && \
     (id app 2>/dev/null || adduser -u 1000 -D app)
 

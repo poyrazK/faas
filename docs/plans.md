@@ -2,7 +2,7 @@
 
 <!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->
 
-Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at $0.05 per GB-RAM-hour on paid plans.
+These are the same limits the API enforces: this page is generated from them. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at $0.05 per GB-RAM-hour on paid plans.
 
 ## At a glance
 
@@ -28,7 +28,7 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 
 ## Developer environments
 
-Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync renews. The default lease is 24h; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from 1h up to the plan maximum.
+Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync, and a running watcher, renews. The default lease is 24h; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from 1h up to the plan maximum. Developer apps have their own budget, separate from your deployed apps; a developer database (`gregale dev --postgres`) counts toward the plan's managed PostgreSQL database limit together with your other databases. Free developer environments have 256 MB and no authentication, so they use production-shaped builds instead of watch mode.
 
 | Plan | Developer apps | Maximum lease |
 |---|---:|---:|

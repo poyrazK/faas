@@ -17,7 +17,7 @@ const columnsQuery = `SELECT n.nspname AS schema, c.relname AS relation, c.relki
  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
  JOIN pg_attribute a ON a.attrelid=c.oid
  LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
- WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p','v','m') AND c.relname NOT IN ('gregale_change_events','gregale_change_drops')
+ WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p','v','m') AND c.relname NOT IN ('gregale_change_events','gregale_change_drops','gregale_storage_uploads')
  AND a.attnum>0 AND NOT a.attisdropped AND has_schema_privilege(COALESCE($2::name,current_user),n.oid,'USAGE')
  AND has_column_privilege(COALESCE($2::name,current_user),c.oid,a.attnum,'SELECT')
  ORDER BY n.nspname,c.relname,a.attnum LIMIT ${limits.columns + 1}`
@@ -437,9 +437,11 @@ export function normalize(columns, types, relationships, schemas, functions = []
 
 export async function main(env = process.env) {
   const validators = process.argv.includes('--validators')
+  const numericMode = process.argv.includes('--lossless-numbers') ? 'lossless' : 'number'
+  if (numericMode === 'lossless' && (validators || process.argv.includes('--snapshot'))) throw new Error('Lossless mode applies to TypeScript types only')
   if (validators && process.argv.includes('--snapshot')) throw new Error('Validators and snapshots are separate outputs')
   const { snapshot, metadata } = await inspectBundle(env.DATABASE_URL, schemaNames(env.DATA_API_SCHEMAS), { validators })
-  const output = process.argv.includes('--snapshot') ? JSON.stringify({ version: 1, fingerprint: fingerprint(snapshot), snapshot }) + '\n' : validators ? generateValidators(snapshot, metadata) : generate(snapshot)
+  const output = process.argv.includes('--snapshot') ? JSON.stringify({ version: 1, fingerprint: fingerprint(snapshot), snapshot }) + '\n' : validators ? generateValidators(snapshot, metadata) : generate(snapshot, fingerprint(snapshot), { numericMode })
   if (Buffer.byteLength(output) > limits.outputBytes) throw new Error('Generated contract exceeds output limit')
   process.stdout.write(output)
 }
@@ -489,8 +491,11 @@ export function enrichOpenAPI(document, snapshot, schema) {
     const required = columns.filter(c => kind === 'Row' || kind === 'Insert' && c.insertable && !c.optional).map(c => c.name)
     return { type: 'object', properties, ...(required.length ? { required } : {}), ...(kind === 'Row' ? {} : { additionalProperties: false }) }
   }
-  for (const table of snapshot.tables.filter(t => t.schema === schema)) {
-    for (const kind of table.view ? ['Row'] : ['Row', 'Insert', 'Update']) document.definitions[`${schema}.${table.name}.${kind}`] = object(table.columns, kind)
+  for (const table of snapshot.tables) {
+    // An approved RPC can return a row from another exposed schema. Its row
+    // contract must be resolvable even though this profile has no path for it.
+    for (const kind of table.view || table.schema !== schema ? ['Row'] : ['Row', 'Insert', 'Update']) document.definitions[`${table.schema}.${table.name}.${kind}`] = object(table.columns, kind)
+    if (table.schema !== schema) continue
     const path = document.paths?.[`/${table.name}`]
     if (!path) continue
     for (const method of ['get', 'post', 'patch', 'delete']) {
@@ -502,7 +507,7 @@ export function enrichOpenAPI(document, snapshot, schema) {
           const value = ref(`${schema}.${table.name}.${method === 'post' ? 'Insert' : 'Update'}`)
           // Swagger 2 cannot express object-or-array unions; this extension
           // documents PostgREST bulk bodies without dropping single-row clients.
-          body.schema = { ...value, 'x-gregale-bulk-schema': { type: 'array', items: value } }
+          body.schema = method === 'post' ? { ...value, 'x-gregale-bulk-schema': { type: 'array', items: value } } : value
         }
       }
       for (const [status, response] of Object.entries(operation.responses ?? {})) if (/^2/.test(status) && status !== '204') response.schema = { type: 'array', items: ref(`${schema}.${table.name}.Row`) }

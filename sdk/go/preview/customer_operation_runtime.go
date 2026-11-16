@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	operationapi "github.com/poyrazK/faas/sdk/go/internal/api"
+	operationapi "github.com/gregale-dev/gregale-go/internal/api"
 )
 
 const (

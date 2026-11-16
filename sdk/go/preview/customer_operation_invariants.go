@@ -1,6 +1,6 @@
 package preview
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 type OperationBusinessInvariant = api.OperationBusinessInvariant
 type OperationBusinessInvariantPayload = api.OperationBusinessInvariantPayload

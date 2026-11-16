@@ -26,6 +26,8 @@ On an existing subscription an upgrade happens in place: the billing provider ch
 
 A downgrade applies at the end of the billing period, and is refused until your apps, databases and stored objects fit the lower plan. Downgrading to Free cancels the subscription at the end of the period.
 
+If your plan ends up lower without that check (a subscription that ends or lapses, or a plan change at the provider), apps that do not fit it are parked and do not wake: apps past the plan's deployed-app count (your oldest apps are kept) and apps whose RAM is above the plan's. You get an email naming them. Each wakes again within a minute once it fits: delete apps, lower their RAM, or upgrade.
+
 ### Cancel and resume
 
 A cancelled subscription (`gregale billing cancel`, a downgrade to Free, or a deletion request) keeps its plan until the end of the billing period and then ends. A scheduled downgrade likewise applies at the end of the period. `GET /v1/billing/status` shows what is scheduled (`subscription_ends_at`, `scheduled_plan`, `scheduled_plan_at`), and so does the dashboard billing page.
@@ -45,14 +47,13 @@ allowance covered is not billed again; after an upgrade, overage already
 billed stays billed. The month's managed PostgreSQL charge is still at most
 the current plan's ceiling, and managed PostgreSQL stops at the current
 plan's limits. A `min_instances` floor is billed like the instances it keeps
-warm, sidecars included, and stops when the spend cap is reached
-(ADR-20261103131742 amendment 2).
+warm, sidecars included, and stops when the spend cap is reached.
 
 Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap need an admin credential and MFA, and a dashboard session also needs a recent step-up: the portal link is a signed-in session that can cancel the subscription and replace the card.
 
 ## Billing email
 
-The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it, so give the organization its own address:
+The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it; until then the organization's quota and billing mail goes to its owner. Give the organization its own address:
 
 ```bash
 curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
@@ -63,6 +64,12 @@ curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
 Only the owner can change it, with MFA and a recent step-up. When the organization already has a subscription, its billing customer moves to the new address first. An address that already pays for another Gregale account or organization is refused with `409 billing_email_in_use`, and so is an upgrade from an organization whose billing email is in use that way. While a member's email is the organization's billing email, that member cannot be removed or delete their account (`409 billing_contact_member`); move the billing email first.
 
 When you change your sign-in email, your own billing customer moves to the new address, and so does the billing email of each organization that billed to your previous address. If the billing provider refuses a move (for example, the new address already pays for another account), that billing email stays as it was and the new address gets an email naming what to update.
+
+## Failed payments
+
+When a payment fails, the account goes past due and you get an email. Your apps, databases and storage keep running, but new deploys are blocked until the payment goes through. Pay from the billing portal (`/dashboard/billing`) to end it.
+
+If the payment is still unpaid seven days later, the account moves to the Free plan and you get an email saying so. It stays active: nothing is suspended or deleted because of the failed payment. From then on the Free plan's limits apply, as they do to any Free account, including the monthly Free quota stop. The unpaid balance stays on the account. Paying it, or starting a new paid subscription, clears it and returns you to a paid plan.
 
 ## Spend cap
 
@@ -110,7 +117,11 @@ When the month's overage reaches the cap:
   policy records the occurrences it missed;
 - object storage, which is billed once the month closes, is billed only up
   to what the cap still allows after the month's compute and egress overage.
-  Object storage keeps serving within its plan limits.
+  Object storage keeps serving within its plan limits;
+- managed PostgreSQL overage (compute, storage and database egress) counts
+  toward the cap too and is billed only up to it. At the cap your databases
+  stop (`hold: compute_ceiling`) like your apps; with a cap of 0 they stop at
+  once. Their data is kept.
 
 When the cap first stops your workloads in a month, Gregale emails the
 account with the cap and the month's overage.
@@ -123,7 +134,7 @@ Hobby then half on Pro includes 600 GB-h. The daily overage warning starts
 above that allowance too. A move to Free is the exception: Free stops
 workloads at its own allowance. If a paid plan ends during a month, that
 allowance counts usage from the day you return to Free; usage on the paid
-plan was billed on its terms (ADR-20261031090658).
+plan was billed on its terms.
 
 Overage is billed hour by hour against the allowance in force at the time,
 and the spend cap counts exactly that. After a downgrade, usage your larger
@@ -131,7 +142,7 @@ allowance already covered is never billed and does not count toward the cap;
 after an upgrade, overage already billed stays billed and keeps counting.
 Hours you spent on the Free plan are never billed, also when you subscribe
 again later. When an organization is deleted, the usage it ran before the
-deletion is still billed on its subscription (ADR-20261101143527).
+deletion is still billed on its subscription.
 
 An organization that owns its resources is billed apart from its members and
 has its own cap, with the same defaults. Its owner sets it with
@@ -144,11 +155,14 @@ organization's cap, not at the cap of the member who created them.
 Each plan includes a monthly allowance of application egress: Free 10 GiB,
 Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB. By default every plan stops at
 it: once the month's egress reaches the allowance, the account's apps are
-parked (`quota_exceeded_egress`) until the month ends or the plan grows
-(ADR-20261104090000).
+parked (`quota_exceeded_egress`) until the month ends, the plan grows or, on a
+paid plan, egress overage is turned on. New deploys wait until then too. Your
+managed PostgreSQL databases and buckets keep running: databases have their
+own egress allowance. Gregale emails the account once a day from 80% of the
+allowance, and again when the apps are parked. The Free plan's compute
+allowance works the same way.
 
-A paid account can instead elect to pay for egress above the allowance
-(ADR-20261104204500):
+A paid account can instead elect to pay for egress above the allowance:
 
 ```bash
 gregale billing egress-overage          # show the election
@@ -166,17 +180,16 @@ allowance is billed at $0.03 per GiB (the response's
 `price_millicents_per_gib`) and counts toward the spend cap like compute
 overage. Each hour's egress counts against the allowance of the plan held in
 that hour, so a later plan change does not re-price it, and hours on Free are
-never billed, also after an upgrade (ADR-20261103131742 amendment 2). While egress billing is not
+never billed, also after an upgrade. While egress billing is not
 live (`billing: off`), the allowance still holds and the saved election takes
 effect when billing starts. Only egress you are billed for counts toward the spend
-cap: egress in hours the election does not cover, or on Free, never does
-(ADR-20261107105126).
+cap: egress in hours the election does not cover, or on Free, never does.
 
 Only egress sent while the election is on is billed: egress above the
 allowance before you turned it on is never billed, and turning it off keeps
 the hours it covered billable, so turning it off cannot undo egress already
-sent. Turning it back on keeps the original start. The hour in which you turn
-it on is not billed.
+sent. Turning it back on starts a new window, so the hours it was off are
+never billed. The hour in which you turn it on is not billed.
 
 An organization that owns its resources elects for itself:
 `PUT /v1/orgs/{slug}/egress-overage` (owner) or
@@ -198,14 +211,14 @@ as "Gregale credit".
 - Credit waits for a later renewal while your subscription is set to cancel or
   change plan at the period end, or while another discount is on it.
 - A first subscription is charged in full; credit applies from its first
-  renewal. Credit is never refunded to your card (ADR-20261104212028).
+  renewal. Credit is never refunded to your card.
 
 ## Retained usage costs and forecasts
 
 This financial visibility preview reports supported usage costs and budget
 policies. Enabled monitored notification policies send spending alerts; disabled
 drafts do not. Monitored budgets, including preview stopping, are generally
-available; strict budgets are in beta (ADR-20261107160000); see their
+available; strict budgets are in beta; see their
 sections below.
 Coverage and unavailable bill components are reported explicitly.
 
@@ -241,7 +254,7 @@ All amounts use integer millicents (1,000 millicents per cent). One shared
 account allowance applies to each usage meter for the month. When plans change,
 the compute allowance is what the provider pusher applies hour by hour: each
 hour above the grant in force for it, so the ledger's net compute equals the
-billed overage (ADR-20261031090658); other meters keep the largest recorded
+billed overage; other meters keep the largest recorded
 grant. Its quantities are shared proportionally across price versions. Within each version, net cost and
 allowance value are allocated by workload quantity using stable largest-remainder
 rounding. Allocated amounts sum exactly to the meter totals. Shadow and disabled
@@ -252,8 +265,7 @@ once as retained evidence and once as a per-minute usage record, in one
 transaction. Gregale bills from the per-minute records today and compares
 every billed hour with the retained evidence; it moves billing to the
 retained evidence once a closed month and a sandbox month show both agree,
-and each billed hour records which of the two it was billed from
-(ADR-20261107105126). Hours on Free are never billed and never count toward
+and each billed hour records which of the two it was billed from. Hours on Free are never billed and never count toward
 a [spend cap](#spend-cap).
 
 Coverage reports the retention start, complete sampling minutes, freshness, and
@@ -405,8 +417,7 @@ it, or delete it.
 
 ### Organization budgets
 
-A budget covers what its owner pays for
-([ADR 20261031211500](adr/20261031211500-organization-budgets.md)). An
+A budget covers what its owner pays for. An
 organization that owns its resources pays for its apps, projects and
 environments, so it holds their costs and budgets, not the members who created
 them. A member's budget cannot name an app the organization pays for, and its
@@ -432,8 +443,7 @@ resources cannot have budgets: its usage is billed to its members.
 
 A budget's threshold alerts always go to the account email. They can also go to
 up to five of the account's notification channels (the same Slack, PagerDuty
-and email channels alert rules use;
-[ADR 20261019193500](adr/20261019193500-budget-alert-channels.md)):
+and email channels alert rules use):
 
 ```bash
 gregale alert channel list                                         # find channel IDs
@@ -474,8 +484,7 @@ starts a new revision, so a still-projected overrun can alert again.
 A monitored account budget can include object storage by adding
 `object_storage` to `meters`, for example `["compute", "object_storage"]`.
 Object storage cannot be selected on app, job, project or environment budgets
-(buckets carry no such attribution), or on strict budgets
-([ADR 20261020160000](adr/20261020160000-object-storage-in-budgets.md)).
+(buckets carry no such attribution), or on strict budgets.
 
 The amount is the live object-storage estimate: this month's stored
 GiB-months, requests and egress, priced with the same rates and plan
@@ -754,8 +763,7 @@ Strict budgets, which hold an app's compute when it reaches a funded limit,
 are in beta and not released to accounts yet. Creating or enabling one returns
 422 `financial_budget_activation_unavailable` ("Strict budgets not released").
 
-A strict budget covers only what its owner pays for
-([ADR 20261107160000](adr/20261107160000-budgets-ga-and-strict-billing-subject.md)).
+A strict budget covers only what its owner pays for.
 An app that an organization pays for is never funded, held or stopped by the
 strict budget of the member who created it, and it does not have to be idle
 for that member's account budget to start. Organizations cannot have strict

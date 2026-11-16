@@ -88,16 +88,14 @@ before running `after_restore`, but cannot refresh application-held values.
 
 The Go, Node and Python SDKs serve both hooks for you. They answer only
 loopback `POST`s with the marker header, run your callbacks in order within
-1.5 s (under the 2-second limit), and run overlapping deliveries once
-([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)).
+1.5 s (under the 2-second limit), and run overlapping deliveries once.
 Each has a helper that closes a pool's idle connections on both hooks. Those
 sockets point at connections the database closed while the instance was
 parked or frozen; closing them is local and fast, and the pool opens fresh
 ones on demand. Gregale itself resets an app's outbound connections before it
 takes a snapshot and again on a restore, so a restored instance's inherited
 sockets fail at once instead of hanging, and the database frees the
-snapshot's sessions immediately
-([ADR-20261110160000](adr/20261110160000-reset-connections-around-captures-and-restores.md)). A full reconnect inside `after_restore` can take longer than
+snapshot's sessions immediately. A full reconnect inside `after_restore` can take longer than
 the limit.
 
 ```go
@@ -201,10 +199,45 @@ whole idle timeout and must not resume with them delayed, or `between_requests`
 for a request-driven app that does no work between requests. Worker, service
 and job execution modes accept only `never`, because they never idle out.
 
-## Warm snapshots (opt-in, Pro and Scale)
+## Primed init snapshots
 
 By default every wake restores the snapshot Gregale takes right after your app
-becomes ready, before it has served a request. Pro and Scale apps can opt in to
+becomes ready on deploy. Just before that capture, Gregale sends up to 20 `GET`
+requests (at most 5 seconds) to your app's HTTP health check path, or to `/`
+when it declares none, so the
+snapshot holds a runtime that has already loaded, compiled and connected for a
+request. JIT runtimes such as the JVM gain the most: in our benchmark the first
+request after a wake was 0.5–0.8 s faster on Java and within noise on Go, Node
+and Python. These requests reach your app directly, not through the public
+edge, so they are not billed or counted in request analytics. A failed burst
+never fails the deploy: Gregale takes the snapshot unprimed.
+
+A health check that only returns `200` warms the runtime and server but not
+your handlers. To warm the code a real request runs, name a path that does,
+in `gregale.yaml`:
+
+```yaml
+lifecycle:
+  warmup:
+    path: /internal/warmup
+```
+
+The warm-up path is used instead of the health check and applies from the next
+deploy. It must be safe to call repeatedly, and it can be set for gRPC, HTTP/2 and
+raw-TCP apps, which are otherwise not primed. An empty `path`
+clears it.
+
+A wake can find no usable snapshot on its node, for example after the node
+dropped it from its cache. That wake cold-boots, and when the instance later
+parks Gregale does not snapshot it, because its memory now holds what its
+requests left behind. Gregale boots, primes and snapshots a fresh instance of
+the same deployment on that node in the background instead, unbilled, so
+every restore still starts from your app's startup state. Until that snapshot
+is ready, wakes on that node cold-boot.
+
+## Warm snapshots (opt-in, Pro and Scale)
+
+Pro and Scale apps can opt in to
 a second, warm snapshot, taken when an instance parks after it has served a few
 requests (5 by default, `--warm-snapshot-min-requests`) and been ready for a
 while (2 s, `--warm-snapshot-min-ms`). Wakes then skip your framework's warm-up
@@ -221,8 +254,7 @@ files under `/tmp`, which lives in memory. Every woken instance starts from
 that same state, and anything written after the capture is lost at each park.
 Opt in only when your app keeps no per-user or per-request state in memory or
 `/tmp`. Apps created before 2026-11-10 on Pro or Scale were opted in by
-default and keep that setting; `--no-warm-snapshot` turns it off
-([ADR-20261110180000](adr/20261110180000-warm-snapshots-are-opt-in.md)).
+default and keep that setting; `--no-warm-snapshot` turns it off.
 
 ## Opting out: keep N instances warm (Pro, Scale)
 

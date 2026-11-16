@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -14,12 +15,13 @@ import (
 // Integration labels are types, not arbitrary receiver names. Refuse new names
 // until reviewed rather than exporting untrusted free-form infrastructure labels.
 func knownNotificationIntegration(name string) bool {
-	switch name {
-	case "email", "pushover", "slack", "webhook", "pagerduty", "opsgenie", "victorops", "wechat", "telegram", "discord", "webex", "sns", "msteams", "msteamsv2", "rocketchat", "jira":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(NotificationIntegrationNames(), name)
+}
+
+// NotificationIntegrationNames is the reviewed transport vocabulary shared by
+// operator response validation. Destinations never become integration names.
+func NotificationIntegrationNames() []string {
+	return []string{"email", "pushover", "slack", "webhook", "pagerduty", "opsgenie", "victorops", "wechat", "telegram", "discord", "webex", "sns", "msteams", "msteamsv2", "rocketchat", "jira"}
 }
 
 func notificationIntegrationMap(rows []promql.VectorSample, err error) (map[string]promql.VectorSample, error) {

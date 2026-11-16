@@ -398,7 +398,11 @@ type VMInstanceStat struct {
 	// the vmmd side; today the field stays nil end-to-end
 	// (the poller stamps RX=Unknown, the meterd sampler
 	// writes 0 to net_rx_bytes — safe under additive-merge).
-	NetRxBytes       *int64
+	NetRxBytes *int64
+	// InternalTxBytes (billing review R8-2) is the cumulative part of
+	// NetTxBytes the guest sent to internal destinations; nil until vmmd's
+	// per-namespace poll has read the instance.
+	InternalTxBytes  *int64
 	InflightRequests int64
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
@@ -553,6 +557,10 @@ type AppSpec struct {
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// RoutedPortRawTCP marks TCP readiness on a declared raw TCP listener;
+	// vmmd then runs no plan-default HTTP liveness probe (ADR-079
+	// amendment 1).
+	RoutedPortRawTCP bool
 	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
 	ImageHealthcheckRequired bool
 	// ReadinessProbeJSON carries the optional continuous primary-app
@@ -644,6 +652,10 @@ type SnapshotRef struct {
 	// is held as a string so SnapshotRef stays comparable.
 	CaptureID string
 	SealedKey string
+	// SealedCache marks a sealed park or warm snapshot (ADR-20261110210000
+	// slice 3d-3): unlike a crash capture it is cache, so vmmd cold boots
+	// when it cannot restore it.
+	SealedCache bool
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -654,6 +666,11 @@ type SnapshotBytes struct {
 	StoredBytes  int64
 	Capture      runtimeadmission.SnapshotCapture
 	CaptureToken string
+	// SealedKey is the capture key of a snapshot vmmd sealed at the source
+	// (ADR-20261110210000 slice 3d-3), sealed to the capture recipient and
+	// bound to SealCaptureID. Both are empty for a plaintext capture.
+	SealedKey     []byte
+	SealCaptureID string
 }
 
 // WakeOutcome is the decoded result of a vmmd wake. Method reports what vmmd
@@ -673,6 +690,10 @@ type WakeOutcome struct {
 	// EnvironmentBranchContained: the runtime installed the contained
 	// environment branch profile (ADR-20261031193635).
 	EnvironmentBranchContained bool
+	// BaseScanGrace: vmmd booted this instance only inside the grace that
+	// keeps apps already serving on a base waking after a scan found a
+	// fixable CRITICAL in it (api.BaseScanCriticalBootGrace).
+	BaseScanGrace bool
 	// Populated only by CreateAdmittedRuntime after exact receipt validation.
 	RuntimeAdmissionReceipt *runtimeadmission.Receipt
 
@@ -885,7 +906,7 @@ func sealedSecretsToProto(entries []fcvm.SealedEnvEntry) []*vmmdpb.SealedSecret 
 	}
 	out := make([]*vmmdpb.SealedSecret, 0, len(entries))
 	for _, entry := range entries {
-		out = append(out, &vmmdpb.SealedSecret{Key: entry.Key, Ciphertext: entry.Ciphertext, SourceKey: entry.SourceKey})
+		out = append(out, &vmmdpb.SealedSecret{Key: entry.Key, Ciphertext: entry.Ciphertext, SourceKey: entry.SourceKey, SecretScope: entry.Scope})
 	}
 	return out
 }
@@ -1199,6 +1220,7 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 			MemBytes:          snap.MemBytes,
 			CaptureId:         snap.CaptureID,
 			SealedKey:         []byte(snap.SealedKey),
+			SealedCache:       snap.SealedCache,
 		},
 		WakeId:     fields.WakeID,
 		KeepPaused: keepPaused,
@@ -1236,6 +1258,36 @@ func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath,
 		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
 	}
 	return snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
+}
+
+// PauseAndSnapshotSealed is PauseAndSnapshot for a snapshot sealed at the
+// source (ADR-20261110210000 slice 3d-3): vmmd publishes only encrypted twins
+// and returns the capture key sealed to the capture recipient. captureID is
+// the capture token of storageKey.
+func (c *VMMClient) PauseAndSnapshotSealed(ctx context.Context, instance, storageKey, vmstateStorageKey string, beforeCheckpoint bool, captureID string) (SnapshotBytes, error) {
+	resp, err := c.cli.PauseAndSnapshot(ctx, &vmmdpb.PauseAndSnapshotRequest{
+		Instance:          instance,
+		StorageKey:        storageKey,
+		VmstateStorageKey: vmstateStorageKey,
+		BeforeCheckpoint:  beforeCheckpoint,
+		SealCaptureId:     captureID,
+	})
+	if err != nil {
+		return SnapshotBytes{}, liftErr(err)
+	}
+	if beforeCheckpoint && !resp.GetBeforeCheckpointCompleted() {
+		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
+	}
+	if len(resp.GetSealedKey()) == 0 {
+		// An older vmmd ignored seal_capture_id and published plaintext.
+		return SnapshotBytes{}, errors.New("sched: vmmd did not seal the snapshot")
+	}
+	b, err := snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
+	if err != nil {
+		return SnapshotBytes{}, err
+	}
+	b.SealedKey, b.SealCaptureID = resp.GetSealedKey(), captureID
+	return b, nil
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) wraps the new
@@ -1905,6 +1957,10 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		b := v.GetValue()
 		row.NetRxBytes = &b
 	}
+	if v := in.GetInternalTxBytes(); v != nil {
+		b := v.GetValue()
+		row.InternalTxBytes = &b
+	}
 	if v := in.GetRequestCountTotal(); v != nil {
 		c := v.GetValue()
 		row.RequestCountTotal = &c
@@ -1919,9 +1975,10 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 	sealed := make([]*vmmdpb.SealedSecret, 0, len(a.SealedEnv))
 	for _, e := range a.SealedEnv {
 		sealed = append(sealed, &vmmdpb.SealedSecret{
-			Key:        e.Key,
-			Ciphertext: e.Ciphertext,
-			SourceKey:  e.SourceKey,
+			Key:         e.Key,
+			Ciphertext:  e.Ciphertext,
+			SourceKey:   e.SourceKey,
+			SecretScope: e.Scope,
 		})
 	}
 	// Issue #395 / ADR-045: plaintext api_env mirror.
@@ -1951,9 +2008,10 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		sealedSidecarSecrets := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedSecrets))
 		for _, entry := range sc.SealedSecrets {
 			sealedSidecarSecrets = append(sealedSidecarSecrets, &vmmdpb.SealedSecret{
-				Key:        entry.Key,
-				Ciphertext: entry.Ciphertext,
-				SourceKey:  entry.SourceKey,
+				Key:         entry.Key,
+				Ciphertext:  entry.Ciphertext,
+				SourceKey:   entry.SourceKey,
+				SecretScope: entry.Scope,
 			})
 		}
 		dependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(sc.DependsOn))
@@ -2030,6 +2088,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		HealthcheckPath:          a.HealthcheckPath,
 		HealthcheckGrpc:          a.HealthcheckGRPC,
 		HealthcheckGrpcService:   a.HealthcheckGRPCService,
+		RoutedPortRawTcp:         a.RoutedPortRawTCP,
 		ImageHealthcheckRequired: a.ImageHealthcheckRequired,
 		ReadinessProbeJson:       a.ReadinessProbeJSON,
 		LivenessProbeJson:        a.LivenessProbeJSON,
@@ -2124,6 +2183,7 @@ func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 		Method:                     r.GetMethod(),
 		RequestedMethod:            r.GetRequestedMethod(),
 		RestoreFallbackReason:      r.GetRestoreFallbackReason(),
+		BaseScanGrace:              r.GetBaseScanGrace(),
 	}
 	// ADR-051 PR-D: decode the optional characterization struct
 	// back into pkg/api.CharacterizationReport. Empty struct =

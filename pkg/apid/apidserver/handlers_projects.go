@@ -399,8 +399,18 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.FromEnvironment != "" {
+		if problem := s.protectedEnvironmentChangeProblem(r, acct, project.ID, req.FromEnvironment, "copy a protected project environment"); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	if req.Full {
 		api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
+		return
+	}
+	commitBudget, answered := s.chargeEnvironmentClone(w, r, acct, project, req.FromEnvironment, false)
+	if answered {
 		return
 	}
 	environment, clone, err := s.persistProjectEnvironment(r, acct, project, req)
@@ -408,6 +418,7 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		writeCreateProjectEnvironmentError(w, project.Slug, req, acct, err)
 		return
 	}
+	commitBudget()
 	s.audit.Emit(r.Context(), "project.environment.created", &acct.ID, map[string]any{
 		"project_id": project.ID, "project_slug": project.Slug,
 		"environment_id": environment.ID, "environment_slug": environment.Slug,

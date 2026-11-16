@@ -2,6 +2,7 @@ from typing import Literal
 
 UpdateAlertRuleRequestMetric = Literal[
     "account_spend_eur",
+    "ai_budget_alerts",
     "api_up",
     "cert_expiry_seconds",
     "cert_issuance_failed",
@@ -86,6 +87,7 @@ UpdateAlertRuleRequestMetric = Literal[
 
 UPDATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[UpdateAlertRuleRequestMetric] = {
     "account_spend_eur",
+    "ai_budget_alerts",
     "api_up",
     "cert_expiry_seconds",
     "cert_issuance_failed",

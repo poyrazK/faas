@@ -3,6 +3,7 @@ from typing import Literal
 RequestAnalyticsTelemetryGap = Literal[
     "telemetry_coverage_missing",
     "telemetry_coverage_stale",
+    "telemetry_coverage_unknown",
     "telemetry_disabled",
     "telemetry_ingestion_pending",
     "telemetry_sampled",
@@ -12,6 +13,7 @@ RequestAnalyticsTelemetryGap = Literal[
 REQUEST_ANALYTICS_TELEMETRY_GAP_VALUES: set[RequestAnalyticsTelemetryGap] = {
     "telemetry_coverage_missing",
     "telemetry_coverage_stale",
+    "telemetry_coverage_unknown",
     "telemetry_disabled",
     "telemetry_ingestion_pending",
     "telemetry_sampled",

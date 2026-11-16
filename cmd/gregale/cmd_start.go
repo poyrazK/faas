@@ -174,15 +174,7 @@ func (r *startRunner) authenticate() int {
 		return printErr("Login required", errors.New("sign in with gregale login before starting a deployment"))
 	}
 	client := NewClient(apiBase(), "")
-	code, err := client.MintCliAuthCode(r.ctx)
-	if err != nil {
-		return printErr("Could not start login", err)
-	}
-	_, _ = fmt.Fprintf(osStdout, "Approve this session in your browser with code %s:\n  %s\n", code.Code, code.URL)
-	if err := openBrowser(code.URL); err != nil {
-		PrintWarn(osStdout, "Open the link above manually: %v", err)
-	}
-	if result := waitForApproval(r.ctx, client, code); result != 0 {
+	if result := browserLogin(r.ctx, client, false); result != 0 {
 		if r.ctx.Err() != nil {
 			return 130
 		}
