@@ -176,6 +176,7 @@ type MemStore struct {
 	appProtection               map[string]AppProtection
 	appProtectionObjects        map[string]map[AppProtectionItem]AppProtectionObject
 	appProtectionLeases         map[string]appProtectionLease
+	appProtectionHealthProbeAt  map[string]time.Time
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner

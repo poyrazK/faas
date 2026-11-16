@@ -28735,10 +28735,15 @@ DELETE FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc
 -- Every enabled check on a live public app, with its app slug and last run
 -- time; the runner decides which are due. The public edge does not serve an
 -- internal app, so its checks wait until it is public (ADR-20261031144636).
+-- A protection-baseline health check is probed by apid, unbilled, not here
+-- (ADR-20261116120000 §3).
 SELECT c.*, a.slug AS app_slug,
  (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
 FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
 WHERE c.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal'
+  AND NOT EXISTS (SELECT 1 FROM app_protection_objects o
+                   WHERE o.app_id = c.app_id AND o.item = 'health_check'
+                     AND o.status = 'created' AND o.object_id = c.id::text)
 ORDER BY c.id;
 
 -- name: InsertSyntheticCheckRun :exec

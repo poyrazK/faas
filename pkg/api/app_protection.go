@@ -38,6 +38,11 @@ const (
 	AppProtectionSkipNeedsSLO = "needs_slo"
 	// The alert needs the email channel, which was not created.
 	AppProtectionSkipNeedsChannel = "needs_channel"
+	// The health alert needs the health check, which was not created.
+	AppProtectionSkipNeedsCheck = "needs_check"
+	// The platform's unbilled health probes are not running on this
+	// deployment, so a baseline health check would never run.
+	AppProtectionSkipProbesUnavailable = "probes_unavailable"
 )
 
 // ProtectionBaselineItem describes one object of the protection baseline:

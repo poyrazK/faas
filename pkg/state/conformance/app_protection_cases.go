@@ -101,6 +101,86 @@ func testAppProtectionEnrollmentAndObjects(t *testing.T, fx *Fixture) {
 	}
 }
 
+// testProtectionHealthProbeClaims pins ADR-20261116120000 §3: the baseline
+// health check leaves meterd's runnable list and is claimed by apid instead,
+// once per interval across replicas; a paused check or protection off is
+// not claimed; a customer check of the same app stays with meterd.
+func testProtectionHealthProbeClaims(t *testing.T, fx *Fixture) {
+	store, ok := fx.Store.(state.AppProtectionStore)
+	checks, ok2 := fx.Store.(state.SyntheticCheckStore)
+	runs, ok3 := fx.Store.(state.SyntheticRunStore)
+	if !ok || !ok2 || !ok3 {
+		t.Skip("store has no app protection or synthetic checks")
+	}
+	appID := fx.App.ID
+	baseline, err := checks.CreateSyntheticCheck(fx.Ctx, state.SyntheticCheck{AccountID: fx.Account.ID, AppID: appID, Name: "health",
+		Method: "GET", Path: "/", TimeoutMS: 10000, IntervalSeconds: 3600}, 5)
+	if err != nil {
+		t.Fatalf("CreateSyntheticCheck: %v", err)
+	}
+	own, err := checks.CreateSyntheticCheck(fx.Ctx, state.SyntheticCheck{AccountID: fx.Account.ID, AppID: appID, Name: "mine",
+		Method: "GET", Path: "/api", TimeoutMS: 10000, IntervalSeconds: 300}, 5)
+	if err != nil {
+		t.Fatalf("CreateSyntheticCheck: %v", err)
+	}
+	runnable := func() map[string]bool {
+		t.Helper()
+		list, err := runs.ListRunnableSyntheticChecks(fx.Ctx)
+		if err != nil {
+			t.Fatalf("ListRunnableSyntheticChecks: %v", err)
+		}
+		out := map[string]bool{}
+		for _, c := range list {
+			out[c.ID] = true
+		}
+		return out
+	}
+	claim := func(label string, want bool) {
+		t.Helper()
+		got, err := store.ClaimProtectionHealthProbes(fx.Ctx, 100)
+		if err != nil {
+			t.Fatalf("%s: ClaimProtectionHealthProbes: %v", label, err)
+		}
+		found := false
+		for _, p := range got {
+			if p.AppID == appID {
+				found = true
+				if p.CheckID != baseline.ID || p.AccountID != fx.Account.ID {
+					t.Fatalf("%s: claimed %+v; want the baseline check", label, p)
+				}
+			}
+		}
+		if found != want {
+			t.Fatalf("%s: claimed = %v; want %v (%+v)", label, found, want, got)
+		}
+	}
+
+	if r := runnable(); !r[baseline.ID] || !r[own.ID] {
+		t.Fatalf("before enrollment, runnable = %v; want both checks", r)
+	}
+	claim("not enrolled", false)
+	if _, err := store.SetAppProtection(fx.Ctx, appID, fx.Account.ID, state.AppProtectionOn); err != nil {
+		t.Fatal(err)
+	}
+	claim("enrolled, no health record", false)
+	if err := store.RecordAppProtectionObject(fx.Ctx, state.AppProtectionObject{AppID: appID, Item: state.AppProtectionHealthCheck, ObjectID: baseline.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if r := runnable(); r[baseline.ID] || !r[own.ID] {
+		t.Fatalf("after recording, runnable = %v; want only the customer's check", r)
+	}
+	claim("due", true)
+	claim("claimed within the interval", false)
+
+	if _, err := store.SetAppProtection(fx.Ctx, appID, fx.Account.ID, state.AppProtectionOff); err != nil {
+		t.Fatal(err)
+	}
+	claim("protection off", false)
+	if claimed, err := store.ClaimProtectionHealthProbes(fx.Ctx, 0); err != nil || len(claimed) != 0 {
+		t.Fatalf("Claim(limit 0) = %+v, %v", claimed, err)
+	}
+}
+
 // testAppProtectionReconcileClaims pins the reconciler schedule: only
 // enrolled ('on') apps that are due are claimed; a claim leases the app
 // until it is finished or the lease runs out; finishing schedules the next

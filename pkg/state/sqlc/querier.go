@@ -4325,6 +4325,8 @@ type Querier interface {
 	// Every enabled check on a live public app, with its app slug and last run
 	// time; the runner decides which are due. The public edge does not serve an
 	// internal app, so its checks wait until it is public (ADR-20261031144636).
+	// A protection-baseline health check is probed by apid, unbilled, not here
+	// (ADR-20261116120000 §3).
 	ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error)
 	// ADR-20261114182830: every runtime release, and whether a compute node must
 	// keep its base cached: a deployment that is not failed or cancelled is

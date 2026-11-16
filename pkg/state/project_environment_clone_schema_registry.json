@@ -21981,6 +21981,7 @@
       "account_id",
       "app_id",
       "created_at",
+      "health_probe_at",
       "lease_until",
       "next_reconcile_at",
       "state",

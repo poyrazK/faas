@@ -23,15 +23,19 @@ const (
 	protectionCapabilityGates    = "release-gates"
 )
 
+// protectionCapabilityChecks releases synthetic checks.
+const protectionCapabilityChecks = "synthetic-checks"
+
 // protectionReconciledItems are the items this reconciler creates, in
-// dependency order. The health check and its alert come with the unbilled
-// probe (ADR-20261116120000 slice 3) and stay pending until then.
+// dependency order.
 var protectionReconciledItems = []state.AppProtectionItem{
 	state.AppProtectionAvailabilitySLO,
 	state.AppProtectionLatencySLO,
+	state.AppProtectionHealthCheck,
 	state.AppProtectionEmailChannel,
 	state.AppProtectionAvailabilityBurnAlert,
 	state.AppProtectionLatencyBurnAlert,
+	state.AppProtectionHealthAlert,
 	state.AppProtectionAvailabilityGate,
 }
 
@@ -232,6 +236,10 @@ func (s *server) protectionCreateItem(ctx context.Context, acct state.Account, a
 			LatencyThresholdMS: api.ProtectionBaselineLatencyThresholdMS,
 			ObjectivePct:       api.ProtectionBaselineLatencyObjectivePct, WindowDays: api.ProtectionBaselineSLOWindowDays,
 		})
+	case state.AppProtectionHealthCheck:
+		return s.protectionHealthCheck(ctx, acct, app)
+	case state.AppProtectionHealthAlert:
+		return s.protectionHealthAlert(ctx, acct, app, created[state.AppProtectionHealthCheck], created[state.AppProtectionEmailChannel])
 	case state.AppProtectionEmailChannel:
 		return s.protectionEmailChannel(ctx, acct, app)
 	case state.AppProtectionAvailabilityBurnAlert:
@@ -337,8 +345,58 @@ func (s *server) protectionEmailChannel(ctx context.Context, acct state.Account,
 	return protectionCreated(row.ID, map[string]any{"name": row.Name, "kind": row.Kind}), nil
 }
 
-// protectionBurnAlert mirrors createAlertRule for a channel-only fast-burn
-// rule on one baseline SLO.
+// protectionHealthCheck mirrors createSyntheticCheck for the hourly
+// baseline check on the app's health path. apid probes it through the
+// route-probe challenge, unbilled (§3), so it needs the route prober.
+func (s *server) protectionHealthCheck(ctx context.Context, acct state.Account, app state.App) (protectionOutcome, error) {
+	if !acct.Plan.PerAppMetricsAllowed() {
+		return protectionSkipped(api.AppProtectionSkipPlan), nil
+	}
+	if !s.protectionCapabilityOn(protectionCapabilityChecks, acct, app) {
+		return protectionSkipped(api.AppProtectionSkipNotReleased), nil
+	}
+	if !s.protectionHealthProbesAvailable() {
+		return protectionSkipped(api.AppProtectionSkipProbesUnavailable), nil
+	}
+	store, ok := s.store.(state.SyntheticCheckStore)
+	if !ok {
+		return protectionOutcome{}, errors.New("synthetic checks are unavailable")
+	}
+	path := app.Manifest.HealthPath
+	if path == "" {
+		path = "/"
+	}
+	req, prob := api.NormalizeCreateSyntheticCheck(api.CreateSyntheticCheckRequest{
+		Name: api.ProtectionBaselineHealthCheckName, Method: "GET", Path: path,
+		IntervalSeconds: api.ProtectionBaselineHealthCheckIntervalSeconds,
+	})
+	if prob != nil {
+		return protectionOutcome{}, fmt.Errorf("baseline health check is invalid: %s", prob.Detail)
+	}
+	row, err := store.CreateSyntheticCheck(ctx, state.SyntheticCheck{
+		AccountID: acct.ID, AppID: app.ID, Name: req.Name, Method: req.Method, Path: req.Path,
+		ExpectedStatus: req.ExpectedStatus, TimeoutMS: req.TimeoutMS, IntervalSeconds: req.IntervalSeconds,
+	}, api.MaxSyntheticChecksPerApp)
+	switch {
+	case errors.Is(err, state.ErrSyntheticCheckLimit):
+		return protectionSkipped(api.AppProtectionSkipLimitReached), nil
+	case errors.Is(err, state.ErrConflict):
+		return protectionSkipped(api.AppProtectionSkipNameTaken), nil
+	case err != nil:
+		return protectionOutcome{}, err
+	}
+	s.audit.Emit(ctx, "synthetic_check.created", &acct.ID, map[string]any{
+		"check_id": row.ID, "app_id": app.ID, "name": row.Name, "method": row.Method, "path": row.Path,
+		"interval_seconds": row.IntervalSeconds, "source": "protection",
+	})
+	return protectionCreated(row.ID, map[string]any{
+		"name": row.Name, "method": row.Method, "path": row.Path, "interval_seconds": row.IntervalSeconds,
+		"timeout_ms": row.TimeoutMS, "expected_status": row.ExpectedStatus,
+	}), nil
+}
+
+// protectionBurnAlert is the channel-only fast-burn rule on one baseline
+// SLO.
 func (s *server) protectionBurnAlert(ctx context.Context, acct state.Account, app state.App, name, sloID, channelID string) (protectionOutcome, error) {
 	if sloID == "" {
 		return protectionSkipped(api.AppProtectionSkipNeedsSLO), nil
@@ -346,25 +404,47 @@ func (s *server) protectionBurnAlert(ctx context.Context, acct state.Account, ap
 	if channelID == "" {
 		return protectionSkipped(api.AppProtectionSkipNeedsChannel), nil
 	}
+	return s.protectionAlertRule(ctx, acct, app, api.CreateAlertRuleRequest{
+		Name: name, Metric: api.AlertRuleMetricSLOBudgetBurn, Comparison: string(state.AlertGt),
+		Threshold: api.ProtectionBaselineBurnRate, WindowSpec: api.ProtectionBaselineBurnWindow,
+		SLOID: sloID, ChannelIDs: []string{channelID},
+	}, api.AppProtectionSkipNeedsSLO)
+}
+
+// protectionHealthAlert fires after consecutive failed baseline health
+// checks.
+func (s *server) protectionHealthAlert(ctx context.Context, acct state.Account, app state.App, checkID, channelID string) (protectionOutcome, error) {
+	if checkID == "" {
+		return protectionSkipped(api.AppProtectionSkipNeedsCheck), nil
+	}
+	if channelID == "" {
+		return protectionSkipped(api.AppProtectionSkipNeedsChannel), nil
+	}
+	return s.protectionAlertRule(ctx, acct, app, api.CreateAlertRuleRequest{
+		Name: api.ProtectionBaselineHealthAlertName, Metric: api.AlertRuleMetricSyntheticConsecutiveFailures,
+		Comparison: api.ProtectionBaselineHealthComparison, Threshold: api.ProtectionBaselineHealthFailures,
+		WindowSpec: api.ProtectionBaselineHealthWindow, SyntheticCheckID: checkID, ChannelIDs: []string{channelID},
+	}, api.AppProtectionSkipNeedsCheck)
+}
+
+// protectionAlertRule mirrors createAlertRule for a channel-only rule.
+// targetGone is the skip reason when the SLO or check the rule watches no
+// longer exists (the customer deleted it).
+func (s *server) protectionAlertRule(ctx context.Context, acct state.Account, app state.App, req api.CreateAlertRuleRequest, targetGone string) (protectionOutcome, error) {
+	name := req.Name
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.AlertRuleLimitPerApp == 0 {
 		return protectionSkipped(api.AppProtectionSkipPlan), nil
 	}
 	if !s.protectionCapabilityOn(protectionCapabilityAlerts, acct, app) ||
-		s.alertMetricCapabilityProblem(appFlagSubject(acct, app), api.AlertRuleMetricSLOBudgetBurn) != nil {
+		s.alertMetricCapabilityProblem(appFlagSubject(acct, app), req.Metric) != nil {
 		return protectionSkipped(api.AppProtectionSkipNotReleased), nil
-	}
-	req := api.CreateAlertRuleRequest{
-		Name: name, Metric: api.AlertRuleMetricSLOBudgetBurn, Comparison: string(state.AlertGt),
-		Threshold: api.ProtectionBaselineBurnRate, WindowSpec: api.ProtectionBaselineBurnWindow,
-		SLOID: sloID, ChannelIDs: []string{channelID},
 	}
 	if prob := validateAlertRuleBody(req); prob != nil {
 		return protectionOutcome{}, fmt.Errorf("baseline alert %s is invalid: %s", name, prob.Detail)
 	}
-	if prob := s.validateSLOAlert(ctx, app.ID, req); prob != nil {
-		// The customer deleted the baseline SLO.
-		return protectionSkipped(api.AppProtectionSkipNeedsSLO), nil
+	if s.validateSLOAlert(ctx, app.ID, req) != nil || s.validateSyntheticCheckAlert(ctx, app.ID, req) != nil {
+		return protectionSkipped(targetGone), nil
 	}
 	channelIDs, prob := s.validateRuleChannels(ctx, acct.ID, req.ChannelIDs)
 	if prob != nil {
@@ -382,6 +462,7 @@ func (s *server) protectionBurnAlert(ctx context.Context, acct state.Account, ap
 		Threshold:                       req.Threshold,
 		WindowSpec:                      state.AlertWindowSpec(req.WindowSpec),
 		SLOID:                           req.SLOID,
+		SyntheticCheckID:                req.SyntheticCheckID,
 		Action:                          alertRuleActionFrom(nil),
 		WebhookSecretSealed:             []byte{},
 		CooldownMinutes:                 alertRuleCooldownFrom(nil),
@@ -403,11 +484,13 @@ func (s *server) protectionBurnAlert(ctx context.Context, acct state.Account, ap
 	s.audit.Emit(ctx, "alert_rule.created", &acct.ID, map[string]any{
 		"rule_id": row.ID, "app_id": row.AppID, "name": row.Name, "metric": row.Metric,
 		"comparison": row.Comparison, "threshold": row.Threshold, "window_spec": row.WindowSpec,
-		"slo_id": row.SLOID, "enabled": row.Enabled, "cooldown_minutes": row.CooldownMinutes, "source": "protection",
+		"slo_id": row.SLOID, "synthetic_check_id": row.SyntheticCheckID, "enabled": row.Enabled,
+		"cooldown_minutes": row.CooldownMinutes, "source": "protection",
 	})
 	return protectionCreated(row.ID, map[string]any{
 		"name": row.Name, "metric": string(row.Metric), "comparison": string(row.Comparison),
-		"threshold": row.Threshold, "window_spec": string(row.WindowSpec), "slo_id": row.SLOID, "channel_id": channelID,
+		"threshold": row.Threshold, "window_spec": string(row.WindowSpec), "slo_id": row.SLOID,
+		"synthetic_check_id": row.SyntheticCheckID, "channel_ids": channelIDs,
 	}), nil
 }
 

@@ -165,6 +165,50 @@ func (s *PgStore) FinishAppProtectionReconcile(ctx context.Context, appID string
 	return nil
 }
 
+// ClaimProtectionHealthProbes implements AppProtectionStore.
+func (s *PgStore) ClaimProtectionHealthProbes(ctx context.Context, limit int) ([]ProtectionHealthProbe, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		with due as (
+			select p.app_id, c.id as check_id
+			  from app_protection p
+			  join app_protection_objects o
+			    on o.app_id = p.app_id and o.item = 'health_check' and o.status = 'created'
+			  join synthetic_checks c on c.app_id = p.app_id and c.id::text = o.object_id
+			  join apps a on a.id = p.app_id
+			 where p.state = 'on' and c.enabled
+			   and a.status <> 'deleted' and a.visibility <> 'internal'
+			   and (p.health_probe_at is null
+			        or p.health_probe_at <= now() - make_interval(secs => c.interval_seconds))
+			 order by p.health_probe_at nulls first, p.app_id
+			 for update of p skip locked
+			 limit $1)
+		update app_protection p
+		   set health_probe_at = now()
+		  from due
+		 where p.app_id = due.app_id
+		returning p.app_id::text, p.account_id::text, due.check_id::text`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: claim protection health probes: %w", err)
+	}
+	defer rows.Close()
+	var out []ProtectionHealthProbe
+	for rows.Next() {
+		var p ProtectionHealthProbe
+		if err := rows.Scan(&p.AppID, &p.AccountID, &p.CheckID); err != nil {
+			return nil, fmt.Errorf("state: scan protection health probe: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: claim protection health probes: %w", err)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AppID < out[j].AppID })
+	return out, nil
+}
+
 // isAppProtectionMissingParent reports a foreign-key violation: the app,
 // account or enrollment row does not exist.
 func isAppProtectionMissingParent(err error) bool {

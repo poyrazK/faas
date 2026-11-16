@@ -110,6 +110,20 @@ type AppProtectionStore interface {
 	// FinishAppProtectionReconcile releases the app's lease and schedules
 	// its next reconcile.
 	FinishAppProtectionReconcile(ctx context.Context, appID string, next time.Time) error
+	// ClaimProtectionHealthProbes claims up to limit baseline health checks
+	// that are due: the app is enrolled ('on'), public and not deleted, its
+	// created health_check record names an enabled synthetic check of the
+	// app, and its last claim is at least the check's interval ago. A claim
+	// stamps the app's health_probe_at, so each due check is claimed once
+	// across apid replicas.
+	ClaimProtectionHealthProbes(ctx context.Context, limit int) ([]ProtectionHealthProbe, error)
+}
+
+// ProtectionHealthProbe is one claimed baseline health check.
+type ProtectionHealthProbe struct {
+	AppID     string
+	AccountID string
+	CheckID   string
 }
 
 // normalizeAppProtectionObject defaults Status to created and Written to

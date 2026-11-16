@@ -8,6 +8,9 @@
 -- off. No row means the app was never enrolled and keeps today's behaviour.
 -- next_reconcile_at and lease_until schedule the apid reconciler that
 -- creates the baseline objects: one apid replica claims an app at a time.
+-- health_probe_at is when apid last claimed the app's baseline health
+-- check: apid, not meterd, probes that check through the route-probe
+-- challenge, so the probe writes no telemetry or usage.
 --
 -- app_protection_objects records each baseline item: 'created' with the
 -- object the baseline made and the values it wrote, or 'skipped' with the
@@ -26,7 +29,8 @@ CREATE TABLE IF NOT EXISTS app_protection (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     next_reconcile_at timestamptz NOT NULL DEFAULT now(),
-    lease_until timestamptz
+    lease_until timestamptz,
+    health_probe_at timestamptz
 );
 
 CREATE INDEX IF NOT EXISTS app_protection_account_idx

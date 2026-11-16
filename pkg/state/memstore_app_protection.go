@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // appProtectionLease is the lease state AppProtection does not carry.
@@ -125,6 +127,66 @@ func (m *MemStore) ClaimAppProtectionReconciles(_ context.Context, limit int, le
 		m.appProtectionLeases[p.AppID] = appProtectionLease{until: now.Add(lease)}
 	}
 	return due, nil
+}
+
+// ClaimProtectionHealthProbes implements AppProtectionStore.
+func (m *MemStore) ClaimProtectionHealthProbes(_ context.Context, limit int) ([]ProtectionHealthProbe, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().UTC()
+	type due struct {
+		probe ProtectionHealthProbe
+		last  time.Time
+	}
+	var candidates []due
+	for appID, p := range m.appProtection {
+		if p.State != AppProtectionOn {
+			continue
+		}
+		rec := m.appProtectionObjects[appID][AppProtectionHealthCheck]
+		if rec.Status != AppProtectionObjectCreated {
+			continue
+		}
+		app, ok := m.apps[appID]
+		if !ok || app.Status == AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+			continue
+		}
+		var check *SyntheticCheck
+		for i := range m.syntheticChecks[appID] {
+			if m.syntheticChecks[appID][i].ID == rec.ObjectID {
+				check = &m.syntheticChecks[appID][i]
+			}
+		}
+		if check == nil || !check.Enabled {
+			continue
+		}
+		last := m.appProtectionHealthProbeAt[appID]
+		if !last.IsZero() && now.Sub(last) < time.Duration(check.IntervalSeconds)*time.Second {
+			continue
+		}
+		candidates = append(candidates, due{ProtectionHealthProbe{AppID: appID, AccountID: p.AccountID, CheckID: check.ID}, last})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if !candidates[i].last.Equal(candidates[j].last) {
+			return candidates[i].last.Before(candidates[j].last)
+		}
+		return candidates[i].probe.AppID < candidates[j].probe.AppID
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	if m.appProtectionHealthProbeAt == nil {
+		m.appProtectionHealthProbeAt = map[string]time.Time{}
+	}
+	out := make([]ProtectionHealthProbe, 0, len(candidates))
+	for _, c := range candidates {
+		m.appProtectionHealthProbeAt[c.probe.AppID] = now
+		out = append(out, c.probe)
+	}
+	return out, nil
 }
 
 // FinishAppProtectionReconcile implements AppProtectionStore.

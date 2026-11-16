@@ -18182,6 +18182,17 @@ const (
 	ProtectionReconcileLease         = 2 * time.Minute
 	ProtectionReconcileRetry         = 15 * time.Minute
 	ProtectionReconcileRecheck       = 24 * time.Hour
+	// ProtectionHealthProbePoll is how often apid claims due baseline
+	// health checks, at most ProtectionHealthProbeBatch at a time, probing
+	// ProtectionHealthProbeWorkers at once.
+	ProtectionHealthProbePoll    = time.Minute
+	ProtectionHealthProbeBatch   = 20
+	ProtectionHealthProbeWorkers = 4
+	// ProtectionBaselineHealthComparison and Window configure the
+	// health-failing alert (docs/synthetic-checks.md: gte 2; the window is
+	// required but ignored for this metric).
+	ProtectionBaselineHealthComparison = "gte"
+	ProtectionBaselineHealthWindow     = "1h"
 )
 
 // Event substrate benchmark workload (spec Appendix D V12,
