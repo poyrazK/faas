@@ -1,0 +1,165 @@
+{
+  "contract": {
+    "version": 1,
+    "name": "csv-import",
+    "input": {
+      "type": "object",
+      "properties": {
+        "row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 10000
+        },
+        "fail_once": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "row",
+        "email"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "saved": {
+          "type": "boolean"
+        },
+        "rejection": {
+          "type": "string",
+          "enum": [
+            "invalid_email",
+            "none"
+          ]
+        }
+      },
+      "required": [
+        "row",
+        "saved",
+        "rejection"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "inputs": [
+    {
+      "id": "row-1",
+      "value": {
+        "row": 1,
+        "email": "one@example.test"
+      }
+    },
+    {
+      "id": "row-2",
+      "value": {
+        "row": 2,
+        "email": "two@example.test"
+      }
+    }
+  ],
+  "account_id": "11111111-1111-4111-8111-111111111111",
+  "job_id": "22222222-2222-4222-8222-222222222222",
+  "run_id": "33333333-3333-4333-8333-333333333333",
+  "replay_id": "44444444-4444-4444-8444-444444444444",
+  "cases": [
+    {
+      "scenario": "success",
+      "outcome": "succeeded",
+      "error": null
+    },
+    {
+      "scenario": "failure",
+      "outcome": "failed",
+      "error": null
+    },
+    {
+      "scenario": "wrong_account",
+      "outcome": null,
+      "error": "acceptance_unknown"
+    },
+    {
+      "scenario": "wrong_job",
+      "outcome": null,
+      "error": "invalid_response"
+    },
+    {
+      "scenario": "wrong_digest",
+      "outcome": null,
+      "error": "acceptance_unknown"
+    },
+    {
+      "scenario": "duplicate_task",
+      "outcome": null,
+      "error": "invalid_response"
+    },
+    {
+      "scenario": "wrong_input",
+      "outcome": null,
+      "error": "invalid_response"
+    },
+    {
+      "scenario": "wrong_binding",
+      "outcome": null,
+      "error": "invalid_response"
+    },
+    {
+      "scenario": "bad_offset",
+      "outcome": null,
+      "error": "invalid_response"
+    },
+    {
+      "scenario": "wrong_total",
+      "outcome": null,
+      "error": "invalid_response"
+    },
+    {
+      "scenario": "corrupt_result",
+      "outcome": "invalid_result",
+      "error": null
+    },
+    {
+      "scenario": "wrong_output",
+      "outcome": "invalid_result",
+      "error": null
+    },
+    {
+      "scenario": "wrong_contract",
+      "outcome": "invalid_result",
+      "error": null
+    },
+    {
+      "scenario": "signed",
+      "outcome": "succeeded",
+      "error": null
+    },
+    {
+      "scenario": "signed_mismatch",
+      "outcome": "invalid_result",
+      "error": null
+    },
+    {
+      "scenario": "signed_expired",
+      "outcome": "invalid_result",
+      "error": null
+    },
+    {
+      "scenario": "unsafe_uri",
+      "outcome": "invalid_result",
+      "error": null
+    },
+    {
+      "scenario": "lost_ack",
+      "outcome": null,
+      "error": "acceptance_unknown"
+    }
+  ]
+}

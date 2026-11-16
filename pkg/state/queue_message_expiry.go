@@ -74,16 +74,31 @@ func (s *PgStore) ExpirePendingQueueMessages(ctx context.Context, now time.Time,
 	return len(rows), err
 }
 
-// invocationOwnerSuspendedLocked mirrors the expiry sweep's status filter: a
-// suspended owner's pending queue messages wait for its reactivation.
-func (m *MemStore) invocationOwnerSuspendedLocked(ownerID string) bool {
+// invocationOwnerHeldLocked mirrors the expiry sweep's hold: a suspended or
+// abuse-held owner's pending queue messages wait for the hold to lift.
+func (m *MemStore) invocationOwnerHeldLocked(ownerID string) bool {
 	if account, ok := m.accounts[ownerID]; ok {
-		return account.Status == AccountSuspended
+		return account.Status == AccountSuspended || account.AbuseHoldAt != nil
 	}
 	if org, ok := m.orgs[ownerID]; ok {
-		return org.Status == OrgStatusSuspended
+		return org.Status == OrgStatusSuspended || org.AbuseHoldAt != nil
 	}
 	return false
+}
+
+// expireQueueReceiptsLocked mirrors the sweep's receipt update: an expired
+// message's open push receipts move to dead_letter with it.
+func (m *MemStore) expireQueueReceiptsLocked(inv Invocation) {
+	for id, r := range m.records {
+		t, ok := m.triggers[r.TriggerID.String()]
+		if !ok || r.ItemIdentifier != inv.ID || t.Kind != "queue" || !t.Source.Valid || t.Source.String != string(InvocationQueue) ||
+			!sameMemUUID(t.AppID.String(), inv.AppID) || (r.State != "pending" && r.State != "retry" && r.State != "claimed") {
+			continue
+		}
+		r.State, r.ClaimExpiresAt = "dead_letter", pgtype.Timestamptz{}
+		r.LastError = pgtype.Text{String: queueMessageExpiredError, Valid: true}
+		m.records[id] = r
+	}
 }
 
 func (m *MemStore) ExpirePendingQueueMessages(_ context.Context, now time.Time, limit int) (int, error) {
@@ -93,15 +108,25 @@ func (m *MemStore) ExpirePendingQueueMessages(_ context.Context, now time.Time, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var due []Invocation
+	held := map[string]bool{}
 	for _, inv := range m.invocations {
 		if inv.Source != InvocationQueue || inv.State != InvocationPending {
 			continue
 		}
 		plan, ok := m.invocationOwnerPlanLocked(inv.AccountID)
-		if !ok || m.invocationOwnerSuspendedLocked(inv.AccountID) {
+		if !ok {
 			continue
 		}
-		if retention, ok := queueMessageRetention(plan); ok && queueMessageWaitStart(inv).Before(now.Add(-retention)) {
+		retention, ok := queueMessageRetention(plan)
+		if !ok {
+			continue
+		}
+		if m.invocationOwnerHeldLocked(inv.AccountID) {
+			// A held owner's message restarts its wait at half the retention.
+			retention /= 2
+			held[inv.ID] = true
+		}
+		if queueMessageWaitStart(inv).Before(now.Add(-retention)) {
 			due = append(due, inv)
 		}
 	}
@@ -111,13 +136,21 @@ func (m *MemStore) ExpirePendingQueueMessages(_ context.Context, now time.Time, 
 	}
 	settled := time.Now().UTC()
 	outcome := OutcomeDeadLetter
+	expired := 0
 	for _, inv := range due {
+		if held[inv.ID] {
+			inv.DueAt = now
+			m.setInvocationLocked(inv.ID, inv)
+			continue
+		}
 		inv.State = InvocationDeadLetter
 		inv.Outcome = &outcome
 		inv.CompletedAt = &settled
 		inv.LastError = queueMessageExpiredError
 		inv.OutcomeCode = QueueMessageExpiredCode
 		m.setInvocationLocked(inv.ID, inv)
+		m.expireQueueReceiptsLocked(inv)
+		expired++
 	}
-	return len(due), nil
+	return expired, nil
 }

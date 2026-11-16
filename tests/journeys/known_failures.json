@@ -70,6 +70,31 @@
     "since": "2026-10-31"
   },
   {
+    "step": "TestProfileCaptures/capture_listed",
+    "bug": "on-demand profiling is not enabled on production: gregale debug captures answers 'on-demand profiling is not enabled on this installation', and the pprof_download and delete steps then hit no such API route; remove once the owner enables it",
+    "since": "2026-11-15"
+  },
+  {
+    "step": "TestManagedPostgres/create_database",
+    "bug": "postgres create answers managed_postgres_usage_stale while another journey's deleted database still owes its final hour of usage (parallel Postgres journeys block each other); fixed by ADR-20261115190000 (#7392), known until that is released",
+    "since": "2026-11-15"
+  },
+  {
+    "step": "TestManagedPostgresRollbackRestore/create_database",
+    "bug": "same as TestManagedPostgres/create_database: managed_postgres_usage_stale after a parallel journey's delete; known until #7392 is released",
+    "since": "2026-11-15"
+  },
+  {
+    "step": "TestManagedPostgresRollbackCancelled/create_database",
+    "bug": "same as TestManagedPostgres/create_database: managed_postgres_usage_stale after a parallel journey's delete; known until #7392 is released",
+    "since": "2026-11-15"
+  },
+  {
+    "step": "TestEnvironmentBranchData/create_database",
+    "bug": "same as TestManagedPostgres/create_database: managed_postgres_usage_stale after a parallel journey's delete; known until #7392 is released",
+    "since": "2026-11-15"
+  },
+  {
     "step": "TestDebugger/regression_detected",
     "bug": "a platform cold-boot health check reaching the old release after the rollout makes the regression detector compare the two releases side by side, where the old one has no baseline for GET /, so a 24x slowdown is not reported (ADR-127 amendment 2026-11-14); known until that fix is released. Passes when no such request lands",
     "since": "2026-11-14"

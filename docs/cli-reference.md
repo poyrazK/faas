@@ -49,6 +49,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`domain`](#domain) | Manage custom domains |
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
+| [`export`](#export) | Verify saved JSON Lines exports offline |
 | [`cron`](#cron) | Schedule requests and commands |
 | [`job`](#job) | Manage jobs that run to completion |
 | [`workflow`](#workflow) | Manage durable workflows |
@@ -2047,7 +2048,7 @@ Show the current status of one build
 
 List builds and discover build IDs
 
-`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--stream]`
+`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--stream] [--output <PATH>] [--progress <MODE>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2057,7 +2058,10 @@ List builds and discover build IDs
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--all` | walk every page using --limit and --cursor |  |
-| `--stream` | emit JSON Lines as pages arrive; requires --json --all |  |
+| `--stream` | emit JSON Lines as pages arrive; stdout requires --json --all |  |
+| `--output <PATH>` | publish a new JSON Lines file after all pages complete; requires --all |  |
+| `--progress <MODE>` | export progress on stderr; requires --all --output | one of `off` · `plain` · `ndjson` |
+| `--timeout <DURATION>` | overall list read budget including page requests and retries (positive duration) |  |
 
 ### build provenance
 
@@ -3121,7 +3125,7 @@ Watch invocations finish across your account in real time
 
 List invocations
 
-`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] [--stream]`
+`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] [--stream] [--output <PATH>] [--progress <MODE>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3129,7 +3133,10 @@ List invocations
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--all` | walk every page using --limit and --cursor |  |
-| `--stream` | emit JSON Lines as pages arrive; requires --json --all |  |
+| `--stream` | emit JSON Lines as pages arrive; stdout requires --json --all |  |
+| `--output <PATH>` | publish a new JSON Lines file after all pages complete; requires --all |  |
+| `--progress <MODE>` | export progress on stderr; requires --all --output | one of `off` · `plain` · `ndjson` |
+| `--timeout <DURATION>` | overall list read budget including page requests and retries (positive duration) |  |
 
 ### invocation get
 
@@ -4818,6 +4825,36 @@ Examples:
 ```sh
 gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 ```
+
+
+## export
+
+Verify saved JSON Lines exports offline
+
+`gregale export [<subcommand>]`
+
+### export verify
+
+Check a file against its saved completion receipt
+
+`gregale export verify --receipt <RECEIPT> <FILE>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--receipt <RECEIPT>` | saved JSON completion receipt | required |
+
+Examples:
+
+```sh
+gregale export verify builds.jsonl --receipt builds.receipt.json
+gregale --json export verify invocations.jsonl --receipt invocations.receipt.json
+```
+
+Runs offline without login. Compares SHA-256, exact bytes and JSON Lines record count; the receipt path is ignored.
+
+Exit 0 means all three checks matched; exit 1 means mismatch or invalid input. A valid comparison prints verified true or false; invalid input reports an error without a result.
+
+A receipt is an integrity reference, not a signature or a point-in-time API snapshot.
 
 
 ## cron

@@ -28,7 +28,7 @@ func (f fixture) runs(job, trigger string, statuses ...string) {
 	}
 }
 
-// ADR-20261113180000: the five round 2 rules, contact linking, the
+// ADR-20261115175928: the five round 2 rules, contact linking, the
 // resolved_on_own outcome and the outcome summary.
 func TestEvaluateRound2KindsAndOutcomes(t *testing.T) {
 	e, pool := pgEvaluator(t)

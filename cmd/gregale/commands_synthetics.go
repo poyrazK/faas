@@ -113,7 +113,7 @@ func cmdSyntheticsCreate(args []string) int {
 		for _, seconds := range api.SyntheticCheckIntervalsSeconds {
 			minutes = append(minutes, strconv.Itoa(seconds/60))
 		}
-		return printErr("Invalid synthetic check", fmt.Errorf("--every-minutes must be one of %s; shorter intervals would keep the app permanently awake", strings.Join(minutes, ", ")))
+		return printErr("Invalid synthetic check", fmt.Errorf("--every-minutes must be one of %s; each probe resets the app's idle timer, so any interval at or under its idle timeout keeps it awake", strings.Join(minutes, ", ")))
 	}
 	req, prob := api.NormalizeCreateSyntheticCheck(api.CreateSyntheticCheckRequest{
 		Name: *name, Method: *method, Path: *path, ExpectedStatus: *expect, TimeoutMS: *timeout, IntervalSeconds: *every * 60,
@@ -134,6 +134,8 @@ func cmdSyntheticsCreate(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created check %s (%s): %s %s every %d minutes, expecting %s\n", check.Name, check.ID, check.Method, check.URL, check.IntervalSeconds/60, describeExpected(check.ExpectedStatus))
 	_, _ = fmt.Fprintln(osStdout, "Each probe is a normal request; one that wakes a parked app is billed like any other.")
+	_, _ = fmt.Fprintf(osStdout, "If it fails %d runs in a row, Gregale emails the app's owner (at most daily). To route it yourself instead:\n  gregale alert add --app %s --metric %s --synthetic-check %s ...\n",
+		api.SyntheticCheckFailingRuns, *slug, api.AlertRuleMetricSyntheticConsecutiveFailures, check.ID)
 	if check.Warning != "" {
 		PrintWarn(os.Stderr, "%s", check.Warning)
 	}

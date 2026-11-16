@@ -251,3 +251,42 @@ func TestCmdAddPostgresAdoptsWorkCommittedBehindAnUncertainError(t *testing.T) {
 		t.Fatalf("adopted result = %+v", got)
 	}
 }
+
+// prod 2026-11-15: a create refused for a region with no backend reused its
+// idempotency key when retried with the corrected --region, so the retry was
+// refused for 24 h as "Idempotency-Key reused". Every create field now joins
+// the key.
+func TestCmdAddPostgresCreateKeyFollowsRegion(t *testing.T) {
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/postgres/databases":
+			keys = append(keys, r.Header.Get("Idempotency-Key"))
+			_, _ = w.Write([]byte(`{"id":"db-1","name":"api-postgres","region":"eu","postgres_major":16,"service_class":"development","availability":"single_zone","scale_to_zero":true,"state":"ready"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":1,"state":"ready"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
+	for _, region := range []string{"us-east-1", "us-east-2", "us-east-2"} {
+		if code := main.Run([]string{"--json", "add", "postgres", "--app", "api", "--env", "production", "--region", region}); code != 0 {
+			t.Fatalf("region %s: exit = %d, output = %s", region, code, out.String())
+		}
+	}
+	if len(keys) != 3 || keys[0] == keys[1] || keys[1] != keys[2] {
+		t.Fatalf("keys = %q, want a new key for the corrected region and the same key for an identical retry", keys)
+	}
+}

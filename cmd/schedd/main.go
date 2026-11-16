@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
+	"github.com/onebox-faas/faas/pkg/objectgc"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -772,6 +773,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	defer closeGrants()
 	// ADR-20261110210000 slice 3g: delivery values by reference.
+	mintViaSecretd, err := internalSvcMinterFromEnv(os.Getenv, grantRPC != nil)
+	if err != nil {
+		return err
+	}
 	deliveryViaSecretd, err := deliveryOpenerFromEnv(os.Getenv, grantRPC != nil, executionEnabled)
 	if err != nil {
 		return err
@@ -1737,6 +1742,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.Role == role.RoleControlPlane && store != nil {
 		go runOwnerAuthorityMetrics(ctx, ops.Registry(), store, time.Minute, log)
 	}
+	if os.Getenv("FAAS_SCHEDD_OBJECT_GC") == "1" {
+		// ADR-20261115180000: the control plane deletes shared-store objects
+		// compute nodes asked to delete (FAAS_STORAGE_DELETE_MODE=defer),
+		// once nothing references them. Only a control plane holds the
+		// delete-capable credentials.
+		if cfg.Role == role.RoleComputeOnly {
+			return fmt.Errorf("schedd: FAAS_SCHEDD_OBJECT_GC runs on the control plane, not a compute node")
+		}
+		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).Run(ctx)
+		log.Info("schedd: object GC enabled")
+	}
 	if ownerNodeID != "" && owners.recoversOntoOwnNode(cfg.Role) {
 		reb := sched.NewRebalancer(engine.RebalanceOrphanedApps, log)
 		go func() {
@@ -2537,7 +2553,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// source leaves the minter nil and SynthesizeRequest
 			// logs a loud warn + internal_only requests 403.
 			var workflowOutboundMinter sched.WorkflowOutboundMinter
-			if minter, mErr := newSchedInternalSvcMinter(ctx, store, log); mErr != nil {
+			if grants, ok := grantRPC.(secretdGrants); mintViaSecretd && ok {
+				// ADR-20261110210000 slice 3k: the control plane's secretd
+				// mints each app's token; this box loads no cluster key, so
+				// workflow outbound (which signs with it) stays off here.
+				remote := newRemoteInternalSvcMinter(grants.rpc)
+				modeLookup := sched.PublicAuthModeFromStore(store.AppByID)
+				internalSvcModeLookup = modeLookup
+				internalSvcTokenMinter = remote.AsFunc()
+				sched.ConfigureInternalSvcAuth(synth, modeLookup, remote.AsFunc())
+				loop.WithAppPublicAuthModeLookup(modeLookup)
+				loop.WithMintInternalSvcToken(remote.AsFunc())
+				log.Info("schedd: internal-service tokens minted by secretd")
+			} else if minter, mErr := newSchedInternalSvcMinter(ctx, store, log); mErr != nil {
 				log.Warn("schedd: internal-svc minter not wired; internal_only cron requests will 403 until corrected",
 					"err", mErr.Error())
 			} else {
@@ -2773,6 +2801,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261031193635 slice 5a: credential-free captures of branch
 	// parents. Rows exist only once an opted-in branch cold-boots.
 	go sched.NewEnvironmentBranchCaptureWorker(store, engine, 0, log).Run(ctx)
+	if strings.TrimSpace(os.Getenv("FAAS_SCHEDD_SEAL_SNAPSHOTS")) == "1" {
+		// ADR-20261110210000 slice 3d-3: park and warm snapshots are sealed
+		// at the source. Every vmmd must understand SnapshotRef.sealed_cache
+		// first, or a sealed wake on an older node fails instead of cold
+		// booting.
+		engine.WithSealedSnapshots(true)
+		log.Info("schedd: park and warm snapshots sealed at the source")
+	}
 	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
 		// ADR-733: captures pause a serving instance, so one coordinator
 		// runs them one at a time. vmmd seals every capture at the source,

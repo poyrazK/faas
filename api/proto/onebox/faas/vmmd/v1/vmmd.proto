@@ -1210,6 +1210,12 @@ message SnapshotRef {
   // restores from there. Empty for every ordinary snapshot.
   string capture_id = 9;
   bytes sealed_key = 10;
+  // ADR-20261110210000 slice 3d-3: the sealed object is a park or warm
+  // snapshot, not a crash capture. It is cache (ADR-005): a key vmmd cannot
+  // open, an unverified backing or a failed restore cold boots instead of
+  // failing the wake. A vmmd that predates the field treats it as a crash
+  // capture, so sealing stays off until every vmmd has it.
+  bool sealed_cache = 11;
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and
@@ -1640,6 +1646,13 @@ message PauseAndSnapshotRequest {
   // Run the configured guest callback before this terminal init capture.
   // A failed callback aborts snapshot publication.
   bool before_checkpoint = 6;
+  // ADR-20261110210000 slice 3d-3: encrypt this park capture at the source,
+  // as WarmSnapshotRequest.seal_capture_id does (ADR-733). vmmd publishes
+  // only encrypted twins (key + ".age") and returns the per-capture key
+  // sealed to its capture recipient in SnapshotResponse.sealed_key; a vmmd
+  // that cannot seal refuses rather than publish plaintext. The id is the
+  // capture token of storage_key.
+  string seal_capture_id = 7;
 }
 
 message SnapshotResponse {
@@ -1987,6 +2000,12 @@ message InstanceStats {
   // 0 when the ladder is off, the instance is running, or it is not on the
   // ladder.
   int32 idle_ladder_level = 30;
+  // Billing review R8-2 (ADR-20261114100000): cumulative bytes the guest
+  // itself sent to Gregale-internal destinations (the netns
+  // faas_internal_tx counter, in veth terms: IP bytes plus Ethernet framing),
+  // a part of net_tx_bytes. Accumulated by vmmd across counter resets; absent
+  // until the first per-namespace poll and on older nodes. Additive.
+  google.protobuf.Int64Value internal_tx_bytes = 31;
 }
 
 message HTTPAdmissionEnforcement {

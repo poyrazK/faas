@@ -10,7 +10,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -416,13 +415,18 @@ func cmdAddPostgres(args []string) int {
 		if err := addPostgresUnsupported(ctx, client, *region, *access, *availability, true); err != nil {
 			return printErr("Cannot create managed PostgreSQL database", err)
 		}
-		createReq := api.CreateManagedPostgresDatabaseRequest{
+		// Every create field joins the key: a retry after a refused request
+		// (a region with no backend) with a corrected --region, class or
+		// major is a new request, not a replay that is refused for 24 h as
+		// "Idempotency-Key reused" (prod 2026-11-15).
+		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("database", appName, name, *scope, *environmentKey,
+			"region", strings.TrimSpace(*region), "major", fmt.Sprint(*major), "class", *serviceClass, "availability", *availability,
+			"scale-to-zero", fmt.Sprint(*scaleToZero), "storage", fmt.Sprint(*storage), "restore-window", fmt.Sprint(*restoreWindow)))
+		database, err = client.CreateManagedPostgresDatabase(createCtx, api.CreateManagedPostgresDatabaseRequest{
 			Name: name, Region: strings.TrimSpace(*region), PostgresMajor: *major,
 			ServiceClass: *serviceClass, Availability: *availability, ScaleToZero: scaleToZero,
 			StorageLimitBytes: *storage, RestoreWindowSeconds: *restoreWindow,
-		}
-		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("database", addPostgresCreateKeyParts(appName, *scope, *environmentKey, createReq)...))
-		database, err = client.CreateManagedPostgresDatabase(createCtx, createReq)
+		})
 		if err != nil {
 			adopted, ok := adoptPostgresAfterUncertainError(ctx, client, err, func(items []api.ManagedPostgresDatabase) (api.ManagedPostgresDatabase, bool) {
 				found, ok, findErr := findAddPostgresDatabase(items, name)
@@ -475,7 +479,7 @@ func cmdAddPostgres(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s (%s).\n", database.Name, appName, binding.EnvironmentKey, binding.Scope)
 	if bindingIsNew {
 		printPostgresBindingDelivery(osStdout, appName, binding.EnvironmentKey, binding.Access)
-		printAddPostgresMigrationHint(osStdout, database.Name, appName, binding.Scope, binding.Access)
+		printAddPostgresMigrationHint(osStdout, database.Name, appName, app.Type, binding.Scope, binding.Access)
 	}
 	return 0
 }
@@ -621,15 +625,6 @@ func postgresLastError(code string) string {
 		return ""
 	}
 	return ": " + strings.TrimSpace(code)
-}
-
-// addPostgresCreateKeyParts names a database create for its idempotency key.
-// The whole request joins the key: a retry that corrects --region (or any
-// other setting) after a refusal is a different request, and must not be
-// refused for 24 hours as a reused key (prod CLI e2e 2026-11-14).
-func addPostgresCreateKeyParts(app, scope, environmentKey string, req api.CreateManagedPostgresDatabaseRequest) []string {
-	raw, _ := json.Marshal(req)
-	return []string{app, req.Name, scope, environmentKey, string(raw)}
 }
 
 func addResourceIdempotencyKey(kind string, parts ...string) string {

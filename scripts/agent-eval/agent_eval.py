@@ -55,7 +55,8 @@ DEFAULT_TRAPS = ("liveness_exhausted", "app_startup_timeout")
 ANTI_PATTERNS = {
     "raw_api_call": re.compile(r"\b(curl|wget|https?|xh)\b[^\n]*(api\.gregale\.dev|/v1/(apps|projects|deployments))"),
     "manual_tarball": re.compile(r"\btar\s+(-\S*c|c\S*\s)"),
-    "app_delete": re.compile(r"\bgregale\b[^\n|;&]*\b(app|apps|project)\s+(delete|rm)\b"),
+    # Reading `app delete --help` is not a deletion (2026-11-15 run).
+    "app_delete": re.compile(r"\bgregale\b[^\n|;&]*\b(app|apps|project)\s+(delete|rm)\b(?![^\n|;&]*\s(--help|-h)\b)"),
     "api_key_minted": re.compile(r"\bgregale\b[^\n|;&]*\bkey\s+create\b"),
 }
 REPEATED_COMMAND_LIMIT = 3

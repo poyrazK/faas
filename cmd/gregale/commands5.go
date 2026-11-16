@@ -759,6 +759,9 @@ func cmdAppScale(slug string, args []string) int {
 	planOutput := fs.String("out", "", "write a reusable reviewed plan to a new JSON file (requires --plan)")
 	applyPlan := fs.String("apply", "", "apply a saved scale plan JSON file")
 	confirmPlan := fs.Bool("confirm", false, "confirm applying the saved plan (requires --apply)")
+	// app scale applies without a prompt; --yes is accepted so scripts that
+	// pass it to every mutating command do not fail (prod 2026-11-15).
+	_ = fs.Bool("yes", false, "accepted for scripts; app scale applies without a prompt")
 	environment := fs.String("environment", "", "edit this project environment's workload settings")
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
@@ -1451,9 +1454,12 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	mode := fs.String("mode", "", "delivery mode: pull|push")
 	workloadClass := fs.String("workload-class", "", "workload class: worker|job|http (http requires push and a function)")
 	maxConcurrency := fs.Int("max-concurrency", 0, "maximum concurrent deliveries")
+	// queue setup keeps a disabled binding disabled; this turns it back on
+	// (ADR-20261113180000, R5-9).
+	enabled := fs.String("enabled", "", "turn delivery on or off: true|false")
 	flags, pos := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || len(pos) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
+	if err := fs.Parse(flags); err != nil || len(pos) != 2 || (*enabled != "" && *enabled != "true" && *enabled != "false") {
+		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N] [--enabled true|false]", "queue")
 		return 1
 	}
 	req := api.UpdateQueueBindingRequest{}
@@ -1474,6 +1480,10 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	})
 	if maxConcurrencySet {
 		req.MaxConcurrency = maxConcurrency
+	}
+	if *enabled != "" {
+		on := *enabled == "true"
+		req.Enabled = &on
 	}
 	row, err := client.UpdateQueueBinding(context.Background(), pos[0], pos[1], req)
 	if err != nil {

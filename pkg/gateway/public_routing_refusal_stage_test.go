@@ -36,12 +36,6 @@ func TestPublicRoutingRefusalRecordsStage(t *testing.T) {
 				s.AppID = uuid.NewString()
 				return s, nil
 			}},
-		{name: "project without a live deployment", want: "routing_empty_roster",
-			prepare: func(app *App) { app.ProjectID = uuid.NewString() },
-			pin: func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) {
-				s.ReleaseVerdict = "allowed"
-				return s, nil
-			}},
 		{name: "host pin", want: "routing_host_pin_denied",
 			prepare: func(app *App) { app.PinnedDeploymentID, app.PinnedDeploymentScope = uuid.NewString(), "default" },
 			pin:     func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) { s.HostChecked = true; return s, nil }},
@@ -124,5 +118,34 @@ func TestPublicRoutingRefusalLogsCauseRateLimited(t *testing.T) {
 	h.publicRoutingRefusals.next.Store(0)
 	if ok, suppressed := h.publicRoutingRefusals.allow(time.Now()); !ok || suppressed != 2 {
 		t.Fatalf("after the interval: allow=%v suppressed=%d, want true 2", ok, suppressed)
+	}
+}
+
+// A project app with no live deployment has a verified empty roster, the
+// same as a plain app: it answers "No deployment available", not "could not
+// verify this route's traffic policy" (prod 2026-11-15).
+func TestProjectAppWithoutLiveDeploymentIsNoDeployment(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	var logs bytes.Buffer
+	h.log = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	backend.mu.Lock()
+	backend.app.ProjectID = uuid.NewString()
+	backend.mu.Unlock()
+	h.backend = &publicSnapshotBackend{fakeBackend: backend}
+	h.WithPublicRoutingPolicy(func(_ context.Context, app App, inputs PublicRoutingInputs) (PublicRoutingSnapshot, error) {
+		s := publicSnapshotFixture(app, inputs)
+		s.ReleaseVerdict = "allowed"
+		return s, nil
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/", nil))
+	if rec.Code != http.StatusServiceUnavailable || !bytes.Contains(rec.Body.Bytes(), []byte("No deployment available")) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	if got := decisionLogField(t, logs.Bytes(), "rejection_reason"); got != "capacity" {
+		t.Fatalf("rejection_reason=%q", got)
+	}
+	if got := decisionLogField(t, logs.Bytes(), "policy_stage"); got != "routing_empty_roster" {
+		t.Fatalf("policy_stage=%q", got)
 	}
 }

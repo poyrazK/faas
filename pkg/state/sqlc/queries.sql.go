@@ -11902,18 +11902,29 @@ func (q *Queries) CountProductionQueueBindingActive(ctx context.Context, db DBTX
 }
 
 const countProductionQueueDeadLetter = `-- name: CountProductionQueueDeadLetter :one
-SELECT count(*) FROM production_invocation_work WHERE app_id=$1::uuid AND source='queue' AND state='dead_letter'
-    AND (NOT $2::boolean OR queue_name=$3::text)
+SELECT count(*) FROM (SELECT 1 FROM production_invocation_work WHERE app_id=$1::uuid AND source='queue' AND state='dead_letter'
+    AND (NOT $2::boolean OR queue_name=$3::text OR queue_binding_id=(
+        SELECT b.id FROM queue_bindings b WHERE b.app_id=$1::uuid AND b.deployment_scope=''
+          AND b.queue_name=$3::text ORDER BY b.created_at, b.id LIMIT 1))
+    LIMIT $4::integer) bounded
 `
 
 type CountProductionQueueDeadLetterParams struct {
 	AppID     pgtype.UUID
 	Named     bool
 	QueueName string
+	RowLimit  int32
 }
 
+// Counted up to row_limit (ADR-20261113180000, R7-3): every state read
+// counted the whole dead letter.
 func (q *Queries) CountProductionQueueDeadLetter(ctx context.Context, db DBTX, arg CountProductionQueueDeadLetterParams) (int64, error) {
-	row := db.QueryRow(ctx, countProductionQueueDeadLetter, arg.AppID, arg.Named, arg.QueueName)
+	row := db.QueryRow(ctx, countProductionQueueDeadLetter,
+		arg.AppID,
+		arg.Named,
+		arg.QueueName,
+		arg.RowLimit,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -12009,6 +12020,27 @@ type CountProjectEnvironmentCloneUncapturedCronsParams struct {
 // Crons of the source environment on project apps the clone does not copy.
 func (q *Queries) CountProjectEnvironmentCloneUncapturedCrons(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedCronsParams) (int64, error) {
 	row := db.QueryRow(ctx, countProjectEnvironmentCloneUncapturedCrons, arg.ProjectID, arg.Scope, arg.AppIds)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countProjectEnvironmentCloneUncapturedEventSubscriptions = `-- name: CountProjectEnvironmentCloneUncapturedEventSubscriptions :one
+SELECT count(*)::bigint FROM event_subscriptions s JOIN apps a ON a.id = s.app_id
+WHERE a.project_id = $1::uuid AND a.status <> 'deleted'
+  AND s.deployment_scope = $2::text AND NOT (s.app_id = ANY($3::uuid[]))
+`
+
+type CountProjectEnvironmentCloneUncapturedEventSubscriptionsParams struct {
+	ProjectID pgtype.UUID
+	Scope     string
+	AppIds    []pgtype.UUID
+}
+
+// Event subscriptions of the source environment on project apps the clone
+// does not copy.
+func (q *Queries) CountProjectEnvironmentCloneUncapturedEventSubscriptions(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedEventSubscriptionsParams) (int64, error) {
+	row := db.QueryRow(ctx, countProjectEnvironmentCloneUncapturedEventSubscriptions, arg.ProjectID, arg.Scope, arg.AppIds)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -13711,12 +13743,12 @@ func (q *Queries) CreateSession(ctx context.Context, db DBTX, arg CreateSessionP
 }
 
 const createSnapshot = `-- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model,sealed_key,sealed_capture_id)
 VALUES($1::uuid,$2::text,$3::text,
  $4::bigint,$5::bigint,$6::bigint,
  $7::text,$8::boolean,$9::text,$10::uuid,$11::bigint,
- $12::text,$13::text)
-RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at
+ $12::text,$13::text,$14::bytea,$15::uuid)
+RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at, sealed_key, sealed_capture_id
 `
 
 type CreateSnapshotParams struct {
@@ -13733,6 +13765,8 @@ type CreateSnapshotParams struct {
 	RecoveryGeneration              int64
 	CpuTemplate                     string
 	CpuModel                        string
+	SealedKey                       []byte
+	SealedCaptureID                 pgtype.UUID
 }
 
 func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapshotParams) (Snapshot, error) {
@@ -13750,6 +13784,8 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		arg.RecoveryGeneration,
 		arg.CpuTemplate,
 		arg.CpuModel,
+		arg.SealedKey,
+		arg.SealedCaptureID,
 	)
 	var i Snapshot
 	err := row.Scan(
@@ -13770,6 +13806,8 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		&i.CpuTemplate,
 		&i.CpuModel,
 		&i.StaleAt,
+		&i.SealedKey,
+		&i.SealedCaptureID,
 	)
 	return i, err
 }
@@ -22429,30 +22467,41 @@ const expirePendingQueueMessages = `-- name: ExpirePendingQueueMessages :many
 WITH plan_retention AS (
     SELECT unnest($1::text[]) AS plan, unnest($2::bigint[]) AS seconds
 ), batch AS (
-    SELECT i.id
+    SELECT i.id,
+        (coalesce(a.status, o.status) = 'suspended' OR coalesce(a.abuse_hold_at, o.abuse_hold_at) IS NOT NULL) AS held
     FROM invocations i
     LEFT JOIN accounts a ON a.id = i.account_id
     LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
-      AND i.created_at < $3::timestamptz - make_interval(secs => $4::bigint)
-      -- ADR-20261112200000: the wait also restarts when a retry or a nack
-      -- delay makes the message due again, so a back-off longer than the
-      -- retention no longer turns the retry into an expiry; and a suspended
-      -- owner's messages wait for its reactivation instead of expiring.
-      AND greatest(coalesce(i.last_replayed_at, i.created_at), i.due_at) < $3::timestamptz - make_interval(secs => r.seconds)
-      AND coalesce(a.status, o.status) <> 'suspended'
+      AND i.created_at < $3::timestamptz - make_interval(secs => $4::bigint / 2)
+      AND greatest(coalesce(i.last_replayed_at, i.created_at), i.due_at) < $3::timestamptz - make_interval(secs =>
+          CASE WHEN coalesce(a.status, o.status) = 'suspended' OR coalesce(a.abuse_hold_at, o.abuse_hold_at) IS NOT NULL
+               THEN r.seconds / 2 ELSE r.seconds END)
     ORDER BY i.created_at
     LIMIT $5::integer
     FOR UPDATE OF i SKIP LOCKED
+), refreshed AS (
+    UPDATE invocations i SET due_at = $3::timestamptz
+    FROM batch WHERE i.id = batch.id AND batch.held AND i.state = 'pending'
+    RETURNING i.id
+), expired AS (
+    UPDATE invocations i
+    SET state = 'dead_letter', outcome = 'dead_letter', completed_at = now(),
+        last_error = 'queue message expired: it waited longer than the plan retention',
+        outcome_code = 'queue_message_expired'
+    FROM batch
+    WHERE i.id = batch.id AND NOT batch.held AND i.state = 'pending'
+    RETURNING i.id, i.app_id
+), receipts AS (
+    UPDATE trigger_records r SET state = 'dead_letter', claim_expires_at = NULL,
+        last_error = 'queue message expired: it waited longer than the plan retention'
+    FROM expired e, triggers t
+    WHERE t.id = r.trigger_id AND t.app_id = e.app_id AND t.kind = 'queue' AND t.source = 'queue'
+      AND r.item_identifier = e.id::text AND r.state IN ('pending', 'retry', 'claimed')
+    RETURNING r.id
 )
-UPDATE invocations i
-SET state = 'dead_letter', outcome = 'dead_letter', completed_at = now(),
-    last_error = 'queue message expired: it waited longer than the plan retention',
-    outcome_code = 'queue_message_expired'
-FROM batch
-WHERE i.id = batch.id AND i.state = 'pending'
-RETURNING i.id::text AS id, i.app_id::text AS app_id
+SELECT e.id::text AS id, e.app_id::text AS app_id FROM expired e
 `
 
 type ExpirePendingQueueMessagesParams struct {
@@ -22475,6 +22524,16 @@ type ExpirePendingQueueMessagesRow struct {
 // message replayed from the dead letter gets the whole retention again. A
 // replay is never earlier than the send, so the created_at bound still
 // narrows invocations_queue_pending_created_idx.
+// ADR-20261112200000: the wait also restarts when a retry or a nack delay
+// makes the message due again, so a back-off longer than the retention no
+// longer turns the retry into an expiry.
+// ADR-20261113180000 (R5-3, R6-3): a held owner (suspended, or under an abuse
+// hold) keeps its messages: the sweep restarts their wait at half the
+// retention instead of dead-lettering them, so after the hold lifts each has
+// at least half the retention left (skipping them only deferred the expiry to
+// the first sweep after reactivation). An expired message's push receipt
+// moves to dead_letter with it; left pending it was never reaped, and a
+// replay re-arms it from dead_letter.
 func (q *Queries) ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error) {
 	rows, err := db.Query(ctx, expirePendingQueueMessages,
 		arg.Plans,
@@ -37141,6 +37200,44 @@ func (q *Queries) InsertProjectEnvironmentCloneDatabase(ctx context.Context, db 
 	return i, err
 }
 
+const insertProjectEnvironmentCloneEventSubscription = `-- name: InsertProjectEnvironmentCloneEventSubscription :exec
+INSERT INTO event_subscriptions(account_id, app_id, source, type, filter, enabled, clone_paused,
+    routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope)
+SELECT a.account_id, a.id, $1::text, $2::text, $3::jsonb, false,
+    $4::boolean, $5::jsonb, $6::text[],
+    $7::integer, $8::text
+FROM apps a WHERE a.id = $9::uuid
+`
+
+type InsertProjectEnvironmentCloneEventSubscriptionParams struct {
+	Source                     string
+	Type                       string
+	Filter                     []byte
+	ClonePaused                bool
+	RoutingRetryPolicy         []byte
+	SchemaVersions             []string
+	AcknowledgmentLeaseSeconds int32
+	Scope                      string
+	AppID                      pgtype.UUID
+}
+
+// A copied subscription starts disabled; clone_paused marks one the source
+// ran. The scope guard resolves the stage's environment ID.
+func (q *Queries) InsertProjectEnvironmentCloneEventSubscription(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneEventSubscriptionParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneEventSubscription,
+		arg.Source,
+		arg.Type,
+		arg.Filter,
+		arg.ClonePaused,
+		arg.RoutingRetryPolicy,
+		arg.SchemaVersions,
+		arg.AcknowledgmentLeaseSeconds,
+		arg.Scope,
+		arg.AppID,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneLayerPin = `-- name: InsertProjectEnvironmentCloneLayerPin :exec
 INSERT INTO project_environment_clone_layer_pins(operation_id, app_id, storage_key, bytes)
 VALUES ($1::uuid, $2::uuid, $3::text, $4::bigint)
@@ -43798,7 +43895,7 @@ func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX,
 }
 
 const latestSnapshot = `-- name: LatestSnapshot :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at, sealed_key, sealed_capture_id FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1
 `
@@ -43824,12 +43921,14 @@ func (q *Queries) LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgty
 		&i.CpuTemplate,
 		&i.CpuModel,
 		&i.StaleAt,
+		&i.SealedKey,
+		&i.SealedCaptureID,
 	)
 	return i, err
 }
 
 const latestSnapshotForTier = `-- name: LatestSnapshotForTier :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at, sealed_key, sealed_capture_id FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC LIMIT 1
 `
@@ -43860,6 +43959,8 @@ func (q *Queries) LatestSnapshotForTier(ctx context.Context, db DBTX, arg Latest
 		&i.CpuTemplate,
 		&i.CpuModel,
 		&i.StaleAt,
+		&i.SealedKey,
+		&i.SealedCaptureID,
 	)
 	return i, err
 }
@@ -50826,7 +50927,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 }
 
 const listEnabledEventSubscriptionsForAccount = `-- name: ListEnabledEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id, s.clone_paused
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
@@ -50857,6 +50958,7 @@ func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, d
 			&i.AcknowledgmentLeaseSeconds,
 			&i.DeploymentScope,
 			&i.EnvironmentID,
+			&i.ClonePaused,
 		); err != nil {
 			return nil, err
 		}
@@ -51468,7 +51570,7 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
-select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id
+select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id, clone_paused
 from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc
@@ -51501,6 +51603,7 @@ func (q *Queries) ListEventSubscriptionsForApp(ctx context.Context, db DBTX, app
 			&i.AcknowledgmentLeaseSeconds,
 			&i.DeploymentScope,
 			&i.EnvironmentID,
+			&i.ClonePaused,
 		); err != nil {
 			return nil, err
 		}
@@ -54118,7 +54221,7 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 }
 
 const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id, s.clone_paused
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1::uuid
@@ -54194,6 +54297,7 @@ func (q *Queries) ListMatchingEventSubscriptionsForAccount(ctx context.Context, 
 			&i.AcknowledgmentLeaseSeconds,
 			&i.DeploymentScope,
 			&i.EnvironmentID,
+			&i.ClonePaused,
 		); err != nil {
 			return nil, err
 		}
@@ -59208,7 +59312,7 @@ func (q *Queries) LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db D
 }
 
 const liveSnapshotsForTier = `-- name: LiveSnapshotsForTier :many
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at, sealed_key, sealed_capture_id FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC
 `
@@ -59245,6 +59349,8 @@ func (q *Queries) LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSna
 			&i.CpuTemplate,
 			&i.CpuModel,
 			&i.StaleAt,
+			&i.SealedKey,
+			&i.SealedCaptureID,
 		); err != nil {
 			return nil, err
 		}
@@ -69187,6 +69293,33 @@ func (q *Queries) ObjectBucketEncryptionUpdate(ctx context.Context, db DBTX, arg
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const objectBucketEventEnvironment = `-- name: ObjectBucketEventEnvironment :one
+SELECT COALESCE(
+    (SELECT bb.environment_id::text FROM project_environment_branch_buckets bb
+     WHERE bb.copy_bucket_id = b.id LIMIT 1),
+    (SELECT COALESCE(
+        (SELECT e.id::text FROM project_environment_clone_operations o
+         JOIN project_environments e ON e.project_id = o.project_id AND e.slug = o.target_environment
+         WHERE o.id = b.environment_clone_operation_id),
+        b.environment_clone_operation_id::text)
+     WHERE b.environment_clone_operation_id IS NOT NULL),
+    '')::text AS environment_id
+FROM object_buckets b
+WHERE b.id = $1::uuid
+`
+
+// The environment a bucket's storage events belong to (ADR-20261104120000):
+// a branch's copy bucket or a clone's target bucket is its stage's; every
+// other bucket is production (”). A stage bucket whose environment is gone
+// reports its clone operation's ID, which no subscription carries, so its
+// events reach no one instead of production.
+func (q *Queries) ObjectBucketEventEnvironment(ctx context.Context, db DBTX, bucketID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectBucketEventEnvironment, bucketID)
+	var environment_id string
+	err := row.Scan(&environment_id)
+	return environment_id, err
 }
 
 const objectBucketFinish = `-- name: ObjectBucketFinish :execrows
@@ -82368,7 +82501,8 @@ func (q *Queries) QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg Q
 const queueConsumerRetiredBindingForRevive = `-- name: QueueConsumerRetiredBindingForRevive :one
 select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id from queue_bindings
 where app_id=$1 and account_id=$2 and environment_id is null
-  and name=$3 and queue_name=$4 and retired_at is not null
+  and name=$3 and retired_at is not null
+order by retired_at desc, id limit 1
 for update
 `
 
@@ -82376,18 +82510,16 @@ type QueueConsumerRetiredBindingForReviveParams struct {
 	AppID     pgtype.UUID
 	AccountID pgtype.UUID
 	Name      string
-	QueueName string
 }
 
 // ADR-20261112200000: the retired production binding a create with the same
-// name and queue name revives.
+// name revives. ADR-20261113180000 (R5-2): the name alone selects it; the
+// create's queue name then applies as an ordinary rename, so its held
+// messages drain under the new name (leases and push claims select them by
+// binding). Requiring the old queue name too left a binding re-created under
+// a new queue name refused and its messages stranded.
 func (q *Queries) QueueConsumerRetiredBindingForRevive(ctx context.Context, db DBTX, arg QueueConsumerRetiredBindingForReviveParams) (QueueBinding, error) {
-	row := db.QueryRow(ctx, queueConsumerRetiredBindingForRevive,
-		arg.AppID,
-		arg.AccountID,
-		arg.Name,
-		arg.QueueName,
-	)
+	row := db.QueryRow(ctx, queueConsumerRetiredBindingForRevive, arg.AppID, arg.AccountID, arg.Name)
 	var i QueueBinding
 	err := row.Scan(
 		&i.ID,
@@ -88884,9 +89016,11 @@ func (q *Queries) ReadProductionQueueInvocation(ctx context.Context, db DBTX, id
 const readProductionQueueStateLive = `-- name: ReadProductionQueueStateLive :one
 SELECT count(*) AS depth,
     count(*) FILTER(WHERE state='dispatching' AND lease_expires_at IS NOT NULL AND lease_expires_at>now()) AS in_flight,
-    min(created_at) FILTER(WHERE state='pending')::timestamptz AS oldest_pending_at
+    min(created_at) FILTER(WHERE state='pending' AND due_at<=now())::timestamptz AS oldest_pending_at
 FROM production_invocation_work WHERE app_id=$1::uuid AND source='queue' AND state IN ('pending','dispatching')
-    AND (NOT $2::boolean OR queue_name=$3::text)
+    AND (NOT $2::boolean OR queue_name=$3::text OR queue_binding_id=(
+        SELECT b.id FROM queue_bindings b WHERE b.app_id=$1::uuid AND b.deployment_scope=''
+          AND b.queue_name=$3::text ORDER BY b.created_at, b.id LIMIT 1))
 `
 
 type ReadProductionQueueStateLiveParams struct {
@@ -88901,6 +89035,12 @@ type ReadProductionQueueStateLiveRow struct {
 	OldestPendingAt pgtype.Timestamptz
 }
 
+// ADR-20261113180000 (R7-3): a named queue counts the messages sent under
+// the name and those of the production binding that reads the name now, so
+// a binding's backlog from before a queue_name rename still shows; leases
+// and push claims already take it. The oldest pending message is the oldest
+// one ready for delivery: a message waiting out a retry back-off made the
+// queue look stalled.
 func (q *Queries) ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg ReadProductionQueueStateLiveParams) (ReadProductionQueueStateLiveRow, error) {
 	row := db.QueryRow(ctx, readProductionQueueStateLive, arg.AppID, arg.Named, arg.QueueName)
 	var i ReadProductionQueueStateLiveRow
@@ -89535,6 +89675,62 @@ func (q *Queries) ReadProjectEnvironmentCloneEnvironmentPresence(ctx context.Con
 	var i ReadProjectEnvironmentCloneEnvironmentPresenceRow
 	err := row.Scan(&i.SourceExists, &i.TargetExists)
 	return i, err
+}
+
+const readProjectEnvironmentCloneEventSubscriptions = `-- name: ReadProjectEnvironmentCloneEventSubscriptions :many
+SELECT source, type, filter, (enabled OR clone_paused)::boolean AS enabled, enabled AS stored_enabled,
+       routing_retry_policy, schema_versions, acknowledgment_lease_seconds
+FROM event_subscriptions
+WHERE app_id = $1::uuid AND deployment_scope = $2::text
+ORDER BY source, type, filter::text
+`
+
+type ReadProjectEnvironmentCloneEventSubscriptionsParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+type ReadProjectEnvironmentCloneEventSubscriptionsRow struct {
+	Source                     string
+	Type                       string
+	Filter                     []byte
+	Enabled                    bool
+	StoredEnabled              bool
+	RoutingRetryPolicy         []byte
+	SchemaVersions             []string
+	AcknowledgmentLeaseSeconds int32
+}
+
+// An app's event subscriptions in one environment (ADR-20261104120000
+// amendment 2026-11-14). A subscription a clone paused counts as enabled:
+// resuming it would.
+func (q *Queries) ReadProjectEnvironmentCloneEventSubscriptions(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneEventSubscriptionsParams) ([]ReadProjectEnvironmentCloneEventSubscriptionsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneEventSubscriptions, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneEventSubscriptionsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneEventSubscriptionsRow
+		if err := rows.Scan(
+			&i.Source,
+			&i.Type,
+			&i.Filter,
+			&i.Enabled,
+			&i.StoredEnabled,
+			&i.RoutingRetryPolicy,
+			&i.SchemaVersions,
+			&i.AcknowledgmentLeaseSeconds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneFlagScope = `-- name: ReadProjectEnvironmentCloneFlagScope :one
@@ -99677,6 +99873,45 @@ func (q *Queries) RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID
 	return err
 }
 
+const refreshHeldQueueMessages = `-- name: RefreshHeldQueueMessages :execrows
+UPDATE invocations i SET due_at = clock_timestamp()
+WHERE i.id IN (
+    SELECT c.id FROM invocations c
+    WHERE c.app_id = $1::uuid AND c.source = 'queue' AND c.state = 'pending' AND c.environment_id IS NULL
+      AND c.due_at <= clock_timestamp()
+      AND (c.queue_binding_id = $2::uuid OR (c.queue_binding_id IS NULL AND c.queue_name = $3::text))
+      AND greatest(coalesce(c.last_replayed_at, c.created_at), c.due_at) < clock_timestamp() - make_interval(secs => $4::bigint)
+    ORDER BY c.created_at
+    LIMIT $5::integer
+    FOR UPDATE SKIP LOCKED)
+  AND i.state = 'pending'
+`
+
+type RefreshHeldQueueMessagesParams struct {
+	AppID            pgtype.UUID
+	BindingID        pgtype.UUID
+	QueueName        string
+	OlderThanSeconds int64
+	BatchLimit       int32
+}
+
+// ADR-20261113180000 (R5-5): a held push queue's due messages that have
+// waited older_than restart their retention wait. due_at moves to now: the
+// row stays due, and its state does not change, so no notification fires.
+func (q *Queries) RefreshHeldQueueMessages(ctx context.Context, db DBTX, arg RefreshHeldQueueMessagesParams) (int64, error) {
+	result, err := db.Exec(ctx, refreshHeldQueueMessages,
+		arg.AppID,
+		arg.BindingID,
+		arg.QueueName,
+		arg.OlderThanSeconds,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const registerApplicationStandardLogConsumer = `-- name: RegisterApplicationStandardLogConsumer :one
 WITH registered AS (
  INSERT INTO application_standard_log_consumers(node_id,session_id,generation,registered_at)
@@ -101047,7 +101282,8 @@ func (q *Queries) ReplaceProductionAppWorkloadSettings(ctx context.Context, db D
 const replayDeadLetterInvocation = `-- name: ReplayDeadLetterInvocation :execrows
 update invocations set state='pending', attempts=0, last_error=null, outcome=null,
   due_at=clock_timestamp(),lease_expires_at=null,instance_id=null,
-  last_replayed_at=clock_timestamp(),completed_at=null,result=null
+  last_replayed_at=clock_timestamp(),completed_at=null,result=null,
+  outcome_code='', work_decision=null, quota_reserved=false, result_retention_until=null
 where id=$1::uuid and account_id=$2::uuid
   and app_id=$3::uuid and state='dead_letter'
   and operation_id IS NULL
@@ -101060,6 +101296,8 @@ type ReplayDeadLetterInvocationParams struct {
 	AppID     pgtype.UUID
 }
 
+// ADR-20261113180000 (R6-1, R8-2): the replay drops the dead letter's
+// outcome code and retention horizon with its result.
 func (q *Queries) ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayDeadLetterInvocationParams) (int64, error) {
 	result, err := db.Exec(ctx, replayDeadLetterInvocation, arg.ID, arg.AccountID, arg.AppID)
 	if err != nil {
@@ -101070,7 +101308,10 @@ func (q *Queries) ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg R
 
 const replayProductionDeadLetterInvocation = `-- name: ReplayProductionDeadLetterInvocation :execrows
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
-    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code='',
+    -- ADR-20261113180000 (R6-1, R8-2): a replay settles anew; the dead
+    -- letter's result and retention horizon do not carry over.
+    result=NULL,result_retention_until=NULL
 FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1::uuid
     AND i.account_id=$2::uuid AND i.app_id=$3::uuid AND i.state='dead_letter' AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
 `
@@ -104241,6 +104482,39 @@ func (q *Queries) ResumeEnvironmentClonePausedCrons(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const resumeEnvironmentClonePausedEventSubscriptions = `-- name: ResumeEnvironmentClonePausedEventSubscriptions :many
+UPDATE event_subscriptions SET enabled = true, updated_at = now()
+WHERE environment_id = $1::uuid AND clone_paused AND NOT enabled
+RETURNING id, app_id
+`
+
+type ResumeEnvironmentClonePausedEventSubscriptionsRow struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
+// Enables the event subscriptions a clone paused in one environment; the
+// enable clears clone_paused.
+func (q *Queries) ResumeEnvironmentClonePausedEventSubscriptions(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ResumeEnvironmentClonePausedEventSubscriptionsRow, error) {
+	rows, err := db.Query(ctx, resumeEnvironmentClonePausedEventSubscriptions, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ResumeEnvironmentClonePausedEventSubscriptionsRow{}
+	for rows.Next() {
+		var i ResumeEnvironmentClonePausedEventSubscriptionsRow
+		if err := rows.Scan(&i.ID, &i.AppID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const resumeStoredWorkflowFailurePause = `-- name: ResumeStoredWorkflowFailurePause :exec
 WITH changed AS (
  UPDATE stored_workflow_failure_guards SET generation=generation+1,paused_at=NULL,monitoring_since=clock_timestamp()
@@ -105179,7 +105453,10 @@ func (q *Queries) RetryExternalTriggerRecordByOperator(ctx context.Context, db D
 
 const retryProductionQueueDeadLetter = `-- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
-    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code='',
+    -- ADR-20261113180000 (R6-1, R8-2): a replay settles anew; the dead
+    -- letter's result and retention horizon do not carry over.
+    result=NULL,result_retention_until=NULL
 FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1 AND i.account_id=$2 AND i.state='dead_letter' AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
 RETURNING i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id, i.edge_jwt_issuer, i.edge_jwt_subject
 `
@@ -105311,7 +105588,8 @@ func (q *Queries) RetryProductionQueueTriggerInvocations(ctx context.Context, db
 const retryQueueDeadLetterInvocation = `-- name: RetryQueueDeadLetterInvocation :one
 update invocations set state='pending', attempts=0, last_error=null, outcome=null,
   due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
-  last_replayed_at=clock_timestamp(), completed_at=null, result=null
+  last_replayed_at=clock_timestamp(), completed_at=null, result=null,
+  outcome_code='', work_decision=null, quota_reserved=false, result_retention_until=null
 where id=$1::uuid and account_id=$2::uuid and state='dead_letter'
   and operation_id IS NULL
   and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
@@ -105323,6 +105601,10 @@ type RetryQueueDeadLetterInvocationParams struct {
 	AccountID pgtype.UUID
 }
 
+// ADR-20261113180000 (R6-1, R8-2): a replay starts a new delivery, so it
+// also drops the dead letter's outcome code and its retention horizon. Kept,
+// the horizon let the reaper delete the replayed message the moment it
+// settled again, and the code reported the old expiry on a later success.
 func (q *Queries) RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, arg RetryQueueDeadLetterInvocationParams) (Invocation, error) {
 	row := db.QueryRow(ctx, retryQueueDeadLetterInvocation, arg.ID, arg.AccountID)
 	var i Invocation

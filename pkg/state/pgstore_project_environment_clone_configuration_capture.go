@@ -255,6 +255,11 @@ func captureCloneConfigurationWorkloadsForScopesTx(ctx context.Context, tx pgx.T
 			return nil, err
 		}
 		snapshot.Crons = &crons
+		subscriptions, err := captureCloneEventSubscriptionsDB(ctx, tx, appID, op.SourceEnvironment)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.EventSubscriptions = &subscriptions
 		raw, hash, err := encodeCloneWorkloadSnapshot(snapshot)
 		if err != nil {
 			return nil, err
@@ -270,6 +275,9 @@ func captureCloneConfigurationWorkloadsForScopesTx(ctx context.Context, tx pgx.T
 		appIDs = append(appIDs, record.AppID)
 	}
 	if err := requireCloneCronsCapturedDB(ctx, tx, op.ProjectID, op.SourceEnvironment, appIDs); err != nil {
+		return nil, err
+	}
+	if err := requireCloneEventSubscriptionsCapturedDB(ctx, tx, op.ProjectID, op.SourceEnvironment, appIDs); err != nil {
 		return nil, err
 	}
 	return records, nil

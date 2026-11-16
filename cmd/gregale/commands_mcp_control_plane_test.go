@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
@@ -207,5 +208,34 @@ func TestMCPControlPlaneHostingDoctorIntegration(t *testing.T) {
 				t.Fatalf("status required compatibility: code=%d reads=%d", code, capabilityReads)
 			}
 		})
+	}
+}
+
+func TestMCPControlPlaneCanceledReleaseDoesNotStart(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		fmt.Fprint(w, `{"conditional_parking":true}`)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "operator")
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "tasks-release.js"), []byte(`throw new Error("gate must not run")`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(root, "journal.json")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	oldOut := *main.OsStdout
+	var output bytes.Buffer
+	*main.OsStdout = &output
+	defer func() { *main.OsStdout = oldOut }()
+	code := main.RunMCPNativeReleaseContext(ctx, main.McpNativeReleasePlan{WorkerPath: root}, main.McpNativeReleaseState{Stage: "prepared"}, state, "plan.json")
+	if code == 0 || requests.Load() != 0 {
+		t.Fatalf("code=%d requests=%d", code, requests.Load())
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("canceled release wrote journal: %v", err)
 	}
 }

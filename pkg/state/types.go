@@ -918,6 +918,11 @@ type APIConsumerUsageEvent struct {
 	// the collapsed usage buckets.
 	Audit           *RequestAuditEvidence
 	DiscoveredRoute string // optional normalized method/template
+	// DiscoveredDeploymentID is the deployment that served DiscoveredRoute.
+	// A stage deployment's routes go to its environment's inventory, and
+	// the first-seen event carries that environment (ADR-20261104120000).
+	// Empty (older gateways) is production.
+	DiscoveredDeploymentID string
 	// BillingRoute is the bounded "METHOD /template" label of
 	// consumer-attributed traffic; its billable units are also kept per route
 	// so rate cards can weight routes (ADR-952).
@@ -7377,6 +7382,12 @@ type Snapshot struct {
 	Stale                           bool
 	DeletePending                   bool
 	CreatedAt                       time.Time
+	// SealedKey and SealedCaptureID describe a snapshot sealed at the source
+	// (ADR-20261110210000 slice 3d-3): the capture key sealed to the capture
+	// recipient, and the capture id (storage_key's capture token) it is
+	// bound to. Both empty for a plaintext snapshot.
+	SealedKey       []byte `json:"-"`
+	SealedCaptureID string
 	// CPUTemplate and CPUModel are the capturing node's CPU identity
 	// (ADR-20261024225612): a templated snapshot restores on any node
 	// class the template supports, a template-less one only on the same
@@ -7489,9 +7500,13 @@ type EmailVerificationToken struct {
 type CliAuthCode struct {
 	TokenHash  []byte
 	DeviceHash []byte
-	AccountID  string // empty until ClaimCliAuthCode
-	ExpiresAt  time.Time
-	ConsumedAt *time.Time
+	// VerifierHash is the SHA-256 of a secret the minting CLI keeps; when
+	// set, the device code is exchanged only together with that secret
+	// (account audit F10-3).
+	VerifierHash []byte
+	AccountID    string // empty until ClaimCliAuthCode
+	ExpiresAt    time.Time
+	ConsumedAt   *time.Time
 	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
 	// approval; "" is the personal one (ADR-20261101225122).
 	OrgID string
@@ -7499,16 +7514,43 @@ type CliAuthCode struct {
 	// nil is every project (ADR-20261104085712). MemStore only: the Pg
 	// store reads it through CliAuthCodeProjects.
 	ProjectIDs []string
+	// CreatedAt and RequesterIP say when and from where the code was
+	// asked for. MemStore only: the Pg store reads them through
+	// CliAuthRequesterStore.
+	CreatedAt   time.Time
+	RequesterIP string
+}
+
+// CliAuthRequest is when and from which address a CLI login code was
+// asked for. The approval page shows it so a person approving a code
+// someone else sent can see it came from elsewhere (account audit F10).
+type CliAuthRequest struct {
+	IP        string // "" when the address was not recorded
+	CreatedAt time.Time
+}
+
+// CliAuthRequesterStore records and reads where a CLI login code came from.
+type CliAuthRequesterStore interface {
+	// RecordCliAuthRequester stores the address that minted a pending code.
+	RecordCliAuthRequester(ctx context.Context, tokenHash []byte, ip string) error
+	// CliAuthRequester returns the request facts of an unexpired code, or
+	// ErrNotFound.
+	CliAuthRequester(ctx context.Context, tokenHash []byte) (CliAuthRequest, error)
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row
 // issued through it is refused by ConsumeCliAuthCode, so guessing the short
 // code the user approves never yields a key.
 type CliAuthDeviceCodeStore interface {
-	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error
+	// IssueCliAuthDeviceCode stores a code bound to a device code. A
+	// non-empty verifierHash also binds it to the minting CLI's verifier.
+	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash, verifierHash []byte, expiresAt time.Time) error
 	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
-	// the device code's hash.
-	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
+	// the device code's hash. A row bound to a verifier is consumed only
+	// when verifierHash matches; otherwise it is left as it is and reported
+	// as unavailable once approved, so a device code that leaked without
+	// its verifier never yields a key and the real CLI can still finish.
+	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash, verifierHash []byte) (api.CliAuthStatus, string, error)
 	// ClaimCliAuthCodeForDevice is ClaimCliAuthCode that also replaces the
 	// row's device hash in the same statement. The one-click loopback login
 	// (ADR-20261111170000) hands the new device code to the approving

@@ -25,39 +25,26 @@ func TestRequestIDMiddlewareGeneratesAndPropagatesID(t *testing.T) {
 	}
 }
 
-func TestRequestIDMiddlewareReplacesOversizedID(t *testing.T) {
-	for _, size := range []int{128, 129, 256} {
-		t.Run(strings.Repeat("x", size), func(t *testing.T) {
-			original := strings.Repeat("x", size)
+// A client's x-faas-request-id is never adopted, whatever its size: the
+// public edge is the trust boundary and mints every id (prod 2026-11-15).
+func TestRequestIDMiddlewareNeverAdoptsSuppliedID(t *testing.T) {
+	for _, supplied := range []string{"supplied-1", `"../x`, strings.Repeat("x", 128), strings.Repeat("x", 256)} {
+		t.Run(supplied[:min(len(supplied), 16)], func(t *testing.T) {
+			var seen string
 			h := RequestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				id := requestIDFrom(r)
-				if len(id) > 128 || (size == 128 && id != original) || (size > 128 && id == original) || r.Header.Get(api.RequestIDHeader) != id {
-					t.Errorf("inconsistent request ID: %q", id)
+				seen = requestIDFrom(r)
+				if seen == "" || seen == supplied || r.Header.Get(api.RequestIDHeader) != seen {
+					t.Errorf("request id = %q (header %q), supplied %q", seen, r.Header.Get(api.RequestIDHeader), supplied)
 				}
+				w.WriteHeader(http.StatusNoContent)
 			}))
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			req.Header.Set(api.RequestIDHeader, original)
-			recorder := httptest.NewRecorder()
-			h.ServeHTTP(recorder, req)
-			if id := recorder.Header().Get(api.RequestIDHeader); len(id) > 128 || (size > 128 && id == original) {
-				t.Fatalf("response request ID: %q", id)
+			req.Header.Set(api.RequestIDHeader, supplied)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if got := rr.Header().Get(api.RequestIDHeader); got != seen {
+				t.Fatalf("response request id = %q, want the minted %q", got, seen)
 			}
 		})
-	}
-}
-
-func TestRequestIDMiddlewarePreservesSuppliedID(t *testing.T) {
-	h := RequestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := requestIDFrom(r); got != "supplied-1" {
-			t.Fatalf("context request id = %q, want supplied-1", got)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set(api.RequestIDHeader, "supplied-1")
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if got := rr.Header().Get(api.RequestIDHeader); got != "supplied-1" {
-		t.Fatalf("request id header = %q, want supplied-1", got)
 	}
 }

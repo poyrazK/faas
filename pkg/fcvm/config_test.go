@@ -252,6 +252,16 @@ func TestBootArgsLowerPageReportingOrder(t *testing.T) {
 	}
 }
 
+// adr: 1239 — a source-built app runs as the platform app user, and like a
+// Docker container it may bind ports below 1024 (prod 2026-11-15: :80 got
+// EACCES).
+func TestColdBootBootArgsAllowUnprivilegedLowPorts(t *testing.T) {
+	args := strings.Fields(BuildColdBootConfig(validColdSpec(), 0).BootSource.BootArgs)
+	if !slices.Contains(args, "sysctl.net.ipv4.ip_unprivileged_port_start=0") {
+		t.Fatalf("cold boot args missing the unprivileged port start: %q", args)
+	}
+}
+
 func TestColdBootBootArgsDisableConsole(t *testing.T) {
 	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if !strings.Contains(cfg.BootSource.BootArgs, "console=ttyS0,115200n8") {

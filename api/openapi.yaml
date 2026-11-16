@@ -340,6 +340,181 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/task-tool-release-intents/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Stable identity of the saved Task stack review
+    get:
+      operationId: getTaskToolReleaseIntent
+      summary: Read the retained Task review and last observed approval; requires account-wide
+        read scope
+      description: Return the retained credential-free Task stack review and its last recorded
+        approval state. The requesting key and personal owner may inspect it. This read observes
+        no source files and certifies no current binding or native app facts. Expired reviews
+        are projected as expired. Every response keeps ready_to_apply and bindings_verified false.
+      responses:
+        '200':
+          description: Retained Task review metadata from this account journal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Malformed Task review identity
+        '403':
+          description: Personal Task review inspection scope is required
+        '404':
+          description: The review is unavailable to this inspecting principal
+        '409':
+          description: The requested Task review cannot be inspected in its current form
+    put:
+      operationId: prepareTaskToolReleaseIntent
+      summary: Save an immutable Task stack review; requires deploy-write scope and MFA policy
+      description: Save an immutable Node Task stack review under a caller-chosen stable identity.
+        Bind its source fingerprint, exact native app snapshots and requesting key to the account.
+        Existing identical requests return the retained record; changed reviews conflict. The
+        review expires fifteen minutes after preparation and grants no runtime authority. Retain
+        at most 256 intent identities per account.
+      responses:
+        '200':
+          description: Newly prepared or identically replayed immutable Task intent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Unsupported or oversized Task stack review input
+        '403':
+          description: Task intent preparation requires personal deploy-write authority and MFA
+            policy
+        '404':
+          description: The Task review requester is no longer available
+        '409':
+          description: The intent identity or its native app snapshot already differs
+        '429':
+          description: The account has reached its retained Task review quota
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskToolReleaseIntent'
+  /v1/task-tool-release-intents/{id}/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Task intent identity whose source and native snapshots are revalidated
+    post:
+      operationId: checkTaskToolReleaseIntent
+      summary: Revalidate source fingerprint and native app reviews; requires deploy-write scope
+        and MFA policy
+      description: Compare a freshly computed local release fingerprint with the retained Task
+        intent and revalidate native app and requesting-key facts. Observed mismatches permanently
+        mark pending or approved reviews stale. Restoring previous source bytes does not revive
+        approval. An execution request atomically claims or guards a separately owner-authorized
+        local operation; only its requesting key may transition it. Guard checks retain app
+        configuration pins while allowing deployment revisions made by the native adapter.
+        Existing native traffic/readiness fences remain mandatory. This endpoint only changes
+        journal metadata and never executes customer code itself.
+      responses:
+        '200':
+          description: Task source and native snapshot revalidation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Invalid current Task release fingerprint
+        '403':
+          description: Task revalidation requires the requesting publisher or personal owner
+        '404':
+          description: No review can be revalidated by this caller
+        '409':
+          description: The Task review changed before revalidation completed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskToolReleaseIntentCheck'
+  /v1/task-tool-release-intents/{id}/recovery/restore:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Original Task intent containing the settled owner-approved recovery
+      schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+    post:
+      operationId: restoreTaskToolRecovery
+      summary: Restore the exact owner-approved web deployment once; requires the requesting key and MFA policy
+      description: The trusted local CLI checks retained Task compatibility under the release advisory lock and submits private claim possession plus fresh evidence. Native storage locks the recovery approval, credentials, app snapshots, running generations and observer heartbeat. The ordinary traffic endpoint's approval, policy, readiness, canary, binding, lifecycle and serving-CAS gates remain mandatory. Traffic and approval consumption commit in the same transaction. Exact repeats return the retained commit receipt after expiry or revocation without replaying traffic. A receipt records a historical traffic commit, not current runtime health. No migration, worker retirement or automatic claim takeover is performed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskToolRecoveryRestoreRequest' }
+      responses:
+        '200':
+          description: Native operation including its retained atomic restore receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskToolReleaseIntentRecord' }
+        '400': { description: Invalid recovery request }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Caller is not the current requesting publisher or lacks traffic authority }
+        '404': { description: No matching recovery is available to this caller }
+        '409': { description: 'Approval, evidence, native generation, runtime, policy or traffic changed' }
+        '422': { description: The ordinary native traffic gate refused this change }
+  /v1/task-tool-release-intents/{id}/decision:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained Task review identity for an exact-digest owner decision
+    put:
+      operationId: decideTaskToolReleaseIntent
+      summary: Record an exact-digest owner decision; requires personal non-agent administrator
+        and MFA policy
+      description: An unscoped personal administrator approves, rejects or revokes the exact intent
+        digest and retained release fingerprint. Agent and MCP-login credentials cannot decide.
+        Approval revalidates native app and key facts. Owner cancellation uses the retained review
+        even after source files or requesting-key authority disappear. Decisions never renew the
+        fifteen-minute deadline. A separate authorize decision from a non-agent admin API key
+        can bind one local Task execution identity to a salted private binding digest. It requires
+        an approved fresh review and cannot replace or renew an existing execution claim.
+      responses:
+        '200':
+          description: Retained owner verdict with its original review expiry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Invalid owner verdict or Task source fingerprint
+        '403':
+          description: A non-agent personal administrator and MFA policy are required to decide
+        '404':
+          description: The owner decision target or owner credential is unavailable
+        '409':
+          description: The owner digest or retained Task decision no longer matches
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskToolReleaseIntentDecision'
   /v1/support/notifications:
     get:
       tags:
@@ -62587,6 +62762,26 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/flags/lifecycle:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlagLifecycle
+      summary: Report each flag's owner, expiry, last change and use.
+      description: "Flags whose attention list is not empty need a decision: expired, expires_soon (within 7 days), stale (serves one value and unchanged for 14 days), never_evaluated (enabled, no decision in 7 days of retained request telemetry) or no_owner. An hourly check also records one flags.lifecycle_attention audit event per flag, reason and configuration version."
+      responses:
+        '200':
+          description: Lifecycle report for the current configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagLifecycleReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/flags/rollback:
     parameters:
       - { $ref: '#/components/parameters/FlagsProjectSlug' }
@@ -74028,6 +74223,429 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    TaskToolReleaseApp:
+      description: One existing personal app role and its exact default-environment native release snapshot.
+      type: object
+      additionalProperties: false
+      required:
+      - role
+      - app
+      - review
+      properties:
+        role:
+          type: string
+          enum:
+          - web
+          - worker
+          - observer
+          - previous_worker
+        app:
+          type: string
+        review:
+          $ref: '#/components/schemas/AppReleaseReview'
+    TaskToolReleaseIntent:
+      type: object
+      additionalProperties: false
+      description: Immutable review metadata bounded to 64 KiB. Required setup remains unverified.
+        No source paths, executable arguments, database URLs, credentials or credential references.
+      required:
+      - release_fingerprint
+      - worker_runtime
+      - protocol
+      - observer_metric_app
+      - endpoint
+      - access_mode
+      - tool_scopes
+      - apps
+      - required_setup
+      - reason
+      properties:
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        worker_runtime:
+          type: string
+          enum:
+          - node
+        protocol:
+          type: string
+          enum:
+          - '2026-07-28'
+        observer_metric_app:
+          type: string
+        endpoint:
+          type: string
+          maxLength: 512
+        access_mode:
+          type: string
+          enum:
+          - open
+          - external-oauth
+        tool_scopes:
+          type: object
+          minProperties: 1
+          maxProperties: 64
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        apps:
+          type: array
+          minItems: 3
+          maxItems: 35
+          items:
+            $ref: '#/components/schemas/TaskToolReleaseApp'
+        required_setup:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 280
+    TaskToolReleaseIntentRecord:
+      type: object
+      additionalProperties: false
+      description: Immutable source and native app review with optional separate owner authorization
+        for a single local Task adapter execution. Root readiness flags never grant authority.
+      required:
+      - version
+      - id
+      - account_id
+      - requester_key_id
+      - intent_sha256
+      - intent
+      - status
+      - created_at
+      - expires_at
+      - bindings_verified
+      - ready_to_apply
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        id:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        account_id:
+          type: string
+          format: uuid
+        requester_key_id:
+          type: string
+          format: uuid
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        intent:
+          $ref: '#/components/schemas/TaskToolReleaseIntent'
+        status:
+          type: string
+          enum:
+          - pending
+          - approved
+          - rejected
+          - revoked
+          - expired
+          - stale
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        decided_at:
+          type: string
+          format: date-time
+        bindings_verified:
+          type: boolean
+          enum:
+          - false
+        ready_to_apply:
+          type: boolean
+          enum:
+          - false
+        execution:
+          $ref: '#/components/schemas/TaskToolReleaseExecution'
+    TaskToolReleaseIntentCheck:
+      description: Fresh local fingerprint for drift detection or a separately authorized adapter claim transition.
+      type: object
+      additionalProperties: false
+      required:
+      - release_fingerprint
+      properties:
+        quarantine:
+          $ref: '#/components/schemas/TaskToolQuarantineRequest'
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        execution:
+          $ref: '#/components/schemas/TaskToolReleaseExecutionRequest'
+    TaskToolReleaseIntentDecision:
+      description: Owner verdict bound to an immutable Task intent digest and its retained source fingerprint.
+      type: object
+      additionalProperties: false
+      required:
+      - intent_sha256
+      - release_fingerprint
+      - decision
+      properties:
+        quarantine:
+          $ref: '#/components/schemas/TaskToolQuarantineRequest'
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        decision:
+          type: string
+          enum:
+          - approve
+          - reject
+          - revoke
+          - authorize
+          - recovery_stop
+          - recovery_qualify
+          - recovery_approve
+          - recovery_revoke
+          - recovery_quarantine_qualify
+          - recovery_quarantine_approve
+          - recovery_quarantine_revoke
+        execution:
+          $ref: '#/components/schemas/TaskToolReleaseExecutionRequest'
+        recovery:
+          $ref: '#/components/schemas/TaskToolRecoveryRequest'
+    TaskToolReleaseExecution:
+      description: Single-use owner authorization bound to a private local binding digest and an immutable operation. Existing claims are never automatically taken over.
+      type: object
+      additionalProperties: false
+      required: [operation_id, bindings_sha256, authorizer_key_id, state, authorized_at]
+      properties:
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        authorizer_key_id: { type: string, format: uuid }
+        state: { type: string, enum: [authorized, running, reconcile_required, completed] }
+        authorized_at: { type: string, format: date-time }
+        claim_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        stage: { type: string, enum: [prepared, deploying_worker, deploying_web, replacements_started, web_promoted, draining_previous, previous_parked, complete] }
+        receipt:
+          $ref: '#/components/schemas/TaskToolReleaseReceipt'
+        completed_stages:
+          type: array
+          items: { type: string, enum: [baseline_captured, worker_submitted, web_submitted, workers_recorded, promotion_recorded, previous_workers_parked, release_completed] }
+        fence_version: { type: integer, enum: [1] }
+        executor_exited_at: { type: string, format: date-time }
+        recovery:
+          $ref: '#/components/schemas/TaskToolRecoveryHandover'
+    TaskToolReleaseExecutionRequest:
+      description: Exact local execution identity and bounded transition. Private claim material is submitted by the trusted CLI and is never returned in API receipts.
+      type: object
+      additionalProperties: false
+      required: [action, operation_id, bindings_sha256]
+      properties:
+        action: { type: string, enum: [authorize, claim, guard, reconcile, complete, executor_exited] }
+        fence_version: { type: integer, enum: [1] }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        claim_token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true }
+        stage: { type: string, enum: [prepared, deploying_worker, deploying_web, replacements_started, web_promoted, draining_previous, previous_parked, complete] }
+        receipt:
+          $ref: '#/components/schemas/TaskToolReleaseReceipt'
+    TaskToolReleaseReceipt:
+      description: Monotonic checkpoint from the authenticated local execution claim holder. Deployment and worker identities require independent fresh native observation during recovery; this metadata grants no action authority.
+      type: object
+      additionalProperties: false
+      required: [revision, release_id, stage, serving_captured, previous_deployments, worker_ids, promoted, parked]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        release_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        stage: { type: string, enum: [prepared, deploying_worker, deploying_web, replacements_started, web_promoted, draining_previous, previous_parked, complete] }
+        serving_captured: { type: boolean }
+        serving_deployment_id: { type: string, format: uuid }
+        web_deployment_id: { type: string, format: uuid }
+        worker_deployment_id: { type: string, format: uuid }
+        pending_submission: { type: string, enum: [web, worker] }
+        previous_deployments:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, format: uuid }
+        worker_ids:
+          type: array
+          maxItems: 1024
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        promoted: { type: boolean }
+        parked:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: boolean, enum: [true] }
+    TaskToolRecoveryHandover:
+      description: Permanent executor fence and separate owner recovery authority. Settlement requires an exit acknowledgement and the native mutation barrier. Restore and quarantine have separate authority and retained results.
+      type: object
+      additionalProperties: false
+      required: [id, operation_id, revision, state, requested_at]
+      properties:
+        quarantine:
+          $ref: '#/components/schemas/TaskToolQuarantine'
+        result:
+          $ref: '#/components/schemas/TaskToolRecoveryResult'
+        id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        state: { type: string, enum: [stopping, settled] }
+        requested_at: { type: string, format: date-time }
+        settled_at: { type: string, format: date-time }
+        qualification:
+          $ref: '#/components/schemas/TaskToolRecoveryQualification'
+        decision: { type: string, enum: [approved, revoked] }
+        authorizer_key_id: { type: string, format: uuid }
+        decided_at: { type: string, format: date-time }
+    TaskToolRecoveryQualification:
+      description: Owner attestation of fresh local checks, exact recovery target and a locked native snapshot. The fixed deadline is observed_at plus 60 seconds, independently of the original release approval. Qualifying or approving never renews it.
+      type: object
+      additionalProperties: false
+      required: [handover_id, operation_id, revision, action, target_deployment_id, expected_serving_deployment_id, bindings_sha256, evidence_sha256, native_apps, observed_at, expires_at]
+      properties:
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        action: { type: string, enum: [restore, quarantine] }
+        target_deployment_id: { type: string, format: uuid }
+        expected_serving_deployment_id: { type: string, format: uuid }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        native_apps:
+          type: array
+          minItems: 3
+          maxItems: 35
+          items: { $ref: '#/components/schemas/TaskToolReleaseApp' }
+        observed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    MCPAccessPolicyExpectation:
+      description: Native stored-policy concurrency condition for the exact canonical MCP resource, optionally including the converged account revision. It does not replace runtime authorization checks.
+      type: object
+      additionalProperties: false
+      required: [resource, fingerprint]
+      properties:
+        resource: { type: string, format: uri }
+        fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
+        account_revision: { type: integer, format: int64, minimum: 1 }
+    TaskToolRecoveryRestoreRequest:
+      description: Trusted local CLI request for the exact separately owner-approved restore. Agent tools accept public identities only; private claim material and binding/evidence details are resolved locally. No automatic retry or deadline renewal.
+      type: object
+      additionalProperties: false
+      required: [operation_id, handover_id, qualification_sha256]
+      properties:
+        expected_instance_ids:
+          type: object
+          maxProperties: 35
+          description: Fresh native VM IDs by approved app ID; Task worker IDs are checked separately by the trusted CLI.
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 1024
+            uniqueItems: true
+            items: { type: string, format: uuid }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        claim_token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        checked_at: { type: string, format: date-time }
+        expected_mcp_access_policy:
+          $ref: '#/components/schemas/MCPAccessPolicyExpectation'
+    TaskToolRecoveryResult:
+      description: Durable atomic traffic-commit receipt. It binds the consumed owner approval to the exact deployments and evidence, and remains inspectable after deadline expiry or revocation. It never authorizes another write or certifies current health.
+      type: object
+      additionalProperties: false
+      required: [intent_id, operation_id, handover_id, qualification_sha256, revision, action, target_deployment_id, previous_serving_deployment_id, evidence_sha256, checked_at, committed_at]
+      properties:
+        intent_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        action: { type: string, enum: [restore] }
+        target_deployment_id: { type: string, format: uuid }
+        previous_serving_deployment_id: { type: string, format: uuid }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        checked_at: { type: string, format: date-time }
+        committed_at: { type: string, format: date-time }
+    TaskToolQuarantine:
+      description: Separate fixed owner approval and one admitted candidate claim-fence attempt. Applying is uncertain until read-only Task-database evidence is observed. It cannot renew or reuse restore authority.
+      type: object
+      additionalProperties: false
+      required: [qualification, state]
+      properties:
+        qualification:
+          $ref: '#/components/schemas/TaskToolRecoveryQualification'
+        state: { type: string, enum: [qualified, applying, quarantined] }
+        decision: { type: string, enum: [approved, revoked] }
+        authorizer_key_id: { type: string, format: uuid }
+        decided_at: { type: string, format: date-time }
+        attempt_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        claimed_at: { type: string, format: date-time }
+        result:
+          $ref: '#/components/schemas/TaskToolQuarantineResult'
+    TaskToolQuarantineRequest:
+      description: Private trusted CLI qualification or attempt metadata on existing journal routes. Agent tools accept public identities only. A claim is never automatically retried; observe records read-only fence evidence after an admitted attempt.
+      type: object
+      additionalProperties: false
+      properties:
+        action: { type: string, enum: [claim, observe] }
+        qualification:
+          $ref: '#/components/schemas/TaskToolRecoveryQualification'
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        claim_token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true }
+        attempt_token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        checked_at: { type: string, format: date-time }
+        expected_instance_ids:
+          type: object
+          maxProperties: 35
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 1024
+            uniqueItems: true
+            items: { type: string, format: uuid }
+        expected_mcp_access_policy:
+          $ref: '#/components/schemas/MCPAccessPolicyExpectation'
+    TaskToolQuarantineResult:
+      description: Historical observation that the exact recorded candidate worker IDs were fenced from new claims. No cross-database atomic commit, active-lease cancellation, worker shutdown or current-health certification is implied.
+      type: object
+      additionalProperties: false
+      required: [operation_id, handover_id, qualification_sha256, worker_deployment_id, serving_deployment_id, worker_ids, evidence_sha256, observed_at, recorded_at]
+      properties:
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        worker_deployment_id: { type: string, format: uuid }
+        serving_deployment_id: { type: string, format: uuid }
+        worker_ids:
+          type: array
+          minItems: 1
+          maxItems: 1024
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        observed_at: { type: string, format: date-time }
+        recorded_at: { type: string, format: date-time }
+    TaskToolRecoveryRequest:
+      description: Owner-only handover or qualification verdict on the existing decision route. The authenticated native handler supplies the owner identity; agent inputs cannot supply it.
+      type: object
+      additionalProperties: false
+      required: [handover_id, operation_id, revision]
+      properties:
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        qualification:
+          $ref: '#/components/schemas/TaskToolRecoveryQualification'
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
     DataPipelineFreshness:
       type: object
       additionalProperties: false
@@ -88156,11 +88774,43 @@ components:
         subjects: { type: array, minItems: 1, maxItems: 1000, uniqueItems: true, items: { type: string, pattern: '^[!-~]{1,128}$' }, description: "Opaque application subject IDs, matched inside the selected customers/group. Use stable internal IDs, not emails or display names." }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of eligible customers by default, or eligible subjects when rollout_unit is subject; omitted means all eligible targets." }
         rollout_unit: { type: string, enum: [customer, subject], description: Allocation unit for rollout percentages. Omitted preserves customer-level allocation. Subject rollout requires a customer or group constraint and an authenticated subject context. }
+        attributes: { type: array, minItems: 1, maxItems: 8, items: { $ref: '#/components/schemas/FlagCondition' }, description: "Request attribute conditions; all must hold. Runtime SDKs need capability attribute-targeting-v1." }
         progression: { $ref: '#/components/schemas/ProgressiveRollout' }
         value:
           oneOf:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
+    FlagLifecycleReport:
+      description: Lifecycle of every flag in the current configuration.
+      type: object
+      required: [config_version, generated_at, flags]
+      properties:
+        config_version: { type: integer, format: int64, minimum: 0 }
+        generated_at: { type: string, format: date-time }
+        flags: { type: array, items: { $ref: '#/components/schemas/FlagLifecycle' } }
+    FlagLifecycle:
+      description: One flag's owner, expiry, last change and recent use.
+      type: object
+      required: [key, last_changed_version, last_changed_at, serves_one_value, evidence, attention]
+      properties:
+        key: { type: string }
+        owner: { type: string }
+        expires_at: { type: string, format: date }
+        last_changed_version: { type: integer, format: int64, description: "Newest version that changed this flag, within the last 200 versions." }
+        last_changed_at: { type: string, format: date-time }
+        serves_one_value: { type: boolean, description: "True when every request gets the same value (disabled, killed, no rules, or a first rule matching everybody)." }
+        evaluated_requests: { type: integer, format: int64, description: Requests with a decision for this flag in the last 7 days of retained telemetry. }
+        evidence: { type: string, enum: [available, unavailable] }
+        attention: { type: array, items: { type: string, enum: [expired, expires_soon, stale, never_evaluated, no_owner] } }
+    FlagCondition:
+      description: "One request attribute condition. gregale.country (ISO 3166-1 alpha-2) and gregale.ua_family are verified by the gateway; app.<name> attributes are supplied by the application after it authenticates the user. A missing attribute never matches, including not_in. ends_with applies only to app.* attributes."
+      type: object
+      additionalProperties: false
+      required: [attribute, op, values]
+      properties:
+        attribute: { type: string, pattern: '^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$' }
+        op: { type: string, enum: [in, not_in, ends_with] }
+        values: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string, pattern: '^[ -~]{1,128}$' } }
     ProgressiveRollout:
       description: Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
       type: object
@@ -88263,6 +88913,9 @@ components:
         description: { type: string, maxLength: 512 }
         type: { type: string, enum: [boolean, variant], default: boolean }
         enabled: { type: boolean }
+        owner: { type: string, maxLength: 128, description: "Who decides about this flag, for example a team or an email. Not used in evaluation." }
+        expires_at: { type: string, format: date, description: Date after which the lifecycle report marks the flag expired. Not used in evaluation. }
+        killed: { type: boolean, default: false, description: "Forces every evaluation to the application's fallback (reason killed), whatever the default, rules or inherited decisions say. Gregale's gateway also reports killed flags on each request, so a kill applies on the next request. SDKs without capability kill-v1 receive bundles without killed flags." }
         default:
           description: Boolean fallback for boolean flags or named fallback variant for variant flags.
           oneOf:
@@ -88327,6 +88980,11 @@ components:
         version: { type: integer, format: int64, minimum: 0, description: Zero or omitted selects current configuration. }
         fallback: { type: boolean, default: false }
         fallback_variant: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Fallback variant for an absent flag; configured variant flags use their own default. }
+        attributes:
+          type: object
+          maxProperties: 18
+          description: Simulated request attributes (gregale.country, gregale.ua_family, app.<name>) for attribute-targeted rules.
+          additionalProperties: { type: string, pattern: '^[ -~]{1,128}$' }
     FlagDecision:
       description: Explainable boolean or named-variant decision against a configuration version.
       type: object
@@ -88340,7 +88998,7 @@ components:
         type: { type: string, enum: [boolean, variant], description: Present as variant for named-variant decisions; omitted for legacy boolean decisions. }
         config_version: { type: integer, format: int64, minimum: 0 }
         rule_id: { type: string }
-        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, subject_missing, rule_match, configuration_stale, type_mismatch] }
+        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, subject_missing, rule_match, configuration_stale, type_mismatch, killed] }
         bucket: { type: integer, minimum: 0, maximum: 9999, description: Boolean rollout bucket or weighted variant assignment bucket. }
         rollout_bucket: { type: integer, minimum: 0, maximum: 9999, description: Eligibility bucket for rollout-gated variant rules. }
         source: { type: string, enum: [configuration, fallback, inherited] }
@@ -90829,7 +91487,7 @@ components:
         blocking: { type: boolean, description: This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled. }
         reasons:
           type: array
-          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending] }
+          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending] }
         collected_window_seconds: { type: integer, format: int64, minimum: 0 }
         required_from: { type: [string, "null"], format: date-time }
         required_until: { type: [string, "null"], format: date-time }
@@ -114760,14 +115418,19 @@ components:
 
     ResumeEnvironmentAutomationResponse:
       type: object
-      description: Crons enabled by resuming a stage's automation after a full environment clone.
-      required: [environment, crons_resumed, cron_ids]
+      description: Crons and event subscriptions enabled by resuming a stage's automation after a full environment clone.
+      required: [environment, crons_resumed, cron_ids, event_subscriptions_resumed, event_subscription_ids]
       properties:
         environment: { type: string, description: "Stage whose paused automation was enabled.", example: "staging" }
         crons_resumed: { type: integer, minimum: 0, description: "Number of crons enabled." }
         cron_ids:
           type: array
           description: Crons enabled by this call.
+          items: { type: string }
+        event_subscriptions_resumed: { type: integer, minimum: 0, description: "Number of event subscriptions enabled." }
+        event_subscription_ids:
+          type: array
+          description: Event subscriptions enabled by this call.
           items: { type: string }
     ProjectEnvironmentCloneOperationResponse:
       description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.
@@ -116060,6 +116723,15 @@ components:
         preview_service_calls_policy:
           $ref: '#/components/schemas/PreviewServiceCallsPolicy'
           description: "Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`."
+        app_protocol:
+          type: string
+          description: "Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets none."
+        streaming:
+          type: boolean
+          description: "Compose `x-gregale-streaming`. Omitted when the file sets none."
+        wake_ahead:
+          type: boolean
+          description: "Compose `x-gregale-wake-ahead`. Omitted when the file sets none."
         allowed_service_callers:
           type: array
           items: { type: string }
@@ -121663,7 +122335,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_all_failed, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string
@@ -124159,7 +124831,7 @@ components:
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
 
     QueueReceiveResponse:
-      description: "200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout."
+      description: "200 — a settled queue invocation observed by the long-poll feed: every waiting receive sees it, and one that settles while none waits is not replayed. 204 (no body) on timeout. Consume with pull leases instead."
       type: object
       required: [id, payload]
       properties:
@@ -124168,6 +124840,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
         result: { type: object, additionalProperties: true }
+        state: { type: string, description: "How the message settled: completed, failed or cancelled. A failed or cancelled message's result is its error." }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         traceparent: { type: string, description: "W3C traceparent propagated from the producer." }
 

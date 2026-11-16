@@ -3644,6 +3644,14 @@ func ErrUploadChecksumMismatch(uploadID, declared, got string) *Problem {
 // sweep). The CLI auto-rolls to a fresh POST /v1/uploads on receipt of
 // this code (cmd/gregale/upload_session.go, PR-2). 410 Gone so the
 // CLI can distinguish from 404 NotFound (id never existed).
+// ErrAppDeleted is the 410 a read of a deleted app's deployment answers, so
+// a client polling it stops instead of waiting on a 503.
+func ErrAppDeleted(slug string) *Problem {
+	return NewProblem(http.StatusGone, CodeAppDeleted,
+		"App deleted",
+		fmt.Sprintf("App %q was deleted, so its deployments no longer run. Restore it with `gregale app restore %s` during the deletion grace period, or deploy again.", slug, slug))
+}
+
 func ErrUploadSessionExpired(uploadID string) *Problem {
 	return NewProblem(http.StatusGone, CodeUploadSessionExpired,
 		"Upload session expired",
@@ -4744,6 +4752,9 @@ const (
 	// CLI auto-rolls to a fresh POST /v1/uploads and restarts
 	// from byte 0 (cmd/gregale/upload_session.go, PR-2).
 	CodeUploadSessionExpired = "upload_session_expired"
+	// CodeAppDeleted is the 410 a read of a deleted app's deployment
+	// answers (ErrAppDeleted). Deploy waits treat it as final.
+	CodeAppDeleted = "app_deleted"
 	// CodeUploadSessionTooMany is the 429 emitted by POST
 	// /v1/uploads when the per-(account_id, app_slug) open-
 	// session cap (5) or the per-account open-spool budget
@@ -5997,16 +6008,13 @@ func ErrPlanLimitTrustedSigners(l Limits, observed int) *Problem {
 		WithDocs(docsBase + "/deploys#trusted-signers")
 }
 
-// ErrEnvVarInvalidKey is returned when an env key fails the
-// ^[A-Z][A-Z0-9_]*$ pattern. Detail names the specific failure so the CLI
-// can render an actionable message. The regex intentionally reuses the
-// SecretKeyPattern constant because POSIX env-var naming and the secrets
-// naming surface share the same ASCII identifier grammar — keeping one
-// pattern avoids the drift where two regexes diverge over time.
+// ErrEnvVarInvalidKey is returned when an env key fails EnvKeyPattern or
+// spells a platform-provided key in another case. Detail names the specific
+// failure so the CLI can render an actionable message.
 func ErrEnvVarInvalidKey(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeEnvVarInvalidKey,
 		"Invalid env var key",
-		fmt.Sprintf("env var keys must match %s; %s", SecretKeyPattern, detail)).
+		fmt.Sprintf("env var keys must match %s; %s", EnvKeyPattern, detail)).
 		WithDocs(docsBase + "/env#keys")
 }
 

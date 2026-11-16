@@ -992,6 +992,8 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
+	// appPlan names a service call target's plan (WithAppPlanResolver).
+	appPlan               AppPlanResolver
 	publicRoutingPolicy   PublicRoutingPinner
 	publicRoutingStride   publicRoutingStride
 	publicRoutingFreezes  publicRoutingFreezes
@@ -5985,8 +5987,12 @@ func (c *capWriter) Write(b []byte) (int, error) {
 		// Fire once; idempotent under concurrent writes thanks
 		// to disabled CAS. A committed response cannot become a
 		// problem document any more (see committed).
-		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil && !c.committed {
-			c.onCap()
+		if c.disabled.CompareAndSwap(false, true) {
+			if !c.committed && c.onCap != nil {
+				c.onCap()
+			} else if c.committed {
+				markResponseTruncated(c.ResponseWriter)
+			}
 		}
 		if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
 			c.onWarn("exceeded")
@@ -6310,6 +6316,10 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Outermost: a gRPC caller gets the platform's errors as gRPC statuses;
+	// the recorders below still see the HTTP status (grpc_platform_error.go).
+	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
+	defer finishGRPC()
 	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
@@ -7803,6 +7813,9 @@ haveApp:
 			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
 		}
 		if err != nil {
+			if h.clientLeftDuringWake(r, app) {
+				return
+			}
 			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
 				// still alive. Record the visit and let the page's fetch/meta
@@ -8104,6 +8117,7 @@ haveApp:
 	// the HTTP bytes to this exact instance. A retry restamps for its own
 	// target inside the forward closures below.
 	var identity api.PlatformIdentity
+	r = h.withFlagRequestAttributes(r)
 	r, identity = stampTargetIdentity(r, app, target)
 	requestAttrs.addIdentity(identity)
 
@@ -8781,6 +8795,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		if decision.path != "" {
 			requestLog = requestLog.With(decision.logAttribute())
 		}
+		if truncated := truncatedResponse(r); truncated != nil {
+			requestLog = requestLog.With("response_truncated", true, "sent_status", truncated.status, "response_bytes", truncated.Bytes)
+		}
 		if revision := TrafficPolicyRevision(r.Context()); revision != "" {
 			requestLog = requestLog.With("traffic_policy_revision", revision)
 		}
@@ -9388,6 +9405,10 @@ type statusRecorder struct {
 	// Retain the origin's privacy veto before response-header rules can
 	// remove it. The parked HEAD cache is shared with anonymous callers.
 	headCachePrivate bool
+
+	// responseTruncated is set when the body passed the plan's cap after
+	// the status went out (truncated_response_telemetry.go).
+	responseTruncated bool
 
 	// Capture the final rebound request context when the response commits.
 	trafficResponseCommittedContext context.Context

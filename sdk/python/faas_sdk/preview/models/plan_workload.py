@@ -99,6 +99,13 @@ class PlanWorkload:
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
     """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
     `deny` rejects preview callers before waking the target."""
+    app_protocol: str | Unset = UNSET
+    """Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets
+    none."""
+    streaming: bool | Unset = UNSET
+    """Compose `x-gregale-streaming`. Omitted when the file sets none."""
+    wake_ahead: bool | Unset = UNSET
+    """Compose `x-gregale-wake-ahead`. Omitted when the file sets none."""
     allowed_service_callers: list[str] | Unset = UNSET
     """Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers;
     an empty array denies all."""
@@ -218,6 +225,12 @@ class PlanWorkload:
         if not isinstance(self.preview_service_calls_policy, Unset):
             preview_service_calls_policy = self.preview_service_calls_policy
 
+        app_protocol = self.app_protocol
+
+        streaming = self.streaming
+
+        wake_ahead = self.wake_ahead
+
         allowed_service_callers: list[str] | Unset = UNSET
         if not isinstance(self.allowed_service_callers, Unset):
             allowed_service_callers = self.allowed_service_callers
@@ -325,6 +338,12 @@ class PlanWorkload:
             field_dict["service_binding_transport"] = service_binding_transport
         if preview_service_calls_policy is not UNSET:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
+        if app_protocol is not UNSET:
+            field_dict["app_protocol"] = app_protocol
+        if streaming is not UNSET:
+            field_dict["streaming"] = streaming
+        if wake_ahead is not UNSET:
+            field_dict["wake_ahead"] = wake_ahead
         if allowed_service_callers is not UNSET:
             field_dict["allowed_service_callers"] = allowed_service_callers
         if allowed_service_call_scopes is not UNSET:
@@ -472,6 +491,12 @@ class PlanWorkload:
         else:
             preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
 
+        app_protocol = d.pop("app_protocol", UNSET)
+
+        streaming = d.pop("streaming", UNSET)
+
+        wake_ahead = d.pop("wake_ahead", UNSET)
+
         allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
 
         _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
@@ -564,6 +589,9 @@ class PlanWorkload:
             service_reliability=service_reliability,
             service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,
+            app_protocol=app_protocol,
+            streaming=streaming,
+            wake_ahead=wake_ahead,
             allowed_service_callers=allowed_service_callers,
             allowed_service_call_scopes=allowed_service_call_scopes,
             class_=class_,

@@ -1465,7 +1465,9 @@ from .dev_postgres_request import DevPostgresRequest
 from .dev_postgres_response import DevPostgresResponse
 from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
 from .dev_postgres_response_state import DevPostgresResponseState
+from .dev_session_list_response import DevSessionListResponse
 from .dev_session_response import DevSessionResponse
+from .dev_session_summary import DevSessionSummary
 from .dev_sync_history_item import DevSyncHistoryItem
 from .dev_sync_history_item_status import DevSyncHistoryItemStatus
 from .dev_sync_history_response import DevSyncHistoryResponse
@@ -2235,6 +2237,8 @@ from .fire_cron_request_response import FireCronRequestResponse
 from .fire_cron_request_response_status import FireCronRequestResponseStatus
 from .fire_cron_response import FireCronResponse
 from .fire_cron_response_status import FireCronResponseStatus
+from .flag_condition import FlagCondition
+from .flag_condition_op import FlagConditionOp
 from .flag_decision import FlagDecision
 from .flag_decision_inherited_from import FlagDecisionInheritedFrom
 from .flag_decision_reason import FlagDecisionReason
@@ -2242,6 +2246,10 @@ from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
 from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
+from .flag_lifecycle import FlagLifecycle
+from .flag_lifecycle_attention_item import FlagLifecycleAttentionItem
+from .flag_lifecycle_evidence import FlagLifecycleEvidence
+from .flag_lifecycle_report import FlagLifecycleReport
 from .flag_outcome import FlagOutcome
 from .flag_outcome_type import FlagOutcomeType
 from .flag_outcomes_response import FlagOutcomesResponse
@@ -2399,6 +2407,7 @@ from .inspect_durable_entity_quota_policy_response_200 import InspectDurableEnti
 from .inspect_durable_entity_registry_cleanup_response_200 import InspectDurableEntityRegistryCleanupResponse200
 from .inspect_durable_entity_tenant_quotas_response_200 import InspectDurableEntityTenantQuotasResponse200
 from .inspect_feature_flag_request import InspectFeatureFlagRequest
+from .inspect_feature_flag_request_attributes import InspectFeatureFlagRequestAttributes
 from .install_bind_request import InstallBindRequest
 from .install_bind_request_deploy_branches import InstallBindRequestDeployBranches
 from .install_bind_response import InstallBindResponse
@@ -2932,6 +2941,7 @@ from .managed_realtime_signal_request import ManagedRealtimeSignalRequest
 from .managed_realtime_signal_response import ManagedRealtimeSignalResponse
 from .managed_realtime_signal_response_member_id import ManagedRealtimeSignalResponseMemberId
 from .managed_service_probe_spec import ManagedServiceProbeSpec
+from .mcp_access_policy_expectation import MCPAccessPolicyExpectation
 from .mcp_admission_evidence import MCPAdmissionEvidence
 from .mcp_admission_evidence_outcome import MCPAdmissionEvidenceOutcome
 from .mcp_admission_evidence_version import MCPAdmissionEvidenceVersion
@@ -6143,6 +6153,50 @@ from .synthetic_check_response_method import SyntheticCheckResponseMethod
 from .synthetic_check_results import SyntheticCheckResults
 from .synthetic_check_run import SyntheticCheckRun
 from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
+from .task_tool_quarantine import TaskToolQuarantine
+from .task_tool_quarantine_decision import TaskToolQuarantineDecision
+from .task_tool_quarantine_request import TaskToolQuarantineRequest
+from .task_tool_quarantine_request_action import TaskToolQuarantineRequestAction
+from .task_tool_quarantine_request_expected_instance_ids import TaskToolQuarantineRequestExpectedInstanceIds
+from .task_tool_quarantine_result import TaskToolQuarantineResult
+from .task_tool_quarantine_state import TaskToolQuarantineState
+from .task_tool_recovery_handover import TaskToolRecoveryHandover
+from .task_tool_recovery_handover_decision import TaskToolRecoveryHandoverDecision
+from .task_tool_recovery_handover_state import TaskToolRecoveryHandoverState
+from .task_tool_recovery_qualification import TaskToolRecoveryQualification
+from .task_tool_recovery_qualification_action import TaskToolRecoveryQualificationAction
+from .task_tool_recovery_request import TaskToolRecoveryRequest
+from .task_tool_recovery_restore_request import TaskToolRecoveryRestoreRequest
+from .task_tool_recovery_restore_request_expected_instance_ids import TaskToolRecoveryRestoreRequestExpectedInstanceIds
+from .task_tool_recovery_result import TaskToolRecoveryResult
+from .task_tool_recovery_result_action import TaskToolRecoveryResultAction
+from .task_tool_release_app import TaskToolReleaseApp
+from .task_tool_release_app_role import TaskToolReleaseAppRole
+from .task_tool_release_execution import TaskToolReleaseExecution
+from .task_tool_release_execution_completed_stages_item import TaskToolReleaseExecutionCompletedStagesItem
+from .task_tool_release_execution_fence_version import TaskToolReleaseExecutionFenceVersion
+from .task_tool_release_execution_request import TaskToolReleaseExecutionRequest
+from .task_tool_release_execution_request_action import TaskToolReleaseExecutionRequestAction
+from .task_tool_release_execution_request_fence_version import TaskToolReleaseExecutionRequestFenceVersion
+from .task_tool_release_execution_request_stage import TaskToolReleaseExecutionRequestStage
+from .task_tool_release_execution_stage import TaskToolReleaseExecutionStage
+from .task_tool_release_execution_state import TaskToolReleaseExecutionState
+from .task_tool_release_intent import TaskToolReleaseIntent
+from .task_tool_release_intent_access_mode import TaskToolReleaseIntentAccessMode
+from .task_tool_release_intent_check import TaskToolReleaseIntentCheck
+from .task_tool_release_intent_decision import TaskToolReleaseIntentDecision
+from .task_tool_release_intent_decision_decision import TaskToolReleaseIntentDecisionDecision
+from .task_tool_release_intent_protocol import TaskToolReleaseIntentProtocol
+from .task_tool_release_intent_record import TaskToolReleaseIntentRecord
+from .task_tool_release_intent_record_status import TaskToolReleaseIntentRecordStatus
+from .task_tool_release_intent_record_version import TaskToolReleaseIntentRecordVersion
+from .task_tool_release_intent_tool_scopes import TaskToolReleaseIntentToolScopes
+from .task_tool_release_intent_worker_runtime import TaskToolReleaseIntentWorkerRuntime
+from .task_tool_release_receipt import TaskToolReleaseReceipt
+from .task_tool_release_receipt_parked import TaskToolReleaseReceiptParked
+from .task_tool_release_receipt_pending_submission import TaskToolReleaseReceiptPendingSubmission
+from .task_tool_release_receipt_previous_deployments import TaskToolReleaseReceiptPreviousDeployments
+from .task_tool_release_receipt_stage import TaskToolReleaseReceiptStage
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
 from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
@@ -8114,7 +8168,9 @@ __all__ = (
     "DevPostgresResponse",
     "DevPostgresResponseBindingState",
     "DevPostgresResponseState",
+    "DevSessionListResponse",
     "DevSessionResponse",
+    "DevSessionSummary",
     "DevSyncHistoryItem",
     "DevSyncHistoryItemStatus",
     "DevSyncHistoryResponse",
@@ -8846,6 +8902,8 @@ __all__ = (
     "FireCronRequestResponseStatus",
     "FireCronResponse",
     "FireCronResponseStatus",
+    "FlagCondition",
+    "FlagConditionOp",
     "FlagDecision",
     "FlagDecisionInheritedFrom",
     "FlagDecisionReason",
@@ -8853,6 +8911,10 @@ __all__ = (
     "FlagDecisionType",
     "FlagEvidence",
     "FlagEvidencePage",
+    "FlagLifecycle",
+    "FlagLifecycleAttentionItem",
+    "FlagLifecycleEvidence",
+    "FlagLifecycleReport",
     "FlagOutcome",
     "FlagOutcomesResponse",
     "FlagOutcomeType",
@@ -9006,6 +9068,7 @@ __all__ = (
     "InspectDurableEntityRegistryCleanupResponse200",
     "InspectDurableEntityTenantQuotasResponse200",
     "InspectFeatureFlagRequest",
+    "InspectFeatureFlagRequestAttributes",
     "InstallBindRequest",
     "InstallBindRequestDeployBranches",
     "InstallBindResponse",
@@ -9483,6 +9546,7 @@ __all__ = (
     "ManagedRealtimeSignalResponse",
     "ManagedRealtimeSignalResponseMemberId",
     "ManagedServiceProbeSpec",
+    "MCPAccessPolicyExpectation",
     "MCPAdmissionEvidence",
     "MCPAdmissionEvidenceOutcome",
     "MCPAdmissionEvidenceVersion",
@@ -12490,6 +12554,50 @@ __all__ = (
     "SyntheticCheckResults",
     "SyntheticCheckRun",
     "SyntheticCheckRunErrorClass",
+    "TaskToolQuarantine",
+    "TaskToolQuarantineDecision",
+    "TaskToolQuarantineRequest",
+    "TaskToolQuarantineRequestAction",
+    "TaskToolQuarantineRequestExpectedInstanceIds",
+    "TaskToolQuarantineResult",
+    "TaskToolQuarantineState",
+    "TaskToolRecoveryHandover",
+    "TaskToolRecoveryHandoverDecision",
+    "TaskToolRecoveryHandoverState",
+    "TaskToolRecoveryQualification",
+    "TaskToolRecoveryQualificationAction",
+    "TaskToolRecoveryRequest",
+    "TaskToolRecoveryRestoreRequest",
+    "TaskToolRecoveryRestoreRequestExpectedInstanceIds",
+    "TaskToolRecoveryResult",
+    "TaskToolRecoveryResultAction",
+    "TaskToolReleaseApp",
+    "TaskToolReleaseAppRole",
+    "TaskToolReleaseExecution",
+    "TaskToolReleaseExecutionCompletedStagesItem",
+    "TaskToolReleaseExecutionFenceVersion",
+    "TaskToolReleaseExecutionRequest",
+    "TaskToolReleaseExecutionRequestAction",
+    "TaskToolReleaseExecutionRequestFenceVersion",
+    "TaskToolReleaseExecutionRequestStage",
+    "TaskToolReleaseExecutionStage",
+    "TaskToolReleaseExecutionState",
+    "TaskToolReleaseIntent",
+    "TaskToolReleaseIntentAccessMode",
+    "TaskToolReleaseIntentCheck",
+    "TaskToolReleaseIntentDecision",
+    "TaskToolReleaseIntentDecisionDecision",
+    "TaskToolReleaseIntentProtocol",
+    "TaskToolReleaseIntentRecord",
+    "TaskToolReleaseIntentRecordStatus",
+    "TaskToolReleaseIntentRecordVersion",
+    "TaskToolReleaseIntentToolScopes",
+    "TaskToolReleaseIntentWorkerRuntime",
+    "TaskToolReleaseReceipt",
+    "TaskToolReleaseReceiptParked",
+    "TaskToolReleaseReceiptPendingSubmission",
+    "TaskToolReleaseReceiptPreviousDeployments",
+    "TaskToolReleaseReceiptStage",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
     "TCPListenerTLSCertificateStatus",

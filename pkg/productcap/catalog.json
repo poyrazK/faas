@@ -3467,6 +3467,7 @@
       "parent": "mcp-hosting",
       "routes": [
         "/v1/tool-publications",
+        "/v1/task-tool-release-intents",
         "/v1/tool-registry"
       ]
     },

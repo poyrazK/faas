@@ -338,6 +338,7 @@ func (r *SnapshotRefresher) askBacking(ctx context.Context, nodeID string, t ref
 	}
 	verdict, detail, err := router.SnapshotBackingCurrent(ctx, e.nodeForRoute(nodeID), SnapshotRef{
 		DeploymentID: t.dep.ID, FCVersion: t.snap.FCVersion, StorageKey: t.snap.StorageKey, MemBytes: t.snap.MemBytes,
+		CaptureID: t.snap.SealedCaptureID, SealedKey: string(t.snap.SealedKey), SealedCache: len(t.snap.SealedKey) > 0,
 	}, baseKey)
 	if err != nil {
 		return SnapshotBackingUnknown, "", fmt.Errorf("sched: snapshot refresh: ask vmmd on %s: %w", nodeID, err)
