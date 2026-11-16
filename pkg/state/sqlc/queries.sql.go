@@ -100694,6 +100694,69 @@ func (q *Queries) ReleaseProjectEnvironmentCloneWorkerLease(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const releaseRunReplacing = `-- name: ReleaseRunReplacing :many
+SELECT t.deployment_id::text AS deployment_id, d.revision, t.status, t.started_at::timestamptz AS started_at
+FROM deployments target
+JOIN app_tasks t ON t.app_id = target.app_id
+  AND t.kind = 'release'
+  AND t.started_at IS NOT NULL
+  AND t.deployment_id <> target.id
+  AND coalesce(nullif(t.deployment_scope, ''), 'default') = coalesce(nullif(target.scope, ''), 'default')
+  AND t.started_at > target.created_at
+  AND t.started_at <= target.serving_ended_at
+JOIN deployments d ON d.id = t.deployment_id
+  AND (d.status = 'live' OR d.serving_ended_at >= target.serving_ended_at)
+WHERE target.id = $1::text::uuid AND target.app_id = $2::text::uuid
+  AND target.serving_ended_at IS NOT NULL
+ORDER BY t.started_at DESC, t.id DESC
+LIMIT 1
+`
+
+type ReleaseRunReplacingParams struct {
+	TargetID string
+	AppID    string
+}
+
+type ReleaseRunReplacingRow struct {
+	DeploymentID string
+	Revision     int32
+	Status       string
+	StartedAt    pgtype.Timestamptz
+}
+
+// ADR-20261023181931 amendment: the release task of the deployment that
+// replaced a rollback target, which ADR-1448 does not count as crossed
+// because it started while the target served. It is the newest started
+// release task of another deployment in the target's scope between the
+// target's creation and the moment it last stopped serving, whose deployment
+// still served at that moment: it is live, or it stopped serving no earlier
+// than the target did. A release that served and was rolled back to the
+// target before then stopped serving earlier, so it is not it.
+func (q *Queries) ReleaseRunReplacing(ctx context.Context, db DBTX, arg ReleaseRunReplacingParams) ([]ReleaseRunReplacingRow, error) {
+	rows, err := db.Query(ctx, releaseRunReplacing, arg.TargetID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReleaseRunReplacingRow{}
+	for rows.Next() {
+		var i ReleaseRunReplacingRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.Revision,
+			&i.Status,
+			&i.StartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const releaseRunsCrossedBy = `-- name: ReleaseRunsCrossedBy :many
 SELECT t.deployment_id::text AS deployment_id, d.revision, t.status, t.started_at::timestamptz AS started_at
 FROM deployments target

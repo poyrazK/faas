@@ -17,6 +17,9 @@ package main
 //	                           so every boot of it here would fail 503
 //	                           scan_critical (keep the node out of service);
 //	                           1: the check itself failed.
+//	                           With --candidate-env-file the CANDIDATE binary
+//	                           judges the candidate's generations before a
+//	                           no-drain restart (ADR-20261116190000).
 //
 // It prints one JSON object on stdout. rc.293 on production-us
 // (2026-10-24): fsn-2's pre-stage published nothing, the shared scan sidecar
@@ -29,6 +32,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"time"
 
@@ -79,11 +83,12 @@ func baseAdoptionCheckCommand(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	servingPID := fs.Int("serving-pid", 0, "the serving vmmd's process id; its environment is the configuration to check")
 	servingEnviron := fs.String("serving-environ", "", "a NUL-separated environment file to read instead of /proc/<serving-pid>/environ")
+	candidateEnvFile := fs.String("candidate-env-file", "", "judge the generations this runtime-bases.env configures over the serving environment, before a no-drain restart installs them (ADR-20261116190000)")
 	timeout := fs.Duration("timeout", time.Minute, "how long opening storage and reading the shared publications may take")
 	if err := fs.Parse(args); err != nil {
 		return adoptionExitError
 	}
-	report, err := runBaseAdoptionCheck(*servingPID, *servingEnviron, *timeout)
+	report, err := runBaseAdoptionCheck(*servingPID, *servingEnviron, *candidateEnvFile, *timeout)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "vmmd base-adoption-check: %v\n", err)
 		return adoptionExitError
@@ -94,12 +99,26 @@ func baseAdoptionCheckCommand(args []string, stdout, stderr io.Writer) int {
 	return report.exitCode()
 }
 
-func runBaseAdoptionCheck(pid int, environPath string, timeout time.Duration) (baseAdoptionReport, error) {
+func runBaseAdoptionCheck(pid int, environPath, candidateEnvFile string, timeout time.Duration) (baseAdoptionReport, error) {
 	servingEnv, err := readServingEnviron(pid, environPath)
 	if err != nil {
 		return baseAdoptionReport{}, err
 	}
-	configured, err := configuredRuntimeBaseGenerations(mapLookup(servingEnv))
+	judgedEnv := servingEnv
+	if candidateEnvFile != "" {
+		raw, err := os.ReadFile(candidateEnvFile) //nolint:forbidigo // operator-supplied release env file
+		if err != nil {
+			return baseAdoptionReport{}, fmt.Errorf("read candidate runtime bases: %w", err)
+		}
+		judgedEnv = make(map[string]string, len(servingEnv))
+		for key, value := range servingEnv {
+			judgedEnv[key] = value
+		}
+		for key, value := range parseEnvFile(raw) {
+			judgedEnv[key] = value
+		}
+	}
+	configured, err := configuredRuntimeBaseGenerations(mapLookup(judgedEnv))
 	if err != nil {
 		return baseAdoptionReport{}, fmt.Errorf("serving generations: %w", err)
 	}

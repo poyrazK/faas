@@ -2723,6 +2723,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		log.Warn("gatewayd-internal: log archive config parse failed; archive read-back disabled", "err", archiveCfgErr)
 	case !archiveCfg.Enabled():
 		log.Info("gatewayd-internal: log archive disabled (FAAS_LOG_ARCHIVE_BUCKET unset); archive read-back will return 503")
+	case archiveCfg.WriteOnly:
+		// ADR-20261110210000 slice 3l: this node's archive credentials
+		// only create objects. Archive read-back belongs to the control
+		// plane's gateways (the API host); here it answers 503.
+		log.Info("gatewayd-internal: log archive credentials are write-only on this node; archive read-back is served by the control plane")
 	default:
 		s3c, s3Err := logarchive.NewS3Client(
 			archiveCfg.Endpoint, archiveCfg.Region, archiveCfg.Bucket,

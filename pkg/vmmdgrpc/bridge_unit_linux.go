@@ -6,18 +6,35 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/onebox-faas/faas/pkg/sdunit"
 )
 
-// pidfdProcess is a bridge unit's main process held by a pidfd.
-type pidfdProcess struct{ fd int }
+// pidfdProcess is a bridge unit's main process held by a pidfd. close is
+// idempotent: closing the number twice would close whatever file the
+// process opened under it in between.
+type pidfdProcess struct {
+	mu sync.Mutex
+	fd int // -1 once closed
+}
 
-func (p *pidfdProcess) alive() bool { return unix.PidfdSendSignal(p.fd, 0, nil, 0) == nil }
+func (p *pidfdProcess) alive() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.fd >= 0 && unix.PidfdSendSignal(p.fd, 0, nil, 0) == nil
+}
 
-func (p *pidfdProcess) close() { _ = unix.Close(p.fd) }
+func (p *pidfdProcess) close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.fd >= 0 {
+		_ = unix.Close(p.fd)
+		p.fd = -1
+	}
+}
 
 // openUnitProcessReal opens u's main process and checks, after the pidfd
 // pins it, that it runs in u's cgroup and in the namespace bound at

@@ -7320,6 +7320,15 @@ type Querier interface {
 	ReleaseQueueLeaseInvocation(ctx context.Context, db DBTX, arg ReleaseQueueLeaseInvocationParams) (int64, error)
 	ReleaseQueuedInvocation(ctx context.Context, db DBTX, arg ReleaseQueuedInvocationParams) error
 	ReleaseQueuedWorkflowRun(ctx context.Context, db DBTX, arg ReleaseQueuedWorkflowRunParams) error
+	// ADR-20261023181931 amendment: the release task of the deployment that
+	// replaced a rollback target, which ADR-1448 does not count as crossed
+	// because it started while the target served. It is the newest started
+	// release task of another deployment in the target's scope between the
+	// target's creation and the moment it last stopped serving, whose deployment
+	// still served at that moment: it is live, or it stopped serving no earlier
+	// than the target did. A release that served and was rolled back to the
+	// target before then stopped serving earlier, so it is not it.
+	ReleaseRunReplacing(ctx context.Context, db DBTX, arg ReleaseRunReplacingParams) ([]ReleaseRunReplacingRow, error)
 	// ADR-1448: release tasks of other deployments in a rollback target's scope
 	// that started after the target last served (serving_ended_at), or after it
 	// was created if it never served. Any started task counts: a failed migration
