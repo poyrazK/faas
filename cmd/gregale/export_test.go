@@ -1161,7 +1161,7 @@ var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
 
-// ReleaseGateRequest builds a release gate create request from its flags.
+// ReleaseGateRequest builds a release gate add request from its flags.
 var ReleaseGateRequest = releaseGateRequest
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
@@ -2959,3 +2959,5 @@ func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretCl
 	report, err := s.syncPairs(ctx, client, app, path, list, fp, "developer config")
 	return report.Written, err
 }
+
+var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal

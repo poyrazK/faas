@@ -37,6 +37,9 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
 		PlatformTenantRequired:    w.PlatformTenantRequired,
 		Visibility:                NewWorkloadVisibility(w),
+		AppProtocol:               w.AppProtocol,
+		Streaming:                 w.Streaming,
+		WakeAhead:                 w.WakeAhead,
 
 		Class:       string(w.Class),
 		Schedule:    w.Schedule,

@@ -2152,6 +2152,19 @@ const (
 	PlatformAlertRetention = 30 * 24 * time.Hour
 )
 
+// Default alerts for SLOs and synthetic checks (ADR-20261115194000,
+// amendment 2026-11-16). A check or SLO a customer created alerted nobody
+// unless they also wrote an alert rule with a channel: a store's checkout
+// check failed for hours and its SLO burned at 126x with no one told. With
+// no enabled alert rule naming it, the account is emailed when a check fails
+// its last SyntheticCheckFailingRuns runs, or when an SLO's multi-window
+// burn rate reaches PlatformAlertSLOBurnRate (the fast-burn page threshold,
+// 2% of a 30-day budget in an hour).
+const (
+	SyntheticCheckFailingRuns = 3
+	PlatformAlertSLOBurnRate  = 14.4
+)
+
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
 // decisions (schedule_occurrences) and its manual-run requests
 // (cron_fire_now_requests). It matches the longest plan's invocation result
@@ -10526,8 +10539,13 @@ const (
 	// its GOMEMLIMIT, a soft per-process bound. A reload runs two apid
 	// generations in one cgroup (ADR-1736). Production over 14 days
 	// (2026-10-18): steady state 51-94 MB per process, spikes to 257 MB, and
-	// two OOM kills at the previous 256 MB cap (ADR 20261018132058).
-	APIDMemoryMaxMB                 = 512
+	// two OOM kills at the previous 256 MB cap (ADR 20261018132058). At 512 MB
+	// the hand-off guard (45 %, 230 MB) sat inside apid's working range: the
+	// rc.344 deploy found the cgroup at 244 MB, refused the hand-off and fell
+	// back to a restart, an API gap of about 9 s. 1024 MB puts the guard at
+	// 460 MB; GOMEMLIMIT stays per process so steady state does not grow
+	// (ADR-20261116090000).
+	APIDMemoryMaxMB                 = 1024
 	APIDGoMemLimitMB                = 256
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000

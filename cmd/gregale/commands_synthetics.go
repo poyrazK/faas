@@ -134,6 +134,8 @@ func cmdSyntheticsCreate(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created check %s (%s): %s %s every %d minutes, expecting %s\n", check.Name, check.ID, check.Method, check.URL, check.IntervalSeconds/60, describeExpected(check.ExpectedStatus))
 	_, _ = fmt.Fprintln(osStdout, "Each probe is a normal request; one that wakes a parked app is billed like any other.")
+	_, _ = fmt.Fprintf(osStdout, "If it fails %d runs in a row, Gregale emails the app's owner (at most daily). To route it yourself instead:\n  gregale alert add --app %s --metric %s --synthetic-check %s ...\n",
+		api.SyntheticCheckFailingRuns, *slug, api.AlertRuleMetricSyntheticConsecutiveFailures, check.ID)
 	if check.Warning != "" {
 		PrintWarn(os.Stderr, "%s", check.Warning)
 	}

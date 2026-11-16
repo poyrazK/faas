@@ -27,6 +27,11 @@ func observedStatus(r *http.Request, status int) int {
 		// (truncated_response_telemetry.go): the client never got this response.
 		return http.StatusBadGateway
 	}
+	if rec != nil && rec.ResponseWriter != nil && rec.wroteHeader && status == http.StatusOK {
+		if mapped, ok := grpcObservedStatus(rec.Header()); ok {
+			return mapped
+		}
+	}
 	if rec == nil || rec.wroteHeader {
 		return status
 	}
