@@ -98,6 +98,18 @@ export type PlanWorkload = {
    */
   preview_service_calls_policy?: PreviewServiceCallsPolicy;
   /**
+   * Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets none.
+   */
+  app_protocol?: string;
+  /**
+   * Compose `x-gregale-streaming`. Omitted when the file sets none.
+   */
+  streaming?: boolean;
+  /**
+   * Compose `x-gregale-wake-ahead`. Omitted when the file sets none.
+   */
+  wake_ahead?: boolean;
+  /**
    * Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers; an empty array denies all.
    */
   allowed_service_callers?: Array<string>;
