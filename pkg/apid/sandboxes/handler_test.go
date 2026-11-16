@@ -273,6 +273,12 @@ func TestCreateRules(t *testing.T) {
 	if len(f.store.sessions) != 0 {
 		t.Fatalf("a refused request was admitted: %+v", f.store.sessions)
 	}
+	// ADR-20261112121456 §6: the operator's switch admits web egress.
+	f.h.WebNetwork = true
+	if sb, code := f.create(t, pro(), `{"preset":"codex","network":{"mode":"web"}}`); code != http.StatusCreated ||
+		sb.Network.Mode != api.SandboxNetworkWeb || f.store.admitted.NetworkMode != api.SandboxNetworkWeb {
+		t.Fatalf("web with the switch on = %d %+v", code, sb)
+	}
 	var p api.Problem
 	if code := f.call(t, f.h.Create, pro(), http.MethodPost, "/v1/sandboxes", `{"preset":"codex","env":{"A":"1"}}`, "", &p); !strings.HasPrefix(p.Detail, "env:") {
 		t.Fatalf("an unsupported field's detail does not name it: %d %q", code, p.Detail)

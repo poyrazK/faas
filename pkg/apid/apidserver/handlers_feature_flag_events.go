@@ -1,0 +1,87 @@
+package apidserver
+
+import (
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/flags"
+	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// runtimeFeatureFlagEvents is POST /v1/runtime/flags/events: a runtime SDK
+// reports conversion events for experiments with the workload identity it
+// uses to read flags (ADR 20261115163113 §2). The token decides account,
+// app and environment; the body never does.
+func (s *server) runtimeFeatureFlagEvents(w http.ResponseWriter, r *http.Request) {
+	if !s.platformFlagOn(platformflags.CustomerFlags) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Flags unavailable", "feature flags require operator qualification"))
+		return
+	}
+	scope, err := s.runtimeFeatureFlagScope(r)
+	if errors.Is(err, errFlagsNotReleased) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Flags unavailable", "feature flags are not enabled for this account"))
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required", "a live workload token for gregale:flags is required"))
+		return
+	}
+	store, ok := s.store.(state.FlagEventStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("flag events unavailable"))
+		return
+	}
+	var req api.FlagEventsRequest
+	if !decodeJSONLimit(w, r, &req, api.FlagEventsMaxBodyBytes) {
+		return
+	}
+	if len(req.Events) == 0 || len(req.Events) > api.FlagEventsMaxBatch {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid event batch",
+			"a batch carries 1 to 100 events").WithLimit(api.FlagEventsMaxBatch, int64(len(req.Events))))
+		return
+	}
+	acct, err := s.store.AccountByID(r.Context(), scope.AccountID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("flag events unavailable"))
+		return
+	}
+	now := time.Now().UTC()
+	events, invalid := validFlagEvents(req.Events, now)
+	quota := api.Plan(acct.Plan).FlagEventsPerMonth()
+	res, err := store.IngestFlagEvents(r.Context(), state.FlagEventIngest{
+		Scope: scope, Quota: quota, MaxNames: api.FlagEventNamesMaxPerEnvironment, Events: events, Now: now})
+	if err != nil {
+		s.log.Error("flag events ingest", "err", err, "environment", scope.EnvironmentID)
+		api.WriteProblem(w, api.ErrInternal("flag events unavailable"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.FlagEventsResponse{
+		Accepted: res.Accepted,
+		Dropped:  api.FlagEventsDropped{Quota: res.DroppedQuota, UnknownCustomer: res.DroppedUnknownCustomer, NameLimit: res.DroppedNameLimit, Invalid: invalid},
+		Month:    api.FlagEventsMonth{Limit: quota, Accepted: res.MonthAccepted, Dropped: res.MonthDropped},
+	})
+}
+
+// validFlagEvents keeps events with a valid name and value whose time is
+// within FlagEventMaxAge before now and FlagEventMaxSkew after it; an event
+// without a time happened now.
+func validFlagEvents(in []api.FlagEvent, now time.Time) ([]state.FlagConversionEvent, int) {
+	out := make([]state.FlagConversionEvent, 0, len(in))
+	invalid := 0
+	for _, e := range in {
+		at := e.At
+		if at.IsZero() {
+			at = now
+		}
+		if !flags.ValidEventName(e.Name) || e.CustomerID == "" || e.Value > api.FlagEventMaxAbsValue || e.Value < -api.FlagEventMaxAbsValue ||
+			at.Before(now.Add(-api.FlagEventMaxAge)) || at.After(now.Add(api.FlagEventMaxSkew)) {
+			invalid++
+			continue
+		}
+		out = append(out, state.FlagConversionEvent{Name: e.Name, CustomerID: e.CustomerID, Value: e.Value, At: at.UTC()})
+	}
+	return out, invalid
+}

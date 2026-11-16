@@ -37,7 +37,7 @@ your app really calls, and from then on only those:
   is recorded when it opens, however long it then stays open.
 - Until the app has woken 20 times, the services it declares in `depends_on`
   are woken ahead, in the order they are declared. Only services the app is
-  allowed to call count; see [internal services](networking.md#internal-services).
+  allowed to call count; see [internal services](internal-services.md#internal-services).
 - From the 20th wake, a service is woken ahead only if the app called it after
   at least half of those wakes and found it parked on at least half of those
   calls, whether it is declared or not. A declared service your app rarely

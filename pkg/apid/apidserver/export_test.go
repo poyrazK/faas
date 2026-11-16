@@ -545,6 +545,14 @@ func RunFeatureFlagLifecycleCheck(s *server, env state.FeatureFlagAutoRolloutCan
 	r.checkEnvironment(context.Background(), s.store.(state.AuditEventOutboxStore), env, now)
 }
 
+// RunFlagExperimentPass runs one pass of the experiment reconciler at now
+// (ADR 20261115163113 §3).
+func RunFlagExperimentPass(s *server, now time.Time) {
+	events, _ := s.store.(state.FlagEventStore)
+	r := &flagExperimentReconciler{server: s, store: s.store.(state.FlagExperimentStore), events: events}
+	r.runPass(context.Background(), now)
+}
+
 func FeatureFlagRequiredCapabilities(config flags.Config) []string {
 	var out []string
 	for _, c := range featureFlagRequiredCapabilities(config) {

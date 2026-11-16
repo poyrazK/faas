@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -51,6 +54,40 @@ func (m *Manager) resolvedEgressRefusalLocked(inst *Instance, source netip.Addr,
 		return "network generation changed"
 	}
 	return ""
+}
+
+// admitSandboxWebDomain records name's registrable domain against a web-mode
+// session's SandboxWebDistinctDomains budget (ADR-20261112121456 §4), or
+// names why it is refused. A domain once granted stays granted. Caller holds
+// m.mu.
+func admitSandboxWebDomain(inst *Instance, name string) string {
+	domain := sandboxWebDomain(name)
+	if _, ok := inst.webDomains[domain]; ok {
+		return ""
+	}
+	limit := 0
+	if inst.Lease.Plan.Valid() {
+		limit = api.SandboxWebDistinctDomains[inst.Lease.Plan.PlanIndex()]
+	}
+	if len(inst.webDomains) >= limit {
+		return fmt.Sprintf("sandbox web distinct domain limit %d reached", limit)
+	}
+	if inst.webDomains == nil {
+		inst.webDomains = make(map[string]struct{})
+	}
+	inst.webDomains[domain] = struct{}{}
+	return ""
+}
+
+// sandboxWebDomain is the registrable domain of a name a web-mode session
+// resolved: its public suffix and one more label. A name with no known
+// suffix counts as its own domain.
+func sandboxWebDomain(name string) string {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	if d, err := publicsuffix.EffectiveTLDPlusOne(name); err == nil {
+		return d
+	}
+	return name
 }
 
 // databaseEgressKey is one address . port pair of a bound managed database
@@ -113,6 +150,14 @@ func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Add
 	gated := inst.Net.DNSGated && inst.Net.Netns != ""
 	if inst.Net.SandboxRegistries && !api.SandboxRegistryHost(name) {
 		gated = false
+	}
+	if inst.Net.SandboxWeb {
+		if !api.SandboxWebHost(name) {
+			gated = false
+		} else if reason := admitSandboxWebDomain(inst, name); reason != "" {
+			m.mu.Unlock()
+			return resolvedEgressRefused{reason}
+		}
 	}
 	database := databasePort != 0 && inst.Net.DatabaseEgress && inst.Net.Netns != ""
 	branch := database && inst.Net.EnvironmentBranchContained && inst.environmentBranch.allows(name, databasePort)
