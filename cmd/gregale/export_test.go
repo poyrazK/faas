@@ -2964,3 +2964,8 @@ func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretCl
 }
 
 var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal
+
+// UncommittedProjectFile exposes the HEAD-deploy project-file check.
+func UncommittedProjectFile(porcelain, repoRoot, sourceDir string) (string, bool) {
+	return uncommittedProjectFile(porcelain, repoRoot, sourceDir)
+}

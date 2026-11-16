@@ -26,6 +26,10 @@ func assessRequests(out *api.AppHealthResponse, e Evidence) {
 		requestCheck(out, Unknown, "request_scope_unavailable", "No confirmed serving releases are available to scope request evidence.", "deployments")
 		return
 	}
+	if e.Metrics.Source != appmetrics.SourcePrometheus && e.Metrics.Reason == appmetrics.RequestsUnobservedReason {
+		requestCheck(out, NotApplicable, appmetrics.RequestsUnobservedReason, "No requests have reached the current serving releases since their request counters started (after a deploy or gateway restart); request success has not been exercised.", "")
+		return
+	}
 	if e.Metrics.Source != appmetrics.SourcePrometheus {
 		reason, detail := "request_evidence_unavailable", "Scoped request telemetry could not be read. Zero values are not treated as successful requests."
 		switch e.Metrics.Reason {
