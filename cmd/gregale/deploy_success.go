@@ -287,9 +287,6 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	if !noHTTP {
 		PrintProgress(osStdout, "Deployment readiness and platform health checks do not establish public access.")
 		PrintProgress(osStdout, "Verify application response: %s", deploymentResponseCheckCommand(appSlug, final.ID, "/", "", ""))
-		if scopeOrDefault(final.Scope) != api.DefaultEnvScope {
-			PrintProgress(osStdout, "For this named environment, include --project-id UUID --environment-id UUID from its project catalog, or continue its linked gregale start session.")
-		}
 	}
 	if !darkDeploy {
 		if summary, ok := deploymentWithReleaseSummary(ctx, c, appSlug, final.ID); ok {

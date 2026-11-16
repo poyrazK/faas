@@ -11,22 +11,22 @@ import (
 )
 
 func TestDeploymentResponseCheckPinsEvidenceAndReportsApplicationStatus(t *testing.T) {
-	for _, outcome := range []string{"success", "internal", "application denied", "wrong deployment", "wrong scope", "wrong app", "unsupported", "named environment"} {
+	for _, outcome := range []string{"success", "internal", "application denied", "wrong deployment", "wrong scope", "wrong app", "unsupported", "named environment", "named environment lookup", "dashed id", "redirect", "denied"} {
 		t.Run(outcome, func(t *testing.T) {
 			stdout, stderr := main.StartTestEnvironment(t)
 			appID, deploymentID, instanceID := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
 			projectID, environmentID := strings.Repeat("d", 32), strings.Repeat("e", 32)
 			scope := "default"
-			if outcome == "named environment" {
+			if strings.HasPrefix(outcome, "named environment") {
 				scope = "staging"
 			}
 			checks := 0
 			main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/v1/deployments/" + deploymentID:
+				case "/v1/deployments/" + deploymentID, "/v1/deployments/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb":
 					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: deploymentID, AppID: appID, Scope: scope, Status: "live"})
 				case "/v1/apps/first-app":
-					app := api.AppResponse{ID: appID, Slug: "first-app", RequireAuthn: true}
+					app := api.AppResponse{ID: appID, Slug: "first-app", RequireAuthn: true, ProjectID: projectID}
 					if outcome == "wrong app" {
 						app.ID = instanceID
 					}
@@ -34,6 +34,13 @@ func TestDeploymentResponseCheckPinsEvidenceAndReportsApplicationStatus(t *testi
 						app.Visibility = "internal"
 					}
 					_ = json.NewEncoder(w).Encode(app)
+				case "/v1/projects":
+					if outcome != "named environment lookup" {
+						t.Error("looked up the project although identities were given")
+					}
+					_ = json.NewEncoder(w).Encode([]api.ProjectSummaryResponse{{ID: strings.Repeat("f", 32), Slug: "other"}, {ID: projectID, Slug: "shop"}})
+				case "/v1/projects/shop/environments/staging":
+					_ = json.NewEncoder(w).Encode(api.ProjectEnvironmentResponse{ID: environmentID, ProjectID: projectID, Slug: "staging"})
 				case "/v1/apps/first-app/deployments/" + deploymentID + "/response-check":
 					checks++
 					if r.Method != http.MethodPost || r.Header.Get("Authorization") == "" {
@@ -41,6 +48,12 @@ func TestDeploymentResponseCheckPinsEvidenceAndReportsApplicationStatus(t *testi
 					}
 					if outcome == "unsupported" {
 						http.NotFound(w, r)
+						return
+					}
+					if outcome == "denied" {
+						w.Header().Set("Content-Type", "application/problem+json")
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`{"type":"about:blank","title":"Forbidden","status":403,"code":"forbidden"}`))
 						return
 					}
 					var request api.DeploymentResponseCheckRequest
@@ -55,7 +68,9 @@ func TestDeploymentResponseCheckPinsEvidenceAndReportsApplicationStatus(t *testi
 						result.DeploymentID = instanceID
 					case "wrong scope":
 						result.Scope = "other"
-					case "named environment":
+					case "redirect":
+						result.HTTPStatus = 302
+					case "named environment", "named environment lookup":
 						if request.ProjectID != projectID || request.EnvironmentID != environmentID {
 							t.Fatal("environment identities missing")
 						}
@@ -67,19 +82,26 @@ func TestDeploymentResponseCheckPinsEvidenceAndReportsApplicationStatus(t *testi
 					http.NotFound(w, r)
 				}
 			})
-			args := []string{"--json", "release", "verify", deploymentID, "--app", "first-app", "--path", "/ready"}
-			if scope != "default" {
+			requested := deploymentID
+			if outcome == "dashed id" {
+				requested = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+			}
+			args := []string{"--json", "release", "verify", requested, "--app", "first-app", "--path", "/ready"}
+			if outcome == "named environment" {
 				args = append(args, "--project-id", projectID, "--environment-id", environmentID)
 			}
 			code := main.Run(args)
-			success := outcome == "success" || outcome == "internal" || outcome == "named environment"
+			success := outcome == "success" || outcome == "internal" || strings.HasPrefix(outcome, "named environment") || outcome == "dashed id"
 			if (code == 0) != success {
 				t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr())
 			}
 			if outcome == "wrong app" && checks != 0 {
 				t.Fatal("checked an unrelated app")
 			}
-			if success || outcome == "application denied" {
+			if (outcome == "unsupported" || outcome == "denied") && !strings.Contains(stderr(), map[string]string{"unsupported": "incompatible", "denied": "deployment-write access"}[outcome]) {
+				t.Fatalf("stderr=%s", stderr())
+			}
+			if success || outcome == "application denied" || outcome == "redirect" {
 				var receipt struct {
 					Verified             bool `json:"verified"`
 					PublicAccessVerified bool `json:"public_access_verified"`

@@ -713,7 +713,9 @@ func (r *startRunner) finish() {
 	}
 	cli, source, app := recoveryCLI(), recoveryArgument(r.session.SourcePath), recoveryArgument(r.session.AppSlug)
 	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Update: %s deploy --path %s --source=worktree --name %s --environment=%s\n  Logs:   %s logs %s --deployment %s --follow\n", cli, source, app, recoveryArgument(r.session.Environment), cli, app, recoveryArgument(r.session.DeploymentID))
-	if r.lastRequest != nil && r.lastRequest.private {
+	// A public app checked through the account (its response lacked a
+	// deployment header) is still publicly reachable, so it keeps the Open line.
+	if r.lastRequest != nil && r.lastRequest.private && !r.lastRequest.publicDeploymentCheck {
 		_, _ = fmt.Fprintf(osStdout, "  Test:   %s\n", deploymentResponseCheckCommand(r.session.AppSlug, r.session.DeploymentID, r.lastRequest.path, r.session.ProjectID, r.session.EnvironmentID))
 	} else if r.session.Environment == "" {
 		_, _ = fmt.Fprintf(osStdout, "  Open:   %s open %s\n", cli, app)

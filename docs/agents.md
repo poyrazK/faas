@@ -408,8 +408,9 @@ Use `release verify` with the exact accepted deployment UUID to test an
 application GET on any plan, including private and internal apps. Only the inner
 application 2xx sets `verified: true`; `public_access_verified` remains false for
 this owner-authorized check. A non-2xx exits 1. Account credentials are not
-forwarded to the app, and its own authentication still applies. Named scopes
-require `--project-id` and `--environment-id` from the project catalog.
+forwarded to the app, and its own authentication still applies. For named
+scopes the CLI looks up `--project-id` and `--environment-id` from the app's
+project when they are omitted. Interrupting the check exits 130.
 
 A deploy writes a receipt with the deployment `id`, its `status` and the
 `app_url`. If `timed_out` is true, run the receipt's `resume_command` instead

@@ -1249,8 +1249,8 @@ Verify an application response from an exact live deployment
 |---|---|---|
 | `--app <SLUG>` |  | required |
 | `--path <PATH>` | app-relative GET path (default /) |  |
-| `--project-id <UUID>` | project identity for a named environment |  |
-| `--environment-id <UUID>` | environment identity for a named environment |  |
+| `--project-id <UUID>` | project identity for a named environment (looked up when omitted) |  |
+| `--environment-id <UUID>` | environment identity for a named environment (looked up when omitted) |  |
 
 Examples:
 

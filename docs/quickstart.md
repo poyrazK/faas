@@ -131,10 +131,11 @@ Then test an application route on the public URL. The public `/healthz` can
 answer from Gregale's edge without running your code; it is not application
 response verification. An internal app has no public endpoint.
 
-For a named environment, use the accepted deployment UUID and pass its project
-and environment identities as `--project-id UUID --environment-id UUID`, or
-continue the linked Start session. The dashboard resolves those identities from
-the selected workspace. Checks never fall back to another deployment or scope.
+For a named environment, use the accepted deployment UUID. `release verify`
+looks up the project and environment identities from the deployment's app; pass
+`--project-id UUID --environment-id UUID` only to pin them explicitly. Checks
+never fall back to another deployment or scope. A redirect (3xx) is not
+verified: rerun with `--path` set to the route it leads to.
 
 ## Keep building
 
