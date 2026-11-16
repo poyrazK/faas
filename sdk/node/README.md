@@ -36,6 +36,11 @@ for usage and delivery-ID deduplication guidance.
 > public API may shift between `0.x` releases. Pin to an exact version
 > in your `package.json` until `1.0.0` ships.
 
+Typed application CloudEvents can start durable Job pipelines through the
+preview SDK, with generated payload types, current owner authorization and
+shared Node/Python start receipts. See [event-triggered pipelines](../../docs/sdk-event-pipelines.md)
+and the [reviewed CSV example](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
 ## Requirements
 
 - Node ≥ 22.10 for the Node SDK entry point (uses

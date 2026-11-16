@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
+import {createInterface} from 'node:readline';
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {randomUUID} from 'node:crypto';
@@ -12,6 +13,7 @@ import {fileStorageFixture} from './file-fixture.mjs';
 import {csvPipeline} from './pipeline.mjs';
 import {liveFixture} from './live-fixture.mjs';
 import {createPipelineReviewServer} from './pipeline-review-api.mjs';
+import {csvEventPipeline} from './pipeline-events.mjs';
 
 const exec=promisify(execFile),here=fileURLToPath(new URL('.',import.meta.url)),root=resolve(here,'../..');
 const python=process.env.GREGALE_LOCAL_PYTHON??join(root,'sdk/python/.venv/bin/python'),pgBin=process.env.GREGALE_LOCAL_PG_BIN??'/opt/homebrew/opt/postgresql@16/bin';
@@ -19,11 +21,12 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<1000;i++){try{if(await fn())return;}catch{}await pause(20);}throw new Error('Fixture did not become ready');}
 async function stop(child){if(child.exitCode!==null)return;const done=new Promise(r=>child.once('exit',r));child.kill('SIGTERM');await done;}
 
-for(const reviewed of [false,true])test(`CSV ${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:240000},async t=>{
+const eventTriggered=process.env.GREGALE_CSV_EVENT_PIPELINE==='1';
+for(const reviewed of eventTriggered?[true]:[false,true])test(`CSV ${eventTriggered?'event-triggered ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered?600000:240000},async t=>{
   try{await access(python);await access(join(pgBin,'initdb'));}catch{t.skip('Set GREGALE_LOCAL_PYTHON and GREGALE_LOCAL_PG_BIN');return;}
   const home=await mkdtemp(join(tmpdir(),'gregale-csv-pipeline-')),cleanup=[];t.after(async()=>{try{for(const close of cleanup.reverse())await close();}finally{await rm(home,{recursive:true,force:true});}});
   await cp(here,join(home,'app'),{recursive:true,filter:p=>!p.includes('node_modules')});await symlink(join(root,'sdk/node/node_modules'),join(home,'app/node_modules'));
-  await exec(join(pgBin,'initdb'),['-D',join(home,'pg'),'-U','sdk','-A','trust','--no-locale']);const postgres=spawn(join(pgBin,'postgres'),['-D',join(home,'pg'),'-k',home,'-h',''],{stdio:'ignore'});cleanup.push(()=>stop(postgres));
+  await exec(join(pgBin,'initdb'),['-D',join(home,'pg'),'-U','sdk','-A','trust','--no-locale','-E','UTF8']);const postgres=spawn(join(pgBin,'postgres'),['-D',join(home,'pg'),'-k',home,'-h',''],{stdio:'ignore'});cleanup.push(()=>stop(postgres));
   const database=`postgresql://sdk@localhost/postgres?host=${encodeURIComponent(home)}`;
   const {default:pg}=await import(new URL('../../sdk/node/node_modules/pg/lib/index.js',import.meta.url));const pool=new pg.Pool({connectionString:database,statement_timeout:5000});cleanup.push(()=>pool.end());await until(async()=>{await pool.query('SELECT 1');return true;});
   const sdk=await import(new URL('../../sdk/node/dist/preview.js',import.meta.url)),runtime=await import(new URL('../../sdk/node/dist/job-runtime.js',import.meta.url));
@@ -31,6 +34,7 @@ for(const reviewed of [false,true])test(`CSV ${reviewed?'reviewed':'original'} p
   await pool.query('CREATE TABLE sdk_pipeline_events (run_id uuid, key text, body jsonb, PRIMARY KEY(run_id,key))');
   await pool.query('CREATE TABLE sdk_pipeline_runs (id uuid PRIMARY KEY, record jsonb NOT NULL, journal jsonb NOT NULL)');
   await pool.query('CREATE TABLE sdk_pipeline_barrier (driver text PRIMARY KEY)');
+  if(eventTriggered){await pool.query(sdk.eventPipelineSchema);await pool.query('CREATE TABLE sdk_csv_event_inputs (import_id uuid PRIMARY KEY,owner_id text NOT NULL,input jsonb NOT NULL)');}
   const accountId=randomUUID(),jobs=new Map(),templates=new Map(),workflowKeys=new Map(),jobKeys=new Map(),work=new Set(),children=new Set();
   for(const [stage,file]of [['validate','validate-contract.json'],['import','contract.json'],['report','report-contract.json']]){const spec=JSON.parse(await readFile(new URL(file,import.meta.url),'utf8'));templates.set(spec.name,{stage,spec,id:randomUUID()});}
   const storage=fileStorageFixture(()=>env.FAAS_API,{accountId});
@@ -55,7 +59,9 @@ for(const reviewed of [false,true])test(`CSV ${reviewed?'reviewed':'original'} p
           const chunks=[];for await(const chunk of req)chunks.push(chunk);const input=JSON.parse(Buffer.concat(chunks).toString()),key=req.headers['idempotency-key'];
           if(workflowKeys.has(key)){send(200,workflowKeys.get(key));return;}
           const record={id:randomUUID(),app_id:storage.app,workflow_name:reviewed?'csv-reviewed-pipeline':'csv-pipeline',status:'running',input};
-          await pool.query('INSERT INTO sdk_pipeline_runs VALUES ($1,$2,$3)',[record.id,record,'[]']);workflowKeys.set(key,record);send(201,record);return;
+          await pool.query('INSERT INTO sdk_pipeline_runs VALUES ($1,$2,$3)',[record.id,record,'[]']);workflowKeys.set(key,record);
+          if(eventTriggered&&key?.startsWith('event-pipeline:')){res.destroy();return;}
+          send(201,record);return;
         }
         const id=parts[4],row=(await pool.query('SELECT record,journal FROM sdk_pipeline_runs WHERE id=$1',[id])).rows[0];if(!row){send(404,{});return;}
         if(u.pathname.endsWith('/events')&&req.method==='POST'){
@@ -95,7 +101,47 @@ for(const reviewed of [false,true])test(`CSV ${reviewed?'reviewed':'original'} p
   const gateStore=sdk.postgresPipelineGateStore((sql,values)=>pool.query(sql,values));
   const {contract,pipeline,reviewContract}=await csvPipeline({sdk,client,scope,reviewed,gateStore,store:sdk.postgresPipelineJobStore((sql,values)=>pool.query(sql,values)),jobStore:await files.jobStore({timeoutMs:10000})});
   const typed=sdk.createJobPipelineClient({baseURL:env.FAAS_API,token:'fixture-owner',scope,ownerId:'alice',contract});
-  const run=await typed.start({import_id:importId,source},{timeoutMs:10000,idempotencyKey:'csv:'+importId});assert.equal((await typed.start({import_id:importId,source},{timeoutMs:10000,idempotencyKey:'csv:'+importId})).checkpoint.run_id,run.checkpoint.run_id);
+  let run;
+  if(eventTriggered){
+    // The authenticated producer names an immutable business record, not an owner/file supplied by the event.
+    await pool.query('INSERT INTO sdk_csv_event_inputs VALUES ($1,$2,$3)',[importId,'alice',{import_id:importId,source}]);
+    const subscriptionId=randomUUID(),eventSource='urn:gregale:csv-imports',ingressKey=randomUUID();env.GREGALE_CSV_EVENT_KEY=ingressKey;
+    const body=JSON.stringify({specversion:'1.0',source:eventSource,id:importId,type:'import.requested',data:{import_id:importId}});
+    const headers={authorization:'Bearer '+ingressKey,'x-gregale-event-subscription-id':subscriptionId,'x-gregale-event-acceptance-id':'9007199254740993','x-gregale-event-source':eventSource,'x-gregale-event-id':importId};
+    const delivery={headers,body:Buffer.from(body)};
+    const events=await csvEventPipeline({sdk,scope,subscriptionId,source:eventSource,contract,token:'fixture-owner',
+      store:sdk.postgresEventPipelineStore((sql,values)=>pool.query(sql,values)),
+      verify:async d=>{if(d.headers.authorization!=='Bearer '+ingressKey)throw new Error('unauthorized');return sdk.eventConsumerRequestFromHeaders(d.headers,d.body,accountId,scope.app_id);},
+      loadImport:async id=>(await pool.query('SELECT owner_id,input FROM sdk_csv_event_inputs WHERE import_id=$1',[id])).rows[0],
+      authorizeOwner:async(owner,actor)=>owner===actor&&['alice','bob'].includes(actor),
+    });
+    const eventWorker=spawn(python,[join(home,'app/event_driver.py'),'--stdio'],{env,stdio:['pipe','pipe','pipe']});children.add(eventWorker);
+    let eventErrors='',eventInvocation=0,ready;const pending=new Map();
+    eventWorker.stderr.on('data',bytes=>eventErrors+=bytes);
+    const lines=createInterface({input:eventWorker.stdout});
+    const started=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Python event fixture startup timed out')),120000);ready=()=>{clearTimeout(timer);resolve();};eventWorker.once('exit',code=>{clearTimeout(timer);reject(new Error('Python event fixture stopped: '+code+' '+eventErrors));});});
+    lines.on('line',line=>{const packet=JSON.parse(line);if(packet.ready){ready();return;}const callback=pending.get(packet.request_id);if(callback){pending.delete(packet.request_id);callback(packet.result);}});
+    eventWorker.once('exit',()=>children.delete(eventWorker));cleanup.push(()=>lines.close());await started;
+    const pythonEvent=(action,access='alice',run_id)=>new Promise((resolve,reject)=>{
+      const request_id=String(eventInvocation++),timer=setTimeout(()=>{pending.delete(request_id);reject(new Error('Python event request timed out'));},30000);
+      pending.set(request_id,result=>{clearTimeout(timer);resolve(result);});
+      eventWorker.stdin.write(JSON.stringify({request_id,action,access,run_id,subscription_id:subscriptionId,source:eventSource,delivery:{headers,body}})+'\n');
+    });
+    await assert.rejects(events.handle(delivery,'bob',{timeoutMs:10000}),{code:'unauthorized'});
+    const starts=await Promise.all([events.handle(delivery,'alice',{timeoutMs:10000}),pythonEvent('handle')]);
+    assert.ok(starts.every(s=>s.state==='start_unknown'));assert.equal(workflowKeys.size,1);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM gregale_event_pipeline_starts')).rows[0].n,1);
+    const retained=(await pool.query('SELECT id FROM sdk_pipeline_runs')).rows[0].id;
+    assert.equal((await pythonEvent('inspect','bob')).code,'unauthorized');
+    const adopted=await pythonEvent('reconcile','alice',retained);
+    assert.equal(adopted.state,'started');
+    assert.deepEqual((await events.inspect(delivery,'alice',{timeoutMs:10000})).receipt,adopted.receipt);
+    assert.equal((await events.handle(delivery,'alice',{timeoutMs:10000})).receipt.checkpoint.run_id,retained);
+    assert.equal((await pythonEvent('handle')).receipt.checkpoint.run_id,retained);assert.equal(workflowKeys.size,1);
+    run=await typed.resumeById(retained,{timeoutMs:10000});
+  }else{
+    run=await typed.start({import_id:importId,source},{timeoutMs:10000,idempotencyKey:'csv:'+importId});assert.equal((await typed.start({import_id:importId,source},{timeoutMs:10000,idempotencyKey:'csv:'+importId})).checkpoint.run_id,run.checkpoint.run_id);
+  }
   const bob=sdk.createJobPipelineClient({baseURL:env.FAAS_API,token:'fixture-owner',scope,ownerId:'bob',contract});await assert.rejects(bob.resumeById(run.checkpoint.run_id,{timeoutMs:10000}),{code:'scope_mismatch'});
   const wrong=sdk.createJobPipelineClient({baseURL:env.FAAS_API,token:'fixture-other',scope,ownerId:'alice',contract});await assert.rejects(wrong.start({import_id:importId,source},{timeoutMs:10000,idempotencyKey:'wrong'}),{code:'scope_mismatch'});assert.equal(workflowKeys.size,1);
   let page,browser,reviewURL,approved=false;const browserErrors=[];

@@ -168,6 +168,10 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/_project_verification.py": b"# uncommitted exact-deployment verification\n",
         "faas_sdk/preview/_binding_runner.py": b"# uncommitted verification runner\n",
         "faas_sdk/preview/files.py": b"# uncommitted preview file workflows\n",
+        "faas_sdk/preview/event_contract.py": b"# uncommitted event schemas\n",
+        "faas_sdk/preview/event_types.py": b"# uncommitted event generation\n",
+        "faas_sdk/preview/event_pipeline_state.py": b"# uncommitted event start receipts\n",
+        "faas_sdk/preview/event_pipelines.py": b"# uncommitted event adapters\n",
         "faas_sdk/preview/pipeline_children.py": b"# uncommitted child runtime\n",
         "faas_sdk/preview/pipeline_children_state.py": b"# uncommitted child receipts\n",
         "faas_sdk/preview/pipeline_gates.py": b"# uncommitted approval/input gates\n",
@@ -383,6 +387,16 @@ def test_regenerated_preview_barrel_preserves_job_pipelines(tmp_path, monkeypatc
     for module in ("pipeline_state.py", "job_pipelines.py", "job_pipeline_client.py", "pipeline_gates.py", "pipeline_children.py", "pipeline_children_state.py"):
         assert module in generator.PREVIEW_WRAPPER_MODULES
     for name in ("JobPipelineClient", "JobPipeline", "PipelineScope", "PipelineJobReceipt", "job_pipeline_live_snapshot", "PipelineGateService", "PipelineGateOptions", "PipelineChildren", "PipelineChildOptions"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_barrel_preserves_event_pipelines(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("event_contract.py", "event_types.py", "event_pipeline_state.py", "event_pipelines.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("EventContract", "EventPipeline", "EventPipelineReceipt", "EventPipelineDelivery", "PostgresEventPipelineStore"):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")

@@ -610,6 +610,7 @@ from .event_consumer_transactions import (
     new_event_consumer_request,
     with_event_consumer_transaction,
 )
+from .event_contract import EventContract
 from .event_deadline_checkpoint import acknowledge_event_deadline_alerts, validate_event_deadline_checkpoint
 from .event_deadline_investigation import (
     EventDeadlineInvestigationOptions,
@@ -621,6 +622,21 @@ from .event_deadline_watch import (
     EventDeadlineWatchCancelled,
     EventDeadlineWatchOptions,
     awatch_event_subscription_deadlines,
+)
+from .event_pipeline_state import (
+    EVENT_PIPELINE_SCHEMA,
+    EventPipelineError,
+    EventPipelineReceipt,
+    EventPipelineStore,
+    PostgresEventPipelineStore,
+    event_pipeline_identity,
+)
+from .event_pipelines import (
+    EventPipeline,
+    EventPipelineAction,
+    EventPipelineDelivery,
+    EventPipelineOutcome,
+    PipelineEvent,
 )
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
 from .file_pipelines import (
@@ -864,6 +880,7 @@ from .realtime_workers import (
 )
 
 __all__ = (
+    'EventContract', 'EventPipeline', 'EventPipelineAction', 'EventPipelineDelivery', 'EventPipelineOutcome', 'PipelineEvent', 'EVENT_PIPELINE_SCHEMA', 'EventPipelineError', 'EventPipelineReceipt', 'EventPipelineStore', 'PostgresEventPipelineStore', 'event_pipeline_identity',
     'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
     'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
     'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',

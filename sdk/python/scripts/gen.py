@@ -210,6 +210,10 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "event_contract.py",
+    "event_types.py",
+    "event_pipeline_state.py",
+    "event_pipelines.py",
     "pipeline_children_state.py",
     "pipeline_children.py",
     "pipeline_state.py",
@@ -1290,6 +1294,10 @@ elsewhere its calls answer 404 no such API route.
 
 # ruff: noqa: F401
 from .pipeline_state import PipelineFailure, pipeline_failure, PIPELINE_JOB_SCHEMA, PipelineError, PipelineJobReceipt, PipelineJobStore, PipelineScope, PostgresPipelineJobStore, pipeline_job_identity, read_pipeline_artifact
+from .event_contract import EventContract
+from .event_pipelines import EventPipeline, EventPipelineAction, EventPipelineDelivery, EventPipelineOutcome, PipelineEvent
+from .event_pipeline_state import EVENT_PIPELINE_SCHEMA, EventPipelineError, EventPipelineReceipt, EventPipelineStore, PostgresEventPipelineStore, event_pipeline_identity
+
 from .pipeline_children_state import PIPELINE_CHILDREN_SCHEMA, PipelineChildrenError, PipelineChildrenReceipt, PipelineChildrenStore, PostgresPipelineChildrenStore, pipeline_children_identity, pipeline_children_intent
 from .pipeline_children import PipelineChildren, PipelineChild, PipelineChildOptions, PipelineChildView, PipelineBatchResult, PipelineChildrenTransport, NativePipelineChildrenTransport, pipeline_children_live_snapshot
 from .pipeline_gates import PIPELINE_GATE_SCHEMA, NativePipelineGateTransport, PipelineGateActor, PipelineGateError, PipelineGateOptions, PipelineGateOutcome, PipelineGateRecord, PipelineGateService, PipelineGateStore, PipelineGateTransport, PipelineGateView, PostgresPipelineGateStore, pipeline_gate_intent
@@ -1823,6 +1831,7 @@ from .event_acknowledgment_intent_recovery_pass import (
 )
 
 __all__ = (
+    'EventContract', 'EventPipeline', 'EventPipelineAction', 'EventPipelineDelivery', 'EventPipelineOutcome', 'PipelineEvent', 'EVENT_PIPELINE_SCHEMA', 'EventPipelineError', 'EventPipelineReceipt', 'EventPipelineStore', 'PostgresEventPipelineStore', 'event_pipeline_identity',
     'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
     'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
     'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',

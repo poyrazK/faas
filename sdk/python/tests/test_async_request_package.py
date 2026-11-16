@@ -38,6 +38,11 @@ from faas_sdk.models.build_response import BuildResponse
 assert pathlib.Path(faas_sdk.__file__).is_relative_to(pathlib.Path(sys.argv[1]))
 assert PreviewOptions is RequestOptions
 import faas_sdk.preview as preview
+from faas_sdk.preview.event_contract import EventContract
+assert preview.EventContract is EventContract
+assert EventContract({"version":1,"type":"example.event","data":{"type":"string"}}).input("hello") == "hello"
+for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore"):
+    assert hasattr(preview,name) and not hasattr(faas_sdk,name)
 for name in ("BuildWaitOptions", "DeploymentWaitOptions", "WaiterError", "WaiterFailureCode", "WaiterOptions", "WaiterProgress", "WaiterTimeoutError", "SourceUploadCheckpoint", "SourceUploadOptions", "SourceUploadError", "save_source_upload_checkpoint", "load_source_upload_checkpoint"):
     assert getattr(preview, name) is getattr(faas_sdk, name)
 def handler(request):
@@ -175,6 +180,11 @@ from typing import assert_type
 from faas_sdk import JobContract,JobInput,JobSubmitOptions,JobRunOptions,JobProgress,JobItemOutcome,TypedJobRun
 from faas_sdk.preview import LiveJob,LiveJobSnapshot,LiveJobFailure,LiveJobSource,realtime_live_job_source
 from faas_sdk.preview import PipelineChild,PipelineChildOptions,PipelineBatchResult,PipelineChildView,PipelineGateOptions,PipelineGateOutcome,PipelineGateService,JobPipeline,JobPipelineClient,PipelineCheckpoint,PipelineInspection,TypedPipelineRun,JobPipelineContext,PipelineJob,PipelineJobResult
+from faas_sdk.preview import EventContract,EventPipeline,EventPipelineDelivery,EventPipelineOutcome
+async def typed_event_pipeline(client:EventPipeline[str,str,int,str],delivery:EventPipelineDelivery)->None:
+    assert_type(await client.handle(delivery,"alice",timeout=1),EventPipelineOutcome)
+    assert_type(await client.inspect(delivery,"alice",timeout=1),EventPipelineOutcome | None)
+    assert_type(EventContract[str]({"version":1,"type":"example.created","data":{"type":"string"}}).input("hello"),str)
 async def typed_job_pipeline(client:JobPipelineClient[str,int],context:JobPipelineContext,job:PipelineJob[str,int])->None:
     run=await client.start("one",timeout=1,idempotency_key="one")
     assert_type(run,TypedPipelineRun[int])
@@ -310,6 +320,7 @@ def observe(info: ResponseInfo) -> None:
         "-m",
         "mypy",
         "--strict",
+        "--show-traceback",
         "--python-version",
         "3.11",
         "--follow-imports=silent",

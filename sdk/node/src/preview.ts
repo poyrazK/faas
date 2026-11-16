@@ -752,3 +752,5 @@ export type * from './pipeline-gate-types.js';
 export { PipelineChildren, nativePipelineChildrenTransport, pipelineChildrenLiveSnapshot, type PipelineChild, type PipelineChildrenTransport } from './pipeline-children.js';
 export * from './pipeline-children-state.js';
 export type * from './pipeline-children-types.js';
+
+export { createEventPipeline, EventContract, EventPipelineError, eventPipelineIdentity, eventPipelineSchema, parseEventPipelineReceipt, postgresEventPipelineStore, type EventContractSpec, type EventPipeline, type EventPipelineDefinition, type EventPipelineDelivery, type PipelineEvent, type EventPipelineAction, type EventPipelineOutcome, type EventPipelineIntent, type EventPipelineReceipt, type EventPipelineStore } from './event-pipelines.js';

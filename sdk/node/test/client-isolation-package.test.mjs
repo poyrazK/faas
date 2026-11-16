@@ -55,6 +55,11 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(fileBrowser.createLiveJob,previewSdk.createLiveJob);assert.equal(typeof fileBrowser.realtimeLiveJobSource,'function');
     assert.equal(typeof previewSdk.defineJobPipeline,'function');assert.equal(typeof previewSdk.createJobPipelineClient,'function');assert.equal(typeof previewSdk.jobPipelineLiveSnapshot,'function');
     assert.equal(sourceSdk.defineJobPipeline,undefined);assert.equal(fileBrowser.defineJobPipeline,undefined);
+    assert.equal(sourceSdk.createEventPipeline,undefined);assert.equal(publicBrowser.createEventPipeline,undefined);assert.equal(fileBrowser.createEventPipeline,undefined);
+    assert.equal(typeof previewSdk.createEventPipeline,'function');assert.equal(typeof previewSdk.postgresEventPipelineStore,'function');
+    const {EventContract}=await import('@gregale/sdk-node/preview/events/runtime');
+    assert.equal(EventContract,previewSdk.EventContract);
+    assert.deepEqual(new EventContract({version:1,type:'example.event',data:{type:'string'}}).input('hello'),'hello');
     const sourceOptions = {timeoutMs:10000,onCheckpoint:value => sourceSdk.saveSourceUploadCheckpoint('source-state.json',value)};
     const staged = await sourceClient.uploads.uploadSource({path:'source.tar.gz',appSlug:'api'},sourceOptions);
     assert.equal(staged.stage,'ready');
@@ -180,8 +185,24 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
   const schema={version:1,name:'typed-job',input:{type:'string',minLength:1},output:{type:'integer',minimum:0}};
   await writeFile(join(app,'job-contract.json'),JSON.stringify(schema));
   await exec(process.execPath,[join(app,'node_modules/.bin/gregale-job-types'),join(app,'job-contract.json'),'typescript',join(app,'typed-job.ts')],{cwd:app});
+  await writeFile(join(app,'event-contract.json'),JSON.stringify({version:1,type:'example.created',data:{type:'string'}}));
+  await exec(process.execPath,[join(app,'node_modules/.bin/gregale-event-types'),join(app,'event-contract.json'),'typescript',join(app,'typed-event.ts')],{cwd:app});
   await writeFile(join(app, 'app.ts'), `
     import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, type RequestOptions, type ResponseInfo, type ResponseObserver, type PaginationOptions, type DeploymentPagination, type DeploymentResponse, type DeploymentListResponse, type BuildResponse, type BuildListResponse, PaginationError, FaaSClient, AppsService, DeploymentsService } from '@gregale/sdk-node';
+    import {contract as eventContract} from './typed-event.js';
+    import {createEventPipeline,type EventPipelineDefinition,type EventPipelineDelivery,type EventPipelineOutcome} from '@gregale/sdk-node/preview';
+    declare const eventDefinition:EventPipelineDefinition<string,string,number,{id:string}>;
+    declare const eventDelivery:EventPipelineDelivery;
+    const triggeredPipelines=createEventPipeline(eventContract,eventDefinition);
+    async function useEvent():Promise<void>{
+      const result:EventPipelineOutcome=await triggeredPipelines.handle(eventDelivery,{id:'alice'},{timeoutMs:1000});
+      if(result.state==='started'){const id:string=result.receipt.checkpoint.run_id;void id;}
+      // @ts-expect-error principal must match application authorization context
+      await triggeredPipelines.handle(eventDelivery,1,{timeoutMs:1000});
+      // @ts-expect-error mapper must produce the pipeline's generated input
+      const wrong:EventPipelineDefinition<string,string,number,{id:string}>={...eventDefinition,map:async()=>42};
+      void wrong;
+    }
     import { createClient as createPreviewClient, type GregaleClient as PreviewClient, type ExecutionResponse, type ExecutionEvent, type ExecutionHelpers, type RequestOptions as PreviewOptions } from '@gregale/sdk-node/preview';
     import { type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters, type ReleaseTimeline, type WaiterSnapshot, type WaiterProgress, WaiterError } from '@gregale/sdk-node';
     import {contract as jobContract} from './typed-job.js';

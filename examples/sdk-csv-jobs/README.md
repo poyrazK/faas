@@ -427,3 +427,63 @@ parent progress. It confirms two child workflows, six Jobs and two verified
 reports. The native control plane and realtime transport are local protocol
 fixtures. Set `GREGALE_LOCAL_PYTHON`, `GREGALE_LOCAL_PG_BIN` and
 `GREGALE_LOCAL_CHROME` as for the other local examples when paths differ.
+
+## Event-triggered reviewed imports
+
+`import.requested` can now start the same reviewed pipeline. The event's generated
+payload contains only `import_id`. Application-owned immutable records supply its
+authorized owner and verified source file; a producer cannot claim another owner
+or make the consumer read an arbitrary file by changing an event payload.
+
+The full flow is business record -> authenticated CloudEvent -> shared durable
+start receipt -> validation Job -> private browser approval -> import Job ->
+verified report. [pipeline-events.mjs](pipeline-events.mjs) and
+[event_pipeline.py](event_pipeline.py) implement the same adapter using
+[event-contract.json](event-contract.json). They require application-supplied
+delivery verification, current owner authorization and immutable-record lookup.
+Reuse the reviewed pipeline's schema, workers and private realtime setup.
+
+Generate payload types after changing the event contract:
+
+```sh
+node sdk/node/dist/event-types.js examples/sdk-csv-jobs/event-contract.json typescript examples/sdk-csv-jobs/event-generated.ts
+python -m faas_sdk.preview.event_types examples/sdk-csv-jobs/event-contract.json python examples/sdk-csv-jobs/event_generated.py
+```
+
+Install [the start-receipt schema](../../sdk/request-contracts/event-pipelines.sql)
+as the application owner. Both adapters use the same primary database and
+acknowledged autocommit statements. The local example stores immutable business
+inputs in `sdk_csv_event_inputs(import_id uuid PRIMARY KEY, owner_id text,
+input jsonb)`; `input` is the reviewed pipeline input with its verified source.
+Keep those records private and insert-only. Publish the event after the business
+record commits, using the existing transactional event-outbox path when reliable
+publication with business writes is required. This adapter coordinates consumption
+and pipeline starts; it does not publish business events itself.
+
+Configure the selected environment's native event subscription to invoke your
+authenticated backend. Its verifier must check the delivery boundary before
+using `eventConsumerRequestFromHeaders` / `event_consumer_request_from_headers`.
+Context headers alone are not authentication. The local fixture uses a separate
+private ingress credential; `event_driver.py` and the workflow journal drivers
+are fixture programs and must never be exposed as HTTP handlers. Integrate the
+factories into an existing backend using its current principals and role checks.
+
+```sh
+npm --prefix sdk/node run build
+GREGALE_CSV_EVENT_PIPELINE=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+This runs competing Node/Python event consumers against real isolated UTF-8
+PostgreSQL. The native fixture accepts the workflow but drops the start response.
+Both consumers report `start_unknown`; Python reconciles the externally inspected
+run ID and Node observes the same receipt. Repeated deliveries never start another
+run. The recovered run then completes the existing mixed-language workers,
+two-user access checks, Chrome review, live progress and verified CSV report.
+Native event delivery, control-plane and realtime transports are local protocol
+fixtures; this is not deployed scheduler/broker acceptance.
+
+Retain start receipts for the entire event replay window. Unknown acceptance
+requires authorized inspection/reconciliation, including after native key
+retention; changing the key, adapter name or subscription is not recovery. See
+[SDK event pipelines](../../docs/sdk-event-pipelines.md) for deadlines,
+cancellation, retention and compatibility details.

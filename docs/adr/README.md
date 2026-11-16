@@ -1,3 +1,4 @@
+- [ADR-20261116165500: Typed event-triggered pipelines](20261116165500-sdk-event-triggered-pipelines.md) — accepted; SDK preview
 - [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
 - [ADR-20261115210000: Typed file-triggered jobs](20261115210000-sdk-file-triggered-jobs.md) — accepted; SDK preview
 - [ADR-20261115223000: Typed live views of Jobs and file pipelines](20261115223000-sdk-live-job-views.md) — accepted; SDK preview

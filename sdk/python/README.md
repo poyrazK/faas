@@ -3860,3 +3860,8 @@ an application-owned PostgreSQL ledger and never automatically repeats unknown
 starts. Existing pipelines opt in through a coordinator; their APIs stay intact.
 See [usage and recovery](../../docs/sdk-pipeline-composition.md) and the
 [reviewed batch CSV example](../../examples/sdk-csv-jobs/README.md#batch-imports-preview).
+
+Typed application CloudEvents can start durable Job pipelines through the preview SDK,
+with generated payload types, current owner authorization and shared Node/Python
+start receipts. See [event-triggered pipelines](../../docs/sdk-event-pipelines.md)
+and the [CSV example](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
