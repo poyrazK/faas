@@ -40,6 +40,13 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-reminder-defaults":                 authz.OrgActionManageAppSecurity,
 	// audit
 	"GET /v1/apps/{slug}/audit/requests": authz.OrgActionReadApp,
+
+	// Postgres change workers (ADR-20261112140000) and managed database switches.
+	"GET /v1/apps/{slug}/postgres-changes":            authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/postgres-changes":            authz.OrgActionConfigureApp,
+	"DELETE /v1/apps/{slug}/postgres-changes":         authz.OrgActionConfigureApp,
+	"PUT /v1/apps/{slug}/postgres-changes/connection": authz.OrgActionManageAppSecrets,
+	"POST /v1/apps/{slug}/database-switches":          authz.OrgActionDeployApp,
 	// stored workflows
 	"GET /v1/apps/{slug}/workflows/stored":                                                              authz.OrgActionReadApp,
 	"DELETE /v1/apps/{slug}/workflows/stored/{name}":                                                    authz.OrgActionConfigureApp,
