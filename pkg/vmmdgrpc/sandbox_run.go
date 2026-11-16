@@ -325,8 +325,10 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		wake.LayerKey == "" || wake.VcpuCount < 1 || wake.MemSizeMiB < 1 || wake.CPUMillicores < 1 {
 		return fcvm.SandboxWakeRequest{}, invalid("instance, sandbox, account, plan, base, layer and a positive machine shape are required")
 	}
-	if wake.Network != api.SandboxNetworkNone && wake.Network != api.SandboxNetworkRegistries {
-		return fcvm.SandboxWakeRequest{}, invalid("network_mode must be none or registries")
+	switch wake.Network {
+	case api.SandboxNetworkNone, api.SandboxNetworkRegistries, api.SandboxNetworkWeb:
+	default:
+		return fcvm.SandboxWakeRequest{}, invalid("network_mode must be none, registries or web")
 	}
 	// Only a materialized job image or a sandbox template build boots as a
 	// session's drive1, never another app's layer, a base or a snapshot.
@@ -354,7 +356,7 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 			return fcvm.SandboxWakeRequest{}, invalid("snapshot must be a sandbox capture of this session's kind, with its keys, version and size")
 		}
 		wake.Snapshot = &fcvm.Snapshot{StorageKey: snap.GetStorageKey(), VMStateStorageKey: snap.GetVmstateStorageKey(),
-			FCVersion: snap.GetFcVersion(), MemBytes: snap.GetMemBytes(), Networkless: wake.Network != api.SandboxNetworkRegistries}
+			FCVersion: snap.GetFcVersion(), MemBytes: snap.GetMemBytes(), Networkless: wake.Network == api.SandboxNetworkNone}
 	}
 	return wake, nil
 }

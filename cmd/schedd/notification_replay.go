@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -13,6 +15,17 @@ import (
 // lifetime rather than the completed delivery's context. Other replay handlers
 // finish synchronously and use the renewable claim's cancellable context.
 //
+// peerDeferralDelay is the retry delay plus up to one poll interval of
+// jitter. A fixed delay that is a whole number of poll intervals reopened the
+// row just before the deferring peer's own next tick, so that peer claimed and
+// deferred it again every time and the owner never did (production
+// 2026-11-16: a credential rotation's restart sat pending for over 20 minutes,
+// reopening every 6.000 s). Jitter moves the reopening across the poll period,
+// so whichever schedd ticks first, the owner included, claims it next.
+func peerDeferralDelay() time.Duration {
+	return db.NotificationRetryDelay(1) + rand.N(db.NotificationOutboxPollInterval())
+}
+
 // Every schedd's replay worker claims any app_wake or runtime_config_restart
 // row: the rows name no node. A schedd that does not own the app defers the
 // row instead of failing it (ADR-191 amendment 2026-10-26, follow-up). A
@@ -29,7 +42,7 @@ func durableReplayHandler(daemonCtx context.Context, handler func(context.Contex
 			err = handler(deliveryCtx, n)
 		}
 		if errors.Is(err, sched.ErrAppOwnedByAnotherNode) {
-			return &db.DeferredNotificationError{Cause: err, Delay: db.NotificationRetryDelay(1)}
+			return &db.DeferredNotificationError{Cause: err, Delay: peerDeferralDelay()}
 		}
 		return err
 	}

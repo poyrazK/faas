@@ -1,6 +1,8 @@
+- [ADR-20261115163113: Flag experiments: conversion events and sequential results](20261115163113-flag-experiments.md) — accepted; experiments on a variant flag's weighted rule with customer units, SDK `track()` conversion events (`track-v1`) folded into daily per-customer rows with plan telemetry retention, per-experiment unit rows for the experiment's lifetime, monthly per-plan event quota (dropped, never billed), mSPRT always-valid results with a sample ratio mismatch check (amends ADR-377, ADR-20261114150000)
 - [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
 - [ADR-20261115210000: Typed file-triggered jobs](20261115210000-sdk-file-triggered-jobs.md) — accepted; SDK preview
 - [ADR-20261115223000: Typed live views of Jobs and file pipelines](20261115223000-sdk-live-job-views.md) — accepted; SDK preview
+- [ADR-20261116170000: App VM memory headroom above the billable fence](20261116170000-app-vm-memory-headroom.md) — accepted; app/job VM `memory.max` = ram_mb + 8 + 24 MB so cold boots of small guests are not OOM-killed; admission and billing stay at ram_mb + 8 (amends spec §11)
 - [ADR-20261116010000: Typed durable job pipelines](20261116010000-sdk-durable-job-pipelines.md) — accepted; SDK preview
 - [ADR-20261115162700: Typed pipeline approval and input gates](20261115162700-sdk-pipeline-gates.md) — accepted; SDK preview
 - [ADR-20261115172526: Typed child pipeline composition](20261115172526-sdk-pipeline-composition.md) — accepted; SDK preview

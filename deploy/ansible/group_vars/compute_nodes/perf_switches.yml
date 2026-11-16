@@ -19,7 +19,14 @@
 # one copy of each platform image layer. On fsn-2 since 2026-11-01, on fsn-3
 # since the trial; no build errors attributed to it.
 #
+# builderd_buildkit_seed (ADR-20261030122204): builderd keeps a per-node
+# BuildKit seed of the platform images and gives each Railpack build a reflink
+# copy, so the builder image step (p50 34 s) becomes a cache hit. Off until a
+# one-node canary; a hand drop-in that sets FAAS_BUILD_BUILDKIT_SEED=1 sorts
+# after this file and runs the canary.
+#
 # false renders 0, so turning one off takes effect at the next daemon start.
 schedd_async_wake_finalize: true
 imaged_app_layer_reuse: true
 builderd_shared_platform_blobs: true
+builderd_buildkit_seed: false
