@@ -52574,6 +52574,21 @@ CREATE TABLE public.platform_mail_producer_outbox (
 
 
 --
+-- Name: platform_probe_wakes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_probe_wakes (
+    instance_id text NOT NULL,
+    app_id uuid NOT NULL,
+    woke_at timestamp with time zone NOT NULL,
+    probe_done_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_probe_wakes_instance_id_check CHECK (((instance_id <> ''::text) AND (length(instance_id) <= 128))),
+    CONSTRAINT platform_probe_wakes_order_chk CHECK ((probe_done_at >= woke_at))
+);
+
+
+--
 -- Name: platform_release_activations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -72190,6 +72205,14 @@ ALTER TABLE ONLY public.platform_mail_producer_outbox
 
 
 --
+-- Name: platform_probe_wakes platform_probe_wakes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_probe_wakes
+    ADD CONSTRAINT platform_probe_wakes_pkey PRIMARY KEY (instance_id, woke_at);
+
+
+--
 -- Name: platform_release_activations platform_release_activations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84982,6 +85005,13 @@ CREATE UNIQUE INDEX platform_mail_producer_outbox_suspended_period_idx ON public
 --
 
 CREATE INDEX platform_mail_producer_outbox_verification_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, verification_key_id) WHERE ((template = 'email_verification'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_probe_wakes_done_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_probe_wakes_done_idx ON public.platform_probe_wakes USING btree (probe_done_at);
 
 
 --
@@ -107164,6 +107194,14 @@ ALTER TABLE ONLY public.platform_mail_deployment_observations
 
 ALTER TABLE ONLY public.platform_mail_producer_outbox
     ADD CONSTRAINT platform_mail_producer_outbox_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_probe_wakes platform_probe_wakes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_probe_wakes
+    ADD CONSTRAINT platform_probe_wakes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

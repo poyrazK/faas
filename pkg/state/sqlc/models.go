@@ -12125,6 +12125,14 @@ type PlatformMailProducerOutbox struct {
 	AgentDeliveryID                  pgtype.UUID
 }
 
+type PlatformProbeWake struct {
+	InstanceID  string
+	AppID       pgtype.UUID
+	WokeAt      pgtype.Timestamptz
+	ProbeDoneAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 // Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).
 type PlatformReleaseActivation struct {
 	ID                pgtype.UUID
