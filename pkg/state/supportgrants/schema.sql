@@ -1,5 +1,5 @@
 -- Offline projection of the migration-owned support grant tables
--- (migrations/20261116162429550_support_grants.sql) and the columns their
+-- (migrations/20261116193733100_support_grants.sql) and the columns their
 -- queries read from orgs, org_memberships and accounts.
 CREATE TABLE orgs (
  id uuid PRIMARY KEY,
