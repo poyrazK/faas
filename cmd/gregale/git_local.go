@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ErrNotInGitRepo is returned by gitRootFromCwd when no .git/ ancestor
@@ -345,17 +347,58 @@ func resolveLocalGitProvenance(cwd string, requireOrigin bool) (zeroConfigProven
 	}, nil
 }
 
+// Local git calls are bounded. A deploy run inside a repository whose
+// `git status` never returns (a stuck core.fsmonitor daemon, a network
+// filesystem, a huge untracked tree) used to wait forever with no output,
+// before any network request (retail-store GREG-03).
+var (
+	// gitMetadataTimeout bounds status, rev-parse, config and the other
+	// metadata reads.
+	gitMetadataTimeout = 30 * time.Second
+	// gitArchiveTimeout bounds `git archive`, which writes the whole tree.
+	gitArchiveTimeout = 10 * time.Minute
+	// gitSlowNoticeAfter is when a still-running git call says what the
+	// CLI is waiting for.
+	gitSlowNoticeAfter = 5 * time.Second
+	// gitPipeWaitDelay is how long the CLI waits for git's output pipes to
+	// close after git itself exited or was killed. A daemon git started
+	// (fsmonitor) can inherit them and keep them open indefinitely.
+	gitPipeWaitDelay = 2 * time.Second
+)
+
+func gitCommandTimeout(args []string) time.Duration {
+	if len(args) > 0 && args[0] == "archive" {
+		return gitArchiveTimeout
+	}
+	return gitMetadataTimeout
+}
+
 // runGitCmd runs `git <args...>` with -C gitDir and returns combined
 // stdout+stderr trimmed. Errors include stderr so the operator sees
-// the underlying git message.
+// the underlying git message. A slow call prints what it is waiting
+// for, and a call past its deadline fails with the command and
+// directory instead of hanging.
 func runGitCmd(gitDir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	timeout := gitCommandTimeout(args)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = gitDir
+	cmd.WaitDelay = gitPipeWaitDelay
 	// Redirect git's progress / pager noise away from the terminal.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat")
+	command := "git " + strings.Join(args, " ")
+	notice := time.AfterFunc(gitSlowNoticeAfter, func() {
+		_, _ = fmt.Fprintf(osStderr, "Waiting for `%s` in %s (local git metadata; gives up after %s)...\n", command, gitDir, timeout)
+	})
 	out, err := cmd.CombinedOutput()
+	notice.Stop()
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("%s did not finish within %s in %s; check that `%s` works there (a stuck core.fsmonitor daemon, a network filesystem or a very large untracked tree can stall it), or deploy from a copy outside the repository: %w",
+			command, timeout, gitDir, command, context.DeadlineExceeded)
+	}
 	if err != nil {
-		return "", fmt.Errorf("git %s: %s: %w", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
+		return "", fmt.Errorf("%s: %s: %w", command, strings.TrimSpace(string(out)), err)
 	}
 	return string(out), nil
 }
