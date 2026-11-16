@@ -61,7 +61,7 @@ func BuildEnv(base []string, m api.AppManifest) []string {
 //
 //	base (os.Environ) < manifest env < apiEnv < secrets env
 //
-// All four sources must conform to the [A-Z][A-Z0-9_]* key shape; entries
+// All four sources must conform to the [A-Za-z][A-Za-z0-9_]* key shape; entries
 // that do not are silently skipped (defense in depth — the SQL CHECK
 // already enforces shape, but an out-of-band writer shouldn't be able to
 // crash execve with a malformed env entry).
@@ -142,24 +142,23 @@ func StampSecretsFileEnvAtPaths(env []string, enabled bool, secretsPath, revisio
 	)
 }
 
-// validEnvKey enforces the same ^[A-Z][A-Z0-9_]* shape the SQL CHECK and
-// apid validator do. Untyped key names reaching execve can take several
-// unfun paths through libc; we'd rather drop a single bad entry than risk
-// it leaking into the spawning environ.
+// validEnvKey enforces the shape ^[A-Za-z][A-Za-z0-9_]* that the SQL CHECK
+// and apid validator (api.EnvKeyPattern) do. Mixed case is real
+// configuration (DOTNET_EnableDiagnostics); a name must still start with a
+// letter, which keeps platform-stamped names such as
+// __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS out of customer reach. Untyped key
+// names reaching execve can take several unfun paths through libc; we'd
+// rather drop a single bad entry than risk it leaking into the spawning
+// environ.
 func validEnvKey(k string) bool {
 	if k == "" || len(k) > 128 {
 		return false
 	}
-	c := k[0]
-	if c < 'A' || c > 'Z' {
-		return false
-	}
-	for i := 1; i < len(k); i++ {
+	for i := 0; i < len(k); i++ {
 		c := k[i]
 		switch {
-		case c >= 'A' && c <= 'Z':
-		case c >= '0' && c <= '9':
-		case c == '_':
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z':
+		case (c >= '0' && c <= '9' || c == '_') && i > 0:
 		default:
 			return false
 		}
