@@ -60,6 +60,7 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(typeof previewSdk.createEventPublisher,'function');assert.equal(typeof previewSdk.createEventOutbox,'function');assert.equal(typeof previewSdk.withEventOutboxTransaction,'function');
     assert.equal(sourceSdk.createEventOutbox,undefined);assert.equal(publicBrowser.createEventPublisher,undefined);
     assert.ok(previewSdk.eventOutboxSchema.includes('gregale_event_outbox'));
+    assert.equal(typeof previewSdk.definePipelineSchedule,'function');assert.equal(typeof previewSdk.createPipelineScheduleClient,'function');assert.equal(sourceSdk.definePipelineSchedule,undefined);assert.equal(publicBrowser.createPipelineScheduleClient,undefined);
     const {EventContract}=await import('@gregale/sdk-node/preview/events/runtime');
     assert.equal(EventContract,previewSdk.EventContract);
     assert.deepEqual(new EventContract({version:1,type:'example.event',data:{type:'string'}}).input('hello'),'hello');
@@ -221,6 +222,13 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     import { createClient as createPreviewClient, type GregaleClient as PreviewClient, type ExecutionResponse, type ExecutionEvent, type ExecutionHelpers, type RequestOptions as PreviewOptions } from '@gregale/sdk-node/preview';
     import { type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters, type ReleaseTimeline, type WaiterSnapshot, type WaiterProgress, WaiterError } from '@gregale/sdk-node';
     import {contract as jobContract} from './typed-job.js';
+    import {definePipelineSchedule,createPipelineScheduleClient,type TypedPipelineRun} from '@gregale/sdk-node/preview';
+    const schedule=definePipelineSchedule(jobContract,'input',{scope:eventScope,ownerId:'alice',cron:'0 2 * * *'});
+    const scheduleInput:string=schedule.trigger.input.input;
+    // @ts-expect-error schedule input must match the generated contract
+    definePipelineSchedule(jobContract,7,{scope:eventScope,ownerId:'alice',cron:'0 2 * * *'});
+    const schedules=createPipelineScheduleClient(schedule,{deploymentId:'id',token:'server',authorize:async(access:{id:string})=>access.id==='alice'});
+    async function useSchedule():Promise<void>{const run:TypedPipelineRun<number>=await schedules.attach('occurrence',{id:'alice'},{timeoutMs:1000});const output:number=await run.result({timeoutMs:1000});void output;}
     const client: GregaleClient = createClient('https://api.test');
     const typedJob=client.jobs.defineJob(jobContract);
     const typedSubmission:Promise<import('@gregale/sdk-node').TypedJobRun<number>>=typedJob.submit([{id:'one',value:'input'}],{timeoutMs:1000,idempotencyKey:'one'});

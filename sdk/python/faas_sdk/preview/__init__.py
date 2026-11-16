@@ -797,6 +797,20 @@ from .pipeline_gates import (
     PostgresPipelineGateStore,
     pipeline_gate_intent,
 )
+from .pipeline_schedule_state import (
+    PipelineSchedule,
+    PipelineScheduleCatchUp,
+    PipelineScheduleDST,
+    PipelineScheduleError,
+    PipelineScheduleFire,
+    PipelineScheduleHistory,
+    PipelineScheduleInfo,
+    PipelineScheduleInspection,
+    PipelineScheduleOccurrence,
+    PipelineSchedulePreview,
+    PipelineScheduleReplayOutcome,
+)
+from .pipeline_schedules import PipelineScheduleAction, PipelineScheduleClient, ScheduledPipelineRun
 from .pipeline_state import (
     PIPELINE_JOB_SCHEMA,
     PipelineError,
@@ -898,6 +912,21 @@ from .realtime_workers import (
 )
 
 __all__ = (
+    "PipelineScheduleClient",
+    "PipelineScheduleAction",
+    "ScheduledPipelineRun",
+    "PipelineSchedule",
+    "PipelineScheduleError",
+    "PipelineScheduleInfo",
+    "PipelineScheduleHistory",
+    "PipelineScheduleInspection",
+    "PipelineSchedulePreview",
+    "PipelineScheduleOccurrence",
+    "PipelineScheduleReplayOutcome",
+    "PipelineScheduleFire",
+    "PipelineScheduleDST",
+    "PipelineScheduleCatchUp",
+
     "EventPublisher",
     "EventOutbox",
     "EventOutboxRecoveryOptions",

@@ -15,6 +15,7 @@ import {liveFixture} from './live-fixture.mjs';
 import {createPipelineReviewServer} from './pipeline-review-api.mjs';
 import {csvEventPipeline} from './pipeline-events.mjs';
 import {stageCsvImport} from './pipeline-producer.mjs';
+import {csvPipelineSchedule} from './pipeline-schedule.mjs';
 
 const exec=promisify(execFile),here=fileURLToPath(new URL('.',import.meta.url)),root=resolve(here,'../..');
 const python=process.env.GREGALE_LOCAL_PYTHON??join(root,'sdk/python/.venv/bin/python'),pgBin=process.env.GREGALE_LOCAL_PG_BIN??'/opt/homebrew/opt/postgresql@16/bin';
@@ -22,8 +23,8 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<1000;i++){try{if(await fn())return;}catch{}await pause(20);}throw new Error('Fixture did not become ready');}
 async function stop(child){if(child.exitCode!==null)return;const done=new Promise(r=>child.once('exit',r));child.kill('SIGTERM');await done;}
 
-const eventTriggered=process.env.GREGALE_CSV_EVENT_PIPELINE==='1';
-for(const reviewed of eventTriggered?[true]:[false,true])test(`CSV ${eventTriggered?'event-triggered ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered?600000:240000},async t=>{
+const eventTriggered=process.env.GREGALE_CSV_EVENT_PIPELINE==='1',scheduled=process.env.GREGALE_CSV_SCHEDULED_PIPELINE==='1';
+for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${eventTriggered?'event-triggered ':scheduled?'scheduled ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered||scheduled?600000:240000},async t=>{
   try{await access(python);await access(join(pgBin,'initdb'));}catch{t.skip('Set GREGALE_LOCAL_PYTHON and GREGALE_LOCAL_PG_BIN');return;}
   const home=await mkdtemp(join(tmpdir(),'gregale-csv-pipeline-')),cleanup=[];t.after(async()=>{try{for(const close of cleanup.reverse())await close();}finally{await rm(home,{recursive:true,force:true});}});
   await cp(here,join(home,'app'),{recursive:true,filter:p=>!p.includes('node_modules')});await symlink(join(root,'sdk/node/node_modules'),join(home,'app/node_modules'));
@@ -40,7 +41,8 @@ for(const reviewed of eventTriggered?[true]:[false,true])test(`CSV ${eventTrigge
   for(const [stage,file]of [['validate','validate-contract.json'],['import','contract.json'],['report','report-contract.json']]){const spec=JSON.parse(await readFile(new URL(file,import.meta.url),'utf8'));templates.set(spec.name,{stage,spec,id:randomUUID()});}
   const storage=fileStorageFixture(()=>env.FAAS_API,{accountId});
   const native=run=>{const total=run.tasks.length,count=status=>run.tasks.filter(t=>t.status===status).length,finished=count('succeeded')+count('failed')+count('cancelled');return {id:run.id,job_id:run.template.id,account_id:accountId,tasks:total,input_manifest_version:1,input_digest:runtime.jobHash(Buffer.from(JSON.stringify(run.tasks.map(t=>({input_id:t.input_id,input_ref:t.input_ref}))))),aggregate_status:finished<total?'running':count('failed')?'failed':count('cancelled')?'cancelled':'succeeded',tasks_succeeded:count('succeeded'),tasks_failed:count('failed'),tasks_cancelled:count('cancelled'),tasks_running:count('claimed')};};
-  const publications=new Map();let publishPosts=0;
+  const publications=new Map();let publishPosts=0,scheduleDefinition;const scheduledDeployment=randomUUID();
+  if(scheduled)await pool.query('CREATE TABLE sdk_csv_schedule_occurrences (id uuid PRIMARY KEY, scheduled_for timestamptz UNIQUE, record jsonb NOT NULL)');
   let workerCount=0,jobPosts=0,scope,eventPosts=0,dropWakeReplies=true;
   const env={...process.env,GREGALE_REVIEWED_PIPELINE:reviewed?'1':'0',DATABASE_URL:database,PYTHONPATH:join(root,'sdk/python'),FAAS_TOKEN:'fixture-owner',GREGALE_NODE_JOB_RUNTIME:join(root,'sdk/node/dist/job-runtime.js'),GREGALE_FILE_BUCKET:storage.bucket};
   const execute=async run=>{
@@ -66,8 +68,15 @@ for(const reviewed of eventTriggered?[true]:[false,true])test(`CSV ${eventTrigge
         publications.set(input.key,receipt);
         if(!old){res.destroy();return;}send(200,{...receipt,duplicate:true});return;
       }
+      if(scheduled&&u.pathname==='/v1/deployments/'+scheduledDeployment){if(req.headers.authorization!=='Bearer fixture-owner'){send(403,{});return;}send(200,{id:scheduledDeployment,app_id:storage.app,scope:'default',workflows:[{name:contract.spec.name,trigger:scheduleDefinition.trigger}]});return;}
       if(u.pathname.includes('/workflows/')){
         if(req.headers.authorization!=='Bearer fixture-owner'){send(403,{});return;}
+        if(scheduled&&u.pathname.includes('/schedules')){
+          const trigger=scheduleDefinition.trigger,meta={workflow_name:contract.spec.name,deployment_id:scheduledDeployment,schedule:trigger.schedule,timezone:trigger.timezone,overlap:trigger.overlap,enabled:trigger.enabled};
+          if(u.pathname.endsWith('/schedules')){send(200,{runtime_enabled:true,schedules:[{...meta,catch_up:'skip'}]});return;}
+          if(u.pathname.endsWith('/preview')){send(200,{...meta,observed_at:'2026-11-16T00:00:00Z',evaluation_at:'2026-11-16T00:00:00Z',dst_behavior:{mode:'fixed_wall_time',spring_gap:'shift_to_first_valid_minute',fall_fold:'run_once_at_first_occurrence'},upcoming:[{scheduled_for:'2026-11-16T02:00:00Z',local_time:'2026-11-16T02:00:00Z'}],catch_up:{policy:'skip',outcome:'no_due_occurrence',eligible_occurrences:0,coalesced_occurrences:0,missed_occurrences_not_recovered:false,missed_outside_window:false}});return;}
+          if(u.pathname.endsWith('/occurrences')){send(200,{occurrences:(await pool.query('SELECT record FROM sdk_csv_schedule_occurrences ORDER BY scheduled_for DESC,id DESC')).rows.map(r=>r.record)});return;}
+        }
         if(req.method==='POST'&&u.pathname.endsWith('/runs')){
           const chunks=[];for await(const chunk of req)chunks.push(chunk);const input=JSON.parse(Buffer.concat(chunks).toString()),key=req.headers['idempotency-key'];
           if(workflowKeys.has(key)){send(200,workflowKeys.get(key));return;}
@@ -166,11 +175,27 @@ for(const reviewed of eventTriggered?[true]:[false,true])test(`CSV ${eventTrigge
     assert.equal((await events.handle(delivery,'alice',{timeoutMs:10000})).receipt.checkpoint.run_id,retained);
     assert.equal((await pythonEvent('handle')).receipt.checkpoint.run_id,retained);assert.equal(workflowKeys.size,1);
     run=await typed.resumeById(retained,{timeoutMs:10000});
+  }else if(scheduled){
+    scheduleDefinition=csvPipelineSchedule({sdk,scope,contract,input:{import_id:importId,source},ownerId:'alice'});
+    // This fixture stands in for native atomic admission, never an SDK timer/start loop.
+    const admit=async()=>{const c=await pool.connect();try{await c.query('BEGIN');const id=randomUUID(),runId=randomUUID(),nominal='2026-11-16T02:00:00Z';
+      const occurrence={id,app_id:scope.app_id,deployment_id:scheduledDeployment,workflow_name:contract.spec.name,scheduled_for:nominal,evaluated_at:'2026-11-16T02:00:01Z',status:'started',run_id:runId};
+      const inserted=await c.query('INSERT INTO sdk_csv_schedule_occurrences VALUES ($1,$2,$3) ON CONFLICT(scheduled_for) DO NOTHING RETURNING id',[id,nominal,occurrence]);
+      if(inserted.rows.length){const record={id:runId,app_id:scope.app_id,deployment_id:scheduledDeployment,workflow_name:contract.spec.name,scheduled_for:nominal,status:'running',input:scheduleDefinition.trigger.input};await c.query('INSERT INTO sdk_pipeline_runs VALUES ($1,$2,$3)',[runId,record,'[]']);}
+      await c.query('COMMIT');
+    }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}};
+    await Promise.all([admit(),admit()]);assert.equal((await pool.query('SELECT count(*)::int AS n FROM sdk_pipeline_runs')).rows[0].n,1);
+    const schedules=sdk.createPipelineScheduleClient(scheduleDefinition,{deploymentId:scheduledDeployment,token:'fixture-owner',authorize:async actor=>actor==='alice'});
+    await assert.rejects(schedules.history('bob',{timeoutMs:10000}),{code:'unauthorized'});
+    const preview=await schedules.preview('alice',{timeoutMs:10000}),history=await schedules.history('alice',{timeoutMs:10000});assert.equal(preview.upcoming[0].scheduled_for,'2026-11-16T02:00:00Z');assert.equal(history.occurrences.length,1);
+    run=await schedules.attach(history.occurrences[0].id,'alice',{timeoutMs:10000});
+    const request=join(home,'schedule.json');await writeFile(request,JSON.stringify({scope,input:{import_id:importId,source},deployment_id:scheduledDeployment,occurrence_id:history.occurrences[0].id}));
+    const pythonReply=JSON.parse((await exec(python,[join(home,'app/schedule_driver.py'),request],{env,timeout:120000})).stdout);assert.equal(pythonReply.identity,scheduleDefinition.identity);assert.deepEqual(pythonReply.checkpoint,run.checkpoint);assert.deepEqual(pythonReply.preview,preview);
   }else{
     run=await typed.start({import_id:importId,source},{timeoutMs:10000,idempotencyKey:'csv:'+importId});assert.equal((await typed.start({import_id:importId,source},{timeoutMs:10000,idempotencyKey:'csv:'+importId})).checkpoint.run_id,run.checkpoint.run_id);
   }
   const bob=sdk.createJobPipelineClient({baseURL:env.FAAS_API,token:'fixture-owner',scope,ownerId:'bob',contract});await assert.rejects(bob.resumeById(run.checkpoint.run_id,{timeoutMs:10000}),{code:'scope_mismatch'});
-  const wrong=sdk.createJobPipelineClient({baseURL:env.FAAS_API,token:'fixture-other',scope,ownerId:'alice',contract});await assert.rejects(wrong.start({import_id:importId,source},{timeoutMs:10000,idempotencyKey:'wrong'}),{code:'scope_mismatch'});assert.equal(workflowKeys.size,1);
+  const wrong=sdk.createJobPipelineClient({baseURL:env.FAAS_API,token:'fixture-other',scope,ownerId:'alice',contract});await assert.rejects(wrong.start({import_id:importId,source},{timeoutMs:10000,idempotencyKey:'wrong'}),{code:'scope_mismatch'});assert.equal(workflowKeys.size,scheduled?0:1);
   let page,browser,reviewURL,approved=false;const browserErrors=[];
   if(reviewed){
     const server=createPipelineReviewServer({sdk,client,scope,files,contract,pipeline,reviewContract,gateStore,token:'fixture-owner',users:{alice:{token:'alice-review',owner_id:'alice',roles:['reviewer']},bob:{token:'bob-review',owner_id:'bob',roles:['reviewer']}},realtime:{...realtime.config(),pollDelayMs:50}});

@@ -210,6 +210,8 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "pipeline_schedules.py",
+    "pipeline_schedule_state.py",
     "_event_outbox_protocol.py",
     "event_outbox.py",
     "event_outbox_state.py",
@@ -1299,6 +1301,8 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from .pipeline_schedules import PipelineScheduleClient, PipelineScheduleAction, ScheduledPipelineRun
+from .pipeline_schedule_state import PipelineSchedule, PipelineScheduleError, PipelineScheduleInfo, PipelineScheduleHistory, PipelineScheduleInspection, PipelineSchedulePreview, PipelineScheduleOccurrence, PipelineScheduleReplayOutcome, PipelineScheduleFire, PipelineScheduleDST, PipelineScheduleCatchUp
 from .pipeline_state import PipelineFailure, pipeline_failure, PIPELINE_JOB_SCHEMA, PipelineError, PipelineJobReceipt, PipelineJobStore, PipelineScope, PostgresPipelineJobStore, pipeline_job_identity, read_pipeline_artifact
 from .event_contract import EventContract
 from .event_outbox import EventPublisher, EventOutbox, EventOutboxRecoveryOptions, EventOutboxReconciliation
@@ -1841,6 +1845,21 @@ from .event_acknowledgment_intent_recovery_pass import (
 )
 
 __all__ = (
+    "PipelineScheduleClient",
+    "PipelineScheduleAction",
+    "ScheduledPipelineRun",
+    "PipelineSchedule",
+    "PipelineScheduleError",
+    "PipelineScheduleInfo",
+    "PipelineScheduleHistory",
+    "PipelineScheduleInspection",
+    "PipelineSchedulePreview",
+    "PipelineScheduleOccurrence",
+    "PipelineScheduleReplayOutcome",
+    "PipelineScheduleFire",
+    "PipelineScheduleDST",
+    "PipelineScheduleCatchUp",
+
     "EventPublisher",
     "EventOutbox",
     "EventOutboxRecoveryOptions",

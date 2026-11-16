@@ -3872,3 +3872,9 @@ workers in `faas_sdk.preview`. Business writes and validated event intent commit
 together; workers share the upgraded Go/Node PostgreSQL protocol and controls.
 See [migration, authorization and recovery](../../docs/sdk-event-outbox.md) and
 the [complete CSV flow](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
+`PipelineSchedule` and `PipelineScheduleClient` in `faas_sdk.preview` bind typed
+inputs to native scheduled pipelines. Preview calendars, read precise bounded
+history, explicitly replay skipped occurrences and attach typed runs with current
+application authorization. See [usage and recovery](../../docs/sdk-pipeline-schedules.md)
+and the [nightly reviewed CSV example](../../examples/sdk-csv-jobs/README.md#scheduled-reviewed-imports).

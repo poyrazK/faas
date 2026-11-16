@@ -4942,3 +4942,12 @@ The application-owned PostgreSQL protocol interoperates with upgraded Go/Python
 workers and honors persisted retry policy, publishing pause and rate limits.
 See [migration, authorization and recovery](../../docs/sdk-event-outbox.md) and
 the [complete CSV flow](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
+## Typed scheduled pipelines (preview)
+
+Use `definePipelineSchedule` to bind generated inputs to a native calendar and
+emit a deployment trigger. `createPipelineScheduleClient` previews upcoming fires,
+reads bounded history, explicitly replays skipped occurrences and attaches typed
+runs, rechecking current application authorization. See
+[usage and recovery](../../docs/sdk-pipeline-schedules.md) and the
+[nightly reviewed CSV example](../../examples/sdk-csv-jobs/README.md#scheduled-reviewed-imports).

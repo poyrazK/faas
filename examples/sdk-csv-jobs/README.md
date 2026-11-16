@@ -498,3 +498,38 @@ requires authorized inspection/reconciliation, including after native key
 retention; changing the key, adapter name or subscription is not recovery. See
 [SDK event pipelines](../../docs/sdk-event-pipelines.md) for deadlines,
 cancellation, retention and compatibility details.
+
+## Scheduled reviewed imports
+
+The reviewed CSV pipeline can run nightly from a native workflow schedule.
+[pipeline-schedule.mjs](pipeline-schedule.mjs) and
+[scheduled_pipeline.py](scheduled_pipeline.py) bind its generated input contract,
+authenticated owner, verified file snapshot and scope to a 02:00 UTC calendar.
+Set the returned `trigger` on the deployed `csv-reviewed-pipeline` workflow,
+using the existing handler, `steps: []` and
+`code: {path: /csv-reviewed-pipeline, timeout: 30s}`. Deploy through the normal
+reviewed path, then pin the schedule client to the resulting deployment ID.
+
+This uses fixed input: the same immutable import ID/source is reviewed on each
+occurrence and business writes retain their idempotency. For newly arriving
+files each day, define a scheduled coordinator that resolves current authorized
+imports and starts typed children. It must not mutate the captured snapshot.
+Only the live default deployment fires; Node/Python handlers need support for
+`trigger.kind: schedule` before enabling the trigger.
+
+```sh
+npm --prefix sdk/node run build
+GREGALE_CSV_SCHEDULED_PIPELINE=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The test uses real isolated UTF-8 PostgreSQL. Two competing native-admission
+fixture transactions create exactly one occurrence and one workflow run. Neither
+SDK submits a manual workflow start. Node and Python produce the same schedule
+identity, preview and checkpoint, and reject the other application user. The run
+then completes mixed-language Jobs, private Chrome approval, live progress and
+verified report download. [schedule_driver.py](schedule_driver.py) is a private
+fixture program, not an HTTP handler. Calendar/admission, control-plane and
+realtime fixtures do not establish deployed scheduler acceptance.
+
+See [the SDK guide](../../docs/sdk-pipeline-schedules.md) for DST/catch-up preview,
+scoped history, explicit replay, unknown replies, deadlines and cancellation.

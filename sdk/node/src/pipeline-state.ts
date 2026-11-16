@@ -22,10 +22,10 @@ export function pipelineFailure(value: unknown): { readonly code: PipelineCode; 
 }
 export interface PipelineScope { readonly base_url: string; readonly account_id: string; readonly app_id: string; readonly app_slug: string; }
 export interface PipelineLineage { readonly version: 1; readonly parent_run_id: string; readonly batch_identity: string; readonly item_id: string; }
-export interface PipelineTrigger { readonly version: 1; readonly kind: 'event'; readonly identity: string; }
+export interface PipelineTrigger { readonly version: 1; readonly kind: 'event' | 'schedule'; readonly identity: string; }
 export function parsePipelineTrigger(value: unknown): PipelineTrigger {
   const v = value as PipelineTrigger;
-  if (!v || Object.keys(v).sort().join() !== 'identity,kind,version' || v.version !== 1 || v.kind !== 'event' || !fileEventHash(v.identity)) throw new PipelineError('receipt_conflict');
+  if (!v || Object.keys(v).sort().join() !== 'identity,kind,version' || v.version !== 1 || !['event', 'schedule'].includes(v.kind) || !fileEventHash(v.identity)) throw new PipelineError('receipt_conflict');
   return jobSnapshot(v);
 }
 export function parsePipelineLineage(value: unknown): PipelineLineage {
