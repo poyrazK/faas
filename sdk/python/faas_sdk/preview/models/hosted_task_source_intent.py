@@ -42,11 +42,11 @@ class HostedTaskSourceIntent:
     expires_at: datetime.datetime
     source_state: HostedTaskSourceIntentSourceState
     ready_to_apply: bool
-    """Always false; source retention grants no execution authority."""
+    """False because retained source alone has no owner execution authorization."""
     bindings_verified: bool
-    """Always false; source retention grants no execution authority."""
+    """False because storing authored Task source does not verify runtime credential bindings."""
     owner_authorization_required: bool
-    """Always true for a retained hosted source intent."""
+    """True because a separate owner decision is required before any retained Task source can execute."""
 
     def to_dict(self) -> dict[str, Any]:
         version: int = self.version

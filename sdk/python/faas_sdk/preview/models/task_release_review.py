@@ -46,11 +46,11 @@ class TaskReleaseReview:
     worker_configured_limits: TaskReviewLimits
     """Explicit configured Task overrides only; no binding or readiness evidence."""
     migrations_required: bool
-    """Always true for a retained hosted source intent."""
+    """True because deploying the reviewed Task stack still requires its separately authorized migration workflow."""
     bindings_verified: bool
-    """Always false; source retention grants no execution authority."""
+    """False because offline source review does not resolve database, key or namespace bindings."""
     ready_to_apply: bool
-    """Always false; source retention grants no execution authority."""
+    """False because an offline Task review is not an authorized executable release plan."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

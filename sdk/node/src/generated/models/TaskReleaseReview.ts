@@ -26,15 +26,15 @@ export type TaskReleaseReview = {
   web_configured_limits: TaskReviewLimits;
   worker_configured_limits: TaskReviewLimits;
   /**
-   * Always true for a retained hosted source intent.
+   * True because deploying the reviewed Task stack still requires its separately authorized migration workflow.
    */
   migrations_required: boolean;
   /**
-   * Always false; source retention grants no execution authority.
+   * False because offline source review does not resolve database, key or namespace bindings.
    */
   bindings_verified: boolean;
   /**
-   * Always false; source retention grants no execution authority.
+   * False because an offline Task review is not an authorized executable release plan.
    */
   ready_to_apply: boolean;
 };

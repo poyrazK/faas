@@ -18,15 +18,15 @@ export type HostedTaskSourceIntent = {
   expires_at: string;
   source_state: 'retained' | 'expired';
   /**
-   * Always false; source retention grants no execution authority.
+   * False because retained source alone has no owner execution authorization.
    */
   ready_to_apply: boolean;
   /**
-   * Always false; source retention grants no execution authority.
+   * False because storing authored Task source does not verify runtime credential bindings.
    */
   bindings_verified: boolean;
   /**
-   * Always true for a retained hosted source intent.
+   * True because a separate owner decision is required before any retained Task source can execute.
    */
   owner_authorization_required: boolean;
 };

@@ -15,6 +15,8 @@ T = TypeVar("T", bound="HostedTaskSourcePrepare")
 
 @_attrs_define
 class HostedTaskSourcePrepare:
+    """Exact reviewed Node Task bundles submitted for encrypted retention under an immutable caller-chosen identity."""
+
     review: HostedTaskSourceReview
     """Canonical hosted source review, including source digests and native app baselines."""
     sources: HostedTaskSourcePrepareSources
