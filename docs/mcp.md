@@ -1001,10 +1001,10 @@ The owner uses a personal non-agent administrator connection and the complete
 `intent_sha256` from the reviewed record:
 
 ```sh
-gregale mcp server tasks intent prepare --plan release.json --id "$INTENT_ID" --reason 'Review reports worker upgrade'
-gregale mcp server tasks intent get --plan release.json --id "$INTENT_ID"
-gregale mcp server tasks intent approve --plan release.json --id "$INTENT_ID" --intent-sha256 "$INTENT_SHA256"
-gregale mcp server tasks intent revoke --id "$INTENT_ID" --intent-sha256 "$INTENT_SHA256"
+gregale mcp server tasks review prepare --plan release.json --id "$INTENT_ID" --reason 'Review reports worker upgrade'
+gregale mcp server tasks review get --plan release.json --id "$INTENT_ID"
+gregale mcp server tasks review approve --plan release.json --id "$INTENT_ID" --intent-sha256 "$INTENT_SHA256"
+gregale mcp server tasks review revoke --id "$INTENT_ID" --intent-sha256 "$INTENT_SHA256"
 ```
 
 The owner can also `reject` a pending review. Rejection and revocation use the
@@ -1038,7 +1038,7 @@ schema must already be initialized. The runtime, schema-owner and read-only
 observer must be separate non-privileged database roles in the same schema.
 
 ```sh
-gregale mcp server tasks execution authorize --id "$INTENT_ID" --operation-id "$OPERATION_ID" --plan release.json --bindings-file /private/task-bindings.json --intent-sha256 "$INTENT_SHA256" --allow-tool-execution
+gregale mcp server tasks run authorize --id "$INTENT_ID" --operation-id "$OPERATION_ID" --plan release.json --bindings-file /private/task-bindings.json --intent-sha256 "$INTENT_SHA256" --allow-tool-execution
 ```
 
 Use a stable 64-character lowercase hex operation ID. Authorization pins a salted
@@ -1059,8 +1059,8 @@ arguments. Poll `gregale_get_task_tool_operation` with `intent_id`, including af
 reconnecting. CLI equivalents are:
 
 ```sh
-gregale mcp server tasks execution apply --id "$INTENT_ID" --operation-id "$OPERATION_ID" --allow-tool-execution
-gregale mcp server tasks execution get --id "$INTENT_ID"
+gregale mcp server tasks run apply --id "$INTENT_ID" --operation-id "$OPERATION_ID" --allow-tool-execution
+gregale mcp server tasks run get --id "$INTENT_ID"
 ```
 
 The native journal records `authorized`, `running`, `reconcile_required` or
@@ -1105,7 +1105,7 @@ CLI equivalents also need no source plan or private bindings:
 
 ```sh
 gregale mcp server tasks execution inspect --id "$INTENT_ID"
-gregale mcp server tasks execution plan-recovery --id "$INTENT_ID"
+gregale mcp server tasks run plan-recovery --id "$INTENT_ID"
 ```
 
 Both tools use native GET APIs only. They compare current app identities and

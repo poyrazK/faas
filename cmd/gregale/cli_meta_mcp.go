@@ -258,7 +258,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "intent-sha256", Short: "owner-reviewed digest, authorize only", Value: "SHA256"},
 				{Name: "allow-tool-execution", Short: "explicit consent to reviewed code, migrations and release effects", Bool: true},
 			}},
-			{Name: "intent", Short: "Prepare and inspect a durable Task stack review, or record an owner decision", Positionals: []string{"<prepare|get|approve|reject|revoke>"}, Notes: []string{"Approval covers the pinned review only and grants no execution authority. Prepare, get and approve re-review --plan; get invalidates observed drift. Reject/revoke use the retained review and need no source files."}, Flags: []cliFlag{
+			{Name: "intent", Short: "Prepare, inspect or decide on a durable Task stack review", Positionals: []string{"<prepare|get|approve|reject|revoke>"}, Notes: []string{"Records the owner decision on the pinned review. Approval covers the pinned review only and grants no execution authority. Prepare, get and approve re-review --plan; get invalidates observed drift. Reject/revoke use the retained review and need no source files."}, Flags: []cliFlag{
 				{Name: "plan", Short: "local native plan required by prepare/get/approve", Value: "PATH"},
 				{Name: "id", Short: "stable intent ID; generated on prepare if omitted", Value: "ID"},
 				{Name: "reason", Short: "reviewable purpose required by prepare", Value: "TEXT"},
