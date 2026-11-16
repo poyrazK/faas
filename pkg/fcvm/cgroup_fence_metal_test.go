@@ -76,7 +76,7 @@ func TestMetalRepairCgroupFencesAfterControllerReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"memory.max": memoryMaxValue(api.BillableRAMMB(l.MemoryMaxMiB)),
+		"memory.max": memoryMaxValue(api.AppVMMemoryMaxMB(l.MemoryMaxMiB)),
 		"cpu.weight": itoa(vmCPUWeight(false)),
 		"cpu.max":    wantCPU,
 	}

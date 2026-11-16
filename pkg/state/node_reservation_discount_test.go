@@ -51,8 +51,8 @@ func checkReservationDiscount(t *testing.T, s state.Store) {
 	full := api.MeasuredAdmissionMaxOvercommitPercent
 	for admit(bound(full, 0)) == nil {
 	}
-	if got := used(); got != 2*ceilingMB {
-		t.Fatalf("measured allowance holds %d MB, want %d", got, 2*ceilingMB)
+	if got, want := used(), int64(ceilingMB*full/100); got != want {
+		t.Fatalf("measured allowance holds %d MB, want %d", got, want)
 	}
 	// 512 MB of idle-ladder reservations left out: two more 256 MB VMs fit.
 	for i := range 2 {
@@ -68,7 +68,7 @@ func checkReservationDiscount(t *testing.T, s state.Store) {
 		t.Fatalf("discount at a 100%% allowance = %v, want ErrNodeCapacity", err)
 	}
 	// An oversized discount is bounded at twice the ceiling: reservations reach
-	// at most 400% of it.
+	// at most the overcommit bound plus 200% of it.
 	for admit(bound(full, 1_000_000)) == nil {
 	}
 	if got, want := used(), int64(ceilingMB*(full+api.IdleLadderReservationDiscountMaxPercent)/100); got != want {
