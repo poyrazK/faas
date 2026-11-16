@@ -340,6 +340,153 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/task-tool-release-intents/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Stable identity of the saved Task stack review
+    get:
+      operationId: getTaskToolReleaseIntent
+      summary: Read the retained Task review and last observed approval; requires account-wide
+        read scope
+      description: Return the retained credential-free Task stack review and its last recorded
+        approval state. The requesting key and personal owner may inspect it. This read observes
+        no source files and certifies no current binding or native app facts. Expired reviews
+        are projected as expired. Every response keeps ready_to_apply and bindings_verified false.
+      responses:
+        '200':
+          description: Retained Task review metadata from this account journal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Malformed Task review identity
+        '403':
+          description: Personal Task review inspection scope is required
+        '404':
+          description: The review is unavailable to this inspecting principal
+        '409':
+          description: The requested Task review cannot be inspected in its current form
+    put:
+      operationId: prepareTaskToolReleaseIntent
+      summary: Save an immutable Task stack review; requires deploy-write scope and MFA policy
+      description: Save an immutable Node Task stack review under a caller-chosen stable identity.
+        Bind its source fingerprint, exact native app snapshots and requesting key to the account.
+        Existing identical requests return the retained record; changed reviews conflict. The
+        review expires fifteen minutes after preparation and grants no runtime authority. Retain
+        at most 256 intent identities per account.
+      responses:
+        '200':
+          description: Newly prepared or identically replayed immutable Task intent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Unsupported or oversized Task stack review input
+        '403':
+          description: Task intent preparation requires personal deploy-write authority and MFA
+            policy
+        '404':
+          description: The Task review requester is no longer available
+        '409':
+          description: The intent identity or its native app snapshot already differs
+        '429':
+          description: The account has reached its retained Task review quota
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskToolReleaseIntent'
+  /v1/task-tool-release-intents/{id}/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Task intent identity whose source and native snapshots are revalidated
+    post:
+      operationId: checkTaskToolReleaseIntent
+      summary: Revalidate source fingerprint and native app reviews; requires deploy-write scope
+        and MFA policy
+      description: Compare a freshly computed local release fingerprint with the retained Task
+        intent and revalidate native app and requesting-key facts. Observed mismatches permanently
+        mark pending or approved reviews stale. Restoring previous source bytes does not revive
+        approval. An execution request atomically claims or guards a separately owner-authorized
+        local operation; only its requesting key may transition it. Guard checks retain app
+        configuration pins while allowing deployment revisions made by the native adapter.
+        Existing native traffic/readiness fences remain mandatory. This endpoint only changes
+        journal metadata and never executes customer code itself.
+      responses:
+        '200':
+          description: Task source and native snapshot revalidation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Invalid current Task release fingerprint
+        '403':
+          description: Task revalidation requires the requesting publisher or personal owner
+        '404':
+          description: No review can be revalidated by this caller
+        '409':
+          description: The Task review changed before revalidation completed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskToolReleaseIntentCheck'
+  /v1/task-tool-release-intents/{id}/decision:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained Task review identity for an exact-digest owner decision
+    put:
+      operationId: decideTaskToolReleaseIntent
+      summary: Record an exact-digest owner decision; requires personal non-agent administrator
+        and MFA policy
+      description: An unscoped personal administrator approves, rejects or revokes the exact intent
+        digest and retained release fingerprint. Agent and MCP-login credentials cannot decide.
+        Approval revalidates native app and key facts. Owner cancellation uses the retained review
+        even after source files or requesting-key authority disappear. Decisions never renew the
+        fifteen-minute deadline. A separate authorize decision from a non-agent admin API key
+        can bind one local Task execution identity to a salted private binding digest. It requires
+        an approved fresh review and cannot replace or renew an existing execution claim.
+      responses:
+        '200':
+          description: Retained owner verdict with its original review expiry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Invalid owner verdict or Task source fingerprint
+        '403':
+          description: A non-agent personal administrator and MFA policy are required to decide
+        '404':
+          description: The owner decision target or owner credential is unavailable
+        '409':
+          description: The owner digest or retained Task decision no longer matches
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskToolReleaseIntentDecision'
   /v1/support/notifications:
     get:
       tags:
@@ -74048,6 +74195,245 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    TaskToolReleaseApp:
+      description: One existing personal app role and its exact default-environment native release snapshot.
+      type: object
+      additionalProperties: false
+      required:
+      - role
+      - app
+      - review
+      properties:
+        role:
+          type: string
+          enum:
+          - web
+          - worker
+          - observer
+          - previous_worker
+        app:
+          type: string
+        review:
+          $ref: '#/components/schemas/AppReleaseReview'
+    TaskToolReleaseIntent:
+      type: object
+      additionalProperties: false
+      description: Immutable review metadata bounded to 64 KiB. Required setup remains unverified.
+        No source paths, executable arguments, database URLs, credentials or credential references.
+      required:
+      - release_fingerprint
+      - worker_runtime
+      - protocol
+      - observer_metric_app
+      - endpoint
+      - access_mode
+      - tool_scopes
+      - apps
+      - required_setup
+      - reason
+      properties:
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        worker_runtime:
+          type: string
+          enum:
+          - node
+        protocol:
+          type: string
+          enum:
+          - '2026-07-28'
+        observer_metric_app:
+          type: string
+        endpoint:
+          type: string
+          maxLength: 512
+        access_mode:
+          type: string
+          enum:
+          - open
+          - external-oauth
+        tool_scopes:
+          type: object
+          minProperties: 1
+          maxProperties: 64
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        apps:
+          type: array
+          minItems: 3
+          maxItems: 35
+          items:
+            $ref: '#/components/schemas/TaskToolReleaseApp'
+        required_setup:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 280
+    TaskToolReleaseIntentRecord:
+      type: object
+      additionalProperties: false
+      description: Immutable source and native app review with optional separate owner authorization
+        for a single local Task adapter execution. Root readiness flags never grant authority.
+      required:
+      - version
+      - id
+      - account_id
+      - requester_key_id
+      - intent_sha256
+      - intent
+      - status
+      - created_at
+      - expires_at
+      - bindings_verified
+      - ready_to_apply
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        id:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        account_id:
+          type: string
+          format: uuid
+        requester_key_id:
+          type: string
+          format: uuid
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        intent:
+          $ref: '#/components/schemas/TaskToolReleaseIntent'
+        status:
+          type: string
+          enum:
+          - pending
+          - approved
+          - rejected
+          - revoked
+          - expired
+          - stale
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        decided_at:
+          type: string
+          format: date-time
+        bindings_verified:
+          type: boolean
+          enum:
+          - false
+        ready_to_apply:
+          type: boolean
+          enum:
+          - false
+        execution:
+          $ref: '#/components/schemas/TaskToolReleaseExecution'
+    TaskToolReleaseIntentCheck:
+      description: Fresh local fingerprint for drift detection or a separately authorized adapter claim transition.
+      type: object
+      additionalProperties: false
+      required:
+      - release_fingerprint
+      properties:
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        execution:
+          $ref: '#/components/schemas/TaskToolReleaseExecutionRequest'
+    TaskToolReleaseIntentDecision:
+      description: Owner verdict bound to an immutable Task intent digest and its retained source fingerprint.
+      type: object
+      additionalProperties: false
+      required:
+      - intent_sha256
+      - release_fingerprint
+      - decision
+      properties:
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        decision:
+          type: string
+          enum:
+          - approve
+          - reject
+          - revoke
+          - authorize
+        execution:
+          $ref: '#/components/schemas/TaskToolReleaseExecutionRequest'
+    TaskToolReleaseExecution:
+      description: Single-use owner authorization bound to a private local binding digest and an immutable operation. Existing claims are never automatically taken over.
+      type: object
+      additionalProperties: false
+      required: [operation_id, bindings_sha256, authorizer_key_id, state, authorized_at]
+      properties:
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        authorizer_key_id: { type: string, format: uuid }
+        state: { type: string, enum: [authorized, running, reconcile_required, completed] }
+        authorized_at: { type: string, format: date-time }
+        claim_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        stage: { type: string, enum: [prepared, deploying_worker, deploying_web, replacements_started, web_promoted, draining_previous, previous_parked, complete] }
+        receipt:
+          $ref: '#/components/schemas/TaskToolReleaseReceipt'
+        completed_stages:
+          type: array
+          items: { type: string, enum: [baseline_captured, worker_submitted, web_submitted, workers_recorded, promotion_recorded, previous_workers_parked, release_completed] }
+    TaskToolReleaseExecutionRequest:
+      description: Exact local execution identity and bounded transition. Private claim material is submitted by the trusted CLI and is never returned in API receipts.
+      type: object
+      additionalProperties: false
+      required: [action, operation_id, bindings_sha256]
+      properties:
+        action: { type: string, enum: [authorize, claim, guard, reconcile, complete] }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        claim_token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true }
+        stage: { type: string, enum: [prepared, deploying_worker, deploying_web, replacements_started, web_promoted, draining_previous, previous_parked, complete] }
+        receipt:
+          $ref: '#/components/schemas/TaskToolReleaseReceipt'
+    TaskToolReleaseReceipt:
+      description: Monotonic checkpoint from the authenticated local execution claim holder. Deployment and worker identities require independent fresh native observation during recovery; this metadata grants no action authority.
+      type: object
+      additionalProperties: false
+      required: [revision, release_id, stage, serving_captured, previous_deployments, worker_ids, promoted, parked]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        release_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        stage: { type: string, enum: [prepared, deploying_worker, deploying_web, replacements_started, web_promoted, draining_previous, previous_parked, complete] }
+        serving_captured: { type: boolean }
+        serving_deployment_id: { type: string, format: uuid }
+        web_deployment_id: { type: string, format: uuid }
+        worker_deployment_id: { type: string, format: uuid }
+        pending_submission: { type: string, enum: [web, worker] }
+        previous_deployments:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, format: uuid }
+        worker_ids:
+          type: array
+          maxItems: 1024
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        promoted: { type: boolean }
+        parked:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: boolean, enum: [true] }
     DataPipelineFreshness:
       type: object
       additionalProperties: false
@@ -114820,14 +115206,19 @@ components:
 
     ResumeEnvironmentAutomationResponse:
       type: object
-      description: Crons enabled by resuming a stage's automation after a full environment clone.
-      required: [environment, crons_resumed, cron_ids]
+      description: Crons and event subscriptions enabled by resuming a stage's automation after a full environment clone.
+      required: [environment, crons_resumed, cron_ids, event_subscriptions_resumed, event_subscription_ids]
       properties:
         environment: { type: string, description: "Stage whose paused automation was enabled.", example: "staging" }
         crons_resumed: { type: integer, minimum: 0, description: "Number of crons enabled." }
         cron_ids:
           type: array
           description: Crons enabled by this call.
+          items: { type: string }
+        event_subscriptions_resumed: { type: integer, minimum: 0, description: "Number of event subscriptions enabled." }
+        event_subscription_ids:
+          type: array
+          description: Event subscriptions enabled by this call.
           items: { type: string }
     ProjectEnvironmentCloneOperationResponse:
       description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.
@@ -121723,7 +122114,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_all_failed, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string
@@ -124219,7 +124610,7 @@ components:
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
 
     QueueReceiveResponse:
-      description: "200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout."
+      description: "200 — a settled queue invocation observed by the long-poll feed: every waiting receive sees it, and one that settles while none waits is not replayed. 204 (no body) on timeout. Consume with pull leases instead."
       type: object
       required: [id, payload]
       properties:
@@ -124228,6 +124619,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
         result: { type: object, additionalProperties: true }
+        state: { type: string, description: "How the message settled: completed, failed or cancelled. A failed or cancelled message's result is its error." }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         traceparent: { type: string, description: "W3C traceparent propagated from the producer." }
 

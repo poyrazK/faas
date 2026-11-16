@@ -120,6 +120,7 @@ var longWaitRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/v1/projects/scan"},
 	{http.MethodPost, "/v1/projects/scan/source-ref"},
 	{http.MethodPost, "/v1/orgs/*/projects/scan"},
+	{http.MethodPost, "/v1/orgs/*/projects/*/scan"},
 	{http.MethodPost, "/v1/orgs/*/projects/scan/source-ref"},
 	{http.MethodPost, "/v1/apps/*/deployments/dev-source"},
 

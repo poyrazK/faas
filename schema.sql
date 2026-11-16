@@ -4883,6 +4883,8 @@ CREATE TABLE public.snapshots (
     cpu_template text DEFAULT ''::text NOT NULL,
     cpu_model text DEFAULT ''::text NOT NULL,
     stale_at timestamp with time zone,
+    sealed_key bytea,
+    sealed_capture_id uuid,
     CONSTRAINT snapshots_recovery_generation_check CHECK ((recovery_generation >= 0)),
     CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
@@ -7136,6 +7138,22 @@ $$;
 
 
 --
+-- Name: clear_event_subscription_clone_pause(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.clear_event_subscription_clone_pause() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.enabled IS DISTINCT FROM OLD.enabled THEN
+    NEW.clone_paused := false;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: clone_checkpoint_admission_snapshot_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8330,6 +8348,27 @@ begin
     );
     return null;
 end;
+$$;
+
+
+--
+-- Name: end_queue_leases_with_instance(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.end_queue_leases_with_instance() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.app_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  UPDATE invocations i SET lease_expires_at = clock_timestamp()
+  WHERE i.app_id = NEW.app_id AND i.source = 'queue' AND i.state = 'dispatching'
+    AND i.instance_id = NEW.id::text AND i.lease_expires_at > clock_timestamp()
+    AND EXISTS (SELECT 1 FROM invocation_queue_lease_receipts r
+      WHERE r.invocation_id = i.id AND r.attempt = i.attempts AND r.replay_generation = i.replay_generation);
+  RETURN NEW;
+END;
 $$;
 
 
@@ -20506,10 +20545,17 @@ CREATE FUNCTION public.invocation_due_notify() RETURNS trigger
 declare
     payload jsonb;
 begin
+    if tg_op = 'UPDATE' and old.state = 'pending' then
+        return new;
+    end if;
+    if new.due_at > clock_timestamp() then
+        return new;
+    end if;
     payload := jsonb_build_object(
         'invocation_id', new.id::text,
         'app_id', new.app_id::text,
-        'source', new.source
+        'source', new.source,
+        'queue_name', coalesce(new.queue_name, '')
     );
     perform pg_notify('invocation_due', payload::text);
     return new;
@@ -29113,6 +29159,42 @@ END $$;
 
 
 --
+-- Name: snapshots_sealed_key_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.snapshots_sealed_key_guard() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node_name text;
+    node uuid;
+    ran boolean;
+BEGIN
+    IF TG_OP = 'UPDATE' AND (NEW.sealed_key IS DISTINCT FROM OLD.sealed_key
+        OR NEW.sealed_capture_id IS DISTINCT FROM OLD.sealed_capture_id) THEN
+        RAISE EXCEPTION 'a snapshot''s sealed key is recorded with the row and never changes'
+            USING ERRCODE = '42501', DETAIL = format('login=%s snapshot=%s', session_user, OLD.id);
+    END IF;
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node_name USING session_user::text;
+    IF node_name IS NULL THEN
+        RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT id FROM %I.compute_nodes WHERE name = $1', TG_TABLE_SCHEMA)
+        INTO node USING node_name;
+    EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.instances WHERE deployment_id = $1 AND node_id = $2)', TG_TABLE_SCHEMA)
+        INTO ran USING NEW.deployment_id, node;
+    IF NOT coalesce(ran, false) THEN
+        RAISE EXCEPTION 'a compute node login records snapshots only of deployments that ran on its node'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s deployment=%s', session_user, node_name, NEW.deployment_id);
+    END IF;
+    RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: soft_delete_job_if_no_live_instances(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -35815,6 +35897,8 @@ CREATE TABLE public.cli_auth_codes (
     device_hash bytea,
     org_id uuid,
     project_ids uuid[],
+    verifier_hash bytea,
+    requester_ip text,
     CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
 );
 
@@ -36501,7 +36585,7 @@ CREATE TABLE public.crons (
     CONSTRAINT crons_retry_policy_check CHECK ((((retry_max >= 0) AND (retry_max <= 5)) AND ((retry_backoff_seconds >= 1) AND (retry_backoff_seconds <= 3600)) AND ((retry_max = 0) OR (cardinality(command) > 0)))),
     CONSTRAINT crons_schedule_policy_shape CHECK (((schedule_policy IS NULL) OR ((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text)))),
     CONSTRAINT crons_schedule_revision_check CHECK ((schedule_revision >= 1)),
-    CONSTRAINT crons_suspended_reason_chk CHECK ((suspended_reason = ANY (ARRAY[''::text, 'no_live_deployment'::text, 'app_deleted'::text]))),
+    CONSTRAINT crons_suspended_reason_v2_chk CHECK ((suspended_reason = ANY (ARRAY[''::text, 'no_live_deployment'::text, 'app_deleted'::text, 'failing'::text]))),
     CONSTRAINT crons_timezone_nonempty_check CHECK ((btrim(timezone) <> ''::text))
 );
 
@@ -36638,7 +36722,7 @@ CREATE TABLE public.customer_attention_signals (
     CONSTRAINT customer_attention_signals_dismiss_reason_check CHECK ((octet_length(dismiss_reason) <= 200)),
     CONSTRAINT customer_attention_signals_dismissed_at_check CHECK (((dismissed_at IS NULL) OR isfinite(dismissed_at))),
     CONSTRAINT customer_attention_signals_first_seen_at_check CHECK (isfinite(first_seen_at)),
-    CONSTRAINT customer_attention_signals_kind_v2_check CHECK ((kind = ANY (ARRAY['deploy_failing'::text, 'refused_burst'::text, 'domain_stuck'::text, 'app_oom'::text, 'boot_failing'::text, 'jobs_failing'::text, 'payment_failing'::text, 'limit_pressure'::text]))),
+    CONSTRAINT customer_attention_signals_kind_v3_check CHECK ((kind = ANY (ARRAY['deploy_failing'::text, 'refused_burst'::text, 'domain_stuck'::text, 'app_oom'::text, 'boot_failing'::text, 'jobs_failing'::text, 'payment_failing'::text, 'limit_pressure'::text, 'crons_failing'::text]))),
     CONSTRAINT customer_attention_signals_last_seen_at_check CHECK (isfinite(last_seen_at)),
     CONSTRAINT customer_attention_signals_observed_check CHECK ((observed >= 0)),
     CONSTRAINT customer_attention_signals_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['contacted'::text, 'platform_issue'::text, 'already_in_touch'::text, 'not_needed'::text, 'false_positive'::text, 'resolved_on_own'::text])))),
@@ -39598,6 +39682,24 @@ CREATE TABLE public.entity_outbox_acceptances (
 
 
 --
+-- Name: environment_api_routes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_api_routes (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    route_template text NOT NULL,
+    first_seen timestamp with time zone NOT NULL,
+    last_seen timestamp with time zone NOT NULL,
+    request_count bigint NOT NULL,
+    CONSTRAINT environment_api_routes_check CHECK ((last_seen >= first_seen)),
+    CONSTRAINT environment_api_routes_request_count_check CHECK ((request_count > 0)),
+    CONSTRAINT environment_api_routes_route_template_check CHECK (((length(route_template) >= 1) AND (length(route_template) <= 256)))
+);
+
+
+--
 -- Name: environment_binding_release_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -41687,6 +41789,7 @@ CREATE TABLE public.event_subscriptions (
     acknowledgment_lease_seconds integer DEFAULT 0 NOT NULL,
     deployment_scope text DEFAULT ''::text NOT NULL,
     environment_id uuid,
+    clone_paused boolean DEFAULT false NOT NULL,
     CONSTRAINT event_subscriptions_acknowledgment_lease_seconds_check CHECK (((acknowledgment_lease_seconds >= 0) AND (acknowledgment_lease_seconds <= 300))),
     CONSTRAINT event_subscriptions_filter_object_chk CHECK ((jsonb_typeof(filter) = 'object'::text)),
     CONSTRAINT event_subscriptions_routing_retry_policy_check CHECK (public.valid_event_routing_retry_policy(routing_retry_policy)),
@@ -48892,6 +48995,10 @@ CREATE TABLE public.meter_network_checkpoints (
     net_rx_valid boolean DEFAULT false NOT NULL,
     observed_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    internal_tx_bytes bigint DEFAULT 0 NOT NULL,
+    internal_tx_valid boolean DEFAULT false NOT NULL,
+    internal_tx_pending bigint DEFAULT 0 NOT NULL,
+    service_reply_pending bigint DEFAULT 0 NOT NULL,
     CONSTRAINT meter_network_checkpoints_net_rx_bytes_check CHECK ((net_rx_bytes >= 0)),
     CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
 );
@@ -52200,6 +52307,33 @@ CREATE TABLE public.plan_fit_notices (
 --
 
 COMMENT ON TABLE public.plan_fit_notices IS 'Last plan-fit email per billing subject: the plan and the sha256 of its over-plan app set. Written by meterd (billing review H17-4).';
+
+
+--
+-- Name: platform_alert_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_alert_notices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject_id text NOT NULL,
+    detail jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_expires_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT platform_alert_notices_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT platform_alert_notices_detail_check CHECK ((jsonb_typeof(detail) = 'object'::text)),
+    CONSTRAINT platform_alert_notices_kind_check CHECK ((kind = ANY (ARRAY['app_outage'::text, 'cron_failing_paused'::text]))),
+    CONSTRAINT platform_alert_notices_last_error_check CHECK ((length(last_error) <= 512)),
+    CONSTRAINT platform_alert_notices_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'skipped'::text, 'failed'::text]))),
+    CONSTRAINT platform_alert_notices_subject_id_check CHECK (((subject_id <> ''::text) AND (length(subject_id) <= 128)))
+);
 
 
 --
@@ -60980,6 +61114,23 @@ CREATE TABLE public.synthetic_checks (
 
 
 --
+-- Name: task_tool_release_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_tool_release_intents (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    status text NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT task_tool_release_intents_check CHECK (((((payload ->> 'id'::text) = id) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND ((payload ->> 'status'::text) = status)) IS TRUE)),
+    CONSTRAINT task_tool_release_intents_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT task_tool_release_intents_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 131072))),
+    CONSTRAINT task_tool_release_intents_payload_check1 CHECK ((payload @> '{"ready_to_apply": false, "bindings_verified": false}'::jsonb)),
+    CONSTRAINT task_tool_release_intents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'revoked'::text, 'expired'::text, 'stale'::text])))
+);
+
+
+--
 -- Name: tenant_hostnames; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -66473,6 +66624,14 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 
 --
+-- Name: environment_api_routes environment_api_routes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_api_routes
+    ADD CONSTRAINT environment_api_routes_pkey PRIMARY KEY (environment_id, app_id, route_template);
+
+
+--
 -- Name: environment_binding_release_receipts environment_binding_release_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -70513,11 +70672,35 @@ ALTER TABLE ONLY public.meter_gateway_usage_events
 
 
 --
+-- Name: meter_network_checkpoints meter_network_checkpoints_internal_tx_bytes_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_internal_tx_bytes_check CHECK ((internal_tx_bytes >= 0)) NOT VALID;
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_internal_tx_pending_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_internal_tx_pending_check CHECK ((internal_tx_pending >= 0)) NOT VALID;
+
+
+--
 -- Name: meter_network_checkpoints meter_network_checkpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.meter_network_checkpoints
     ADD CONSTRAINT meter_network_checkpoints_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_service_reply_pending_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_service_reply_pending_check CHECK ((service_reply_pending >= 0)) NOT VALID;
 
 
 --
@@ -71854,6 +72037,14 @@ ALTER TABLE ONLY public.pg_ratelimit_counters
 
 ALTER TABLE ONLY public.plan_fit_notices
     ADD CONSTRAINT plan_fit_notices_pkey PRIMARY KEY (subject_id);
+
+
+--
+-- Name: platform_alert_notices platform_alert_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_alert_notices
+    ADD CONSTRAINT platform_alert_notices_pkey PRIMARY KEY (id);
 
 
 --
@@ -75449,6 +75640,14 @@ ALTER TABLE ONLY public.snapshots
 
 
 --
+-- Name: snapshots snapshots_sealed_key_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.snapshots
+    ADD CONSTRAINT snapshots_sealed_key_check CHECK ((((sealed_key IS NULL) AND (sealed_capture_id IS NULL)) OR ((sealed_key IS NOT NULL) AND (sealed_capture_id IS NOT NULL) AND ((octet_length(sealed_key) >= 1) AND (octet_length(sealed_key) <= 4096)) AND (storage_key ~~ (('%/captures/'::text || (sealed_capture_id)::text) || '/v2/mem'::text))))) NOT VALID;
+
+
+--
 -- Name: snapshots snapshots_stale_at_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75862,6 +76061,14 @@ ALTER TABLE ONLY public.synthetic_checks
 
 ALTER TABLE ONLY public.synthetic_checks
     ADD CONSTRAINT synthetic_checks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_tool_release_intents task_tool_release_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_tool_release_intents
+    ADD CONSTRAINT task_tool_release_intents_pkey PRIMARY KEY (account_id, id);
 
 
 --
@@ -80087,6 +80294,20 @@ CREATE INDEX egress_flow_log_remote_ip_idx ON public.egress_flow_log USING gist 
 --
 
 CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_tokens USING btree (account_id, expires_at);
+
+
+--
+-- Name: environment_api_routes_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_api_routes_account_idx ON public.environment_api_routes USING btree (account_id);
+
+
+--
+-- Name: environment_api_routes_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_api_routes_app_idx ON public.environment_api_routes USING btree (app_id);
 
 
 --
@@ -84486,6 +84707,27 @@ CREATE INDEX pg_ratelimit_counters_subject_id_app_idx ON public.pg_ratelimit_cou
 
 
 --
+-- Name: platform_alert_notices_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_alert_notices_due_idx ON public.platform_alert_notices USING btree (next_attempt_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: platform_alert_notices_pending_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_alert_notices_pending_uniq ON public.platform_alert_notices USING btree (kind, subject_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: platform_alert_notices_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_alert_notices_subject_idx ON public.platform_alert_notices USING btree (kind, subject_id, created_at DESC);
+
+
+--
 -- Name: platform_mail_agent_run_observations_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -86944,6 +87186,13 @@ CREATE INDEX snapshots_live_idx ON public.snapshots USING btree (deployment_id) 
 --
 
 COMMENT ON INDEX public.snapshots_live_idx IS 'Supports pkg/state/pgstore.go::LatestSnapshotBytes inner scan — bounds to non-stale rows under live deployments. ADR-049 §B.3 + PR #428 review blocker #3.';
+
+
+--
+-- Name: snapshots_sealed_capture_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX snapshots_sealed_capture_idx ON public.snapshots USING btree (sealed_capture_id) WHERE (sealed_capture_id IS NOT NULL);
 
 
 --
@@ -89936,6 +90185,13 @@ CREATE TRIGGER clear_cron_clone_pause BEFORE UPDATE OF enabled ON public.crons F
 
 
 --
+-- Name: event_subscriptions clear_event_subscription_clone_pause; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clear_event_subscription_clone_pause BEFORE UPDATE OF enabled ON public.event_subscriptions FOR EACH ROW EXECUTE FUNCTION public.clear_event_subscription_clone_pause();
+
+
+--
 -- Name: deployments clone_checkpoint_deployment_admission; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -92001,6 +92257,13 @@ CREATE TRIGGER inbound_webhooks_delete_exclusive_binding AFTER DELETE ON public.
 --
 
 CREATE TRIGGER initialize_clone_configuration_guard AFTER INSERT OR UPDATE OF account_id ON public.projects FOR EACH ROW EXECUTE FUNCTION public.initialize_clone_configuration_guard();
+
+
+--
+-- Name: instances instance_end_queue_leases; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_end_queue_leases AFTER UPDATE OF state ON public.instances FOR EACH ROW WHEN (((old.state IS DISTINCT FROM new.state) AND (new.state = ANY (ARRAY['stopped'::text, 'failed'::text])))) EXECUTE FUNCTION public.end_queue_leases_with_instance();
 
 
 --
@@ -95109,6 +95372,13 @@ CREATE TRIGGER snapshot_stale_after_terminal_deployment AFTER UPDATE OF status O
 --
 
 CREATE TRIGGER snapshot_stale_at_stamp BEFORE UPDATE OF stale ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.snapshot_stale_at_stamp();
+
+
+--
+-- Name: snapshots snapshots_sealed_key_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER snapshots_sealed_key_guard BEFORE INSERT OR UPDATE OF deployment_id, sealed_key, sealed_capture_id ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.snapshots_sealed_key_guard();
 
 
 --
@@ -100818,6 +101088,30 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 ALTER TABLE ONLY public.entity_outbox_acceptances
     ADD CONSTRAINT entity_outbox_acceptances_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_api_routes environment_api_routes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_api_routes
+    ADD CONSTRAINT environment_api_routes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_api_routes environment_api_routes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_api_routes
+    ADD CONSTRAINT environment_api_routes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_api_routes environment_api_routes_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_api_routes
+    ADD CONSTRAINT environment_api_routes_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --
@@ -106709,6 +107003,22 @@ ALTER TABLE ONLY public.password_reset_tokens
 
 
 --
+-- Name: platform_alert_notices platform_alert_notices_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_alert_notices
+    ADD CONSTRAINT platform_alert_notices_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_alert_notices platform_alert_notices_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_alert_notices
+    ADD CONSTRAINT platform_alert_notices_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: platform_mail_agent_run_observations platform_mail_agent_run_observations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -111834,6 +112144,14 @@ ALTER TABLE ONLY public.synthetic_check_runs
 
 ALTER TABLE ONLY public.synthetic_checks
     ADD CONSTRAINT synthetic_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_tool_release_intents task_tool_release_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_tool_release_intents
+    ADD CONSTRAINT task_tool_release_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

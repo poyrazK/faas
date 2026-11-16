@@ -40,6 +40,9 @@ type mcpNativeReleasePlan struct {
 	TimeoutSeconds     int                    `json:"timeout_seconds"`
 }
 type mcpNativeReleaseState struct {
+	TaskIntentID            string `json:"task_intent_id,omitempty"`
+	TaskOperationID         string `json:"task_operation_id,omitempty"`
+	quiet                   bool
 	AccessPolicyExpectation *api.MCPAccessPolicyExpectation `json:"-"`
 	Revision                uint64                          `json:"revision,omitempty"`
 	journalExists           bool
@@ -219,8 +222,18 @@ func cmdMCPTaskRelease(args []string) int {
 	if err := flags.Parse(args); err != nil {
 		return 1
 	}
+	if action == "plan" {
+		if flags.NArg() != 0 || *planPath == "" || *statePath != "" || *resume {
+			return printErr("MCP release plan", errors.New("use release plan --plan PATH without --state or --resume"))
+		}
+		review, err := reviewMCPTaskRelease(*planPath)
+		if err != nil {
+			return printErr("MCP release plan", err)
+		}
+		return jsonOut(writeJSON(review))
+	}
 	if flags.NArg() != 0 || *planPath == "" || *statePath == "" || (action != "run" && action != "start" && action != "drain" && action != "restore-hook" && action != "status" && action != "recover" && action != "restore" && action != "quarantine" && action != "retire" && action != "retire-check" && action != "retire-hook") {
-		return printErr("MCP release", errors.New("use release [run|status|recover|restore|quarantine|retire] --plan PATH --state PATH"))
+		return printErr("MCP release", errors.New("use release plan --plan PATH, or release [run|status|recover|restore|quarantine|retire] --plan PATH --state PATH"))
 	}
 	p, err := readMCPNativePlan(*planPath)
 	if err != nil {
@@ -311,16 +324,24 @@ func cmdMCPTaskRelease(args []string) int {
 	return jsonOut(writeJSON(map[string]any{"workerIDs": s.WorkerIDs, "stage": s.Stage}))
 }
 func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state, plan string) int {
+	return runMCPNativeReleaseContext(context.Background(), p, s, state, plan)
+}
+
+func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s mcpNativeReleaseState, state, plan string) int {
+	quiet := s.quiet
 	if s.Stage == "restore_pending" || s.Stage == "web_restored" || s.Stage == "quarantined" || s.Stage == "retirement_pending" || s.Stage == "worker_retired" {
 		return printErr("MCP release", errors.New("recovery or retirement started; resume that operation or create a new release instead"))
 	}
 	if s.Stage == "complete" {
+		if quiet {
+			return 0
+		}
 		return jsonOut(writeJSON(s))
 	}
 	if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
 		return printErr("MCP release runtime", err)
 	}
-	if err := preflightMCPControlPlane(); err != nil {
+	if err := preflightMCPControlPlaneContext(ctx); err != nil {
 		return printErr("MCP control-plane compatibility", err)
 	}
 	if s.PendingSubmission != "" {
@@ -328,7 +349,7 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 		if err != nil {
 			return printErr("MCP release recovery", err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.TimeoutSeconds)*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds)*time.Second)
 		err = reconcileMCPNativeSubmission(ctx, c, p, &s, state)
 		cancel()
 		if err != nil {
@@ -336,7 +357,7 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 		}
 	}
 	if !s.journalExists {
-		if err := saveMCPNativeState(state, &s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, &s); err != nil {
 			return printErr("MCP release journal", err)
 		}
 	}
@@ -349,6 +370,9 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 		return printErr("MCP release", err)
 	}
 	gatePlan := map[string]any{"timeoutMs": p.TimeoutSeconds * 1000, "releaseId": s.Fingerprint, "checkpointPath": state + ".gate", "start": []string{binary, "--json", "mcp", "tasks", "release", "start", "--plan", plan, "--state", state}, "drain": []string{binary, "--json", "mcp", "tasks", "release", "drain", "--plan", plan, "--state", state}}
+	if s.TaskIntentID != "" {
+		gatePlan["authorize"] = []string{binary, "--json", "mcp", "tasks", "execution", "guard", "--id", s.TaskIntentID, "--operation-id", s.TaskOperationID}
+	}
 	b, _ := json.Marshal(gatePlan)
 	f, err := os.CreateTemp("", "gregale-native-release-*.json")
 	if err != nil {
@@ -363,10 +387,25 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 		return printErr("MCP release plan", err)
 	}
 	// Each adapter and each wait has its own deadline; bound the entire invocation too.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.TimeoutSeconds*5+120)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds*5+120)*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "node", "tasks-release.js", f.Name())
 	command.Dir = p.WorkerPath
+	if s.TaskIntentID != "" {
+		c, err := authedClient()
+		if err != nil {
+			return printErr("Task execution", err)
+		}
+		record, err := c.GetTaskToolReleaseIntent(ctx, s.TaskIntentID)
+		if err != nil {
+			return printErr("Task execution", err)
+		}
+		profile, _, err := loadMCPTaskExecutionProfile(record)
+		if err != nil {
+			return printErr("Task execution", err)
+		}
+		command.Env = append(environWithout(mcpTaskExecutionChildEnv(profile, true), "FAAS_TOKEN", "FAAS_API"), "FAAS_TOKEN="+c.Token(), "FAAS_API="+profile.APIBase)
+	}
 	output, runErr := command.Output()
 	var report struct {
 		OK     bool   `json:"ok"`
@@ -385,11 +424,16 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 			return printErr("MCP release journal", err)
 		}
 		s.Stage = "complete"
-		if err = saveMCPNativeState(state, &s); err != nil {
+		if err = saveMCPNativeStateContext(ctx, state, &s); err != nil {
 			return printErr("MCP release journal", err)
 		}
 	}
-	if code := jsonOut(writeJSON(report)); code != 0 {
+	if code := func() int {
+		if quiet {
+			return 0
+		}
+		return jsonOut(writeJSON(report))
+	}(); code != 0 {
 		return code
 	}
 	if runErr != nil || !report.OK {
@@ -514,10 +558,13 @@ func reconcileMCPNativeSubmission(ctx context.Context, c *Client, p mcpNativeRel
 		s.WorkerDeployment = id
 	}
 	s.PendingSubmission = ""
-	return saveMCPNativeState(state, s)
+	return saveMCPNativeStateContext(ctx, state, s)
 }
 
 func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool, s *mcpNativeReleaseState, state string) error {
+	if err := guardMCPNativeTaskExecution(ctx, c, s); err != nil {
+		return err
+	}
 	id := s.WorkerDeployment
 	kind := "worker"
 	if web {
@@ -538,7 +585,7 @@ func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool,
 		s.ReleaseID = hex.EncodeToString(entropy[:])
 	}
 	s.PendingSubmission = kind
-	if err := saveMCPNativeState(state, s); err != nil {
+	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 		return err
 	}
 	args := []string{"--path", path, "--source=worktree", "--name", app, "--app", "--wait", "--timeout", "600", "--reason", "mcp-release-" + s.ReleaseID + "-" + kind, "--idempotency-key", "mcp-release-" + s.ReleaseID + "-" + kind}
@@ -553,7 +600,7 @@ func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool,
 			s.WorkerDeployment = dep.ID
 		}
 		s.PendingSubmission = ""
-		journalErr = saveMCPNativeState(state, s)
+		journalErr = saveMCPNativeStateContext(ctx, state, s)
 	}})
 	if journalErr != nil {
 		return journalErr
@@ -847,19 +894,19 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			}
 		}
 		s.ServingCaptured = true
-		if err := saveMCPNativeState(state, s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 			return err
 		}
 	}
 	s.Stage = "deploying_worker"
-	if err := saveMCPNativeState(state, s); err != nil {
+	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 		return err
 	}
 	if err := mcpNativeDeploy(ctx, c, p.WorkerPath, p.WorkerApp, false, s, state); err != nil {
 		return err
 	}
 	s.Stage = "deploying_web"
-	if err := saveMCPNativeState(state, s); err != nil {
+	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 		return err
 	}
 	if err := mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state); err != nil {
@@ -876,7 +923,7 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		if err == nil {
 			s.WorkerIDs = ids
 			s.Stage = "replacements_started"
-			return saveMCPNativeState(state, s)
+			return saveMCPNativeStateContext(ctx, state, s)
 		}
 		select {
 		case <-ctx.Done():
@@ -966,6 +1013,9 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		if err := mcpNativeWebTaskBindings(ctx, c, p); err != nil {
 			return err
 		}
+		if err := guardMCPNativeTaskExecution(ctx, c, s); err != nil {
+			return err
+		}
 		_, err := c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, s.WebDeployment, 100, s.ServingDeployment, s.AccessPolicyExpectation)
 		if err != nil {
 			var apiErr *api.APIError
@@ -980,7 +1030,7 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		}
 		s.Promoted = true
 		s.Stage = "web_promoted"
-		if err := saveMCPNativeState(state, s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 			return err
 		}
 	}
@@ -1016,15 +1066,18 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		if _, err := mcpNativeDrainableWorkerIDs(ctx, c, app, slug, dep.ID, true); err != nil {
 			return err
 		}
+		if err := guardMCPNativeTaskExecution(ctx, c, s); err != nil {
+			return err
+		}
 		if err := c.ParkIfDeployment(ctx, slug, s.PreviousDeployments[slug]); err != nil {
 			return err
 		}
 		s.Parked[slug] = true
 		s.Stage = "draining_previous"
-		if err := saveMCPNativeState(state, s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
 			return err
 		}
 	}
 	s.Stage = "previous_parked"
-	return saveMCPNativeState(state, s)
+	return saveMCPNativeStateContext(ctx, state, s)
 }

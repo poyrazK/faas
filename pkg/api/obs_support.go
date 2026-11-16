@@ -150,19 +150,20 @@ const (
 	AttentionKindDeployFailing = "deploy_failing"
 	AttentionKindRefusedBurst  = "refused_burst"
 	AttentionKindDomainStuck   = "domain_stuck"
-	// ADR-20261113180000 kinds.
+	// ADR-20261115175928 kinds.
 	AttentionKindAppOOM         = "app_oom"
 	AttentionKindBootFailing    = "boot_failing"
 	AttentionKindJobsFailing    = "jobs_failing"
 	AttentionKindPaymentFailing = "payment_failing"
 	AttentionKindLimitPressure  = "limit_pressure"
+	AttentionKindCronsFailing   = "crons_failing"
 
 	AttentionStateOpen      = "open"
 	AttentionStateDismissed = "dismissed"
 	AttentionStateResolved  = "resolved"
 
 	// Outcomes record what support did about a signal
-	// (ADR-20261113180000). Contacting sets contacted; dismissing names one
+	// (ADR-20261115175928). Contacting sets contacted; dismissing names one
 	// of the next four; a signal that clears without one is resolved_on_own.
 	AttentionOutcomeContacted      = "contacted"
 	AttentionOutcomePlatformIssue  = "platform_issue"
@@ -174,7 +175,7 @@ const (
 
 // AttentionKinds lists every signal kind in display order.
 func AttentionKinds() []string {
-	return []string{AttentionKindDeployFailing, AttentionKindAppOOM, AttentionKindBootFailing, AttentionKindJobsFailing,
+	return []string{AttentionKindDeployFailing, AttentionKindAppOOM, AttentionKindBootFailing, AttentionKindJobsFailing, AttentionKindCronsFailing,
 		AttentionKindDomainStuck, AttentionKindRefusedBurst, AttentionKindLimitPressure, AttentionKindPaymentFailing}
 }
 
@@ -215,7 +216,7 @@ type ObsAttentionListResponse struct {
 	Limit int                  `json:"limit"`
 }
 
-// Operator console signal actions (ADR-20261115120000): the JSON twins of
+// Operator console signal actions (ADR-20261115175927): the JSON twins of
 // the staff page at /dashboard/admin/support/attention.
 
 // ObsAttentionDismissRequest is the body of
@@ -293,7 +294,7 @@ type ObsSupportTicketSnapshot struct {
 // ObsSupportTicketCustomer answers GET /v1/admin/support/tickets/{ticket}/customer:
 // the account behind a ticket, its live diagnosis, the snapshot taken when
 // the ticket was opened, and the restriction kinds lifted or added since
-// (ADR-20261115120000). Unavailable means the account could not be loaded;
+// (ADR-20261115175927). Unavailable means the account could not be loaded;
 // only the ticket id is then meaningful.
 type ObsSupportTicketCustomer struct {
 	TicketID    string                    `json:"ticket_id"`

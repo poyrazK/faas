@@ -398,7 +398,11 @@ type VMInstanceStat struct {
 	// the vmmd side; today the field stays nil end-to-end
 	// (the poller stamps RX=Unknown, the meterd sampler
 	// writes 0 to net_rx_bytes — safe under additive-merge).
-	NetRxBytes       *int64
+	NetRxBytes *int64
+	// InternalTxBytes (billing review R8-2) is the cumulative part of
+	// NetTxBytes the guest sent to internal destinations; nil until vmmd's
+	// per-namespace poll has read the instance.
+	InternalTxBytes  *int64
 	InflightRequests int64
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
@@ -648,6 +652,10 @@ type SnapshotRef struct {
 	// is held as a string so SnapshotRef stays comparable.
 	CaptureID string
 	SealedKey string
+	// SealedCache marks a sealed park or warm snapshot (ADR-20261110210000
+	// slice 3d-3): unlike a crash capture it is cache, so vmmd cold boots
+	// when it cannot restore it.
+	SealedCache bool
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -658,6 +666,11 @@ type SnapshotBytes struct {
 	StoredBytes  int64
 	Capture      runtimeadmission.SnapshotCapture
 	CaptureToken string
+	// SealedKey is the capture key of a snapshot vmmd sealed at the source
+	// (ADR-20261110210000 slice 3d-3), sealed to the capture recipient and
+	// bound to SealCaptureID. Both are empty for a plaintext capture.
+	SealedKey     []byte
+	SealCaptureID string
 }
 
 // WakeOutcome is the decoded result of a vmmd wake. Method reports what vmmd
@@ -1207,6 +1220,7 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 			MemBytes:          snap.MemBytes,
 			CaptureId:         snap.CaptureID,
 			SealedKey:         []byte(snap.SealedKey),
+			SealedCache:       snap.SealedCache,
 		},
 		WakeId:     fields.WakeID,
 		KeepPaused: keepPaused,
@@ -1244,6 +1258,36 @@ func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath,
 		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
 	}
 	return snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
+}
+
+// PauseAndSnapshotSealed is PauseAndSnapshot for a snapshot sealed at the
+// source (ADR-20261110210000 slice 3d-3): vmmd publishes only encrypted twins
+// and returns the capture key sealed to the capture recipient. captureID is
+// the capture token of storageKey.
+func (c *VMMClient) PauseAndSnapshotSealed(ctx context.Context, instance, storageKey, vmstateStorageKey string, beforeCheckpoint bool, captureID string) (SnapshotBytes, error) {
+	resp, err := c.cli.PauseAndSnapshot(ctx, &vmmdpb.PauseAndSnapshotRequest{
+		Instance:          instance,
+		StorageKey:        storageKey,
+		VmstateStorageKey: vmstateStorageKey,
+		BeforeCheckpoint:  beforeCheckpoint,
+		SealCaptureId:     captureID,
+	})
+	if err != nil {
+		return SnapshotBytes{}, liftErr(err)
+	}
+	if beforeCheckpoint && !resp.GetBeforeCheckpointCompleted() {
+		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
+	}
+	if len(resp.GetSealedKey()) == 0 {
+		// An older vmmd ignored seal_capture_id and published plaintext.
+		return SnapshotBytes{}, errors.New("sched: vmmd did not seal the snapshot")
+	}
+	b, err := snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
+	if err != nil {
+		return SnapshotBytes{}, err
+	}
+	b.SealedKey, b.SealCaptureID = resp.GetSealedKey(), captureID
+	return b, nil
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) wraps the new
@@ -1912,6 +1956,10 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 	if v := in.GetNetRxBytes(); v != nil {
 		b := v.GetValue()
 		row.NetRxBytes = &b
+	}
+	if v := in.GetInternalTxBytes(); v != nil {
+		b := v.GetValue()
+		row.InternalTxBytes = &b
 	}
 	if v := in.GetRequestCountTotal(); v != nil {
 		c := v.GetValue()

@@ -13,7 +13,7 @@ import (
 )
 
 // supportTicketCustomer serves GET /v1/admin/support/tickets/{ticket}/customer
-// (ADR-20261115120000): the account panel the staff ticket page shows, for
+// (ADR-20261115175927): the account panel the staff ticket page shows, for
 // the operator console's support inbox. Only support staff may read it, under
 // the same roster, MFA and session checks as every staff route.
 func (s *server) supportTicketCustomer(w http.ResponseWriter, r *http.Request, _ state.Account) {

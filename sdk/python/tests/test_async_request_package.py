@@ -170,7 +170,34 @@ asyncio.run(main())
     run([sys.executable, "-I", str(program), str(target)], cwd=tmp_path)
     positive = tmp_path / "typed.py"
     positive.write_text("""
+from __future__ import annotations
 from typing import assert_type
+from faas_sdk import JobContract,JobInput,JobSubmitOptions,JobRunOptions,JobProgress,JobItemOutcome,TypedJobRun
+from faas_sdk.preview import LiveJob,LiveJobSnapshot,LiveJobFailure,LiveJobSource,realtime_live_job_source
+from faas_sdk.preview import PipelineChild,PipelineChildOptions,PipelineBatchResult,PipelineChildView,PipelineGateOptions,PipelineGateOutcome,PipelineGateService,JobPipeline,JobPipelineClient,PipelineCheckpoint,PipelineInspection,TypedPipelineRun,JobPipelineContext,PipelineJob,PipelineJobResult
+async def typed_job_pipeline(client:JobPipelineClient[str,int],context:JobPipelineContext,job:PipelineJob[str,int])->None:
+    run=await client.start("one",timeout=1,idempotency_key="one")
+    assert_type(run,TypedPipelineRun[int])
+    assert_type(run.checkpoint,PipelineCheckpoint)
+    assert_type(await run.result(timeout=1),int)
+    assert_type(await run.inspect(timeout=1),PipelineInspection)
+    child:PipelineChild[str,int]=PipelineChild(contract=job.contract)
+    assert_type(await context.child("child",child,"input",options=PipelineChildOptions(timeout=60)),PipelineChildView[int])
+    assert_type(await context.children("children",child,[JobInput("one","input")],options=PipelineChildOptions(timeout=60,concurrency=2)),PipelineBatchResult[int])
+    assert_type(await context.approval("review",job.contract,"input",options=PipelineGateOptions(timeout=60,required_roles=("reviewer",))),PipelineGateOutcome[int])
+    assert_type(await context.wait_for_input("reply",job.contract,"input",options=PipelineGateOptions(timeout=60,required_roles=("reviewer",))),PipelineGateOutcome[int])
+    assert_type(await context.job("work",[JobInput("one","input")],definition=job),PipelineJobResult[int])
+async def typed_live_jobs(live: LiveJob) -> None:
+    async for snapshot in live.updates():
+        assert_type(snapshot,LiveJobSnapshot)
+        assert_type(snapshot.failures,tuple[LiveJobFailure,...])
+        assert_type(snapshot.complete,bool)
+async def typed_jobs(client: FaaSClient) -> None:
+    contract:JobContract[str,int]=JobContract({"version":1,"name":"typed-job","input":{"type":"string"},"output":{"type":"integer"}})
+    run=await client.define_job(contract).submit([JobInput("one","input")],options=JobSubmitOptions(timeout=1,idempotency_key="one"))
+    assert_type(run,TypedJobRun[str,int])
+    assert_type(await run.wait(options=JobRunOptions(timeout=1)),JobProgress)
+    assert_type(await run.results(options=JobRunOptions(timeout=1)),tuple[JobItemOutcome[int],...])
 from faas_sdk import FaaSClient, RequestOptions, RetryPolicy, ResponseInfo, AsyncPagination, PaginationOptions, PaginationPage, BuildWaitOptions, DeploymentWaitOptions, WaiterOptions, WaiterError, WaiterFailureCode, WaiterProgress, WaiterTimeoutError
 from faas_sdk.api.deployments import get_build
 from faas_sdk.models.build_response import BuildResponse
@@ -189,7 +216,7 @@ async def check_preparation() -> None:
     assert_type(await inspect_source("project"),SourcePlan)
     assert_type(await prepare_source("project","archive.tgz",options=SourcePreparationOptions(source_root="apps/api")),PreparedSource)
 from faas_sdk import SourceDeploymentOptions,SourceDeploymentResult,SourceDeploymentError,SourceDeploymentState,SourceDeploymentPhase,SourceDeploymentProgress,ProjectPlan,ProjectInspectionOptions,inspect_project,validate_project_plan
-from faas_sdk import ProjectPreviewOptions,ProjectApplyOptions,ReviewedProjectPlan,ProjectApplicationResult,ProjectWorkloadOutcome,ProjectWorkflowError
+from faas_sdk import ProjectPreviewOptions,ProjectApplyOptions,ReviewedProjectPlan,ProjectApplicationResult,ProjectWorkloadOutcome,ProjectWorkflowError,ProjectVerificationOptions,ProjectVerificationTarget,ProjectVerificationReport,VerificationWorkloadReport,project_verification_target
 from faas_sdk.models.plan_response import PlanResponse
 from faas_sdk.api.projects import apply_cached_project_plan
 from faas_sdk.models.apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
@@ -201,6 +228,12 @@ async def check_project_application(client: FaaSClient, preview: PreviewClient) 
     result=await client.apply_project_plan(plan,options=options)
     assert_type(result,ProjectApplicationResult)
     assert_type(result.workloads,tuple[ProjectWorkloadOutcome,...])
+    target=project_verification_target(result)
+    assert_type(target,ProjectVerificationTarget)
+    verification=await client.verify_project_application(target,options=ProjectVerificationOptions(timeout=1))
+    assert_type(verification,ProjectVerificationReport)
+    assert_type(verification.workloads,tuple[VerificationWorkloadReport,...])
+    assert_type(await preview.verify_project_application(target,options=ProjectVerificationOptions(timeout=1)),ProjectVerificationReport)
     assert_type(await preview.resume_project_application(plan,options=options),ProjectApplicationResult)
     await apply_cached_project_plan.asyncio(client=client.inner,body=ApplyCachedProjectPlanRequest(plan_token="reviewed"),deployment_attempt_id="a"*32)
 async def check_project(client: FaaSClient, preview: PreviewClient) -> None:

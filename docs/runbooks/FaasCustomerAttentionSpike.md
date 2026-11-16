@@ -5,9 +5,10 @@
 ## What it means
 
 apid evaluates customer attention signals every five minutes
-(ADR-20261113123000, ADR-20261113180000): repeated failed deployments
+(ADR-20261113123000, ADR-20261115175928): repeated failed deployments
 (`deploy_failing`), runtime OOM kills (`app_oom`), failed boots
-(`boot_failing`), failing scheduled jobs (`jobs_failing`), custom domains
+(`boot_failing`), failing scheduled jobs (`jobs_failing`), HTTP crons whose
+last runs all failed (`crons_failing`), custom domains
 that are not serving (`domain_stuck`), bursts of one refused API problem
 code (`refused_burst`), repeated plan-limit refusals (`limit_pressure`) and
 unrecovered payment failures (`payment_failing`).
@@ -42,6 +43,8 @@ otherwise.
      base image or node problem rather than customer code; check the wake
      and node dashboards and recent runtime releases.
    - `jobs_failing`: check the job runner and recent releases of it.
+   - `crons_failing`: check the cron loop and the gateway; one app's cron
+     usually means a wrong path or a handler error.
    - `limit_pressure`, `payment_failing`: a jump usually follows a limit
      change or a billing provider incident.
    - `domain_stuck`: the `detail` says whether certificate issuance failed

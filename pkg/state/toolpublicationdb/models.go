@@ -34,6 +34,7 @@ type App struct {
 	ProjectID pgtype.UUID
 	OrgID     pgtype.UUID
 	Slug      string
+	Status    string
 }
 
 type AppSecret struct {
@@ -66,6 +67,13 @@ type Org struct {
 	ID                     pgtype.UUID
 	PersonalOrg            bool
 	PersonalOwnerAccountID pgtype.UUID
+}
+
+type TaskToolReleaseIntent struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
 }
 
 type ToolGrant struct {

@@ -4940,6 +4940,11 @@ type ResumeEnvironmentAutomationResponse struct {
 	Environment  string   `json:"environment"`
 	CronsResumed int      `json:"crons_resumed"`
 	CronIDs      []string `json:"cron_ids"`
+	// EventSubscriptionsResumed and EventSubscriptionIDs are the event
+	// subscriptions the call enabled (ADR-20261104120000 amendment
+	// 2026-11-14).
+	EventSubscriptionsResumed int      `json:"event_subscriptions_resumed"`
+	EventSubscriptionIDs      []string `json:"event_subscription_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -6151,8 +6156,12 @@ type QueueReceiveResponse struct {
 	ID             string          `json:"id"`
 	Payload        json.RawMessage `json:"payload"`
 	Result         json.RawMessage `json:"result,omitempty"`
-	TraceID        string          `json:"trace_id,omitempty"`
-	Traceparent    string          `json:"traceparent,omitempty"`
+	// State is how the message settled: completed, failed or cancelled.
+	// Receive returned all three alike, so a failure looked processed
+	// (ADR-20261113180000, R6-5).
+	State       string `json:"state,omitempty"`
+	TraceID     string `json:"trace_id,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
 }
 
 // LogQueryEvent is the stable, source-neutral shape emitted by database-backed

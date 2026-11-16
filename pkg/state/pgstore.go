@@ -11200,7 +11200,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	if _, err := tx.Exec(ctx, `
 		update crons
 		   set suspended_reason = ''
-		 where app_id = $1 and suspended_reason = 'no_live_deployment'`, appID); err != nil {
+		 where app_id = $1 and suspended_reason in ('no_live_deployment', 'failing')`, appID); err != nil {
 		return fmt.Errorf("state: reactivate deployment crons: %w", err)
 	}
 	if dep.Status == DeployLive || (dep.CanaryTotalSteps <= 0 && IsServiceRollout(dep)) {
@@ -15341,7 +15341,12 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		   retry_max = coalesce($8, retry_max),
 		   retry_backoff_seconds = coalesce($9, retry_backoff_seconds),
 		   schedule_policy = case when $12::boolean then null else coalesce($10::jsonb, schedule_policy) end,
-		   failure_rules = case when $13::boolean then null else coalesce($11::jsonb, failure_rules) end
+		   failure_rules = case when $13::boolean then null else coalesce($11::jsonb, failure_rules) end,
+		   -- A customer edit of a cron paused for failing resumes it
+		   -- (ADR-20261115194000).
+		   suspended_reason = case when suspended_reason = 'failing'
+		       and ($2::text is not null or $3::text is not null or $4::boolean is not null)
+		       then '' else suspended_reason end
 		 where id = $1
 		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused`,
 		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg, retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg, clearPolicy, clearRules)
@@ -15416,14 +15421,18 @@ func (s *PgStore) MarkCronFired(ctx context.Context, id string, at time.Time) er
 	return nil
 }
 
-// CountActiveCronInvocations counts pending/dispatching cron invocations for
+// CountActiveCronInvocations counts pending/dispatching cron invocations, and
+// timed-out runs the app may still be running (CronTimedOutRunHold), for
 // the overlap guard. The cron history index keeps this point lookup cheap.
 func (s *PgStore) CountActiveCronInvocations(ctx context.Context, cronID string) (int, error) {
 	var n int
 	if err := s.pool.QueryRow(ctx, `
 		select count(*) from invocations
 		 where cron_id = $1 and source = 'cron'
-		   and state in ('pending','dispatching')`, cronID).Scan(&n); err != nil {
+		   and (state in ('pending','dispatching')
+		        or (state = 'failed' and outcome = 'timeout' and completed_at is not null
+		            and now() < completed_at + least(completed_at - created_at, $2 * interval '1 second')))`,
+		cronID, int(CronTimedOutRunHold.Seconds())).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -15504,7 +15513,7 @@ func (s *PgStore) ReactivateCronsForApp(ctx context.Context, appID string) (int,
 	tag, err := s.pool.Exec(ctx, `
 		update crons
 		   set suspended_reason = ''
-		 where app_id = $1 and suspended_reason = 'no_live_deployment'`, appID)
+		 where app_id = $1 and suspended_reason in ('no_live_deployment', 'failing')`, appID)
 	if err != nil {
 		return 0, fmt.Errorf("state: reactivate crons for app: %w", err)
 	}
@@ -19908,12 +19917,16 @@ func createSnapshotWithQuerier(ctx context.Context, q sqlc.DBTX, snap Snapshot) 
 			return Snapshot{}, ErrInvalidArgument
 		}
 	}
+	if err := validSnapshotSeal(snap); err != nil {
+		return Snapshot{}, err
+	}
 	row, err := sqlc.New().CreateSnapshot(ctx, q, sqlc.CreateSnapshotParams{
 		RecoveryGeneration: snap.RecoveryGeneration,
 		DeploymentID:       mustPgUUID(snap.DeploymentID), FcVersion: snap.FCVersion, BaseImageVersion: snap.BaseImageVersion,
 		MemBytes: snap.MemBytes, DiskBytes: snap.DiskBytes, StoredBytes: snap.StoredBytes, StorageKey: snap.StorageKey,
 		Stale: snap.Stale, Tier: tier, ApplicationStandardCaptureToken: mustPgUUID(snap.ApplicationStandardCaptureToken),
 		CpuTemplate: snap.CPUTemplate, CpuModel: snap.CPUModel,
+		SealedKey: snap.SealedKey, SealedCaptureID: mustPgUUID(snap.SealedCaptureID),
 	})
 	if err != nil {
 		return Snapshot{}, mapErr(err)
@@ -22872,7 +22885,17 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 // and applies its counters in the same transaction. The caller may ACK the
 // frame only after this method returns nil.
 func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32) error {
-	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 {
+	return s.AppendGatewayUsageEventWithServiceReply(ctx, nodeID, eventID, instanceID, minute, requests, txBytes, coldBoots, 0)
+}
+
+// AppendGatewayUsageEventWithServiceReply is AppendGatewayUsageEvent that also
+// queues the reply bytes the instance sent to other apps' service calls for
+// subtraction from its billed egress (billing review R8-2 slice 3), in the
+// same transaction as the frame's idempotency row, so a replayed frame queues
+// nothing twice. It queues only for an instance whose node reports internal
+// egress; elsewhere the bytes stay billed.
+func (s *PgStore) AppendGatewayUsageEventWithServiceReply(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32, serviceReplyBytes int64) error {
+	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 || serviceReplyBytes < 0 {
 		return fmt.Errorf("state: invalid gateway usage counters")
 	}
 	node, err := parsePgUUID(nodeID)
@@ -22914,6 +22937,11 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 		if rows != 1 {
 			return fmt.Errorf("state: gateway usage instance %s not found", instanceID)
 		}
+		if serviceReplyBytes > 0 {
+			if _, err := tx.Exec(ctx, serviceReplyQueue, instanceID, serviceReplyBytes); err != nil {
+				return fmt.Errorf("state: queue service reply bytes: %w", err)
+			}
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -22923,17 +22951,35 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 // in the same transaction as usage_minutes, which makes retry after a meterd
 // crash exactly-once for every observed cumulative value.
 func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
+	tx, rx, _, err := s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
+	return tx, rx, err
+}
+
+// AppendNetworkUsageObservationExcludingInternal implements
+// InternalEgressObserver.
+func (s *PgStore) AppendNetworkUsageObservationExcludingInternal(ctx context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internalCumulative int64) (int64, int64, int64, error) {
+	if internalCumulative < 0 {
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
+}
+
+// appendNetworkUsageObservation is AppendNetworkUsageObservation; with a
+// non-nil internal reading the egress it adds leaves out the internal bytes
+// (billing review R8-2). Financial usage evidence is append-only, so billed
+// egress is reduced before it is written, never after.
+func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
-		return 0, 0, fmt.Errorf("network usage counters must be non-negative")
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	subject, err := ownersql.New().UsageSubject(ctx, tx, ownersql.UsageSubjectParams{InstanceID: mustPgUUID(instanceID), Minute: pgtype.Timestamptz{Time: minute.UTC().Truncate(time.Minute), Valid: true}, AppID: mustPgUUID(appID)})
 	if err != nil {
-		return 0, 0, mapErr(err)
+		return 0, 0, 0, mapErr(err)
 	}
 	billingAccountID := pgUUIDString(subject)
 
@@ -22942,17 +22988,19 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		 values ($1, 0, 0, false, false, $2)
 		 on conflict (instance_id) do nothing`, instanceID, minute.UTC())
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	var previousTx, previousRx int64
-	var previousTxValid, previousRxValid bool
+	var previousTx, previousRx, previousInternal, internalPending, serviceReplies int64
+	var previousTxValid, previousRxValid, previousInternalValid bool
 	err = tx.QueryRow(ctx,
-		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid
+		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid,
+		        internal_tx_bytes, internal_tx_valid, internal_tx_pending, service_reply_pending
 		   from meter_network_checkpoints
 		  where instance_id = $1
-		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid)
+		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid,
+		&previousInternal, &previousInternalValid, &internalPending, &serviceReplies)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
@@ -22984,6 +23032,13 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		nextRxValid = true
 	}
 
+	var excluded, nextInternalPending int64
+	if internal != nil {
+		excluded, nextInternalPending = internalEgressStep(previousInternal, previousInternalValid,
+			internalPending, serviceReplies, *internal, netTxDelta)
+		netTxDelta -= excluded
+	}
+
 	command, err := tx.Exec(ctx,
 		`update usage_minutes
 		    set net_tx_bytes = net_tx_bytes + $1,
@@ -22992,10 +23047,10 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		    and account_id = $5 and app_id = $6`,
 		netTxDelta, netRxDelta, instanceID, minute.UTC().Truncate(time.Minute), billingAccountID, appID)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if command.RowsAffected() != 1 {
-		return 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, minute.UTC().Truncate(time.Minute).Format(time.RFC3339))
+		return 0, 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, minute.UTC().Truncate(time.Minute).Format(time.RFC3339))
 	}
 
 	_, err = tx.Exec(ctx,
@@ -23010,12 +23065,17 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 		       updated_at = now()`,
 		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC())
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
+	}
+	if internal != nil {
+		if _, err := tx.Exec(ctx, internalEgressCheckpointUpdate, instanceID, *internal, nextInternalPending); err != nil {
+			return 0, 0, 0, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	return netTxDelta, netRxDelta, nil
+	return netTxDelta, netRxDelta, excluded, nil
 }
 
 // InstanceBillingSeconds returns each instance's actual resident seconds in
@@ -27862,6 +27922,8 @@ func snapshotFromSQLC(row sqlc.Snapshot) Snapshot {
 		RecoveryGeneration:              row.RecoveryGeneration,
 		CPUTemplate:                     row.CpuTemplate,
 		CPUModel:                        row.CpuModel,
+		SealedKey:                       row.SealedKey,
+		SealedCaptureID:                 pgUUIDString(row.SealedCaptureID),
 	}
 }
 
@@ -28602,6 +28664,41 @@ func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.Cl
 	return api.CliAuthStatus(status), aid, nil
 }
 
+// RecordCliAuthRequester implements CliAuthRequesterStore. It runs right
+// after the mint, so the row is in its stored (keyed) form.
+func (s *PgStore) RecordCliAuthRequester(ctx context.Context, tokenHash []byte, ip string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update cli_auth_codes set requester_ip = $2
+		 where token_hash = $1 and status = 'pending' and account_id is null`,
+		storedCredential(credTagCLIAuthCode, tokenHash), ip)
+	if err != nil {
+		return fmt.Errorf("record cli auth requester: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CliAuthRequester implements CliAuthRequesterStore.
+func (s *PgStore) CliAuthRequester(ctx context.Context, tokenHash []byte) (CliAuthRequest, error) {
+	return firstCredential(ctx, credentialLookups(credTagCLIAuthCode, tokenHash), func(ctx context.Context, value []byte) (CliAuthRequest, error) {
+		var req CliAuthRequest
+		var ip *string
+		err := s.pool.QueryRow(ctx,
+			`select requester_ip, created_at from cli_auth_codes
+			 where token_hash = $1 and expires_at > now()`,
+			value).Scan(&ip, &req.CreatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return req, ErrNotFound
+		}
+		if ip != nil {
+			req.IP = *ip
+		}
+		return req, err
+	})
+}
+
 // ClaimCliAuthCode atomically transitions pending → consumed and binds
 // account_id in one statement. Two error shapes distinguish the
 // reasons a claim can fail (handler renders different banners):
@@ -28748,11 +28845,15 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 // IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore. A colliding
 // short code is refused rather than ignored: it would bind the device code
 // to someone else's pending row.
-func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash, verifierHash []byte, expiresAt time.Time) error {
+	var verifier []byte
+	if len(verifierHash) > 0 {
+		verifier = verifierHash
+	}
 	tag, err := s.pool.Exec(ctx,
-		`insert into cli_auth_codes (token_hash, device_hash, expires_at) values ($1, $2, $3)
+		`insert into cli_auth_codes (token_hash, device_hash, verifier_hash, expires_at) values ($1, $2, $3, $4)
 		 on conflict do nothing`,
-		storedCredential(credTagCLIAuthCode, tokenHash), storedCredential(credTagCLIDeviceCode, deviceHash), expiresAt)
+		storedCredential(credTagCLIAuthCode, tokenHash), storedCredential(credTagCLIDeviceCode, deviceHash), verifier, expiresAt)
 	if err != nil {
 		return err
 	}
@@ -28764,10 +28865,15 @@ func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceH
 
 // ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore with
 // ConsumeCliAuthCode's contract, keyed by the device code's hash.
-func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash, verifierHash []byte) (api.CliAuthStatus, string, error) {
 	lookups := credentialLookups(credTagCLIDeviceCode, deviceHash)
+	var verifier []byte
+	if len(verifierHash) > 0 {
+		verifier = verifierHash
+	}
 	accountID, err := firstCredential(ctx, lookups, func(ctx context.Context, value []byte) (string, error) {
 		var accountID string
+		// A row bound to a verifier needs it ($2 NULL never equals one).
 		err := s.pool.QueryRow(ctx,
 			`update cli_auth_codes
 			 set consumed_at = now()
@@ -28776,8 +28882,9 @@ func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byt
 			   and account_id is not null
 			   and consumed_at is null
 			   and expires_at > now()
+			   and (verifier_hash is null or verifier_hash = $2::bytea)
 			 returning account_id`,
-			value,
+			value, verifier,
 		).Scan(&accountID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound

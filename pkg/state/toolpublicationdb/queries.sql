@@ -3,6 +3,42 @@ INSERT INTO tool_publications (account_id, id, status, payload)
 VALUES ($1, $2, 'running', $3)
 ON CONFLICT (account_id, id) DO NOTHING;
 
+-- name: InsertTaskToolReleaseIntent :execrows
+INSERT INTO task_tool_release_intents(account_id,id,status,payload) VALUES($1,$2,'pending',$3)
+ON CONFLICT(account_id,id) DO NOTHING;
+
+-- name: CountTaskToolReleaseIntents :one
+SELECT count(*) FROM task_tool_release_intents WHERE account_id=$1;
+
+-- name: GetTaskToolReleaseIntent :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2;
+
+-- name: LockTaskToolReleaseIntent :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2 FOR UPDATE;
+
+-- name: UpdateTaskToolReleaseIntent :exec
+UPDATE task_tool_release_intents SET status=$3,payload=$4 WHERE account_id=$1 AND id=$2;
+
+-- name: LockTaskToolReleaseApp :one
+SELECT a.id FROM apps a WHERE a.account_id=$1 AND a.id=$2 AND a.slug=$3
+AND a.status='active' AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id)) FOR SHARE OF a;
+
+-- name: LockTaskToolReleaseKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND (k.expires_at IS NULL OR k.expires_at>now())
+AND (k.scopes @> ARRAY['deploy:write']::text[] OR k.scopes @> ARRAY['admin']::text[])
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k;
+
+-- Owner authority is checked again under lock for every adapter transition.
+-- name: LockTaskToolExecutionOwnerKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now())
+AND k.scopes @> ARRAY['admin']::text[] AND NOT k.scopes @> ARRAY['agent']::text[]
+AND k.label IS DISTINCT FROM 'mcp-login'
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k;
+
 -- name: LockPublicationReadinessEvidence :many
 SELECT evidence FROM deployment_mcp_readiness_evidence WHERE deployment_id=$1 FOR SHARE;
 

@@ -209,6 +209,8 @@ type cliSub struct {
 	// FlagsAfterPositionals marks leaf commands that take a positional
 	// argument before parsing their flags, such as `tcp <slug> tls NAME --tls-mode`.
 	FlagsAfterPositionals bool
+	// output registers an optional JSON output contract; human renderers ignore it.
+	output cliOutputKind
 }
 
 // withNotes attaches help notes to a subcommand built by a helper.
@@ -2246,7 +2248,7 @@ var cliCommands = []cliCommand{
 		CompletionPositions: buildCLICompletionPositions(),
 		Subcommands: []cliSub{
 			{Name: statusLiteral, Short: "Show the current status of one build", Positionals: []string{"<id>"}},
-			{Name: "list", Short: "List builds and discover build IDs", Flags: []cliFlag{
+			{Name: "list", output: cliOutputBuildList, Short: "List builds and discover build IDs", Flags: []cliFlag{
 				{Name: "app", Short: "filter to one app", Value: "SLUG"},
 				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "running", "succeeded", "failed", "cancelled"}},
 				{Name: "limit", Short: "page size (1..200)", Value: "N"},
@@ -2255,6 +2257,8 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "stream", Short: "emit JSON Lines as pages arrive; stdout requires --json --all", Bool: true},
 				{Name: "output", Short: "publish a new JSON Lines file after all pages complete; requires --all", Value: "PATH"},
+				{Name: "progress", Short: "export progress on stderr; requires --all --output", Value: "MODE", ClosedSet: []string{"off", "plain", "ndjson"}},
+				{Name: "timeout", Short: "overall list read budget including page requests and retries (positive duration)", Value: "DURATION"},
 			}},
 			{Name: "provenance", Short: "Show the build provenance attestation", Positionals: []string{"<id>"}},
 			{Name: "sbom", Short: "Show the build SBOM", Positionals: []string{"<id>"}},
@@ -4797,7 +4801,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
 			}},
-			{Name: "resume-automation", Short: "Enable the crons a full clone copied paused into a stage", Notes: []string{"Only crons the source ran are enabled; ones the source had disabled, or changed since, stay as they are."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
+			{Name: "resume-automation", Short: "Enable the automation a full clone copied paused into a stage", Notes: []string{"Enables the crons and event subscriptions the clone copied paused.", "Only ones the source ran are enabled; ones the source had disabled, or changed since, stay as they are.", "Refused, changing nothing, when the enabled event subscriptions would pass the plan's cap."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
 				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
 			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging", "gregale env pull --app my-api --dry-run --json"}, Flags: []cliFlag{
@@ -4995,13 +4999,15 @@ var cliCommands = []cliCommand{
 		DocSlug: "invocations",
 		Short:   "List, inspect and wait on invocations across your account",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List invocations", Flags: []cliFlag{
+			{Name: "list", output: cliOutputInvocationList, Short: "List invocations", Flags: []cliFlag{
 				{Name: "limit", Short: "page size (1-100, default 50)", Value: "N"},
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "stream", Short: "emit JSON Lines as pages arrive; stdout requires --json --all", Bool: true},
 				{Name: "output", Short: "publish a new JSON Lines file after all pages complete; requires --all", Value: "PATH"},
+				{Name: "progress", Short: "export progress on stderr; requires --all --output", Value: "MODE", ClosedSet: []string{"off", "plain", "ndjson"}},
+				{Name: "timeout", Short: "overall list read budget including page requests and retries (positive duration)", Value: "DURATION"},
 			}},
 			{Name: "get", Short: "Show or recover one invocation", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "replay", Short: "re-issue failed unkeyed work"},
@@ -6365,6 +6371,7 @@ var cliCommands = []cliCommand{
 					{Name: "mode", Short: "delivery mode", Value: "MODE", ClosedSet: []string{"pull", "push"}},
 					{Name: "workload-class", Short: "consumer workload class", Value: "CLASS", ClosedSet: []string{"worker", "job", "http"}},
 					{Name: "max-concurrency", Short: "maximum concurrent deliveries", Value: "N"},
+					{Name: "enabled", Short: "turn delivery on or off", Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				}},
 				{Name: "rm", Short: "Retire a queue binding", Positionals: []string{"<slug>", "<binding-id>"}},
 			}},
@@ -7354,6 +7361,14 @@ var cliCommands = []cliCommand{
 		Name:    "whoami",
 		DocSlug: "auth",
 		Short:   "Show the authenticated account",
+	},
+
+	{
+		Name: "export", DocSlug: "cli-config", Short: "Verify saved JSON Lines exports offline",
+		Subcommands: []cliSub{{Name: "verify", Short: "Check a file against its saved completion receipt", Positionals: []string{"<FILE>"},
+			Flags:    []cliFlag{{Name: "receipt", Value: "RECEIPT", Req: true, Short: "saved JSON completion receipt"}},
+			Examples: []string{"gregale export verify builds.jsonl --receipt builds.receipt.json", "gregale --json export verify invocations.jsonl --receipt invocations.receipt.json"},
+			Notes:    []string{"Runs offline without login. Compares SHA-256, exact bytes and JSON Lines record count; the receipt path is ignored.", "Exit 0 means all three checks matched; exit 1 means mismatch or invalid input. A valid comparison prints verified true or false; invalid input reports an error without a result.", "A receipt is an integrity reference, not a signature or a point-in-time API snapshot."}}},
 	},
 
 	// Tier A8 surface — the two new commands this PR lands.

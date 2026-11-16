@@ -1261,6 +1261,19 @@
     "kind": "operational"
   },
   {
+    "table": "environment_api_routes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "environment_id",
+      "first_seen",
+      "last_seen",
+      "request_count",
+      "route_template"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_application_standards",
     "columns": [
       "additional_log_destinations",
@@ -3945,8 +3958,10 @@
       "expires_at",
       "org_id",
       "project_ids",
+      "requester_ip",
       "status",
-      "token_hash"
+      "token_hash",
+      "verifier_hash"
     ],
     "kind": "account_identity"
   },
@@ -7649,6 +7664,7 @@
       "account_id",
       "acknowledgment_lease_seconds",
       "app_id",
+      "clone_paused",
       "created_at",
       "deployment_scope",
       "enabled",
@@ -7662,7 +7678,7 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": ["capture", "materialize"],
     "clone": {
       "owner": "app",
       "live": [
@@ -12563,11 +12579,15 @@
     "table": "meter_network_checkpoints",
     "columns": [
       "instance_id",
+      "internal_tx_bytes",
+      "internal_tx_pending",
+      "internal_tx_valid",
       "net_rx_bytes",
       "net_rx_valid",
       "net_tx_bytes",
       "net_tx_valid",
       "observed_at",
+      "service_reply_pending",
       "updated_at"
     ],
     "kind": "operational"
@@ -19816,6 +19836,8 @@
       "id",
       "mem_bytes",
       "recovery_generation",
+      "sealed_capture_id",
+      "sealed_key",
       "stale",
       "stale_at",
       "storage_key",
@@ -21912,12 +21934,41 @@
     "kind": "account_identity"
   },
   {
+    "table": "task_tool_release_intents",
+    "columns": [
+      "account_id",
+      "id",
+      "payload",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "tool_publications",
     "columns": [
       "account_id",
       "id",
       "payload",
       "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_alert_notices",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "created_at",
+      "detail",
+      "finished_at",
+      "id",
+      "kind",
+      "last_error",
+      "lease_expires_at",
+      "next_attempt_at",
+      "status",
+      "subject_id"
     ],
     "kind": "operational"
   }

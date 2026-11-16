@@ -1,7 +1,7 @@
 package apidserver
 
 // Operator console routes for stuck-customer signals and the customer's own
-// health view (ADR-20261115120000). They are the JSON twins of the staff page
+// health view (ADR-20261115175927). They are the JSON twins of the staff page
 // at /dashboard/admin/support/attention and share its dismiss and contact
 // code, so both front ends record the same outcomes and audit.
 //

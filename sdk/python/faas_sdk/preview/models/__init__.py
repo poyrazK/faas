@@ -6152,6 +6152,31 @@ from .synthetic_check_response_method import SyntheticCheckResponseMethod
 from .synthetic_check_results import SyntheticCheckResults
 from .synthetic_check_run import SyntheticCheckRun
 from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
+from .task_tool_release_app import TaskToolReleaseApp
+from .task_tool_release_app_role import TaskToolReleaseAppRole
+from .task_tool_release_execution import TaskToolReleaseExecution
+from .task_tool_release_execution_completed_stages_item import TaskToolReleaseExecutionCompletedStagesItem
+from .task_tool_release_execution_request import TaskToolReleaseExecutionRequest
+from .task_tool_release_execution_request_action import TaskToolReleaseExecutionRequestAction
+from .task_tool_release_execution_request_stage import TaskToolReleaseExecutionRequestStage
+from .task_tool_release_execution_stage import TaskToolReleaseExecutionStage
+from .task_tool_release_execution_state import TaskToolReleaseExecutionState
+from .task_tool_release_intent import TaskToolReleaseIntent
+from .task_tool_release_intent_access_mode import TaskToolReleaseIntentAccessMode
+from .task_tool_release_intent_check import TaskToolReleaseIntentCheck
+from .task_tool_release_intent_decision import TaskToolReleaseIntentDecision
+from .task_tool_release_intent_decision_decision import TaskToolReleaseIntentDecisionDecision
+from .task_tool_release_intent_protocol import TaskToolReleaseIntentProtocol
+from .task_tool_release_intent_record import TaskToolReleaseIntentRecord
+from .task_tool_release_intent_record_status import TaskToolReleaseIntentRecordStatus
+from .task_tool_release_intent_record_version import TaskToolReleaseIntentRecordVersion
+from .task_tool_release_intent_tool_scopes import TaskToolReleaseIntentToolScopes
+from .task_tool_release_intent_worker_runtime import TaskToolReleaseIntentWorkerRuntime
+from .task_tool_release_receipt import TaskToolReleaseReceipt
+from .task_tool_release_receipt_parked import TaskToolReleaseReceiptParked
+from .task_tool_release_receipt_pending_submission import TaskToolReleaseReceiptPendingSubmission
+from .task_tool_release_receipt_previous_deployments import TaskToolReleaseReceiptPreviousDeployments
+from .task_tool_release_receipt_stage import TaskToolReleaseReceiptStage
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
 from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
@@ -12508,6 +12533,31 @@ __all__ = (
     "SyntheticCheckResults",
     "SyntheticCheckRun",
     "SyntheticCheckRunErrorClass",
+    "TaskToolReleaseApp",
+    "TaskToolReleaseAppRole",
+    "TaskToolReleaseExecution",
+    "TaskToolReleaseExecutionCompletedStagesItem",
+    "TaskToolReleaseExecutionRequest",
+    "TaskToolReleaseExecutionRequestAction",
+    "TaskToolReleaseExecutionRequestStage",
+    "TaskToolReleaseExecutionStage",
+    "TaskToolReleaseExecutionState",
+    "TaskToolReleaseIntent",
+    "TaskToolReleaseIntentAccessMode",
+    "TaskToolReleaseIntentCheck",
+    "TaskToolReleaseIntentDecision",
+    "TaskToolReleaseIntentDecisionDecision",
+    "TaskToolReleaseIntentProtocol",
+    "TaskToolReleaseIntentRecord",
+    "TaskToolReleaseIntentRecordStatus",
+    "TaskToolReleaseIntentRecordVersion",
+    "TaskToolReleaseIntentToolScopes",
+    "TaskToolReleaseIntentWorkerRuntime",
+    "TaskToolReleaseReceipt",
+    "TaskToolReleaseReceiptParked",
+    "TaskToolReleaseReceiptPendingSubmission",
+    "TaskToolReleaseReceiptPreviousDeployments",
+    "TaskToolReleaseReceiptStage",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
     "TCPListenerTLSCertificateStatus",

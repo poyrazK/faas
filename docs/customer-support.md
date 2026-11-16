@@ -190,7 +190,7 @@ expiring preview does not create a permanent receipt.
 ## Customers who may be stuck
 
 apid flags customers who look stuck before they write in
-(ADR-20261113123000, ADR-20261113180000): repeated failed deployments of one
+(ADR-20261113123000, ADR-20261115175928): repeated failed deployments of one
 app, an app that keeps running out of memory or failing to boot, a scheduled
 job whose recent runs all failed, a custom domain that is not serving, a
 burst of one refused API problem code, repeated plan-limit refusals, or a
@@ -215,9 +215,9 @@ either:
 Both need a fresh step-up. A signal that clears with no action is marked
 `resolved_on_own`.
 
-Customers see their own open signals of four kinds on their account health page
+Customers see their own open signals of five kinds on their account health page
 and in `GET /v1/account/health`, under "Keeps going wrong" (ADR-20261114190002):
-`deploy_failing`, `app_oom`, `jobs_failing` and `limit_pressure`, each with
+`deploy_failing`, `app_oom`, `jobs_failing`, `crons_failing` and `limit_pressure`, each with
 customer wording and a next step. The wording is built from the signal's subject
 and count, never from the staff detail. The other kinds stay staff-only: domain,
 refused-request and payment problems already have their own sections on that

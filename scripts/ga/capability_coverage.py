@@ -32,6 +32,8 @@ INVENTORY = os.path.join(ROOT, "docs", "ga-capability-inventory.md")
 RULES = [
     (r"(^|/|-)support([/-]|$)", "Native customer support"),
     (r"(^|/|-)customer-attention([/-]|$)", "Native customer support"),
+    # Offline export tools belong to the existing CLI capability (row 156).
+    (r"^export$", "`gregale` CLI"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck|^mutate$", "TOOLING"),
@@ -414,7 +416,7 @@ INFRA_RULES = [
     r"lock|lease-|fence|leader|ledger|journal|outbox-reconcil|receipt|idempotency-key|retention|gc$|janitor|reconcil|watchdog|spool|backpressure|ratelimit|rate-limit|quota|admission|eviction",
     r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
     r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics|^loki-",
-    r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$",
+    r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$|^boot-tracker$",
     # ADR-20261030115139: the public edge's status for platform problems.
     r"^platform-error-status$",
     # ADR-20261031105055: the compute edge's host-to-node routing and its switch.

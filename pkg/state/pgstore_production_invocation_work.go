@@ -2,8 +2,10 @@ package state
 
 import (
 	"context"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -37,7 +39,8 @@ func (s *PgStore) productionQueueState(ctx context.Context, appID, queueName str
 	if err != nil {
 		return QueueStats{}, err
 	}
-	dead, err := q.CountProductionQueueDeadLetter(ctx, s.pool, sqlc.CountProductionQueueDeadLetterParams{AppID: id, QueueName: queueName, Named: named})
+	dead, err := q.CountProductionQueueDeadLetter(ctx, s.pool, sqlc.CountProductionQueueDeadLetterParams{AppID: id, QueueName: queueName, Named: named,
+		RowLimit: int32(api.QueueStatusCountLimit)})
 	if err != nil {
 		return QueueStats{}, err
 	}
