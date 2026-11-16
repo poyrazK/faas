@@ -37,7 +37,8 @@ class AppProtectionItemStatus:
     reason: AppProtectionItemStatusReason | Unset = UNSET
     """Why a skipped object could not be created yet: the plan does not include it, the feature is not available to
     the account, the account email is not verified, you already have an object with this name, the app or account is
-    at its limit, or the SLO or email channel it needs was not created."""
+    at its limit, the SLO, email channel or health check it needs was not created, or free health probes are not
+    running on this platform."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

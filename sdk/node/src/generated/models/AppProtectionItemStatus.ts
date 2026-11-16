@@ -18,8 +18,8 @@ export type AppProtectionItemStatus = {
    */
   object_id?: string;
   /**
-   * Why a skipped object could not be created yet: the plan does not include it, the feature is not available to the account, the account email is not verified, you already have an object with this name, the app or account is at its limit, or the SLO or email channel it needs was not created.
+   * Why a skipped object could not be created yet: the plan does not include it, the feature is not available to the account, the account email is not verified, you already have an object with this name, the app or account is at its limit, the SLO, email channel or health check it needs was not created, or free health probes are not running on this platform.
    */
-  reason?: 'plan' | 'not_released' | 'email_unverified' | 'name_taken' | 'limit_reached' | 'needs_slo' | 'needs_channel';
+  reason?: 'plan' | 'not_released' | 'email_unverified' | 'name_taken' | 'limit_reached' | 'needs_slo' | 'needs_channel' | 'needs_check' | 'probes_unavailable';
 };
 

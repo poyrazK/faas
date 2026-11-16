@@ -33451,6 +33451,7 @@ CREATE TABLE public.app_protection (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     next_reconcile_at timestamp with time zone DEFAULT now() NOT NULL,
     lease_until timestamp with time zone,
+    health_probe_at timestamp with time zone,
     CONSTRAINT app_protection_state_check CHECK ((state = ANY (ARRAY['on'::text, 'off'::text])))
 );
 

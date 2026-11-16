@@ -1722,6 +1722,7 @@ type AppProtection struct {
 	UpdatedAt       pgtype.Timestamptz
 	NextReconcileAt pgtype.Timestamptz
 	LeaseUntil      pgtype.Timestamptz
+	HealthProbeAt   pgtype.Timestamptz
 }
 
 type AppProtectionObject struct {

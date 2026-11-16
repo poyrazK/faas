@@ -1,7 +1,15 @@
 from typing import Literal
 
 AppProtectionItemStatusReason = Literal[
-    "email_unverified", "limit_reached", "name_taken", "needs_channel", "needs_slo", "not_released", "plan"
+    "email_unverified",
+    "limit_reached",
+    "name_taken",
+    "needs_channel",
+    "needs_check",
+    "needs_slo",
+    "not_released",
+    "plan",
+    "probes_unavailable",
 ]
 
 APP_PROTECTION_ITEM_STATUS_REASON_VALUES: set[AppProtectionItemStatusReason] = {
@@ -9,9 +17,11 @@ APP_PROTECTION_ITEM_STATUS_REASON_VALUES: set[AppProtectionItemStatusReason] = {
     "limit_reached",
     "name_taken",
     "needs_channel",
+    "needs_check",
     "needs_slo",
     "not_released",
     "plan",
+    "probes_unavailable",
 }
 
 

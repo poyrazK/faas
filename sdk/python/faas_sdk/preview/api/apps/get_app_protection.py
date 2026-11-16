@@ -64,8 +64,8 @@ def sync_detailed(
 
      Reports whether the app is enrolled in production protection and the state of each protection
     object: the availability and latency SLOs, the health check, the account email channel, the alert
-    rules and the availability release gate. An app created before protection was available reports
-    state none.
+    rules and the availability release gate. The health check is run by the platform without billing its
+    requests. An app created before protection was available reports state none.
 
     Args:
         slug (str):
@@ -98,8 +98,8 @@ def sync(
 
      Reports whether the app is enrolled in production protection and the state of each protection
     object: the availability and latency SLOs, the health check, the account email channel, the alert
-    rules and the availability release gate. An app created before protection was available reports
-    state none.
+    rules and the availability release gate. The health check is run by the platform without billing its
+    requests. An app created before protection was available reports state none.
 
     Args:
         slug (str):
@@ -127,8 +127,8 @@ async def asyncio_detailed(
 
      Reports whether the app is enrolled in production protection and the state of each protection
     object: the availability and latency SLOs, the health check, the account email channel, the alert
-    rules and the availability release gate. An app created before protection was available reports
-    state none.
+    rules and the availability release gate. The health check is run by the platform without billing its
+    requests. An app created before protection was available reports state none.
 
     Args:
         slug (str):
@@ -159,8 +159,8 @@ async def asyncio(
 
      Reports whether the app is enrolled in production protection and the state of each protection
     object: the availability and latency SLOs, the health check, the account email channel, the alert
-    rules and the availability release gate. An app created before protection was available reports
-    state none.
+    rules and the availability release gate. The health check is run by the platform without billing its
+    requests. An app created before protection was available reports state none.
 
     Args:
         slug (str):

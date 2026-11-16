@@ -101,16 +101,37 @@ ADR-748 bills a probe like any request. A baseline check must not add a
 line to the customer's bill, or "protected by default" becomes "billed by
 default". So for checks the baseline owns:
 
-- meterd's runner marks the probe as a platform probe, the same way route
-  probes are marked (ADR-847): no request telemetry, no usage row;
-- a wake caused only by a platform probe is **unbilled**. If a customer
-  request arrives on that instance, billing starts from that request;
-- an instance woken only by a platform probe parks again straight after the
-  probe instead of waiting out the idle timeout, so the platform's cost is
-  about one restore per app per hour.
+- **apid, not meterd, probes it** (slice 3a). meterd's runnable list leaves
+  out a check recorded as the app's created `health_check`. apid claims due
+  baseline checks once per interval across replicas
+  (`app_protection.health_probe_at`), publishes an ADR-847 route-probe
+  challenge for the app's newest live production deployment, and sends the
+  check's request through the local gateway with it. The gateway writes no
+  request telemetry and no usage for a validated route probe. The result is
+  an ordinary row in the check's run history, so the `health-failing` alert,
+  the dashboard and `gregale synthetics get` read it unchanged. An answer
+  the gateway cannot attribute to the deployment (it could not wake it, or
+  refused the probe) is a failed run: that is the outage the check exists
+  to catch. Without a configured route prober the check and its alert are
+  skipped (`probes_unavailable`). This reuses ADR-847's audited trust model
+  and adds no secret. The alternative, meterd signing a new header with a
+  new key the gateways verify, was rejected for that reason.
+- **a wake caused only by a platform probe is unbilled** (slice 3b). The
+  gateway records a probe-caused wake; meterd subtracts that instance's
+  seconds until the first customer request or park, through a ledger in
+  the same shape as the quiet-pause one (ADR-20261023171905). Until 3b
+  lands, a probe that wakes a parked app is billed like ADR-847's route
+  probes, so the `protection_baseline` flag must not be released to
+  customers before 3b.
+- **an instance woken only by a platform probe parks again straight after
+  the probe** (slice 3b) instead of waiting out the idle timeout. Park
+  already reuses the node's existing init snapshot instead of capturing a
+  new one when one is usable (`captureInitOrReuse`), so this costs a
+  destroy, not a snapshot write; a node without a usable init snapshot
+  captures one as any park does.
 
-If the customer edits the check's interval or path, it is no longer the
-baseline check and is billed normally (§4). The CLI says so on the edit.
+Customers cannot change a check's path or interval (only pause, resume or
+delete it), so a baseline check stays a baseline check until it is deleted.
 
 ### 4. The customer always wins
 
@@ -127,7 +148,7 @@ re-enabling) makes the app due at once. The reconciler is idempotent:
 - object deleted by the customer: **not** recreated; status reports
   "removed by you";
 - object edited by the customer: left alone, and no longer counted as a
-  baseline object (for the check, this ends the free probe);
+  baseline object;
 - the reconciler never updates or deletes customer objects, and never
   overwrites an object with the same name that the customer created first.
 
@@ -193,10 +214,12 @@ outage detector fires, so the baseline alert arrives first.
    constants, `GET /v1/apps/{slug}/protection`.
 2. Reconciler creating SLOs, channel, alert rules and gate; outage-notice
    suppression (§7).
-3. Baseline health check with platform-probe marking, unbilled probe wakes and
-   park-after-probe.
-4. CLI: `gregale app protection on|off`, the status line, `gregale.yaml`
-   `protection:` key, and the "edited, now billed" warning.
+3. a. Baseline health check and its alert, probed by apid through the
+      route-probe challenge (no telemetry or usage rows).
+   b. Unbilled probe wakes and park-after-probe (gateway, meterd, schedd).
+      Required before the flag is released to customers.
+4. CLI: `gregale app protection on|off`, the status line and the
+   `gregale.yaml` `protection:` key.
 5. Docs page and rollout.
 
 ## Alternatives considered
