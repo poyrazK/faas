@@ -194,6 +194,7 @@ var adoptionInstanceInventory = map[string]string{
 	"databaseEgress":                  "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
 	"environmentBranch":               "refused", // a contained branch guest is not adopted (ADR-20261031193635)
 	"branchDatabaseEgress":            "refused", // its branch_db pairs go with it
+	"webDomains":                      "reset",   // a restart restarts the web session's distinct-domain count (ADR-20261112121456 §4)
 	"TailCount":                       "reset",   // the host only ever sees decrements
 	"tailSecondsAccum":                "reset",   // informational, not billed
 	"adoptionVCPUs":                   "rebuilt",
