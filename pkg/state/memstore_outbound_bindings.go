@@ -22,6 +22,10 @@ func copyOutboundOffer(in OutboundIntegrationOffer) OutboundIntegrationOffer {
 	in.AIDailyTokenLimit = copyInt64Ptr(in.AIDailyTokenLimit)
 	in.AIDailyCostLimit = copyInt64Ptr(in.AIDailyCostLimit)
 	in.AIMonthlyCostLimit = copyInt64Ptr(in.AIMonthlyCostLimit)
+	if in.AISemanticCache != nil {
+		semantic := *in.AISemanticCache
+		in.AISemanticCache = &semantic
+	}
 	return in
 }
 

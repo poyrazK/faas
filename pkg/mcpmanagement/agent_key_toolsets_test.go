@@ -60,6 +60,11 @@ func TestAgentKeyCatalogSelectionSharesPlans(t *testing.T) {
 				if req.URL.Path != "/v1/apps/alpha/scaling" {
 					return false
 				}
+				if req.Header.Get(api.AgentPreviewHeader) == api.AgentPreviewBudget {
+					// A budget preview writes nothing (ADR-20261111114059).
+					_ = json.NewEncoder(w).Encode(api.AgentBudgetPreview{Preview: true})
+					return true
+				}
 				if req.Method != http.MethodGet {
 					writes.Add(1)
 					api.WriteProblem(w, api.NewProblem(http.StatusConflict, "scaling_revision_conflict", "Scaling changed", "review current settings"))

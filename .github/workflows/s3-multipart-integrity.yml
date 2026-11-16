@@ -37,6 +37,10 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: local-test-only
           POSTGRES_DB: checksum_tests
+          # Each test migrates into its own schema and drops it with CASCADE
+          # in one transaction; the full schema needs more locks than the
+          # default 64 per transaction (as in every other workflow).
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U faas -d checksum_tests"
@@ -54,7 +58,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:

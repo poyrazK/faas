@@ -6,6 +6,25 @@ import (
 	"testing/fstest"
 )
 
+// hosting.readiness_probe is the primary app's steady-state traffic gate
+// (2026-11-13); its bounds are the deploy override's.
+func TestParseReadinessProbe(t *testing.T) {
+	cfg, present, err := Parse([]byte("hosting:\n  readiness_probe:\n    path: /ready\n    period_s: 5\n    failure_threshold: 2\n"))
+	if err != nil || !present || cfg.ReadinessProbe == nil || cfg.ReadinessProbe.Path != "/ready" || cfg.ReadinessProbe.PeriodS != 5 || cfg.ReadinessProbe.FailureThreshold != 2 {
+		t.Fatalf("Parse = %+v present=%v err=%v", cfg, present, err)
+	}
+	for name, body := range map[string]string{
+		"relative path":           "hosting:\n  readiness_probe:\n    path: ready\n",
+		"neither path nor grpc":   "hosting:\n  readiness_probe:\n    period_s: 5\n",
+		"period too long":         "hosting:\n  readiness_probe:\n    path: /ready\n    period_s: 100000\n",
+		"liveness not declarable": "hosting:\n  liveness_probe:\n    path: /live\n",
+	} {
+		if _, _, err := Parse([]byte(body)); err == nil {
+			t.Errorf("%s: Parse accepted %q", name, body)
+		}
+	}
+}
+
 func TestLoadHostingOverrides(t *testing.T) {
 	cfg, ok, err := Load(fstest.MapFS{
 		"gregale.yaml": &fstest.MapFile{Data: []byte(`hosting:

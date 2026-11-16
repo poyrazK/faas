@@ -34,7 +34,7 @@ func (m *MemStore) ResolveProjectServiceBinding(ctx context.Context, callerAppID
 	}
 	input := projectServiceGraphInput{Caller: m.projectServiceMemberLocked(callerAppID, callerDeploymentID)}
 	input.Managed = m.promotionServiceMemberLocked(callerAppID, callerDeploymentID)
-	if !input.Managed && len(input.Caller.Settings.Manifest.ServiceBindings) == 0 {
+	if !input.Managed && (len(input.Caller.Settings.Manifest.ServiceBindings) == 0 || !m.releaseGraphEnvironmentLocked(input.Caller)) {
 		return EnvironmentGitOpsServiceBindingRoute{}, false, false, nil
 	}
 	for _, release := range m.projectReleaseSets {
@@ -105,6 +105,24 @@ func (m *MemStore) promotionServiceMemberLocked(appID, deploymentID string) bool
 			if pin := m.projectEnvironmentPromotionWorkloadSpecs[workloadSpecHeadKey(id, appID)]; pin.DeploymentID == deploymentID && deploymentID != "" {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// releaseGraphEnvironmentLocked reports whether the caller routes through a
+// release graph: its project environment has an active release set, or the
+// caller belongs to one still retained for rollback. Otherwise a stage
+// deployed with "deploy --env" routes its service calls in its own
+// environment lane (ADR-20261027120000), as ReadProjectServiceGraph's owner
+// does (Hunt 34 H34-33; ADR-20261019120024 amendment 2026-11-13).
+func (m *MemStore) releaseGraphEnvironmentLocked(caller projectServiceMember) bool {
+	for _, release := range m.projectReleaseSets {
+		if release.AccountID != caller.AccountID || release.ProjectID != caller.ProjectID || release.EnvironmentSlug != caller.Scope {
+			continue
+		}
+		if release.Active || m.releaseUsableLocked(release) && releaseMemberForApp(release, caller.AppID) == caller.DeploymentID {
+			return true
 		}
 	}
 	return false

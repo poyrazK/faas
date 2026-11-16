@@ -951,6 +951,86 @@ groups:
           description: "tetragon.service is installed but not active on {{ $labels.instance }}, so guest-escape signals (setuid to root, secret opens, module loads, ptrace) are not reported. `journalctl -u tetragon -n 200` first; a crash loop stops restarting after 10 starts in 2 minutes (`systemctl reset-failed tetragon`)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
 
+  # ADR-20261110210000 §4: an app's owner node is the control plane's
+  # decision. In observe mode the apps trigger records every owner change a
+  # login outside faas_owner_authority made; the control plane's schedd
+  # publishes the last 15 minutes' count.
+  - name: app_owner_authority
+    interval: 1m
+    rules:
+      - alert: FaasAppOwnerUnauthorizedWrite
+        expr: max(faas_app_owner_unauthorized_writes) > 0
+        labels:
+          severity: page
+          family: app_owner_authority
+        annotations:
+          summary: "A login outside the control plane changed an app's owner node"
+          description: "{{ $value }} owner change(s) to apps.node_id in the last 15 minutes came from a database login that is not in faas_owner_authority. Before control-plane owner authority is on everywhere this lists the paths still to move; after it, a compute node choosing which apps it runs is a compromise signal. `select * from app_owner_writes where not authorized order by id desc limit 50` names the login and the nodes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppOwnerUnauthorizedWrite.md"
+
+  # ADR-20261110210000 §3: secretd opens customer runtime secrets only for the
+  # node that runs the app. Prometheus scrapes it only while
+  # faas_secretd_listen is set, so these stay silent on fleets without it.
+  # A refusal is what a node asking for tenants it does not run looks like.
+  - name: secretd
+    interval: 1m
+    rules:
+      # Cannot happen by accident: a node sent ciphertext bound to another
+      # tenant, or asked for another app's capture key under an app it runs.
+      - alert: FaasSecretdCrossTenantRequest
+        expr: sum by (rpc, reason) (increase(faas_secretd_refusals_total{reason=~"wrong_account|other_app"}[15m])) > 0
+        labels:
+          severity: page
+          component: secretd
+          family: secretd
+        annotations:
+          summary: "A compute node asked secretd for another tenant's secrets ({{ $labels.reason }})"
+          description: "secretd refused {{ $value | humanize }} {{ $labels.rpc }} request(s) in the last 15 minutes with reason {{ $labels.reason }}: the caller sent an envelope bound to another account than the app's, named another app's crash capture, or asked for an edge rule header value of another account's app. No release sends either. Treat the node as compromised: `journalctl -u faas-secretd --since -1h | grep refused` names it; drain it and rotate the runtime domain."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/secretd.md"
+      - alert: FaasSecretdBudgetExhausted
+        expr: sum by (rpc) (increase(faas_secretd_refusals_total{reason="budget_exhausted"}[15m])) > 0
+        labels:
+          severity: page
+          component: secretd
+          family: secretd
+        annotations:
+          summary: "A compute node opened more distinct apps than its hourly budget"
+          description: "secretd refused {{ $value | humanize }} {{ $labels.rpc }} request(s) in the last 15 minutes because a node passed FAAS_SECRETD_APPS_PER_NODE_HOUR distinct apps. Churn beyond what a node can run is a node collecting secrets. `journalctl -u faas-secretd --since -1h | grep budget` names it; drain it and rotate the runtime domain unless a known mass reschedule explains it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/secretd.md"
+      # An owner change can race a restore once; a node that keeps asking is
+      # not running what it asks for.
+      - alert: FaasSecretdUnauthorizedCaller
+        expr: sum by (rpc, reason) (increase(faas_secretd_refusals_total{reason=~"not_authorized|unknown_node|unauthenticated"}[15m])) > 3
+        labels:
+          severity: warn
+          component: secretd
+          family: secretd
+        annotations:
+          summary: "secretd keeps refusing a caller ({{ $labels.reason }})"
+          description: "secretd refused {{ $value | humanize }} {{ $labels.rpc }} request(s) in the last 15 minutes with reason {{ $labels.reason }}: a node that neither owns the app nor holds a grant, or a leaf that names no active node. An owner move can race a restore once; more is a schedd that stopped granting, or a node asking for apps it does not run. `journalctl -u faas-secretd --since -1h | grep refused` names the node and app."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/secretd.md"
+      - alert: FaasSecretdUnreferencedEntry
+        expr: sum(increase(faas_secretd_refusals_total{reason="unreferenced"}[15m])) > 0
+        labels:
+          severity: warn
+          component: secretd
+          family: secretd
+        annotations:
+          summary: "A node sent app-secret ciphertext while secretd requires references"
+          description: "secretd refused {{ $value | humanize }} entries in the last 15 minutes that carried ciphertext instead of naming the app's own app_secrets row, after faas_secretd_require_references was turned on. A schedd or vmmd still runs a release older than slice 3d-4: those wakes fail. Upgrade it, or turn the switch off until it is."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/secretd.md"
+      - alert: FaasSecretdDown
+        expr: up{job="secretd"} == 0
+        for: 2m
+        labels:
+          severity: page
+          component: secretd
+          family: secretd
+        annotations:
+          summary: "secretd is not answering on the control plane"
+          description: "Prometheus has not scraped secretd for 2 minutes. Compute nodes that open runtime secrets through secretd (faas_vmmd_secretd_open) cannot wake or cold-boot apps with secrets until it is back. `systemctl status faas-secretd`, then `journalctl -u faas-secretd -n 200`."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/secretd.md"
+
   # ADR-20261110183000: each host proves hourly that its platform binaries
   # and running daemons are the signed release's (gregalectl release verify).
   - name: release_integrity
@@ -1484,6 +1564,363 @@ groups:
   # the control plane down. These alerts put the same signal in the
   # Alertmanager review queue and the fleet dashboard while it is up, and
   # notice a probe that stopped running.
+  # Independent deployment intent keeps a never-installed or vanished probe visible.
+  # Status: 0 healthy, 1 missing, 2 stale, 3 invalid evidence, 4 content off,
+  # 5 budget mismatch, 6 failing validation. No intent means no healthy verdict.
+  # Values bind to the discovered job/node/node_id/instance before aggregation;
+  # counts retain all evidence so duplicate sources cannot look healthy.
+  - name: faas_serving_probe_coverage
+    interval: 1m
+    rules:
+      - record: faas_serving_probe:inventory_valid
+        expr: |
+          (0 * min(faas_serving_probe_inventory_configured{job="node"}) + 1)
+          and on() (count(faas_serving_probe_inventory_configured{job="node"}) == 1)
+          and on() ((min(faas_serving_probe_inventory_configured{job="node"}) == 0) or (min(faas_serving_probe_inventory_configured{job="node"}) == 1))
+          and on() (min(timestamp(faas_serving_probe_inventory_configured{job="node"})) >= time() - 120)
+          and on() (max(timestamp(faas_serving_probe_inventory_configured{job="node"})) <= time() + 30)
+          and on() (count(faas_serving_probe_expected_pairs{job="node"}) == 1)
+          and on() (min(faas_serving_probe_expected_pairs{job="node"}) >= 0)
+          and on() (max(faas_serving_probe_expected_pairs{job="node"}) <= 1000)
+          and on() ((count(faas_serving_probe_expected{job="node"} == 1) or vector(0)) == scalar(faas_serving_probe_expected_pairs{job="node"}))
+      - record: faas_serving_probe:inventory_status
+        expr: |
+          min(faas_serving_probe_inventory_configured{job="node"}) and on() faas_serving_probe:inventory_valid
+      - record: faas_serving_probe:expected
+        expr: |
+          max by (probe_node, url) (faas_serving_probe_expected{job="node"} == 1) and on() (faas_serving_probe:inventory_status == 1)
+      - record: faas_serving_probe:expected_budget
+        expr: |
+          min by (probe_node) (faas_serving_probe_expected_first_byte_seconds{job="node"})
+      - record: faas_serving_probe:expected_max_age
+        expr: |
+          min by (probe_node) (faas_serving_probe_expected_max_age_seconds{job="node"})
+      - record: faas_serving_probe:result_count
+        expr: |
+          count by (probe_node, url) (label_replace(faas_serving_probe_success{job="node-compute",node!="",url!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:result_value
+        expr: |
+          max by (probe_node, url) (label_replace((faas_serving_probe_success{job="node-compute",node!="",url!=""} and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:result_scrape_time
+        expr: |
+          min by (probe_node, url) (label_replace((timestamp(faas_serving_probe_success{job="node-compute",node!="",url!=""}) and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:node_scrape_count
+        expr: |
+          count by (probe_node) (label_replace(up{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:node_up
+        expr: |
+          min by (probe_node) (label_replace(up{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:node_scrape_time
+        expr: |
+          min by (probe_node) (label_replace(timestamp(up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:last_run
+        expr: |
+          min by (probe_node) (label_replace((faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node!=""} and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:last_run_count
+        expr: |
+          count by (probe_node) (label_replace(faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:content_enabled
+        expr: |
+          min by (probe_node) (label_replace((faas_serving_probe_content_check_enabled{job="node-compute",node!=""} and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:content_enabled_count
+        expr: |
+          count by (probe_node) (label_replace(faas_serving_probe_content_check_enabled{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:budget
+        expr: |
+          min by (probe_node) (label_replace((faas_serving_probe_first_byte_budget_seconds{job="node-compute",node!=""} and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:budget_count
+        expr: |
+          count by (probe_node) (label_replace(faas_serving_probe_first_byte_budget_seconds{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:node_fresh
+        expr: |
+          (faas_serving_probe:node_up == 1)
+          and on(probe_node) (faas_serving_probe:node_scrape_time >= time() - 120)
+          and on(probe_node) (faas_serving_probe:node_scrape_time <= time() + 30)
+          and on(probe_node) (faas_serving_probe:last_run >= on(probe_node) (time() - faas_serving_probe:expected_max_age))
+          and on(probe_node) (faas_serving_probe:last_run <= time() + 30)
+      - record: faas_serving_probe:fresh
+        expr: |
+          (faas_serving_probe:expected and on(probe_node, url) faas_serving_probe:result_count)
+          and on(probe_node) faas_serving_probe:node_fresh
+          and on(probe_node, url) (faas_serving_probe:result_scrape_time >= time() - 120)
+          and on(probe_node, url) (faas_serving_probe:result_scrape_time <= time() + 30)
+      - record: faas_serving_probe:valid
+        expr: |
+          faas_serving_probe:fresh
+          and on(probe_node) (faas_serving_probe:node_scrape_count == 1)
+          and on(probe_node) (faas_serving_probe:last_run_count == 1)
+          and on(probe_node) (faas_serving_probe:content_enabled_count == 1)
+          and on(probe_node) (faas_serving_probe:budget_count == 1)
+          and on(probe_node, url) (faas_serving_probe:result_count == 1)
+          and on(probe_node, url) ((faas_serving_probe:result_value == 0) or (faas_serving_probe:result_value == 1))
+          and on(probe_node) ((faas_serving_probe:content_enabled == 0) or (faas_serving_probe:content_enabled == 1))
+          and on(probe_node) (faas_serving_probe:budget > 0)
+          and on(probe_node) (faas_serving_probe:budget < Inf)
+          and on(probe_node) (faas_serving_probe:expected_budget > 0)
+          and on(probe_node) (faas_serving_probe:expected_budget < Inf)
+      - record: faas_serving_probe:missing
+        expr: |
+          faas_serving_probe:expected unless on(probe_node, url) faas_serving_probe:result_count
+      - record: faas_serving_probe:stale
+        expr: |
+          (faas_serving_probe:expected and on(probe_node, url) faas_serving_probe:result_count) unless on(probe_node, url) faas_serving_probe:fresh
+      - record: faas_serving_probe:invalid
+        expr: |
+          faas_serving_probe:fresh unless on(probe_node, url) faas_serving_probe:valid
+      - record: faas_serving_probe:content_disabled
+        expr: |
+          faas_serving_probe:valid and on(probe_node) (faas_serving_probe:content_enabled == 0)
+      - record: faas_serving_probe:budget_mismatch
+        expr: |
+          faas_serving_probe:valid unless on(probe_node) (faas_serving_probe:budget == on(probe_node) faas_serving_probe:expected_budget)
+      - record: faas_serving_probe:failing
+        expr: |
+          faas_serving_probe:valid and on(probe_node, url) (faas_serving_probe:result_value == 0)
+      - record: faas_serving_probe:coverage_state
+        expr: |
+          (faas_serving_probe:missing * 0 + 1)
+          or on(probe_node, url) (faas_serving_probe:stale * 0 + 2)
+          or on(probe_node, url) (faas_serving_probe:invalid * 0 + 3)
+          or on(probe_node, url) (faas_serving_probe:content_disabled * 0 + 4)
+          or on(probe_node, url) (faas_serving_probe:budget_mismatch * 0 + 5)
+          or on(probe_node, url) (faas_serving_probe:failing * 0 + 6)
+          or on(probe_node, url) (faas_serving_probe:expected * 0)
+      - record: faas_serving_probe:failure_code
+        expr: |
+          max by (probe_node, url) (label_replace((faas_serving_probe_failure_code{job="node-compute",node!="",url!=""} and on(job, node, node_id, instance) (up{job="node-compute",node!=""} == 1)), "probe_node", "$1", "node", "(.+)"))
+          and on(probe_node, url) faas_serving_probe:valid
+          and on(probe_node, url) (count by (probe_node, url) (label_replace(faas_serving_probe_failure_code{job="node-compute",node!="",url!=""}, "probe_node", "$1", "node", "(.+)")) == 1)
+          and on(probe_node, url) (min by (probe_node, url) (label_replace(timestamp(faas_serving_probe_failure_code{job="node-compute",node!="",url!=""}), "probe_node", "$1", "node", "(.+)")) == on(probe_node, url) faas_serving_probe:result_scrape_time)
+      - record: faas_serving_probe:first_failure_code
+        expr: |
+          max by (probe_node, url) (label_replace((faas_serving_probe_first_failure_code{job="node-compute",node!="",url!=""} and on(job, node, node_id, instance) (up{job="node-compute",node!=""} == 1)), "probe_node", "$1", "node", "(.+)"))
+          and on(probe_node, url) faas_serving_probe:valid
+          and on(probe_node, url) (count by (probe_node, url) (label_replace(faas_serving_probe_first_failure_code{job="node-compute",node!="",url!=""}, "probe_node", "$1", "node", "(.+)")) == 1)
+          and on(probe_node, url) (min by (probe_node, url) (label_replace(timestamp(faas_serving_probe_first_failure_code{job="node-compute",node!="",url!=""}), "probe_node", "$1", "node", "(.+)")) == on(probe_node, url) faas_serving_probe:result_scrape_time)
+      - record: faas_serving_probe:attempts
+        expr: |
+          max by (probe_node, url) (label_replace((faas_serving_probe_attempts{job="node-compute",node!="",url!=""} and on(job, node, node_id, instance) (up{job="node-compute",node!=""} == 1)), "probe_node", "$1", "node", "(.+)"))
+          and on(probe_node, url) faas_serving_probe:valid
+          and on(probe_node, url) (count by (probe_node, url) (label_replace(faas_serving_probe_attempts{job="node-compute",node!="",url!=""}, "probe_node", "$1", "node", "(.+)")) == 1)
+          and on(probe_node, url) (min by (probe_node, url) (label_replace(timestamp(faas_serving_probe_attempts{job="node-compute",node!="",url!=""}), "probe_node", "$1", "node", "(.+)")) == on(probe_node, url) faas_serving_probe:result_scrape_time)
+      - record: faas_serving_probe:http_status
+        expr: |
+          max by (probe_node, url) (label_replace((faas_serving_probe_http_status{job="node-compute",node!="",url!=""} and on(job, node, node_id, instance) (up{job="node-compute",node!=""} == 1)), "probe_node", "$1", "node", "(.+)"))
+          and on(probe_node, url) faas_serving_probe:valid
+          and on(probe_node, url) (count by (probe_node, url) (label_replace(faas_serving_probe_http_status{job="node-compute",node!="",url!=""}, "probe_node", "$1", "node", "(.+)")) == 1)
+          and on(probe_node, url) (min by (probe_node, url) (label_replace(timestamp(faas_serving_probe_http_status{job="node-compute",node!="",url!=""}), "probe_node", "$1", "node", "(.+)")) == on(probe_node, url) faas_serving_probe:result_scrape_time)
+      # Direct node-to-provider transport, separate from serving validation.
+      # All dependencies share this group so source guards evaluate first.
+      - record: faas_serving_probe_notification:expected
+        expr: |
+          label_replace(count by (probe_node) (faas_serving_probe:expected) * 0 + 1, "channel", "webhook", "", "")
+          or label_replace(count by (probe_node) (faas_serving_probe:expected) * 0 + 1, "channel", "heartbeat", "", "")
+      # The target value is the actual up sample timestamp, not evaluation time.
+      - record: faas_serving_probe_notification:target
+        expr: |
+          min by (job, node, node_id, instance) ((timestamp(up{job="node-compute",node!=""} == 1) >= time() - 120) <= time() + 30)
+          and on(node) (count by (node) (up{job="node-compute",node!=""}) == 1)
+      - record: faas_serving_probe_notification:source
+        expr: |
+          faas_serving_probe_notification:target
+          and on(job, node, node_id, instance)
+            (timestamp(faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node!=""}) == on(job, node, node_id, instance) group_left faas_serving_probe_notification:target)
+          and on(job, node, node_id, instance)
+            (faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node!=""} <= on(job, node, node_id, instance) group_left() (faas_serving_probe_notification:target + 30))
+          and on(node) label_replace(
+            faas_serving_probe:node_fresh
+            and on(probe_node) (faas_serving_probe:last_run_count == 1)
+            and on(probe_node) (faas_serving_probe:node_scrape_count == 1)
+            and on(probe_node) (faas_serving_probe:expected_max_age > 0)
+            and on(probe_node) (faas_serving_probe:expected_max_age < Inf)
+            and on(probe_node) (count by (probe_node) (faas_serving_probe_expected_max_age_seconds{job="node"}) == 1)
+            and on(probe_node) (min by (probe_node) (timestamp(faas_serving_probe_expected_max_age_seconds{job="node"})) >= time() - 120)
+            and on(probe_node) (max by (probe_node) (timestamp(faas_serving_probe_expected_max_age_seconds{job="node"})) <= time() + 30),
+            "node", "$1", "probe_node", "(.+)")
+          and on(node) label_replace(count by (probe_node) (faas_serving_probe_notification:expected), "node", "$1", "probe_node", "(.+)")
+      # Project only reviewed source labels; counts below include every original series.
+      - record: faas_serving_probe_notification:raw
+        expr: |
+          max by (job, node, node_id, instance, channel, field) (
+            label_replace(faas_serving_probe_notification_enabled{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "enabled", "", "")
+            or label_replace(faas_serving_probe_notification_attempted{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "attempted", "", "")
+            or label_replace(faas_serving_probe_notification_last_attempt_success{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "last_attempt_success", "", "")
+            or label_replace(faas_serving_probe_notification_last_attempt_failure_code{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "last_attempt_failure_code", "", "")
+            or label_replace(faas_serving_probe_notification_last_attempt_timestamp_seconds{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "last_attempt_timestamp_seconds", "", "")
+            or label_replace(faas_serving_probe_notification_last_success_timestamp_seconds{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "last_success_timestamp_seconds", "", "")
+          )
+      - record: faas_serving_probe_notification:scrape_time
+        expr: |
+          min by (job, node, node_id, instance, channel, field) (
+            label_replace(timestamp(faas_serving_probe_notification_enabled{job="node-compute",node!="",channel=~"webhook|heartbeat"}), "field", "enabled", "", "")
+            or label_replace(timestamp(faas_serving_probe_notification_attempted{job="node-compute",node!="",channel=~"webhook|heartbeat"}), "field", "attempted", "", "")
+            or label_replace(timestamp(faas_serving_probe_notification_last_attempt_success{job="node-compute",node!="",channel=~"webhook|heartbeat"}), "field", "last_attempt_success", "", "")
+            or label_replace(timestamp(faas_serving_probe_notification_last_attempt_failure_code{job="node-compute",node!="",channel=~"webhook|heartbeat"}), "field", "last_attempt_failure_code", "", "")
+            or label_replace(timestamp(faas_serving_probe_notification_last_attempt_timestamp_seconds{job="node-compute",node!="",channel=~"webhook|heartbeat"}), "field", "last_attempt_timestamp_seconds", "", "")
+            or label_replace(timestamp(faas_serving_probe_notification_last_success_timestamp_seconds{job="node-compute",node!="",channel=~"webhook|heartbeat"}), "field", "last_success_timestamp_seconds", "", "")
+          )
+      - record: faas_serving_probe_notification:count
+        expr: |
+          count by (probe_node, channel, field) (label_replace(
+            label_replace(faas_serving_probe_notification_enabled{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "enabled", "", "")
+            or label_replace(faas_serving_probe_notification_attempted{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "attempted", "", "")
+            or label_replace(faas_serving_probe_notification_last_attempt_success{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "last_attempt_success", "", "")
+            or label_replace(faas_serving_probe_notification_last_attempt_failure_code{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "last_attempt_failure_code", "", "")
+            or label_replace(faas_serving_probe_notification_last_attempt_timestamp_seconds{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "last_attempt_timestamp_seconds", "", "")
+            or label_replace(faas_serving_probe_notification_last_success_timestamp_seconds{job="node-compute",node!="",channel=~"webhook|heartbeat"}, "field", "last_success_timestamp_seconds", "", ""),
+            "probe_node", "$1", "node", "(.+)")
+          )
+      - record: faas_serving_probe_notification:field
+        expr: |
+          max by (probe_node, channel, field) (label_replace(
+            ((faas_serving_probe_notification:raw >= 0) < Inf)
+            and on(job, node, node_id, instance) faas_serving_probe_notification:source
+            and (faas_serving_probe_notification:scrape_time == on(job, node, node_id, instance) group_left faas_serving_probe_notification:source),
+            "probe_node", "$1", "node", "(.+)")
+          )
+          and on(probe_node, channel, field) (faas_serving_probe_notification:count == 1)
+      - record: faas_serving_probe_notification:enabled
+        expr: |
+          (
+            (max by (probe_node, channel) (faas_serving_probe_notification:field{field="enabled"}) == 0)
+            and on(probe_node, channel) (max by (probe_node, channel) (faas_serving_probe_notification:field{field="attempted"}) == 0)
+            unless on(probe_node, channel) max by (probe_node, channel) (faas_serving_probe_notification:count{field=~"last_.*"})
+          )
+          or on(probe_node, channel) (
+            (max by (probe_node, channel) (faas_serving_probe_notification:field{field="enabled"}) == 1)
+            and on(probe_node, channel) (max by (probe_node, channel) (faas_serving_probe_notification:field{field="attempted"}) == 0 or max by (probe_node, channel) (faas_serving_probe_notification:field{field="attempted"}) == 1)
+          )
+      - record: faas_serving_probe_notification:last_attempt_timestamp_seconds
+        expr: |
+          (max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_timestamp_seconds"}) > 0) <= time() + 30
+          and on(probe_node, channel) (faas_serving_probe_notification:enabled == 1)
+          and on(probe_node, channel) (max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_timestamp_seconds"})
+            <= on(probe_node) group_left()
+            (max by (probe_node) (label_replace(faas_serving_probe_notification:source, "probe_node", "$1", "node", "(.+)")) + 30))
+      - record: faas_serving_probe_notification:last_success_timestamp_seconds
+        expr: |
+          (max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_success_timestamp_seconds"}) > 0)
+          <= on(probe_node, channel) faas_serving_probe_notification:last_attempt_timestamp_seconds
+      - record: faas_serving_probe_notification:last_attempt_success
+        expr: |
+          (
+            (max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_success"}) == 1)
+            and on(probe_node, channel) (max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_failure_code"}) == 0)
+            and on(probe_node, channel)
+              (faas_serving_probe_notification:last_success_timestamp_seconds == on(probe_node, channel) faas_serving_probe_notification:last_attempt_timestamp_seconds)
+          )
+          or on(probe_node, channel) (
+            (max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_success"}) == 0)
+            and on(probe_node, channel) faas_serving_probe_notification:last_attempt_timestamp_seconds
+            and on(probe_node, channel) (
+              ((max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_failure_code"}) >= 1) <= 5)
+              and on(probe_node, channel) (max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_failure_code"}) == floor(max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_failure_code"})))
+              or (max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_failure_code"}) == 8)
+            )
+            unless on(probe_node, channel) (
+              max by (probe_node, channel) (faas_serving_probe_notification:count{field="last_success_timestamp_seconds"})
+              unless on(probe_node, channel) faas_serving_probe_notification:last_success_timestamp_seconds
+            )
+          )
+      # 0 disabled, 1 unknown, 2 last completed submission succeeded, 3 last completed submission failed.
+      - record: faas_serving_probe_notification:state
+        expr: |
+          (faas_serving_probe_notification:enabled == 0) * 0
+          or on(probe_node, channel) ((faas_serving_probe_notification:last_attempt_success == 1) * 0 + 2)
+          or on(probe_node, channel) ((faas_serving_probe_notification:last_attempt_success == 0) * 0 + 3)
+          or on(probe_node, channel) (faas_serving_probe_notification:expected * 0 + 1)
+      - record: faas_serving_probe_notification:last_attempt_failure_code
+        expr: |
+          max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_failure_code"})
+          and on(probe_node, channel) faas_serving_probe_notification:last_attempt_success
+      # An attempted request or any retained history requires a complete outcome.
+      - record: faas_serving_probe_notification:history_expected
+        expr: |
+          (max by (probe_node, channel) (faas_serving_probe_notification:count{field=~"last_.*"}) * 0 + 1)
+          or on(probe_node, channel)
+          ((max by (probe_node, channel) (faas_serving_probe_notification:field{field="attempted"}) == 1) * 0 + 1)
+      - record: faas_serving_probe_notification:missing_fields
+        expr: |
+          (faas_serving_probe_notification:expected
+            unless on(probe_node, channel) max by (probe_node, channel) (faas_serving_probe_notification:count{field="enabled"}))
+          or on(probe_node, channel) (faas_serving_probe_notification:expected
+            unless on(probe_node, channel) max by (probe_node, channel) (faas_serving_probe_notification:count{field="attempted"}))
+          or on(probe_node, channel) (faas_serving_probe_notification:history_expected
+            unless on(probe_node, channel) max by (probe_node, channel) (faas_serving_probe_notification:count{field="last_attempt_success"}))
+          or on(probe_node, channel) (faas_serving_probe_notification:history_expected
+            unless on(probe_node, channel) max by (probe_node, channel) (faas_serving_probe_notification:count{field="last_attempt_failure_code"}))
+          or on(probe_node, channel) (faas_serving_probe_notification:history_expected
+            unless on(probe_node, channel) max by (probe_node, channel) (faas_serving_probe_notification:count{field="last_attempt_timestamp_seconds"}))
+          or on(probe_node, channel) ((max by (probe_node, channel) (faas_serving_probe_notification:field{field="last_attempt_success"}) == 1)
+            unless on(probe_node, channel) max by (probe_node, channel) (faas_serving_probe_notification:count{field="last_success_timestamp_seconds"}))
+      # 0 complete outcome/disabled; 1 valid no-history; 2 missing fields;
+      # 3 invalid/inconsistent telemetry; 4 unavailable source (separate coverage alerts).
+      - record: faas_serving_probe_notification:evidence_status
+        expr: |
+          ((faas_serving_probe_notification:state != 1) * 0)
+          or on(probe_node, channel) ((faas_serving_probe_notification:expected
+            unless on(probe_node) max by (probe_node) (label_replace(faas_serving_probe_notification:source, "probe_node", "$1", "node", "(.+)"))) * 0 + 4)
+          or on(probe_node, channel) (((faas_serving_probe_notification:enabled == 1)
+            and on(probe_node, channel) (max by (probe_node, channel) (faas_serving_probe_notification:field{field="attempted"}) == 0)
+            unless on(probe_node, channel) max by (probe_node, channel) (faas_serving_probe_notification:count{field=~"last_.*"})) * 0 + 1)
+          or on(probe_node, channel) (faas_serving_probe_notification:missing_fields * 0 + 2)
+          or on(probe_node, channel) (faas_serving_probe_notification:expected * 0 + 3)
+      - alert: FaasServingProbeNotificationTelemetryDegraded
+        expr: |
+          ((faas_serving_probe_notification:evidence_status == 2) or (faas_serving_probe_notification:evidence_status == 3))
+          and on(probe_node, channel) (faas_serving_probe_notification:state == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: node
+          family: serving_probe_notifications
+          public_status: internal
+        annotations:
+          summary: "Serving probe {{ $labels.channel }} telemetry is degraded on {{ $labels.probe_node }}"
+          description: "An expected node has a fresh, unique probe source, but its {{ $labels.channel }} notification telemetry has remained unusable for five minutes. Evidence code {{ $value }}: 2 missing required fields, 3 invalid or inconsistent fields. Valid channels with no submission history and explicitly disabled channels do not trigger this warning. Inspect the node lookup and metrics writer; this is lost evidence, not a confirmed submission failure or recovery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbeNotificationTelemetryDegraded.md"
+      - alert: FaasServingProbeNotificationFailed
+        expr: faas_serving_probe_notification:last_attempt_failure_code and on(probe_node, channel) (faas_serving_probe_notification:state == 3)
+        for: 5m
+        labels:
+          severity: warn
+          component: node
+          family: serving_probe_notifications
+          public_status: internal
+        annotations:
+          summary: "Serving probe {{ $labels.channel }} submission failed on {{ $labels.probe_node }}"
+          description: "A fresh, unique probe source reports that its last completed {{ $labels.channel }} submission failed with code {{ $value }} and no later success is known. Codes: 1 DNS, 2 connection, 3 TLS, 4 timeout, 5 HTTP status, 8 unknown. Skipped runs retain this history. Check the node's journal and transport configuration; this is submission evidence, not a provider outage or human receipt."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbeNotificationFailed.md"
+
+      - record: faas_serving_probe:coverage_ratio
+        expr: |
+          ((count by (probe_node) (faas_serving_probe:coverage_state == 0)) or on(probe_node) (0 * count by (probe_node) (faas_serving_probe:expected)))
+          / on(probe_node) count by (probe_node) (faas_serving_probe:expected)
+      - alert: FaasServingProbeInventoryUnavailable
+        expr: absent(faas_serving_probe:inventory_valid)
+        for: 10m
+        labels:
+          severity: warn
+          component: node
+          family: serving_probe_coverage
+          public_status: internal
+        annotations:
+          summary: "Serving probe deployment inventory is unavailable"
+          description: "The independent control-plane inventory is missing, stale, ambiguous or inconsistent. Probe coverage cannot be assessed. Check node_exporter and converge the shared serving-probe fleet inventory before relying on coverage panels."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
+      - alert: FaasServingProbeCoverageDegraded
+        expr: faas_serving_probe:coverage_state > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: node
+          family: serving_probe_coverage
+          public_status: internal
+        annotations:
+          summary: "Serving probe coverage is degraded on {{ $labels.probe_node }}"
+          description: "The expected probe for {{ $labels.url }} has coverage state {{ $value }}: 1 missing result, 2 stale result, 3 invalid telemetry, 4 content validation disabled, 5 latency budget mismatch, 6 failing validation. Compare the shared fleet policy with this node's service, textfile and journal."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
+
   - name: faas_serving_probe
     interval: 1m
     rules:
@@ -1496,8 +1933,8 @@ groups:
           family: serving_probe
           public_status: internal
         annotations:
-          summary: "The serving probe on {{ $labels.instance }} cannot reach {{ $labels.url }}"
-          description: "Two attempts 30 s apart have missed a 2xx on every run for 10 minutes; faas_serving_probe_http_status shows the last status (0 means nothing answered). The node's webhook has already posted. If every compute node reports it, look at the edge or the probe app; if only one does, look at that node's network."
+          summary: "The serving probe on {{ $labels.instance }} failed validation for {{ $labels.url }}"
+          description: "Two attempts 30 s apart have failed status, configured body or first-byte checks on every run for 10 minutes. HTTP 200 can still fail validation; check the node's journal for the reason. The node posts directly to its webhook. If every compute node reports it, look at the edge or the probe app; if only one does, look at that node's network."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
 
       - alert: FaasServingProbeStale
@@ -2525,6 +2962,110 @@ groups:
           description: "The {{ $labels.consumer }} consumer rejected at least one app_changed payload during the last 10m. This usually indicates a mixed or broken producer contract and can leave lifecycle or security-policy caches stale."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNotificationPayloadRejected.md"
 
+  # Completed requests per configured receiver/integration, not merely
+  # notification attempts. The collector reads loopback metrics; independent
+  # deployment intent keeps a missing transport visible. ADR-20261113090000.
+  - name: faas_notification_receivers
+    interval: 30s
+    rules:
+      - record: faas_notification_receiver:source_up
+        expr: |
+          (faas_notification_receiver_collector_up{job="node"} == 1)
+          and (timestamp(faas_notification_receiver_collector_up{job="node"}) >= time() - 120)
+          and on(job,instance) (
+            (faas_notification_receiver_collector_last_run_timestamp_seconds{job="node"} >= time() - 120)
+            and (faas_notification_receiver_collector_last_run_timestamp_seconds{job="node"} <= time() + 30)
+            and (timestamp(faas_notification_receiver_collector_last_run_timestamp_seconds{job="node"}) >= time() - 120)
+          )
+          and on(job,instance) (up{job="node"} == 1)
+          and on() (count(faas_notification_receiver_collector_up{job="node"}) == 1)
+          and on() (count(faas_notification_receiver_collector_last_run_timestamp_seconds{job="node"}) == 1)
+
+      - record: faas_notification_receiver:collector_fresh
+        expr: max(faas_notification_receiver:source_up) or vector(0)
+
+      - record: faas_notification_receiver:expected
+        expr: |
+          max by(receiver,integration) (
+            (faas_notification_receiver_expected{job="node"} == 1)
+            and (timestamp(faas_notification_receiver_expected{job="node"}) >= time() - 120)
+            and on(job,instance) (up{job="node"} == 1)
+          )
+
+      - record: faas_notification_receiver:telemetry_present
+        expr: |
+          (count by(receiver,integration) (
+            (
+              (faas_notification_receiver_requests_total{job="node"} >= 0)
+              and (timestamp(faas_notification_receiver_requests_total{job="node"}) >= time() - 120)
+              and on(job,instance,receiver,integration) (
+                (faas_notification_receiver_failures_total{job="node"} >= 0)
+                and (timestamp(faas_notification_receiver_failures_total{job="node"}) >= time() - 120)
+              )
+              and on(job,instance,receiver,integration) (
+                (faas_notification_receiver_latency_seconds_total{job="node"} >= 0)
+                and (timestamp(faas_notification_receiver_latency_seconds_total{job="node"}) >= time() - 120)
+              )
+              and on(job,instance,receiver,integration) (
+                (faas_notification_receiver_last_success_observed_timestamp_seconds{job="node"} >= 0)
+                and (faas_notification_receiver_last_success_observed_timestamp_seconds{job="node"} <= time() + 30)
+                and (timestamp(faas_notification_receiver_last_success_observed_timestamp_seconds{job="node"}) >= time() - 120)
+              )
+            )
+            and on(job,instance) faas_notification_receiver:source_up
+          ) == 1)
+          and on(receiver,integration) faas_notification_receiver:expected
+
+      - alert: FaasNotificationReceiverCollectorUnavailable
+        expr: |
+          ((faas_notification_receiver:collector_fresh == 0)
+          or absent(faas_notification_receiver:expected))
+          and on() (up{job="alertmanager"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: alertmanager
+          family: notification_receivers
+          public_status: internal
+        annotations:
+          summary: "Per-receiver notification evidence is unavailable"
+          description: "Alertmanager is reachable, but the receiver collector or independent receiver inventory is missing, stale or invalid. Check the receiver-metrics timer and the receiver-name-in-metrics feature flag. Missing evidence cannot establish successful delivery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+
+      - alert: FaasNotificationReceiverTelemetryMissing
+        expr: |
+          (faas_notification_receiver:expected
+          unless on(receiver,integration) faas_notification_receiver:telemetry_present)
+          and on() (faas_notification_receiver:collector_fresh == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: alertmanager
+          family: notification_receivers
+          public_status: internal
+        annotations:
+          summary: "Configured notification receiver lacks transport evidence"
+          description: "The {{ $labels.receiver }} / {{ $labels.integration }} group is expected by deployment intent but has no complete, fresh transport evidence. Check configuration reload and collector errors; another receiver's success does not satisfy this expectation."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+
+      - alert: FaasNotificationReceiverRequestsFailing
+        expr: |
+          (sum by(receiver,integration) (
+            increase(faas_notification_receiver_failures_total{job="node"}[10m])
+            and on(job,instance) faas_notification_receiver:source_up
+          ) > 0)
+          and on(receiver,integration) faas_notification_receiver:telemetry_present
+        for: 2m
+        labels:
+          severity: warn
+          component: alertmanager
+          family: notification_receivers
+          public_status: internal
+        annotations:
+          summary: "Notification transport requests are failing for a receiver"
+          description: "The {{ $labels.receiver }} / {{ $labels.integration }} group recorded failed completed requests in the last ten minutes, including retry attempts. Inspect provider errors and verify firing and recovery receipts using the on-call procedure. Transport success does not prove human acknowledgement."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+
   # ────────────────────────────────────────────────────────────────────
   # Traffic anomaly recording rules (issue #303, ADR-039).
   # 3-day rolling baseline vs current 5m window. Series:
@@ -3356,6 +3897,21 @@ groups:
           description: "schedd destroyed {{ $value }} instance(s) of app {{ $labels.app }} in the last 15m for egress {{ $labels.reason }}: fanout means at least the plan's EgressNewDestinationsPerMinute new destinations in one minute, flood means at least EgressFloodDropsPerMinute new flows dropped against single destinations. Treat it as a likely scan, flood or other abuse from the node's egress address until reviewed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressAbuse.md"
 
+      # ADR-20261112120603: an instance stayed at 90% of its CPU quota for
+      # 15 minutes. Free instances are recycled in enforce mode; shadow mode
+      # and paid plans only record the signal, so every action warns for
+      # review.
+      - alert: FaasTenantCPUAbuse
+        expr: sum by (plan, action) (increase(schedd_cpu_abuse_signals_total[1h])) > 0
+        labels:
+          severity: warn
+          component: schedd
+          family: tenant_abuse
+        annotations:
+          summary: "Sustained CPU abuse signal ({{ $labels.plan }}, {{ $labels.action }})"
+          description: "schedd saw {{ $value }} {{ $labels.plan }} instance(s) pinned at 90% or more of their CPU quota for 15 minutes in the last hour (action {{ $labels.action }}: recycled destroys a Free instance in enforce mode, shadow records a Free signal without acting, flagged records a paid one). The instance.cpu_abuse audit event names the app and account. Treat a Free signal as likely mining until reviewed."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantCPUAbuse.md"
+
       # ADR-373: a guest looked up a blocklisted name (mining pool or an
       # operator feed entry).
       - alert: FaasGuestDNSBlocked
@@ -3404,7 +3960,7 @@ groups:
           family: tenant_abuse
         annotations:
           summary: "Account abuse hold placed ({{ $labels.reason }})"
-          description: "schedd placed {{ $value }} account abuse hold(s) in the last 15m. Every workload of the held account is stopped and refused until an operator releases the hold. Review the account's egress before releasing it."
+          description: "schedd placed {{ $value }} account abuse hold(s) in the last 15m. Every workload of the held account is stopped and refused until an operator releases the hold. Review the account's egress (egress_fanout, egress_flood) or CPU use (cpu_sustained) before releasing it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressAbuse.md"
 
       # ─────────────────────────────────────────────────────────────────
@@ -3749,6 +4305,20 @@ groups:
         annotations:
           summary: "Many AI gateway calls have no price"
           description: "More than a tenth of settled AI calls cost zero for 1h because their model has no price, so usage reports undercount and cost caps refuse those models. Refresh the built-in price catalog, or check whether one account calls an unlisted model."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+      # ADR 20261027132936 amendment 1: the flag alone serves no app; apps
+      # reach the gateway only through the app relay (ADR-989).
+      - alert: FaasAIGatewayEnabledWithoutAppRelay
+        expr: (max(outbound_ai_gateway_enabled) == 1) and on() (max(outbound_ai_app_relay_ready) == 0)
+        for: 10m
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "The AI gateway is on but apps cannot reach it"
+          description: "The ai_gateway platform flag is on while no outboundd serves the app relay, so deployed apps get no GREGALE_OUTBOUND_URL path to the gateway. Set faas_outboundd_relay_listen and the vmmd relay switches after the workload-identity key is installed, or turn the flag off."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
 
       # A rollout should converge to one daemon release. This catches a
@@ -4756,6 +5326,22 @@ groups:
         annotations:
           summary: "vmmd refuses to boot {{ $labels.base }} ({{ $labels.reason }}) on {{ $labels.node }}"
           description: "vmmd's base scan gate has kept refusing boots on {{ $labels.base }} for fifteen minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
+
+      # Deploy-path review P5: a scan that newly finds a fixable CRITICAL in a
+      # base keeps admitting boots of apps already serving on it for
+      # api.BaseScanCriticalBootGrace (72 h) while new deployments on it are
+      # refused. Boots are sparse on a quiet base, so look back an hour; the
+      # base is refused outright when the grace ends.
+      - alert: FaasBaseScanCriticalInGrace
+        expr: sum by (node, base) (increase(vmmd_base_scan_grace_admits_total[1h])) > 0
+        labels:
+          severity: page
+          component: vmmd
+          family: base_scan_gate
+        annotations:
+          summary: "{{ $labels.base }} has a fixable CRITICAL; serving apps boot on grace, new deploys refused"
+          description: "A scan of {{ $labels.base }} found a fix-available CRITICAL vulnerability. vmmd on {{ $labels.node }} keeps booting apps already serving on it for 72 hours from the first finding, but every new deployment on the runtime fails with scan_critical. Publish a patched base before the grace ends, or every boot on it is refused and FaasBaseScanRefusingBoots follows."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
       # Bug hunt 2026-10-28 H102: a shared-base scan that fails for a reason
@@ -6785,6 +7371,23 @@ groups:
           summary: "realtimed on {{ $labels.instance }} keeps losing its live-query hub connections"
           description: "More than three hub connections dropped in 15m. Subscriptions go stale until realtimed redials and resubscribes them. Check the hub's health, its TLS certificates and the network path to it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+  - name: faas_customer_attention
+    interval: 1m
+    rules:
+      - alert: FaasCustomerAttentionSpike
+        expr: |
+          (max by (kind) (apid_customer_attention_signals_open)
+            - max by (kind) (apid_customer_attention_signals_open offset 1h)) >= 10
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: customer_attention
+        annotations:
+          summary: "{{ $value }} more customers look stuck ({{ $labels.kind }}) than an hour ago"
+          description: "apid's customer attention evaluator opened at least ten more {{ $labels.kind }} signals within an hour. Many customers failing the same way at once usually means a platform cause (a builder image, a certificate authority, a new refusal code) rather than customer mistakes. Check the staff page of customers who may be stuck and the per-code refusal counter before contacting customers."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerAttentionSpike.md"
 
   - name: faas_stale_deployments
     interval: 30s
@@ -9934,3 +10537,75 @@ groups:
           summary: "Manual profile captures wait more than two minutes to start"
           description: "The 95th percentile time a manual capture waited queued exceeded 120 s for 10 minutes. Each schedd runs four captures at a time and claims manual captures first; a capture still queued after 10 minutes fails as interrupted. Check that schedd drains captures and how long captures hold their slots."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasProfileCaptures.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # neond, the Neon key holder (ADR-20261112160000). apid's Neon calls go
+  # through it once the broker is on, so neond down stops managed PostgreSQL
+  # control (the databases keep running). Refusals and rate limits mean apid
+  # asked for something the policy forbids: a bug, a loop or an exploit.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_neond
+    interval: 30s
+    rules:
+      - alert: FaasNeondDown
+        expr: up{job="neond"} == 0
+        for: 5m
+        labels:
+          severity: page
+          component: neond
+          family: managed_postgres
+          public_status: internal
+        annotations:
+          summary: "neond is down"
+          description: "Prometheus cannot scrape neond for 5m. With the broker on, every managed PostgreSQL create, delete, resize and cap write fails as unavailable and the cap sweep skips its pass; Neon keeps running the databases. Check systemctl status faas-neond and its journal."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md"
+
+      - alert: FaasNeondRateLimited
+        expr: sum(increase(neond_requests_total{decision="rate_limited"}[15m])) > 0
+        labels:
+          severity: page
+          component: neond
+          family: managed_postgres
+          public_status: internal
+        annotations:
+          summary: "neond refused destructive Neon calls over the rate limit"
+          description: "apid asked neond for more project, branch, endpoint, snapshot or role deletes than the hourly limit allows, fleet-wide or for one account. neond refused them. A loop or a compromised apid deletes in bulk; find the account in neond's 'destructive call rate limit reached' log lines before raising a limit."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md"
+
+      - alert: FaasNeondRefusing
+        expr: sum(increase(neond_requests_total{decision=~"refused|denied"}[15m])) > 0
+        labels:
+          severity: warn
+          component: neond
+          family: managed_postgres
+          public_status: internal
+        annotations:
+          summary: "neond refused Neon calls apid made"
+          description: "apid asked neond for a call off the allow-list, a delete of what a live database runs on, or a quota write or role delete on a project no database names. Each one is a bug or an attempt; read neond's 'call refused' and 'call not on the allow-list' log lines."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md"
+
+      - alert: FaasNeondProjectKeysFailing
+        expr: sum(increase(neond_project_keys_total{outcome="error"}[1h])) > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: neond
+          family: managed_postgres
+          public_status: internal
+        annotations:
+          summary: "neond cannot mint, revoke or rotate Neon project keys"
+          description: "Project key operations have failed for 30m. Projects without a usable key fall back to the admin key and a revoked project keeps a key until the sweep retries. Check the admin key is an organization Admin's, the neon seal domain is loaded and Neon is reachable."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md"
+
+      - alert: FaasNeondBackfillStalled
+        expr: neond_projects_without_key > 0
+        for: 2h
+        labels:
+          severity: warn
+          component: neond
+          family: managed_postgres
+          public_status: internal
+        annotations:
+          summary: "Neon projects have been without a project key for over two hours"
+          description: "The key sweep mints up to 50 keys every 10 minutes, so the backfill should finish within hours. Projects still without a key are called with the admin key. Check FaasNeondProjectKeysFailing and neond's 'key sweep' log lines."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md"

@@ -32,6 +32,10 @@ export type DatabaseSwitch = {
    */
   undone_deployment_ids: Array<string>;
   /**
+   * True for a restore that moves the app to the copy without changing its code; the target deployment is the release that served when it was requested.
+   */
+  keeps_release?: boolean;
+  /**
    * The database the app leaves. It keeps every write.
    */
   source_database_id: string;

@@ -6,15 +6,17 @@ Severity: page.
 
 ## Symptom
 
-A scheduled synthetic deploy failed. Something between `gregale deploy` and a
-200 from the app's health path is broken **right now**, on the release that is
-currently serving.
+A scheduled synthetic deploy failed, or it passed but could not report success
+to its independent heartbeat monitor. The alert summary and failing workflow
+step distinguish these cases. An acceptance failure means something between
+`gregale deploy` and a 200 from the app's health path is broken on the release
+that is currently serving.
 
 Unlike every other page in this directory, this alert is not derived from a
-metric. It is the outcome of
+metric. It comes from the workflow that runs
 `deploy/scripts/production-release-acceptance.sh` — the same script
-`cd-platform` runs as its final release gate — executed against production on
-a six-hourly schedule.
+`cd-platform` runs as its final release gate — against production every six
+hours and reports successful scheduled runs to an external monitor.
 
 ## Why this alert exists
 
@@ -36,14 +38,55 @@ The precedent is PR #1286: `FAAS_FUNCTION_RUNNER_*` was unset on imaged, so
 every function deploy failed platform-wide while warm instances kept serving
 existing traffic. No passive metric could see it.
 
-So: **a green dashboard does not contradict this alert.** If the two disagree,
-this one is the one describing a customer's experience.
+When acceptance failed, **a green dashboard does not contradict this alert**:
+the canary directly exercises a customer's deploy path. A heartbeat-only
+failure means that path passed but its independent monitoring needs repair.
 
 ## First moves
 
 The annotation carries a `run_url`. Open it — the failing step's log is the
 tail that was also embedded in the alert description, and it names which phase
 failed.
+
+The SSH preflight runs before any deployment probe. Failure at this stage
+means customer deployment health was **not tested**. The workflow prints fixed
+`canary-ssh` codes without host addresses, keys or raw connection errors:
+
+| Code | Meaning |
+|---|---|
+| `ssh_configuration_missing` / `ssh_host_invalid` | Missing control-plane host/key, or an invalid host value. |
+| `ssh_host_pins_missing` | No operator-provided `COMPUTE_KNOWN_HOSTS` pins. |
+| `ssh_host_keys_unavailable` / `ssh_host_scan_timeout` | No keys were obtained, or the whole scan timed out. Check reachability before concluding a key changed. |
+| `ssh_host_key_untrusted` | A presented key did not match the pins, or strict verification failed during authentication. Independently verify the host identity before updating pins. |
+| `ssh_authentication_failed` | The pinned host rejected authentication. |
+| `ssh_preflight_failed` / `ssh_preflight_timeout` | The authenticated no-op did not complete. Review control-plane connectivity and SSH service health. |
+
+The scan has a 15-second deadline and authentication a 20-second deadline,
+each with at most five more seconds before forced termination. Subsequent
+connections use batch authentication, one connection attempt, a ten-second
+connection timeout and SSH keepalives. Keys and readiness are kept in a private
+runner-local directory; failed setup clears earlier readiness.
+
+If setup failed, notification skips SSH and tries the independent
+`CANARY_FALLBACK_WEBHOOK_URL` immediately. Otherwise the complete Alertmanager
+submission attempt has a 120-second deadline plus at most five seconds before
+forced termination, then fallback has a three-second connection timeout and
+15-second total limit. The failure-notification step has a three-minute budget.
+The original job remains failed even if notification submission succeeds.
+
+`notification_submitted_alertmanager` and `notification_submitted_fallback`
+mean only that the submission returned success, not that the operator received
+it. Missing fallback configuration reports `fallback_unconfigured`; transport
+errors or non-2xx responses (including redirects) report
+`fallback_submission_failed`. Raw webhook URLs, errors and responses are not
+printed. Both submission paths still require the existing delivery qualification.
+
+If the heartbeat step failed, use the
+[missing-run monitor procedure](../ops/synthetic-canary-heartbeat.md). Its
+fixed error code identifies missing configuration, an invalid URL or failed
+delivery. Do not print the secret URL or repeat an ad-hoc success ping. An
+external missed-ping alarm can also arrive without any failed workflow run;
+check for a disabled schedule, queued job, runner loss or cancellation.
 
 The script covers several phases; the log tells you which one:
 

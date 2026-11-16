@@ -251,10 +251,110 @@ func TestReleaseAcceptanceVerifyNodeRequiresAnInstanceAndABuildOnTheNode(t *test
 		t.Fatalf("proven node rejected: code=%d report=%+v stderr=%s", code, report, stderr.String())
 	}
 
+	if report.InstanceEvidence != "acceptance" {
+		t.Fatalf("canary instance evidence = %q, want acceptance", report.InstanceEvidence)
+	}
+
 	if code, _ := verify("canary-a", "canary-a"); code != 1 {
 		t.Fatalf("duplicate slug code=%d, want 1", code)
 	}
 	if code := cmdReleaseAcceptanceVerifyNode([]string{"--slugs", "canary-a"}); code != 2 {
 		t.Fatalf("missing --node code=%d, want 2", code)
+	}
+}
+
+// rc.347: fsn-3 activated second, beside an empty fsn-2. Placement sent all
+// six canary apps to fsn-2; fsn-3 built one and kept serving customer
+// instances it started after activation. With --since, an instance the node
+// started at or after that time proves it serves; an older one does not.
+func TestReleaseAcceptanceVerifyNodeAcceptsAnInstanceStartedSinceActivation(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	account, err := ensureReleaseAcceptanceAccount(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.UpsertComputeNode(ctx, state.ComputeNode{ID: "node-fsn-3", Name: "fsn-3.faas", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The canary app: built on the target, placed on the other node.
+	canary, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "canary-fsn-3", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: canary.ID, Kind: state.DeploymentKindTarball})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := store.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 1024, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateBuildStatus(ctx, build.ID, state.BuildRunning, "", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateBuildStatus(ctx, build.ID, state.BuildSucceeded, "", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateBuildProvenance(ctx, state.BuildProvenance{BuildID: build.ID, SourceSHA256: "sha256:src", BuilderNodeID: target.Name}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstance(ctx, canary.ID, dep.ID, string(state.StateRunning), 128, other.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	// A customer instance running on the target.
+	customerAccount, err := store.CreateAccount(ctx, "customer@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	customer, err := store.CreateApp(ctx, state.App{AccountID: customerAccount.ID, Slug: "customer-app", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	customerDep, err := store.CreateDeployment(ctx, state.Deployment{AppID: customer.ID, Kind: state.DeploymentKindTarball})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstance(ctx, customer.ID, customerDep.ID, string(state.StateRunning), 128, target.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	slugs := []string{"canary-fsn-3"}
+
+	// Without --since only canary instances count.
+	report, err := releaseAcceptanceVerifyNode(ctx, store, "fsn-3", slugs, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Instance || report.Ready || !report.Build {
+		t.Fatalf("no --since: report=%+v, want built but not serving", report)
+	}
+	// The instance started before the node activated: not evidence.
+	report, err = releaseAcceptanceVerifyNode(ctx, store, "fsn-3", slugs, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Instance || report.Ready {
+		t.Fatalf("instance older than --since counted: report=%+v", report)
+	}
+	// Started since activation: the node serves.
+	report, err = releaseAcceptanceVerifyNode(ctx, store, "fsn-3", slugs, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Instance || !report.Ready || report.InstanceEvidence != "node" {
+		t.Fatalf("instance started since activation rejected: report=%+v", report)
+	}
+
+	// The flag takes RFC 3339 and refuses anything else.
+	if code := cmdReleaseAcceptanceVerifyNode([]string{"--node", "fsn-3", "--slugs", "canary-fsn-3", "--since", "yesterday"}); code != 2 {
+		t.Fatalf("bad --since code=%d, want 2", code)
 	}
 }

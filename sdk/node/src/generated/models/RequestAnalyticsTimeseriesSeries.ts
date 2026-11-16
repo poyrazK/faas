@@ -8,7 +8,7 @@ import type { RequestAnalyticsTimeseriesPoint } from './RequestAnalyticsTimeseri
  */
 export type RequestAnalyticsTimeseriesSeries = {
   value: string;
-  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER';
   points: Array<RequestAnalyticsTimeseriesPoint>;
 };
 

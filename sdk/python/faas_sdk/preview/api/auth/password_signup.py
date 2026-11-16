@@ -92,9 +92,9 @@ def sync_detailed(
 
     Args:
         body (PasswordSignupRequest): Email + password for signup. Same shape as
-            PasswordLoginRequest so the create-or-claim race detection reuses the verifier.
+            PasswordLoginRequest with an optional referral code.
         body (PasswordSignupRequest): Email + password for signup. Same shape as
-            PasswordLoginRequest so the create-or-claim race detection reuses the verifier.
+            PasswordLoginRequest with an optional referral code.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -133,9 +133,9 @@ def sync(
 
     Args:
         body (PasswordSignupRequest): Email + password for signup. Same shape as
-            PasswordLoginRequest so the create-or-claim race detection reuses the verifier.
+            PasswordLoginRequest with an optional referral code.
         body (PasswordSignupRequest): Email + password for signup. Same shape as
-            PasswordLoginRequest so the create-or-claim race detection reuses the verifier.
+            PasswordLoginRequest with an optional referral code.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,9 +169,9 @@ async def asyncio_detailed(
 
     Args:
         body (PasswordSignupRequest): Email + password for signup. Same shape as
-            PasswordLoginRequest so the create-or-claim race detection reuses the verifier.
+            PasswordLoginRequest with an optional referral code.
         body (PasswordSignupRequest): Email + password for signup. Same shape as
-            PasswordLoginRequest so the create-or-claim race detection reuses the verifier.
+            PasswordLoginRequest with an optional referral code.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -208,9 +208,9 @@ async def asyncio(
 
     Args:
         body (PasswordSignupRequest): Email + password for signup. Same shape as
-            PasswordLoginRequest so the create-or-claim race detection reuses the verifier.
+            PasswordLoginRequest with an optional referral code.
         body (PasswordSignupRequest): Email + password for signup. Same shape as
-            PasswordLoginRequest so the create-or-claim race detection reuses the verifier.
+            PasswordLoginRequest with an optional referral code.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

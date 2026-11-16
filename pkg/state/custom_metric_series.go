@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // Labelled custom metric series (ADR-20261108160000 slice C). A series is one
@@ -100,11 +102,14 @@ func (s *PgStore) PutCustomMetricSeries(ctx context.Context, appID string, w Cus
 	if err != nil {
 		return fmt.Errorf("state: encode custom metric labels: %w", err)
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return fmt.Errorf("state: begin custom metric series write: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := sqlc.New().LockCustomMetricAdmission(ctx, tx, appID); err != nil {
+		return fmt.Errorf("lock custom metric series admission: %w", err)
+	}
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO app_custom_metrics (app_id, name, value, observed_at, kind)
@@ -114,13 +119,17 @@ func (s *PgStore) PutCustomMetricSeries(ctx context.Context, appID string, w Cus
 	`, appID, w.Name, w.ObservedAt, w.Kind, lim.Names); err != nil {
 		return fmt.Errorf("state: admit custom metric %q: %w", w.Name, err)
 	}
-	var exists bool
+	var previousKind string
+	var previousAt time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT true FROM app_custom_metrics WHERE app_id = $1::uuid AND name = $2::text FOR UPDATE
-	`, appID, w.Name).Scan(&exists); errors.Is(err, pgx.ErrNoRows) {
+		SELECT kind,observed_at FROM app_custom_metrics WHERE app_id = $1::uuid AND name = $2::text FOR UPDATE
+	`, appID, w.Name).Scan(&previousKind, &previousAt); errors.Is(err, pgx.ErrNoRows) {
 		return ErrCustomMetricLimit
 	} else if err != nil {
 		return fmt.Errorf("state: lock custom metric %q: %w", w.Name, err)
+	}
+	if !w.Delta && previousKind != w.Kind && metricObservationStale(previousAt, w.ObservedAt, time.Now()) {
+		return nil
 	}
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM app_custom_metric_series
@@ -144,13 +153,22 @@ func (s *PgStore) PutCustomMetricSeries(ctx context.Context, appID string, w Cus
 		           CASE WHEN $11::boolean THEN app_custom_metric_series.value + $6::double precision
 		                ELSE $6::double precision END, 0), $10::double precision),
 		       labels = EXCLUDED.labels,
-		       observed_at = GREATEST(app_custom_metric_series.observed_at, EXCLUDED.observed_at)
+		       observed_at = CASE WHEN app_custom_metric_series.observed_at>now()+$12::integer*interval '1 second' THEN EXCLUDED.observed_at ELSE GREATEST(app_custom_metric_series.observed_at, EXCLUDED.observed_at) END
+ WHERE $11::boolean OR app_custom_metric_series.observed_at<=EXCLUDED.observed_at
+ OR app_custom_metric_series.observed_at>now()+$12::integer*interval '1 second'
 	`, appID, w.Name, w.SeriesKey, labelsJSON, w.Kind, w.Value, w.ObservedAt,
-		lim.SeriesPerMetric, lim.SeriesPerApp, customMetricMaxTotal, w.Delta)
+		lim.SeriesPerMetric, lim.SeriesPerApp, customMetricMaxTotal, w.Delta, int(api.CustomMetricClockSkew/time.Second))
 	if err != nil {
 		return fmt.Errorf("state: put custom metric %q series: %w", w.Name, err)
 	}
 	if tag.RowsAffected() == 0 {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app_custom_metric_series WHERE app_id=$1::uuid AND name=$2::text AND series_key=$3::text)`, appID, w.Name, w.SeriesKey).Scan(&exists); err != nil {
+			return fmt.Errorf("check custom metric series admission: %w", err)
+		}
+		if exists {
+			return nil
+		}
 		return ErrCustomMetricSeriesLimit
 	}
 	if _, err := tx.Exec(ctx, `
@@ -216,10 +234,10 @@ func (s *PgStore) ListFreshCustomMetricSeries(ctx context.Context, since time.Ti
 	rows, err := s.pool.Query(ctx, `
 		SELECT app_id::text, name, series_key, value
 		  FROM app_custom_metric_series
-		 WHERE observed_at >= $1::timestamptz OR kind = 'counter'
+		 WHERE (observed_at >= $1::timestamptz OR kind = 'counter') AND observed_at <= $3::timestamptz
 		 ORDER BY app_id, name, series_key
 		 LIMIT $2::int
-	`, since, limit)
+	`, since, limit, since.Add(time.Duration(api.CustomMetricFreshnessSeconds)*time.Second))
 	if err != nil {
 		return nil, fmt.Errorf("state: list fresh custom metric series: %w", err)
 	}
@@ -263,6 +281,9 @@ func (m *MemStore) PutCustomMetricSeries(_ context.Context, appID string, w Cust
 		}
 		metric = CustomMetric{Name: w.Name, ObservedAt: w.ObservedAt, Kind: w.Kind}
 	}
+	if exists && metric.Kind != w.Kind && !w.Delta && metricObservationStale(metric.ObservedAt, w.ObservedAt, time.Now()) {
+		return nil
+	}
 	bySeries := m.customMetricSeries[appID]
 	if bySeries == nil {
 		bySeries = map[string]map[string]CustomMetricSeries{}
@@ -277,6 +298,9 @@ func (m *MemStore) PutCustomMetricSeries(_ context.Context, appID string, w Cust
 		}
 	}
 	prev, seriesExists := series[w.SeriesKey]
+	if seriesExists && !w.Delta && metricObservationStale(prev.ObservedAt, w.ObservedAt, time.Now()) {
+		return nil
+	}
 	if !seriesExists {
 		appSeries := len(series)
 		for name, rows := range bySeries {
@@ -294,7 +318,7 @@ func (m *MemStore) PutCustomMetricSeries(_ context.Context, appID string, w Cust
 		if w.Delta {
 			value += prev.Value
 		}
-		if prev.ObservedAt.After(observed) {
+		if prev.ObservedAt.After(observed) && !prev.ObservedAt.After(time.Now().Add(api.CustomMetricClockSkew)) {
 			observed = prev.ObservedAt
 		}
 	}
@@ -353,7 +377,7 @@ func (m *MemStore) ListFreshCustomMetricSeries(_ context.Context, since time.Tim
 	for appID, byName := range m.customMetricSeries {
 		for _, rows := range byName {
 			for _, row := range rows {
-				if !row.ObservedAt.Before(since) || row.Kind == CustomMetricKindCounter {
+				if (!row.ObservedAt.Before(since) || row.Kind == CustomMetricKindCounter) && !row.ObservedAt.After(since.Add(time.Duration(api.CustomMetricFreshnessSeconds)*time.Second)) {
 					out = append(out, CustomMetricSeriesSample{AppID: appID, Name: row.Name, SeriesKey: row.SeriesKey, Value: row.Value})
 				}
 			}
@@ -373,4 +397,12 @@ func (m *MemStore) ListFreshCustomMetricSeries(_ context.Context, since time.Tim
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func metricObservationStale(previous, incoming, now time.Time) bool {
+	if !previous.After(incoming) {
+		return false
+	}
+	legacyFuture := previous.After(now.Add(api.CustomMetricClockSkew))
+	return !legacyFuture || incoming.After(now.Add(api.CustomMetricClockSkew))
 }

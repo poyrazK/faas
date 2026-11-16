@@ -79,7 +79,9 @@ func (m *scannerMemo) current(now time.Time) (deployScanner, bool) {
 }
 
 // reusableDeployScan returns a copy of an earlier deployment's complete scan
-// of the same artifact by the current scanner, or nil.
+// of the same artifact by the current scanner, or nil. It searches the app's
+// recent deployments and then the deployment a reused layer was copied from
+// (ADR-20261112170911), which may belong to another app of the account.
 func (h *Handler) reusableDeployScan(ctx context.Context, app state.App, dep state.Deployment, artifactDigest string) *ScanResult {
 	if app.SecurityPolicy == api.AppSecurityPolicyEnforce || artifactDigest == "" {
 		return nil
@@ -94,20 +96,31 @@ func (h *Handler) reusableDeployScan(ctx context.Context, app state.App, dep sta
 		return nil
 	}
 	for _, prior := range recent {
-		if prior.ID == dep.ID || prior.ScanStatus != "complete" {
+		if prior.ID == dep.ID {
 			continue
 		}
-		result := decodeScanEvidence(prior.ScanResult)
-		if result == nil || result.Error != "" || result.ArtifactDigest != artifactDigest {
-			continue
+		if reused := reusableScanOf(prior, artifactDigest, scanner); reused != nil {
+			return reused
 		}
-		if id, ok := scannerOf(result); !ok || id != scanner {
-			continue
-		}
-		reused := *result
-		reused.Vulnerabilities = append([]Vulnerability{}, result.Vulnerabilities...)
-		reused.ReusedFrom = prior.ID
-		return &reused
 	}
-	return nil
+	return h.layerScanSourceResult(ctx, app, dep, artifactDigest, scanner)
+}
+
+// reusableScanOf returns a copy of prior's complete scan when it covers
+// artifactDigest and came from scanner, or nil.
+func reusableScanOf(prior state.Deployment, artifactDigest string, scanner deployScanner) *ScanResult {
+	if prior.ScanStatus != "complete" {
+		return nil
+	}
+	result := decodeScanEvidence(prior.ScanResult)
+	if result == nil || result.Error != "" || result.ArtifactDigest != artifactDigest {
+		return nil
+	}
+	if id, ok := scannerOf(result); !ok || id != scanner {
+		return nil
+	}
+	reused := *result
+	reused.Vulnerabilities = append([]Vulnerability{}, result.Vulnerabilities...)
+	reused.ReusedFrom = prior.ID
+	return &reused
 }

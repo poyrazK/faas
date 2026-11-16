@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -23,7 +24,9 @@ type devSourceMetadata struct {
 	base    string
 	target  string
 	deleted []string
-	seen    map[string]bool
+	// buildNow opts this sync out of build coalescing (ADR-20261021221906).
+	buildNow bool
+	seen     map[string]bool
 }
 
 func (m *devSourceMetadata) readField(name string, part *multipart.Part) *api.Problem {
@@ -51,6 +54,8 @@ func (m *devSourceMetadata) readField(name string, part *multipart.Part) *api.Pr
 		if err := json.Unmarshal(b, &m.deleted); err != nil {
 			return api.ErrSourceInvalid("dev_source_deleted must be a JSON string array")
 		}
+	case "dev_source_build_now":
+		m.buildNow = strings.TrimSpace(string(b)) == "true"
 	}
 	return nil
 }
@@ -75,7 +80,10 @@ func sourceDeltaLimits(limits api.Limits) sourcedelta.Limits {
 	return sourcedelta.Limits{
 		MaxEntries:         api.SourceArchiveMaxEntries,
 		MaxCompressedBytes: int64(limits.SourceTarballMaxMB) * 1024 * 1024,
-		MaxExpandedBytes:   int64(limits.SourceTarballMaxMB) * 1024 * 1024,
+		// The expanded tree has the same ceiling as an ordinary source deploy;
+		// capping it at the compressed upload size refused text-heavy trees
+		// that `gregale deploy` accepts.
+		MaxExpandedBytes: api.SourceArchiveMaxExpandedBytes,
 	}
 }
 
@@ -100,8 +108,8 @@ func (s *server) prepareDevSource(acct state.Account, app state.App, uploadedPat
 		return uploadedPath, manifest.CompressedBytes, nil
 	}
 
-	s.devSourceCacheMu.Lock()
-	defer s.devSourceCacheMu.Unlock()
+	unlock := s.devSourceCacheLocks.lock(s.devSourceCacheDir(acct, app))
+	defer unlock()
 	basePath, ok := s.devSourceBasePath(acct, app, meta.base)
 	if !ok {
 		return "", 0, api.ErrDevSourceBaseMissing()
@@ -168,9 +176,9 @@ func (s *server) publishDevSource(acct state.Account, app state.App, sourcePath,
 	if !ok {
 		return errors.New("invalid developer source revision")
 	}
-	s.devSourceCacheMu.Lock()
-	defer s.devSourceCacheMu.Unlock()
 	dir := s.devSourceCacheDir(acct, app)
+	unlock := s.devSourceCacheLocks.lock(dir)
+	defer unlock()
 	if err := os.MkdirAll(dir, 0o770); err != nil {
 		return fmt.Errorf("create developer source cache: %w", err)
 	}
@@ -224,7 +232,50 @@ func (s *server) publishDevSource(acct state.Account, app state.App, sourcePath,
 			_ = os.Remove(filepath.Join(dir, entry.Name()))
 		}
 	}
+	// The whole-cache prune walks every app's bases; one prune at a time is
+	// enough, and a sync never waits for another app's prune.
+	if !s.devSourcePruneMu.TryLock() {
+		return nil
+	}
+	defer s.devSourcePruneMu.Unlock()
 	return pruneDevSourceCache(filepath.Join(spoolRoot(), "dev-source-cache"), dst)
+}
+
+// devSourceLocks hands out one mutex per developer source cache directory.
+// Entries are dropped when nobody holds or waits for them, so the map stays
+// bounded by concurrent syncs, not by every app ever synced.
+type devSourceLocks struct {
+	mu    sync.Mutex
+	locks map[string]*devSourceLock
+}
+
+type devSourceLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (l *devSourceLocks) lock(key string) func() {
+	l.mu.Lock()
+	if l.locks == nil {
+		l.locks = make(map[string]*devSourceLock)
+	}
+	entry := l.locks[key]
+	if entry == nil {
+		entry = &devSourceLock{}
+		l.locks[key] = entry
+	}
+	entry.refs++
+	l.mu.Unlock()
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		l.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(l.locks, key)
+		}
+		l.mu.Unlock()
+	}
 }
 
 func canonicalDevSourceRevision(revision string) (string, bool) {

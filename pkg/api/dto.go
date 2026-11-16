@@ -44,6 +44,11 @@ type PublishEventRequest struct {
 	Data            json.RawMessage `json:"data"`
 	AccountID       string          `json:"accountid,omitempty"`
 	SchemaVersion   string          `json:"schemaversion,omitempty"`
+	// EnvironmentID names the project environment the event belongs to
+	// (ADR-20261104120000); omitted is production. Only subscriptions of that
+	// environment receive the event, and only production events start
+	// workflows.
+	EnvironmentID string `json:"environmentid,omitempty"`
 }
 
 func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
@@ -357,8 +362,11 @@ type EventSubscriptionResponse struct {
 	WorkAction         string                   `json:"work_action,omitempty"`
 	Ordered            bool                     `json:"ordered,omitempty"`
 	Enabled            bool                     `json:"enabled"`
-	CreatedAt          time.Time                `json:"created_at"`
-	UpdatedAt          time.Time                `json:"updated_at"`
+	// Environment is the project environment slug whose events the
+	// subscription receives; omitted is production (ADR-20261104120000).
+	Environment string    `json:"environment,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // EventSubscriptionListResponse is the app-scoped, read-only subscription
@@ -580,6 +588,9 @@ type CreateAppRequest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000). An empty path clears it.
+	Warmup *WarmupHook `json:"warmup,omitempty"`
 	// Pause declares when the platform may pause the VM (ADR-1151):
 	// between_requests, when_idle or never. Empty selects the default for
 	// the app's type.
@@ -860,6 +871,10 @@ type DevPatchPreview struct {
 	// Generation is set when this sync published a live patch; poll
 	// GET /v1/dev/sessions/{project}/patches/{generation} for delivery.
 	Generation int64 `json:"generation,omitempty"`
+	// BuildDeferredUntil is set when the sync's convergence build waits
+	// for the developer to stop saving (ADR-20261021221906): the live patch is the
+	// sync, and a later sync supersedes this build before it starts.
+	BuildDeferredUntil *time.Time `json:"build_deferred_until,omitempty"`
 }
 
 // DevPatchStatusResponse reports whether a published live patch reached the
@@ -906,6 +921,26 @@ type DevSessionResponse struct {
 	// none. A client that asked for one and finds it missing is talking to an
 	// API that ignores the request field.
 	GoCommand string `json:"go_command,omitempty"`
+	// LivePatches reports whether this control plane delivers ADR-740 live
+	// source patches. Watch mode is only faster than a developer build when
+	// they are delivered, so automatic watch selection falls back without
+	// them. Omitted by servers that predate the field.
+	LivePatches *bool `json:"live_patches,omitempty"`
+}
+
+// DevSessionSummary is one developer environment in GET /v1/dev/sessions.
+// App is the backing dev-* slug, accepted by DELETE /v1/dev/sessions/{project}?app=.
+type DevSessionSummary struct {
+	Project   string    `json:"project"`
+	App       string    `json:"app"`
+	URL       string    `json:"url"`
+	State     string    `json:"state,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// DevSessionListResponse lists the account's developer environments.
+type DevSessionListResponse struct {
+	Sessions []DevSessionSummary `json:"sessions"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
@@ -1037,6 +1072,9 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000). An empty path clears it.
+	Warmup *WarmupHook `json:"warmup,omitempty"`
 	// Pause replaces the declared pause value; "" restores the default.
 	Pause            *string          `json:"pause,omitempty"`
 	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
@@ -2892,12 +2930,13 @@ func (h *DeploymentHealthcheck) Clone() *DeploymentHealthcheck {
 // DeploymentReadinessProbe is a reversible, steady-state traffic gate for
 // the primary app. It is distinct from Healthcheck (startup admission) and
 // LivenessProbe (which restarts a wedged VM).
+// The yaml tags let gregale.yaml hosting.readiness_probe use the same keys.
 type DeploymentReadinessProbe struct {
-	Path             string                     `json:"path,omitempty"`
-	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
-	PeriodS          int                        `json:"period_s,omitempty"`
-	TimeoutS         int                        `json:"timeout_s,omitempty"`
-	FailureThreshold int                        `json:"failure_threshold,omitempty"`
+	Path             string                     `json:"path,omitempty" yaml:"path,omitempty"`
+	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty" yaml:"grpc,omitempty"`
+	PeriodS          int                        `json:"period_s,omitempty" yaml:"period_s,omitempty"`
+	TimeoutS         int                        `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty"`
+	FailureThreshold int                        `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
@@ -3905,8 +3944,9 @@ type DeploymentAliasListResponse struct {
 // its own "min_instances required" presence rule. Splitting the
 // DTOs keeps each handler's contract crisp.
 type UpdateDeploymentTrafficRequest struct {
-	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
-	TrafficPercent int               `json:"traffic_percent"`
+	ExpectedMCPReadiness *MCPReadinessExpectation `json:"expected_mcp_readiness,omitempty"`
+	ExpectedReview       *AppReleaseReview        `json:"expected_review,omitempty"`
+	TrafficPercent       int                      `json:"traffic_percent"`
 	// An explicit empty id requires no live sibling with positive traffic.
 	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
 	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
@@ -4633,6 +4673,18 @@ type ListOrgAPIKeysResponse struct {
 // re-bound.
 type RotateOrgAPIKeyRequest struct {
 	Label string `json:"label,omitempty"`
+	// GraceWindowDays overrides, for this rotation only, how many days the
+	// old key keeps working (0 revokes it at once). Omitted uses the
+	// account setting or the plan default.
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
+}
+
+// RotateKeyRequest is the optional body of POST /v1/keys/{id}/rotate.
+// GraceWindowDays overrides, for this rotation only, how many days the old
+// key keeps working; 0 revokes it at once, which is what to do with a key
+// that leaked. Omitted uses the account setting or the plan default.
+type RotateKeyRequest struct {
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
 }
 
 // RotateOrgAPIKeyResponse is the body of
@@ -4870,10 +4922,29 @@ type CronResponse struct {
 	// Environment is the project environment the cron runs in; omitted for
 	// the app's production environment (ADR-20261104120000).
 	Environment string `json:"environment,omitempty"`
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it (ADR-20261104120000).
+	ClonePaused bool `json:"clone_paused,omitempty"`
 	// Labels are the cron's key/value labels (ADR-20261031100025), on its
 	// list and read while the resource-labels capability is on for the
 	// caller. Labels are not secret.
 	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// ResumeEnvironmentAutomationResponse reports the automation a resume
+// enabled in one project environment: the crons a full clone copied paused
+// that the source ran (ADR-20261104120000). A cron the source had disabled,
+// or one already enabled or disabled since, is left as it is.
+type ResumeEnvironmentAutomationResponse struct {
+	Environment  string   `json:"environment"`
+	CronsResumed int      `json:"crons_resumed"`
+	CronIDs      []string `json:"cron_ids"`
+	// EventSubscriptionsResumed and EventSubscriptionIDs are the event
+	// subscriptions the call enabled (ADR-20261104120000 amendment
+	// 2026-11-14).
+	EventSubscriptionsResumed int      `json:"event_subscriptions_resumed"`
+	EventSubscriptionIDs      []string `json:"event_subscription_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -5307,8 +5378,9 @@ type PasswordLoginResponse struct {
 // equivalence ("wrong password" vs "no account" vs "weak password") is
 // kept intact under the same JSON keys.
 type PasswordSignupRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
 }
 
 // ProgrammaticAuthResponse is the body for the JSON-only
@@ -5349,7 +5421,8 @@ type ProgrammaticAPIKey struct {
 // body regardless of whether the email is bound, so the surface
 // cannot be used to enumerate accounts.
 type MagicLinkSignupRequest struct {
-	Email string `json:"email"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
 }
 
 // PasswordResetRequest is the body of POST /login/forgot. The email
@@ -6054,6 +6127,9 @@ type QueueSendBatchRequest struct {
 // QueueSendBatchMessage is one message of a batch send.
 type QueueSendBatchMessage struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// GroupKey orders this message after earlier ones with the same key
+	// (ADR-20261112193306); see QueueSendRequest.GroupKey.
+	GroupKey string `json:"group_key,omitempty"`
 }
 
 // QueueSendBatchResult reports one message by its zero-based input index:
@@ -6080,8 +6156,12 @@ type QueueReceiveResponse struct {
 	ID             string          `json:"id"`
 	Payload        json.RawMessage `json:"payload"`
 	Result         json.RawMessage `json:"result,omitempty"`
-	TraceID        string          `json:"trace_id,omitempty"`
-	Traceparent    string          `json:"traceparent,omitempty"`
+	// State is how the message settled: completed, failed or cancelled.
+	// Receive returned all three alike, so a failure looked processed
+	// (ADR-20261113180000, R6-5).
+	State       string `json:"state,omitempty"`
+	TraceID     string `json:"trace_id,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
 }
 
 // LogQueryEvent is the stable, source-neutral shape emitted by database-backed
@@ -6343,6 +6423,11 @@ type QueueSendRequest struct {
 	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	Work        *InvokeWork     `json:"work,omitempty"`
+	// GroupKey delivers messages with the same key one at a time, in send
+	// order; a message waiting to retry holds later ones of its key
+	// (ADR-20261112193306). It is the work key of the built-in
+	// gregale-ordered policy, so it cannot be combined with Work.
+	GroupKey string `json:"group_key,omitempty"`
 }
 
 // DelayedTaskRequest is the body for POST /v1/apps/{slug}/delayed-tasks.
@@ -7752,6 +7837,13 @@ type PlanWorkload struct {
 	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
+	// AppProtocol, Streaming and WakeAhead are the Compose
+	// x-gregale-app-protocol, x-gregale-streaming and x-gregale-wake-ahead
+	// settings the deploy applies; empty or nil when the file sets none, so
+	// a dry run shows them before apply.
+	AppProtocol string `json:"app_protocol,omitempty"`
+	Streaming   *bool  `json:"streaming,omitempty"`
+	WakeAhead   *bool  `json:"wake_ahead,omitempty"`
 	// Visibility is "internal" when the app is or will be hidden from the
 	// public edge: an existing internal app, or a new Compose service without
 	// `ports:` (ADR-20261022131852). Omitted means public.
@@ -7766,6 +7858,10 @@ type PlanWorkload struct {
 	// have no value in the selected environment: not configured on the app
 	// and not provided by the platform. Names only, never values.
 	UnsetEnvKeys []string `json:"unset_env_keys,omitempty"`
+	// SourceHosts are string literals in the workload's source that dial
+	// another service by its Compose name, which does not resolve on Gregale
+	// (ADR-20261112223000). At most a few per workload.
+	SourceHosts []PlanSourceHost `json:"source_hosts,omitempty"`
 	// UnsetEnvKeyReasons says why a Compose value for an UnsetEnvKeys name
 	// is not imported (ADR-20261023085230): not_opted_in, secret,
 	// service_address, local_address, interpolated, host_value, empty or
@@ -7944,28 +8040,50 @@ type QuotaBlock struct {
 // account (Unaffected = noop or skipped) plus the scan's proposed
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
+// FeatureHint is one Gregale behavior or feature that applies to the scanned
+// source: what the plan will do, how to change it, and the exact commands
+// (ADR-20261112223000 §1). IDs are stable.
+// PlanSourceHost is one place source code dials a service by its Compose
+// name: the name, and the file and line that spell it.
+type PlanSourceHost struct {
+	Host string `json:"host"`
+	File string `json:"file"`
+	Line int    `json:"line"`
+}
+
+type FeatureHint struct {
+	ID        string   `json:"id"`
+	Workloads []string `json:"workloads,omitempty"`
+	Applied   string   `json:"applied"`
+	Change    string   `json:"change,omitempty"`
+	Commands  []string `json:"commands,omitempty"`
+}
+
 type PlanResponse struct {
-	SafeRelease           *ProjectSafeRelease    `json:"safe_release,omitempty"`
-	ProjectSlug           string                 `json:"project_slug"`
-	RepoFullName          string                 `json:"repo_full_name,omitempty"`
-	Environment           string                 `json:"environment,omitempty"`
-	EnvironmentProtected  bool                   `json:"environment_protected,omitempty"`
-	EnvironmentConfigHash string                 `json:"environment_config_hash,omitempty"`
-	ScanSource            string                 `json:"scan_source"`
-	Tier                  string                 `json:"tier"`
-	Workloads             []PlanWorkload         `json:"workloads"`
-	Managed               []PlanManaged          `json:"managed"`
-	Crons                 []PlanCron             `json:"crons"`
-	AsyncRoutes           []PlanAsyncRoute       `json:"async_routes,omitempty"`
-	Warnings              []string               `json:"warnings,omitempty"`
-	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
-	ObservedApps          int                    `json:"observed_apps"`
-	ObservedCrons         int                    `json:"observed_crons"`
-	LimitApps             int                    `json:"limit_apps"`
-	LimitCrons            int                    `json:"limit_crons"`
-	CanApply              bool                   `json:"can_apply"`
-	CronsNotAllowed       bool                   `json:"crons_not_allowed,omitempty"`
-	PlanToken             string                 `json:"plan_token"`
+	SafeRelease           *ProjectSafeRelease `json:"safe_release,omitempty"`
+	ProjectSlug           string              `json:"project_slug"`
+	RepoFullName          string              `json:"repo_full_name,omitempty"`
+	Environment           string              `json:"environment,omitempty"`
+	EnvironmentProtected  bool                `json:"environment_protected,omitempty"`
+	EnvironmentConfigHash string              `json:"environment_config_hash,omitempty"`
+	ScanSource            string              `json:"scan_source"`
+	Tier                  string              `json:"tier"`
+	Workloads             []PlanWorkload      `json:"workloads"`
+	Managed               []PlanManaged       `json:"managed"`
+	Crons                 []PlanCron          `json:"crons"`
+	AsyncRoutes           []PlanAsyncRoute    `json:"async_routes,omitempty"`
+	Warnings              []string            `json:"warnings,omitempty"`
+	// FeatureHints says which Gregale behaviors and features apply to the
+	// scanned source and the commands that change them (ADR-20261112223000).
+	FeatureHints      []FeatureHint          `json:"feature_hints,omitempty"`
+	DetectionWarnings []PlanDetectionWarning `json:"detection_warnings,omitempty"`
+	ObservedApps      int                    `json:"observed_apps"`
+	ObservedCrons     int                    `json:"observed_crons"`
+	LimitApps         int                    `json:"limit_apps"`
+	LimitCrons        int                    `json:"limit_crons"`
+	CanApply          bool                   `json:"can_apply"`
+	CronsNotAllowed   bool                   `json:"crons_not_allowed,omitempty"`
+	PlanToken         string                 `json:"plan_token"`
 	// ADR-124 can_apply rescue signal. PreExclude is the gate
 	// evaluated on the full scan (pre-`--only`/pre-`--exclude`).
 	// Rescued is true when --exclude flipped a blocked gate to
@@ -8187,9 +8305,10 @@ type AppStaticEgressIPResponse struct {
 // /v1/apps/{slug}/static-egress-ip. IP is the canonical
 // customer-supplied IPv4 (dotted-quad string). The handler
 // validates the family=4 + non-RFC1918 + non-link-local +
-// non-multicast before the column write. Set=false means
-// "clear" — the same wire body covers the DELETE /keep-IP
-// promotion path without a third endpoint.
+// non-multicast before the column write. Set=false with no IP
+// means "clear" — the same wire body covers the DELETE /keep-IP
+// promotion path without a third endpoint. Set=false with an IP
+// is refused as ambiguous.
 type SetAppStaticEgressIPRequest struct {
 	IP  string `json:"ip"`
 	Set bool   `json:"set"`
@@ -12638,6 +12757,8 @@ type RequestAnalyticsGroup struct {
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
+	// Omitted names optional enrichments unavailable within their query budget.
+	Omitted               []string                                 `json:"omitted,omitempty"`
 	Slug                  string                                   `json:"slug"`
 	Since                 string                                   `json:"since"`
 	From                  string                                   `json:"from"`
@@ -13624,6 +13745,83 @@ type EgressFlowLogResponse struct {
 	Truncated bool                 `json:"truncated"`
 }
 
+// AccountRiskResponse is GET /v1/admin/accounts/{id}/risk
+// (ADR-20261115090000): what an operator needs to judge an account's abuse
+// risk. Email, sign-up address and user agent are present only with
+// ?include_pii=1, which is audited.
+type AccountRiskResponse struct {
+	AccountID       string              `json:"account_id"`
+	Email           string              `json:"email,omitempty"`
+	Status          string              `json:"status"`
+	Plan            string              `json:"plan"`
+	CreatedAt       time.Time           `json:"created_at"`
+	AbuseHoldAt     *time.Time          `json:"abuse_hold_at,omitempty"`
+	AbuseHoldReason string              `json:"abuse_hold_reason,omitempty"`
+	Signup          *AccountRiskSignup  `json:"signup,omitempty"`
+	LinksToHeld     []AccountRiskLink   `json:"links_to_held"`
+	LinkedAccounts  []AccountRiskLink   `json:"linked_accounts"`
+	Strikes         []AccountRiskStrike `json:"strikes"`
+	AbuseEvents     []AccountRiskEvent  `json:"abuse_events"`
+}
+
+// AccountRiskSignup is the account's sign-up record (ADR-20261113160000).
+type AccountRiskSignup struct {
+	Method          string     `json:"method"`
+	SignupIP        string     `json:"signup_ip,omitempty"`
+	UserAgent       string     `json:"user_agent,omitempty"`
+	Country         string     `json:"country,omitempty"`
+	ASN             uint32     `json:"asn,omitempty"`
+	ASNOrg          string     `json:"asn_org,omitempty"`
+	EmailDomain     string     `json:"email_domain"`
+	DisposableEmail bool       `json:"disposable_email"`
+	CreatedAt       time.Time  `json:"created_at"`
+	ReducedAt       *time.Time `json:"reduced_at,omitempty"`
+}
+
+// AccountRiskLink is a link between a new account and an abuse-held one
+// (ADR-20261114174600).
+type AccountRiskLink struct {
+	AccountID     string    `json:"account_id"`
+	HeldAccountID string    `json:"held_account_id"`
+	HeldOrgID     string    `json:"held_org_id,omitempty"`
+	HeldReason    string    `json:"held_reason"`
+	Signal        string    `json:"signal"`
+	DetectedAt    time.Time `json:"detected_at"`
+}
+
+// AccountRiskStrike is an abuse recycle inside the hold window.
+type AccountRiskStrike struct {
+	Reason   string    `json:"reason"`
+	AppID    string    `json:"app_id,omitempty"`
+	StruckAt time.Time `json:"struck_at"`
+}
+
+// AccountRiskEvent is an abuse event about the account, one of its apps,
+// deployments or instances.
+type AccountRiskEvent struct {
+	At      time.Time       `json:"at"`
+	Kind    string          `json:"kind"`
+	Actor   string          `json:"actor"`
+	Subject string          `json:"subject"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// HeldLinksResponse is GET /v1/admin/held-links: links detected since a
+// time, newest first, for the daily review.
+type HeldLinksResponse struct {
+	Links     []HeldLinkReview `json:"links"`
+	Truncated bool             `json:"truncated"`
+}
+
+// HeldLinkReview is a link with the new account's sign-up country and email
+// domain.
+type HeldLinkReview struct {
+	AccountRiskLink
+	Country         string `json:"country,omitempty"`
+	EmailDomain     string `json:"email_domain,omitempty"`
+	DisposableEmail bool   `json:"disposable_email"`
+}
+
 // EventReceiptPageMax bounds recipient pages on the event receipt read surface.
 const EventReceiptPageMax = 200
 
@@ -13908,6 +14106,9 @@ type AppPublishEventRequest struct {
 	Data          json.RawMessage `json:"data"`
 	Time          *time.Time      `json:"time,omitempty"`
 	SchemaVersion string          `json:"schemaversion,omitempty"`
+	// Environment is the slug of the app's project environment the event
+	// belongs to (ADR-20261104120000); omitted is production.
+	Environment string `json:"environment,omitempty"`
 }
 
 type AppPublishEventResponse struct {

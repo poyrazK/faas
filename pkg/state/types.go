@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/referrals"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -564,11 +565,14 @@ type Account struct {
 	AbuseHoldReason string
 }
 
-// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_valid
+// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_v2_valid
 // CHECK accepts exactly these.
 const (
 	AccountAbuseHoldEgressFanout = "egress_fanout"
 	AccountAbuseHoldEgressFlood  = "egress_flood"
+	// AccountAbuseHoldCPUSustained: the tipping recycle was a Free
+	// instance pinned at its CPU quota (ADR-20261112120603).
+	AccountAbuseHoldCPUSustained = "cpu_sustained"
 	AccountAbuseHoldOperator     = "operator"
 )
 
@@ -579,6 +583,18 @@ func (a Account) AbuseHeld() bool { return a.AbuseHoldAt != nil }
 // deleted or abuse-held).
 func (a Account) Active() bool {
 	return (a.Status == AccountActive || a.Status == AccountPastDue) && !a.AbuseHeld()
+}
+
+// MovedToFreeForNonpayment reports an account the dunning ladder moved to
+// the Free plan for an overdue payment (billing review 2026-11-13, R9-1): it
+// is active, or since stopped by the Free quota, and still carries
+// past_due_at, which marks the unpaid balance until a paid order or an
+// operator clears it. A further payment failure or update on the old
+// subscription must not move it back into past_due or onto its paid plan. An
+// account the retired ladder suspended for non-payment reads the same; the
+// dunning sweep moves it to Free.
+func (a Account) MovedToFreeForNonpayment() bool {
+	return (a.Status == AccountActive || a.Status == AccountSuspended) && a.PastDueAt != nil
 }
 
 // MayDeploy reports whether the account may start new deployments. A
@@ -616,6 +632,123 @@ type AccountAbuseHoldStore interface {
 	// ReleaseAccountAbuseHold clears the hold. released reports whether one
 	// was set.
 	ReleaseAccountAbuseHold(ctx context.Context, accountID string) (released bool, err error)
+}
+
+// AccountSignupFacts is what an account looked like when it signed up
+// (ADR-20261113160000). SignupIP and UserAgent are cleared once the row is
+// older than api.SignupFactsPersonalRetention (ReducedAt is then set).
+type AccountSignupFacts struct {
+	AccountID       string
+	Method          string
+	SignupIP        string
+	UserAgent       string
+	Country         string
+	ASN             uint32
+	ASNOrg          string
+	EmailDomain     string
+	DisposableEmail bool
+	CreatedAt       time.Time
+	ReducedAt       *time.Time
+}
+
+// AccountSignupFactsStore records and reads AccountSignupFacts. Both PgStore
+// and MemStore implement it; callers type-assert.
+type AccountSignupFactsStore interface {
+	// RecordAccountSignupFacts stores the facts unless the account already
+	// has a record; the first sign-up wins.
+	RecordAccountSignupFacts(ctx context.Context, facts AccountSignupFacts) error
+	// AccountSignupFacts returns ErrNotFound for an account without a record.
+	AccountSignupFacts(ctx context.Context, accountID string) (AccountSignupFacts, error)
+	// ReduceAccountSignupFacts clears SignupIP and UserAgent on up to batch
+	// records created before cutoff and returns how many it reduced.
+	ReduceAccountSignupFacts(ctx context.Context, cutoff, now time.Time, batch int) (int64, error)
+}
+
+// Held-account link signals (ADR-20261114174600).
+const (
+	// HeldLinkSignalNetwork: the new account's sign-up address shares a /24
+	// (IPv4) or /48 (IPv6) with the held account's sign-up address or a
+	// recent sign-in address.
+	HeldLinkSignalNetwork = "signup_network"
+	// HeldLinkSignalEmailDomain: both accounts use the same private email
+	// domain (not a public provider, not disposable).
+	HeldLinkSignalEmailDomain = "email_domain"
+)
+
+// AccountHeldLink records that a new account resembles an abuse-held one
+// (ADR-20261114174600). It is a flag for operator review only.
+type AccountHeldLink struct {
+	AccountID     string
+	HeldAccountID string // the held account, or a held organization's owner
+	HeldOrgID     string // set when the hold is on an organization
+	HeldReason    string
+	Signal        string
+	DetectedAt    time.Time
+}
+
+// AccountHeldLinkStore links new accounts to abuse-held ones. Both PgStore
+// and MemStore implement it; callers type-assert.
+type AccountHeldLinkStore interface {
+	// LinkAccountToHeld compares the account's sign-up record with every
+	// abuse-held account and held organization's owner, stores the new
+	// links and returns them. Sign-in addresses count from since on; the
+	// email domain counts only when domainLinkable. An account without a
+	// sign-up record links to nothing.
+	LinkAccountToHeld(ctx context.Context, accountID string, domainLinkable bool, since, at time.Time) ([]AccountHeldLink, error)
+	// AccountHeldLinks lists the links stored for an account.
+	AccountHeldLinks(ctx context.Context, accountID string) ([]AccountHeldLink, error)
+}
+
+// AccountAbuseStrike is one stored abuse recycle (ADR-20261113133500).
+type AccountAbuseStrike struct {
+	Reason   string
+	AppID    string
+	StruckAt time.Time
+}
+
+// AccountAbuseEvent is an abuse-related event about an account, its apps,
+// deployments or instances (ADR-20261115090000).
+type AccountAbuseEvent struct {
+	At      time.Time
+	Actor   string
+	Kind    string
+	Subject string
+	Data    json.RawMessage
+}
+
+// RecentHeldLink is a held-account link with the new account's sign-up
+// country and email domain, for the daily review list.
+type RecentHeldLink struct {
+	AccountHeldLink
+	Country         string
+	EmailDomain     string
+	DisposableEmail bool
+}
+
+// AccountRiskStore serves the operator account risk view
+// (ADR-20261115090000). Both PgStore and MemStore implement it.
+type AccountRiskStore interface {
+	// AccountAbuseStrikes lists the owner's strikes after since, newest first.
+	AccountAbuseStrikes(ctx context.Context, accountID string, since time.Time) ([]AccountAbuseStrike, error)
+	// HeldLinksToAccount lists the accounts linked to heldAccountID.
+	HeldLinksToAccount(ctx context.Context, heldAccountID string) ([]AccountHeldLink, error)
+	// RecentHeldLinks lists links detected from since on, newest first.
+	RecentHeldLinks(ctx context.Context, since time.Time, limit int) ([]RecentHeldLink, error)
+	// AccountAbuseEvents lists events of the given kinds about the account,
+	// its apps, deployments and instances from since on, newest first.
+	AccountAbuseEvents(ctx context.Context, accountID string, kinds []string, since time.Time, limit int) ([]AccountAbuseEvent, error)
+}
+
+// AccountAbuseStrikeStore records abuse recycles against a resource owner
+// (account or organization) for the account abuse hold escalation
+// (ADR-20261113133500). The count is shared by every schedd and survives
+// restarts. Both PgStore and MemStore implement it.
+type AccountAbuseStrikeStore interface {
+	// RecordAccountAbuseStrike records a strike at at and returns the number
+	// of the owner's strikes after at-window, this one included. reason is
+	// an automatic hold reason (egress_fanout, egress_flood, cpu_sustained);
+	// appID may be empty.
+	RecordAccountAbuseStrike(ctx context.Context, accountID, reason, appID string, at time.Time, window time.Duration) (int, error)
 }
 
 // EmailVerified reports whether the account has proved control of its email.
@@ -785,6 +918,11 @@ type APIConsumerUsageEvent struct {
 	// the collapsed usage buckets.
 	Audit           *RequestAuditEvidence
 	DiscoveredRoute string // optional normalized method/template
+	// DiscoveredDeploymentID is the deployment that served DiscoveredRoute.
+	// A stage deployment's routes go to its environment's inventory, and
+	// the first-seen event carries that environment (ADR-20261104120000).
+	// Empty (older gateways) is production.
+	DiscoveredDeploymentID string
 	// BillingRoute is the bounded "METHOD /template" label of
 	// consumer-attributed traffic; its billable units are also kept per route
 	// so rate cards can weight routes (ADR-952).
@@ -2054,6 +2192,9 @@ type AppManifest struct {
 	RestartPolicy    string                    `json:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup is the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000).
+	Warmup *api.WarmupHook `json:"warmup,omitempty"`
 	// Pause is the app's declared pause value (ADR-1151); empty selects the
 	// default for the app's type (api.EffectivePause).
 	Pause            string               `json:"pause,omitempty"`
@@ -2138,13 +2279,16 @@ func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Warmup == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0 &&
-		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0
+		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0 &&
+		// A function app whose only settings are its callables or input
+		// schema must not be stored as {} (ADR-20261111150000).
+		len(m.FunctionCallables) == 0 && len(m.FunctionInputSchema) == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -3082,6 +3226,12 @@ type Deployment struct {
 	// carries the advertised serving port across imaged -> schedd -> vmmd.
 	// Raw JSON keeps state independent of the framework-profile package shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
+	// BuildRegistryScope (ADR-20261110210000 slice 3j-4) lists the image
+	// repositories ("host/repository") the deployment's Dockerfiles name;
+	// secretd lets its builds pull only those with the app's registry
+	// credential. apid records it at creation and the column never changes;
+	// nil means not recorded. Written only; secretd reads the column.
+	BuildRegistryScope []string `json:"-"`
 	// ReleaseCommand is immutable pre-activation intent captured from the
 	// exact source version (gregale.yaml release.command or Procfile release:).
 	// The orchestrator converts it into the deployment's unique release task;
@@ -3469,6 +3619,11 @@ type Cron struct {
 	RetryMax              int // additional attempts after the first failed/timed-out execution
 	RetryBackoffSeconds   int // base delay; later retries double it, capped at 24 hours
 	Enabled               bool
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it. Any explicit enable or disable clears it
+	// (ADR-20261104120000 amendment 2026-11-12).
+	ClonePaused bool
 	// SuspendedReason is set by the scheduler when customer intent remains
 	// enabled but the app has no live deployment (a later successful deploy
 	// clears it without re-enabling a cron the customer disabled
@@ -3802,6 +3957,10 @@ const (
 	// health guard holds or aborted (ADR-20261028110044).
 	AlertMetricRouteMonitorIncidents AlertMetric = "route_monitor_incidents"
 	AlertMetricRouteHealthHolds      AlertMetric = "route_health_holds"
+	// AlertMetricAIBudgetAlerts counts the AI budget threshold crossings of
+	// the app's bound integrations within the window (ADR 20261027132936
+	// amendment 2).
+	AlertMetricAIBudgetAlerts AlertMetric = "ai_budget_alerts"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -4846,9 +5005,15 @@ type Invocation struct {
 	// It is admission input only, never persisted or customer-authored.
 	AdmissionMaxPending int `json:"-"`
 	// AdmissionMaxBacklogBytes is the producer's per-account cap on pending
-	// queue payload bytes (ADR-20261022105723; 0 = uncapped). Like
-	// AdmissionMaxPending it is admission input only.
+	// queue, async and delayed-task payload bytes (ADR-20261022105723; 0 =
+	// uncapped). Like AdmissionMaxPending it is admission input only.
 	AdmissionMaxBacklogBytes int64 `json:"-"`
+	// AdmissionUnlocked counts the caps without taking the app's admission
+	// lock: concurrent producers may pass a cap by the rows they are
+	// inserting at once. High-rate async producers (async invoke, async
+	// routes, function send) use it so admission never serializes an app's
+	// enqueues (ADR-20261022105723 amendment 2026-11-13).
+	AdmissionUnlocked bool `json:"-"`
 	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
 	OperationResultVersion     int    `json:"-"`
 	ManagedOperationID         string `json:"-"`
@@ -4915,6 +5080,16 @@ type Invocation struct {
 	// them as X-Faas-Edge-Jwt-*. Customer headers never fill them.
 	EdgeJWTIssuer  string `json:"-"`
 	EdgeJWTSubject string `json:"-"`
+	// SentByAppID and OnCompleteAppID record a send() (ADR-20261112160000):
+	// the calling app, and the app that receives the completion. They are
+	// written to invocation_sends with the row and not read back on it.
+	SentByAppID     string `json:"-"`
+	OnCompleteAppID string `json:"-"`
+	// WorkflowCallRunID and WorkflowCallOp name the code-workflow call
+	// operation an invocation runs for (ADR-20261113120824 §2); its terminal
+	// transition settles that operation. Unrelated to WorkflowRunID.
+	WorkflowCallRunID string `json:"-"`
+	WorkflowCallOp    string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
@@ -5274,6 +5449,21 @@ type QueueStats struct {
 	InFlight        int
 	OldestPendingAt time.Time
 	DeadLetter      int
+	// Ordered work (ADR-20261112193306), from bounded binding telemetry;
+	// other readers leave them zero. WaitingBehindKey counts due messages
+	// held behind an older message of their work key; BlockedLanes counts
+	// keys whose head has failed and holds later messages, the oldest head
+	// created at OldestBlockedAt.
+	WaitingBehindKey int
+	BlockedLanes     int
+	OldestBlockedAt  time.Time
+}
+
+// RunnableDepth is the backlog that could run now: Depth without messages
+// waiting behind their key. queue_depth scaling sizes workers by it, so a
+// blocked key does not start idle workers.
+func (q QueueStats) RunnableDepth() int {
+	return max(q.Depth-q.WaitingBehindKey, 0)
 }
 
 // QueueBinding is the durable app-scoped contract between a logical queue and
@@ -7192,6 +7382,12 @@ type Snapshot struct {
 	Stale                           bool
 	DeletePending                   bool
 	CreatedAt                       time.Time
+	// SealedKey and SealedCaptureID describe a snapshot sealed at the source
+	// (ADR-20261110210000 slice 3d-3): the capture key sealed to the capture
+	// recipient, and the capture id (storage_key's capture token) it is
+	// bound to. Both empty for a plaintext snapshot.
+	SealedKey       []byte `json:"-"`
+	SealedCaptureID string
 	// CPUTemplate and CPUModel are the capturing node's CPU identity
 	// (ADR-20261024225612): a templated snapshot restores on any node
 	// class the template supports, a template-less one only on the same
@@ -7304,9 +7500,13 @@ type EmailVerificationToken struct {
 type CliAuthCode struct {
 	TokenHash  []byte
 	DeviceHash []byte
-	AccountID  string // empty until ClaimCliAuthCode
-	ExpiresAt  time.Time
-	ConsumedAt *time.Time
+	// VerifierHash is the SHA-256 of a secret the minting CLI keeps; when
+	// set, the device code is exchanged only together with that secret
+	// (account audit F10-3).
+	VerifierHash []byte
+	AccountID    string // empty until ClaimCliAuthCode
+	ExpiresAt    time.Time
+	ConsumedAt   *time.Time
 	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
 	// approval; "" is the personal one (ADR-20261101225122).
 	OrgID string
@@ -7314,16 +7514,43 @@ type CliAuthCode struct {
 	// nil is every project (ADR-20261104085712). MemStore only: the Pg
 	// store reads it through CliAuthCodeProjects.
 	ProjectIDs []string
+	// CreatedAt and RequesterIP say when and from where the code was
+	// asked for. MemStore only: the Pg store reads them through
+	// CliAuthRequesterStore.
+	CreatedAt   time.Time
+	RequesterIP string
+}
+
+// CliAuthRequest is when and from which address a CLI login code was
+// asked for. The approval page shows it so a person approving a code
+// someone else sent can see it came from elsewhere (account audit F10).
+type CliAuthRequest struct {
+	IP        string // "" when the address was not recorded
+	CreatedAt time.Time
+}
+
+// CliAuthRequesterStore records and reads where a CLI login code came from.
+type CliAuthRequesterStore interface {
+	// RecordCliAuthRequester stores the address that minted a pending code.
+	RecordCliAuthRequester(ctx context.Context, tokenHash []byte, ip string) error
+	// CliAuthRequester returns the request facts of an unexpired code, or
+	// ErrNotFound.
+	CliAuthRequester(ctx context.Context, tokenHash []byte) (CliAuthRequest, error)
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row
 // issued through it is refused by ConsumeCliAuthCode, so guessing the short
 // code the user approves never yields a key.
 type CliAuthDeviceCodeStore interface {
-	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error
+	// IssueCliAuthDeviceCode stores a code bound to a device code. A
+	// non-empty verifierHash also binds it to the minting CLI's verifier.
+	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash, verifierHash []byte, expiresAt time.Time) error
 	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
-	// the device code's hash.
-	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
+	// the device code's hash. A row bound to a verifier is consumed only
+	// when verifierHash matches; otherwise it is left as it is and reported
+	// as unavailable once approved, so a device code that leaked without
+	// its verifier never yields a key and the real CLI can still finish.
+	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash, verifierHash []byte) (api.CliAuthStatus, string, error)
 	// ClaimCliAuthCodeForDevice is ClaimCliAuthCode that also replaces the
 	// row's device hash in the same statement. The one-click loopback login
 	// (ADR-20261111170000) hands the new device code to the approving
@@ -8310,8 +8537,10 @@ func PersonalOrgSlug(accountID string) string {
 // is derived deterministically from the account id (PersonalOrgSlug),
 // name defaults to "Personal", status defaults to OrgStatusActive.
 type CreateAccountWithPersonalOrgParams struct {
-	Email string
-	Plan  api.Plan
+	// Referral is accepted only by the shared self-service signup path.
+	Referral *referrals.Attribution
+	Email    string
+	Plan     api.Plan
 	// RequireEmailVerification leaves email_verified_at NULL. The zero value
 	// preserves the historical trusted-creation behavior used by OAuth,
 	// operator, migration, and test call sites.

@@ -11,7 +11,9 @@ func TestResolveUsesStatelessDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Source != SourceDirectory || got.Port != DefaultPort || got.HealthPath != DefaultHealthPath {
+	// ADR-079 amendment 2: a source with no named health route readies on
+	// its listener.
+	if got.Source != SourceDirectory || got.Port != DefaultPort || got.HealthPath != "" || !slices.Contains(got.DefaultsApplied, "readiness=tcp-listener") {
 		t.Fatalf("defaults = %+v", got)
 	}
 	if got.ExecutionMode != "request" || !got.ScaleToZero || got.LocalStorage != LocalStorageEphemeral || got.DurableState != DurableStateExternal {

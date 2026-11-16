@@ -13,12 +13,11 @@ func (c *Client) BackfillInvoiceHistory(ctx context.Context, cursor string, limi
 	if limit == 0 {
 		limit = MaxInvoiceHistoryPageSize
 	}
-	client := *c.http
-	client.Timeout = InvoiceHistoryTimeout
+	client := c.operationHTTP(InvoiceHistoryTimeout)
 	query := url.Values{"limit": {strconv.Itoa(limit)}}
 	if cursor != "" {
 		query.Set("cursor", cursor)
 	}
-	err := c.doWithClientAndIdempotencyKey(ctx, &client, http.MethodPost, "/v1/invoices/backfill?"+query.Encode(), nil, &result, "")
+	err := c.doWithClientAndIdempotencyKey(ctx, client, http.MethodPost, "/v1/invoices/backfill?"+query.Encode(), nil, &result, "")
 	return result, err
 }

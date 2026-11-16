@@ -145,6 +145,19 @@ type MFADisableEmailConfirmRequest struct {
 	CSRFToken string `json:"csrf_token,omitempty"`
 }
 
+// MFADisableEmailCancelRequest is the body of POST
+// /v1/account/mfa/disable-email-cancel. A browser session sends the CSRF
+// token minted for action mfa_disable_email_cancel.
+type MFADisableEmailCancelRequest struct {
+	CSRFToken string `json:"csrf_token,omitempty"`
+}
+
+// MFADisableEmailCancelResponse reports how many pending email-assisted MFA
+// disables the request cancelled (0 when none was pending).
+type MFADisableEmailCancelResponse struct {
+	Cancelled int `json:"cancelled"`
+}
+
 // All MFA success response types are deliberately empty bodies. They are
 // deliberately empty — the meaningful side effects (cookie
 // re-issue, audit Emit, store stamp) are not on the JSON wire.

@@ -763,6 +763,15 @@ var ErrAPIKeyExpired = errors.New("state: api key expired")
 // Issue #189 / IAM-5.
 var ErrAPIKeyRevoked = errors.New("state: api key revoked")
 
+// refusedKey is the key AuthenticateKey and AuthenticateDeployToken return
+// with ErrAPIKeyRevoked or ErrAPIKeyExpired: only the key id and the owning
+// account, so the auth middleware can audit the key and attribute the
+// refusal to the account (ADR-20261114190002). It carries no scopes and
+// grants nothing; callers must still treat the error as a refusal.
+func refusedKey(id, accountID string) APIKey {
+	return APIKey{ID: id, AccountID: accountID}
+}
+
 // ErrInvalidCursor is returned by List*ForOrgPage and friends when
 // the `before` cursor doesn't parse as a valid compound key. The
 // handler maps this to a 400 with the `invalid_cursor` Problem code;

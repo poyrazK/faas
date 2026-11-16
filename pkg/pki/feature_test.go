@@ -23,6 +23,12 @@ func TestFeatureLeavesStayOutOfTheRequiredSets(t *testing.T) {
 	for _, feature := range Features() {
 		for _, box := range []string{"control-plane", "compute-only", "single-box"} {
 			roles := FeatureRoles(feature, box)
+			if box == "control-plane" && FeatureComputeOnly(feature) {
+				if len(roles) != 0 {
+					t.Errorf("%s: the control plane carries %d leaves of a compute-only feature", feature, len(roles))
+				}
+				continue
+			}
 			if len(roles) == 0 {
 				t.Fatalf("%s: %s carries no leaf", feature, box)
 			}
@@ -168,6 +174,54 @@ func TestPlatformLogsFeatureLeaves(t *testing.T) {
 	}
 	if again, err := EnsureFeatureLeaves(ca, out, FeaturePlatformLogs, "control-plane"); err != nil || len(again) != 0 {
 		t.Fatalf("second issue = %v, %v; want the leaves kept", names(again), err)
+	}
+}
+
+// The PostgreSQL verifier has a static control-plane identity, distinct from
+// the node identities that authorize ordinary application-secret opens.
+func TestSecretOpenerPostgresVerifierLeaf(t *testing.T) {
+	ca := t.TempDir()
+	caCert, _, err := EnsureCA(ca, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if issued, err := EnsureFeatureLeaves(ca, root, FeatureSecretOpener, "control-plane"); err != nil || len(issued) != 2 {
+		t.Fatalf("control-plane leaves = %v, %v", issued, err)
+	}
+	var verifier *Role
+	for _, role := range FeatureRoles(FeatureSecretOpener, "control-plane") {
+		if role.CommonName == ApidPostgresVerifierClient {
+			verifier = &role
+		}
+	}
+	if verifier == nil || RoleUsesNodeIdentity(*verifier) {
+		t.Fatal("dedicated control-plane identity missing or replaced by node identity")
+	}
+	certPath, keyPath := LeafPaths(root, *verifier)
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	if leaf.Subject.CommonName != ApidPostgresVerifierClient {
+		t.Fatalf("verifier CN=%s", leaf.Subject.CommonName)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		t.Fatal(err)
+	}
+	if issued, err := EnsureFeatureLeaves(ca, root, FeatureSecretOpener, "control-plane"); err != nil || len(issued) != 0 {
+		t.Fatalf("unchanged leaves reissued: %v, %v", issued, err)
+	}
+	for _, role := range FeatureRoles(FeatureSecretOpener, "compute-only") {
+		if role.CommonName == ApidPostgresVerifierClient {
+			t.Fatal("control-plane verifier issued to compute")
+		}
 	}
 }
 

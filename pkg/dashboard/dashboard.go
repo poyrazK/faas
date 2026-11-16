@@ -118,6 +118,10 @@ type IndexData struct {
 	DeveloperAppCount  int
 	DeveloperAppsLimit int
 	Plan               string
+	// Attention counts account restrictions that need the customer's
+	// action; the overview links to /dashboard/account/health when it is
+	// non-zero (ADR-20261112210000).
+	Attention int
 }
 
 // ProjectsData backs the durable project lifecycle list and detail pages.
@@ -808,6 +812,9 @@ type LogDrainPageItem struct {
 	LastFailureAt           string
 	LastError               string
 	UpdatedAt               string
+	AnalyticsComplete       bool
+	AnalyticsFrom           string
+	AnalyticsTo             string
 	AnalyticsAvailable      bool
 	AnalyticsDelivered      int64
 	AnalyticsFailed         int64
@@ -2425,6 +2432,7 @@ type AppMetricsView struct {
 // request analytics API. It deliberately mirrors only aggregate fields;
 // request IDs and trace data belong to the debugger surface.
 type RequestAnalyticsView struct {
+	Omitted               []string
 	GroupBy               string
 	Since                 string
 	From                  string
@@ -3434,7 +3442,9 @@ type UpgradeOption struct {
 // (mirrors the account delete confirmation) instead of sharing the
 // billing page with the spend-cap form.
 type UpgradeData struct {
-	CurrentPlan string
+	CurrentPlan              string
+	SalespersonCodeAvailable bool
+	ExistingReferralCode     string
 	// Target is nil when ?plan= is missing or not an eligible upgrade;
 	// the template then renders Options as a chooser.
 	Target  *UpgradeOption
@@ -3550,7 +3560,9 @@ type APIKeyItem struct {
 
 // AccountData is the /dashboard/account page payload.
 type AccountData struct {
-	Keys []APIKeyItem
+	ReferralsEnabled bool
+	SalesEnabled     bool
+	Keys             []APIKeyItem
 	// KeyDeleteConfirmToken is shared by the account page's key-revoke
 	// forms. Its sidecar uses a dedicated cookie name so it can coexist
 	// with the account-delete and GitHub-connect CSRF tokens rendered on
@@ -3988,7 +4000,7 @@ type StatelessDenylistEntry struct {
 	Hint string
 }
 
-// StatelessClosedPath is one path the guest-init fanotify advisory
+// StatelessClosedPath is one path the guest-init stateless advisory
 // watches. Severity is "high" for /data, /db, and the well-known
 // stateful daemon data dirs the customer is most likely to trip
 // (postgres, mysql); "warn" for the rest. Mirrors

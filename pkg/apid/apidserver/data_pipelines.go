@@ -100,6 +100,40 @@ func (s *server) pipelineControl(w http.ResponseWriter, r *http.Request, a state
 	s.dataPipelines.Control(w, r, a.ID)
 }
 
+func (s *server) pipelineTenantReaders(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.TenantReaders(w, r, a.ID)
+}
+
+func (s *server) pipelinePlanSetup(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.PlanSetup(w, r, a.ID)
+}
+func (s *server) pipelineStartSetup(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.StartSetup(w, r, a.ID)
+}
+func (s *server) pipelineSetups(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.Setups(w, r, a.ID)
+}
+func (s *server) pipelineGetSetup(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.GetSetup(w, r, a.ID)
+}
+func (s *server) pipelineControlSetup(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.ControlSetup(w, r, a.ID)
+}
+func (s *server) pipelineFreshness(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.Freshness(w, r, a.ID)
+}
+func (s *server) pipelineIndexes(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.Indexes(w, r, a.ID)
+}
+
+func (s *server) pipelineEvolve(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.Evolve(w, r, a.ID)
+}
+
+func (s *server) pipelineApproveSchema(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.ApproveSchema(w, r, a.ID)
+}
+
 func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	if _, err := daemonenv.Load("apid"); err != nil {
 		return err
@@ -130,7 +164,7 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 		return errors.New("data pipelines: catalog unavailable")
 	}
 	defer pool.Close()
-	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(pool, os.Getenv, log, nil)
+	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(ctx, pool, os.Getenv, log, nil)
 	if err != nil {
 		return err
 	}
@@ -150,6 +184,16 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	}
 	store := datapipeline.NewPostgresStore(pool)
 	capacity := &datapipeline.CapacityObserver{Store: connectioncapacity.NewStore(pool), Qualifications: cfg.DataPipelines.Capacity, Target: service.PipelineCapacityTarget}
-	worker := &datapipeline.Worker{SetupTick: srv.dataPipelines.Service.SetupTick, Store: store, Identities: identities, Allowed: srv.dataPipelines.Service.Allowed, Engine: &datapipeline.Engine{RefreshSchema: store.RefreshSchema, Policy: policy, Target: service.WithPipelineSQL, Capacity: capacity, Admit: store.AdmitCapacity}}
+	worker := &datapipeline.Worker{AuthMemberships: srv.dataPipelines.Service.AuthMemberships, AuthCanGrant: srv.dataPipelines.Service.Available, SetupTick: srv.dataPipelines.Service.SetupTick, Store: store, Identities: identities, Allowed: srv.dataPipelines.Service.Allowed, Engine: &datapipeline.Engine{IndexStorageLimit: func(ctx context.Context, p datapipeline.Pipeline) (int64, error) {
+		if !srv.dataPipelines.Service.Available(ctx, p.AccountID) {
+			return 0, datapipeline.ErrUnavailable
+		}
+		db, err := service.Get(ctx, p.AccountID, p.DatabaseID)
+		return db.Spec.StorageLimitBytes, err
+	}, RefreshRelationships: store.RefreshRelationships, RefreshSchema: store.RefreshSchema, RefreshReadGate: store.RefreshReadGate, Policy: policy, Target: service.WithPipelineSQL, Capacity: capacity, Admit: store.AdmitCapacity}}
 	return worker.Run(ctx)
+}
+
+func (s *server) pipelineOperations(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.Operations(w, r, a.ID)
 }

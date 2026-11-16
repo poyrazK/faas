@@ -6,6 +6,18 @@
 <body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a> · <a href="/dashboard/apps/{{.Data.Slug}}/env">Environment &amp; secrets</a></header>
 <main>{{template "email-verification-banner" .}}<h1>Data API</h1>
 <p>Inspect the database schema and download application types from your deployed <code>data-api</code> app.</p>
+<section aria-labelledby="operations-title"><h2 id="operations-title">Operations</h2>
+<form method="get"><input type="hidden" name="observe" value="1"><label>Request ID <input name="request_id" value="{{.Data.RequestID}}" placeholder="Optional request UUID"></label><button>Observe health and recent requests</button></form>
+<p>Observing health can wake a parked API. Requests carry no application credentials.</p>
+{{with .Data.Operations}}<p role="status">Readiness: <strong>{{.State}}</strong> · Runtime: {{.RuntimeState}}{{if .Runtime}} (<code>{{.Runtime}}</code>){{end}} · Observed {{.ObservedAt.UTC.Format "2006-01-02 15:04:05 UTC"}}</p>
+{{if ne .State "unknown"}}<p>Requests active: {{.Active}} / {{.Capacity}} · Queued: {{.Queued}}</p>{{end}}
+{{if .Checks}}<table><tr><th>Check</th><th>Observation</th></tr>{{range .Checks}}<tr><td>{{.Name}}</td><td>{{.State}}</td></tr>{{end}}</table>{{end}}
+{{if eq .RuntimeState "update available"}}<p>Update the runtime with <code>gregale data-api deploy {{$.Data.Slug}}</code>.</p>{{end}}
+{{with .Budgets}}<p>Database connection budget: {{.State}}.</p>{{range .Databases}}<p>{{.DatabaseName}}: {{.State}}{{if .Enforced}} (enforced){{else}} (planning observation){{end}}{{range .Reasons}} · {{.}}{{end}}</p>{{end}}{{end}}
+{{if .Message}}<p role="status">{{.Message}}</p>{{end}}
+{{with .Sample}}<p>Retained edge request sample (last hour): {{.Requests}} requests · {{.RateLimited}} HTTP 429 · {{.Overloaded}} HTTP 503 · {{.Errors}} server errors{{with .P95}} · p95 {{.}} ms{{end}}. {{if .Partial}}Only the newest page is included.{{end}}</p><p>These are historical samples and end-to-end edge timings; they do not measure SQL execution or establish current readiness.</p>
+{{if .Recent}}<table><tr><th>Request ID</th><th>Status</th><th>Duration (ms)</th></tr>{{range .Recent}}<tr><td><a href="?observe=1&amp;request_id={{.ID}}">{{.ID}}</a></td><td>{{.Status}}</td><td>{{with .Latency}}{{.}}{{else}}unknown{{end}}</td></tr>{{end}}</table>{{end}}{{end}}
+{{end}}</section>
 {{if .Data.Message}}<p role="status">{{.Data.Message}}</p>{{end}}
 <section><h2>Database bindings</h2>{{if .Data.Bindings}}<table><tr><th>Database</th><th>State</th><th>Credential generation</th></tr>{{range .Data.Bindings}}<tr><td>{{.DatabaseName}}</td><td>{{.State}}{{if .RotationPending}} · rotation pending{{end}}</td><td>{{.CredentialGeneration}}</td></tr>{{end}}</table>{{else}}<p>No managed Data API binding is recorded in the default environment. Check the app's database configuration before running operations.</p>{{end}}</section>
 <section><h2>Usage</h2>{{with .Data.Usage}}

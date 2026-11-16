@@ -52,6 +52,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -709,6 +710,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
+	explicitSourceRoot := strings.TrimSpace(opts.SourceRoot) != ""
 	root, rootErr := sourcecontext.DeploymentRoot(opts.SourceRoot, app.RootDir)
 	if rootErr != nil {
 		api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
@@ -750,15 +752,16 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	// was inflated in full on each commit retry; a failed commit leaves the
 	// session open.
 	if opts.SourceRoot != "" {
-		present, rootErr := archiveHasSourceRoot(row.PartPath, opts.SourceRoot)
+		resolved, present, rootErr := resolveArchiveSourceRoot(row.PartPath, opts.SourceRoot, explicitSourceRoot)
 		if rootErr != nil || !present {
 			if rootErr != nil {
 				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error()))
 			} else {
-				api.WriteProblem(w, api.ErrSourceInvalid(fmt.Sprintf("source_root %q is not present in the source archive", opts.SourceRoot)))
+				api.WriteProblem(w, sourceRootMissingProblem(opts.SourceRoot, explicitSourceRoot))
 			}
 			return
 		}
+		opts.SourceRoot = resolved
 	}
 	if prob := s.scanSourceTarballSecrets(row.PartPath, api.MustLimitsFor(acct.Plan)); prob != nil {
 		api.WriteProblem(w, prob)
@@ -874,6 +877,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		Workflows:              append(json.RawMessage(nil), rollout.Workflows...),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
 		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideReadinessProbe: append(json.RawMessage(nil), rollout.OverrideReadinessProbe...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ReleaseCommand:         releaseCommand.command,
 		ReleaseCommandShell:    releaseCommand.shell,

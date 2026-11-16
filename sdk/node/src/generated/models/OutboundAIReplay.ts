@@ -19,5 +19,9 @@ export type OutboundAIReplay = {
   targets: Array<OutboundAIReplayTarget>;
   source: OutboundAIReplaySource;
   results: Array<OutboundAIReplayResult>;
+  /**
+   * The source's and results' answers were left out; reading them needs admin or secrets:read.
+   */
+  content_withheld?: boolean;
 };
 

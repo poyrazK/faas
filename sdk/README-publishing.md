@@ -2,8 +2,9 @@
 
 Status: **no Gregale SDK is published to any public registry yet.** The
 metadata is valid, the artifacts build, and the license is decided (Apache-2.0,
-2026-10-29; see [Licensing](#licensing)). What remains is registering the
-package names and wiring the publish jobs, below.
+2026-10-29; see [Licensing](#licensing)). The Data API release job is enabled;
+its first publication requires the registry credential and a release. Other
+language packages retain the setup steps below.
 
 The Go, Node and Python SDKs are published as source to public repositories in
 the `gregale-dev` org ([ADR-20261112110000](../docs/adr/20261112110000-sdk-public-repositories.md)):
@@ -34,7 +35,7 @@ python3 scripts/sdk_mirror.py build --repo gregale-go --out /tmp/gregale-go
 |---|---|---|---|
 | Go | `github.com/gregale-dev/gregale-go` | `faas` | needs a `vX.Y.Z` tag on gregale-go |
 | Node | `@gregale/sdk-node` | `@gregale/sdk-node` | not published; npm scope `@gregale` exists |
-| Data API | `@gregale/data` | `@gregale/data` | not published; release job ready, off (see [Data API SDK](#data-api-sdk)) |
+| Data API | `@gregale/data` | `@gregale/data` | release job enabled; first publication requires the npm credential (see [Data API SDK](#data-api-sdk)) |
 | Application Auth | `@gregale/auth` | `@gregale/auth` | source package in `sdk/auth`; not published |
 | Python | `gregale-sdk` | `faas_sdk` | PyPI project unregistered |
 
@@ -115,16 +116,17 @@ npm publish
 
 ## Data API SDK
 
-`release.yml` has a `publish-data-sdk` job for `@gregale/data`. It stays off
-until you turn it on: set the repository variable
-`PUBLISH_DATA_SDK=true` to turn it on. On each release tag it then:
+`release.yml` has a `publish-data-sdk` job for `@gregale/data`. It runs on release
+tags by default; set `PUBLISH_DATA_SDK=false` to pause publication. Configure the
+existing `NPM_TOKEN` repository secret before releasing. On each release tag it:
 
 1. installs the locked dependencies without lifecycle scripts and runs
    `npm test` (build, declaration and type tests, unit tests);
 2. checks the packed files, including the live-read module (`dist/live`)
    behind `@gregale/data/live` and `@gregale/data/live/react`;
 3. publishes the version in `sdk/data/package.json` unless the registry already
-   has it, so a CLI release that does not bump the SDK publishes nothing.
+   has the exact package integrity. Reusing a version with different bytes fails
+   the release and requires a version bump.
 
 `publishConfig.access` is `public` (Apache-2.0, see [Licensing](#licensing)).
 The `@gregale` scope already holds the CLI's `@gregale/cli-*` packages, so no
@@ -163,3 +165,32 @@ paths customers can use right now:
 - Node — `npm pack` a tarball, then `npm install /path/to/tarball.tgz`
 - Python — `poetry build -f wheel`, then `pip install dist/*.whl`
 - Go — `go get github.com/gregale-dev/gregale-go@<commit>` works today; a `vX.Y.Z` tag on gregale-go adds versions
+
+## Consumer installation gate
+
+`sdk-mirror` now builds and installs each exported SDK into an independent
+consumer before pushing the public tree. It runs the first-request code from
+that tree's README, a typed application read, and the SDK's typed not-found
+error against the existing `fakeapid` fixture. Node additionally type-checks
+its consumer and imports public browser/workflow subpaths; Python checks its
+workflow import and wheel's `py.typed` marker. No live account is used.
+
+Successful runs retain `sdk-install-gregale-js` (npm tarball and report),
+`sdk-install-gregale-python` (wheel and report), and `sdk-install-gregale-go`
+(report only). `sdk-install.json` records each package's identity, checks and
+artifact SHA-256. Install a verified artifact in another project with
+`npm install /path/to/package.tgz` or
+`python -m pip install /path/to/package.whl`. These artifacts are available to
+maintainers with workflow access; this does not publish a registry version.
+
+Run the same gate locally with new or empty output directories:
+
+```sh
+python3 scripts/sdk_mirror.py build --repo gregale-js --out /tmp/gregale-js-tree
+python3 scripts/sdk_install_check.py --repo gregale-js \
+  --tree /tmp/gregale-js-tree --out /tmp/gregale-js-install
+```
+
+Repeat with `gregale-go` or `gregale-python`. All checks require Go for the
+fixture, plus Node/npm or Python/pip/venv for that language. See
+[installation checks](install-tests/README.md) for requirements and scope.

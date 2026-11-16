@@ -61,3 +61,30 @@ test('names and ranges are checked before any request; visitors send no token', 
   assert.equal(requests[0].headers.get('Authorization'), null)
   assert.throws(() => createStorageClient({ url: 'http://data.example', accessToken: 't' }), /HTTPS/)
 })
+
+test('DAPI002 lost creation responses retain a persisted recovery ID and permit explicit idempotent creation', async () => {
+  const { UploadSessionStartError } = await import('../dist/index.js')
+  let saved, calls = 0
+  const ids = []
+  const storage = createStorageClient({ url: 'https://data.example', accessToken: 'token', fetch: async (_url, init) => {
+    const input = JSON.parse(init.body)
+    assert.equal(saved, input.id, 'the recovery ID is persisted before sending')
+    ids.push(input.id)
+    if (++calls === 1) throw new TypeError('lost reply')
+    return Response.json({ id: input.id, bucket: 'uploads', name: 'a.txt', size: 0, content_type: 'application/octet-stream', state: 'complete', expires_at: '2030-01-01T00:00:00Z', chunk_size: 5242880, parts: [], object: { ...row, name: 'a.txt', size: 0 } })
+  } }).from('uploads')
+  const error = await storage.uploadResumable('a.txt', '', { onSessionId: async id => { saved = id } }).catch(error => error)
+  assert.ok(error instanceof UploadSessionStartError)
+  assert.equal(error.sessionId, saved)
+  assert.ok(error.cause instanceof TypeError)
+  const object = await storage.uploadResumable('a.txt', '', { id: error.sessionId })
+  assert.equal(object.name, 'a.txt')
+  assert.equal(ids.length, 2); assert.equal(ids[0], ids[1])
+})
+
+test('DAPI002 refusing to persist an upload ID prevents network dispatch', async () => {
+  let calls = 0
+  const bucket = createStorageClient({ url: 'https://data.example', accessToken: 'token', fetch: async () => { calls++; throw new Error('unexpected') } }).from('uploads')
+  await assert.rejects(bucket.uploadResumable('a.txt', 'x', { onSessionId: () => { throw new Error('storage failed') } }), /storage failed/)
+  assert.equal(calls, 0)
+})

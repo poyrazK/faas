@@ -161,6 +161,14 @@ def pre_normalize_spec(spec: Path) -> Path:
         }:
             raise ValueError("dead-letter export binary response adaptation needs review")
         export_operation["responses"]["200"]["content"] = {"application/octet-stream": content["application/x-ndjson"]}
+    append = fixed.get("paths", {}).get("/v1/uploads/{id}", {}).get("patch")
+    if append is not None:
+        if append.get("operationId") != "appendUpload":
+            raise ValueError("Source upload generator adaptation needs review")
+        content = append["requestBody"]["content"]
+        if set(content) != {"application/offset+octet-stream"}:
+            raise ValueError("Source upload binary media adaptation needs review")
+        append["requestBody"]["content"] = {"application/octet-stream": content["application/offset+octet-stream"]}
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="openapi-", delete=False) as fh:
         tmp = Path(fh.name)
         json.dump(fixed, fh, indent=2, sort_keys=False, default=str)
@@ -169,6 +177,18 @@ def pre_normalize_spec(spec: Path) -> Path:
 
 # Hand-written modules of the GA and beta package, `faas_sdk/<name>`.
 ROOT_WRAPPER_MODULES = (
+    "_async_request.py",
+    "_pagination.py",
+    "_waiters.py",
+    "_source_upload.py",
+    "_source_preparation.py",
+    "_source_deployment.py",
+    "_project_inspection.py",
+    "_project_workflows.py",
+    "_project_verification.py",
+    "job_runtime.py",
+    "_typed_jobs.py",
+    "job_types.py",
     "_wrapper.py",
     "_rfc7807.py",
     "_sse.py",
@@ -182,6 +202,7 @@ ROOT_WRAPPER_MODULES = (
     "lifecycle_runtime.py",
     "workflows.py",
     "functions.py",
+    "functions_runtime.py",
     "_binding_client_runtime.py",
     "_async_binding_client_runtime.py",
 )
@@ -189,6 +210,15 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "pipeline_children_state.py",
+    "pipeline_children.py",
+    "pipeline_state.py",
+    "job_pipelines.py",
+    "job_pipeline_client.py",
+    "pipeline_gates.py",
+    "live_jobs.py",
+    "file_pipelines.py",
+    "files.py",
     "_wrapper.py",
     "_binding_qualification.py",
     "_binding_creation.py",
@@ -466,8 +496,10 @@ def regen(overwrite: bool = True) -> None:
         restore_handwritten()
 
         _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
-        (OUT / "faas_sdk" / "preview" / "__init__.py").write_text(_PREVIEW_INIT_PY_TEMPLATE)
+        (OUT / "faas_sdk" / "preview" / "__init__.py").write_text(_PREVIEW_INIT_PY_TEMPLATE.rstrip() + "\n")
         _patch_generator_bugs(OUT / "faas_sdk")
+        _preserve_pagination_cursor_inputs(OUT / "faas_sdk")
+        _adapt_source_upload_binary(OUT / "faas_sdk")
         _preserve_routing_replay_guard_precision(OUT / "faas_sdk")
         _preserve_routing_replay_guard_precision(OUT / "faas_sdk" / "preview")
 
@@ -546,7 +578,7 @@ def regen(overwrite: bool = True) -> None:
                         "--quiet",
                         str(sdk_root),
                         "--exclude",
-                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
+                        "_async_request.py,_pagination.py,_waiters.py,_source_upload.py,_source_preparation.py,_source_deployment.py,_project_inspection.py,_project_workflows.py,_project_verification.py,job_runtime.py,_typed_jobs.py,job_types.py,_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
                     ],
                     check=False,
                     capture_output=True,
@@ -657,6 +689,60 @@ def _fix_docstrings(text: str) -> str:
         out.append(line)
         i += 1
     return "\n".join(out)
+
+
+def _adapt_source_upload_binary(sdk_root: Path) -> None:
+    """Preserve the append wire media type and typed replayable byte bodies."""
+    for prefix in ("", "preview/"):
+        path = sdk_root / prefix / "api/uploads/append_upload.py"
+        text = path.read_text()
+        if text.count("body: File,") not in (0, 5):
+            raise ValueError("Source upload binary signatures need review")
+        text = text.replace("body: File,", "body: File | bytes,")
+        if text.count("body: File | bytes,") != 5:
+            raise ValueError("Source upload binary signatures need review")
+        old = '_kwargs["content"] = body.payload'
+        new = '_kwargs["content"] = body if isinstance(body, bytes) else body.payload.read()'
+        if text.count(old) + text.count(new) != 1:
+            raise ValueError("Source upload binary serialization needs review")
+        text = text.replace(old, new).replace("body (File):", "body (File | bytes):")
+        text = text.replace(
+            'headers["Content-Type"] = "application/octet-stream"',
+            'headers["Content-Type"] = "application/offset+octet-stream"',
+        )
+        text = text.replace("Any | Problem | None", "Problem | None").replace(
+            "Response[Any | Problem]", "Response[Problem]"
+        )
+        text = text.replace(
+            "        response_200 = cast(Any, None)\n        return response_200", "        return None"
+        )
+        path.write_text(text)
+
+
+def _preserve_pagination_cursor_inputs(sdk_root: Path) -> None:
+    """Add lossless string cursors without changing legacy datetime inputs/DTOs.
+
+    Fail closed when generator output changes, rather than silently losing
+    sub-microsecond server cursor precision. Safe to run repeatedly.
+    """
+    for prefix in ("", "preview/"):
+        for name in ("list_app_deployments.py", "list_deployments.py"):
+            path = sdk_root / prefix / "api/deployments" / name
+            text = path.read_text()
+            old = "    if not isinstance(before, Unset):\n        json_before = before.isoformat()"
+            new = (
+                "    if isinstance(before, str):\n        json_before = before\n"
+                "    elif not isinstance(before, Unset):\n        json_before = before.isoformat()"
+            )
+            if text.count(old) + text.count(new) != 1:
+                raise ValueError(f"pagination cursor serialization needs review: {path}")
+            if text.count("before: datetime.datetime | Unset") not in (0, 5):
+                raise ValueError(f"pagination cursor signatures need review: {path}")
+            text = text.replace("before: datetime.datetime | Unset", "before: datetime.datetime | str | Unset")
+            if text.count("before: datetime.datetime | str | Unset") != 5:
+                raise ValueError(f"pagination cursor signatures need review: {path}")
+            text = text.replace("before (datetime.datetime | Unset):", "before (datetime.datetime | str | Unset):")
+            path.write_text(text.replace(old, new))
 
 
 def _patch_generator_bugs(sdk_root: Path) -> None:
@@ -869,6 +955,112 @@ from ._rfc7807 import (
     parse_problem,
     raise_for_problem,
 )
+from .job_runtime import (
+    JobContract as JobContract,
+    JobError as JobError,
+    JobCode as JobCode,
+    JobInput as JobInput,
+    JobInputBinding as JobInputBinding,
+    JobContext as JobContext,
+    JobStore as JobStore,
+    LocalJobOutcome as LocalJobOutcome,
+    LocalJobStore as LocalJobStore,
+    prepare_job_input as prepare_job_input,
+    read_job_input as read_job_input,
+    decode_job_output as decode_job_output,
+    run_local_job_batch as run_local_job_batch,
+    run_job_task as run_job_task,
+)
+from ._typed_jobs import (
+    TypedJob as TypedJob,
+    TypedJobRun as TypedJobRun,
+    JobCheckpoint as JobCheckpoint,
+    JobCheckpointInput as JobCheckpointInput,
+    JobProgress as JobProgress,
+    JobRunOptions as JobRunOptions,
+    JobSubmitOptions as JobSubmitOptions,
+    JobItemOutcome as JobItemOutcome,
+)
+from ._project_verification import (
+    VerificationOutcome as VerificationOutcome,
+    VerificationCode as VerificationCode,
+    VerificationWorkload as VerificationWorkload,
+    ProjectVerificationTarget as ProjectVerificationTarget,
+    VerificationCheckResult as VerificationCheckResult,
+    VerificationCheckContext as VerificationCheckContext,
+    VerificationCheck as VerificationCheck,
+    VerificationCheckEvidence as VerificationCheckEvidence,
+    VerificationHealth as VerificationHealth,
+    VerificationTimelineEvent as VerificationTimelineEvent,
+    VerificationTimeline as VerificationTimeline,
+    VerificationWorkloadReport as VerificationWorkloadReport,
+    ProjectVerificationReport as ProjectVerificationReport,
+    ProjectVerificationOptions as ProjectVerificationOptions,
+    project_verification_target as project_verification_target,
+)
+from ._project_workflows import (
+    ProjectArchive as ProjectArchive,
+    ReviewedProjectPlan as ReviewedProjectPlan,
+    ProjectWorkflowOptions as ProjectWorkflowOptions,
+    ProjectPreviewOptions as ProjectPreviewOptions,
+    ProjectApplyOptions as ProjectApplyOptions,
+    ProjectApplicationState as ProjectApplicationState,
+    ProjectWorkflowCode as ProjectWorkflowCode,
+    ProjectWorkflowPhase as ProjectWorkflowPhase,
+    ProjectWorkflowProgress as ProjectWorkflowProgress,
+    ProjectWorkflowError as ProjectWorkflowError,
+    ProjectApplicationResult as ProjectApplicationResult,
+    ProjectWorkloadOutcome as ProjectWorkloadOutcome,
+    ProjectWorkloadStatus as ProjectWorkloadStatus,
+    load_project_application_state as load_project_application_state,
+)
+from ._project_inspection import (
+    inspect_project,
+    validate_project_plan,
+    ProjectPlan,
+    ProjectInspectionOptions,
+    ProjectInspectionError,
+    ProjectShape,
+    ProjectFramework,
+    ProjectIssue,
+    ProjectIssueCode,
+    ProjectInput,
+    ProjectSetting,
+    ProjectCandidate,
+    ProjectGeneratedFile,
+    ProjectBuild,
+)
+from ._source_deployment import (
+    SourceDeploymentArchive,
+    SourceDeploymentCode,
+    SourceDeploymentPhase,
+    SourceDeploymentState,
+    SourceDeploymentPreparationOptions,
+    SourceDeploymentWaitOptions,
+    SourceDeploymentOptions,
+    SourceDeploymentProgress,
+    SourceDeploymentReleaseProgress,
+    SourceDeploymentResult,
+    SourceDeploymentError,
+    SourceDeploymentCancelledError,
+    load_source_deployment_state,
+)
+from ._source_preparation import (
+    inspect_source,
+    prepare_source,
+    SourcePreparationError,
+    SourcePreparationCode,
+    SourcePreparationOptions,
+    SourcePreparationProgress,
+    SourceIssue,
+    SourceEntry,
+    SourcePlan,
+    PreparedSource,
+)
+from ._source_upload import SourceUploadCheckpoint, SourceUploadCode, SourceUploadError, SourceUploadOptions, SourceUploadProgress, SourceUploadStage, SourceUploadTimeoutError, load_source_upload_checkpoint, save_source_upload_checkpoint
+from ._pagination import AsyncPagination, PaginationError, PaginationOptions, PaginationPage
+from ._waiters import BuildWaitOptions, DeploymentWaitOptions, WaiterError, WaiterFailureCode, WaiterOptions, WaiterProgress, WaiterTimeoutError
+from ._async_request import RequestOptions, RequestTimeoutError, ResponseInfo, ResponseObserver, RetryPolicy
 from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
@@ -942,12 +1134,91 @@ def __dir__() -> list[str]:
 
 
 __all__ = (
+    "ProjectArchive",
+    "ReviewedProjectPlan",
+    "ProjectWorkflowOptions",
+    "ProjectPreviewOptions",
+    "ProjectApplyOptions",
+    "ProjectApplicationState",
+    "ProjectWorkflowCode",
+    "ProjectWorkflowPhase",
+    "ProjectWorkflowProgress",
+    "ProjectWorkflowError",
+    "ProjectApplicationResult",
+    "ProjectWorkloadOutcome",
+    "ProjectWorkloadStatus",
+    "load_project_application_state",
     "function",
     "FunctionHookContext",
     "FaaSClient",
     "FaaSClientOptions",
     "Client",
     "AuthenticatedClient",
+    "AsyncPagination",
+    "PaginationError",
+    "PaginationOptions",
+    "PaginationPage",
+    "inspect_source",
+    "prepare_source",
+    "SourcePreparationError",
+    "SourcePreparationCode",
+    "SourcePreparationOptions",
+    "SourcePreparationProgress",
+    "SourceIssue",
+    "SourceEntry",
+    "SourcePlan",
+    "PreparedSource",
+    "inspect_project",
+    "validate_project_plan",
+    "ProjectPlan",
+    "ProjectInspectionOptions",
+    "ProjectInspectionError",
+    "ProjectShape",
+    "ProjectFramework",
+    "ProjectIssue",
+    "ProjectIssueCode",
+    "ProjectInput",
+    "ProjectSetting",
+    "ProjectCandidate",
+    "ProjectGeneratedFile",
+    "ProjectBuild",
+    "SourceDeploymentArchive",
+    "SourceDeploymentCode",
+    "SourceDeploymentPhase",
+    "SourceDeploymentState",
+    "SourceDeploymentPreparationOptions",
+    "SourceDeploymentWaitOptions",
+    "SourceDeploymentOptions",
+    "SourceDeploymentProgress",
+    "SourceDeploymentReleaseProgress",
+    "SourceDeploymentResult",
+    "SourceDeploymentError",
+    "SourceDeploymentCancelledError",
+    "load_source_deployment_state",
+
+    "SourceUploadCheckpoint",
+    "SourceUploadCode",
+    "SourceUploadError",
+    "SourceUploadOptions",
+    "SourceUploadProgress",
+    "SourceUploadStage",
+    "SourceUploadTimeoutError",
+    "load_source_upload_checkpoint",
+    "save_source_upload_checkpoint",
+
+    "BuildWaitOptions",
+    "DeploymentWaitOptions",
+    "WaiterError",
+    "WaiterFailureCode",
+    "WaiterOptions",
+    "WaiterProgress",
+    "WaiterTimeoutError",
+
+    "RequestOptions",
+    "RequestTimeoutError",
+    "ResponseInfo",
+    "ResponseObserver",
+    "RetryPolicy",
     "RetryOptions",
     "WrapperOptions",
     "install_chain",
@@ -1018,8 +1289,143 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from .pipeline_state import PipelineFailure, pipeline_failure, PIPELINE_JOB_SCHEMA, PipelineError, PipelineJobReceipt, PipelineJobStore, PipelineScope, PostgresPipelineJobStore, pipeline_job_identity, read_pipeline_artifact
+from .pipeline_children_state import PIPELINE_CHILDREN_SCHEMA, PipelineChildrenError, PipelineChildrenReceipt, PipelineChildrenStore, PostgresPipelineChildrenStore, pipeline_children_identity, pipeline_children_intent
+from .pipeline_children import PipelineChildren, PipelineChild, PipelineChildOptions, PipelineChildView, PipelineBatchResult, PipelineChildrenTransport, NativePipelineChildrenTransport, pipeline_children_live_snapshot
+from .pipeline_gates import PIPELINE_GATE_SCHEMA, NativePipelineGateTransport, PipelineGateActor, PipelineGateError, PipelineGateOptions, PipelineGateOutcome, PipelineGateRecord, PipelineGateService, PipelineGateStore, PipelineGateTransport, PipelineGateView, PostgresPipelineGateStore, pipeline_gate_intent
+from .job_pipelines import JobPipeline, JobPipelineContext, JobPipelineOptions, PipelineItem, PipelineJob, PipelineJobResult
+from .job_pipeline_client import job_pipeline_live_snapshot, JobPipelineClient, PipelineCheckpoint, PipelineInspection, PipelineStepInspection, TypedPipelineRun
+from .live_jobs import LiveJobWaiting, LiveJob, LiveJobError, LiveJobFailure, LiveJobSink, LiveJobSnapshot, LiveJobSource, LiveJobStatus, realtime_live_job_source
+from .file_pipelines import FILE_PIPELINE_SCHEMA, FileCreatedEvent, FileDelivery, FilePipeline, FilePipelineError, FilePipelineInput, FilePipelineIntent, FilePipelineOptions, FilePipelineOutcome, FilePipelineOwner, FilePipelineReceipt, FilePipelineScope, FilePipelineStore, NativeFileVerifier, PostgresFilePipelineStore, file_event_invocation_id, file_pipeline_identity, parse_file_created_event
+from .files import BytesFileSource, FileBucket, FileCheckpoint, FileCode, FileError, FileMetadata, FileObject, FileOptions, FilePage, FilePart, FileProgress, FileSource, FileUploadResult, PathFileSource, file_source_digest
+from ..job_runtime import (
+    JobContract as JobContract,
+    JobError as JobError,
+    JobCode as JobCode,
+    JobInput as JobInput,
+    JobInputBinding as JobInputBinding,
+    JobContext as JobContext,
+    JobStore as JobStore,
+    LocalJobOutcome as LocalJobOutcome,
+    LocalJobStore as LocalJobStore,
+    prepare_job_input as prepare_job_input,
+    read_job_input as read_job_input,
+    decode_job_output as decode_job_output,
+    run_local_job_batch as run_local_job_batch,
+    run_job_task as run_job_task,
+)
+from .._typed_jobs import (
+    TypedJob as TypedJob,
+    TypedJobRun as TypedJobRun,
+    JobCheckpoint as JobCheckpoint,
+    JobCheckpointInput as JobCheckpointInput,
+    JobProgress as JobProgress,
+    JobRunOptions as JobRunOptions,
+    JobSubmitOptions as JobSubmitOptions,
+    JobItemOutcome as JobItemOutcome,
+)
+from .._project_verification import (
+    VerificationOutcome as VerificationOutcome,
+    VerificationCode as VerificationCode,
+    VerificationWorkload as VerificationWorkload,
+    ProjectVerificationTarget as ProjectVerificationTarget,
+    VerificationCheckResult as VerificationCheckResult,
+    VerificationCheckContext as VerificationCheckContext,
+    VerificationCheck as VerificationCheck,
+    VerificationCheckEvidence as VerificationCheckEvidence,
+    VerificationHealth as VerificationHealth,
+    VerificationTimelineEvent as VerificationTimelineEvent,
+    VerificationTimeline as VerificationTimeline,
+    VerificationWorkloadReport as VerificationWorkloadReport,
+    ProjectVerificationReport as ProjectVerificationReport,
+    ProjectVerificationOptions as ProjectVerificationOptions,
+    project_verification_target as project_verification_target,
+)
+from .._project_workflows import (
+    ProjectArchive as ProjectArchive,
+    ReviewedProjectPlan as ReviewedProjectPlan,
+    ProjectWorkflowOptions as ProjectWorkflowOptions,
+    ProjectPreviewOptions as ProjectPreviewOptions,
+    ProjectApplyOptions as ProjectApplyOptions,
+    ProjectApplicationState as ProjectApplicationState,
+    ProjectWorkflowCode as ProjectWorkflowCode,
+    ProjectWorkflowPhase as ProjectWorkflowPhase,
+    ProjectWorkflowProgress as ProjectWorkflowProgress,
+    ProjectWorkflowError as ProjectWorkflowError,
+    ProjectApplicationResult as ProjectApplicationResult,
+    ProjectWorkloadOutcome as ProjectWorkloadOutcome,
+    ProjectWorkloadStatus as ProjectWorkloadStatus,
+    load_project_application_state as load_project_application_state,
+)
+from .._project_inspection import (
+    inspect_project as inspect_project,
+    validate_project_plan as validate_project_plan,
+    ProjectPlan as ProjectPlan,
+    ProjectInspectionOptions as ProjectInspectionOptions,
+    ProjectInspectionError as ProjectInspectionError,
+    ProjectShape as ProjectShape,
+    ProjectFramework as ProjectFramework,
+    ProjectIssue as ProjectIssue,
+    ProjectIssueCode as ProjectIssueCode,
+    ProjectInput as ProjectInput,
+    ProjectSetting as ProjectSetting,
+    ProjectCandidate as ProjectCandidate,
+    ProjectGeneratedFile as ProjectGeneratedFile,
+    ProjectBuild as ProjectBuild,
+)
+from .._source_deployment import (
+    SourceDeploymentArchive as SourceDeploymentArchive,
+    SourceDeploymentCode as SourceDeploymentCode,
+    SourceDeploymentPhase as SourceDeploymentPhase,
+    SourceDeploymentState as SourceDeploymentState,
+    SourceDeploymentPreparationOptions as SourceDeploymentPreparationOptions,
+    SourceDeploymentWaitOptions as SourceDeploymentWaitOptions,
+    SourceDeploymentOptions as SourceDeploymentOptions,
+    SourceDeploymentProgress as SourceDeploymentProgress,
+    SourceDeploymentReleaseProgress as SourceDeploymentReleaseProgress,
+    SourceDeploymentResult as SourceDeploymentResult,
+    SourceDeploymentError as SourceDeploymentError,
+    SourceDeploymentCancelledError as SourceDeploymentCancelledError,
+    load_source_deployment_state as load_source_deployment_state,
+)
+from .._source_preparation import (
+    inspect_source as inspect_source,
+    prepare_source as prepare_source,
+    SourcePreparationError as SourcePreparationError,
+    SourcePreparationCode as SourcePreparationCode,
+    SourcePreparationOptions as SourcePreparationOptions,
+    SourcePreparationProgress as SourcePreparationProgress,
+    SourceIssue as SourceIssue,
+    SourceEntry as SourceEntry,
+    SourcePlan as SourcePlan,
+    PreparedSource as PreparedSource,
+)
 from .. import (
-    FaaSClient,
+    SourceUploadCheckpoint as SourceUploadCheckpoint,
+    SourceUploadCode as SourceUploadCode,
+    SourceUploadError as SourceUploadError,
+    SourceUploadOptions as SourceUploadOptions,
+    SourceUploadProgress as SourceUploadProgress,
+    SourceUploadStage as SourceUploadStage,
+    SourceUploadTimeoutError as SourceUploadTimeoutError,
+    load_source_upload_checkpoint as load_source_upload_checkpoint,
+    save_source_upload_checkpoint as save_source_upload_checkpoint,
+    BuildWaitOptions as BuildWaitOptions,
+    DeploymentWaitOptions as DeploymentWaitOptions,
+    WaiterError as WaiterError,
+    WaiterFailureCode as WaiterFailureCode,
+    WaiterOptions as WaiterOptions,
+    WaiterProgress as WaiterProgress,
+    WaiterTimeoutError as WaiterTimeoutError,
+    AsyncPagination as AsyncPagination,
+    PaginationError as PaginationError,
+    PaginationOptions as PaginationOptions,
+    PaginationPage as PaginationPage,
+    RequestOptions,
+    RequestTimeoutError,
+    ResponseInfo,
+    ResponseObserver,
+    RetryPolicy,
     FaaSClientOptions,
     Client,
     AuthenticatedClient,
@@ -1070,7 +1476,7 @@ from .. import (
     __version__,
 )
 from .. import __all__ as _PACKAGE_ALL
-from ._wrapper import FaaSClient
+from ._wrapper import FaaSClient as FaaSClient
 from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_event
 from .crash_snapshots import (
     CRASH_SNAPSHOT_ENDPOINT,
@@ -1102,8 +1508,11 @@ from .dev_bridge import (
 )
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
 from .flags import (
+    GREGALE_CLIENT_COUNTRY_HEADER,
+    GREGALE_CLIENT_UA_FAMILY_HEADER,
     GREGALE_FLAG_CONTEXT_HEADER,
     GREGALE_FLAG_EVIDENCE_HEADER,
+    GREGALE_FLAG_KILLS_HEADER,
     GREGALE_FLAG_PROPAGATION_HEADER,
     AsyncGregaleFlagsTransport,
     FlagDecision,
@@ -1115,6 +1524,8 @@ from .flags import (
     flag_subject_bucket,
     flag_subject_variant_bucket,
     flag_variant_bucket,
+    match_conditions,
+    parse_kills,
     validate_bundle,
 )
 from .issues import IssueReporter
@@ -1140,14 +1551,18 @@ from .operations import (
 from .operations_runtime import GregaleOperations, OperationExecutionContext, OperationHTTPError
 from .ai_gateway import (
     AI_CALL_HEADER,
+    AI_PROMPT_VERSION_HEADER,
     AI_SESSION_HEADER,
     AI_TAGS_HEADER,
     AI_TRACE_HEADER,
     AI_USER_HEADER,
     AIGatewayError,
+    AIPrompt,
+    AIPromptResult,
     ai_gateway_feedback,
     ai_gateway_headers,
     ai_gateway_url,
+    ai_prompt,
     is_valid_ai_user_id,
     opaque_ai_user_id,
 )
@@ -1408,8 +1823,15 @@ from .event_acknowledgment_intent_recovery_pass import (
 )
 
 __all__ = (
+    'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
+    'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
+    'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',
+    'LiveJob', 'LiveJobError', 'LiveJobFailure', 'LiveJobSink', 'LiveJobSnapshot', 'LiveJobSource', 'LiveJobStatus', 'realtime_live_job_source',
+    "BytesFileSource", "FileBucket", "FileCheckpoint", "FileCode", "FileError", "FileMetadata", "FileObject", "FileOptions", "FilePage", "FilePart", "FileProgress", "FileSource", "FileUploadResult", "PathFileSource", "file_source_digest",
+    'FILE_PIPELINE_SCHEMA', 'FileCreatedEvent', 'FileDelivery', 'FilePipeline', 'FilePipelineError', 'FilePipelineInput', 'FilePipelineIntent', 'FilePipelineOptions', 'FilePipelineOutcome', 'FilePipelineOwner', 'FilePipelineReceipt', 'FilePipelineScope', 'FilePipelineStore', 'NativeFileVerifier', 'PostgresFilePipelineStore', 'file_event_invocation_id', 'file_pipeline_identity', 'parse_file_created_event',
     *_PACKAGE_ALL,
     "AI_CALL_HEADER",
+    "AI_PROMPT_VERSION_HEADER",
     "AI_SESSION_HEADER",
     "AI_TAGS_HEADER",
     "AI_TRACE_HEADER",
@@ -1418,12 +1840,18 @@ __all__ = (
     "ai_gateway_feedback",
     "ai_gateway_headers",
     "ai_gateway_url",
+    "AIPrompt",
+    "AIPromptResult",
+    "ai_prompt",
     "is_valid_ai_user_id",
     "opaque_ai_user_id",
     "IssueReporter",
     "GREGALE_FLAG_CONTEXT_HEADER",
     "GREGALE_FLAG_EVIDENCE_HEADER",
     "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GREGALE_CLIENT_COUNTRY_HEADER",
+    "GREGALE_CLIENT_UA_FAMILY_HEADER",
+    "GREGALE_FLAG_KILLS_HEADER",
     "GregaleFlags",
     "GregaleFlagsMiddleware",
     "AsyncGregaleFlagsTransport",
@@ -1434,6 +1862,8 @@ __all__ = (
     "flag_subject_bucket",
     "flag_subject_variant_bucket",
     "flag_variant_bucket",
+    "match_conditions",
+    "parse_kills",
     "validate_bundle",
     "CRASH_SNAPSHOT_ENDPOINT",
     "CrashSnapshotResult",
@@ -1856,7 +2286,12 @@ def _canonicalise_to_head(
     #    hashing primitives so the comparison is apples-to-apples.
     mismatches: list[tuple[Path, bytes, str]] = []
     candidates = []
+    # These barrels are authored by templates in this file. Import additions
+    # export real SDK capabilities, so restoring them as cosmetic drops APIs.
+    authored_barrels = {sdk_root / "__init__.py", sdk_root / "preview" / "__init__.py"}
     for regen_path in sdk_root.rglob("*.py"):
+        if regen_path in authored_barrels:
+            continue
         rel = regen_path.relative_to(repo_root).as_posix()
         head_sha = head_blobs.get(rel)
         if head_sha is not None:

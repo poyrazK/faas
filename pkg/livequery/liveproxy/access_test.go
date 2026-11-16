@@ -22,6 +22,24 @@ var (
 	keyB = "gdsk_" + strings.Repeat("b", 43)
 )
 
+func TestLivePolicyChangeClosesBeforeDeliveringAnotherResult(t *testing.T) {
+	for _, kind := range []string{liveproto.AccessAnonymous, liveproto.AccessServer} {
+		current := accessRoute()
+		var got liveproto.Error
+		proxy := New(nil, nil)
+		session := proxy.Attach(func(context.Context, RouteKey) (Route, error) { return current, nil }, func(raw []byte) error { return json.Unmarshal(raw, &got) })
+		u := &upstream{proxy: proxy, route: current, subs: map[string]*sub{}}
+		sb := &sub{session: session, client: "test", up: u, cred: liveproto.ClientFrame{Access: kind}, accessFingerprint: accessFingerprint(current, kind)}
+		session.subs[sb.client] = sb
+		u.subs[sb.upstreamID()] = sb
+		current.Access = nil
+		u.dispatch(&liveproto.Rows{Type: liveproto.TypeRows, Subscription: sb.upstreamID()})
+		if got.Code != liveproto.CodeForbidden || !got.Closed || len(session.subs) != 0 || len(u.subs) != 0 {
+			t.Fatalf("old policy still delivered: %+v", got)
+		}
+	}
+}
+
 func keyHash(key string) string {
 	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])

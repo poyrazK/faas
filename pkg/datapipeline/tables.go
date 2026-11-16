@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -39,7 +38,7 @@ func tablePlan(p Pipeline, before, after []relation) SchemaChange {
 	plan.RequestedTables = relationNames(after)
 	for _, old := range before {
 		i := slices.IndexFunc(after, func(r relation) bool { return r.Name == old.Name })
-		if i < 0 || !reflect.DeepEqual(old, after[i]) {
+		if i < 0 || !sameVerificationRelation(old, after[i]) {
 			plan.Supported = false
 		}
 	}
@@ -53,6 +52,9 @@ func tablePlan(p Pipeline, before, after []relation) SchemaChange {
 		}
 		plan.AddedTables = append(plan.AddedTables, r.Name)
 		plan.Changes = append(plan.Changes, SchemaColumnChange{Table: r.Name, Column: "*", Kind: "table_added", Safe: safe, Reason: "Copy and synchronize this table. Every saved reader can read every row after verification and API refresh."})
+		if tenantAccess(p) != nil {
+			plan.Changes[len(plan.Changes)-1].Reason = "Copy and synchronize this table. Approved tenant memberships control row access after verification and API refresh."
+		}
 		plan.Supported = plan.Supported && safe
 	}
 	plan.Supported = plan.Supported && len(plan.AddedTables) > 0 && len(after) <= api.DataPipelineTablesMax
@@ -119,7 +121,7 @@ func checkExistingSelection(c api.DataConnectionCheck, p Pipeline, tables []stri
 		}
 	}
 	c.State = "passed"
-	return checkSelection(c, tables)
+	return ValidateServingSelection(c, tables, p.Serving)
 }
 func (s *PostgresStore) checkedTables(ctx context.Context, tx pgx.Tx, p Pipeline, tables []string) error {
 	r, err := s.q.PipelineCheckForCreate(ctx, tx, sqlc.PipelineCheckForCreateParams{AccountID: p.AccountID, ConnectionID: p.SourceConnectionID})
@@ -140,6 +142,9 @@ func (s *PostgresStore) RequestTables(ctx context.Context, account, id string, r
 	if err != nil {
 		return err
 	}
+	if snapshotMode(p) || p.Serving != nil && len(p.Serving.Columns) > 0 {
+		return ErrConflict
+	}
 	if revision < 1 || len(added) == 0 {
 		return ErrInvalid
 	}
@@ -147,7 +152,7 @@ func (s *PostgresStore) RequestTables(ctx context.Context, account, id string, r
 		return ErrConflict
 	}
 	tables := append(slices.Clone(p.Tables), added...)
-	if err = ValidateCreate(api.CreateDataPipelineRequest{Name: p.Name, SourceConnectionID: p.SourceConnectionID, DatabaseID: p.DatabaseID, ReadSubjects: p.ReadSubjects, Tables: tables}); err != nil {
+	if err = validatePipeline(api.CreateDataPipelineRequest{Name: p.Name, SourceConnectionID: p.SourceConnectionID, DatabaseID: p.DatabaseID, ReadSubjects: p.ReadSubjects, Tables: tables}); err != nil {
 		return err
 	}
 	slices.Sort(tables)

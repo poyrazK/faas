@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/commit"
-	"github.com/onebox-faas/faas/pkg/connectioncapacity"
 )
 
 func (e *Engine) connectSource(ctx context.Context, raw string) (*pgxpool.Pool, error) {
@@ -24,8 +23,13 @@ func blockedCheck(code, message, remediation string) api.DataConnectionCheck {
 
 // Check inspects bounded metadata with verified TLS and the replication network
 // policy. It creates no publications, slots, tables, or subscriptions.
-func (e *Engine) Check(ctx context.Context, job ConnectionCheck, raw string) api.DataConnectionCheck {
-	result := blockedCheck("source_connection_unavailable", "Source connection failed", "Check the credential, verified TLS certificate, and approved source network access.")
+func (e *Engine) Check(ctx context.Context, job ConnectionCheck, raw string) (result api.DataConnectionCheck) {
+	defer func() { neonCheckGuidance(&result, raw) }()
+
+	if _, pooled := neonSource(raw); pooled {
+		return blockedCheck("source_neon_direct_connection_required", "A direct Neon connection is required", "Register a new source using Neon's direct connection string without the -pooler hostname suffix. Credential rotation preserves the existing host identity.")
+	}
+	result = blockedCheck("source_connection_unavailable", "Source connection failed", "Check the credential, verified TLS certificate, and approved source network access.")
 	source, err := e.connectSource(ctx, raw)
 	if err != nil {
 		return result
@@ -34,21 +38,24 @@ func (e *Engine) Check(ctx context.Context, job ConnectionCheck, raw string) api
 	if err = source.Ping(ctx); err != nil {
 		return result
 	}
-	checks, err := inspectSourceSettings(ctx, source)
+	checks, err := inspectCheckSettings(ctx, source, job.Mode)
 	if err != nil {
 		return blockedCheck("source_metadata_unavailable", "Source settings could not be inspected", "Allow the source role to inspect replication settings and run the check again.")
 	}
+	result.Mode = job.Mode
 	result.Checks = append([]api.DataConnectionIssue{inspectionIssue("source_connection", "Verified source connection", "", true)}, checks...)
-	capacity, err := inspectSourceCapacity(ctx, source)
+	capacity, err := inspectCheckCapacity(ctx, source, job.Mode)
 	if err != nil {
 		return blockedCheck("source_capacity_unavailable", "Source capacity could not be inspected", "Allow replication capacity inspection and run the check again.")
 	}
 	result.Checks = append(result.Checks, capacity...)
 	allocation, allocationErr := e.Capacity.source(ctx, job, raw, source)
-	result.Capacity = &api.DataPipelineCapacity{State: "needs_qualification", Source: capacityReport(allocation, connectioncapacity.PipelineSourceDemand(), allocationErr)}
+	result.Capacity = &api.DataPipelineCapacity{State: "needs_qualification", Source: capacityReport(allocation, sourceDemand(job.Mode == "snapshot"), allocationErr)}
 	result.Checks = append(result.Checks, capacityIssue("source", result.Capacity.Source))
 	rows, err := source.Query(ctx, `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') ORDER BY c.relname COLLATE "C" LIMIT $1`, api.DataPipelineDiscoveryTablesMax+1)
+ WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f')
+ AND ($2::text='' OR strpos(c.relname,$2)>0)
+ ORDER BY c.relname COLLATE "C" LIMIT $1`, api.DataPipelineDiscoveryTablesMax+1, job.Search)
 	if err != nil {
 		return blockedCheck("source_metadata_unavailable", "Source tables could not be discovered", "Check source catalog access and run the check again.")
 	}
@@ -71,9 +78,15 @@ func (e *Engine) Check(ctx context.Context, job ConnectionCheck, raw string) api
 		result.Truncated = true
 		names = names[:api.DataPipelineDiscoveryTablesMax]
 	}
+	if len(job.RequestedTables) > 0 {
+		// Exact selections bypass the catalog page, while using the same inspector
+		// and evidence limits. Missing tables receive ordinary remediation.
+		names = job.RequestedTables
+		result.Truncated = false
+	}
 	metadataBytes := 0
 	for _, name := range names {
-		_, table, err := inspectSourceTable(ctx, source, name)
+		_, table, err := inspectSourceTableMode(ctx, source, name, job.Mode == "snapshot")
 		if err != nil {
 			return blockedCheck("source_metadata_unavailable", "Source discovery did not finish", "Run the check again after restoring source connectivity.")
 		}
@@ -93,9 +106,9 @@ func (e *Engine) Check(ctx context.Context, job ConnectionCheck, raw string) api
 		}
 		err = e.Target(ctx, job.AccountID, job.DatabaseID, func(target *pgx.Conn, _ string) error {
 			allocation, allocationErr := e.Capacity.target(ctx, job.AccountID, job.DatabaseID, target)
-			result.Capacity.Destination = capacityReport(allocation, connectioncapacity.PipelineTargetDemand(), allocationErr)
+			result.Capacity.Destination = capacityReport(allocation, targetDemand(job.Mode == "snapshot"), allocationErr)
 			result.Checks = append(result.Checks, capacityIssue("mirror", result.Capacity.Destination))
-			checks, err := inspectTargetCapacity(ctx, target)
+			checks, err := inspectCheckTargetCapacity(ctx, target, job.Mode)
 			result.Checks = append(result.Checks, checks...)
 			if err != nil {
 				return err

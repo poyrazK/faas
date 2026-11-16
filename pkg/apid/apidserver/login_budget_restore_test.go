@@ -41,9 +41,10 @@ func TestPasswordChecksShareTheSignInBudget(t *testing.T) {
 	if !ok {
 		t.Fatal("store has no shared login failure budget")
 	}
-	// Another apid counted all but one failure.
-	budget := state.LoginFailureBudget{MaxFailures: api.LoginFailuresPerEmail, Window: api.LoginFailureEmailWindow}
-	for range api.LoginFailuresPerEmail - 1 {
+	// Another apid counted all but one failure of the address's fleet-wide
+	// budget (over every client network, ADR-20261115100000).
+	budget := state.LoginFailureBudget{MaxFailures: api.LoginFailuresPerEmailFleet, Window: api.LoginFailureEmailWindow}
+	for range api.LoginFailuresPerEmailFleet - 1 {
 		if _, err := shared.RecordLoginFailure(t.Context(), auth.HashEmail(email), budget); err != nil {
 			t.Fatal(err)
 		}

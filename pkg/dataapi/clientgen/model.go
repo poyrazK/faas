@@ -30,6 +30,29 @@ func (n *names) take(base string) string {
 	return name
 }
 
+func (n *names) family(base string, suffixes ...string) string {
+	for i := 1; ; i++ {
+		candidate := base
+		if i > 1 {
+			candidate = fmt.Sprintf("%s%d", base, i)
+		}
+		available := !n.used[candidate]
+		for _, suffix := range suffixes {
+			available = available && !n.used[candidate+suffix] && !n.used["_"+candidate+suffix+"Required"] && !n.used["_"+candidate+suffix+"Optional"]
+		}
+		if !available {
+			continue
+		}
+		n.used[candidate] = true
+		for _, suffix := range suffixes {
+			n.used[candidate+suffix] = true
+			n.used["_"+candidate+suffix+"Required"] = true
+			n.used["_"+candidate+suffix+"Optional"] = true
+		}
+		return candidate
+	}
+}
+
 func words(value string) []string {
 	return strings.FieldsFunc(value, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 }
@@ -58,9 +81,10 @@ func snake(value string) string {
 }
 
 type enumDef struct {
-	Key    string // schema.name in the snapshot
-	Name   string
-	Labels []string
+	Key       string // schema.name in the snapshot
+	Name      string
+	Labels    []string
+	Constants []string
 }
 
 type tableDef struct {
@@ -97,7 +121,7 @@ func qualified(schemas []string, schema, name string) string {
 func buildModel(contract dataapi.Contract) model {
 	s := contract.Parsed
 	m := model{Fingerprint: contract.Fingerprint, Schemas: s.Schemas, enumByKey: map[string]string{}, compositeNm: map[string]string{}, tableByKey: map[string]tableDef{}}
-	types := newNames("Client", "Error", "Table", "Json")
+	types := newNames("Client", "Error", "Table", "Json", "SchemaFingerprint", "SCHEMA_FINGERPRINT", "DataAPIError", "DataClient", "Cursor", "CursorOrder", "CallOption", "WithGET", "CursorFrom", "R", "I", "U", "Any", "Callable", "Dict", "Generic", "List", "Literal", "Optional", "Sequence", "Tuple", "TypeVar", "TypedDict", "Union")
 	keys := make([]string, 0, len(s.Enums))
 	for key := range s.Enums {
 		keys = append(keys, key)
@@ -110,6 +134,9 @@ func buildModel(contract dataapi.Contract) model {
 			continue
 		}
 		def := enumDef{Key: key, Name: types.take(pascal(qualified(s.Schemas, schema, name))), Labels: s.Enums[key]}
+		for _, label := range def.Labels {
+			def.Constants = append(def.Constants, types.take(def.Name+pascal(label)))
+		}
 		m.enumByKey[string(labels)] = def.Name
 		m.Enums = append(m.Enums, def)
 	}
@@ -119,15 +146,7 @@ func buildModel(contract dataapi.Contract) model {
 	}
 	for _, t := range s.Tables {
 		base := pascal(qualified(s.Schemas, t.Schema, t.Name))
-		for _, suffix := range []string{"Row", "Insert", "Update"} {
-			if types.used[base+suffix] {
-				base = types.take(base)
-				break
-			}
-		}
-		for _, suffix := range []string{"Row", "Insert", "Update"} {
-			types.used[base+suffix] = true
-		}
+		base = types.family(base, "Row", "Insert", "Update")
 		def := tableDef{Table: t, Base: base}
 		m.Tables = append(m.Tables, def)
 		m.tableByKey[t.Schema+"."+t.Name] = def

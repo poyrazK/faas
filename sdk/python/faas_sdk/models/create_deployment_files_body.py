@@ -30,12 +30,16 @@ class CreateDeploymentFilesBody:
     runtime: CreateDeploymentFilesBodyRuntime | Unset = UNSET
     healthcheck: str | Unset = UNSET
     """JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."""
+    readiness_probe: str | Unset = UNSET
+    """JSON steady-state readiness probe with the CreateDeploymentOverrides.readiness_probe shape. Overrides
+    gregale.yaml hosting.readiness_probe for this deployment."""
     override_env: str | Unset = UNSET
     """JSON object of non-secret environment overrides applied to this deployment revision only; values follow the
     plan's deployment override limits."""
     source_root: str | Unset = UNSET
-    """Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.'
-    explicitly selects the archive root."""
+    """Optional repository-relative build directory. Empty or omitted uses the app's configured root; when the
+    archive does not contain that directory and its own root holds a Dockerfile, package.json, requirements.txt,
+    pyproject.toml, go.mod or gregale.yaml, the archive root is used. '.' explicitly selects the archive root."""
     scope: str | Unset = UNSET
     """Named environment scope read by the developer deployment; omitted uses default."""
     source_url: str | Unset = UNSET
@@ -64,6 +68,8 @@ class CreateDeploymentFilesBody:
 
         healthcheck = self.healthcheck
 
+        readiness_probe = self.readiness_probe
+
         override_env = self.override_env
 
         source_root = self.source_root
@@ -89,6 +95,8 @@ class CreateDeploymentFilesBody:
             field_dict["runtime"] = runtime
         if healthcheck is not UNSET:
             field_dict["healthcheck"] = healthcheck
+        if readiness_probe is not UNSET:
+            field_dict["readiness_probe"] = readiness_probe
         if override_env is not UNSET:
             field_dict["override_env"] = override_env
         if source_root is not UNSET:
@@ -121,6 +129,9 @@ class CreateDeploymentFilesBody:
 
         if not isinstance(self.healthcheck, Unset):
             files.append(("healthcheck", (None, str(self.healthcheck).encode(), "text/plain")))
+
+        if not isinstance(self.readiness_probe, Unset):
+            files.append(("readiness_probe", (None, str(self.readiness_probe).encode(), "text/plain")))
 
         if not isinstance(self.override_env, Unset):
             files.append(("override_env", (None, str(self.override_env).encode(), "text/plain")))
@@ -173,6 +184,8 @@ class CreateDeploymentFilesBody:
 
         healthcheck = d.pop("healthcheck", UNSET)
 
+        readiness_probe = d.pop("readiness_probe", UNSET)
+
         override_env = d.pop("override_env", UNSET)
 
         source_root = d.pop("source_root", UNSET)
@@ -191,6 +204,7 @@ class CreateDeploymentFilesBody:
             kind=kind,
             runtime=runtime,
             healthcheck=healthcheck,
+            readiness_probe=readiness_probe,
             override_env=override_env,
             source_root=source_root,
             scope=scope,

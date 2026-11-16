@@ -419,6 +419,10 @@ func (s *server) deliverAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrAppWebhookInvalid("type is required, must be at most 256 characters, and must not contain control characters"))
 		return
 	}
+	if api.ReservedAppWebhookEvent(req.Type) {
+		api.WriteProblem(w, api.ErrAppWebhookInvalid(fmt.Sprintf("type %q is a Gregale platform event; choose your own event type (for example order.paid)", req.Type)))
+		return
+	}
 	if len(req.Data) == 0 || !json.Valid(req.Data) {
 		api.WriteProblem(w, api.ErrAppWebhookInvalid("data must be valid JSON"))
 		return

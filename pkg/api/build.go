@@ -66,7 +66,7 @@ const (
 // line "1.26" to 1.26.9, one patch behind. The go.mod go line still sets the
 // module's language version and GODEBUG defaults. Keep it equal to go.mod's
 // toolchain directive (TestGoToolchainVersionMatchesRepositoryToolchain).
-const GoBuildToolchain = "1.26.10"
+const GoBuildToolchain = "1.26.11"
 
 var goCommandNameRE = lazyregexp.New(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
 

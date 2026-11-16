@@ -599,7 +599,20 @@ func migrateDomain(ctx context.Context, store *state.PgStore, d sealdomain.Domai
 	case sealdomain.Build:
 		return sealmigrate.MigrateBuild(ctx, store, domain, legacy)
 	case sealdomain.Edge:
-		return sealmigrate.MigrateEdge(ctx, store, domain, legacy)
+		// With no legacy or previous identity left there is nothing to
+		// re-seal, but the verifier backfill still runs.
+		report := sealmigrate.MigrationReport{Domain: sealdomain.Edge, Target: domain.Recipient().String()}
+		if len(legacy) > 0 {
+			if report, err = sealmigrate.MigrateEdge(ctx, store, domain, legacy); err != nil {
+				return report, err
+			}
+		}
+		// ADR-20261110210000 slice 3h: every basic-auth credential,
+		// including the ones just re-sealed into new blobs, gets its
+		// verify-only form.
+		verifiers, err := sealmigrate.BackfillBasicAuthVerifiers(ctx, store, store, append([]*age.X25519Identity{domain}, legacy...))
+		report.BasicAuthVerifiers = &verifiers
+		return report, err
 	case sealdomain.Alerting:
 		return sealmigrate.MigrateAlerting(ctx, store, domain, legacy)
 	case sealdomain.Storage:

@@ -740,6 +740,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	}
 	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	buildLayers := layersAsReaders(layers)
+	var sharedSplit *sharedRuntimeLayers
 	runtime := sharedRuntimeClaim(app, source)
 	if app.SandboxTemplate {
 		// A template boots as a whole root filesystem over the agent base,
@@ -760,11 +761,18 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		}
 		defer shared.cleanup()
 		buildLayers = shared.layers
+		sharedSplit = &shared
 		if shared.Reason != "" {
 			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason)
 		}
 	}
-	result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
+	// ADR-20261112170911: an unsigned source build whose layer inputs match
+	// an earlier layer of the account republishes that layer.
+	reuseKey := ""
+	if source == nil {
+		reuseKey = h.appLayerReuseKey(app, acct, digest, sharedSplit, runtime, manifest)
+	}
+	result, err := h.buildOrReuseAppLayer(ctx, reuseKey, app, *dep, rootfs.BuildInput{
 		Layers:         buildLayers,
 		Manifest:       manifest,
 		GuestInitPath:  h.guestInitPath,

@@ -166,7 +166,7 @@ func (s *server) listCustomMetrics(w http.ResponseWriter, r *http.Request, acct 
 			// Stale is computed here rather than left to the client so
 			// the API and the scheduler cannot disagree about which rows
 			// are driving scaling.
-			Stale:  now.Sub(row.ObservedAt) > freshness,
+			Stale:  !api.CustomMetricFresh(row.ObservedAt, now),
 			Series: customMetricSeriesValues(series[row.Name], now, freshness),
 		})
 	}
@@ -203,7 +203,7 @@ func customMetricSeriesValues(rows []state.CustomMetricSeries, now time.Time, fr
 		}
 		out = append(out, api.CustomMetricSeriesValue{
 			Key: row.SeriesKey, Labels: labels, Value: row.Value,
-			ObservedAt: row.ObservedAt.UTC(), Stale: now.Sub(row.ObservedAt) > freshness,
+			ObservedAt: row.ObservedAt.UTC(), Stale: row.ObservedAt.After(now) || now.Sub(row.ObservedAt) > freshness,
 		})
 	}
 	return out

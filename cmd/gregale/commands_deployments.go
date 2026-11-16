@@ -257,7 +257,11 @@ func cmdDeployments(args []string) int {
 		}
 		return 0
 	}
+	parked := parkedAppsForDeployments(ctx, client, *app, page.Items)
 	for _, d := range page.Items {
+		if parkedApp, ok := parked[d.ID]; ok && parkedApp.ID == d.AppID {
+			d.Status = parkedReleaseStatus(d.Status)
+		}
 		if *wide {
 			renderDeploymentRowWide(osStdout, d)
 		} else {
@@ -267,7 +271,63 @@ func cmdDeployments(args []string) int {
 	if page.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", page.NextBefore)
 	}
+	for _, parkedApp := range orderedParkedApps(page.Items, parked) {
+		writeParkedNotice(osStdout, parkedApp)
+	}
 	return 0
+}
+
+// parkedAppsForDeployments maps the live deployments in items that their app
+// is parked on to that app. A live release of a parked app was listed as
+// plain "live" while callers got timeouts (2026-11-12 agent feedback). The
+// lookup is best effort: on error the list renders as before.
+func parkedAppsForDeployments(ctx context.Context, client *Client, appSlug string, items []api.DeploymentResponse) map[string]api.AppResponse {
+	hasLive := false
+	for _, d := range items {
+		if d.Status == "live" {
+			hasLive = true
+			break
+		}
+	}
+	if !hasLive {
+		return nil
+	}
+	var apps []api.AppResponse
+	if appSlug != "" {
+		app, err := client.GetApp(ctx, appSlug)
+		if err != nil {
+			return nil
+		}
+		apps = []api.AppResponse{app}
+	} else {
+		listed, err := client.ListApps(ctx)
+		if err != nil {
+			return nil
+		}
+		apps = listed
+	}
+	out := make(map[string]api.AppResponse)
+	for _, app := range apps {
+		if id := parkedDeploymentID(app); id != "" {
+			out[id] = app
+		}
+	}
+	return out
+}
+
+// orderedParkedApps lists each parked app once, in row order.
+func orderedParkedApps(items []api.DeploymentResponse, parked map[string]api.AppResponse) []api.AppResponse {
+	var out []api.AppResponse
+	seen := make(map[string]bool)
+	for _, d := range items {
+		app, ok := parked[d.ID]
+		if !ok || app.ID != d.AppID || d.Status != "live" || seen[app.ID] {
+			continue
+		}
+		seen[app.ID] = true
+		out = append(out, app)
+	}
+	return out
 }
 
 // cmdDeploymentsExclude dispatches the `exclude` verb family.

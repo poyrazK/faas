@@ -184,19 +184,68 @@ var billing = map[string]bool{
 var billingPath = regexp.MustCompile(`(^|/)(billing|consumer-billing)(/|$)|/billing-[a-z-]+(/|$)|^/v1/billing/`)
 
 // budgetRoutes change an app's standing capacity, so their handlers charge
-// the agent's budget (ADR-20261111114059 slices 1 and 2).
+// the agent's budget (ADR-20261111114059 slices 1 to 3).
 var budgetRoutes = map[string]bool{
-	"PATCH /v1/apps/{}":        true,
-	"POST /v1/apps/{}/scaling": true,
-	"POST /v1/apps/{}/prewarm": true,
-	"POST /v1/apps":            true,
-	"PATCH /v1/deployments/{}": true,
+	"PATCH /v1/apps/{}":                             true,
+	"POST /v1/apps/{}/scaling":                      true,
+	"POST /v1/apps/{}/prewarm":                      true,
+	"POST /v1/apps":                                 true,
+	"PATCH /v1/deployments/{}":                      true,
+	"POST /v1/postgres/databases":                   true,
+	"POST /v1/postgres/databases/{}/compute-policy": true,
+	"POST /v1/postgres/databases/{}/resize":         true,
+	"POST /v1/postgres/databases/{}/restore":        true,
+	"POST /v1/projects/{}/environments":             true,
+	"POST /v1/projects/{}/environment-clones":       true,
+	"POST /v1/projects/{}/environments/{}/branches": true,
+	// Source deploys apply gregale.yaml's deployment settings.
+	"POST /v1/apps/{}/deployments":                true,
+	"POST /v1/apps/{}/deployments/source-ref":     true,
+	"POST /v1/apps/{}/deployments/source-tarball": true,
+	"POST /v1/uploads/{}/commit":                  true,
 }
 
 // ChargesBudget reports whether a route's handler charges the agent's
 // budget, so the request must be bound before the handler reads its body.
 func ChargesBudget(pattern string) bool {
 	return budgetRoutes[Normalize(pattern)]
+}
+
+// previewRoutes accept the budget preview header (ADR-20261111114059,
+// amendment 2026-11-13): their handlers price every request they accept
+// before any write, so answering at the price writes nothing
+// (TestAgentBudgetPreviewWritesNothing). A route joins only with that
+// test.
+var previewRoutes = map[string]bool{
+	"PATCH /v1/apps/{}":                             true,
+	"POST /v1/apps/{}/scaling":                      true,
+	"POST /v1/apps/{}/prewarm":                      true,
+	"POST /v1/apps":                                 true,
+	"PATCH /v1/deployments/{}":                      true,
+	"POST /v1/postgres/databases":                   true,
+	"POST /v1/postgres/databases/{}/compute-policy": true,
+	"POST /v1/postgres/databases/{}/resize":         true,
+	"POST /v1/postgres/databases/{}/restore":        true,
+	"POST /v1/projects/{}/environments":             true,
+	"POST /v1/projects/{}/environment-clones":       true,
+	"POST /v1/projects/{}/environments/{}/branches": true,
+	// The handler fetches and checks the repository, then answers at
+	// the price of its gregale.yaml before preparing the rollout.
+	"POST /v1/apps/{}/deployments/source-ref": true,
+}
+
+// Previewable reports whether a route accepts the budget preview header.
+func Previewable(pattern string) bool {
+	return previewRoutes[Normalize(pattern)]
+}
+
+// PreviewRoutes lists the previewable route patterns, for tests.
+func PreviewRoutes() []string {
+	out := make([]string, 0, len(previewRoutes))
+	for p := range previewRoutes {
+		out = append(out, p)
+	}
+	return out
 }
 
 // gatedReads are reads that hand an agent something a person should agree

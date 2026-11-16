@@ -66,8 +66,38 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		}
 	case p.DesiredState == "paused" && p.State == "paused":
 		h.State, h.Code, h.Message, h.Recovery, h.Action = "inactive", "paused", "Sync is paused.", "Resume to continue replication; monitor retained WAL while paused.", "resume"
+		if p.Operations != nil && p.Operations.Snapshot != nil {
+			h.Recovery = "Resume to continue scheduled captures. The last successful capture is retained."
+		}
+		if p.ObservationFresh && retentionPressure(p) {
+			h.State, h.Code, h.Message = "attention", "retention_pressure", "Sync is paused and retained WAL is approaching the source safety limit."
+		}
 	case !p.ObservationFresh:
 		h.State, h.Code, h.Message, h.Recovery = "unknown", "monitoring_stale", "Monitoring is stale; data freshness is unknown.", "Check worker availability and refresh status. Native replication may still be running."
+	case p.State == "live" && authProofExpired(p, now):
+		h.Code, h.Message, h.Recovery = "auth_membership_unconfirmed", "Auth organization membership could not be confirmed.", "Check the worker and approved Auth binding. Reads remain closed until a fresh membership proof is applied."
+	case p.State == "live" && snapshotStale(p, now):
+		h.State, h.Code, h.Message, h.Recovery = "attention", "snapshot_stale", "The last verified snapshot is retained; its refresh failed or is overdue.", "Check the saved run, source access and work window, then request a snapshot refresh."
+	case p.State == "live" && p.Operations != nil && p.Operations.Snapshot != nil:
+		h.State, h.Code, h.Message, h.Recovery = "healthy", "snapshot_current", "The last scheduled snapshot was verified. Its capture time reports data age.", ""
+	case p.Reason == "snapshot_waiting" || p.Reason == "maintenance_window":
+		h.Message, h.Recovery = "Work is waiting for the allowed maintenance window.", "Review the saved UTC window and next run time. Safety monitoring and lifecycle controls continue."
+	case p.Reason == "snapshot_budget_exceeded":
+		h.Message, h.Recovery = "The snapshot exceeded its row or encoded-byte budget.", "Review the configured budgets and selected data before requesting another snapshot."
+	case p.Reason == "snapshot_schema_changed" || p.Reason == "snapshot_source_schema_unsupported":
+		h.Message, h.Recovery = "The source no longer matches the reviewed snapshot schema.", "Restore the supported source definition or create a newly reviewed snapshot pipeline."
+	case p.Reason == "snapshot_source_unavailable":
+		h.Message, h.Recovery = "The snapshot source could not be reached.", "Check the saved source credential, verified TLS and approved network access, then request another snapshot."
+	case p.Reason == "serving_contract_invalid":
+		h.Message, h.Recovery = "The saved access and column configuration could not be validated.", "Ask the operator to inspect the saved serving contract before retrying."
+	case p.Reason == "auth_membership_unconfirmed":
+		h.Message, h.Recovery = "Auth organization membership could not be confirmed.", "Restore access to the approved Auth app and database binding, or review a replacement organization mapping. Reads stay closed until a fresh membership proof is applied."
+	case p.Reason == "relationship_contract_unavailable":
+		h.Message, h.Recovery = "A related read could not be prepared safely.", "Review its selected columns and target primary key. Restore the owned function or preview a corrected relationship declaration."
+	case p.Reason == "relationship_api_refresh_failed" || p.Reason == "relationship_api_refresh_pending" || p.Reason == "relationship_api_refresh_unavailable":
+		h.Message, h.Recovery = "The related-read API refresh is unconfirmed.", "Check API restart delivery. A failed refresh can be retried using the saved approved change."
+	case p.Reason == "source_serving_contract_changed":
+		h.Message, h.Recovery, h.Action, h.RequiresConfirmation = "Selected source columns or the tenant column changed.", "Restore the reviewed column definitions and confirm a resync, or create a pipeline with a newly reviewed serving contract.", "resync", true
 	case p.State == "resync_required":
 		h.Code, h.Message, h.Recovery, h.Action, h.RequiresConfirmation = p.Reason, "Replication requires a new copy.", "Resolve the reported source problem, then confirm replacement of the imported tables. Reads can be interrupted.", "resync", true
 	case p.Reason == "table_addition_pending":
@@ -136,8 +166,10 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		h.Message, h.Recovery, h.Action = "Source credentials need attention.", "Rotate the source connection credential, then wait for reconciliation.", "rotate_credentials"
 	case p.State == "blocked":
 		h.Message, h.Recovery = "Sync is blocked.", "Check source and mirror reachability, permissions, and capacity. Reconciliation retries automatically."
-	case p.RetainedWALBytes != nil && *p.RetainedWALBytes >= api.DataPipelineRetentionWarningBytes:
+	case retentionPressure(p):
 		h.Code, h.Message, h.Recovery, h.Action = "retention_pressure", "Retained WAL is approaching the safety limit.", "Check destination apply progress and available capacity. Resume if paused; increasing retention requires operator review.", ""
+	case p.Reason == "initial_copy_stalled":
+		h.Code, h.Message, h.Recovery = "initial_copy_stalled", "The initial copy has no recent observed progress.", "Check native copy workers, source access from the destination, and copy errors. Recovery remains explicit; no resync was started."
 	case p.State == "copying" || p.State == "validating":
 		h.State, h.Code, h.Message, h.Recovery = "pending", "initial_copy", "The initial copy is not complete.", "Wait for all selected tables to become ready."
 	case p.State == "catching_up":
@@ -151,4 +183,12 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		}
 	}
 	return h
+}
+
+func authProofExpired(p api.DataPipeline, now time.Time) bool {
+	if p.Serving == nil || p.Serving.AuthOrganizations == nil || p.Serving.TenantAccess == nil {
+		return false
+	}
+	until, err := time.Parse(time.RFC3339Nano, p.Serving.TenantAccess.ValidUntil)
+	return err != nil || !until.After(now)
 }

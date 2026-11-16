@@ -48,11 +48,18 @@ operation still enforces its own authorization and admission checks.
   saying which one to update. Wrong passwords count
   against the same limits as sign-in.
 - **Failed passwords:** after 20 wrong passwords for one email address within
-  an hour, from any network, password checks for that address pause until
-  the hour is over and you get one email. Sign-in, changing your password or
-  email, and turning off two-factor authentication all count and all pause.
-  A password reset lifts the pause.
-- **Password:** `gregale account password update` opens the form. A reset
+  an hour from one network (an IPv4 /24 or IPv6 /48), password checks for
+  that address pause on that network until the hour is over, and you get one
+  email; someone guessing from elsewhere does not lock you out. After 300
+  wrong passwords within an hour from all networks together, checks pause
+  everywhere. Sign-in, changing your password or email, and turning off
+  two-factor authentication all count and all pause. A password reset lifts
+  the pause on your network and the overall one.
+- **Password:** `gregale account password update` opens the form. A new
+  password needs at least 12 characters and is refused when it is a common
+  breached password (checked against a list built into Gregale, without
+  sending the password anywhere), one repeated character or a plain
+  sequence such as `123456789012`. A reset
   (**Forgot password**) signs out every browser and revokes the keys that
   sign-ins created. API keys you created by hand keep working; the reset
   emails you a list of them and the account page shows it, so you can revoke
@@ -80,7 +87,9 @@ operation still enforces its own authorization and admission checks.
   an unverified address with an email link, and an operator's email revert or
   two-factor reset remove every linked provider whose email is not your
   Gregale email, and email you for each. Link it again from the account page
-  if it was yours.
+  if it was yours. Confirming an email change removes the providers linked
+  under your previous address (for example a work Google account you no
+  longer control) and emails you for each.
 - **Signing in again for sensitive changes:** if your account has neither a
   password nor two-factor authentication, setting a first password,
   changing the email, removing a sign-in method and setting up two-factor
@@ -91,12 +100,17 @@ operation still enforces its own authorization and admission checks.
 - **Approving a CLI or agent (MCP) sign-in** in the browser needs a verified
   email, and a sign-in from the last 15 minutes (with two-factor
   authentication on, a code from the last 15 minutes). An older browser
-  signs in again and comes back to the same code.
+  signs in again and comes back to the same code. With the one-click
+  `gregale login`, the page shows the login's code and the port it hands
+  the sign-in to: approve only when your terminal shows the same.
 - **Two-factor changes:** turning two-factor authentication on signs out
   every other browser and revokes CLI and agent sign-in keys; hand-made API
   keys keep working. Turning it off with your password also needs a code
   from the last 5 minutes; without your authenticator, use a recovery code
-  or the emailed disable link.
+  or the emailed disable link. While an emailed disable is waiting out its
+  24 hours, the two-factor page shows it with a **Cancel** button (only to a
+  session that passed two-factor), and signing in with your authenticator
+  or a recovery code cancels it; either way you get an email.
 - **Sign-in keys and recovery:** CLI and agent sign-in keys are also revoked
   when you confirm an email change and when an operator signs out your
   browsers or resets your two-factor authentication.
@@ -120,7 +134,13 @@ operation still enforces its own authorization and admission checks.
   credential you did not create is noticed.
 - **Rotation grace window:** `gregale key grace-window set --days N` keeps a
   rotated key working for N days (0 to 30). Changing it asks for a recent
-  sign-in or authenticator code.
+  sign-in or authenticator code. To end it sooner for one rotation, for a key
+  that leaked, run `gregale key rotate KEY_ID --revoke-old` (or
+  `--grace-days N`); the old key stops working at once.
+- **Key lifetime:** every new API key, full-access keys included, expires a
+  year after it is made (agent keys after 90 days); rotate it before then.
+  `gregale login` keeps your five newest CLI sign-ins and signs older ones
+  out.
 - **Leaving an org:** `gregale org leave SLUG`. Owners transfer ownership first,
   billing contacts are replaced first, and a personal org cannot be left.
 

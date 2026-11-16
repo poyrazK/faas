@@ -655,6 +655,10 @@ func (f *fakeVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotReque
 func (f *fakeVmmdClient) ResumeWarmInstance(context.Context, *vmmdpb.ResumeWarmInstanceRequest, ...grpc.CallOption) (*vmmdpb.ResumeWarmInstanceResponse, error) {
 	panic("ResumeWarmInstance: not stubbed")
 }
+func (f *fakeVmmdClient) PrimeInstance(context.Context, *vmmdpb.PrimeInstanceRequest, ...grpc.CallOption) (*vmmdpb.PrimeInstanceResponse, error) {
+	panic("PrimeInstance: not stubbed")
+}
+
 func (f *fakeVmmdClient) FreezeInstance(context.Context, *vmmdpb.FreezeInstanceRequest, ...grpc.CallOption) (*vmmdpb.FreezeInstanceResponse, error) {
 	panic("FreezeInstance: not stubbed")
 }

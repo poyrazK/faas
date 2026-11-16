@@ -1099,6 +1099,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return e.observeRouteInsights(ctx, rule)
 	case state.AlertMetricRouteMonitorIncidents, state.AlertMetricRouteHealthHolds:
 		return e.observeRouteAlert(ctx, rule)
+	case state.AlertMetricAIBudgetAlerts:
+		return e.observeAIBudgetAlerts(ctx, rule)
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable

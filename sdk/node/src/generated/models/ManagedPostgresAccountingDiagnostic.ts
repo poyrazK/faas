@@ -16,7 +16,7 @@ export type ManagedPostgresAccountingDiagnostic = {
    * This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled.
    */
   blocking: boolean;
-  reasons: Array<'identity_unknown' | 'legacy_identity_unknown' | 'coverage_missing' | 'window_mismatch' | 'shutdown_unconfirmed' | 'coverage_incomplete' | 'observation_stale' | 'final_correction_pending'>;
+  reasons: Array<'identity_unknown' | 'legacy_identity_unknown' | 'coverage_missing' | 'window_mismatch' | 'shutdown_unconfirmed' | 'coverage_incomplete' | 'observation_stale' | 'final_correction_pending' | 'final_window_pending'>;
   collected_window_seconds: number;
   required_from?: string | null;
   required_until?: string | null;

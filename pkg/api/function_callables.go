@@ -3,14 +3,15 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // FunctionCallablesEnv carries an app's function_callables to its guest as
 // a JSON object (ADR-20261111150000); the SDK functions clients read it.
 const FunctionCallablesEnv = "GREGALE_FUNCTIONS"
 
-var functionCallableName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+var functionCallableName = lazyregexp.New(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 // ValidateFunctionCallables checks a function_callables map: at most
 // ServiceBindingTargetsMax entries, each a function name or app slug mapped
@@ -48,6 +49,14 @@ const FunctionCallHeader = "X-Gregale-Function-Call"
 const (
 	FunctionInvokeHeader = "X-Gregale-Invoke"
 	FunctionInvokeAsync  = "async"
+)
+
+// FunctionOnCompleteHeader on a send names the function that receives the
+// completion: a name in the caller's function_callables, or
+// FunctionOnCompleteSelf for the caller itself.
+const (
+	FunctionOnCompleteHeader = "X-Gregale-On-Complete"
+	FunctionOnCompleteSelf   = "self"
 )
 
 // FunctionInputSchemaMaxBytes caps a function's input schema.

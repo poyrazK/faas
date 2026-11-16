@@ -96,6 +96,9 @@ extend calls report each receipt separately in `succeeded` and `failed`.
   when the pool scales in. Only a worker running a production deployment can
   lease with its token: a staging or preview deployment of the same app gets
   `401`, so code reviewed only for a stage never touches production messages.
+  Workload tokens need the platform's workload identity. Where it is not
+  enabled, the token endpoint answers an error and the SDK consumers report
+  `Queue workload identity unavailable`; pass an API key instead.
 - **From anywhere else:** an API key with the `queues:consume` scope
   (`deploy:write` and `admin` keys also work).
 
@@ -105,5 +108,47 @@ A call leases at most 100 messages and takes at most 100 receipts. It also
 stops adding messages once their payloads and headers would pass 8 MiB, but
 always returns at least one ready message. A call waits at most 20 seconds.
 The default visibility timeout is 30 seconds; the maximum is the plan's async
-invocation deadline. Leasing works on production queues; stage environment
-queues use their own delivery path.
+invocation deadline. A lease cannot be extended past that deadline from when
+it was issued either: an extend after it answers `lease_expired`, so a hung
+handler cannot hold a message forever. One account holds at most 64 waiting
+lease calls at a time; past that a call answers at once without waiting.
+If the caller disconnects before a lease response reaches it, the messages
+return to the queue without spending an attempt.
+
+Leasing works on production queues only. A stage environment cannot consume
+a queue by pull yet: an enabled stage pull binding is refused; use push.
+
+## Retries, retention and binding changes
+
+- A message's retry budget and back-off come from the send's
+  `retry_policy`, else the binding's, else the app's, capped by the plan.
+  For pull consumers the policy is fixed when the message is sent. Push
+  delivery uses the binding's current policy and ignores a per-send one.
+- A pending message expires after the plan's retention, counted from its
+  send, its last replay, or when a retry or nack delay last made it due,
+  whichever is latest. Messages held for their owner (a suspended or
+  abuse-held account, a spend cap, a compute budget hold, or the queues
+  capability switched off) do not expire while the hold lasts, and have at
+  least half the retention left when it lifts.
+- Renaming a binding's `queue_name` keeps its messages: they lease and
+  settle under the new name, and `queues/state` for the new name counts them.
+- Deleting a binding retires it and holds its messages for the plan's
+  retention. Creating a binding with the same `name` again revives it and its
+  messages, under the queue name the create gives. No other binding may take
+  a retired binding's queue name. A dead letter replayed while its binding is
+  retired waits in the queue until the binding is revived.
+- A lease ends when the worker instance that took it stops or fails: the
+  message is redelivered at once, and the attempt counts.
+
+## Long-polls
+
+A lease with `wait_seconds` waits for a message on its queue. An account has
+at most 64 waiting leases per API server; a lease past that cap leases once and,
+finding nothing, waits out `wait_seconds` without being woken, so an idle
+consumer never polls in a tight loop. A worker token may address its app by
+the slug it had before a rename.
+
+The SDK consumers (`consumeQueue` in Node, `QueueConsumer` in Python,
+`Client.ConsumeQueue` in Go) extend a lease every third of its visibility
+timeout while the handler runs, signal the handler when the lease is lost,
+and retry a failed ack or nack.

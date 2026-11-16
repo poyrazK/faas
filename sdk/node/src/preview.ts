@@ -13,11 +13,23 @@
 // sentinels + idempotency + SSE). Customers `import { ... } from
 // '@gregale/sdk-node'` and never touch `src/generated/` directly.
 //
-// The generated services call `OpenAPI.BASE/TOKEN/HEADERS` from
-// `src/generated/core/OpenAPI.ts` — the `FaaSClient` constructor
-// sets these once at construction time. Mutating methods receive a
-// fresh `Idempotency-Key` per logical call, preserved across retries, via
-// the fetch wrapper stack installed on `globalThis.fetch` (see `client.ts`).
+// createClient binds the full service surface to private configuration.
+// Static services and FaaSClient retain their legacy shared state.
+
+export { createClient, type GregaleClient } from './isolated-client-preview.js';
+export * from './files.js';
+export * from './file-pipelines.js';
+export * from './live-jobs.js';
+export * from './live-job-realtime.js';
+export * from './live-job-bridge.js';
+export * from './job-pipelines.js';
+export * from './job-pipeline-client.js';
+export * from './job-pipeline-live.js';
+export type { ManagedFileBucket, FileHelpers } from './file-client.js';
+export { pathFileSource } from './file-client.js';
+export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
+export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
+export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 
 // Generated surface.
 export {
@@ -101,6 +113,7 @@ export {
   type ExecutionEvent,
   type ExecutionEventData,
   type ExecutionEventType,
+  type ExecutionHelpers,
   type RunExecutionOptions,
   type WatchExecutionOptions,
 } from './executions.js';
@@ -209,8 +222,13 @@ export {
   AI_TAGS_HEADER,
   AI_TRACE_HEADER,
   AI_CALL_HEADER,
+  AI_PROMPT_VERSION_HEADER,
   AIGatewayError,
   aiGatewayFeedback,
+  aiPrompt,
+  type AIPrompt,
+  type AIPromptResult,
+  type AIPromptRunOptions,
   aiGatewayHeaders,
   aiGatewayURL,
   isValidAIUserId,
@@ -229,8 +247,8 @@ export { createIssueReporter, type IssueContext, type IssueReporterOptions, type
 export { buildIssueSourceMapManifest, loadIssueSourceMapManifest, type IssueSourceMapManifestOptions } from './issue-source-map-manifest.js';
 export { createIssueContext, type IssueBreadcrumbEntry, type IssueContextSnapshot } from './issue-context.js';
 
-export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER } from './flags.js';
-export type { FlagsBundle, FlagRule, VariantFlagRule, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';
+export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, validFlagAttributeValue, matchFlagConditions, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER, GREGALE_CLIENT_COUNTRY_HEADER, GREGALE_CLIENT_UA_FAMILY_HEADER, GREGALE_FLAG_KILLS_HEADER, parseFlagKills } from './flags.js';
+export type { FlagsBundle, FlagRule, VariantFlagRule, FlagCondition, FlagAttributes, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';
 
 export { FlagsService } from './generated/services/FlagsService.js';
 
@@ -717,3 +735,20 @@ export { EventAcknowledgmentIntentRecoveryWorkerMetrics, recoverEventAcknowledgm
   type EventAcknowledgmentIntentRecoveryWorkerMetricsSnapshot } from './event-acknowledgment-intent-worker-metrics.js';
 export { formatEventAcknowledgmentIntentRecoveryWorkerMetrics,
   type EventAcknowledgmentIntentRecoveryWorkerPrometheusOptions } from './event-acknowledgment-intent-worker-prometheus.js';
+
+export { SourceUploadError, parseSourceUploadCheckpoint, saveSourceUploadCheckpoint, loadSourceUploadCheckpoint, type SourceUploadCheckpoint, type SourceUploadOptions, type SourceUploadProgress, type SourceUploadStage, type SourceUploadCode, type SourceUploadInput, type SourceUploads } from './source-upload.js';
+export { inspectSource, prepareSource, SourcePreparationError, type SourcePreparationCode, type SourcePreparationOptions, type SourcePreparationProgress, type SourceIssue, type SourceEntry, type SourcePlan, type PreparedSource } from './source-preparation.js';
+export { SourceDeploymentError, loadSourceDeploymentState, parseSourceDeploymentState, type SourceDeploymentCode, type SourceDeploymentPhase, type SourceDeploymentArchive, type SourceDeploymentState, type SourceDeploymentProgress, type SourceDeploymentOptions, type SourceDeploymentPreparationOptions, type SourceDeploymentWaitOptions, type SourceDeploymentReleaseProgress, type SourceDeploymentInput, type SourceDeploymentResumeInput, type SourceDeploymentResult, type SourceDeployments } from './source-deployment.js';
+export { inspectProject, parseProjectPlan, validateProjectPlan, projectDeployOptions, ProjectInspectionError, type ProjectPlan, type ProjectInspectionOptions, type ProjectShape, type ProjectFramework, type ProjectIssue, type ProjectIssueCode, type ProjectInput, type ProjectSetting, type ProjectCandidate, type ProjectGeneratedFile, type ProjectBuild } from './project-inspection.js';
+
+export { parseReviewedProjectPlan, parseProjectApplicationState, loadProjectApplicationState, ProjectWorkflowError, type ReviewedProjectPlan, type ProjectPreviewInput, type ProjectPreviewOptions, type ProjectApplyOptions, type ProjectWorkflowOptions, type ProjectWorkflowCode, type ProjectWorkflowPhase, type ProjectWorkflowProgress, type ProjectApplicationState, type ProjectApplicationResult, type ProjectWorkloadOutcome, type ProjectWorkflows } from './project-workflows.js';
+export { parseProjectVerificationTarget, projectVerificationTarget, type VerificationOutcome, type VerificationCode, type VerificationWorkload, type ProjectVerificationTarget, type VerificationCheckResult, type VerificationCheckContext, type VerificationCheck, type VerificationCheckEvidence, type VerificationHealth, type VerificationTimeline, type VerificationWorkloadReport, type ProjectVerificationReport, type ProjectVerificationOptions, type ProjectVerification } from './project-verification.js';
+export { JobContract, JobError, prepareJobInput, readJobInput, decodeJobOutput, runLocalJobBatch, runJobTask, localJobStore, type JobCode, type JobSchema, type JobContractSpec, type JobInput, type JobInputBinding, type JobStore, type JobContext, type JobHandler, type JobArtifact, type LocalJobOutcome } from './job-runtime.js';
+export { parseJobCheckpoint, type JobCheckpoint, type JobProgress, type JobRunOptions, type JobSubmitOptions, type JobItemOutcome, type TypedJobRun, type TypedJob, type TypedJobs } from './typed-jobs.js';
+
+export { PipelineGateError, pipelineGateIntent, parsePipelineGateRecord, pipelineGateSchema, postgresPipelineGateStore, nativePipelineGateTransport, createPipelineGateService, type PipelineGateOptions, type PipelineGateStore, type PipelineGateTransport } from './pipeline-gates.js';
+export type * from './pipeline-gate-types.js';
+
+export { PipelineChildren, nativePipelineChildrenTransport, pipelineChildrenLiveSnapshot, type PipelineChild, type PipelineChildrenTransport } from './pipeline-children.js';
+export * from './pipeline-children-state.js';
+export type * from './pipeline-children-types.js';

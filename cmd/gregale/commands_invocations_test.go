@@ -257,6 +257,7 @@ func TestRunInvocationsWaitJSONAPIErrors(t *testing.T) {
 			if out.Len() != 0 || got.Status != problem.Status || got.Code != problem.Code || got.Detail != problem.Detail {
 				t.Fatalf("stdout=%s problem=%+v", out.String(), got)
 			}
+			assertInvocationWaitRecovery(t, stderr(), "inv-json-error")
 		})
 	}
 }
@@ -298,6 +299,7 @@ func TestRunInvocationsWaitJSONTimeoutPreservesLastStatus(t *testing.T) {
 	if problem.Code != "invocation_wait_timeout" || problem.Status != http.StatusRequestTimeout || !strings.Contains(problem.Hint, "gregale invocation get "+inv.ID) {
 		t.Fatalf("timeout problem = %+v", problem)
 	}
+	assertInvocationWaitRecovery(t, stderr(), inv.ID)
 }
 
 func TestCmdInvocationsWait_NoID(t *testing.T) {

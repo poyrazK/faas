@@ -458,6 +458,8 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		AppProtocol:        protocol,
 		ContentLength:      max(r.ContentLength, 0),
 		ContentLengthKnown: r.ContentLength >= 0 && len(r.TransferEncoding) == 0,
+		// ADR-20261110210000 slice 3i: sealed rule headers vmmd adds.
+		EdgeSecretHeaders: edgeSecretHeadersFrom(r.Context()),
 	}
 	// The gRPC client handler propagates the current span to vmmd, but
 	// the guest request is a new HTTP carrier assembled from this init
@@ -638,6 +640,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				responseHeaders.Add(h.GetName(), h.GetValue())
 			}
 			stripHopByHopInPlace(responseHeaders)
+			trailersOnly := takeGRPCTrailersOnlyStatus(responseHeaders)
 			for name, values := range responseHeaders {
 				for _, value := range values {
 					forwardedResponseHeader(r.Context(), w.Header(), name, value)
@@ -656,6 +659,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
+			for name, values := range trailersOnly {
+				for _, value := range values {
+					forwardedResponseTrailer(r.Context(), w.Header(), name, value)
+				}
+			}
 			// Only an explicit long-lived response may detach its handshake
 			// budget. Ordinary HTTP uses the same RPC framing but stays bounded.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
@@ -774,6 +782,30 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	<-bodyErrCh
 }
 
+// grpcTrailersOnlyFields are the status fields a gRPC server sends in a
+// Trailers-Only response (one HEADERS frame with END_STREAM).
+var grpcTrailersOnlyFields = []string{"Grpc-Status", "Grpc-Message", "Grpc-Status-Details-Bin"}
+
+// takeGRPCTrailersOnlyStatus removes and returns the status fields of a gRPC
+// Trailers-Only answer. The guest's H2 frame carries them with the headers,
+// so the bridge reports them as headers; sent on as a header block followed
+// by a bare end of stream, a gRPC client reports "server closed the stream
+// without sending trailers" instead of the status. Moving them to trailers
+// keeps the status where every gRPC client reads it.
+func takeGRPCTrailersOnlyStatus(header http.Header) http.Header {
+	if !strings.HasPrefix(strings.ToLower(header.Get("Content-Type")), "application/grpc") || header.Get("Grpc-Status") == "" {
+		return nil
+	}
+	moved := make(http.Header, len(grpcTrailersOnlyFields))
+	for _, name := range grpcTrailersOnlyFields {
+		if values := header.Values(name); len(values) > 0 {
+			moved[name] = append([]string(nil), values...)
+			header.Del(name)
+		}
+	}
+	return moved
+}
+
 // H2 can reveal trailer names only after body EOF. Apply the normal guest
 // header policy before using Go's late-trailer convention on the HTTP hop.
 func forwardedResponseTrailer(ctx context.Context, dst http.Header, name, value string) {
@@ -838,6 +870,7 @@ const rawStreamSessionDeadline = 24 * time.Hour
 // the raw session remains bounded by activity, the 24 h ceiling, and
 // the independent idle timer.
 func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient, log *slog.Logger, t Target, events *evts.Platform, sink *egresssink.EgressSink) {
+	serviceReply := isServiceReplyAccounting(r.Context())
 	ctx, detachBudget, touch, cancel := newStreamSession(r.Context(), rawStreamSessionDeadline, streamIdleTimeout)
 	defer cancel()
 
@@ -909,6 +942,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		Instance:        r.Header.Get("x-faas-instance"),
 		Port:            port,
 		MaxRequestBytes: api.RawStreamMaxRequestBytes,
+		// ADR-20261110210000 slice 3i: sealed rule headers vmmd adds to
+		// the request head below.
+		EdgeSecretHeaders: edgeSecretHeadersFrom(r.Context()),
 	}
 	if err := stream.Send(&vmmdpb.ForwardRawRequest{
 		Frame: &vmmdpb.ForwardRawRequest_Init{Init: init},
@@ -1235,6 +1271,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// guard lives at the sink boundary.
 			if sink != nil {
 				sink.RecordResponseBytes(t.InstanceID, int64(len(chunk)))
+				if serviceReply {
+					sink.RecordServiceReplyBytes(t.InstanceID, int64(len(chunk)))
+				}
 			}
 			// Flush per Write so the H2C transport emits
 			// a DATA frame on every body_chunk. The

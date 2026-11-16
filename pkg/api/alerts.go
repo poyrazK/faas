@@ -110,6 +110,7 @@ var AllowedAlertRuleMetrics = []string{
 	MetricMCPProtocolErrorRate, MetricMCPProtocolP95,
 	AlertMetricRouteInsightsDetected,
 	AlertMetricRouteMonitorIncidents, AlertMetricRouteHealthHolds,
+	AlertMetricAIBudgetAlerts,
 	"event_recovery_notification_admission_overdue_jobs",
 	"event_recovery_notification_admission_dead_jobs",
 	"event_recovery_notification_admission_unknown_jobs",
@@ -265,6 +266,7 @@ var alertMetricCapabilities = map[string]string{
 	AlertMetricRouteInsightsDetected:            "route-insights",
 	AlertMetricRouteMonitorIncidents:            "production-route-monitoring",
 	AlertMetricRouteHealthHolds:                 "route-health-canary-guard",
+	AlertMetricAIBudgetAlerts:                   "ai-gateway",
 }
 
 // AlertMetricCapability returns the capability an alert metric needs beyond
@@ -365,7 +367,8 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
-		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || metric == "queue_backlog" || metric == "queue_oldest_age_seconds" || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected || IsRouteAlertMetric(metric) {
+		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || metric == "queue_backlog" || metric == "queue_oldest_age_seconds" || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected || IsRouteAlertMetric(metric) ||
+		metric == AlertMetricAIBudgetAlerts {
 		return action == "" || action == "webhook"
 	}
 	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
@@ -708,9 +711,39 @@ func IsRouteAlertMetric(metric string) bool {
 }
 
 // ValidateRouteAlert checks a route alert rule: an app scope and a route alert
-// window. Mirrors the alert_rules_route_alerts_chk constraint.
+// window. Mirrors the alert_rules_route_alerts_chk constraint. AI budget
+// alerts share the same scope and windows and are checked here too.
 func ValidateRouteAlert(metric, windowSpec, appID string) *Problem {
+	if metric == AlertMetricAIBudgetAlerts {
+		return ValidateAIBudgetAlert(metric, windowSpec, appID)
+	}
 	if !IsRouteAlertMetric(metric) {
+		return nil
+	}
+	if appID == "" {
+		return ErrAlertRuleInvalid(metric + " alerts require an app")
+	}
+	if !containsString(RouteAlertWindowSpecs, windowSpec) {
+		return ErrAlertRuleInvalid(metric + " alerts use window_spec " + strings.Join(RouteAlertWindowSpecs, ", "))
+	}
+	return nil
+}
+
+// AlertMetricAIBudgetAlerts counts the AI budget threshold crossings (80%
+// and 100% of a daily or monthly budget) of the integrations bound to the
+// app within the window, leaving out other apps' own budgets, so channels
+// carry what the outbound.ai_budget.threshold webhook carried alone before
+// (ADR 20261027132936 amendment 2).
+const AlertMetricAIBudgetAlerts = "ai_budget_alerts"
+
+// AIBudgetAlertNotes caps how many crossings one notification lists.
+const AIBudgetAlertNotes = 5
+
+// ValidateAIBudgetAlert checks an ai_budget_alerts rule: an app scope and a
+// route alert window. Mirrors the alert_rules_ai_budget_alerts_chk
+// constraint.
+func ValidateAIBudgetAlert(metric, windowSpec, appID string) *Problem {
+	if metric != AlertMetricAIBudgetAlerts {
 		return nil
 	}
 	if appID == "" {
@@ -771,6 +804,8 @@ func AlertMetricActionRestriction(metric string) string {
 		return "MCP task metrics freshness alerts support webhook action only"
 	case AlertRuleMetricLogSearchMatches:
 		return "log search alerts support webhook action only"
+	case AlertMetricAIBudgetAlerts:
+		return "AI budget alerts support webhook action only"
 	}
 	return "pre-auth target metrics support webhook action only"
 }

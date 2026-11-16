@@ -26,15 +26,33 @@ func (m *MemStore) pullBindingLocked(accountID, appID, queueName string) (QueueB
 	return found, found.ID != ""
 }
 
+// queueLeaseBindingForQueueLocked mirrors QueueLeaseBindingForQueue: the
+// production binding queueName names now, in any state.
+func (m *MemStore) queueLeaseBindingForQueueLocked(accountID, appID, queueName string) string {
+	var found QueueBinding
+	for _, b := range m.queueBindings {
+		if b.AccountID != accountID || b.AppID != appID || b.QueueName != queueName || b.DeploymentScope != "" {
+			continue
+		}
+		if found.ID == "" || b.CreatedAt.Before(found.CreatedAt) || (b.CreatedAt.Equal(found.CreatedAt) && b.ID < found.ID) {
+			found = b
+		}
+	}
+	return found.ID
+}
+
 // queueLeaseRowLocked reports whether inv is production work for the binding.
 func (m *MemStore) queueLeaseRowLocked(inv Invocation, appID string, binding QueueBinding) bool {
-	if inv.AppID != appID || inv.Source != InvocationQueue || inv.EnvironmentID != "" || inv.WorkPolicyName != "" || inv.QuotaReserved {
+	if inv.AppID != appID || inv.Source != InvocationQueue || inv.EnvironmentID != "" || inv.QuotaReserved {
 		return false
 	}
 	if _, owned := m.invocationEnvironmentQueueAdmissions[inv.ID]; owned {
 		return false
 	}
 	if _, owned := m.invocationEnvironmentQueueReceipts[inv.ID]; owned {
+		return false
+	}
+	if _, canary := m.queueBindingCanaries[inv.ID]; canary {
 		return false
 	}
 	return inv.QueueBindingID == binding.ID || (inv.QueueBindingID == "" && inv.QueueName == binding.QueueName)
@@ -83,6 +101,14 @@ func (m *MemStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest
 		if len(leases) >= messages {
 			break
 		}
+		// A work-policy row leases only as its lane's head (ADR-20261112193306);
+		// read it fresh, since an earlier lease in this call may hold its lane.
+		if inv.WorkPolicyName != "" {
+			inv = m.invocations[inv.ID]
+			if m.keyedClaimAllowedLocked(inv, now) != nil || m.fairnessClaimAllowedLocked(inv, now) != nil {
+				continue
+			}
+		}
 		if environmentQueueDeliveryAttemptsExhausted(inv, limits) {
 			inv = exhaustQueueLease(inv, now)
 			m.invocations[inv.ID] = inv
@@ -103,7 +129,7 @@ func (m *MemStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest
 		inv.State, inv.LeaseExpiresAt, inv.InstanceID = InvocationDispatching, &until, req.InstanceID
 		inv.Attempts++
 		m.invocations[inv.ID] = inv
-		m.invocationQueueLeaseReceipts[inv.ID] = queueLeaseReceipt{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration, TokenHash: digest}
+		m.invocationQueueLeaseReceipts[inv.ID] = queueLeaseReceipt{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration, TokenHash: digest, IssuedAt: now}
 		leases = append(leases, QueueLease{Invocation: inv, Receipt: receipt})
 	}
 	return leases, nil
@@ -121,7 +147,11 @@ func (m *MemStore) heldQueueLeaseLocked(accountID, appID, queueName, receipt str
 		return Invocation{}, QueueLeaseReasonInvalid
 	}
 	held, issued := m.invocationQueueLeaseReceipts[id]
-	if !issued || !queueLeaseOwned(inv, accountID, appID, queueName, held, digest, now) {
+	bindingID := ""
+	if inv.QueueName != queueName && inv.QueueBindingID != "" {
+		bindingID = m.queueLeaseBindingForQueueLocked(accountID, appID, queueName)
+	}
+	if !issued || !queueLeaseOwned(inv, accountID, appID, queueName, bindingID, held, digest, now) {
 		return Invocation{}, QueueLeaseReasonExpired
 	}
 	return inv, ""
@@ -205,7 +235,12 @@ func (m *MemStore) ExtendQueueLeases(ctx context.Context, accountID, appID, queu
 		if reason != "" {
 			return reason, nil
 		}
-		until := now.Add(time.Duration(visibility) * time.Second)
+		lifetime := time.Duration(api.MustLimitsFor(account.Plan).MaxAsyncInvocationDeadlineSeconds) * time.Second
+		seconds, ok := queueLeaseExtension(m.invocationQueueLeaseReceipts[inv.ID].IssuedAt, now, visibility, lifetime)
+		if !ok {
+			return QueueLeaseReasonExpired, nil
+		}
+		until := now.Add(time.Duration(seconds) * time.Second)
 		inv.LeaseExpiresAt = &until
 		m.invocations[inv.ID] = inv
 		return "", nil
@@ -248,4 +283,23 @@ func (m *MemStore) QueueLeasesByInstance(ctx context.Context, appID string) (map
 		}
 	}
 	return out, nil
+}
+
+func (m *MemStore) ReleaseQueueLeases(ctx context.Context, appID string, leases []QueueLease) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, lease := range leases {
+		inv, ok := m.invocations[lease.Invocation.ID]
+		if !ok || inv.AppID != appID || inv.Source != InvocationQueue || inv.State != InvocationDispatching ||
+			inv.Attempts != lease.Invocation.Attempts || inv.Attempts <= 0 || inv.ReplayGeneration != lease.Invocation.ReplayGeneration {
+			continue
+		}
+		inv.State, inv.LeaseExpiresAt, inv.InstanceID = InvocationPending, nil, ""
+		inv.Attempts--
+		m.invocations[inv.ID] = inv
+		if receipt, ok := m.invocationQueueLeaseReceipts[inv.ID]; ok && receipt.Attempt == lease.Invocation.Attempts {
+			delete(m.invocationQueueLeaseReceipts, inv.ID)
+		}
+	}
+	return nil
 }

@@ -152,7 +152,13 @@ until the copy is ready and its credentials are verified:
 
 Until the switch reaches step 4, any failure (or `gregale release rollback status
 my-api <id> --cancel`) unwinds it, and the app keeps serving its current
-release on the original database. The restored copy is kept either way;
+release on the original database.
+
+When the code is fine and the data is not, restore the database to a point
+you pick and switch the app without changing its code:
+`gregale postgres restore orders --name orders-0900 --point-in-time <time> --switch my-api`
+runs the same steps with the current release
+([Restore and switch an app](postgres.md#restore-and-switch-an-app)). The restored copy is kept either way;
 delete it with `gregale postgres delete` if you do not need it.
 
 What to expect:

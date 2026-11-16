@@ -12,6 +12,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OpenapiImportService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read the imported (or auto-generated) OpenAPI document for an app.
    * Two source modes (selected via `?source=`):
@@ -50,7 +51,7 @@ export class OpenapiImportService {
      */
     source?: 'manual_import' | 'auto',
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/openapi',
       path: {
@@ -104,7 +105,7 @@ export class OpenapiImportService {
       paths: Record<string, any>;
     },
   }): CancelablePromise<AppOpenAPIImportResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/openapi',
       path: {
@@ -139,7 +140,7 @@ export class OpenapiImportService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/openapi',
       path: {
@@ -180,7 +181,7 @@ export class OpenapiImportService {
       paths: Record<string, any>;
     },
   }): CancelablePromise<AppOpenAPIImportDryRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/openapi/dry-run',
       path: {
@@ -222,7 +223,7 @@ export class OpenapiImportService {
      */
     slug: string,
   }): CancelablePromise<AppOpenAPIPolicyPreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/openapi/preview',
       path: {
@@ -258,7 +259,7 @@ export class OpenapiImportService {
     slug: string,
     requestBody?: ApplyAppOpenAPIPolicyRequest,
   }): CancelablePromise<AppOpenAPIPolicyApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/openapi/apply',
       path: {
@@ -301,7 +302,7 @@ export class OpenapiImportService {
      */
     scope?: string,
   }): CancelablePromise<OpenAPIContractDiffResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/openapi/diff',
       path: {

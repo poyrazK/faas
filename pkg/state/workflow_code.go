@@ -87,10 +87,16 @@ type WorkflowCodeOpWrite struct {
 	Output  json.RawMessage
 	Error   *string
 	RetryAt *time.Time
+	// Call is a new call operation's async invocation of the callee
+	// (ADR-20261113120824 §2), enqueued in the same transaction with a send
+	// record naming the run and this operation.
+	Call *Invocation
 }
 
 // WorkflowCodeInvocation is one entry-handler call's outcome.
 type WorkflowCodeInvocation struct {
+	// runID is set by the stores before validation, for call operations.
+	runID      string
 	Attempt    int
 	HTTPStatus *int
 	// Error marks a failed call; RetryAt is its retry deadline.
@@ -139,6 +145,9 @@ func validateWorkflowCodeInvocation(finish WorkflowCodeInvocation) error {
 			if err := validateWorkflowJSON(op.Input, true); err != nil {
 				return err
 			}
+		}
+		if err := validateWorkflowCallWrite(finish.runID, op); err != nil {
+			return err
 		}
 		if err := validateWorkflowJSON(op.Output, false); err != nil {
 			return err

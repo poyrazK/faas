@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -64,7 +64,7 @@ func reconcileSchema(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 		_, err = target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET schema_spec=$3 WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation, encoded)
 		return false, false, err
 	}
-	same := saved == hash && reflect.DeepEqual(baseline, relations)
+	same := saved == hash && sameRelations(baseline, relations)
 	if sourceQualificationFence(p, change) && phase == "verifying" {
 		if !same {
 			return false, false, &blocked{"source_schema_changed", true}
@@ -143,6 +143,10 @@ func reconcileSchema(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 		ob.State, ob.Reason = "blocked", "schema_change_pending"
 		return false, true, nil
 	}
+	if !workAllowed(p, time.Now()) {
+		ob.State, ob.Reason = "blocked", "maintenance_window"
+		return false, true, nil
+	}
 	if err = applySchema(ctx, p, source, target, owner, plan, current); err != nil {
 		return false, false, err
 	}
@@ -151,6 +155,7 @@ func reconcileSchema(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 }
 
 func applySchema(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, owner string, plan SchemaChange, current func(context.Context) error) error {
+	ctx = workloadContext(ctx, p)
 	if p.SchemaApproval != plan.ID || !plan.Supported {
 		return ErrConflict
 	}

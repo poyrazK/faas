@@ -38,6 +38,9 @@ type ProjectEnvironmentClone struct {
 	capturedValues         map[string]projectCloneWorkloadValues
 	capturedValueScopes    map[string]string
 	capturedPolicies       map[string]projectCloneScopedPolicies
+	capturedCrons          map[string]projectCloneCrons
+	// capturedEventSubscriptions are copied paused like crons.
+	capturedEventSubscriptions map[string]projectCloneEventSubscriptions
 	// branch makes the target an environment branch of the source, recorded in
 	// the same transaction (ADR-20261031193635); branchOut receives its row.
 	branch    *ProjectEnvironmentBranchCreate
@@ -60,7 +63,13 @@ type ProjectEnvironmentCloneResult struct {
 	BindingsCopied         int
 	RoutesCopied           int
 	PoliciesCopied         int
-	SharedResources        []string
+	// CronsCopied counts the crons a full clone copied paused
+	// (ADR-20261104120000 amendment 2026-11-12).
+	CronsCopied int
+	// EventSubscriptionsCopied counts the event subscriptions a full clone
+	// copied paused (ADR-20261104120000 amendment 2026-11-14).
+	EventSubscriptionsCopied int
+	SharedResources          []string
 }
 
 // ProjectEnvironmentCloneManagedBindingsError prevents provider credentials
@@ -129,6 +138,11 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 		}
 		clone.capturedPolicies, err = capturedCloneScopedPolicies(records)
 		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		clone.capturedCrons = capturedCloneCrons(records)
+		clone.capturedEventSubscriptions = capturedCloneEventSubscriptions(records)
+		if err := m.checkCloneCronQuotaLocked(clone.capturedCrons, limits); err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
 	}
@@ -374,6 +388,8 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 	}
 	if clone.capturedPolicies != nil {
 		m.copyCapturedScopedPoliciesLocked(clone, created.CreatedAt, &result)
+		m.copyCapturedCronsLocked(clone, created, created.CreatedAt, &result)
+		m.copyCapturedEventSubscriptionsLocked(clone, created, created.CreatedAt, &result)
 		if result.RoutesCopied < result.WorkloadsCopied {
 			result.SharedResources = append(result.SharedResources, "routes")
 		}

@@ -99,3 +99,20 @@ func TestRenderRolloutDecisionsInSummary(t *testing.T) {
 		t.Fatalf("summary printed a rollout section without a canary: %s", out.String())
 	}
 }
+
+// Hunt 34 H34-17: a release without a canary that the first-wake 5xx guard or
+// the post-release watch rolled back showed only "superseded".
+func TestRenderRolloutDecisionsShowsAutomaticRollbackWithoutCanary(t *testing.T) {
+	var out bytes.Buffer
+	main.RenderRolloutDecisions(&out, api.DeploymentResponse{Status: "superseded", RolloutDecision: &api.RolloutDecision{Kind: api.RolloutDecisionAbort,
+		Rule: api.RolloutRuleAbortPostRelease5xx, Summary: "first-wake 5xx: 5 of 5 responses failed", StableDeploymentID: "d999f2cf", DecidedAt: "2026-11-12T15:04:35Z"}})
+	want := "after release (abort_post_release_5xx, 2026-11-12T15:04:35Z): first-wake 5xx: 5 of 5 responses failed; rolled back automatically to d999f2cf"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("summary = %q, want %q", out.String(), want)
+	}
+	out.Reset()
+	main.RenderRolloutDecisions(&out, api.DeploymentResponse{Status: "superseded", RolloutDecision: &api.RolloutDecision{Kind: api.RolloutDecisionAdvance, Rule: api.RolloutRuleAdvanceManual}})
+	if out.Len() != 0 {
+		t.Fatalf("a canary decision printed without a canary: %s", out.String())
+	}
+}

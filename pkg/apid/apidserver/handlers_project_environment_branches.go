@@ -71,17 +71,45 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, problem)
 		return
 	}
+	// An agent's budget pays for the branch's warm instances; the charge
+	// stands only once the branch exists (#7140).
+	commitBudget, answered := s.chargeEnvironmentClone(w, r, acct, project, parent, true)
+	if answered {
+		return
+	}
+	response, problem := s.branchProjectEnvironment(r.Context(), store, acct, project, environmentBranchSpec{
+		parent: parent, slug: req.Slug, ttl: ttl, egress: egress, privateNetworks: req.PrivateNetworks,
+	})
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	commitBudget()
+	writeJSON(w, http.StatusCreated, response)
+}
+
+// environmentBranchSpec is what a branch is made from: by a create, or by a
+// reset that makes the branch again with its settings.
+type environmentBranchSpec struct {
+	parent, slug, egress, privateNetworks string
+	ttl                                   time.Duration
+	// pullRequest marks a branch githubd asked for (ADR-20261113121342).
+	pullRequest int
+}
+
+// branchProjectEnvironment creates a branch and publishes its workloads. A
+// branch whose workloads cannot be published is deleted again.
+func (s *server) branchProjectEnvironment(ctx context.Context, store state.ProjectEnvironmentBranchStore, acct state.Account, project state.Project, spec environmentBranchSpec) (api.ProjectEnvironmentResponse, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
-	ctx := r.Context()
 	env, branch, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
-		AccountID: acct.ID, ProjectID: project.ID, ParentSlug: parent, Slug: req.Slug,
-		ExpiresAt: time.Now().UTC().Add(ttl), EgressMode: egress, PrivateNetworks: req.PrivateNetworks,
-		MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
+		AccountID: acct.ID, ProjectID: project.ID, ParentSlug: spec.parent, Slug: spec.slug,
+		ExpiresAt: time.Now().UTC().Add(spec.ttl), EgressMode: spec.egress, PrivateNetworks: spec.privateNetworks,
+		PullRequestNumber: spec.pullRequest,
+		MaxDepth:          api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
 		ContainedObjects: s.environmentBranchContainedObjectsEnabled,
 	}, limits)
 	if err != nil {
-		api.WriteProblem(w, s.environmentBranchCreateProblem(ctx, acct, project, parent, req.Slug, limits, err))
-		return
+		return api.ProjectEnvironmentResponse{}, s.environmentBranchCreateProblem(ctx, acct, project, spec.parent, spec.slug, limits, err)
 	}
 	workloads, err := s.publishEnvironmentBranchWorkloads(ctx, store, acct, project, branch)
 	if err != nil {
@@ -91,8 +119,7 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		if cleanupErr := store.DeleteProjectEnvironmentBranch(context.WithoutCancel(ctx), acct.ID, project.ID, branch.Slug); cleanupErr != nil && s.log != nil {
 			s.log.Error("environment branch compensation failed; the expiry sweep will retire it", "project_id", project.ID, "environment", branch.Slug, "err", cleanupErr)
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not publish the branch's workloads; the branch was not created"))
-		return
+		return api.ProjectEnvironmentResponse{}, api.ErrCapacity("could not publish the branch's workloads; the branch was not created")
 	}
 	s.audit.Emit(ctx, "project.environment.branched", &acct.ID, map[string]any{
 		"project_id": project.ID, "project_slug": project.Slug, "environment_id": env.ID, "environment_slug": env.Slug,
@@ -101,7 +128,7 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 	response := projectEnvironmentResponse(env)
 	response.Branch = environmentBranchResponse(branch)
 	response.Branch.Workloads = workloads
-	writeJSON(w, http.StatusCreated, response)
+	return response, nil
 }
 
 // environmentBranchParentProblem refuses a company-project member who may
@@ -109,17 +136,25 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 // (projectaccess.BranchParent). A missing parent is left to the create, which
 // reports it.
 func (s *server) environmentBranchParentProblem(r *http.Request, acct state.Account, project state.Project, parent string) *api.Problem {
+	return s.protectedEnvironmentChangeProblem(r, acct, project.ID, parent, "branch a protected project environment")
+}
+
+// protectedEnvironmentChangeProblem refuses a company-project member who may
+// not make a change that a protected environment reserves for approvers
+// (projectaccess.ProtectedEnvironmentChange). A missing environment is left to
+// the operation, which reports it.
+func (s *server) protectedEnvironmentChangeProblem(r *http.Request, acct state.Account, projectID, environment, what string) *api.Problem {
 	if _, shared := projectaccess.From(r.Context()); !shared {
 		return nil
 	}
-	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, project.ID, parent)
+	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, projectID, environment)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return api.ErrCapacity("could not load project environment")
 	}
-	return projectaccess.BranchParent(r, env)
+	return projectaccess.ProtectedEnvironmentChange(r, env, what)
 }
 
 // publishEnvironmentBranchWorkloads creates one branch deployment per parent
@@ -148,12 +183,25 @@ func (s *server) publishEnvironmentBranchWorkloads(ctx context.Context, store st
 				s.log.Warn("environment branch activation notification failed; prime recovery will retry", "deployment_id", d.ID, "err", err)
 			}
 		}
-		workloads = append(workloads, api.ProjectEnvironmentBranchWorkload{
+		workload := api.ProjectEnvironmentBranchWorkload{
 			Workload: parent.WorkloadSlug, DeploymentID: d.ID, SourceDeployment: parent.SourceDeploymentID, Status: string(d.Status),
-			URL: projectEnvironmentWorkloadURL(branch.EnvironmentID, parent.AppID),
-		})
+		}
+		workload.URL, workload.EnvironmentURL = environmentBranchWorkloadURLs(branch, parent.AppID)
+		workloads = append(workloads, workload)
 	}
 	return workloads, nil
+}
+
+// environmentBranchWorkloadURLs returns a branch workload's stable URL,
+// built from the branch's slot so a reset keeps it, and the URL of this
+// incarnation, built from its environment ID. A branch made before slots has
+// only the environment URL.
+func environmentBranchWorkloadURLs(branch state.ProjectEnvironmentBranch, appID string) (url, environmentURL string) {
+	environmentURL = projectEnvironmentWorkloadURL(branch.EnvironmentID, appID)
+	if branch.SlotID == "" {
+		return environmentURL, ""
+	}
+	return projectEnvironmentWorkloadURL(branch.SlotID, appID), environmentURL
 }
 
 func (s *server) environmentBranchCreateProblem(ctx context.Context, acct state.Account, project state.Project, parent, slug string, limits api.Limits, err error) *api.Problem {

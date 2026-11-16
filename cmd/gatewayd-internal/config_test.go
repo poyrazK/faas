@@ -83,6 +83,9 @@ func TestLoadConfig_DefaultsWhenMissing(t *testing.T) {
 	if !c.TLS.Disabled {
 		t.Error("default TLS.Disabled should be true (e2e harness path)")
 	}
+	if c.ControlServiceProxy {
+		t.Error("default ControlServiceProxy must be false: the loopback route trusts X-Faas-Caller-App")
+	}
 }
 
 func TestLoadConfig_RoundTrip(t *testing.T) {

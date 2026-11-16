@@ -97,26 +97,29 @@ func (s *server) dashboardLogDrainItems(r *http.Request, log *slog.Logger, acct 
 		if !reveal {
 			item.TargetURL = api.MaskAppLogDrainTargetURL(item.TargetURL)
 		}
-		s.addDashboardLogDrainAnalytics(ctx, log, acct, &item, now)
+		s.addDashboardLogDrainAnalytics(ctx, log, acct, &item, now, drain.CreatedAt)
 		items = append(items, item)
 	}
 	return items, message
 }
 
 // addDashboardLogDrainAnalytics fills item's last-24h delivery summary.
-func (s *server) addDashboardLogDrainAnalytics(ctx context.Context, log *slog.Logger, acct state.Account, item *dashboard.LogDrainPageItem, now time.Time) {
+func (s *server) addDashboardLogDrainAnalytics(ctx context.Context, log *slog.Logger, acct state.Account, item *dashboard.LogDrainPageItem, now, createdAt time.Time) {
 	from := now.Add(-24 * time.Hour)
-	firstBucket := from.Truncate(appLogDrainAnalyticsBucketInterval).Add(appLogDrainAnalyticsBucketInterval)
+	firstBucket := from.Truncate(appLogDrainAnalyticsBucketInterval)
 	samples, err := s.store.ListAppLogDrainDeliveryAnalytics(ctx, item.ID,
-		firstBucket.Add(-appLogDrainAnalyticsBucketInterval), now.Truncate(appLogDrainAnalyticsBucketInterval))
+		firstBucket, now.Truncate(appLogDrainAnalyticsBucketInterval))
 	if err != nil {
 		log.Warn("dashboard log drains: list analytics", "account_id", acct.ID, "drain_id", item.ID, "err", err)
 		return
 	}
-	analytics := appLogDrainAnalyticsResponse(samples, item.ID, "24h", from, now)
+	analytics := appLogDrainAnalyticsResponse(samples, item.ID, "24h", from, now, createdAt)
 	if len(analytics.Buckets) == 0 {
 		return
 	}
+	item.AnalyticsComplete = analytics.Complete != nil && *analytics.Complete
+	item.AnalyticsFrom = analytics.From
+	item.AnalyticsTo = analytics.To
 	item.AnalyticsAvailable = true
 	item.AnalyticsDelivered = analytics.Summary.Delivered
 	item.AnalyticsFailed = analytics.Summary.Failed

@@ -14,6 +14,32 @@ import (
 	"github.com/onebox-faas/faas/pkg/livequery/rest"
 )
 
+// A route change invalidates existing keyless grants. The fingerprint is
+// private metadata; it is never sent to clients or logged.
+func accessFingerprint(route Route, kind string) string {
+	if kind == "" {
+		return ""
+	}
+	if route.Access == nil {
+		return "unavailable"
+	}
+	b, _ := json.Marshal(struct {
+		Role   string
+		Access *api.DataAPIAccessConfig
+	}{route.DataAPIRole, route.Access})
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
+// accessCurrent runs against the endpoint's in-memory route, not a SQL query.
+func (s *sub) accessCurrent() bool {
+	if s.accessFingerprint == "" {
+		return true
+	}
+	route, err := s.session.router(context.Background(), RouteKey{Database: s.up.route.Database})
+	return err == nil && s.accessFingerprint == accessFingerprint(route, s.cred.Access)
+}
+
 // Live reads without a user token (ADR-20261016151947) follow the Data API's
 // own rules, which its runtime reports and apid puts on the route: anonymous
 // reads only of public relations (embedded ones included), server keys only

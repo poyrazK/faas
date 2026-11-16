@@ -87,9 +87,14 @@ func New(config managedpostgres.BackendConfig, getenv func(string) string) (mana
 		return nil, errors.New("neon: invalid organization configuration")
 	}
 	// With neond configured the backend holds no Neon key: neond does
-	// (ADR-20261112160000).
+	// (ADR-20261112160000). A key left beside the broker is refused, so a
+	// cut-over that forgot to remove it fails loudly instead of leaving the
+	// key in apid's environment.
 	brokerTarget := os.Getenv(neond.BrokerEnv)
 	apiKey := ""
+	if name := config.SecretEnv[apiKeySecret]; brokerTarget != "" && name != "" && getenv(name) != "" {
+		return nil, fmt.Errorf("neon: %s holds a Neon key while %s sends Neon calls through neond; remove the key from apid's environment (docs/runbooks/FaasNeond.md)", name, neond.BrokerEnv)
+	}
 	if brokerTarget == "" {
 		if len(config.SecretEnv) != 1 || config.SecretEnv[apiKeySecret] == "" {
 			return nil, errors.New("neon: api-key secret mapping is required")

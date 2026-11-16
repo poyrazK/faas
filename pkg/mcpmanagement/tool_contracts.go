@@ -34,15 +34,47 @@ func registeredToolOutputSchema(name string) *jsonschema.Schema {
 // Schemas describe stable envelope fields while allowing additive native
 // evidence. Nested diagnostic projections retain their existing versioned
 // contracts; this does not pretend unknown evidence fields are fixed.
+//
+// A tool's output schema describes its successful result only. Errors are
+// answered with isError and the recovery contract (toolErrorSchema), which
+// clients do not validate against outputSchema; repeating that contract in
+// every tool cost about 950 bytes per tool on every turn
+// (ADR-20261103193000, amendment 2026-11-13). The contract is described once,
+// in gregale://contracts/errors and docs/mcp.md.
 func toolOutputSchema(name string) map[string]any {
-	defs := map[string]any{"recovery": recoverySchema()}
-	if isApplyTool(name) || name == "gregale_get_plan" || name == "gregale_verify_plan" || name == "gregale_list_plans" {
+	schema := toolSuccessSchema(name)
+	raw, _ := json.Marshal(schema)
+	defs := map[string]any{}
+	if bytes.Contains(raw, []byte("#/$defs/verification")) {
+		// The verification contract names its next step as a recovery.
 		defs["verification"] = verificationSchema()
+		defs["recovery"] = recoverySchema()
 	}
-	return map[string]any{"type": "object", "anyOf": []any{toolSuccessSchema(name), toolErrorSchema()}, "$defs": defs}
+	if bytes.Contains(raw, []byte("#/$defs/recovery")) {
+		defs["recovery"] = recoverySchema()
+	}
+	if len(defs) > 0 {
+		schema["$defs"] = defs
+	}
+	return schema
 }
 
 func toolSuccessSchema(name string) map[string]any {
+	if name == "gregale_get_tool_connection" {
+		return map[string]any{"type": "object", "required": []string{"grant_id", "app", "app_id", "version", "name", "state"}, "properties": map[string]any{"grant_id": map[string]any{"type": "string"}, "app": map[string]any{"type": "string"}, "app_id": map[string]any{"type": "string"}, "version": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"}, "state": map[string]any{"type": "string", "enum": []string{"ready", "refresh_required", "refreshing", "reconnect_required"}}, "expires_at": map[string]any{"type": "string"}, "recovery_action": map[string]any{"type": "string"}}, "additionalProperties": false}
+	}
+	if toolsetOf[name] == ToolsetInvoke {
+		return invocationOutputSchema()
+	}
+	if toolsetOf[name] == ToolsetRegistry {
+		return toolRegistryOutputSchema(name)
+	}
+	if toolsetOf[name] == ToolsetBuildTools {
+		return toolBuildingOutputSchema(name)
+	}
+	if toolsetOf[name] == ToolsetExecute {
+		return executionOutputSchema(name)
+	}
 	props := map[string]any{}
 	var required []string
 	add := func(kind string, names ...string) {
@@ -123,6 +155,12 @@ func toolSuccessSchema(name string) map[string]any {
 }
 
 func toolIdempotent(name string, readOnly bool) bool {
+	if name == "gregale_plan_task_tool_deploy" || name == "gregale_plan_task_tool_recovery" {
+		return true // Read-only reviews create no durable plan or release state.
+	}
+	if name == "gregale_start_job" || name == "gregale_cancel_job_run" {
+		return true // Caller-stable dispatch key, or native repeat-safe cancellation.
+	}
 	if strings.HasPrefix(name, "gregale_plan_") || name == "gregale_request_secret" || name == "gregale_create_source_upload" {
 		return false
 	}
@@ -132,6 +170,18 @@ func toolIdempotent(name string, readOnly bool) bool {
 // Native result DTOs keep their existing fields while every apply result also
 // identifies the MCP plan, including receipts written by older bridges.
 func bindToolPlanID(name string, args any, data json.RawMessage) (json.RawMessage, error) {
+	if name == "gregale_apply_task_tool_retire" {
+		return bindTaskRetirementReceipt(args, data)
+	}
+	if name == "gregale_apply_task_tool_quarantine" {
+		return bindTaskQuarantineReceipt(args, data)
+	}
+	if name == "gregale_apply_task_tool_restore" {
+		return bindTaskRestoreReceipt(args, data)
+	}
+	if name == "gregale_apply_task_tool_deploy" {
+		return bindTaskExecutionReceipt(args, data)
+	}
 	if !strings.HasPrefix(name, "gregale_apply_") && name != "gregale_promote_deployment" {
 		return data, nil
 	}

@@ -23,16 +23,17 @@ import (
 type keyConnection struct {
 	// id names the connection's uploads and audit lines; it is derived from
 	// the key's hash, never the key.
-	id            string
-	planNamespace string
-	allowedApps   map[string]string
-	accountID     string
-	scopes        []string
-	client        *api.Client
-	server        *mcp.Server
-	management    *management
-	inflight      int
-	lastUsed      time.Time
+	id                string
+	planNamespace     string
+	allowedApps       map[string]string
+	publishingLimited bool
+	accountID         string
+	scopes            []string
+	client            *api.Client
+	server            *mcp.Server
+	management        *management
+	inflight          int
+	lastUsed          time.Time
 }
 
 var errKeyConnectionCapacity = errors.New("agent key connection capacity reached")
@@ -90,7 +91,7 @@ func (r *remoteServer) serveAgentKey(w http.ResponseWriter, req *http.Request, n
 		}
 		req = req.WithContext(context.WithValue(req.Context(), agentKeyToolsetsContextKey{}, selection))
 	}
-	server, release, err := r.holdKeyConnection(tokenHash(token), account.ID, account.KeyScopes, client, account.KeyApp)
+	server, release, err := r.holdKeyConnection(tokenHash(token), account.ID, account.KeyScopes, client, account.KeyOrg != nil || len(account.KeyProjects) != 0, account.KeyApp)
 	if errors.Is(err, errKeyConnectionsPerAccount) {
 		w.Header().Set("Retry-After", "60")
 		oauthError(w, http.StatusTooManyRequests, "too_many_requests",
@@ -107,7 +108,7 @@ func (r *remoteServer) serveAgentKey(w http.ResponseWriter, req *http.Request, n
 
 // holdKeyConnection returns the key's connection server, building it on first
 // use, and holds it for one request.
-func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string, client *api.Client, bindings ...*api.AppAgentBinding) (*mcp.Server, func(), error) {
+func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string, client *api.Client, publishingLimited bool, bindings ...*api.AppAgentBinding) (*mcp.Server, func(), error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var apps map[string]string
@@ -115,7 +116,7 @@ func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string
 		apps = map[string]string{bindings[0].Slug: bindings[0].ID}
 	}
 	c := r.keyConns[hash]
-	if c != nil && (c.accountID != accountID || !slices.Equal(c.scopes, scopes) || !maps.Equal(c.allowedApps, apps)) {
+	if c != nil && (c.accountID != accountID || !slices.Equal(c.scopes, scopes) || !maps.Equal(c.allowedApps, apps) || c.publishingLimited != publishingLimited) {
 		// A request already holding the old server keeps its own reference.
 		c = nil
 	}
@@ -133,7 +134,7 @@ func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string
 		if len(r.keyConns) >= r.capacity() {
 			return nil, nil, errKeyConnectionCapacity
 		}
-		c = &keyConnection{id: "gmcp_key_" + hash[:24], planNamespace: "agent-key/" + accountID + "/" + hash, accountID: accountID, scopes: slices.Clone(scopes), client: client, allowedApps: apps}
+		c = &keyConnection{id: "gmcp_key_" + hash[:24], planNamespace: "agent-key/" + accountID + "/" + hash, accountID: accountID, scopes: slices.Clone(scopes), client: client, allowedApps: apps, publishingLimited: publishingLimited}
 		r.keyConns[hash] = c
 	}
 	if c.server == nil {
@@ -170,7 +171,7 @@ func (r *remoteServer) keyOptions(c *keyConnection) Options {
 			capabilities = append(capabilities, scope)
 		}
 	}
-	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, agentKey: true, agentKeyToolsetSelection: r.opts.AgentKeyToolsetSelection, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
+	return Options{AllowPrivateToolInvocation: r.opts.AllowPrivateToolInvocation && r.opts.AllowToolInvocation && c.allowedApps == nil, AllowToolPublishing: r.opts.AllowToolPublishing && !c.publishingLimited, AllowToolInvocation: r.opts.AllowToolInvocation && c.allowedApps == nil, Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, agentKey: true, agentKeyToolsetSelection: r.opts.AgentKeyToolsetSelection, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
 }
 
 // dropIdleKeyConnectionsLocked forgets key connections (of accountID, or

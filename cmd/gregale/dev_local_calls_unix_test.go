@@ -20,13 +20,16 @@ import (
 // through the SDK's wire contract (GREGALE_FUNCTIONS and the
 // GREGALE_SERVICE_<NAME>_URL the local server sets), the sibling's input
 // schema is checked by its local adapter, and a send answers 202 at once and
-// runs the call in the background.
+// runs the call in the background. The sender reads the send's result back
+// and gets its completion (ADR-20261112160000).
 func TestDevLocalFunctionsCallSiblings(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node not installed")
 	}
 	record := filepath.Join(t.TempDir(), "users.log")
-	caller := `const fns = JSON.parse(process.env.GREGALE_FUNCTIONS || "{}");
+	done := filepath.Join(t.TempDir(), "done.log")
+	caller := `import { appendFileSync } from "node:fs";
+const fns = JSON.parse(process.env.GREGALE_FUNCTIONS || "{}");
 const key = (slug) => "GREGALE_SERVICE_" + slug.toUpperCase().replace(/[^A-Z0-9]/g, "_") + "_URL";
 async function users(input, send) {
   const headers = { "content-type": "application/json", "X-Gregale-Function-Call": "1" };
@@ -34,8 +37,20 @@ async function users(input, send) {
   const res = await fetch(process.env[key(fns.users)] + "/", { method: "POST", headers, body: JSON.stringify(input) });
   return { status: res.status, body: await res.json() };
 }
+async function sendAndWait() {
+  const headers = { "content-type": "application/json", "X-Gregale-Function-Call": "1", "X-Gregale-Invoke": "async", "X-Gregale-On-Complete": "self" };
+  const res = await fetch(process.env[key(fns.users)] + "/", { method: "POST", headers, body: JSON.stringify({ email: "waited@b" }) });
+  const { id } = await res.json();
+  const st = await fetch(process.env.GREGALE_PLATFORM_API_URL + "/v1/invocations/" + id + "?wait=10");
+  return { status: st.status, body: await st.json() };
+}
 export default { async fetch(request) {
+  if (request.headers.get("x-gregale-invocation-completion")) {
+    appendFileSync(process.env.DONE, (await request.text()) + "\n");
+    return new Response("ok");
+  }
   const path = new URL(request.url).pathname;
+  if (path === "/wait") return Response.json(await sendAndWait());
   if (path === "/fns") return Response.json(fns);
   if (path === "/call") return Response.json(await users({ email: "a@b" }, false));
   if (path === "/bad") return Response.json(await users({}, false));
@@ -53,6 +68,7 @@ export default async function handler(event) {
   - name: web
     root: functions/web
     runtime: node24
+    env: {DONE: ` + done + `}
   - name: users
     root: functions/users
     runtime: node24
@@ -112,6 +128,24 @@ export default async function handler(event) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the sent call never ran; users saw:\n%s", got)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	waited := get("/wait")
+	st, _ := waited["body"].(map[string]any)
+	if waited["status"] != float64(200) || st["state"] != "completed" || st["done"] != true ||
+		st["result"].(map[string]any)["hello"] != "waited@b" {
+		t.Fatalf("wait = %v, want the completed send's result", waited)
+	}
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		got, _ := os.ReadFile(done)
+		if strings.Contains(string(got), `"status":"succeeded"`) && strings.Contains(string(got), `"waited@b"`) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the completion never reached the sender; it saw:\n%s", got)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

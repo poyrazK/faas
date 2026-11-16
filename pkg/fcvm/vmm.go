@@ -233,6 +233,11 @@ type JailerVMM struct {
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.
 	bindMounts map[string][]ephemeralBind
+	// driveBaseKeys is the storage key of the app layer each instance's
+	// private drive started from, recorded at boot and restore. A park
+	// uploads the drive as a delta against it (ADR-20261115213230). Guarded
+	// by mu; an adopted instance has none and uploads its whole drive.
+	driveBaseKeys map[string]string
 	// bindSourceModes reference-counts temporary source permission widening
 	// when multiple VMs bind the same shared base image concurrently. It is
 	// keyed by path and inode: the artifact cache can rename a refreshed file
@@ -1325,6 +1330,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// field with the staged tmp path so BuildColdBootConfig's
 	// PathOnHost reads point at the chroot-basename tmp files.
 	if len(spec.Workloads) == 0 {
+		v.setDriveBaseKey(l.Instance, spec.LayerKey)
 		layerSrc, layerTiming, mErr := v.resolveColdBootArtifact(ctx, l.Instance, "main", spec.LayerKey)
 		if mErr != nil {
 			return fmt.Errorf("vmm: stage layer: %w", mErr)
@@ -1332,6 +1338,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 		breakdown.ResolveArtifacts = append(breakdown.ResolveArtifacts, layerTiming)
 		spec.LayerKey = layerSrc
 	} else {
+		v.setDriveBaseKey(l.Instance, spec.Workloads[0].StorageKey)
 		for i := range spec.Workloads {
 			artifact := "main"
 			if i > 0 {
@@ -1479,6 +1486,13 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if !l.IsBuilder && cfg.VsockDevice != nil {
 		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
+		}
+	}
+	// ADR-20261110210000 slice 3j-3: a builder's private registries are
+	// served on vsock, through secretd.
+	if l.IsBuilder && cfg.VsockDevice != nil && len(l.buildMirrors.list()) > 0 {
+		if err = v.serveBuildMirrors(l); err != nil {
+			return fmt.Errorf("vmm: %w", err)
 		}
 	}
 	if jobManifest != nil {
@@ -2174,6 +2188,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		{artifact: "base", key: spec.BaseKey, errorContext: "vmm: stage base"},
 	}
 	snapshotDriveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
+	// The drive restores from the snapshot's drive, but its base for the
+	// next park's delta stays the app layer, so deltas never chain.
+	if len(spec.Workloads) == 0 {
+		v.setDriveBaseKey(l.Instance, spec.LayerKey)
+	} else {
+		v.setDriveBaseKey(l.Instance, spec.Workloads[0].StorageKey)
+	}
 	restoreDriveKey := snapshotDriveKey
 	if sealedDrive != "" {
 		restoreDriveKey = sealedDrive
@@ -3948,7 +3969,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if oerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot private drive for publish: %w", oerr)
 		}
-		if perr := store.Put(ctx, driveKey, f); perr != nil {
+		if perr := store.Put(ctx, driveKey, storage.WithDriveDeltaBase(f, v.driveBaseKey(l.Instance))); perr != nil {
 			_ = f.Close()
 			return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot private drive: %w", perr)
 		}
@@ -6626,8 +6647,30 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 	}
 	v.mu.Lock()
 	delete(v.bindMounts, instance)
+	delete(v.driveBaseKeys, instance)
 	v.mu.Unlock()
 	return nil
+}
+
+// setDriveBaseKey records the layer key instance's private drive started
+// from; an empty key clears it.
+func (v *JailerVMM) setDriveBaseKey(instance, key string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if key == "" {
+		delete(v.driveBaseKeys, instance)
+		return
+	}
+	if v.driveBaseKeys == nil {
+		v.driveBaseKeys = make(map[string]string)
+	}
+	v.driveBaseKeys[instance] = key
+}
+
+func (v *JailerVMM) driveBaseKey(instance string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.driveBaseKeys[instance]
 }
 
 func hostMountPresent(path string) (bool, error) {
@@ -6854,9 +6897,31 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 		select {
 		case <-ctx.Done():
 			return v.readinessCutShort(ctx, l, healthcheckPath, seen, readyTimeout, readinessStartedAt)
-		case <-time.After(10 * time.Millisecond):
+		case <-time.After(seen.nextProbeDelay()):
 		}
 	}
+}
+
+// Readiness probe cadence. While nothing listens a probe costs the guest a
+// kernel RST, so it repeats every readinessProbeMinDelay to catch a fast boot.
+// Once the app answers without being ready, every probe runs the app's own
+// healthcheck on the guest's vCPU: production saw 1.3k-2.5k probes in a 30 s
+// boot (~80/s), slowing the startup they wait for and, for a healthcheck that
+// queries its database, issuing thousands of queries per cold boot
+// (deploy-path review P8). The delay then doubles up to readinessProbeMaxDelay.
+const (
+	readinessProbeMinDelay = 10 * time.Millisecond
+	readinessProbeMaxDelay = 100 * time.Millisecond
+)
+
+// nextProbeDelay is the wait before the next HTTP readiness probe.
+func (o *readinessObservation) nextProbeDelay() time.Duration {
+	if o.responses+o.nonHTTP == 0 {
+		o.delay = readinessProbeMinDelay
+		return o.delay
+	}
+	o.delay = min(max(o.delay*2, readinessProbeMinDelay), readinessProbeMaxDelay)
+	return o.delay
 }
 
 // readinessAnswerMargin is how long before the caller's deadline a readiness
@@ -7237,6 +7302,43 @@ func (v *JailerVMM) guestStopRequested(instance string) bool {
 // with the workload's own last output lines, in the same form as a
 // characterization report of a workload that exited during startup.
 func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
+	return v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance))
+}
+
+// ExplainGuestStop reports a guest that passed readiness and then stopped
+// before its wake finished, from the workload's own output, the way
+// guestStoppedDuringStartup reports one that stopped before readiness. Hunt
+// 34 H34-35: a crash-looping essential companion ended guest-init just after
+// the main workload answered its readiness probe, and the deploy failed with
+// "apply current app CPU policy: … connection refused" and none of the
+// companion's output.
+func (v *JailerVMM) ExplainGuestStop(l Lease) error {
+	v.mu.Lock()
+	rec := v.recs[l.Instance]
+	v.mu.Unlock()
+	if rec != nil && rec.done != nil {
+		select {
+		case <-rec.done:
+			// The tailer copies the guest's last lines into the ring once
+			// the process has exited.
+			v.awaitConsoleDrain(l.Instance, rec)
+		default:
+		}
+	}
+	err := v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited after becoming ready)", l.Instance))
+	if api.AsProblem(err) != nil {
+		return err
+	}
+	// The guest passed readiness, so its init, overlay and the app all ran;
+	// guest-init then exited cleanly, which it does when the supervisor
+	// returns. A workload that exits with status 0 is not restarted and
+	// prints no restart marker, so this read as an internal platform failure
+	// and the customer got no app code or logs hint (deploy-path review P4,
+	// production h35-comp 2026-11-13: the app exited 0 without listening).
+	return startupCrashProblem("", err.Error()+"; the app's process exited after it became ready (a clean exit is not restarted). Keep the server process running in the foreground")
+}
+
+func (v *JailerVMM) guestStopped(l Lease, detail string) error {
 	var lines []string
 	if ring := v.LogRing(l.Instance); ring != nil {
 		// Seq starts at 1; Snapshot(0) means "tail from now" and returned
@@ -7246,7 +7348,6 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 			lines = append(lines, line.Line)
 		}
 	}
-	detail := fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
 	if tail := workloadOutputTail(lines, 20); tail != "" {
 		detail += ": " + tail
 	}
@@ -7254,7 +7355,7 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 	// and exited. Without it the guest itself failed (overlay, pivot, init),
 	// which stays a platform failure (production-us hunt #9, H9-106).
 	if supervisedWorkloadExited(lines) {
-		return startupCrashProblem(strings.Join(lines, "\n"), detail)
+		return startupCrashProblem(strings.Join(lines, "\n"), detail+cleanExitHint(lines))
 	}
 	return errors.New(detail)
 }
@@ -7278,6 +7379,26 @@ var supervisedWorkloadMarkers = []string{
 	"guest-init: main restart (",
 	"app crash-looped after ",
 	"app restart budget exhausted",
+	// A companion's restarts: "guest-init: sidecar echo crashed (restart 1/3): …".
+	" crashed (restart ",
+	// A workload that exited 0 and was not restarted (deploy-path review P4;
+	// prod test 2026-11-15: an app that exits without listening failed its
+	// deploy as internal). guest/init main_linux.go, workload_linux.go.
+	guestCleanExitMarker,
+}
+
+// guestCleanExitMarker is the shared tail of guest-init's clean-exit lines
+// ("guest-init: app exited cleanly (status 0, policy=on-failure); …").
+const guestCleanExitMarker = " exited cleanly (status 0, policy="
+
+// cleanExitHint explains a workload that ended on its own with status 0.
+func cleanExitHint(lines []string) string {
+	for _, line := range lines {
+		if strings.Contains(line, guestCleanExitMarker) {
+			return "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+		}
+	}
+	return ""
 }
 
 func supervisedWorkloadExited(lines []string) bool {
@@ -7359,6 +7480,8 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 // crashed app was reported as "answered 348 readiness probes without a 2xx").
 type readinessObservation struct {
 	responses, lastStatus, connRefused, nonHTTP int
+	// delay is the current wait between probes (nextProbeDelay).
+	delay time.Duration
 }
 
 // isNonHTTPReply reports a probe the app accepted and answered with something

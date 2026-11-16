@@ -63,6 +63,25 @@ func (a *queuePushLaneAllowance) observe(triggerID string, ceiling int, gatewayF
 	a.allowed[triggerID] = max(min(n, ceiling), 1)
 }
 
+// prune forgets the allowance of triggers this tick no longer polls, which
+// otherwise stayed in the map for the scheduler's lifetime.
+func (a *queuePushLaneAllowance) prune(polled []sqlc.Trigger) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.allowed) == 0 {
+		return
+	}
+	live := make(map[string]bool, len(polled))
+	for i := range polled {
+		live[polled[i].ID.String()] = true
+	}
+	for id := range a.allowed {
+		if !live[id] {
+			delete(a.allowed, id)
+		}
+	}
+}
+
 // queuePushLaneCount is the lanes one tick submits: enough to cover the
 // backlog at one batch per lane, never more than the binding's concurrency,
 // the trigger's allowance or the node's slots, and at least one so an idle

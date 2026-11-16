@@ -171,6 +171,11 @@ message ConsumerUsageEvent {
   // Gregale-Usage header or trailer, by meter (ADR-1318). Empty from older
   // gateways.
   map<string, int64> meter_units = 18;
+  // The deployment that served the request with discovered_route. A stage
+  // deployment's routes go to that environment's own inventory and events
+  // (ADR-20261104120000). Empty from older gateways, which count as
+  // production.
+  string discovered_deployment_id = 19;
 }
 
 message ConsumerUsageReceipt {

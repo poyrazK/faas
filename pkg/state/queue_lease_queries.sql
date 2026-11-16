@@ -8,6 +8,15 @@ WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.app_id=sqlc.arg(app_id)::uui
     AND b.enabled AND b.retired_at IS NULL
 ORDER BY b.created_at, b.id LIMIT 1 FOR UPDATE;
 
+-- name: QueueLeaseBindingForQueue :one
+-- The production binding the lease path's queue name names now, in any
+-- state: a receipt for one of its messages settles under its current name
+-- even when the message was sent under the name it had before a rename.
+SELECT b.id FROM queue_bindings b
+WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.app_id=sqlc.arg(app_id)::uuid
+    AND b.queue_name=sqlc.arg(queue_name)::text AND b.deployment_scope=''
+ORDER BY b.created_at, b.id LIMIT 1;
+
 -- name: QueueLeaseActiveCount :one
 SELECT count(*)::bigint FROM invocations i
 WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue' AND i.environment_id IS NULL
@@ -23,15 +32,25 @@ WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue' AND i.environment_id 
 -- 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
 -- bounds the index range, where volatile clock_timestamp() left only a filter
 -- and the planner walked the global due index instead.
-SELECT c.id FROM (
-    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+SELECT c.id, c.work_policy_name, c.work_key_digest, c.work_fairness_digest, c.work_fairness_limit FROM (
+    (SELECT w.id, w.due_at, w.created_at, w.work_policy_name, w.work_key_digest, w.work_fairness_digest, w.work_fairness_limit FROM production_invocation_work w
      WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending'
          AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
-         AND w.work_policy_name IS NULL AND NOT w.quota_reserved
+         AND NOT w.quota_reserved
+         -- A work-policy row is a candidate only as its lane's head
+         -- (ADR-20261112193306): no older pending or any running row in the
+         -- same app, policy and key. A retrying head that is not due yet
+         -- still blocks later rows. The claim rechecks under the lane lock.
+         AND (w.work_policy_name IS NULL OR NOT EXISTS (
+             SELECT 1 FROM invocations o
+             WHERE o.app_id=w.app_id AND o.work_policy_name=w.work_policy_name
+                 AND o.work_key_digest=w.work_key_digest AND o.id<>w.id
+                 AND o.state IN ('pending','dispatching')
+                 AND (o.work_sequence<w.work_sequence OR o.state='dispatching')))
          AND w.queue_binding_id=sqlc.arg(binding_id)::uuid
      ORDER BY w.due_at, w.created_at, w.id LIMIT sqlc.arg(candidate_limit)::integer)
     UNION ALL
-    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+    (SELECT w.id, w.due_at, w.created_at, w.work_policy_name, w.work_key_digest, w.work_fairness_digest, w.work_fairness_limit FROM production_invocation_work w
      WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending'
          AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
          AND w.work_policy_name IS NULL AND NOT w.quota_reserved
@@ -47,8 +66,11 @@ UPDATE invocations i SET state='dispatching', received_at=COALESCE(i.received_at
     attempts=i.attempts+1, instance_id=sqlc.narg(instance_id)::text
 FROM lease_clock
 WHERE i.id=sqlc.arg(id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue'
-    AND i.state='pending' AND NOT i.quota_reserved AND i.environment_id IS NULL AND i.work_policy_name IS NULL
+    AND i.state='pending' AND NOT i.quota_reserved AND i.environment_id IS NULL
     AND i.due_at<=lease_clock.at AND (i.deadline_at IS NULL OR i.deadline_at>lease_clock.at)
+    -- ADR-20261112200000: a push verification canary left behind by a
+    -- push-to-pull switch is not a job for a pull worker.
+    AND NOT EXISTS (SELECT 1 FROM queue_binding_canaries c WHERE c.id=i.id)
 RETURNING i.*;
 
 -- name: QueueLeaseExhaustInvocation :execrows
@@ -122,3 +144,21 @@ SELECT instance_id::text AS instance_id, count(*)::bigint AS leases FROM invocat
 WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dispatching'
     AND lease_expires_at>clock_timestamp() AND instance_id IS NOT NULL
 GROUP BY instance_id;
+
+-- name: QueueBindingHasKeyedWork :one
+-- ADR-20261112200000: keyed messages a push binding accepted, which a pull
+-- lease would never take.
+SELECT EXISTS (SELECT 1 FROM invocations
+    WHERE queue_binding_id=sqlc.arg(binding_id)::uuid AND source='queue'
+      AND state IN ('pending','dispatching') AND work_policy_name IS NOT NULL)::boolean AS keyed;
+
+-- name: ReleaseQueueLeaseInvocation :execrows
+-- ADR-20261112200000: a lease whose consumer went away before the response
+-- reached it returns to pending with the attempt it never used.
+UPDATE invocations SET state='pending', attempts=attempts-1, lease_expires_at=NULL, instance_id=NULL
+WHERE id=sqlc.arg(id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dispatching'
+    AND attempts=sqlc.arg(attempt)::integer AND attempts>0 AND replay_generation=sqlc.arg(replay_generation)::bigint;
+
+-- name: DeleteQueueLeaseReceiptForAttempt :exec
+DELETE FROM invocation_queue_lease_receipts
+WHERE invocation_id=sqlc.arg(invocation_id)::uuid AND attempt=sqlc.arg(attempt)::integer;

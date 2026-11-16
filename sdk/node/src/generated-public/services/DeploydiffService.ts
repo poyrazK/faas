@@ -8,6 +8,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class DeploydiffService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read-only preview of what a deploy would change.
    * Server-side equivalent of
@@ -43,7 +44,7 @@ export class DeploydiffService {
     slug: string,
     requestBody: DiffRequest,
   }): CancelablePromise<DiffResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/diff',
       path: {

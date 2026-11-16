@@ -538,7 +538,7 @@ func dashboardRecoveryRoute(acct state.Account, method, path string) bool {
 	switch method + " " + path {
 	case "GET /dashboard/billing", "GET /dashboard/usage", "GET /dashboard/upgrade",
 		"POST /dashboard/upgrade", "POST /dashboard/account/plan",
-		"GET /dashboard/account", "GET /dashboard/account/export":
+		"GET /dashboard/account", "GET /dashboard/account/export", "GET /dashboard/account/health":
 		return acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending
 	case "POST /dashboard/account/restore":
 		return acct.Status == state.AccountDeletedPending

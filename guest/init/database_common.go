@@ -352,12 +352,14 @@ func lookupPasswdUser(passwd []byte, name string) (uid, gid int, ok bool) {
 		if len(fields) < 4 || fields[0] != name {
 			continue
 		}
-		u, uErr := strconv.Atoi(fields[2])
-		g, gErr := strconv.Atoi(fields[3])
-		if uErr != nil || gErr != nil || u <= 0 || g <= 0 {
+		// IDs are 32-bit: syscall.Credential takes uint32, and an unbounded
+		// Atoi would wrap a larger value to another user.
+		u, uErr := strconv.ParseUint(fields[2], 10, 32)
+		g, gErr := strconv.ParseUint(fields[3], 10, 32)
+		if uErr != nil || gErr != nil || u == 0 || g == 0 {
 			return 0, 0, false
 		}
-		return u, g, true
+		return int(u), int(g), true
 	}
 	return 0, 0, false
 }

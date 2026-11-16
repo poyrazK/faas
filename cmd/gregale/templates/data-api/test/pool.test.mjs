@@ -132,3 +132,16 @@ test('metrics failure does not change SQL readiness and coordinated refresh uses
   assert.equal(recovered.pool.capacity, 1)
   assert.equal(recovered.pool.state, 'observed')
 })
+
+test('DAPI026 invalidation cancels old pool work before observing the replacement engine',async t=>{
+ let calls=0,seen
+ const arrived=new Promise(resolve=>{seen=resolve})
+ const server=await fixture(t,(_req,res)=>{if(++calls===1){seen();return}res.end(metrics(2,0))})
+ const observe=createPoolObservation(server.address().port,2)
+ const old=observe();await arrived
+ observe.invalidate()
+ const fresh=await observe()
+ assert.equal((await old).state,'unknown')
+ assert.equal(fresh.state,'observed');assert.equal(fresh.available,0)
+ assert.equal(calls,2)
+})

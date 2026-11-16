@@ -60,12 +60,9 @@ func (s *server) enqueuePreparedInvocation(ctx context.Context, inv state.Invoca
 		if !ok {
 			return state.Invocation{}, api.ErrCapacity("work policy store unavailable")
 		}
-		record, lookupErr := policyStore.AppWorkPolicyByName(ctx, inv.AppID, work[0].Policy)
-		if errors.Is(lookupErr, state.ErrNotFound) {
-			return state.Invocation{}, api.ErrValidation("unknown work policy")
-		}
-		if lookupErr != nil {
-			return state.Invocation{}, api.ErrCapacity("lookup work policy")
+		record, problem := appWorkPolicyForEnqueue(ctx, policyStore, inv.AccountID, inv.AppID, work[0].Policy)
+		if problem != nil {
+			return state.Invocation{}, problem
 		}
 		key, keyErr := workpolicy.CanonicalScalar(work[0].Key)
 		if keyErr != nil {
@@ -99,6 +96,9 @@ func (s *server) enqueueProblem(ctx context.Context, inv state.Invocation, err e
 	if errors.As(err, &depth) {
 		if inv.Source == state.InvocationDelayedTask {
 			return api.ErrPlanDelayedTasksCap(depth.Limit, depth.Observed)
+		}
+		if inv.Source == state.InvocationAsyncInvoke {
+			return api.ErrPlanAsyncBacklog(depth.Limit, depth.Observed)
 		}
 		return api.ErrPlanQueueDepth(depth.Limit, depth.Observed)
 	}

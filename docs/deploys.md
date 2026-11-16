@@ -49,6 +49,37 @@ otherwise (`--source=worktree` includes uncommitted changes). Before upload:
   to `.gregaleignore` to keep them out, and set their values with
   `gregale env push` or `gregale env set`.
 
+### Inspect the payload before uploading
+
+```bash
+gregale deploy --dry-run --explain-files
+gregale deploy --dry-run --explain-files --worktree --json
+gregale deploy --dry-run --explain-files --path services/api --source=head
+```
+
+This local inspection needs no login and makes no API calls. It uses the deploy
+packers and reports included paths, byte sizes, excluded paths and the ignore
+file and line responsible for a match. Sizes come from the finished archive,
+including generated Go build files and secret-scan replacements. Credential-like
+filenames are marked; file contents, secret values and ignore-rule text are not
+printed. `--secrets-file PATH` excludes that file without importing its values
+as remote configuration.
+
+The default source selection is the same as deploy. HEAD reports describe Git's
+normalized archive, so uncommitted, untracked and export-ignored files are absent.
+An excluded directory represents its pruned subtree. For a declared workspace
+member, the report includes the repository context and the selected source root.
+For a functions project, select one function with `--path`; use `--project` to
+inspect a project root archive. Image, tarball, remote repository and template
+inputs are not supported by file inspection.
+
+JSON includes `source_mode`, `commit` for HEAD, `file_count`, `included_bytes`,
+`compressed_bytes` and `files`. Each file records its logical `path`, included
+`archive_path`, `included`, `bytes`, `reason` and any `rule_file`/`rule_line`.
+Account upload limits, remote configuration and runtime readiness are unchecked;
+`account_limit_checked` is false. Ordinary `--dry-run` without `--explain-files`
+continues to compare authenticated remote state.
+
 ### Limits
 
 | Limit | Free | Hobby | Pro | Scale |
@@ -382,6 +413,15 @@ Deploys of one environment go live in the order you start them, not the order
 they finish. If you start another deploy before an earlier one goes live, the
 earlier one never goes live: it is superseded when it reaches the cutover,
 whether or not the newer deploy succeeds.
+
+When a revision goes live, the previous one stops taking new requests at once.
+Its instances that are still answering requests keep running for up to
+30 seconds so those requests can finish, then park. An instance with nothing
+in flight parks immediately. The draining instances use the one extra
+instance a rollout may run beside the app's limit, so a one-instance app keeps
+its old instance's requests while the new revision starts. Only an app that
+is already past that, its limit plus the extra instance, parks the old
+instances at once so the new revision can start.
 
 Use a revision anywhere a deployment ID is accepted:
 

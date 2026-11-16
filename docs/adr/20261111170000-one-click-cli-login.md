@@ -59,3 +59,27 @@ terminal no longer offers a "paste code" prompt in any flow.
   CLI into another account without the 32-bit code shown nowhere but the
   approving browser's URL.
 - `gregale start` uses the same sign-in.
+
+## Amendment 2026-11-15: the device code needs the minting CLI's verifier
+
+Account audit F10-3: the approval hands the device code to
+`http://127.0.0.1:<port>/callback` in a URL, so it can stay in the browser's
+history, an extension's view, or the request log of whatever listens on that
+port, and on its own it redeemed a 30-day full-access key.
+
+- When minting a login code (`device: true`, typed or one-click), the CLI also
+  sends `code_challenge`: the SHA-256 of a 32-byte verifier it keeps in
+  memory. `cli_auth_codes.verifier_hash` stores it (expand migration).
+- The exchange sends `code_verifier`. A row with a `verifier_hash` is consumed
+  only when the verifier hashes to it. A missing or wrong verifier leaves the
+  row as it is: still pending reads as pending, approved reads as 410, so a
+  leaked device code yields nothing and the real CLI can still finish. The
+  loopback approval replaces only the device hash, so the binding survives it.
+- Skew: a server that predates challenges refuses the unknown field with 400,
+  and the CLI mints once more without it. Rows without a challenge keep the
+  device-code-only exchange, so older CLIs are unaffected. Refusing
+  challenge-less login codes is a later step, once older CLIs have aged out.
+- Not covered: whoever minted the code holds the verifier, so a phisher who
+  sends their own login link and can also read the request log of a local
+  server on the victim's port still gets in. The page shows the code and port
+  for that case (ADR-20261115160000).

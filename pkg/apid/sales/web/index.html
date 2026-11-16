@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow"><title>Your referrals · Gregale</title>
+  <link rel="stylesheet" href="/dashboard/referral-assets/portal.css">
+  <script nonce="{{.Nonce}}" src="/dashboard/referral-assets/portal.js" defer></script>
+
+
+</head>
+<body data-staff="false" data-manager="false">
+  <a class="skip" href="#main">Skip to content</a>
+  <aside class="rail">
+    <a class="brand" href="/dashboard/"><span class="brand-mark">g</span> gregale<span class="brand-dot">●</span></a>
+    <span class="eyebrow rail-label">REFERRAL PROGRAM</span>
+    <nav aria-label="Workspace">
+      <a href="#overview" class="nav-item active" aria-current="page"><span>◈</span> Overview</a>
+
+
+      <a href="#referrals" class="nav-item"><span>↗</span> Your referrals</a>
+
+      <a href="/dashboard/" class="nav-item"><span>←</span> Product console</a>
+    </nav>
+    <div class="rail-bottom"><span class="live-dot"></span> Connected to Gregale<p id="identity">Checking your session…</p><a href="/dashboard/account">Account & security ↗</a></div>
+  </aside>
+  <main id="main">
+    <header class="topbar"><span>Workspace <span class="slash">/</span> Referrals</span><span class="environment">PRIVATE WORKSPACE</span></header>
+    <section id="overview" class="page-section">
+      <div class="page-heading"><div><p class="eyebrow">GOOD THINGS ARE BETTER SHARED</p><h1>Bring someone on board.</h1><p class="subtitle">Share your code. Follow new signups and see your potential referral rewards.</p></div><button id="refresh" class="button secondary">↻ Refresh data</button></div>
+      <div class="notice"><span class="notice-icon">i</span><p><strong>Rewards are in preview. Payouts are disabled.</strong> Amounts shown are estimates. No cash or account credit is issued. Terms are captured when a new customer signs up.</p></div>
+      <div id="error" class="error" role="alert" hidden></div>
+      <div id="metrics" class="metrics" aria-live="polite"><article class="metric"><span class="eyebrow">REFERRED SIGNUPS</span><strong>—</strong><small>Loading verified data</small></article></div>
+      <div class="overview-grid">
+        <article class="panel link-panel"><div class="panel-heading"><span class="eyebrow">YOUR NEXT INTRODUCTION</span><span class="pill">Customer referral</span></div><h2>Six characters. One introduction.</h2><p>Share your referral code. Customers enter it when creating their Gregale account.</p><label for="referral-code" class="field-label">Your referral code</label><div class="copy-field"><input id="referral-code" readonly placeholder="Create your code" aria-label="Your referral code"><button id="copy" class="button primary" disabled>Copy code</button></div><div class="link-actions"><button id="create-code" class="button secondary" disabled>Create referral code</button><button id="toggle-code" class="text-button" hidden>Pause code</button><span id="code-status" class="muted"></span></div><p id="copy-status" class="muted" role="status"></p></article>
+        <article class="panel terms-panel"><span class="eyebrow">PROGRAM TERMS</span><h2>A clear path to a reward.</h2><ol class="steps"><li><span>01</span><div><strong>A new customer enters your code</strong><p>Existing accounts and self-referrals do not qualify.</p></div></li><li><span>02</span><div><strong>The first invoice is paid</strong><p id="conversion-terms">Loading program terms…</p></div></li><li><span>03</span><div><strong>The reward passes its hold</strong><p id="reward-terms">Loading reward terms…</p></div></li></ol></article>
+      </div>
+    </section>
+
+
+    <section id="referrals" class="page-section">
+      <div class="section-heading"><div><p class="eyebrow">FROM INTRODUCTION TO ACTIVATION</p><h2>Your referrals</h2><p id="scope-label" class="muted">Loading your permitted view…</p></div><button id="export" class="button secondary" disabled>↓ Export this page</button></div>
+
+      <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Referral</th><th>Joined</th><th>Conversion</th><th>Reward estimate</th></tr></thead><tbody id="rows"><tr><td colspan="7" class="empty">Loading referrals…</td></tr></tbody></table></div><div class="table-footer"><span id="page-info">Each page contains up to 25 referrals.</span><div><button id="first" class="button secondary small" hidden>First page</button><button id="next" class="button secondary small" disabled>Next page →</button></div></div></div>
+    </section>
+
+
+    <footer class="footer"><span>gregale · referral program</span><span id="observed">Waiting for data</span></footer>
+  </main>
+
+
+
+
+
+</body></html>

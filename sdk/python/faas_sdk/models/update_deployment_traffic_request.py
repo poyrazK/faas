@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_release_review import AppReleaseReview
+    from ..models.mcp_readiness_expectation import MCPReadinessExpectation
     from ..models.update_deployment_traffic_request_expected_mcp_access_policy import (
         UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
     )
@@ -41,6 +42,9 @@ class UpdateDeploymentTrafficRequest:
     traffic, keyed by deployment id, mapped to its percent (1-100, summing to 100, at most 100 releases). If the
     split differs at the transaction boundary, the update returns 409 traffic_serving_changed without changing
     traffic. Cannot be combined with expected_serving_deployment_id or expected_review."""
+    expected_mcp_readiness: MCPReadinessExpectation | Unset = UNSET
+    """Exact fresh role observations required in the traffic transaction, independently of emergency overrides.
+    Mismatches return 409 without changing traffic."""
     expected_mcp_access_policy: UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy | Unset = UNSET
     """Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping
     JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the
@@ -62,6 +66,10 @@ class UpdateDeploymentTrafficRequest:
         if not isinstance(self.expected_traffic, Unset):
             expected_traffic = self.expected_traffic.to_dict()
 
+        expected_mcp_readiness: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.expected_mcp_readiness, Unset):
+            expected_mcp_readiness = self.expected_mcp_readiness.to_dict()
+
         expected_mcp_access_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.expected_mcp_access_policy, Unset):
             expected_mcp_access_policy = self.expected_mcp_access_policy.to_dict()
@@ -79,6 +87,8 @@ class UpdateDeploymentTrafficRequest:
             field_dict["expected_serving_deployment_id"] = expected_serving_deployment_id
         if expected_traffic is not UNSET:
             field_dict["expected_traffic"] = expected_traffic
+        if expected_mcp_readiness is not UNSET:
+            field_dict["expected_mcp_readiness"] = expected_mcp_readiness
         if expected_mcp_access_policy is not UNSET:
             field_dict["expected_mcp_access_policy"] = expected_mcp_access_policy
 
@@ -87,6 +97,7 @@ class UpdateDeploymentTrafficRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_release_review import AppReleaseReview
+        from ..models.mcp_readiness_expectation import MCPReadinessExpectation
         from ..models.update_deployment_traffic_request_expected_mcp_access_policy import (
             UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
         )
@@ -113,6 +124,13 @@ class UpdateDeploymentTrafficRequest:
         else:
             expected_traffic = UpdateDeploymentTrafficRequestExpectedTraffic.from_dict(_expected_traffic)
 
+        _expected_mcp_readiness = d.pop("expected_mcp_readiness", UNSET)
+        expected_mcp_readiness: MCPReadinessExpectation | Unset
+        if isinstance(_expected_mcp_readiness, Unset):
+            expected_mcp_readiness = UNSET
+        else:
+            expected_mcp_readiness = MCPReadinessExpectation.from_dict(_expected_mcp_readiness)
+
         _expected_mcp_access_policy = d.pop("expected_mcp_access_policy", UNSET)
         expected_mcp_access_policy: UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy | Unset
         if isinstance(_expected_mcp_access_policy, Unset):
@@ -127,6 +145,7 @@ class UpdateDeploymentTrafficRequest:
             expected_review=expected_review,
             expected_serving_deployment_id=expected_serving_deployment_id,
             expected_traffic=expected_traffic,
+            expected_mcp_readiness=expected_mcp_readiness,
             expected_mcp_access_policy=expected_mcp_access_policy,
         )
 

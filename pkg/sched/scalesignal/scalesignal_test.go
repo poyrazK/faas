@@ -184,3 +184,12 @@ func TestArbitrate_ColdStartOnRateMetric(t *testing.T) {
 		t.Fatalf("Arbitrate = %+v, want hot with desired 1", res)
 	}
 }
+
+func TestArbitrateSaturatesOversizedReplicaDemand(t *testing.T) {
+	for _, metric := range []string{api.ScalingMetricCustom, api.ScalingMetricRPS, api.ScalingMetricQueueDepth} {
+		got := Arbitrate(5, []Observation{{Metric: metric, Target: 1, Measured: 1e100, Have: true}})
+		if !got.Hot || got.Desired != int(^uint(0)>>1) {
+			t.Fatalf("%s overflowed to %+v", metric, got)
+		}
+	}
+}

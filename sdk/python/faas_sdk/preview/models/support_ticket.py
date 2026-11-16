@@ -32,6 +32,8 @@ class SupportTicket:
     updated_at: datetime.datetime
     can_reopen: bool
     resolved_at: datetime.datetime | Unset = UNSET
+    unread_count: int | Unset = UNSET
+    """Unread support updates for the current caller and audience."""
     reopen_until: datetime.datetime | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +59,8 @@ class SupportTicket:
         if not isinstance(self.resolved_at, Unset):
             resolved_at = self.resolved_at.isoformat()
 
+        unread_count = self.unread_count
+
         reopen_until: str | Unset = UNSET
         if not isinstance(self.reopen_until, Unset):
             reopen_until = self.reopen_until.isoformat()
@@ -78,6 +82,8 @@ class SupportTicket:
         )
         if resolved_at is not UNSET:
             field_dict["resolved_at"] = resolved_at
+        if unread_count is not UNSET:
+            field_dict["unread_count"] = unread_count
         if reopen_until is not UNSET:
             field_dict["reopen_until"] = reopen_until
 
@@ -113,6 +119,8 @@ class SupportTicket:
         else:
             resolved_at = datetime.datetime.fromisoformat(_resolved_at)
 
+        unread_count = d.pop("unread_count", UNSET)
+
         _reopen_until = d.pop("reopen_until", UNSET)
         reopen_until: datetime.datetime | Unset
         if isinstance(_reopen_until, Unset):
@@ -131,6 +139,7 @@ class SupportTicket:
             updated_at=updated_at,
             can_reopen=can_reopen,
             resolved_at=resolved_at,
+            unread_count=unread_count,
             reopen_until=reopen_until,
         )
 

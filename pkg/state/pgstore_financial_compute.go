@@ -486,24 +486,46 @@ func (t *pgFinancialComputeTxn) ready(app string, quiet bool) (bool, error) {
 	if app == "" {
 		return t.accountReady()
 	}
+	reason, err := t.appReadiness(app, quiet)
+	return err == nil && reason == "", err
+}
+
+// appReadiness names the first app-scope condition that does not hold, or ""
+// when all hold, so activation can say what to fix (Hunt 34 H34-15).
+func (t *pgFinancialComputeTxn) appReadiness(app string, quiet bool) (string, error) {
 	ready, err := t.q.FinancialComputeOwnersReady(t.ctx, t.db, 3*api.FinancialComputeOwnerHeartbeat.Seconds())
-	if err != nil || !ready.Valid || !ready.Bool {
-		return false, err
+	if err != nil {
+		return "", err
+	}
+	if !ready.Valid || !ready.Bool {
+		return financial.ComputeUnavailableNodes, nil
 	}
 	id, _ := parsePgUUID(app)
 	if quiet {
 		safe, err := t.q.FinancialComputeActivationSafe(t.ctx, t.db, sqlc.FinancialComputeActivationSafeParams{AccountID: t.account, AppID: id})
-		if err != nil || !safe {
-			return false, err
+		if err != nil {
+			return "", err
+		}
+		if !safe {
+			return financial.ComputeUnavailableRunning, nil
 		}
 	} else {
 		active, err := t.active(app)
-		if err != nil || len(active) > 0 {
-			return false, err
+		if err != nil {
+			return "", err
+		}
+		if len(active) > 0 {
+			return financial.ComputeUnavailableRunning, nil
 		}
 	}
 	readySampling, err := t.q.FinancialComputeSamplingReady(t.ctx, t.db, sqlc.FinancialComputeSamplingReadyParams{AccountID: t.account, AppID: id, PeriodStart: pgTime(financial.ComputeMonth(t.now))})
-	return readySampling.Valid && readySampling.Bool, err
+	if err != nil {
+		return "", err
+	}
+	if !readySampling.Valid || !readySampling.Bool {
+		return financial.ComputeUnavailableAccounting, nil
+	}
+	return "", nil
 }
 func (t *pgFinancialComputeTxn) initialize(app string, quiet bool) error {
 	if job, ok := computeJobKey(app); ok {
@@ -515,12 +537,12 @@ func (t *pgFinancialComputeTxn) initialize(app string, quiet bool) error {
 	if app == "" {
 		return t.initializeAccount()
 	}
-	ready, err := t.ready(app, quiet)
+	reason, err := t.appReadiness(app, quiet)
 	if err != nil {
 		return err
 	}
-	if !ready {
-		return financial.ErrComputeUnavailable
+	if reason != "" {
+		return financial.ComputeUnavailableBecause(reason)
 	}
 	month := financial.ComputeMonth(t.now)
 	b, err := t.book(app, month)
@@ -534,7 +556,7 @@ func (t *pgFinancialComputeTxn) initialize(app string, quiet bool) error {
 		return err
 	}
 	if baseline.Incomplete {
-		return financial.ErrComputeUnavailable
+		return financial.ComputeUnavailableBecause(financial.ComputeUnavailableAccounting)
 	}
 	total, err := strconv.ParseInt(baseline.Amount, 10, 64)
 	if err != nil || total < 0 || total > api.FinancialBudgetMoneyMax {

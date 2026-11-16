@@ -41,7 +41,7 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 	}
 	producer, problem := s.accountProducer(r.Context(), acct)
 	if problem == nil {
-		problem = s.PublishRateProblem(acct, len(wire.Events))
+		problem = s.PublishRateProblem(r.Context(), acct, len(wire.Events))
 	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -81,6 +81,11 @@ func (s *Service) publishEventBatchItem(ctx context.Context, store state.Publish
 	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
 		return batchPublishFailure("rejected", false, AppSourceReservedProblem())
 	}
+	environment, problem := s.PublishEnvironment(ctx, acct.ID, req.EnvironmentID)
+	if problem != nil {
+		return batchPublishFailure("rejected", problem.Status >= http.StatusInternalServerError, problem)
+	}
+	envelope.EnvironmentID = environment
 	envelope.Producer = producer
 	trace := pkgtrace.InjectHeaders(ctx)
 	envelope.Traceparent, envelope.Tracestate, envelope.Baggage = trace["traceparent"], trace["tracestate"], trace["baggage"]

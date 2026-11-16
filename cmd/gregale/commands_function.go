@@ -5,9 +5,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
@@ -89,14 +92,14 @@ func functionTypeFiles(dir string) ([]gregalemanifest.FunctionTypesFile, error) 
 	if err != nil {
 		return nil, err
 	}
-	typed, err := typedFunctions(resolved, functionTypesProjectSlug)
+	typed, err := typedFunctions(dir, resolved, functionTypesProjectSlug)
 	if err != nil {
 		return nil, err
 	}
 	return gregalemanifest.GenerateFunctionTypes(typed)
 }
 
-func typedFunctions(resolved []gregalemanifest.FunctionPlan, projectSlug string) ([]gregalemanifest.TypedFunction, error) {
+func typedFunctions(projectDir string, resolved []gregalemanifest.FunctionPlan, projectSlug string) ([]gregalemanifest.TypedFunction, error) {
 	specs := make([]gregalemanifest.FunctionSpec, 0, len(resolved))
 	for _, p := range resolved {
 		specs = append(specs, p.Spec)
@@ -110,7 +113,7 @@ func typedFunctions(resolved []gregalemanifest.FunctionPlan, projectSlug string)
 	typed := make([]gregalemanifest.TypedFunction, 0, len(resolved))
 	for _, p := range resolved {
 		typed = append(typed, gregalemanifest.TypedFunction{Name: p.Spec.Name, Root: p.Root, Runtime: p.Runtime,
-			Input: p.Spec.InputSchema, Output: p.Spec.OutputSchema, Calls: graph[p.Spec.Name]})
+			Input: p.Spec.InputSchema, Output: p.Spec.OutputSchema, Calls: graph[p.Spec.Name], GoPackage: goHandlerPackage(projectDir, p)})
 	}
 	return typed, nil
 }
@@ -120,7 +123,7 @@ func typedFunctions(resolved []gregalemanifest.FunctionPlan, projectSlug string)
 // imports gregale_functions.py ships types matching its siblings. Files the
 // author never generated are left alone (ADR-20261111150000 §1).
 func refreshFunctionTypes(projectDir string, resolved []gregalemanifest.FunctionPlan, projectSlug string, out io.Writer) error {
-	typed, err := typedFunctions(resolved, projectSlug)
+	typed, err := typedFunctions(projectDir, resolved, projectSlug)
 	if err != nil {
 		return err
 	}
@@ -140,4 +143,21 @@ func refreshFunctionTypes(projectDir string, resolved []gregalemanifest.Function
 		_, _ = fmt.Fprintf(out, "Updated %s from the current schemas\n", path)
 	}
 	return nil
+}
+
+// goHandlerPackage is the package clause of a Go function's handler, so its
+// generated gregale_functions.go compiles beside it; empty (main) otherwise.
+func goHandlerPackage(projectDir string, p gregalemanifest.FunctionPlan) string {
+	if !strings.HasPrefix(p.Runtime, "go") || p.Handler == "" {
+		return ""
+	}
+	src, err := os.ReadFile(filepath.Join(projectDir, filepath.FromSlash(p.Root), filepath.FromSlash(p.Handler)))
+	if err != nil {
+		return ""
+	}
+	f, err := parser.ParseFile(token.NewFileSet(), p.Handler, src, parser.PackageClauseOnly)
+	if err != nil {
+		return ""
+	}
+	return f.Name.Name
 }

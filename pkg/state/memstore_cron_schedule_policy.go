@@ -89,6 +89,13 @@ func (m *MemStore) CreateScheduledCronInvocationOccurrence(_ context.Context, cr
 				}
 				replacedPending = active
 			}
+		} else if policy.Overlap == "skip" {
+			for _, candidate := range m.invocations {
+				if candidate.CronID != nil && *candidate.CronID == cronID && candidate.Source == InvocationCron && timedOutRunMayStillRun(candidate, time.Now()) {
+					status, reason, blocker = "skipped_overlap", "an earlier run of this cron timed out and may still be running", candidate.OccurrenceID
+					break
+				}
+			}
 		}
 	}
 	if invocation.State == "" {

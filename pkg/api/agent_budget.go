@@ -12,6 +12,24 @@ func AgentStandingMillicents(floor, ramMB int) int64 {
 	return mbHours * OverageMillicentsPerGBHour / 1024
 }
 
+// AgentPostgresStandingMillicents prices a managed Postgres database over a
+// month: one that never scales to zero runs its class's smallest compute all
+// month at the Postgres overage rate. A database that scales to zero commits
+// nothing; its compute, storage and egress follow use. An unknown class is
+// priced as the largest known minimum, so the estimate never understates.
+func AgentPostgresStandingMillicents(class string, scaleToZero bool) int64 {
+	if scaleToZero {
+		return 0
+	}
+	quarters, ok := ManagedPostgresMinimumQuarterComputeUnits[class]
+	if !ok {
+		for _, q := range ManagedPostgresMinimumQuarterComputeUnits {
+			quarters = max(quarters, q)
+		}
+	}
+	return quarters * AgentBudgetHoursPerMonth * ManagedPostgresOverageMillicentsPerComputeUnitHour / 4
+}
+
 // AgentPrewarmMillicents prices a prewarm of count instances of ramMB each
 // held for seconds: a one-off charge, not a monthly one.
 func AgentPrewarmMillicents(count, ramMB int, seconds int64) int64 {

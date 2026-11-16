@@ -1,12 +1,13 @@
 from typing import Literal
 
-RequestAnalyticsGroupMethod = Literal["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+RequestAnalyticsGroupMethod = Literal["DELETE", "GET", "HEAD", "OPTIONS", "OTHER", "PATCH", "POST", "PUT"]
 
 REQUEST_ANALYTICS_GROUP_METHOD_VALUES: set[RequestAnalyticsGroupMethod] = {
     "DELETE",
     "GET",
     "HEAD",
     "OPTIONS",
+    "OTHER",
     "PATCH",
     "POST",
     "PUT",
