@@ -1,3 +1,4 @@
+- [ADR-20261115163113: Flag experiments: conversion events and sequential results](20261115163113-flag-experiments.md) — accepted; experiments on a variant flag's weighted rule with customer units, SDK `track()` conversion events (`track-v1`) folded into daily per-customer rows with plan telemetry retention, per-experiment unit rows for the experiment's lifetime, monthly per-plan event quota (dropped, never billed), mSPRT always-valid results with a sample ratio mismatch check (amends ADR-377, ADR-20261114150000)
 - [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
 - [ADR-20261115210000: Typed file-triggered jobs](20261115210000-sdk-file-triggered-jobs.md) — accepted; SDK preview
 - [ADR-20261115223000: Typed live views of Jobs and file pipelines](20261115223000-sdk-live-job-views.md) — accepted; SDK preview
