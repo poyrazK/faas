@@ -3,7 +3,8 @@
 - **Status:** proposed. Owner decisions, 2026-11-16: self-host **Valkey**,
   **cache-only** durability, **Hobby and up**; then "Redis should work on
   compute nodes, max 512mb (can change later), and how the scale to zero
-  would work?". Nothing is built yet.
+  would work?"; then data must be kept when resize, upgrade or restart
+  happens. Nothing is built yet.
 - **Date:** 2026-11-16
 - **Owner:** apid, schedd, vmmd and gatewayd-internal maintainers
 - **Builds on:** [ADR-576](576-private-tcp-service-addressing.md) (private
@@ -155,7 +156,9 @@ What survives:
 | --- | --- | --- |
 | Idle park, then wake | kept (memory snapshot) | kept (held by proxy) |
 | Caller app parks | kept | the caller's own sockets drop with it, as today |
-| Resize, Valkey upgrade, restart | **lost** (cold boot) | reset; clients reconnect |
+| Restart | kept (snapshot restore, below) | kept |
+| Resize, Valkey or guest upgrade, node drain | kept (live handoff, below) | kept |
+| Crash inside the VM (guest panic, OOM kill) | **lost**; cold boot | reset |
 | Node loss while running | **lost**; re-placed empty in < 60 s | reset |
 | Node loss while parked | kept if the park snapshot is stored off-node like app snapshots, else lost | reset |
 | Snapshot evicted or expired | **lost**; next wake is a cold boot | kept |
@@ -172,15 +175,75 @@ What survives:
   so the first commands may fault pages in. Target, measured in slice 1:
   p95 first reply after wake under 500 ms at 64 MB and under 1.5 s at 512 MB.
 
-### Upgrades
+### Keeping data through restart, resize and upgrade
 
-A new Valkey minor or guest-init makes caches `stale`. Parked caches pick
-it up at their next wake **only if** their snapshot is gone. Otherwise
-restoring the old snapshot keeps the old image, and the upgrade waits for
-the next cold boot. Running stale caches restart (empty) only in the
-account's maintenance window, at most weekly. A security fix may restart at
-once, announced as a `redis.restarted` event. Target: patched Valkey across
-the fleet within 72 h of an upstream security release.
+Planned operations never cold-boot a cache that holds data. Each operation
+**fails safe**: if a step fails or times out, it is abandoned and the old VM
+keeps serving, so nothing is lost. `--flush` on restart or resize is the
+only way to ask for an empty cache.
+
+**Restart (same image, same size): snapshot and restore.** This is a park
+and wake on purpose. The proxy holds the sessions, vmmd writes the memory
+snapshot, stops the VM and restores it into a fresh VM (same node, or another
+for a drain). The pause is the park plus the restore, about 1 s at 512 MB.
+It fixes a wedged guest or host process without touching Valkey's data.
+
+**Resize, Valkey or guest upgrade, node drain: live handoff by replication.**
+A snapshot cannot change the VM's RAM or the Valkey binary, so these copy the
+data into a new VM:
+
+1. schedd admits VM B (new size or image, any compute node) next to the
+   running VM A. While both run, only A is billed.
+2. B replicates from A (`REPLICAOF` through a vmmd vsock relay, as native
+   Postgres replication does in ADR-1027). Sync is diskless, because the
+   guest has no disk.
+3. When B's replication offset is within 1 MB of A's, the proxy holds new
+   commands for the cache, sends `CLIENT PAUSE WRITE` to A, and waits for
+   B's offset to equal A's.
+4. B is promoted (`REPLICAOF NO ONE`). The proxy re-dials every session to
+   B and replays its state, as on wake (protocol, DB, name, and subscribed
+   channels and patterns). Then it releases the held commands. The target
+   write pause is p95 under 100 ms.
+5. A stops. The service address now routes to B.
+
+How the switch treats sessions in a pinned state:
+
+- **Blocking command in flight.** It cannot complete on A while writes are
+  paused. The proxy unblocks it on A, drops that reply, and re-issues it on
+  B with the remaining timeout.
+- **Open `WATCH`/`MULTI`.** The proxy waits up to 5 s for `EXEC`. After that,
+  `EXEC` returns the nil "watched key changed" reply, which clients already
+  retry.
+- **Client tracking.** The proxy sends a flush-all invalidation and
+  re-enables tracking on B.
+
+**Memory during the handoff.** A full sync forks Valkey inside A. Copy-on-write
+can need up to the written share of the dataset again. For the handoff,
+admission charges A's node an extra `min(used_memory, size) / 2`, and vmmd
+raises A's cgroup limit by the same amount. This is the most likely failure,
+and its outcome is the safe one: if A comes near the raised limit, the
+handoff is cancelled before A is at risk, then retried at a quieter time,
+with an `info` warning to the customer.
+
+**Resize down.** If `used_memory` exceeds the new size, the API answers
+`409 cache_too_full_to_shrink`, unless `--evict` is given. In that case
+`maxmemory` is lowered on A first, Valkey evicts by its policy, and the
+handoff follows.
+
+**Version direction.** Replication from an older Valkey to a newer one is
+supported. Rolling back to an older Valkey can fail if the RDB format
+changed. That rollback is refused, and the cache stays on the newer
+version.
+
+**Upgrades in the fleet.** A new Valkey minor or guest-init makes caches
+`stale`. A running stale cache is handed off with no data lost in the
+account's maintenance window, or at once for a security fix. A parked stale
+cache is restored from its snapshot when it wakes, then handed off in the
+background. Target: patched Valkey across the fleet within 72 h of an
+upstream security release, with no cache emptied by it.
+
+Node failure and crashes inside the VM still lose a running cache's data.
+This ADR keeps the owner's cache-only choice for those.
 
 ### Plans and billing
 
@@ -227,7 +290,12 @@ the fleet within 72 h of an upstream security release.
    `gregale redis …`, flag `managed_redis` (dark).
 4. **Compose.** Provisioning from Compose, sibling-name resolution, and the
    microservices-demo `cartservice` unchanged as the acceptance test.
-5. **GA gate.** `docs/redis.md` and the `docs/storage.md` table, capability
+5. **Handoff.** Restart through snapshot restore, live replication handoff
+   for resize, upgrade and drain, and fail-safe abort. On metal, a write
+   loop (go-redis, ioredis) runs through 100 handoffs at 512 MB with zero
+   lost acknowledged writes, and the pause is measured. This must pass
+   before GA.
+6. **GA gate.** `docs/redis.md` and the `docs/storage.md` table, capability
    row, runbook (node loss, security roll), a journey in the full prod run
    covering park → held session → wake, then owner approval to release the
    flag.
@@ -244,6 +312,15 @@ the fleet within 72 h of an upstream security release.
 - **Treat any byte as activity (today's ADR-576 rule).** A pooled client's
   `PING`s would keep every cache awake forever, so it would never scale to
   zero.
+- **Cold-boot on resize, upgrade or restart.** Rejected by the owner
+  (2026-11-16): planned operations must keep data.
+- **Resize by virtio-mem only.** It would avoid a copy for size changes, but
+  it is still a proposal (ADR-20261027090015 §7) and cannot change the
+  Valkey binary. The handoff covers every case with one mechanism. virtio-mem
+  can later make growth copy-free.
+- **Move data by `SCAN` + `DUMP`/`RESTORE` from the proxy.** No fork, but
+  writes during the copy need dual-writes and ordering rules. Replication
+  already solves that.
 - **Cold-boot on wake (no memory snapshot).** Wake would empty the cache
   every time, so an idle cache would be worthless.
 - **Provider adapter (Upstash), native KV over HTTP, shared multi-tenant
