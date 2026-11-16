@@ -58,17 +58,68 @@ func deliveryRetiredFromEnv(getenv func(string) string, deliveryViaSecretd bool,
 	if getenv(envSealDomainDeliveryIdentity) != "" {
 		return false, fmt.Errorf("schedd: %s but %s is set: remove the delivery identity (seal_domains role, faas_seal_domain_delivery_retired_on_compute) before starting", envSealDomainDeliveryRetired, envSealDomainDeliveryIdentity)
 	}
-	// Any fleet identity file refuses, readable or not: the names are the
-	// ones secretbox.LoadFleetAndHostKeys looks for.
+	if err := refuseFleetIdentity(hostKeyDir, envSealDomainDeliveryRetired, "delivery values"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// envSealDomainControlRetired marks a compute node whose control identity is
+// retired (ADR-20261110210000 slice 3k-2).
+const envSealDomainControlRetired = "FAAS_SEAL_DOMAIN_CONTROL_RETIRED"
+
+// controlRetiredFromEnv reads FAAS_SEAL_DOMAIN_CONTROL_RETIRED. A retired
+// schedd holds no identity that opens the cluster signing key: it asks
+// secretd for internal-service and workflow outbound tokens
+// (FAAS_SCHEDD_INTERNAL_SVC_MINTER=secretd), loads no control identity, and
+// has no fleet identity in hostKeyDir (schedd's contract step), since the
+// fleet key may also open the cluster key. Anything left refuses the start.
+func controlRetiredFromEnv(getenv func(string) string, mintViaSecretd bool, hostKeyDir string) (bool, error) {
+	switch v := getenv(envSealDomainControlRetired); v {
+	case "", "false":
+		return false, nil
+	case "true":
+	default:
+		return false, fmt.Errorf("schedd: %s=%q: want true or false", envSealDomainControlRetired, v)
+	}
+	if !mintViaSecretd {
+		return false, fmt.Errorf("schedd: %s needs %s=secretd: nothing else would mint its tokens", envSealDomainControlRetired, internalSvcMinterEnv)
+	}
+	if getenv(envSealDomainControlIdentity) != "" {
+		return false, fmt.Errorf("schedd: %s but %s is set: remove the control identity (seal_domains role, faas_seal_domain_control_retired_on_compute) before starting", envSealDomainControlRetired, envSealDomainControlIdentity)
+	}
+	if err := refuseFleetIdentity(hostKeyDir, envSealDomainControlRetired, "the cluster signing key"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// loadedSealDomains is what faas_seal_domain_loaded reports: each domain
+// schedd reads, minus those retired on this node.
+func loadedSealDomains(getenv func(string) string, control, delivery bool) map[sealdomain.Domain]bool {
+	out := map[sealdomain.Domain]bool{}
+	if getenv(envSealDomainControlRetired) != "true" {
+		out[sealdomain.Control] = control
+	}
+	if getenv(envSealDomainDeliveryRetired) != "true" {
+		out[sealdomain.Delivery] = delivery
+	}
+	return out
+}
+
+// refuseFleetIdentity fails when any fleet identity file is in hostKeyDir,
+// readable or not: the names are the ones secretbox.LoadFleetAndHostKeys
+// looks for.
+func refuseFleetIdentity(hostKeyDir, env, opens string) error {
 	for _, name := range []string{"fleet.age", "faas_fleet_age_identity", "fleet.age.previous", "faas_fleet_age_identity_previous"} {
 		path := filepath.Join(hostKeyDir, name)
 		if _, err := os.Lstat(path); err == nil {
-			return false, fmt.Errorf("schedd: %s needs schedd's contract step (faas_seal_domain_control_contracted and faas_seal_domain_delivery_contracted): %s also opens delivery values", envSealDomainDeliveryRetired, path)
+			return fmt.Errorf("schedd: %s needs schedd's contract step (faas_seal_domain_control_contracted and faas_seal_domain_delivery_contracted): %s also opens %s", env, path, opens)
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return false, fmt.Errorf("schedd: %s: check for a fleet identity: %w", envSealDomainDeliveryRetired, err)
+			return fmt.Errorf("schedd: %s: check for a fleet identity: %w", env, err)
 		}
 	}
-	return true, nil
+	return nil
 }
 
 func loadSealDomain(getenv func(string) string, env string, domain sealdomain.Domain) ([]*age.X25519Identity, error) {

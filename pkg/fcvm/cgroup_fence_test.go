@@ -61,7 +61,7 @@ func assertFence(t *testing.T, scope, memoryMax, cpuWeight, cpuMax string) {
 func TestRepairCgroupFencesRestoresFenceAfterSystemdReload(t *testing.T) {
 	l := Lease{Instance: "worker-after-reload", Plan: api.PlanScale, MemoryMaxMiB: 128}
 	v, scope := fencedVM(t, l)
-	wantMemory := memoryMaxValue(api.BillableRAMMB(128))
+	wantMemory := memoryMaxValue(api.AppVMMemoryMaxMB(128))
 	wantCPU, err := appCPUMax(api.PlanScale, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestRepairCgroupFencesRecreatesMissingFiles(t *testing.T) {
 	if rep := v.RepairCgroupFences(context.Background()); rep.Repaired != 1 {
 		t.Fatalf("report = %+v, want one repair", rep)
 	}
-	assertFence(t, scope, memoryMaxValue(api.BillableRAMMB(512)), itoa(vmCPUWeight(false)), "50000 100000")
+	assertFence(t, scope, memoryMaxValue(api.AppVMMemoryMaxMB(512)), itoa(vmCPUWeight(false)), "50000 100000")
 }
 
 func TestRepairCgroupFencesFollowsRuntimeCPUChanges(t *testing.T) {
@@ -139,7 +139,7 @@ func TestRepairCgroupFencesKeepsSnapshotHeadroom(t *testing.T) {
 	if err := restore(); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	ordinary := memoryMaxValue(api.BillableRAMMB(1024))
+	ordinary := memoryMaxValue(api.AppVMMemoryMaxMB(1024))
 	if got := readFenceFile(t, scope, "memory.max"); got != ordinary {
 		t.Errorf("memory.max after capture = %q, want %q", got, ordinary)
 	}

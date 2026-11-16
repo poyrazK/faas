@@ -322,6 +322,11 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		return nil, nil
 	}
 	cfg = cfg.WithCredentials(creds)
+	if cfg.WriteOnly {
+		// ADR-20261110210000 slice 3l: create-only credentials; the shipper
+		// sends part objects and never reads the bucket.
+		log.Info("vmmd: log archive credentials are write-only; shipping part objects")
+	}
 	// Keep vmmd's local producer spool separate from apid on single-box
 	// installs. An explicit vmmd override wins; otherwise a shared override
 	// remains supported for operators that intentionally co-locate spools.

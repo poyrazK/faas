@@ -62974,6 +62974,179 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/experiments:
+    get:
+      tags: [flags]
+      operationId: listProjectFlagExperiments
+      summary: List an environment's flag experiments.
+      description: "Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers that later send a conversion event."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      responses:
+        '200':
+          description: The environment's experiments, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [flags]
+      operationId: createProjectFlagExperiment
+      summary: Create, and optionally start, a flag experiment.
+      description: "The rule must be a weighted rule of an enabled variant flag that allocates by customer; control must be one of its variants. One experiment runs per rule; FlagExperimentsMaxRunning run per environment."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagExperimentCreateRequest' }
+      responses:
+        '201':
+          description: The created experiment, running when start was set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperiment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { description: "Another experiment uses the key or already runs on the rule, or the environment is at its experiment limit." }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/projects/{slug}/environments/{environment}/experiments/{key}:
+    get:
+      tags: [flags]
+      operationId: getProjectFlagExperiment
+      summary: Read one flag experiment.
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { $ref: '#/components/parameters/FlagExperimentKey' }
+      responses:
+        '200':
+          description: The experiment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperiment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [flags]
+      operationId: deleteProjectFlagExperiment
+      summary: Delete a flag experiment that is not running, with its units.
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { $ref: '#/components/parameters/FlagExperimentKey' }
+      responses:
+        '204': { description: The experiment and its units are deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { description: The experiment is running; stop it first. }
+
+  /v1/projects/{slug}/environments/{environment}/experiments/{key}/start:
+    post:
+      tags: [flags]
+      operationId: startProjectFlagExperiment
+      summary: Start a draft flag experiment.
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { $ref: '#/components/parameters/FlagExperimentKey' }
+      responses:
+        '200':
+          description: The running experiment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperiment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { description: "Another experiment already runs on the rule, or the environment is at its running limit." }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop:
+    post:
+      tags: [flags]
+      operationId: stopProjectFlagExperiment
+      summary: Stop a running flag experiment and freeze its results.
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { $ref: '#/components/parameters/FlagExperimentKey' }
+      responses:
+        '200':
+          description: The stopped experiment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperiment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiments/{key}/results:
+    get:
+      tags: [flags]
+      operationId: getProjectFlagExperimentResults
+      summary: Read a flag experiment's sequential results.
+      description: "Each variant is compared with control by an always-valid mixture sequential probability ratio test, so results may be read at any time. A sample ratio mismatch against the rule's weights is reported first."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { $ref: '#/components/parameters/FlagExperimentKey' }
+      responses:
+        '200':
+          description: Per-variant conversion, lift, confidence sequence and status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentResults' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/runtime/flags/events:
+    post:
+      tags: [flags]
+      operationId: postRuntimeFlagEvents
+      summary: Report conversion events for flag experiments.
+      description: "Requires the same workload identity as getRuntimeFlags. Account, app and environment come from the token. Each event names the verified customer of the request it belongs to; events for customers that are not active platform tenants of the account are dropped. Accepted events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never billed."
+      parameters:
+        - name: X-Faas-Flags-Capabilities
+          in: header
+          required: false
+          description: Comma-separated optional runtime SDK capabilities. SDKs that report events advertise track-v1.
+          schema: { type: string, maxLength: 256 }
+      security:
+        - flagsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagEventsRequest' }
+      responses:
+        '200':
+          description: What happened to each event of the batch, and the month's usage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagEventsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/operation-policies:
     get:
       tags: [exclusive-operations]
@@ -73961,6 +74134,12 @@ components:
       in: path
       required: true
       description: Project that owns this environment flag configuration.
+      schema: { type: string }
+    FlagExperimentKey:
+      name: key
+      in: path
+      required: true
+      description: Experiment key, unique within the environment.
       schema: { type: string }
     FlagsEnvironment:
       name: environment
@@ -89033,6 +89212,119 @@ components:
           type: object
           maxProperties: 100
           additionalProperties: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
+    FlagExperimentCreateRequest:
+      description: A flag experiment to create.
+      type: object
+      additionalProperties: false
+      required: [key, flag, rule_id, control, metric_event]
+      properties:
+        key: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$' }
+        flag: { type: string, description: The variant flag. }
+        rule_id: { type: string, description: "The flag's weighted rule." }
+        control: { type: string, description: The baseline variant. }
+        metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: The conversion event. }
+        mixing_lift: { type: number, exclusiveMinimum: 0, maximum: 1, description: "mSPRT mixing standard deviation as an absolute conversion-rate lift; default 0.02." }
+        start: { type: boolean, description: Start the experiment at once. }
+    FlagExperiment:
+      description: A flag experiment.
+      type: object
+      required: [key, flag, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, created_by, created_at]
+      properties:
+        key: { type: string }
+        flag: { type: string }
+        rule_id: { type: string }
+        control: { type: string }
+        metric_event: { type: string }
+        metric_kind: { type: string, enum: [conversion] }
+        status: { type: string, enum: [draft, running, stopped] }
+        mixing_lift: { type: number }
+        weights: { type: object, additionalProperties: { type: integer } }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        stopped_at: { type: string, format: date-time }
+        analyzed_until: { type: string, format: date-time, description: End of the request telemetry the results cover. }
+    FlagExperimentList:
+      description: An environment's flag experiments.
+      type: object
+      required: [experiments]
+      properties:
+        experiments: { type: array, items: { $ref: '#/components/schemas/FlagExperiment' } }
+    FlagExperimentArm:
+      description: One variant's exposed and converted customers.
+      type: object
+      required: [variant, exposed, converted, rate]
+      properties:
+        variant: { type: string }
+        exposed: { type: integer, format: int64 }
+        converted: { type: integer, format: int64 }
+        rate: { type: number }
+    FlagExperimentVariantResult:
+      description: One variant compared with control.
+      allOf:
+        - { $ref: '#/components/schemas/FlagExperimentArm' }
+        - type: object
+          required: [status]
+          properties:
+            lift: { type: number, description: Absolute difference in conversion rate against control. }
+            relative_lift: { type: number }
+            low: { type: number, description: Lower bound of the 95% confidence sequence on lift. }
+            high: { type: number, description: Upper bound of the 95% confidence sequence on lift. }
+            p_value: { type: number, description: Always-valid p-value (running minimum). }
+            status: { type: string, enum: [significant, not_significant, insufficient_data, sample_ratio_mismatch] }
+    FlagExperimentResults:
+      description: A flag experiment's sequential results.
+      type: object
+      required: [experiment, control, variants, sample_ratio_p_value, sample_ratio_mismatch, crossed_units]
+      properties:
+        experiment: { $ref: '#/components/schemas/FlagExperiment' }
+        control: { $ref: '#/components/schemas/FlagExperimentArm' }
+        variants: { type: array, items: { $ref: '#/components/schemas/FlagExperimentVariantResult' } }
+        sample_ratio_p_value: { type: number }
+        sample_ratio_mismatch: { type: boolean }
+        crossed_units: { type: integer, format: int64, description: Customers that saw more than one variant and are left out. }
+    FlagEvent:
+      description: One conversion event a runtime SDK reports for experiments.
+      type: object
+      additionalProperties: false
+      required: [name, customer_id]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: Conversion event name. }
+        customer_id: { type: string, format: uuid, description: Verified customer (platform tenant) of the request the event belongs to. }
+        value: { type: integer, format: int64, minimum: -1000000000000, maximum: 1000000000000, description: "Optional integer value, such as cents." }
+        at: { type: string, format: date-time, description: "When the event happened; within the last 24 hours. Defaults to now." }
+    FlagEventsRequest:
+      description: A batch of runtime conversion events.
+      type: object
+      additionalProperties: false
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/FlagEvent' }
+    FlagEventsResponse:
+      description: Accepted and dropped events of a batch, with the month's event usage.
+      type: object
+      required: [accepted, dropped, month]
+      properties:
+        accepted: { type: integer }
+        dropped:
+          type: object
+          required: [quota, unknown_customer, name_limit, invalid]
+          properties:
+            quota: { type: integer, description: Over the monthly event quota. }
+            unknown_customer: { type: integer, description: Not an active platform tenant of the account. }
+            name_limit: { type: integer, description: A new event name over the environment's name bound. }
+            invalid: { type: integer, description: "Invalid name or value, or a time outside the accepted window." }
+        month:
+          type: object
+          required: [limit, accepted, dropped]
+          properties:
+            limit: { type: integer, format: int64 }
+            accepted: { type: integer, format: int64 }
+            dropped: { type: integer, format: int64 }
     FlagsBundle:
       description: Immutable runtime configuration snapshot.
       allOf:

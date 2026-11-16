@@ -20,7 +20,16 @@ type Credentials struct {
 	AuthMode string `json:"auth_mode,omitempty"`
 	KeyID    string `json:"key_id,omitempty"`
 	Secret   string `json:"secret,omitempty"`
+	// Access is "" or "read-write" (the default), or "write-only" on a
+	// compute node whose credentials may only create objects
+	// (ADR-20261110210000 slice 3l): the daemon then ships part objects,
+	// never reads the bucket back, and leaves read-back to the control plane.
+	Access string `json:"access,omitempty"`
 }
+
+// AccessWriteOnly marks an envelope whose credentials may only create
+// objects.
+const AccessWriteOnly = "write-only"
 
 // ReadCredentials reads and parses an unsealed archive credential file.
 // Missing files are intentionally returned unchanged as os.ErrNotExist so
@@ -33,6 +42,11 @@ func ReadCredentials(path string) (Credentials, error) {
 	}
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return creds, fmt.Errorf("logarchive: parse %s: %w", path, err)
+	}
+	switch creds.Access {
+	case "", "read-write", AccessWriteOnly:
+	default:
+		return creds, fmt.Errorf("logarchive: %s: access %q: want read-write or write-only", path, creds.Access)
 	}
 	return creds, nil
 }
@@ -58,6 +72,12 @@ func (c Config) WithCredentials(creds Credentials) Config {
 	}
 	if c.Secret == "" {
 		c.Secret = creds.Secret
+	}
+	// A write-only envelope cannot read the day object a whole-day rebuild
+	// starts from, so it always ships part objects.
+	if creds.Access == AccessWriteOnly {
+		c.WriteOnly = true
+		c.PartObjects = true
 	}
 	return c
 }

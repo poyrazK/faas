@@ -21971,5 +21971,77 @@
       "subject_id"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "flag_conversion_daily",
+    "columns": [
+      "account_id",
+      "count",
+      "customer_id",
+      "day",
+      "environment_id",
+      "event_name",
+      "first_at",
+      "last_at",
+      "value_sum"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_event_names",
+    "columns": [
+      "account_id",
+      "created_at",
+      "environment_id",
+      "name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_event_usage",
+    "columns": [
+      "accepted",
+      "account_id",
+      "dropped",
+      "month"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_experiment_units",
+    "columns": [
+      "converted_at",
+      "crossed",
+      "customer_id",
+      "experiment_id",
+      "first_exposed_at",
+      "variant"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_experiments",
+    "columns": [
+      "account_id",
+      "control",
+      "created_at",
+      "created_by",
+      "environment_id",
+      "flag_key",
+      "id",
+      "key",
+      "metric_event",
+      "metric_kind",
+      "min_p_values",
+      "mixing_lift",
+      "project_id",
+      "rule_id",
+      "started_at",
+      "status",
+      "stopped_at",
+      "telemetry_cursor",
+      "weights"
+    ],
+    "kind": "operational"
   }
 ]

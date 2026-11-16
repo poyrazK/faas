@@ -3406,6 +3406,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 							dirtyFileCount++
 						}
 					}
+					if file, untracked := uncommittedProjectFile(dirtyOut, provVal.Root, selectedSourceDir); file != "" && !*worktree {
+						switch {
+						case untracked && path.Base(file) != "gregale.yaml":
+							// HEAD has no Compose file, so the project would plan no workloads.
+							return printErr("Compose file not committed", fmt.Errorf("%s is not committed, and deploy ships committed HEAD without it; commit it, or rerun with --worktree to ship the working tree", file))
+						case untracked:
+							PrintWarn(osStderr, "%s is not committed; this deploy ignores it. Use --worktree to ship it.", file)
+						default:
+							PrintWarn(osStderr, "%s has uncommitted changes; this deploy uses its committed version. Use --worktree to ship your edits.", file)
+						}
+					}
 				}
 			}
 			if dirtyFileCount > 0 && !*worktree {

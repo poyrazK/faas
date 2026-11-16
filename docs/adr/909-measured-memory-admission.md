@@ -297,3 +297,57 @@ nominal budget, is covered the same way.
 
 **Validation.** `TestSeedLedgerKeepsResidentRowsPastTheBareCeiling` and
 `TestAdmit_ResidentRecoveryAccountsRAMAndVCPUWithoutAllowingGrowth`.
+
+## Amendment 3 — Reservations may reach 250% of the ceiling (2026-11-16)
+
+**Problem.** On production-us the 200% reservation cap, not memory, decides
+how many instances a node takes. With the 16 GB nodes' 8,381 MB ceiling:
+
+- 2026-11-05 to 11-12: bookings peaked at 14,200 MB (169%) while measured
+  memory peaked at 4,640 MB (55%); on average 3,000 MB booked against
+  740 MB measured.
+- 2026-11-13 to 11-16 (rc.343 onward): bookings peaked at 14,080 MB (168%,
+  fsn-2), measured memory at 2,800–3,660 MB per node in normal running.
+  At peaks, measured memory was 26–40% of bookings.
+- The idle ladder's freeze-level discount (ADR-20261107122928) was meant to
+  lift this. Three days of `observe` on both nodes showed every idle instance
+  is a `when_idle` app, which the discount does not cover, and that its
+  activity guard would pause those apps 3–4 times a second per node, each
+  pause ended by the app's own background work. It is not the lever yet.
+
+**Decision.** `MeasuredAdmissionMaxOvercommitPercent` becomes 250, and the
+durable node guard (`admission_reserve_node`, migration
+20261116171808537) clamps the scheduler's allowance at 250. Invariant 2 now
+reads: a node's measured memory stays under its admission ceiling,
+Σ(plan RAM + 8 MB) stays under 2.5 times that ceiling, and schedd evicts
+when measured memory crosses the ceiling. Billing is unchanged.
+
+Why not 300%: at the measured-to-booked ratio above, 300% of bookings would
+put peak measured memory at 100–120% of the ceiling, so eviction would run
+at ordinary daily peaks. At 250% the same ratio gives 65–100%.
+
+**What stays the same.** Every VM keeps `memory.max = plan + 8 MB`;
+eviction to `MeasuredEvictionTargetPercent` (90%) still bounds a node that
+crosses the ceiling; the idle ladder discount stays bounded at 200% of the
+ceiling, so bookings with it reach at most 450%.
+
+**Known squeeze.** A rollout drains one node at a time, and the other then
+carries both nodes' instances: on 2026-11-16 at 01:07, with fsn-2 drained,
+fsn-3's measured memory reached 8,280 MB (99%). More bookings per node make
+that window more likely to evict. Eviction takes best-effort instances
+before reserved ones; an evicted instance's next request restores it from
+its snapshot or cold-boots it (ADR-005).
+
+**Compatibility.** The previous release's scheduler sends at most 200, which
+the new guard accepts. Rolling back the scheduler leaves rows booked past
+200%; startup recovery keeps them (amendment 2) and new admissions on that
+node wait until it drains under 200%. The migration's Down restores the
+200% clamp.
+
+**Watch after release.** `schedd_node_memory_measured_mb` against the
+ceiling, `schedd_evicted_priority_total{reason="eviction_ram"}` and
+`schedd_eviction_fired_total`, and wake refusals for node capacity. Revert
+to 200 if eviction fires outside rollouts.
+
+**Financial model.** The model's node capacity still assumes reservations;
+it understates tenants per node further (see "Decision").
