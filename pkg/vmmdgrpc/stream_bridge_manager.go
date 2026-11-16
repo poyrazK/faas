@@ -113,7 +113,10 @@ type streamBridgeManager struct {
 	// It outlives the entry (idle reaping, a freeze) so a thaw can start the
 	// bridge again beside the resume; forget drops it with the instance.
 	started map[string]streamBridgeStart
-	log     *slog.Logger
+	// instanceGuestErrors counts consecutive guest-connection failures per
+	// instance across its bridges (noteGuestTransport); forget drops it.
+	instanceGuestErrors map[string]int
+	log                 *slog.Logger
 
 	idleTimeout  time.Duration
 	reapInterval time.Duration
@@ -434,6 +437,7 @@ func (m *streamBridgeManager) closeInstance(ctx context.Context, instance string
 	}
 	m.mu.Lock()
 	if dropStarts {
+		delete(m.instanceGuestErrors, instance)
 		for key, start := range m.started {
 			if start.instance == instance {
 				delete(m.started, key)
@@ -614,22 +618,64 @@ func (m *streamBridgeManager) release(entry *streamBridgeEntry) {
 // listener) does not cost the requests the bridge carries.
 const streamBridgeGuestErrorFence = 3
 
+// streamBridgeInstanceReport is the per-instance streak, across bridge
+// replacements, at which the instance itself is reported unreachable and
+// replaced: a fresh bridge that fails the same way points at the guest.
+const streamBridgeInstanceReport = 2 * streamBridgeGuestErrorFence
+
+// guestTransportVerdict is what one exchange's outcome asks the caller to do.
+type guestTransportVerdict struct {
+	streak         int  // consecutive failures on this bridge
+	fenceBridge    bool // replace the bridge after relaying the response
+	reportInstance bool // report the instance unreachable so it is replaced
+}
+
 // noteGuestTransport records whether the bridge answered this exchange itself
-// because its guest connection failed. It returns the failure streak and
-// whether that streak just reached the fence; the caller then invalidates
-// the lease once the response has been relayed.
-func (m *streamBridgeManager) noteGuestTransport(lease *streamBridgeLease, failed bool) (streak int, fence bool) {
+// because its guest connection failed. The bridge streak fences the bridge;
+// the instance streak, which survives bridge replacement, reports the
+// instance once. Any guest answer resets both.
+func (m *streamBridgeManager) noteGuestTransport(lease *streamBridgeLease, failed bool) guestTransportVerdict {
 	if m == nil || lease == nil || lease.entry == nil {
-		return 0, false
+		return guestTransportVerdict{}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	instance := lease.entry.instance
 	if !failed {
 		lease.entry.guestErrors = 0
-		return 0, false
+		delete(m.instanceGuestErrors, instance)
+		return guestTransportVerdict{}
+	}
+	if m.instanceGuestErrors == nil {
+		m.instanceGuestErrors = map[string]int{}
 	}
 	lease.entry.guestErrors++
-	return lease.entry.guestErrors, lease.entry.guestErrors == streamBridgeGuestErrorFence
+	m.instanceGuestErrors[instance]++
+	return guestTransportVerdict{
+		streak:         lease.entry.guestErrors,
+		fenceBridge:    lease.entry.guestErrors == streamBridgeGuestErrorFence,
+		reportInstance: m.instanceGuestErrors[instance] == streamBridgeInstanceReport,
+	}
+}
+
+// livenessReporter is the fcvm.Manager surface that hands an instance to
+// schedd for replacement (DestroyForLivenessFailure).
+type livenessReporter interface {
+	ReportLivenessFailed(ctx context.Context, instanceID, reason string)
+}
+
+// reportTrafficUnreachable hands an instance that a fresh bridge still cannot
+// reach to schedd, which replaces it; the next request wakes a new one. The
+// reason keeps the restart out of the app's eviction budget: a broken
+// platform hop must not park a customer's app.
+func (s *Server) reportTrafficUnreachable(ctx context.Context, instance string) {
+	r, ok := s.vmm.(livenessReporter)
+	if !ok || instance == "" {
+		return
+	}
+	s.log.Warn("vmmd: instance unreachable through fresh bridges; asking schedd to replace it",
+		"instance", instance, "failures", streamBridgeInstanceReport)
+	go r.ReportLivenessFailed(context.WithoutCancel(ctx), instance, fcvm.LivenessReasonTrafficUnreachable)
 }
 
 func (m *streamBridgeManager) invalidate(ctx context.Context, lease *streamBridgeLease) {

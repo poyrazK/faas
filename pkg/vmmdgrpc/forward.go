@@ -1881,17 +1881,20 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	}
 	if persistent {
 		guestErr := slices.Contains(httpResp.Header.Values(bridgecompletion.GuestErrorHeader), exchange)
-		if streak, fence := s.streamBridges.noteGuestTransport(bridgeLease, guestErr); guestErr {
+		if v := s.streamBridges.noteGuestTransport(bridgeLease, guestErr); guestErr {
 			// The bridge, not the guest, answered this 502: its connection to
 			// the guest failed. Nothing else records it.
 			s.log.Warn("vmmd: stream bridge could not reach the guest",
 				"instance", reqInit.GetInstance(), "guest_port", dialPort,
-				"protocol", requestBridgeProtocol, "streak", streak)
-			if fence {
+				"protocol", requestBridgeProtocol, "streak", v.streak)
+			if v.fenceBridge {
 				s.log.Warn("vmmd: replacing stream bridge after repeated guest connection failures",
-					"instance", reqInit.GetInstance(), "failures", streak)
+					"instance", reqInit.GetInstance(), "failures", v.streak)
 				// After the 502 is relayed; this exchange then needs no completion wait.
 				defer s.streamBridges.invalidate(context.WithoutCancel(ctx), bridgeLease)
+			}
+			if v.reportInstance {
+				s.reportTrafficUnreachable(ctx, reqInit.GetInstance())
 			}
 		}
 	}

@@ -10375,7 +10375,7 @@ func (e *Engine) DestroyForLivenessFailure(ctx context.Context, instanceID, reas
 	// evict a healthy app. A destroy timeout is excluded too,
 	// because the control plane has no proof that a restart completed.
 	// nil window → no check (test-only opt-out).
-	budgetedRestart := reason != fcvm.LivenessReasonInfrastructure
+	budgetedRestart := fcvm.LivenessReasonBudgeted(reason)
 	if !budgetedRestart {
 		e.log.Info("liveness: restart excluded from eviction budget",
 			"instance", instanceID,
