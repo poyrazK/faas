@@ -306,6 +306,9 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	}
 
 	credentialRequest := bindingCredentialRequest(binding, databaseDataResource(database))
+	if credentialRequest.CustomRoles, err = customRoleGrants(ctx, s.databases, database, binding.Access); err != nil {
+		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "custom_roles_unavailable", ErrUnavailable, s.retryInterval)
+	}
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	material, err := issueAdmittedCredentials(providerContext, backend.Provider, credentialRequest)
 	cancel()

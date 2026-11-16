@@ -560,10 +560,17 @@ func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.Cre
 	if err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	batch, err := credentialSQL(p.cfg.Database, role, credentialScope(req.ProviderResourceID, p.cfg.Database), req.Access, verifier.String())
+	scope := credentialScope(req.ProviderResourceID, p.cfg.Database)
+	batch, err := credentialSQL(p.cfg.Database, role, scope, req.Access, verifier.String())
 	if err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
+	// Declared custom roles, and the Data API fence (ADR-20261116213000).
+	fence, grants, err := customRoleLoginSQL(p.cfg.Database, role, scope, req.Access, req.CustomRoles)
+	if err != nil {
+		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrInvalid
+	}
+	batch = fence + batch + grants
 	if err := p.admin(ctx, req.ProviderResourceID, batch); err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
@@ -642,6 +649,9 @@ func (p *Provider) admin(ctx context.Context, databaseID, sql string) error {
 		// an unexpected SQL failure. Neither carries PostgreSQL output.
 		if resp.GetSqlstate() == "P0001" {
 			return managedpostgres.ErrConflict
+		}
+		if resp.GetSqlstate() == sqlstateBypassRLSConflict {
+			return managedpostgres.ErrBypassRLSConflict
 		}
 		return fmt.Errorf("%w: admin batch failed (sqlstate %s)", managedpostgres.ErrUnavailable, resp.GetSqlstate())
 	}

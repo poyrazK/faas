@@ -596,6 +596,10 @@ type CredentialRequest struct {
 	IdentityKey    string
 	Access         CredentialAccess
 	IdempotencyKey string
+	// CustomRoles names the database's declared custom roles the login may
+	// SET ROLE to (ADR-20261116213000). Roles not yet created are skipped;
+	// the next custom-role apply grants them.
+	CustomRoles []string
 }
 
 type Meter string

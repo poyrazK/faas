@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,9 @@ type credentialRole struct {
 	// session marks a session login, whose connection limit is enforced on
 	// an existing role too (ADR-20261110120000).
 	session bool
+	// customRoles are the declared custom roles the login receives
+	// (ADR-20261116213000).
+	customRoles []string
 }
 
 type credentialRoleManager interface {
@@ -65,7 +69,8 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 		connectionLimit: connectionLimit, session: request.Access == managedpostgres.CredentialSession,
 		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
-		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
+		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID,
+		customRoles: slices.Clone(request.CustomRoles)}
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
@@ -300,6 +305,9 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	if err := grantLiveMembership(ctx, tx, role); err != nil {
 		return err
 	}
+	if err := ensureLoginCustomRoles(ctx, tx, role); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -338,22 +346,35 @@ type sqlRoleInfo struct {
 	inherit, inheritedMembership                                   bool
 	marker                                                         string
 	memberships, configuration                                     []string
+	// customMarkers are the markers of the custom roles (ADR-20261116213000)
+	// the role is a member of; memberships leaves those roles out.
+	customMarkers []string
 }
 
 func credentialRoleInfo(ctx context.Context, tx pgx.Tx, name string) (sqlRoleInfo, error) {
 	var info sqlRoleInfo
 	err := tx.QueryRow(ctx, `SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit,
  COALESCE(shobj_description(r.oid, 'pg_authid'), ''), COALESCE(rolconfig, ARRAY[]::text[]),
- ARRAY(SELECT parent.rolname::text FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid ORDER BY parent.rolname),
- EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid AND COALESCE((to_jsonb(m)->>'inherit_option')::boolean, false))
+ ARRAY(SELECT parent.rolname::text FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid
+   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') NOT LIKE 'gregale:custom-role:v1:%' ORDER BY parent.rolname),
+ EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid AND COALESCE((to_jsonb(m)->>'inherit_option')::boolean, false)),
+ ARRAY(SELECT COALESCE(shobj_description(parent.oid, 'pg_authid'), '') FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid
+   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') LIKE 'gregale:custom-role:v1:%')
  FROM pg_roles r WHERE rolname = $1`, name).Scan(&info.login, &info.superuser, &info.createDB, &info.createRole, &info.replication, &info.bypassRLS,
-		&info.inherit, &info.marker, &info.configuration, &info.memberships, &info.inheritedMembership)
+		&info.inherit, &info.marker, &info.configuration, &info.memberships, &info.inheritedMembership, &info.customMarkers)
 	return info, err
 }
 
 func (i sqlRoleInfo) matches(role credentialRole) bool {
 	if !i.login || i.superuser || i.createDB || i.createRole || i.replication || i.bypassRLS || i.inherit || i.inheritedMembership || i.marker != role.marker {
 		return false
+	}
+	// Custom roles are SET-only memberships of this database's own roles,
+	// and only for the access modes they can be granted to.
+	for _, marker := range i.customMarkers {
+		if marker != customRoleMarker(role.scope) || (role.access != managedpostgres.CredentialMigration && role.access != managedpostgres.CredentialReadWrite && role.access != managedpostgres.CredentialReadOnly) {
+			return false
+		}
 	}
 	if role.access == managedpostgres.CredentialMigration {
 		return len(i.memberships) == 1 && i.memberships[0] == role.schemaOwner && len(i.configuration) == 1 && i.configuration[0] == "role="+role.schemaOwner
