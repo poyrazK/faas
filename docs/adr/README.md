@@ -2440,3 +2440,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261115183908: Owner-approved Task worker retirement](20261115183908-owner-approved-task-worker-retirement.md) — separate expiring approval, atomic conditional parking and read-only shutdown reconciliation.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)
 - [ADR-20261115194000: Platform alerts for outages and failing crons](20261115194000-platform-alerts.md) — accepted; schedd pauses an HTTP cron after 10 failed runs over 24 h and meterd emails accounts about it and about apps at ≥90% 5xx, unless they have their own error-rate rule
+
+- [ADR-20261116163708: Hosted read-only Task recovery inspection](20261116163708-hosted-task-recovery-inspection.md) — accepted; opt-in original-requester agent keys inspect native Task checkpoints and recovery guidance without local files, cross-key delegation or execution authority.

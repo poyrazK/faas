@@ -51,6 +51,9 @@ type Options struct {
 	// AllowToolPublishing enables reviewed hosted source publication separately
 	// from invocation. Native deployment authority remains required.
 	AllowToolPublishing bool
+	// AllowTaskInspection enables native-only Task recovery reads for account agent keys.
+	// It grants no local files, execution, owner decisions or cross-key access.
+	AllowTaskInspection bool
 	// AllowedApps binds consented slugs to app identities; nil allows the account.
 	AllowedApps map[string]string
 	// Environments is nil for local account access. Remote grants always set it.
@@ -245,6 +248,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerResourceInventory(s, m)
 	registerExecution(s, m)
 	registerToolBuilding(s, m)
+	registerTaskInspection(s, m)
 	registerToolRegistry(s, m)
 	registerToolInvocations(s, m)
 	registerAgentApprovals(s, m)

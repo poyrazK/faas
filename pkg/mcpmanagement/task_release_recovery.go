@@ -16,12 +16,15 @@ func (m *management) planTaskRecovery(ctx context.Context, args taskReleaseInten
 }
 
 func (m *management) taskRecovery(ctx context.Context, args taskReleaseIntentArgs, plan bool) (any, error) {
-	if err := m.taskIntentAccess(); err != nil {
+	if err := m.taskInspectionAccess(); err != nil {
 		return nil, err
 	}
 	out, err := tasktoolrelease.InspectRecovery(ctx, m.client, args.IntentID, plan, time.Now())
 	if errors.Is(err, tasktoolrelease.ErrInvalid) {
 		return nil, invalid("invalid_response", "native Task recovery metadata is incompatible")
+	}
+	if err == nil && m.remote() && out.AccountID != m.opts.accountID {
+		return nil, invalid("invalid_response", "native Task recovery metadata belongs to another account")
 	}
 	return out, err
 }
