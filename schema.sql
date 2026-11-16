@@ -61114,6 +61114,23 @@ CREATE TABLE public.synthetic_checks (
 
 
 --
+-- Name: task_tool_release_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_tool_release_intents (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    status text NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT task_tool_release_intents_check CHECK (((((payload ->> 'id'::text) = id) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND ((payload ->> 'status'::text) = status)) IS TRUE)),
+    CONSTRAINT task_tool_release_intents_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT task_tool_release_intents_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 131072))),
+    CONSTRAINT task_tool_release_intents_payload_check1 CHECK ((payload @> '{"ready_to_apply": false, "bindings_verified": false}'::jsonb)),
+    CONSTRAINT task_tool_release_intents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'revoked'::text, 'expired'::text, 'stale'::text])))
+);
+
+
+--
 -- Name: tenant_hostnames; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -76044,6 +76061,14 @@ ALTER TABLE ONLY public.synthetic_checks
 
 ALTER TABLE ONLY public.synthetic_checks
     ADD CONSTRAINT synthetic_checks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_tool_release_intents task_tool_release_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_tool_release_intents
+    ADD CONSTRAINT task_tool_release_intents_pkey PRIMARY KEY (account_id, id);
 
 
 --
@@ -112119,6 +112144,14 @@ ALTER TABLE ONLY public.synthetic_check_runs
 
 ALTER TABLE ONLY public.synthetic_checks
     ADD CONSTRAINT synthetic_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_tool_release_intents task_tool_release_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_tool_release_intents
+    ADD CONSTRAINT task_tool_release_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

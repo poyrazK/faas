@@ -16650,6 +16650,13 @@ type SyntheticCheckRun struct {
 	ErrorClass string
 }
 
+type TaskToolReleaseIntent struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
+}
+
 type TenantHostname struct {
 	ID                    pgtype.UUID
 	SurfaceID             pgtype.UUID

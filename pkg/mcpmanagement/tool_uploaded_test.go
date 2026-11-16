@@ -102,7 +102,7 @@ func hostedToolPublicationJourney(t *testing.T, protocol, runtime string, archiv
 			t.Fatalf("missing hosted tool %s", name)
 		}
 	}
-	for _, name := range []string{"gregale_plan_tool_deploy", "gregale_plan_task_tool_deploy", "gregale_test_tool", "gregale_plan_local_deploy"} {
+	for _, name := range []string{"gregale_plan_tool_deploy", "gregale_plan_task_tool_deploy", "gregale_prepare_task_tool_deploy", "gregale_check_task_tool_deploy", "gregale_get_task_tool_deploy", "gregale_test_tool", "gregale_plan_local_deploy"} {
 		if tools[name] {
 			t.Fatalf("host filesystem tool listed: %s", name)
 		}

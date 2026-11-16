@@ -21934,6 +21934,16 @@
     "kind": "account_identity"
   },
   {
+    "table": "task_tool_release_intents",
+    "columns": [
+      "account_id",
+      "id",
+      "payload",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "tool_publications",
     "columns": [
       "account_id",
