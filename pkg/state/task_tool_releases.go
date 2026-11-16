@@ -31,6 +31,13 @@ func cloneTaskToolRelease(in api.TaskToolReleaseIntentRecord) api.TaskToolReleas
 }
 
 func changeTaskToolRelease(record api.TaskToolReleaseIntentRecord, action string, in api.TaskToolReleaseIntentDecision, fresh bool) (api.TaskToolReleaseIntentRecord, error) {
+	if action == "decide" && tasktoolrelease.IsRecoveryDecision(in.Decision) {
+		out, err := tasktoolrelease.Recovery(record, in, fresh, time.Now())
+		if err != nil {
+			return record, ErrConflict
+		}
+		return out, nil
+	}
 	if action == "execution" || action == "decide" && in.Decision == "authorize" {
 		out, err := tasktoolrelease.Execution(record, in, fresh, time.Now())
 		if err != nil {
@@ -148,23 +155,44 @@ func (m *MemStore) GetTaskToolReleaseIntent(_ context.Context, account, id strin
 	return tasktoolrelease.View(cloneTaskToolRelease(record), time.Now()), nil
 }
 
-func (m *MemStore) ChangeTaskToolReleaseIntent(_ context.Context, account, id, action string, in api.TaskToolReleaseIntentDecision) (api.TaskToolReleaseIntentRecord, error) {
+func (m *MemStore) ChangeTaskToolReleaseIntent(ctx context.Context, account, id, action string, in api.TaskToolReleaseIntentDecision) (api.TaskToolReleaseIntentRecord, error) {
+	release, err := m.lockTaskToolEffect(ctx, account, id)
+	if err != nil {
+		return api.TaskToolReleaseIntentRecord{}, err
+	}
+	defer release()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	record, ok := m.taskToolReleaseIntents[account+":"+id]
 	if !ok {
 		return record, ErrNotFound
 	}
-	configurationOnly := action == "execution" && in.Execution != nil && in.Execution.Action != "claim"
-	fresh := m.taskToolReleaseFreshLocked(account, record.RequesterKeyID, record.Intent, configurationOnly)
-	if action == "execution" || in.Decision == "authorize" {
+	configurationOnly := tasktoolrelease.IsRecoveryDecision(in.Decision) || action == "execution" && in.Execution != nil && in.Execution.Action != "claim"
+	freshKey := record.RequesterKeyID
+	if tasktoolrelease.IsRecoveryDecision(in.Decision) {
+		freshKey = in.AuthorizerKeyID
+	}
+	fresh := m.taskToolReleaseFreshLocked(account, freshKey, record.Intent, configurationOnly)
+	if tasktoolrelease.IsRecoveryDecision(in.Decision) && in.Recovery != nil {
+		snapshot := in.Recovery.Qualification
+		if snapshot == nil && record.Execution != nil && record.Execution.Recovery != nil {
+			snapshot = record.Execution.Recovery.Qualification
+		}
+		if snapshot != nil {
+			fresh = fresh && m.taskToolReleaseFreshLocked(account, in.AuthorizerKeyID, api.TaskToolReleaseIntent{Apps: snapshot.NativeApps}, false)
+		}
+	}
+	if action == "execution" || in.Decision == "authorize" || tasktoolrelease.IsRecoveryDecision(in.Decision) {
 		owner := in.AuthorizerKeyID
 		if action == "execution" && record.Execution != nil {
 			owner = record.Execution.AuthorizerKeyID
 		}
 		k, ok := m.keys[owner]
-		fresh = fresh && ok && m.taskToolReleaseKeyFreshLocked(account, owner) && slices.Contains(k.Scopes, api.ScopeAdmin) &&
-			!slices.Contains(k.Scopes, api.ScopeAgent) && k.Label != api.MCPLoginKeyLabel
+		ownerFresh := ok && m.taskToolReleaseKeyFreshLocked(account, owner) && slices.Contains(k.Scopes, api.ScopeAdmin) && !slices.Contains(k.Scopes, api.ScopeAgent) && k.Label != api.MCPLoginKeyLabel
+		if tasktoolrelease.IsRecoveryDecision(in.Decision) && !ownerFresh {
+			return record, ErrConflict
+		}
+		fresh = fresh && ownerFresh
 	}
 	out, err := changeTaskToolRelease(record, action, in, fresh)
 	if err == nil {

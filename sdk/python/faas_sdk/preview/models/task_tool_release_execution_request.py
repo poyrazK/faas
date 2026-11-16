@@ -9,6 +9,10 @@ from ..models.task_tool_release_execution_request_action import (
     TaskToolReleaseExecutionRequestAction,
     check_task_tool_release_execution_request_action,
 )
+from ..models.task_tool_release_execution_request_fence_version import (
+    TaskToolReleaseExecutionRequestFenceVersion,
+    check_task_tool_release_execution_request_fence_version,
+)
 from ..models.task_tool_release_execution_request_stage import (
     TaskToolReleaseExecutionRequestStage,
     check_task_tool_release_execution_request_stage,
@@ -32,6 +36,7 @@ class TaskToolReleaseExecutionRequest:
     action: TaskToolReleaseExecutionRequestAction
     operation_id: str
     bindings_sha256: str
+    fence_version: TaskToolReleaseExecutionRequestFenceVersion | Unset = UNSET
     claim_token: str | Unset = UNSET
     stage: TaskToolReleaseExecutionRequestStage | Unset = UNSET
     receipt: TaskToolReleaseReceipt | Unset = UNSET
@@ -44,6 +49,10 @@ class TaskToolReleaseExecutionRequest:
         operation_id = self.operation_id
 
         bindings_sha256 = self.bindings_sha256
+
+        fence_version: int | Unset = UNSET
+        if not isinstance(self.fence_version, Unset):
+            fence_version = self.fence_version
 
         claim_token = self.claim_token
 
@@ -64,6 +73,8 @@ class TaskToolReleaseExecutionRequest:
                 "bindings_sha256": bindings_sha256,
             }
         )
+        if fence_version is not UNSET:
+            field_dict["fence_version"] = fence_version
         if claim_token is not UNSET:
             field_dict["claim_token"] = claim_token
         if stage is not UNSET:
@@ -83,6 +94,13 @@ class TaskToolReleaseExecutionRequest:
         operation_id = d.pop("operation_id")
 
         bindings_sha256 = d.pop("bindings_sha256")
+
+        _fence_version = d.pop("fence_version", UNSET)
+        fence_version: TaskToolReleaseExecutionRequestFenceVersion | Unset
+        if isinstance(_fence_version, Unset):
+            fence_version = UNSET
+        else:
+            fence_version = check_task_tool_release_execution_request_fence_version(_fence_version)
 
         claim_token = d.pop("claim_token", UNSET)
 
@@ -104,6 +122,7 @@ class TaskToolReleaseExecutionRequest:
             action=action,
             operation_id=operation_id,
             bindings_sha256=bindings_sha256,
+            fence_version=fence_version,
             claim_token=claim_token,
             stage=stage,
             receipt=receipt,

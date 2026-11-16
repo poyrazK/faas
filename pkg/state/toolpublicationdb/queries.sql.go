@@ -559,6 +559,22 @@ func (q *Queries) LockTaskToolReleaseIntent(ctx context.Context, db DBTX, arg Lo
 	return payload, err
 }
 
+const lockTaskToolReleaseIntentNowait = `-- name: LockTaskToolReleaseIntentNowait :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT
+`
+
+type LockTaskToolReleaseIntentNowaitParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+func (q *Queries) LockTaskToolReleaseIntentNowait(ctx context.Context, db DBTX, arg LockTaskToolReleaseIntentNowaitParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockTaskToolReleaseIntentNowait, arg.AccountID, arg.ID)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
+}
+
 const lockTaskToolReleaseKey = `-- name: LockTaskToolReleaseKey :one
 SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
 AND (k.expires_at IS NULL OR k.expires_at>now())

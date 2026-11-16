@@ -158,6 +158,7 @@ type MemStore struct {
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
+	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
 	toolGrants                     map[string]api.ToolGrantRecord
 	toolOAuthConnections           map[string]ToolOAuthConnection

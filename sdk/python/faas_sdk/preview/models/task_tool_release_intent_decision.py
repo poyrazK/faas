@@ -12,6 +12,7 @@ from ..models.task_tool_release_intent_decision_decision import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.task_tool_recovery_request import TaskToolRecoveryRequest
     from ..models.task_tool_release_execution_request import TaskToolReleaseExecutionRequest
 
 
@@ -28,6 +29,9 @@ class TaskToolReleaseIntentDecision:
     execution: TaskToolReleaseExecutionRequest | Unset = UNSET
     """Exact local execution identity and bounded transition. Private claim material is submitted by the trusted
     CLI and is never returned in API receipts."""
+    recovery: TaskToolRecoveryRequest | Unset = UNSET
+    """Owner-only handover or qualification verdict on the existing decision route. The authenticated native
+    handler supplies the owner identity; agent inputs cannot supply it."""
 
     def to_dict(self) -> dict[str, Any]:
         intent_sha256 = self.intent_sha256
@@ -40,6 +44,10 @@ class TaskToolReleaseIntentDecision:
         if not isinstance(self.execution, Unset):
             execution = self.execution.to_dict()
 
+        recovery: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.recovery, Unset):
+            recovery = self.recovery.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -51,11 +59,14 @@ class TaskToolReleaseIntentDecision:
         )
         if execution is not UNSET:
             field_dict["execution"] = execution
+        if recovery is not UNSET:
+            field_dict["recovery"] = recovery
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.task_tool_recovery_request import TaskToolRecoveryRequest
         from ..models.task_tool_release_execution_request import TaskToolReleaseExecutionRequest
 
         d = dict(src_dict)
@@ -72,11 +83,19 @@ class TaskToolReleaseIntentDecision:
         else:
             execution = TaskToolReleaseExecutionRequest.from_dict(_execution)
 
+        _recovery = d.pop("recovery", UNSET)
+        recovery: TaskToolRecoveryRequest | Unset
+        if isinstance(_recovery, Unset):
+            recovery = UNSET
+        else:
+            recovery = TaskToolRecoveryRequest.from_dict(_recovery)
+
         task_tool_release_intent_decision = cls(
             intent_sha256=intent_sha256,
             release_fingerprint=release_fingerprint,
             decision=decision,
             execution=execution,
+            recovery=recovery,
         )
 
         return task_tool_release_intent_decision

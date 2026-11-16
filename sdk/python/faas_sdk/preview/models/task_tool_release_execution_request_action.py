@@ -1,11 +1,14 @@
 from typing import Literal
 
-TaskToolReleaseExecutionRequestAction = Literal["authorize", "claim", "complete", "guard", "reconcile"]
+TaskToolReleaseExecutionRequestAction = Literal[
+    "authorize", "claim", "complete", "executor_exited", "guard", "reconcile"
+]
 
 TASK_TOOL_RELEASE_EXECUTION_REQUEST_ACTION_VALUES: set[TaskToolReleaseExecutionRequestAction] = {
     "authorize",
     "claim",
     "complete",
+    "executor_exited",
     "guard",
     "reconcile",
 }
