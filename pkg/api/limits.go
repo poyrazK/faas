@@ -10539,8 +10539,13 @@ const (
 	// its GOMEMLIMIT, a soft per-process bound. A reload runs two apid
 	// generations in one cgroup (ADR-1736). Production over 14 days
 	// (2026-10-18): steady state 51-94 MB per process, spikes to 257 MB, and
-	// two OOM kills at the previous 256 MB cap (ADR 20261018132058).
-	APIDMemoryMaxMB                 = 512
+	// two OOM kills at the previous 256 MB cap (ADR 20261018132058). At 512 MB
+	// the hand-off guard (45 %, 230 MB) sat inside apid's working range: the
+	// rc.344 deploy found the cgroup at 244 MB, refused the hand-off and fell
+	// back to a restart, an API gap of about 9 s. 1024 MB puts the guard at
+	// 460 MB; GOMEMLIMIT stays per process so steady state does not grow
+	// (ADR-20261116090000).
+	APIDMemoryMaxMB                 = 1024
 	APIDGoMemLimitMB                = 256
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000
