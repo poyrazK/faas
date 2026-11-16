@@ -69,8 +69,43 @@ func TestNodeJoinRendersTheAdoptionSwitches(t *testing.T) {
 	}
 	// The switches are written before the drain decision asks the candidate.
 	playbook := nodeJoinPlaybook(t)
-	if strings.Index(playbook, "zz-faas-adoption.conf") > strings.Index(playbook, "- adoption-check") {
+	checkAt := strings.Index(playbook, "vmmd\" adoption-check --config")
+	if checkAt < 0 {
+		t.Fatal("node_join no longer runs the candidate's adoption-check")
+	}
+	if strings.Index(playbook, "zz-faas-adoption.conf") > checkAt {
 		t.Fatal("the adoption drop-in is rendered after the adoption check")
+	}
+}
+
+// ADR-20261116170000: fsn-2 refused on rc.346 and rc.347 because of a guest's
+// state at one instant and drained 5.6 minutes; the same check passed when
+// re-run. The check retries while only guests are refused, stops on a
+// node-level reason, and the play names every refused guest.
+func TestNodeJoinRetriesTheAdoptionCheckAndNamesRefusedGuests(t *testing.T) {
+	check := nodeJoinTask(t, "Ask the candidate vmmd whether it adopts every live guest")
+	script, _ := check["ansible.builtin.shell"].(string)
+	for _, want := range []string{
+		"faas_join_adoption_check_attempts | default(7)",
+		"faas_join_adoption_check_delay_seconds | default(10)",
+		`if [ "$rc" -ne 3 ]; then`, // success or a broken check ends the loop
+		`get("reason")`,            // a node-level refusal is not retried
+		`exit "$rc"`,               // the decision still reads the exit code
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("adoption-check retry loop lacks %q:\n%s", want, script)
+		}
+	}
+	if failed, _ := check["failed_when"].(string); !strings.Contains(failed, "not in [0, 3]") {
+		t.Errorf("adoption-check failed_when = %q, want a broken check (not 0 or 3) to fail the play", failed)
+	}
+	report := nodeJoinTask(t, "Report the guests the candidate refused")
+	if report == nil {
+		t.Fatal("node_join does not name the guests the candidate refused")
+	}
+	debug, _ := report["ansible.builtin.debug"].(map[string]any)
+	if msg, _ := debug["msg"].(string); !strings.Contains(msg, ".unadoptable") {
+		t.Errorf("refused-guest report msg = %q, want the check's unadoptable list", msg)
 	}
 }
 

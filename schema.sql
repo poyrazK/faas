@@ -246,7 +246,7 @@ BEGIN
        AND i.node_id = p_node_id
        AND i.state IN ('waking','cold_booting','running','draining','warm');
     used_mb := used_mb + resident_mb;
-    cap_mb := ceiling_mb * greatest(100, least(coalesce(p_reservation_percent, 100), 200)) / 100;
+    cap_mb := ceiling_mb * greatest(100, least(coalesce(p_reservation_percent, 100), 250)) / 100;
     -- ADR-20261107122928: the scheduler leaves out the reservations of
     -- instances vmmd holds at the idle ladder's freeze level, which measured
     -- admission books at their measured memory. Only a measured allowance

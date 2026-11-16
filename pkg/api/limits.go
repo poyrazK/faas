@@ -1022,6 +1022,11 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
+// builderd remembers the digest of, so a cache hit skips re-reading the
+// artifact to check it. A node's cache holds a few hundred entries.
+const BuilderdVerifiedCacheArtifacts = 1024
+
 // ImagedLayerReuseMaxRecords bounds the records in imaged's node-local app
 // layer reuse index, per kind (layer keys, artifact digests); the oldest go
 // first (ADR-20261112170911). A record is a few hundred bytes.
@@ -8407,6 +8412,13 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// AppVMHeadroomMB is how far an app or job VM's cgroup memory.max sits
+	// above BillableRAMMB (ADR-20261116170000). A cold-booting guest touches
+	// all of its RAM, and Firecracker's own mapped pages (~16 MB) did not fit
+	// in PerVMOverheadMB: every 128 MB app OOM-killed on cold boot on prod
+	// (2026-11-15/16). Admission, billing and invariant 2 stay at
+	// BillableRAMMB; only the kill fence moves.
+	AppVMHeadroomMB = 24
 	// DatabaseVMWritebackBurstMB is how far a database VM's memory.max sits
 	// above its memory.high, which is BillableRAMMB (ADR-1027). The VM's
 	// volume writes leave host page cache charged to its cgroup; with only
@@ -8449,7 +8461,7 @@ const (
 	// holds at the idle ladder's freeze level (ADR-20261107122928): at most
 	// this percent of the node's admission ceiling. With the ADR-909 cap of
 	// MeasuredAdmissionMaxOvercommitPercent, reservations including those
-	// instances reach at most 400% of the ceiling; the measured figure still
+	// instances reach at most 450% of the ceiling; the measured figure still
 	// bounds what the node holds.
 	IdleLadderReservationDiscountMaxPercent = 200
 	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
@@ -8496,9 +8508,12 @@ const (
 	// MeasuredAdmissionMaxOvercommitPercent caps reservations on a node
 	// under measured admission (ADR-909): Σ(ram_mb + 8) may reach this
 	// share of the admission ceiling while measured charges stay under the
-	// ceiling itself. MeasuredAdmissionSampleMaxAgeMillis is how old a node's
-	// measurement may be before admission falls back to reservations.
-	MeasuredAdmissionMaxOvercommitPercent = 200
+	// ceiling itself. 250 since ADR-909 amendment 3 (production-us measured
+	// at most 26–40% of bookings while the 200% cap refused placements); the
+	// durable node guard (admission_reserve_node) clamps at the same value.
+	// MeasuredAdmissionSampleMaxAgeMillis is how old a node's measurement may
+	// be before admission falls back to reservations.
+	MeasuredAdmissionMaxOvercommitPercent = 250
 	MeasuredAdmissionSampleMaxAgeMillis   = 2000
 	// MeasuredEvictionTargetPercent: under measured admission, when a node's
 	// measured memory exceeds its admission ceiling, schedd evicts until it
@@ -14057,6 +14072,13 @@ func (l Limits) AdmissionMB() int {
 // to the overhead constant updates exactly one place.
 func BillableRAMMB(ramMB int) int {
 	return ramMB + PerVMOverheadMB
+}
+
+// AppVMMemoryMaxMB is the per-instance cgroup memory.max of an app or job VM:
+// its billable RAM plus AppVMHeadroomMB for Firecracker's own pages
+// (ADR-20261116170000). Never use it for admission or billing.
+func AppVMMemoryMaxMB(ramMB int) int {
+	return BillableRAMMB(ramMB) + AppVMHeadroomMB
 }
 
 // SnapshotMemoryMaxMB returns the temporary per-instance memory.max used for

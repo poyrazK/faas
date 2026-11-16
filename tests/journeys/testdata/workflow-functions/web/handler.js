@@ -17,9 +17,9 @@ export default {
     if (url.pathname === "/wait") {
       return relay(await fetch(api() + "/" + id + "?wait=20"));
     }
-    // Anything else, the deploy's post-readiness health probe included, is a
-    // plain 200: relaying a run read without an id answered it 500 and failed
-    // the deploy (journeys 2026-11-16).
-    return Response.json({ ok: true, probe: "gregale-e2e-workflow-web" });
+    // Health and the deploy's smoke probe: every other path answers 200.
+    // The long-poll fallthrough threw on a missing run id and the smoke
+    // failed the deploy with HTTP 500 (2026-11-16 journeys).
+    return Response.json({ ok: true });
   },
 };

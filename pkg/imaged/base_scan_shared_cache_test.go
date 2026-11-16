@@ -145,10 +145,12 @@ func TestPrestageScanSurvivesServingConvergenceOfTheSharedCacheEntry(t *testing.
 	converged := false
 	h.WithStorage(prestage).WithGrypeRun(func(ctx context.Context, _ string) (*ScanResult, error) {
 		if !converged {
-			replaced, err := servingDaemon.convergeBase(ctx, serving, sharedCacheBaseKey,
-				stagedBase{ref: sharedCacheOtherRef, digestKey: sharedCacheDigestKey}, servingGuest)
-			if err != nil || !replaced {
-				t.Fatalf("serving convergence did not replace the cached base: %t %v", replaced, err)
+			// ADR-20261116190000: each generation has its own cache file, so
+			// the serving daemon finds its own file intact and need not
+			// replace anything; either way the pre-stage's file is untouched.
+			if _, err := servingDaemon.convergeBase(ctx, serving, sharedCacheBaseKey,
+				stagedBase{ref: sharedCacheOtherRef, digestKey: sharedCacheDigestKey}, servingGuest); err != nil {
+				t.Fatalf("serving convergence: %v", err)
 			}
 			converged = true
 		}
@@ -159,7 +161,7 @@ func TestPrestageScanSurvivesServingConvergenceOfTheSharedCacheEntry(t *testing.
 		t.Fatalf("pre-stage: %v", err)
 	}
 	if !converged || !bytes.Equal(readStored(t, serving, sharedCacheBaseKey), servingBytes) {
-		t.Fatal("fixture: the serving daemon must have put its generation back in the cache during the scan")
+		t.Fatal("fixture: the serving daemon's convergence must have run during the scan and kept its generation cached")
 	}
 	scan, err := store.GetCurrentBaseImageScan(t.Context(), sharedCacheBaseKey)
 	if err != nil || scan.Input.Status != "complete" {

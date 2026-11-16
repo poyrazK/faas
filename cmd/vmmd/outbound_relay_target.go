@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"strings"
@@ -18,12 +19,6 @@ import (
 const outboundRelayServerName = "outboundd.faas"
 
 const outboundRelayDialTimeout = 5 * time.Second
-
-// errOutboundRelayNoClientTLS reports a TCP relay target without vmmd's
-// outbound client mTLS material: the expected state until the
-// outboundd-client leaf is issued (faas_vmmd_outbound_relay_tls_managed
-// off), so vmmd logs it as a warning, not an error.
-var errOutboundRelayNoClientTLS = errors.New("requires vmmd outbound client mTLS")
 
 // outboundRelayDialer opens one connection to outboundd's relay listener.
 type outboundRelayDialer func(context.Context) (net.Conn, error)
@@ -58,7 +53,7 @@ func outboundRelayTarget(getenv func(string) string) (outboundRelayDialer, error
 			return nil, fmt.Errorf("outbound relay client TLS: %w", err)
 		}
 		if tlsCfg == nil {
-			return nil, fmt.Errorf("outbound relay: tcp target %q %w", target, errOutboundRelayNoClientTLS)
+			return nil, fmt.Errorf("outbound relay: tcp target %q requires vmmd outbound client mTLS", target)
 		}
 		tlsCfg.ServerName = outboundRelayServerName
 		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: tlsCfg}
@@ -68,13 +63,15 @@ func outboundRelayTarget(getenv func(string) string) (outboundRelayDialer, error
 	}
 }
 
-// logOutboundRelayDisabled reports a relay vmmd leaves closed. Missing client
-// mTLS is the expected state before the leaf is issued; logged at ERROR it
-// was the only error line after every rollout (prod check 2026-11-16).
-func logOutboundRelayDisabled(log *slog.Logger, err error) {
-	level := slog.LevelError
-	if errors.Is(err, errOutboundRelayNoClientTLS) {
-		level = slog.LevelWarn
+// outboundRelayDisabledLevel is the log level of a relay target that left the
+// relay closed. Missing mTLS files are the documented state of a compute node
+// whose relay leaf was never issued (vmmd_service's
+// faas_vmmd_outbound_relay_tls_managed off): the relay is simply off, and an
+// ERROR on every vmmd start was noise (prod 2026-11-16). A malformed target
+// or unreadable material is a configuration fault and stays an error.
+func outboundRelayDisabledLevel(err error) slog.Level {
+	if errors.Is(err, fs.ErrNotExist) {
+		return slog.LevelWarn
 	}
-	log.Log(context.Background(), level, "vmmd: outbound relay disabled", "err", err)
+	return slog.LevelError
 }

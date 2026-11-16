@@ -1582,6 +1582,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("vmmd: %w", err)
 	}
 	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
+	// ADR-20261116190000: this vmmd is the only one on the node now, so the
+	// base generations it does not boot need no eviction pin. The cache
+	// reclaims them under pressure; running guests keep their own links.
+	if unpinned, err := imaged.UnpinOtherBaseGenerations(storageBackend, baseGenerations, routedBases); err != nil {
+		log.Warn("vmmd: unpin other runtime base generations", "err", err)
+	} else if unpinned > 0 {
+		log.Info("vmmd: unpinned runtime base generations this release does not boot", "entries", unpinned)
+	}
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
 	// first restore after this start does not hash a base in its wake path,
@@ -1939,7 +1947,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// closed instead of failing VM hosting; plaintext TCP is never used.
 	relayDial, relayTargetErr := outboundRelayTarget(os.Getenv)
 	if relayTargetErr != nil {
-		logOutboundRelayDisabled(log, relayTargetErr)
+		log.Log(ctx, outboundRelayDisabledLevel(relayTargetErr), "vmmd: outbound relay disabled", "err", relayTargetErr)
 		relayDial = nil
 	}
 	relayRecv, relayRecvErr := StartOutboundRelayReceiver(ctx, log, mgr, identitySigner, relayDial, jailer)
