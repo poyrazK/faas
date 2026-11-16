@@ -1026,7 +1026,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, imageSuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, planWorkloadProtocolSuffix(wl), imageSuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
@@ -1376,4 +1376,22 @@ func planProblem(plan api.PlanResponse) api.Problem {
 		Title:  "Cron limit reached",
 		Detail: fmt.Sprintf("plan caps crons at %d; you have %d.", plan.LimitCrons, plan.ObservedCrons),
 	}
+}
+
+// planWorkloadProtocolSuffix shows the Compose x-gregale-app-protocol,
+// -streaming and -wake-ahead settings the deploy applies, so a dry run
+// confirms the extensions took effect (microservices-demo feedback,
+// 2026-11-16).
+func planWorkloadProtocolSuffix(wl api.PlanWorkload) string {
+	var out string
+	if wl.AppProtocol != "" {
+		out += "  protocol=" + wl.AppProtocol
+	}
+	if wl.Streaming != nil {
+		out += fmt.Sprintf("  streaming=%t", *wl.Streaming)
+	}
+	if wl.WakeAhead != nil {
+		out += fmt.Sprintf("  wake_ahead=%t", *wl.WakeAhead)
+	}
+	return out
 }

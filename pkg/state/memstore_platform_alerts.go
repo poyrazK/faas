@@ -22,7 +22,7 @@ type platformAlertNoticeMeta struct {
 func (m *MemStore) QueuePlatformAlertNotice(_ context.Context, n PlatformAlertNotice, cooldown time.Duration) (bool, error) {
 	// Mirrors the table's NOT NULL and CHECK constraints.
 	if n.AccountID == "" || n.AppID == "" || n.SubjectID == "" || len(n.SubjectID) > 128 ||
-		(n.Kind != PlatformAlertAppOutage && n.Kind != PlatformAlertCronFailingPaused) {
+		!validPlatformAlertKind(n.Kind) {
 		return false, ErrInvalidArgument
 	}
 	m.mu.Lock()

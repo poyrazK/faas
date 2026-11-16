@@ -21,7 +21,24 @@ const (
 	// PlatformAlertCronFailingPaused: schedd paused a failing cron.
 	// SubjectID is the cron ID.
 	PlatformAlertCronFailingPaused PlatformAlertKind = "cron_failing_paused"
+	// PlatformAlertCheckFailing: a synthetic check failed its last
+	// SyntheticCheckFailingRuns runs and no alert rule names it. SubjectID is
+	// the check ID.
+	PlatformAlertCheckFailing PlatformAlertKind = "check_failing"
+	// PlatformAlertSLOBurn: an SLO burns its error budget at or above
+	// PlatformAlertSLOBurnRate and no alert rule names it. SubjectID is the
+	// SLO ID.
+	PlatformAlertSLOBurn PlatformAlertKind = "slo_burn"
 )
+
+// validPlatformAlertKind mirrors platform_alert_notices' kind CHECK.
+func validPlatformAlertKind(k PlatformAlertKind) bool {
+	switch k {
+	case PlatformAlertAppOutage, PlatformAlertCronFailingPaused, PlatformAlertCheckFailing, PlatformAlertSLOBurn:
+		return true
+	}
+	return false
+}
 
 // Platform alert notice statuses.
 const (
