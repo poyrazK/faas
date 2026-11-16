@@ -118,6 +118,8 @@ var toolsetOf = map[string]string{
 	"gregale_get_logs":                       ToolsetCore,
 	"gregale_get_metrics":                    ToolsetCore,
 	"gregale_get_health":                     ToolsetCore,
+	"gregale_search_docs":                    ToolsetCore,
+	"gregale_get_docs_page":                  ToolsetCore,
 	"gregale_list_error_groups":              ToolsetCore,
 	"gregale_plan_local_deploy":              ToolsetCore,
 	"gregale_apply_local_deploy":             ToolsetCore,

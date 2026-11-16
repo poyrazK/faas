@@ -454,7 +454,7 @@ so list only the toolsets it needs:
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness; wait for approvals, list and undo the agent's own changes. About a third of the full catalog. |
+| `core` (default) | Apps, deployments, logs, metrics, health and error groups; search and read the Gregale docs; deploy a directory, set variables, promote and roll back, then verify readiness; wait for approvals, list and undo the agent's own changes. About a third of the full catalog. |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets |
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons |
@@ -658,3 +658,7 @@ file; the CLI never overwrites an existing one.
   contains all pages as one Markdown file.
 - Every page is also available as Markdown: add `.md` to its URL, so
   `/docs/agents` becomes `/docs/agents.md`.
+- An agent connected to the MCP server can search these pages with
+  `gregale_search_docs` and read a page or one section with
+  `gregale_get_docs_page`, in the default `core` toolset. Results link to the
+  page and heading on gregale.dev.

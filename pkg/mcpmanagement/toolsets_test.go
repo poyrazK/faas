@@ -29,7 +29,9 @@ import (
 // commit before it plans (ADR-20261111114059, amendment 2026-11-13).
 // Lowered to 52 KB on 2026-11-13: output schemas describe successes only,
 // and the error contract is served once (ADR-20261103193000, amendment
-// 2026-11-13). The fully consented hosted catalog is about 47.6 KB.
+// 2026-11-13). gregale_search_docs and gregale_get_docs_page added about
+// 2 KB on 2026-11-16: an agent looks up how Gregale works before it acts
+// (ADR-20261116183445). The fully consented hosted catalog is about 49.7 KB.
 const coreCatalogBudget = 52 << 10
 
 func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
@@ -41,7 +43,7 @@ func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Tools) != 27 {
+	if len(catalog.Tools) != 29 {
 		t.Fatalf("read-only core count=%d names=%v", len(catalog.Tools), toolNamesOf(catalog.Tools))
 	}
 	for _, tool := range catalog.Tools {
