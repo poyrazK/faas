@@ -108,6 +108,10 @@ inbox and a browser. The "Not covered" column lists the remaining gaps.
 returns a typed source/line/column, then returned offline help is followed,
 with zero API requests and no invocation submission.
 
+`TestCLICommandCorrectionsIsolatedCLI` extends row 156: misspelled invocation
+commands and help topics return canonical argument arrays; following help makes
+zero requests and never replays the failed invocation.
+
 `TestCLIFlagCorrectionsIsolatedCLI` extends row 156: a misspelled deploy flag
 returns structured advice, and its help argument array discovers the suggested
 flag from another directory, with zero requests and no deployment submission.

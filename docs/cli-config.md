@@ -706,6 +706,20 @@ or falls back to root JSON help, without API requests. Prefix-only globals use
 local meaning. Errors outside these flag-parser and JSON-input syntax paths omit `cli`. Human diagnostics,
 Problem codes, exit codes and stdout/stderr routing stay unchanged.
 
+Unknown commands at the root, in the shared nested-command renderer and in
+the invocation family expose `cli.kind: "unknown_command"`. Unknown JSON help
+topics use `unknown_help_topic`. For example,
+`gregale --json invocation lsit` returns `suggested_commands` containing
+`["gregale", "invocation", "list"]`, and `help_argv` containing
+`["gregale", "--json", "help", "invocation", "list"]`.
+Corrections contain only visible canonical command words; they do not preserve
+targets, flags or values from the failed invocation. A command path can still
+require arguments: inspect its help before constructing a new invocation.
+Ambiguous, unrelated and hidden names get no correction. Help falls back to
+the deepest visible parent or root. Advice uses offline capability state and
+never executes a command. Human diagnostics and existing Problem codes remain
+unchanged; API errors omit this metadata.
+
 Successful `--json` output takes one of two shapes, and a command keeps its
 shape across releases:
 
