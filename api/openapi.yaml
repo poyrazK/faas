@@ -91487,7 +91487,7 @@ components:
         blocking: { type: boolean, description: This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled. }
         reasons:
           type: array
-          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending] }
+          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending] }
         collected_window_seconds: { type: integer, format: int64, minimum: 0 }
         required_from: { type: [string, "null"], format: date-time }
         required_until: { type: [string, "null"], format: date-time }
