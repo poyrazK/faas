@@ -1517,16 +1517,26 @@
         - faas_join_active_vmmd.stat.exists
         - (faas_join_serving_vmmd_pid.stdout | default('0') | trim) not in ['', '0']
 
-    - name: Defer runtime-base pre-staging past the drain when a generation changes
+    # ADR-20261116190000: the candidate keeps each runtime base generation in
+    # its own cache file, so pre-staging a changed generation never touches
+    # the file the serving vmmd boots. Only a cache that already lost the
+    # serving generation (exit 4), or faas_join_side_by_side_bases=false,
+    # still defers the pre-stage past the drain barrier.
+    - name: Defer runtime-base pre-staging past the drain only when the serving bases are not intact
       ansible.builtin.set_fact:
-        faas_join_defer_runtime_prestage: "{{ (faas_join_base_generations.rc | default(0)) in [3, 4] }}"
+        faas_join_defer_runtime_prestage: >-
+          {{ (faas_join_base_generations.rc | default(0)) == 4
+             or ((faas_join_base_generations.rc | default(0)) == 3
+                 and not (faas_join_side_by_side_bases | default(true) | bool)) }}
 
     - name: Report the runtime base generation decision
       ansible.builtin.debug:
         msg: >-
-          {{ 'Runtime base generations change: pre-staging after the drain barrier, so the serving vmmd keeps its own generation while the node takes traffic.'
+          {{ 'Runtime base generations: the cache no longer holds a generation the serving vmmd boots, or side-by-side bases are off; pre-staging after the drain barrier.'
              if faas_join_defer_runtime_prestage | bool else
-             'Runtime base generations unchanged: pre-staging before the drain.' }}
+             ('Runtime base generations change: pre-staging the new generation beside the serving one, before any drain.'
+              if (faas_join_base_generations.rc | default(0)) == 3 else
+              'Runtime base generations unchanged: pre-staging before the drain.') }}
 
     # A fresh host has the daemon units installed by bootstrap.yml, but the
     # production TOML files are intentionally owned by the manifest renderer.
@@ -1744,6 +1754,50 @@
         - faas_join_serving_vmmd_binary.stat.exists
         - (faas_join_drain_vmmd_pid.stdout | default('0') | trim) not in ['', '0']
 
+    # ADR-20261116190000: a changed generation (exit 3) was pre-staged beside
+    # the serving one and needs no drain. A cache that already lost a serving
+    # generation (exit 4) still drains, and so does every changed generation
+    # with faas_join_side_by_side_bases=false (the ADR-20261024085817 path).
+    - name: Decide whether the runtime base generations force a drain
+      ansible.builtin.set_fact:
+        faas_join_base_generations_drain: >-
+          {{ (faas_join_drain_base_generations.rc | default(0)) == 4
+             or ((faas_join_drain_base_generations.rc | default(0)) == 3
+                 and not (faas_join_side_by_side_bases | default(true) | bool)) }}
+
+    # The candidate's pre-stage ran before this point. Before a no-drain
+    # restart installs a changed generation, prove the candidate vmmd can
+    # adopt it: cached here, or published under its generation's keys. The
+    # post-install adoption gate runs only after a drain, so this check is the
+    # no-drain path's gate. A base it cannot adopt drains the node as before.
+    - name: Require the candidate to adopt every changed runtime base before restarting without a drain
+      ansible.builtin.command:
+        argv:
+          - "/opt/faas/prestage/{{ faas_join_release_git_sha }}/vmmd"
+          - base-adoption-check
+          - --serving-pid
+          - "{{ faas_join_drain_vmmd_pid.stdout | trim }}"
+          - --candidate-env-file
+          - /etc/faas/runtime-bases.env
+      register: faas_join_candidate_base_adoption
+      changed_when: false
+      failed_when: false
+      # 6 x 10 s: a publication still in flight from another node.
+      retries: 6
+      delay: 10
+      until: faas_join_candidate_base_adoption.rc == 0
+      when:
+        - (faas_join_drain_base_generations.rc | default(0)) == 3
+        - not (faas_join_base_generations_drain | default(false) | bool)
+
+    - name: Drain when the candidate cannot adopt a changed runtime base
+      ansible.builtin.set_fact:
+        faas_join_base_generations_drain: true
+      when:
+        - faas_join_candidate_base_adoption is defined
+        - faas_join_candidate_base_adoption.rc is defined
+        - faas_join_candidate_base_adoption.rc != 0
+
     # Existing nodes enter draining first: placement stops admitting new work,
     # while the forwarding bridge remains available to live instances until
     # the recovery controller migrates them, or withdraws from routing, drains
@@ -1874,8 +1928,8 @@
     # ADR-20261116170000 A2: guests the candidate still refuses after the
     # retries are parked one by one, so a few of them cost a park each
     # instead of a drain of every guest on the node. Only when nothing else
-    # forces the drain (the serving vmmd hands off, no base generation
-    # changes, no forced drain), only per-guest refusals (no node-level
+    # forces the drain (the serving vmmd hands off, no base generation forces
+    # one, no forced drain), only per-guest refusals (no node-level
     # reason), and at most faas_join_park_refused_max of them: parking a
     # large share of a node is a drain anyway.
     - name: Collect the guests the candidate still refuses
@@ -1915,7 +1969,7 @@
         - (faas_join_adoption_refused_ids | default([]) | length) <= (faas_join_park_refused_max | default(10) | int)
         - (faas_join_adoption_node_reason | default('') | length) == 0
         - (faas_join_serving_vmmd_adopts.stdout | default('no')) == 'yes'
-        - (faas_join_drain_base_generations.rc | default(0)) == 0
+        - not (faas_join_base_generations_drain | default(false) | bool)
         - not (faas_join_force_drain | default(false) | bool)
 
     - name: Ask the candidate vmmd again after parking the refused guests
@@ -1946,24 +2000,25 @@
         - faas_join_adoption_recheck is defined
         - faas_join_adoption_recheck.rc is defined
 
-    # A changed runtime base generation always drains: its pre-stage runs
-    # behind the drain barrier, and the serving vmmd must not take new
-    # guests once the cache holds the candidate's generation.
+    # A runtime base generation drains only when the decision above says so:
+    # its pre-stage then runs behind the drain barrier.
     - name: Decide whether this rollout restarts vmmd without draining
       ansible.builtin.set_fact:
         faas_join_skip_drain: >-
           {{ (faas_join_adoption_check.rc | default(3)) == 0 and
              (faas_join_serving_vmmd_adopts.stdout | default('no')) == 'yes' and
              not (faas_join_force_drain | default(false) | bool) and
-             (faas_join_drain_base_generations.rc | default(0)) == 0 }}
+             not (faas_join_base_generations_drain | default(false) | bool) }}
 
     - name: Report the no-drain decision
       ansible.builtin.debug:
         msg: >-
           {{ 'Restarting without a drain: the candidate adopts every live guest.'
              if faas_join_skip_drain | bool else
-             'Draining: the release changes a runtime base generation.'
-             if (faas_join_drain_base_generations.rc | default(0)) in [3, 4] else
+             'Draining: the cache no longer holds a runtime base generation the serving vmmd boots.'
+             if (faas_join_drain_base_generations.rc | default(0)) == 4 else
+             'Draining: the release changes a runtime base generation the candidate cannot adopt yet, or faas_join_side_by_side_bases is off.'
+             if faas_join_base_generations_drain | default(false) | bool else
              'Draining: faas_join_force_drain is set.'
              if faas_join_force_drain | default(false) | bool else
              'Draining: the serving vmmd does not hand its guests off (adopt_running_vms is off); the next rollout can skip the drain.'
@@ -2102,14 +2157,15 @@
               applicable, and no service or release was replaced. Last drain
               status: {{ faas_compute_node_drain_status.stdout | default('unknown', true) }}
 
-    # ADR-20261024085817: a release that changes a runtime base generation
-    # pre-stages here, behind the drain barrier. The drained node's serving
-    # vmmd is still up (the one-shot requires it) and takes no new guests.
+    # ADR-20261024085817: when the runtime base generations forced the drain,
+    # the pre-stage runs here, behind the drain barrier. The drained node's
+    # serving vmmd is still up (the one-shot requires it) and takes no new
+    # guests. Otherwise (ADR-20261116190000) it already ran before the drain.
     - name: Pre-stage changed runtime bases behind the drain barrier
       ansible.builtin.systemd:
         name: faas-imaged-prestage.service
         state: started
-      when: (faas_join_drain_base_generations.rc | default(0)) in [3, 4]
+      when: faas_join_base_generations_drain | default(false) | bool
 
     # ADR-1343: the edge socket stays open while the edge restarts, so tunnel
     # requests queue, and a queued request starts the edge, which wants
@@ -2826,7 +2882,9 @@
     # configured runtime base generation stops here and stays drained. The
     # pre-stage publishes every such base; the bounded wait covers a
     # publication still in flight from the serving imaged or another node.
-    # A no-drain restart changes no generation and never left service.
+    # A no-drain restart never left service: when it changes a generation,
+    # the candidate's base-adoption-check gated it before the restart
+    # (ADR-20261116190000).
     - name: Require the installed vmmd to adopt every configured runtime base before activation
       when: not (faas_join_skip_drain | bool)
       block:
