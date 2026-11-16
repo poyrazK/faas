@@ -100,6 +100,10 @@ func (e *hopDialError) reason() string {
 // request with no body that fails on a reused connection before any of its
 // response arrived is sent once more on a new connection: the server may
 // have closed the idle connection as the request went out.
+// hopEarlyResponseWait bounds the read for an answer the server sent before
+// it stopped reading a request head.
+const hopEarlyResponseWait = time.Second
+
 func (t *binaryHopTransport) roundTrip(req *http.Request, dial func(context.Context) (net.Conn, error)) (*http.Response, error) {
 	noContent := req.Body == nil || req.Body == http.NoBody
 	for attempt := 0; ; attempt++ {
@@ -211,21 +215,30 @@ func (t *binaryHopTransport) send(cc *hopClientConn, req *http.Request, noConten
 		head.Authority = req.URL.Host
 	}
 	// The head goes out now: a streamed body may wait for the response.
-	if err := binhttp.WriteRequestHead(cc.bw, head); err != nil {
-		return fail(&hopRetryableError{err})
-	}
-	if err := cc.bw.Flush(); err != nil {
-		return fail(&hopRetryableError{err})
+	headErr := binhttp.WriteRequestHead(cc.bw, head)
+	if headErr == nil {
+		headErr = cc.bw.Flush()
 	}
 	// writeDone stays nil for a request with no content: it is all sent.
 	var writeDone chan error
-	if !noContent {
+	if headErr == nil && !noContent {
 		writeDone = make(chan error, 1)
 		go func() { writeDone <- writeHopBody(cc.bw, req) }()
 	}
-
+	if headErr != nil {
+		// The server can answer and close before reading the whole head
+		// (431 for oversized headers). Like net/http, read that answer
+		// instead of reporting the write error; the connection is not reused.
+		_ = cc.conn.SetReadDeadline(time.Now().Add(hopEarlyResponseWait))
+	}
 	if err := binhttp.ReadResponseStart(cc.br); err != nil {
+		if headErr != nil {
+			err = headErr
+		}
 		return fail(&hopRetryableError{err})
+	}
+	if headErr != nil {
+		_ = cc.conn.SetReadDeadline(time.Time{})
 	}
 	for {
 		status, header, err := binhttp.ReadResponseHead(cc.br, t.maxHeaderBytes)
@@ -249,7 +262,7 @@ func (t *binaryHopTransport) send(cc *hopClientConn, req *http.Request, noConten
 			Header:        header,
 			Request:       req,
 			ContentLength: hopResponseLength(req, status, header),
-			Close:         strings.EqualFold(strings.TrimSpace(header.Get("Connection")), "close"),
+			Close:         headErr != nil || strings.EqualFold(strings.TrimSpace(header.Get("Connection")), "close"),
 			Trailer:       declaredTrailers(header),
 		}
 		body := &hopResponseBody{t: t, cc: cc, resp: resp, writeDone: writeDone, stop: stop}
