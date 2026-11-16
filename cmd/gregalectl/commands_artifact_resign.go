@@ -29,6 +29,7 @@ func cmdArtifactResign(args []string) int {
 	signKey := fs.String("sign-key", cosign.DefaultSignKeyPath, "the fleet signing key signd holds")
 	dryRun := fs.Bool("dry-run", false, "verify and count, write nothing")
 	asJSON := fs.Bool("json", false, "emit a machine-readable report")
+	signaturesOnly := fs.Bool("signatures-only", false, "rewrite signature objects only, no artifact_signatures rows (for a role that cannot insert them, e.g. from a compute node)")
 	if err := fs.Parse(args); err != nil {
 		return printErr(op, err)
 	}
@@ -55,7 +56,11 @@ func cmdArtifactResign(args []string) int {
 		return printErr(op, err)
 	}
 	defer pool.Close()
-	report, err := signd.Resign(ctx, signpg.New(pool), objects, key, *dryRun, nil)
+	resign := signd.Resign
+	if *signaturesOnly {
+		resign = signd.ResignSignatures
+	}
+	report, err := resign(ctx, signpg.New(pool), objects, key, *dryRun, nil)
 	if err != nil {
 		return printErr(op, err)
 	}

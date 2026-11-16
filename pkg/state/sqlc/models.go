@@ -6666,6 +6666,63 @@ type FinancialUsageEvidence struct {
 	AdjustmentReason pgtype.Text
 }
 
+type FlagConversionDaily struct {
+	EnvironmentID pgtype.UUID
+	EventName     string
+	CustomerID    pgtype.UUID
+	Day           pgtype.Date
+	AccountID     pgtype.UUID
+	Count         int64
+	ValueSum      int64
+	FirstAt       pgtype.Timestamptz
+	LastAt        pgtype.Timestamptz
+}
+
+type FlagEventName struct {
+	EnvironmentID pgtype.UUID
+	Name          string
+	AccountID     pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type FlagEventUsage struct {
+	AccountID pgtype.UUID
+	Month     pgtype.Date
+	Accepted  int64
+	Dropped   int64
+}
+
+type FlagExperiment struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	Key             string
+	FlagKey         string
+	RuleID          string
+	Control         string
+	MetricEvent     string
+	MetricKind      string
+	Status          string
+	MixingLift      float64
+	Weights         []byte
+	MinPValues      []byte
+	TelemetryCursor pgtype.Timestamptz
+	CreatedBy       string
+	CreatedAt       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	StoppedAt       pgtype.Timestamptz
+}
+
+type FlagExperimentUnit struct {
+	ExperimentID   pgtype.UUID
+	CustomerID     pgtype.UUID
+	Variant        string
+	FirstExposedAt pgtype.Timestamptz
+	ConvertedAt    pgtype.Timestamptz
+	Crossed        bool
+}
+
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
 type FleetSealDomainProbe struct {
 	ID         int16

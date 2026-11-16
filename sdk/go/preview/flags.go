@@ -156,6 +156,7 @@ type flagSubjectContextKey struct{}
 // each request. Call Middleware on Gregale ingress handlers before checking flags.
 type GregaleFlags struct {
 	apiURL      *url.URL
+	eventsURL   *url.URL
 	identityURL *url.URL
 	httpClient  *http.Client
 	interval    time.Duration
@@ -168,6 +169,8 @@ type GregaleFlags struct {
 	stateMu   sync.RWMutex
 	bundle    *runtimeFlagsBundle
 	refreshed time.Time
+
+	events flagEventQueue
 
 	lifecycleMu sync.Mutex
 	started     bool
@@ -182,6 +185,7 @@ func NewGregaleFlags(options GregaleFlagsOptions) (*GregaleFlags, error) {
 	if err != nil || apiURL.Scheme != "https" || apiURL.Hostname() == "" || apiURL.User != nil || apiURL.Fragment != "" {
 		return nil, errors.New("faas: Flags API requires an HTTPS URL")
 	}
+	eventsURL := apiURL.ResolveReference(&url.URL{Path: "/v1/runtime/flags/events"})
 	apiURL = apiURL.ResolveReference(&url.URL{Path: "/v1/runtime/flags"})
 
 	identityEndpoint := options.IdentityEndpoint
@@ -234,7 +238,7 @@ func NewGregaleFlags(options GregaleFlagsOptions) (*GregaleFlags, error) {
 		now = time.Now
 	}
 	return &GregaleFlags{
-		apiURL: apiURL, identityURL: identityURL, httpClient: client,
+		apiURL: apiURL, eventsURL: eventsURL, identityURL: identityURL, httpClient: client,
 		interval: interval, maxStale: maxStale, timeout: timeout, now: now,
 		appID: strings.ToLower(os.Getenv("FAAS_APP_ID")),
 	}, nil
@@ -276,6 +280,10 @@ func (f *GregaleFlags) Close() {
 		}
 		return
 	}
+	f.lifecycleMu.Unlock()
+	// Queued conversion events are sent before the client stops.
+	_ = f.Flush(context.Background())
+	f.lifecycleMu.Lock()
 	f.closed = true
 	cancel, done := f.cancel, f.done
 	f.lifecycleMu.Unlock()
@@ -313,12 +321,16 @@ func (f *GregaleFlags) refreshLoop(ctx context.Context, done chan struct{}) {
 	defer close(done)
 	ticker := time.NewTicker(f.interval)
 	defer ticker.Stop()
+	events := time.NewTicker(flagEventFlushInterval)
+	defer events.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			_ = f.Refresh(ctx)
+		case <-events.C:
+			_ = f.Flush(ctx)
 		}
 	}
 }
@@ -354,25 +366,19 @@ func (f *GregaleFlags) isFresh(now time.Time) bool {
 func (f *GregaleFlags) load(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, f.timeout)
 	defer cancel()
-	identity, err := f.getJSON(ctx, f.identityURL.String(), maxFlagIdentityBytes, nil)
+	token, err := f.identityToken(ctx)
 	if err != nil {
-		return fmt.Errorf("faas: read workload identity: %w", err)
-	}
-	var credentials struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(identity, &credentials); err != nil || credentials.AccessToken == "" || len(credentials.AccessToken) > maxFlagIdentityTokenSize || strings.ContainsAny(credentials.AccessToken, "\r\n \t") {
-		return errors.New("faas: invalid Flags workload identity")
+		return err
 	}
 	apiURL := *f.apiURL
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL.String(), nil)
 	if err != nil {
 		return fmt.Errorf("faas: create runtime Flags request: %w", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+credentials.AccessToken)
+	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Cache-Control", "no-store")
-	request.Header.Set("X-Faas-Flags-Capabilities", "subject-targeting-v1, attribute-targeting-v1, kill-v1")
+	request.Header.Set("X-Faas-Flags-Capabilities", flagSDKCapabilities)
 	response, err := f.httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("faas: fetch runtime Flags: %w", err)

@@ -222,7 +222,7 @@ func TestWake_StageWorkload_WritesPerWorkloadCgroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.TrimSpace(string(body)), itoa(api.BillableRAMMB(320)<<20); got != want {
+	if got, want := strings.TrimSpace(string(body)), itoa(api.AppVMMemoryMaxMB(320)<<20); got != want {
 		t.Fatalf("VM host memory fence = %s, want %s", got, want)
 	}
 	// Per-workload cgroup scopes materialized.
