@@ -62979,7 +62979,7 @@ paths:
       tags: [flags]
       operationId: listProjectFlagExperiments
       summary: List an environment's flag experiments.
-      description: "Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers that later send a conversion event (ADR 20261115163113)."
+      description: "Experiments compare the variants of a variant flag's weighted rule by the share of exposed customers that later send a conversion event."
       parameters:
         - { $ref: '#/components/parameters/FlagsProjectSlug' }
         - { $ref: '#/components/parameters/FlagsEnvironment' }
@@ -63122,7 +63122,7 @@ paths:
       tags: [flags]
       operationId: postRuntimeFlagEvents
       summary: Report conversion events for flag experiments.
-      description: "Requires the same workload identity as getRuntimeFlags (ADR 20261115163113). Account, app and environment come from the token. Each event names the verified customer of the request it belongs to; events for customers that are not active platform tenants of the account are dropped. Accepted events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never billed."
+      description: "Requires the same workload identity as getRuntimeFlags. Account, app and environment come from the token. Each event names the verified customer of the request it belongs to; events for customers that are not active platform tenants of the account are dropped. Accepted events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never billed."
       parameters:
         - name: X-Faas-Flags-Capabilities
           in: header

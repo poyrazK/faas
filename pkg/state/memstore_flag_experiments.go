@@ -11,7 +11,7 @@ import (
 )
 
 // MemStore keeps experiments for apid tests; it has no request telemetry to
-// read exposures from, so AdvanceFlagExperimentUnits adds no units.
+// read exposures from, so AdvanceFlagExperimentUnits reports that.
 
 type memFlagExperimentUnit struct {
 	variant   string
@@ -213,9 +213,12 @@ func (m *MemStore) ListRunningFlagExperiments(_ context.Context, afterID string,
 	return out, nil
 }
 
-// AdvanceFlagExperimentUnits implements FlagExperimentStore.
+// AdvanceFlagExperimentUnits reads exposures from request telemetry, which
+// MemStore does not keep (ADR-127): like the other telemetry readers it
+// returns errMemStoreRequestTelemetry, and unit tracking is tested against
+// Postgres (TestPg_FlagExperimentUnitsFromTelemetry).
 func (m *MemStore) AdvanceFlagExperimentUnits(context.Context, FlagExperiment, time.Time, time.Time, int) (int, error) {
-	return 0, nil
+	return 0, errMemStoreRequestTelemetry
 }
 
 // SaveFlagExperimentProgress implements FlagExperimentStore.
