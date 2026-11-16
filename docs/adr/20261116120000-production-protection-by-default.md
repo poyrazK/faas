@@ -116,19 +116,30 @@ default". So for checks the baseline owns:
   skipped (`probes_unavailable`). This reuses ADR-847's audited trust model
   and adds no secret. The alternative, meterd signing a new header with a
   new key the gateways verify, was rejected for that reason.
-- **a wake caused only by a platform probe is unbilled** (slice 3b). The
-  gateway records a probe-caused wake; meterd subtracts that instance's
-  seconds until the first customer request or park, through a ledger in
-  the same shape as the quiet-pause one (ADR-20261023171905). Until 3b
-  lands, a probe that wakes a parked app is billed like ADR-847's route
-  probes, so the `protection_baseline` flag must not be released to
-  customers before 3b.
+- **a wake caused only by a platform probe is unbilled** (slice 3b). apid's
+  challenge for a baseline probe carries `unbilled: true`; gateways keep
+  the flag with the token. When such a probe's own request admitted the
+  wake (not one that joined a wake already in flight), the gateway records
+  `platform_probe_wakes` (instance, `woke_at`, `probe_done_at`) after the
+  response. meterd subtracts each instance-minute's overlap with
+  `[woke_at, probe_done_at + 30 s]` from its resident seconds, after the
+  quiet-pause subtraction and never below zero; the 30 s covers the park
+  grace, one 10 s reaper tick and the park. If a customer request lands
+  inside that tail it is unbilled too, by a few seconds, in the customer's
+  favour. A failed ledger write bills the wake, the safe direction. Rows
+  are kept 7 days.
 - **an instance woken only by a platform probe parks again straight after
-  the probe** (slice 3b) instead of waiting out the idle timeout. Park
-  already reuses the node's existing init snapshot instead of capturing a
-  new one when one is usable (`captureInitOrReuse`), so this costs a
-  destroy, not a snapshot write; a node without a usable init snapshot
-  captures one as any park does.
+  the probe** (slice 3b) instead of waiting out the idle timeout. schedd's
+  reaper reads the last 10 minutes of probe wakes; an instance whose latest
+  request is no later than the probe's end (+2 s) parks once 5 s have
+  passed with nothing in flight. Its open flows are the gateway's
+  keep-alive connections, so they are ignored for it, as for a superseded
+  release's drain; a customer request after the probe moves its last
+  request past the probe and the normal idle timeout applies. The app's
+  floor still holds. Park already reuses the node's existing init snapshot
+  instead of capturing a new one when one is usable (`captureInitOrReuse`),
+  so this costs a destroy, not a snapshot write; a node without a usable
+  init snapshot captures one as any park does.
 
 Customers cannot change a check's path or interval (only pause, resume or
 delete it), so a baseline check stays a baseline check until it is deleted.
