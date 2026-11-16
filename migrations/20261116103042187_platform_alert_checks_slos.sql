@@ -1,4 +1,4 @@
--- filename: 20261116103000000_platform_alert_checks_slos.sql
+-- filename: 20261116103042187_platform_alert_checks_slos.sql
 -- migration-compat: expand
 -- Default alerts for synthetic checks and SLOs (ADR-20261115194000,
 -- amendment 2026-11-16): platform_alert_notices.kind gains 'check_failing'

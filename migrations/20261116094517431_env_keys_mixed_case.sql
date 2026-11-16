@@ -1,4 +1,4 @@
--- filename: 20261116094500000_env_keys_mixed_case.sql
+-- filename: 20261116094517431_env_keys_mixed_case.sql
 -- migration-compat: expand
 -- Env var names accept mixed case (api.EnvKeyPattern ^[A-Za-z][A-Za-z0-9_]*$):
 -- runtimes read names like DOTNET_EnableDiagnostics (microservices-demo,
