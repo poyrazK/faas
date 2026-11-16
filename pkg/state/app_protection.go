@@ -104,6 +104,9 @@ type AppProtectionStore interface {
 	RecordAppProtectionObject(ctx context.Context, obj AppProtectionObject) error
 	// ListAppProtectionObjects returns the recorded items in item order.
 	ListAppProtectionObjects(ctx context.Context, appID string) ([]AppProtectionObject, error)
+	// DeleteAppProtectionObject forgets an item's record, so the baseline
+	// may create it again; deleting a missing record is not an error.
+	DeleteAppProtectionObject(ctx context.Context, appID string, item AppProtectionItem) error
 	// ClaimAppProtectionReconciles leases up to limit enrolled ('on') apps
 	// whose next reconcile is due and whose lease, if any, has expired.
 	ClaimAppProtectionReconciles(ctx context.Context, limit int, lease time.Duration) ([]AppProtection, error)

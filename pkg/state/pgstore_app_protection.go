@@ -110,6 +110,15 @@ func (s *PgStore) ListAppProtectionObjects(ctx context.Context, appID string) ([
 	return out, nil
 }
 
+// DeleteAppProtectionObject implements AppProtectionStore.
+func (s *PgStore) DeleteAppProtectionObject(ctx context.Context, appID string, item AppProtectionItem) error {
+	if _, err := s.pool.Exec(ctx, `
+		delete from app_protection_objects where app_id = $1::uuid and item = $2`, appID, string(item)); err != nil {
+		return fmt.Errorf("state: delete app protection object: %w", err)
+	}
+	return nil
+}
+
 // ClaimAppProtectionReconciles implements AppProtectionStore.
 func (s *PgStore) ClaimAppProtectionReconciles(ctx context.Context, limit int, lease time.Duration) ([]AppProtection, error) {
 	if limit <= 0 {

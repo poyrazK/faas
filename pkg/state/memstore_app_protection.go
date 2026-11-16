@@ -93,6 +93,14 @@ func (m *MemStore) ListAppProtectionObjects(_ context.Context, appID string) ([]
 	return out, nil
 }
 
+// DeleteAppProtectionObject implements AppProtectionStore.
+func (m *MemStore) DeleteAppProtectionObject(_ context.Context, appID string, item AppProtectionItem) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.appProtectionObjects[appID], item)
+	return nil
+}
+
 // ClaimAppProtectionReconciles implements AppProtectionStore.
 func (m *MemStore) ClaimAppProtectionReconciles(_ context.Context, limit int, lease time.Duration) ([]AppProtection, error) {
 	if limit <= 0 {

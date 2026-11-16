@@ -99,6 +99,20 @@ func testAppProtectionEnrollmentAndObjects(t *testing.T, fx *Fixture) {
 	if other, err := store.ListAppProtectionObjects(fx.Ctx, uuid.NewString()); err != nil || len(other) != 0 {
 		t.Fatalf("ListAppProtectionObjects(other app) = %+v, %v; want none", other, err)
 	}
+
+	// Forgetting a record lets the baseline create the item again.
+	if err := store.DeleteAppProtectionObject(fx.Ctx, appID, state.AppProtectionAvailabilitySLO); err != nil {
+		t.Fatalf("DeleteAppProtectionObject: %v", err)
+	}
+	if err := store.DeleteAppProtectionObject(fx.Ctx, appID, state.AppProtectionAvailabilitySLO); err != nil {
+		t.Fatalf("DeleteAppProtectionObject(again): %v", err)
+	}
+	if err := store.RecordAppProtectionObject(fx.Ctx, state.AppProtectionObject{AppID: appID, Item: state.AppProtectionAvailabilitySLO, ObjectID: uuid.NewString()}); err != nil {
+		t.Fatalf("re-record after delete: %v", err)
+	}
+	if objs, _ := store.ListAppProtectionObjects(fx.Ctx, appID); len(objs) != 2 {
+		t.Fatalf("after delete and re-record = %+v; want 2", objs)
+	}
 }
 
 // testProtectionHealthProbeClaims pins ADR-20261116120000 §3: the baseline

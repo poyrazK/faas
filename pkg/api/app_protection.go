@@ -96,6 +96,20 @@ type AppProtectionItemStatus struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// SetAppProtectionRequest is PUT /v1/apps/{slug}/protection. on enrolls
+// the app (also an app created before protection existed) and creates the
+// baseline; off deletes the baseline objects you have not changed.
+type SetAppProtectionRequest struct {
+	State string `json:"state"`
+}
+
+// SetAppProtection turns an app's protection baseline on or off
+// (ADR-20261116120000 §5).
+func (c *Client) SetAppProtection(ctx context.Context, slug, state string) (AppProtectionResponse, error) {
+	var out AppProtectionResponse
+	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/protection", SetAppProtectionRequest{State: state}, &out)
+}
+
 // GetAppProtection reports an app's protection baseline
 // (ADR-20261116120000).
 func (c *Client) GetAppProtection(ctx context.Context, slug string) (AppProtectionResponse, error) {
