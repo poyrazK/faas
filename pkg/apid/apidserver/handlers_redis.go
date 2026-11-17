@@ -23,6 +23,7 @@ func (s *server) registerRedisRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/redis", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createRedisCache))))))
 	mux.HandleFunc("GET /v1/redis/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRedisCache))))
 	mux.HandleFunc("DELETE /v1/redis/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteRedisCache))))
+	mux.HandleFunc("POST /v1/redis/{name}/restart", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.restartRedisCache)))))
 	mux.HandleFunc("POST /v1/redis/{name}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.requireVerifiedEmail(s.bindRedisCache)))))
 }
 
@@ -243,6 +244,21 @@ func (s *server) deleteRedisCache(w http.ResponseWriter, r *http.Request, acct s
 	// marker row goes with the app (ON DELETE CASCADE at purge).
 	r.SetPathValue("slug", app.Slug)
 	s.deleteApp(w, r, acct)
+}
+
+// restartRedisCache restarts a cache's VM and keeps its data: schedd's normal
+// restart snapshots the running instance and wakes from that snapshot. A
+// fresh restart, which discards snapshots, is never used for a cache.
+func (s *server) restartRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, _, ok := s.loadRedisCache(w, r, acct)
+	if !ok {
+		return
+	}
+	query := r.URL.Query()
+	query.Del("fresh")
+	r.URL.RawQuery = query.Encode()
+	r.SetPathValue("slug", app.Slug)
+	s.restartApp(w, r, acct)
 }
 
 func (s *server) bindRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account) {

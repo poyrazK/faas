@@ -32,6 +32,13 @@ func (c *Client) DeleteRedisCache(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/redis/"+url.PathEscape(name), nil, nil)
 }
 
+// RestartRedisCache restarts a cache's VM, keeping its data.
+func (c *Client) RestartRedisCache(ctx context.Context, name string) (AppRestartResponse, error) {
+	var out AppRestartResponse
+	err := c.do(ctx, http.MethodPost, "/v1/redis/"+url.PathEscape(name)+"/restart", nil, &out)
+	return out, err
+}
+
 // BindRedisCache writes the cache's connection URL into an app's env.
 func (c *Client) BindRedisCache(ctx context.Context, name string, request BindRedisCacheRequest) (RedisCacheBinding, error) {
 	var out RedisCacheBinding

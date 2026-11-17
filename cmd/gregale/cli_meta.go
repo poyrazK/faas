@@ -6188,6 +6188,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app that receives the URL", Req: true, Value: "APP"},
 				{Name: "env", Short: "environment variable (default REDIS_URL)", Value: "KEY"},
 			}, Examples: []string{"gregale redis bind sessions --app web"}},
+			{Name: "restart", Short: "Restart a managed Redis cache; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "delete", Short: "Delete a managed Redis cache and its data", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "yes", Short: "skip the typed confirmation"},
 			}},

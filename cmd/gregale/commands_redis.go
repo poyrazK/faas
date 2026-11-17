@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const redisUsage = "usage: gregale redis <list|create|get|bind|delete>"
+const redisUsage = "usage: gregale redis <list|create|get|bind|restart|delete>"
 
 func cmdRedis(args []string) int {
 	if len(args) == 0 {
@@ -29,6 +29,8 @@ func cmdRedis(args []string) int {
 		return cmdRedisGet(args[1:])
 	case "bind":
 		return cmdRedisBind(args[1:])
+	case "restart":
+		return cmdRedisRestart(args[1:])
 	case "delete":
 		return cmdRedisDelete(args[1:])
 	default:
@@ -145,6 +147,27 @@ func cmdRedisBind(args []string) int {
 		return jsonOut(writeJSON(binding))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Set %s on %s; it takes effect at the app's next deploy or wake.\n", binding.EnvKey, binding.App)
+	return 0
+}
+
+func cmdRedisRestart(args []string) int {
+	fs := newFlagSet("redis restart", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale redis restart NAME", "redis")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	out, err := client.RestartRedisCache(context.Background(), fs.Arg(0))
+	if err != nil {
+		return printErr("Could not restart Redis cache", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Restarting Redis cache %s; its data is kept (wake %s).\n", fs.Arg(0), out.WakeID)
 	return 0
 }
 

@@ -3274,7 +3274,8 @@
       "routes": [
         "=/v1/redis",
         "=/v1/redis/{}",
-        "/v1/redis/{}/bindings"
+        "/v1/redis/{}/bindings",
+        "/v1/redis/{}/restart"
       ],
       "cli": [
         "redis"
