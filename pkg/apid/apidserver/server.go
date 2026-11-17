@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/apid/sales"
 	"github.com/onebox-faas/faas/pkg/apid/support"
+	"github.com/onebox-faas/faas/pkg/apid/supportaccess"
 
 	"github.com/onebox-faas/faas/pkg/apid/storedworkflowconsole"
 
@@ -2229,6 +2230,17 @@ func (s *server) handler() http.Handler {
 	// ADR-20261114170352: an owner can require two-factor authentication.
 	mux.HandleFunc("GET /v1/orgs/{slug}/security-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgSecurityPolicy)))))
 	mux.HandleFunc("PUT /v1/orgs/{slug}/security-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.putOrgSecurityPolicy))))))
+	// ADR-20261116163508: owners and admins grant Gregale support access.
+	// Granting and approving need a signed-in browser and the ownership-transfer
+	// step-up rule; revoking and declining work with a key, since taking access
+	// away is always safe. Dark behind the support_grants platform flag.
+	mux.HandleFunc("GET /v1/orgs/{slug}/support-access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.supportAccess(supportaccess.HTTP.Overview))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/support-access/grants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.supportAccess(supportaccess.HTTP.Grant)))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/support-access/grants/{id}/revoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.supportAccess(supportaccess.HTTP.Revoke))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/support-access/requests/{id}/approve", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.supportAccess(supportaccess.HTTP.Approve)))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/support-access/requests/{id}/decline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.supportAccess(supportaccess.HTTP.Decline))))))
+	mux.HandleFunc("POST /v1/admin/support-access/requests", s.authLimited(s.requireAdminMutation(s.supportAccess(supportaccess.HTTP.OperatorRequest))))
+	mux.HandleFunc("GET /v1/admin/support-access/grants", s.authLimited(s.requireOperatorSessionRead(s.supportAccess(supportaccess.HTTP.OperatorGrants))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgMembers)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.loadOrg(s.inviteOrgMember))))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.changeOrgMemberRole)))))
@@ -5548,6 +5560,12 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/releases/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderReleasePage))))
 	mux.Handle("GET /dashboard/apps/{slug}/custom-metrics", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomMetricsDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
+	// ADR-20261116163508: the Support access page.
+	mux.Handle("GET /dashboard/support-access", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderSupportAccessDashboard))))
+	mux.Handle("POST /dashboard/support-access/{org}/grants", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardSupportAccessPost)))))
+	mux.Handle("POST /dashboard/support-access/{org}/grants/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSupportAccessPost))))
+	mux.Handle("POST /dashboard/support-access/{org}/requests/{id}/approve", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardSupportAccessPost)))))
+	mux.Handle("POST /dashboard/support-access/{org}/requests/{id}/decline", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSupportAccessPost))))
 
 	// PR-B bind picker UX (handlers_install_github.go). Both routes
 	// are cookie-session-authenticated (NOT API-key auth — the
