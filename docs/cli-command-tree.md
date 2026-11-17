@@ -465,6 +465,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp tasks intent` | `gregale mcp server tasks review` |
 | `gregale mcp tasks observer` | `gregale mcp observer` |
 | `gregale mcp tasks release` | `gregale mcp server tasks deploy` |
+| `gregale mcp tasks source-review` | `gregale mcp server tasks audit` |
 | `gregale mcp tools` | `gregale mcp client tools` |
 | `gregale openapi dry-run` | `gregale api spec import --dry-run` |
 | `gregale openapi preview` | `gregale api spec apply --dry-run` |
