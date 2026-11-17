@@ -159,6 +159,7 @@ type contractTestStore interface {
 	state.ProjectEnvironmentBranchDataStore
 	state.ProjectEnvironmentBranchBucketStore
 	state.ObjectBucketOverlayStore
+	state.ObjectBucketOverlayTombstonePrefixStore
 	state.EnvironmentBranchDeploymentReader
 	state.EnvironmentBranchCaptureStore
 	state.EnvironmentBranchCaptureObjectStore

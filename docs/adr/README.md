@@ -17,6 +17,22 @@
 - [ADR-20261114150000: Flags usability: short commands, attribute targeting, gateway kill switch, lifecycle](20261114150000-flags-usability.md) — accepted; read-modify-write CLI verbs (`flags create/set/on/off/percent/rule/rm/kill/stale`), rule `attributes` on gateway-verified `gregale.country`/`gregale.ua_family` and app-supplied `app.*` (SDK capability `attribute-targeting-v1`), `killed` flags served as the app fallback and stamped by the gateway in `X-Faas-Flag-Kills`, flag `owner`/`expires_at` with a lifecycle report and hourly `flags.lifecycle_attention` audit events (amends ADR-377)
 - [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)
 
+- [ADR-20261116090001 · Observed app-task operation outcomes](20261116090001-observed-app-task-operation-outcomes.md) — monitoring implementation; operational activation separate
+- [ADR-20261116080000 · Advisory command-cron admission evidence](20261116080000-advisory-command-cron-admission-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115210001 · Advisory app-task and release-command evidence](20261115210001-advisory-app-task-and-release-command-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115200000 · Advisory build recovery and cleanup evidence](20261115200000-advisory-build-recovery-and-cleanup-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115190001 · Advisory post-capture activation evidence](20261115190001-advisory-post-capture-activation-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115180001 · Advisory snapshot-priming evidence](20261115180001-advisory-snapshot-priming-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115170001 · Advisory image-preparation phase evidence](20261115170001-advisory-image-preparation-phase-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115160001 · Advisory build-to-image handoff evidence](20261115160001-advisory-build-image-handoff-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115150000 · Advisory builder progress and pressure](20261115150000-advisory-builder-progress-and-pressure.md) — monitoring implementation; operational activation separate
+- [ADR-20261115140001 · Advisory work-loop health](20261115140001-advisory-work-loop-health.md) — monitoring implementation; operational activation separate
+- [ADR-20261115130000 · Sampled daemon process continuity](20261115130000-sampled-daemon-process-continuity.md) — monitoring implementation; operational activation separate
+- [ADR-20261115120001 · Advisory daemon readiness evidence](20261115120001-advisory-daemon-readiness-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115110000 · Versioned build-service coverage profiles](20261115110000-versioned-build-service-profiles.md) — monitoring implementation; operational activation separate
+- [ADR-20261115100001 · Observed build history during verification](20261115100001-observed-build-history.md) — monitoring implementation; operational activation separate
+- [ADR-20261115090001 · Build evidence in deployment monitoring collection](20261115090001-monitoring-build-evidence-transport.md) — collection implementation; operational activation separate
+- [ADR-20261115080000 · Advisory running-build evidence](20261115080000-advisory-runtime-build-evidence.md) — monitoring implementation; production convergence separate
 - [ADR-20261114090001 · Deployment qualification changes and wait timing](20261114090001-deployment-qualification-progress.md) — monitoring implementation; production convergence separate
 - [ADR-20261114080000 · Diagnostics for unqualified deployment evidence](20261114080000-deployment-qualification-evidence.md) — monitoring implementation; production convergence separate
 - [ADR-20261114070000 · Deployment source read diagnostics](20261114070000-deployment-source-read-diagnostics.md) — monitoring implementation; production convergence separate
@@ -2455,4 +2471,17 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261116183445: The management MCP server searches the published docs](20261116183445-management-mcp-docs-search.md) — accepted; core tools gregale_search_docs and gregale_get_docs_page rank and read sections of gregale.dev's llms.txt/llms-full.txt, cached hourly per process with a 24 h stale fallback.
 - [ADR-20261116183545: Durable hosted Task source intents](20261116183545-hosted-task-source-intents.md)
 - [ADR-20261116213000: Custom Postgres group roles](20261116213000-custom-postgres-group-roles.md) — proposed; customers declare NOLOGIN group roles (BYPASSRLS allowed, refused on Data API/Auth databases, Hobby+) granted to their own Gregale logins, created by the platform admin path, so tools like Windmill run on managed Postgres.
+- [ADR-20261116100000 · Observed app-task completion and recovery](20261116100000-observed-app-task-completion-and-recovery.md)
+
+- [ADR-20261116110000 · Bounded runtime history compaction](20261116110000-bounded-runtime-history-compaction.md)
+
+- [ADR-20261116120000 · Observed command-cron outcomes](20261116120000-observed-command-cron-outcomes.md)
+
+- [ADR-20261116130000 · Observed command-cron admission timing](20261116130000-observed-command-cron-admission-timing.md)
+
+- [ADR-20261116140000 · Observed HTTP cron delivery outcomes](20261116140000-observed-http-cron-delivery-outcomes.md)
+
+- [ADR-20261117010000 · Targeted runtime diagnostic selection](20261117010000-targeted-runtime-diagnostic-selection.md)
+
+- [ADR-20261117020000 · Observed delayed-task dispatch outcomes](20261117020000-observed-delayed-task-dispatch-outcomes.md)
 - [ADR-20261117070839: Owner review of retained hosted Task source](20261117070839-hosted-task-source-owner-review.md) — fixed-expiry source review decisions, separate from credential and execution authority.

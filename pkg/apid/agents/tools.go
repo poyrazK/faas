@@ -124,7 +124,7 @@ func (h *Handler) Toolset(w http.ResponseWriter, _ *http.Request) {
 				"additionalProperties": false,
 			},
 			DisplayScript: `if args.until != () { "Sleeping until " + args.until } else { "Sleeping " + args.seconds + "s" }`,
-		}, runTool(), githubSubscribeTool(), browseTool()},
+		}, runTool(), githubSubscribeTool(), browseTool(), browserTool()},
 	})
 }
 
@@ -207,9 +207,11 @@ func (h *Handler) runTool(ctx context.Context, grant CallbackToken, inv rapInvoc
 		return h.subscribeGitHub(ctx, grant, inv, caller)
 	case toolBrowse:
 		return h.startBrowse(ctx, grant, inv, caller)
+	case toolBrowser:
+		return h.startBrowser(ctx, grant, inv, caller)
 	}
-	return h.answerTool(ctx, grant, inv, fmt.Sprintf("unknown operation %q; the gregale toolset has %s, %s, %s and %s", inv.Operation,
-		toolSleep, toolRun, toolGitHubSubscribe, toolBrowse))
+	return h.answerTool(ctx, grant, inv, fmt.Sprintf("unknown operation %q; the gregale toolset has %s, %s, %s, %s and %s", inv.Operation,
+		toolSleep, toolRun, toolGitHubSubscribe, toolBrowse, toolBrowser))
 }
 
 // answerTool publishes the call's tool result now.

@@ -508,11 +508,27 @@ var docsStopwords = map[string]bool{
 func docsTerms(text string) []string {
 	var terms []string
 	for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
-		if !docsStopwords[word] {
-			terms = append(terms, docsStem(word))
+		for _, part := range docsSplitDigits(word) {
+			if !docsStopwords[part] {
+				terms = append(terms, docsStem(part))
+			}
 		}
 	}
 	return terms
+}
+
+// docsSplitDigits splits a word where letters meet digits, so "python313"
+// is found by "python" and "node24" by "node".
+func docsSplitDigits(word string) []string {
+	var parts []string
+	start := 0
+	for i, r := range word {
+		if i > start && unicode.IsDigit(r) != unicode.IsDigit(rune(word[i-1])) {
+			parts = append(parts, word[start:i])
+			start = i
+		}
+	}
+	return append(parts, word[start:])
 }
 
 // docsStem folds plurals so "deploys" finds "deploy" and "policies" finds
@@ -581,6 +597,7 @@ func (c *docsCorpus) search(query string, limit int) []docsHit {
 		}
 	}
 	phrase := strings.Join(strings.Fields(strings.ToLower(query)), " ")
+	codes := docsQueryCodes(query)
 	const k1, b = 1.2, 0.75
 	var scored []docsScored
 	for _, s := range c.sections {
@@ -610,6 +627,13 @@ func (c *docsCorpus) search(query string, limit int) []docsHit {
 		if len(words) > 1 && (strings.Contains(s.lower, phrase) || strings.Contains(strings.ToLower(s.heading), phrase)) {
 			score *= 1.5
 		}
+		if s.page.slug == docsCodeReference {
+			if codes[s.anchor] {
+				score *= docsCodeMatchBoost
+			} else {
+				score *= docsCodeReferenceWeight
+			}
+		}
 		scored = append(scored, docsScored{s, score})
 	}
 	sort.SliceStable(scored, func(i, j int) bool {
@@ -632,6 +656,31 @@ func (c *docsCorpus) search(query string, limit int) []docsHit {
 		hits = append(hits, docsHit{Page: s.page.slug, Title: s.page.title, Section: s.anchor, Heading: s.heading, URL: c.pageURL(s.page.slug, s.anchor), Snippet: c.snippet(s, terms)})
 	}
 	return hits
+}
+
+// docsCodeReference is the error code reference: one short section per
+// code, headed by the code. Its hundreds of entries spell ordinary words
+// ("invalid_canary_preset"), so on a question that names no code they would
+// crowd out the guides; they count at docsCodeReferenceWeight unless the
+// query names the entry's code, which puts that entry first.
+const (
+	docsCodeReference       = "error-codes"
+	docsCodeReferenceWeight = 0.5
+	docsCodeMatchBoost      = 4
+)
+
+// docsQueryCodes are the query's snake_case words: error codes, as an agent
+// pastes them from a response.
+func docsQueryCodes(query string) map[string]bool {
+	codes := map[string]bool{}
+	for _, word := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if strings.Contains(strings.Trim(word, "_"), "_") {
+			codes[word] = true
+		}
+	}
+	return codes
 }
 
 // snippet is a window of the section's text around its rarest query term.

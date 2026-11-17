@@ -1067,6 +1067,18 @@ const ImagedPublishedLayerDigests = 256
 // base key: the runtime matrix has about ten bases per architecture.
 const ImagedVerifiedBaseFiles = 64
 
+// Deploy scans deferred past the snapshot handoff (ADR-075 amendment
+// 2026-11-17). One runs at a time, so deferral never runs more Grype
+// processes than the serial scans it replaced. A full queue drops the
+// scan; the live-deployment rescan sweep picks it up. The timeout frees
+// the worker from a hung scanner: production's slowest scan in two days
+// was 4.5 minutes.
+const (
+	ImagedDeferredScanWorkers = 1
+	ImagedDeferredScanQueue   = 64
+	ImagedDeferredScanTimeout = 15 * time.Minute
+)
+
 // BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
 // builderd remembers the digest of, so a cache hit skips re-reading the
 // artifact to check it. A node's cache holds a few hundred entries.
@@ -11297,6 +11309,24 @@ var (
 	// SandboxBrowseDefaultChars is its default.
 	SandboxBrowseMaxChars     = 100_000
 	SandboxBrowseDefaultChars = 20_000
+	// Interactive browser sessions (ADR-20261117065818). A session gregale_browser
+	// opens closes after SandboxBrowserIdleCloseSec with no action, and at
+	// SandboxBrowserLifetimeSec at the latest; it runs at most
+	// SandboxBrowserActionsMax actions, each within
+	// SandboxBrowserActionTimeoutSec. A snapshot's page text defaults to
+	// SandboxBrowserSnapshotDefaultChars, and type enters at most
+	// SandboxBrowserTypeMaxChars.
+	SandboxBrowserIdleCloseSec         = [4]int{0, 300, 600, 600}
+	SandboxBrowserLifetimeSec          = [4]int{0, 1800, 3600, 3600}
+	SandboxBrowserActionsMax           = [4]int{0, 200, 500, 500}
+	SandboxBrowserActionTimeoutSec     = [4]int{0, 30, 30, 30}
+	SandboxBrowserSnapshotDefaultChars = 4000
+	SandboxBrowserTypeMaxChars         = 2048
+	// SandboxScreenshotMaxBytes caps one gregale_browser screenshot; a larger
+	// one is not kept. SandboxScreenshotRetentionSec is how long a session's
+	// screenshots outlive it (ADR-20261117065818 §5).
+	SandboxScreenshotMaxBytes     = 1 << 20
+	SandboxScreenshotRetentionSec = 86_400
 	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
 	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
 	// it. A browser touches many domains per page, so it is above the per-run
@@ -14558,6 +14588,12 @@ const (
 	// Qualification changes share a separate report-wide history budget.
 	ObsPostDeployEvidenceEventsMax       = 16
 	ObsPostDeployEvidenceHistoryBytesMax = 16 << 10
+	// ADR-20261115100001: build history records aggregate advisory changes.
+	ObsPostDeployBuildEventsMax       = 16
+	ObsPostDeployBuildHistoryBytesMax = 16 << 10
+	// ADR-20261116110000: lossless history details have an independent decoded
+	// ceiling; the encoded event array still uses the unchanged 16 KiB budget.
+	ObsPostDeployBuildHistoryDecodedBytesMax = ObsRuntimeBuildResponseMaxBytes
 
 	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
 	// expose only a bounded, unhealthy-first metadata preview.
@@ -14570,23 +14606,57 @@ const (
 	ObsRuleCoverageBudget = 3 * time.Second
 	// Critical input diagnostics pin reads to one time and bound work to six
 	// jobs, one always-instantiated readiness gauge each, and strict vectors.
-	ObsInputHealthBudget              = 3 * time.Second
-	ObsInputHealthMaxAge              = 120 * time.Second
-	ObsInputHealthLookback            = 10 * time.Minute
-	ObsInputHealthStep                = 15 * time.Second
-	ObsInputHealthJobsMax             = 6
-	ObsInputHealthTargetsMax          = 4096
-	ObsRuleCoverageItemsMax           = 200
-	ObsRuleCoverageExpectedSetsMax    = 8
-	ObsRuleCoverageExpectedFilesMax   = 8
-	ObsRuleCoverageExpressionMaxBytes = 16 * 1024
-	ObsRuleCoverageLabelsMax          = 64
-	ObsRuleCoverageLabelNameMaxBytes  = 128
-	ObsRuleCoverageLabelValueMaxBytes = 2048
-	ObsRuleCatalogMaxBytes            = 4 << 20
-	ObsRecordingDependentAlertsMax    = 5
-	ObsRecordingUnknownAlertsMax      = 5
-	ObsRecordingDependencyLinksMax    = 16384
+	ObsInputHealthBudget     = 3 * time.Second
+	ObsInputHealthMaxAge     = 120 * time.Second
+	ObsInputHealthLookback   = 10 * time.Minute
+	ObsInputHealthStep       = 15 * time.Second
+	ObsInputHealthJobsMax    = 6
+	ObsInputHealthTargetsMax = 4096
+	// ADR-20261115080000: advisory identity uses selected critical jobs only.
+	ObsRuntimeBuildBudget = 3 * time.Second
+	// ADR-20261115110000: v2 build profiles add builderd and imaged.
+	ObsRuntimeBuildJobsMax          = 8
+	ObsRuntimeBuildSamplesMax       = 4096
+	ObsRuntimeBuildNodesMax         = 1000
+	ObsRuntimeBuildPreviewMax       = 32
+	ObsRuntimeBuildVersionMaxBytes  = 128
+	ObsRuntimeBuildResponseMaxBytes = 64 << 10
+	// ADR-20261115160001: exact integer telemetry, without summing overlapping
+	// imaged recovery scopes. This is a wire safety bound, not an admission quota.
+	ObsRuntimeHandoffPendingMax int64 = 1<<53 - 1
+	// ADR-20261115170001: same exact-integer bound for preparation checkpoints.
+	ObsRuntimePreparationPendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115180001: exact integers for scheduler snapshot attempt evidence.
+	ObsRuntimeSnapshotPrimePendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115190001: exact integers for per-replica post-capture evidence.
+	ObsRuntimePostCapturePendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115200000: exact integers for fleet build recovery observations.
+	ObsRuntimeBuildRecoveryCountMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115210001: exact-integer wire safety for app-task evidence.
+	ObsRuntimeAppTaskPendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261116080000: exact-integer wire bound for scoped cron schedules.
+	ObsRuntimeCommandCronSchedulesMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261116090001: exact-integer bounds for local operation counters.
+	ObsRuntimeAppTaskOperationCounterMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115120001: ten closed wire readiness classes, including zeroes.
+	// ADR-20261115130000: stateless comparison of sampled daemon uptime.
+	ObsRuntimeProcessLookback           = 10 * time.Minute
+	ObsRuntimeProcessUptimeMax          = 10 * 365 * 24 * time.Hour
+	ObsRuntimeProcessStartTolerance     = ObsHealthClockSkewTolerance + time.Second
+	ObsRuntimeProcessResetTolerance     = time.Second
+	ObsRuntimeReadinessReasonsMax       = 10
+	ObsRuntimeReadinessReasonSamplesMax = ObsRuntimeBuildSamplesMax * ObsRuntimeReadinessReasonsMax
+	ObsRuleCoverageItemsMax             = 200
+	ObsRuleCoverageExpectedSetsMax      = 8
+	ObsRuleCoverageExpectedFilesMax     = 8
+	ObsRuleCoverageExpressionMaxBytes   = 16 * 1024
+	ObsRuleCoverageLabelsMax            = 64
+	ObsRuleCoverageLabelNameMaxBytes    = 128
+	ObsRuleCoverageLabelValueMaxBytes   = 2048
+	ObsRuleCatalogMaxBytes              = 4 << 20
+	ObsRecordingDependentAlertsMax      = 5
+	ObsRecordingUnknownAlertsMax        = 5
+	ObsRecordingDependencyLinksMax      = 16384
 
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared

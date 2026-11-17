@@ -349,9 +349,22 @@ nor rewrite it undetected. A snapshot that cannot be opened cold boots
    (a vmmd without it treats a sealed snapshot as a crash capture and fails
    the wake instead of cold booting). On a node with the runtime identity
    retired (slice 3e), vmmd must open keys through secretd
-   (`faas_vmmd_secretd_open`). Run `make test-metal` and `make leakcheck`
-   on a native KVM host, and measure the restore p95 on the reference node
-   with sealing on: it must stay under 350 ms.
+   (`faas_vmmd_secretd_open`).
+   **Fast sealed wakes (slice 3d-5).** The first metal run (2026-11-16)
+   measured sealed wakes at 6.6–7.4 s against 1.15 s unsealed, because each
+   wake decrypted the whole memory file. Once every vmmd runs a release that
+   reads the chunked format, set on every vmmd:
+   - `FAAS_VMMD_SEALED_FORMAT=v2`: captures are written in 4 MiB chunks
+     with zero chunks left out, and a wake opens them in parallel;
+   - `FAAS_VMMD_SEALED_PLAIN_CACHE_DIR=/var/lib/faas/sealed-plain` (and
+     `FAAS_VMMD_SEALED_PLAIN_CACHE_MB`, default 20480): a node keeps one
+     decrypted copy of each sealed snapshot it restored, so only its first
+     wake per capture decrypts and later wakes link the copy like an
+     unsealed snapshot. Plaintext is only ever on a node that restored the
+     app; unused copies expire after 24 h.
+   Then run `make test-metal` and `make leakcheck` on a native KVM host, and
+   measure the restore p95 on the reference node with sealing on, first
+   wakes and repeat wakes separately: repeat wakes must stay under 350 ms.
 2. **Turn on.** Set `FAAS_SCHEDD_SEAL_SNAPSHOTS=1` for schedd and restart
    it. Check: schedd logs `schedd: park and warm snapshots sealed at the
    source`; new rows carry a key

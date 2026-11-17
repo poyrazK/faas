@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 )
 
 type obsDeploymentServingRead struct {
@@ -14,10 +15,31 @@ type obsDeploymentServingRead struct {
 	timing *obsDeploymentReadTiming
 }
 type obsDeploymentSnapshot struct {
-	serving            obsDeploymentServingRead
-	notifications      api.ObsNotificationHealth
-	notificationErr    error
-	notificationTiming *obsDeploymentReadTiming
+	runtimeDiagnostics            *operatorobs.RuntimeDiagnostics
+	runtimeDiagnosticsUnsupported bool
+	runtimeDiagnosticsApplied     bool
+	serving                       obsDeploymentServingRead
+	notifications                 api.ObsNotificationHealth
+	notificationErr               error
+	notificationTiming            *obsDeploymentReadTiming
+	runtimeBuilds                 *api.ObsRuntimeBuilds
+	runtimeBuildErr               error
+	runtimeLoopHealth             *operatorobs.RuntimeLoopHealth
+	runtimeBuilderHealth          *operatorobs.RuntimeBuilderHealth
+	runtimeHandoffHealth          *operatorobs.RuntimeHandoffHealth
+	runtimePreparationHealth      *operatorobs.RuntimePreparationHealth
+	runtimeBuildRecoveryHealth    *operatorobs.RuntimeBuildRecoveryHealth
+	runtimeAppTaskHealth          *operatorobs.RuntimeAppTaskHealth
+	runtimeCommandCronHealth      *operatorobs.RuntimeCommandCronHealth
+	runtimeCommandCronOutcomes    *operatorobs.RuntimeCommandCronOutcomes
+	runtimeHTTPCronDelivery       *operatorobs.RuntimeHTTPCronDelivery
+	runtimeDelayedTaskDispatch    *operatorobs.RuntimeDelayedTaskDispatch
+	runtimeCommandCronTiming      *operatorobs.RuntimeCommandCronTiming
+	runtimeAppTaskResults         *operatorobs.RuntimeAppTaskResults
+	runtimeAppTaskOperations      *operatorobs.RuntimeAppTaskOperations
+	runtimePostCaptureHealth      *operatorobs.RuntimePostCaptureHealth
+	runtimeSnapshotPrimeHealth    *operatorobs.RuntimeSnapshotPrimeHealth
+	runtimeProcessCompareAt       time.Time
 }
 type obsDeploymentCheck struct {
 	Name             string `json:"name"`
@@ -53,6 +75,7 @@ type obsDeploymentReport struct {
 	Stability             *obsDeploymentStability     `json:"stability,omitempty"`
 	Sources               *obsDeploymentSources       `json:"sources,omitempty"`
 	QualificationEvidence *obsDeploymentEvidence      `json:"qualification_evidence,omitempty"`
+	RuntimeBuilds         *obsDeploymentRuntimeBuilds `json:"runtime_builds,omitempty"`
 }
 
 func runObsDeploymentVerification(ctx context.Context, opts obsDeploymentOptions, fetch func(context.Context) obsDeploymentSnapshot, now func() time.Time, wait func(context.Context, time.Duration) error, save func(obsDeploymentReport) error) (obsDeploymentReport, int) {
@@ -70,6 +93,13 @@ func runObsDeploymentVerification(ctx context.Context, opts obsDeploymentOptions
 	evidence := newObsDeploymentEvidence(checks)
 	report := obsDeploymentReport{SchemaVersion: 1, Scope: "post_deployment_monitoring", Release: opts.release, After: opts.after, StartedAt: started, UpdatedAt: started, WaitSeconds: budget.Seconds(), State: "unknown", Reason: "awaiting_evidence", Checks: checks, Timeline: timeline.snapshot(), Limitations: []string{"requested_release_not_runtime_identity", "notification_windows_can_include_pre_deployment_events", "success_clock_is_collector_confirmation", "no_notification_sent_or_human_receipt_proven", "no_deployment_or_rollback_performed", "poll_intervals_are_duration_estimates", "direct_notification_history_advisory_not_qualification", obsDeploymentNotificationPreviewLimitation}}
 	report.Sources = sources.snapshot()
+	report.RuntimeBuilds = initialObsDeploymentRuntimeBuilds(opts.expectedRole)
+	applyObsDeploymentDiagnostics(report.RuntimeBuilds, opts.runtimeDiagnostics, "client")
+	var buildHistory *obsDeploymentBuildRecorder
+	if opts.expectedRole != "" {
+		buildHistory = newObsDeploymentBuildRecorder()
+		report.RuntimeBuilds = buildHistory.snapshot(report.RuntimeBuilds)
+	}
 	report.QualificationEvidence = evidence.snapshot(nil)
 	var stability *obsDeploymentStabilityRecorder
 	if opts.stableFor > 0 {
@@ -102,6 +132,10 @@ func runObsDeploymentVerification(ctx context.Context, opts obsDeploymentOptions
 		report.Attempts++
 		observed := now()
 		report.UpdatedAt = observed.UTC()
+		report.RuntimeBuilds = assessObsDeploymentRuntimeBuilds(snapshot, opts, observed)
+		if buildHistory != nil {
+			report.RuntimeBuilds = buildHistory.observe(report.RuntimeBuilds, observed)
+		}
 		report.Checks, report.Serving, report.Notifications = assessObsDeployment(snapshot, opts.after, report.UpdatedAt)
 		report.Sources = sources.observe(snapshot, report.Serving != nil, report.Notifications != nil, observed)
 		report.QualificationEvidence = evidence.observe(report.Checks, snapshot, report.Serving, report.Notifications, opts.after, observed)

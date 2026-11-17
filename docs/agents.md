@@ -424,6 +424,16 @@ approval exits `1`; `--non-interactive` never approves on the agent's behalf.
 See [CLI configuration](cli-config.md) for the full contract, including
 pagination and profiles.
 
+### Which agent ran the CLI
+
+When Claude Code, Codex, Cursor or Gemini CLI runs the CLI, the CLI adds the
+agent's name to its User-Agent, for example
+`gregale/0.1.0 (linux/amd64; agent=claude-code)`. Gregale records that name
+with the apps and deploys the agent makes, so it can see which agents its
+customers use. The CLI sends nothing else about the agent, and the name
+never changes what a command is allowed to do. Set `DO_NOT_TRACK=1` to
+leave it out.
+
 ## Run the MCP server locally
 
 The hosted server is the default. Run the server on your own machine instead

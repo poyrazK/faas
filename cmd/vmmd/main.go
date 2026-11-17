@@ -1443,6 +1443,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	})
 	mgr.SetHostIdentities(hostIdentities)
 	mgr.SetCaptureRecipient(captureRecipient)
+	sealedSnapshots, err := sealedSnapshotConfigFromEnv(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if err := sealedSnapshots.apply(mgr, jailer); err != nil {
+		return err
+	}
+	log.Info("vmmd: sealed snapshots", "chunked_format", sealedSnapshots.chunked,
+		"plaintext_cache", sealedSnapshots.cacheDir != "", "plaintext_cache_mb", sealedSnapshots.cacheBytes>>20)
 	mgr.SetRegistryIdentities(registryIdentities)
 	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
 	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
