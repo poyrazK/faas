@@ -65,7 +65,7 @@ func TestSealedPlainCacheFillsOnce(t *testing.T) {
 	}
 	// A linked staging file survives the entry's eviction.
 	staged := filepath.Join(t.TempDir(), "staged")
-	if err := (sealedPlainLinker{path: paths[0]}).LinkTo(staged); err != nil {
+	if err := os.Link(paths[0], staged); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(paths[0]); err != nil {

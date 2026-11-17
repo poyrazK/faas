@@ -141,6 +141,11 @@ func (c *SealedPlainCache) fill(ctx context.Context, path string, fill func(cont
 	}
 	tmpPath := tmp.Name()
 	err = fill(ctx, tmp)
+	if err == nil {
+		// Written once, read by every later wake: flush now so a wake's
+		// staging (which fsyncs its source) never pays for these pages.
+		err = tmp.Sync()
+	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
@@ -207,9 +212,3 @@ func allocatedBytes(info fs.FileInfo) int64 {
 	}
 	return info.Size()
 }
-
-// sealedPlainLinker links an entry into a restore's staging
-// (storage.LocalFileLinker, for retainStorageFile).
-type sealedPlainLinker struct{ path string }
-
-func (l sealedPlainLinker) LinkTo(dst string) error { return os.Link(l.path, dst) }

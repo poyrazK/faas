@@ -8512,16 +8512,14 @@ func (v *JailerVMM) materializeSealed(ctx context.Context, instanceID string, st
 			if err != nil {
 				return "", fmt.Errorf("vmm: open sealed %q: %w", key, err)
 			}
-			ensured := time.Since(started)
-			path, linked, err := v.retainStorageFile(instanceID, sealedPlainLinker{path: entry})
+			// The entry is the restore source itself, as an unsealed node-cache
+			// file is: staging bind-mounts it read-only into the chroot. It is
+			// not tracked as a staging file, so Kill never removes it, and it
+			// was synced when filled, so staging's chmod+fsync finds no dirty
+			// pages (a fresh 512 MiB decrypt cost ~175 ms there per wake).
 			slog.Default().Debug("sealed plaintext cache", "instance", instanceID, "key", key,
-				"filled", filled, "ensure_ms", ensured.Milliseconds(), "linked", linked,
-				"total_ms", time.Since(started).Milliseconds(), "err", err)
-			if err != nil {
-				return "", fmt.Errorf("vmm: retain sealed %q: %w", key, err)
-			} else if linked {
-				return path, nil
-			}
+				"filled", filled, "ensure_ms", time.Since(started).Milliseconds())
+			return entry, nil
 		}
 		return v.materializeSealedParallel(ctx, instanceID, backend, key)
 	}
