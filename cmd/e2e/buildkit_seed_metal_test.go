@@ -78,6 +78,7 @@ func TestBuildKitSeedMetal(t *testing.T) {
 
 	t.Run("seed-run-makes-a-seed", func(t *testing.T) {
 		waitForBuildKitSeed(t, seedDir)
+		assertSeedOwnedLikeItsDirectory(t, seedDir)
 	})
 
 	createOpenApp(t, h, key, "seeded")
@@ -153,6 +154,29 @@ func waitForBuildKitSeed(t *testing.T, seedDir string) {
 			t.Fatalf("no BuildKit seed in %s after %v", seedDir, buildKitSeedWait)
 		}
 		time.Sleep(5 * time.Second)
+	}
+}
+
+// assertSeedOwnedLikeItsDirectory checks vmmd handed the seed run's drive
+// back: builderd, an unprivileged user in production, must open the seed for
+// every build. This suite runs as root and can read any file, so it checks
+// ownership; a seed left owned by the seed run's jail uid made every
+// production build run unseeded (2026-11-17).
+func assertSeedOwnedLikeItsDirectory(t *testing.T, seedDir string) {
+	t.Helper()
+	seeds, err := filepath.Glob(filepath.Join(seedDir, "*.ext4"))
+	if err != nil || len(seeds) != 1 {
+		t.Fatalf("seed drives = %v (%v), want one", seeds, err)
+	}
+	var dir, seed unix.Stat_t
+	if err := unix.Stat(seedDir, &dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Stat(seeds[0], &seed); err != nil {
+		t.Fatal(err)
+	}
+	if seed.Uid != dir.Uid || seed.Gid != dir.Gid {
+		t.Fatalf("seed %s owned by %d:%d, want its directory's %d:%d (vmmd did not hand the drive back)", seeds[0], seed.Uid, seed.Gid, dir.Uid, dir.Gid)
 	}
 }
 
