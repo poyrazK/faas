@@ -1359,6 +1359,19 @@
           Environment=FAAS_BUILD_SHARED_PLATFORM_BLOBS={{ '1' if (builderd_shared_platform_blobs | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_BUILDKIT_SEED={{ '1' if (builderd_buildkit_seed | default(false) | bool) else '0' }}
 
+    # ADR-20261109170000: refuse v1 layer signatures, which do not name their
+    # storage key and can be replayed onto another app's layer. Only true once
+    # `gregalectl artifact resign` has converted every stored layer.
+    - name: Install schedd's v2-only artifact signature switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-artifact-signatures.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2={{ '1' if (artifact_signature_require_v2 | default(false) | bool) else '0' }}
+
     # The 2026-11-15 trial set these switches, and the edge's binary hop (now
     # manifest hot_path.edge_binary_hop), by hand; fsn-2 also kept its
     # 2026-11-01 platform-blobs canary drop-in.
