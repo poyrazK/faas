@@ -54,7 +54,8 @@ must not be trusted with another workload's runtime state.
 
 Use stdin or an environment variable when setting a value in automation, and
 grant CI only `secrets:write` plus the scopes it needs to deploy. Secret names
-follow the same uppercase key contract as [environment variables](env.md).
+are uppercase (`^[A-Z][A-Z0-9_]*$`); [environment variables](env.md) may also
+use lowercase letters.
 Rotate a value by writing the same key; the operation is audited without
 recording the value. Every mutation invalidates snapshots that already exist;
 the `--restart` path additionally prevents the live process with the old value

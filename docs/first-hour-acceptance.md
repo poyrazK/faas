@@ -45,6 +45,76 @@ fixture after authentication, not a user's installation/login time, interactive
 account run does not establish Free-plan compatibility. Those distinctions stay
 visible in the scorecard.
 
+## Published CLI qualification
+
+Qualify the exact archive users can download, without rebuilding or replacing
+your installed CLI:
+
+```sh
+python3 scripts/first-hour/qualify_release.py \
+  --release v0.1.18-rc.349 --api https://api.gregale.dev \
+  --cli-login --plan scale --out /tmp/gregale-first-hour-released
+```
+
+The output directory must be new. Alternatively use `--token-file` for an
+explicit acceptance credential. The tool checks that the release is published,
+downloads the host platform's archive and `CLI-SHA256SUMS`, verifies its exact
+checksum record, and unpacks only the single regular `gregale` file into a
+temporary directory. Before deploying, the binary must report the selected
+version and the tag's source commit, and support `release verify`. The binary
+is removed when qualification ends; the existing CLI/login is left in place.
+
+The same seven-step journey then runs using that binary. Passing qualification
+requires a zero exit, all journey milestones including checked cleanup, and
+evidence bound to the verified binary checksum and selected API. Missing
+configuration, unsupported commands, fixture results, skipped steps or failed
+cleanup cannot qualify the released artifact. There is no automatic deployment
+retry. `qualification.json`/`.md` retain release/archive/binary provenance and
+the result; `baseline.json`/`.md` retain the sanitized journey scorecard.
+
+This measures a published archive and an authenticated scripted journey on one
+platform/plan. It does not qualify the published installer, its default channel
+selection, browser login, interactive Start, npm, other platforms/plans, or the
+rest of the release pipeline. Those lanes remain separately unmeasured.
+
+### Release workflow
+
+`.github/workflows/first-hour-release.yml` starts after the `release` workflow
+finishes, or can be dispatched on `main` with an exact published tag. It uses
+the acceptance harness from `main` and downloads the released binary separately.
+The upstream tag is taken from the release workflow's `head_branch` and checked
+as a release tag before network requests. An upstream pipeline failure still
+starts qualification: a published CLI can be tested independently of other
+publication jobs, while missing/unpublished assets cannot qualify. This does
+not change release publication, channel advancement or production deploy gates.
+
+Configure the GitHub environment `first-hour-acceptance` with:
+
+- Variable `GREGALE_ACCEPTANCE_API_URL`: the explicitly selected API origin.
+- Secret `GREGALE_ACCEPTANCE_TOKEN`: a separate key with `apps:read,deploy:write`
+  scopes, for an explicitly selected account with one free app slot and
+  allowance for four releases. Do not copy a developer's login into CI.
+- Optional variable `GREGALE_ACCEPTANCE_PLAN`: the account's actual plan; the
+  report otherwise records `unknown`.
+
+Restrict the environment's deployment branch policy to `main`. These key scopes
+are account-wide; the journey separately requires its generated app name to be
+absent before creating it and deletes only that owned app. See
+[authentication](auth.md) for key creation, revocation and rotation.
+
+Missing API/token configuration produces a blocked, nonzero qualification with
+artifact evidence retained. The workflow publishes its outcome in the job
+summary and uploads only the four sanitized JSON/Markdown reports, even after
+failure. Raw logs and Go output stay under `private/`, outside that upload list;
+the temporary token file is removed on step exit. Runs serialize without
+cancelling an active journey; GitHub may replace an older pending run, so a
+cancelled/absent run is not evidence that a release qualified. Dispatch an exact
+tag when a queued observation was missed.
+
+The separate workflow uses `workflow_run` because releases created using
+`GITHUB_TOKEN` do not start another `release: published` workflow. See
+[GitHub's workflow trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+
 ## Coding-agent lane
 
 The existing harness now has `first-hour-private` and `first-hour-edit` tasks.
@@ -124,6 +194,7 @@ fixture; without a binary only that fixture is skipped.
 
 ```sh
 python3 -I scripts/first-hour/baseline_test.py
+python3 -I scripts/first-hour/qualify_release_test.py
 python3 -I scripts/agent-eval/agent_eval_test.py
 go test ./tests/journeys -run '^TestHarnessFirstHour' -count=1
 ```

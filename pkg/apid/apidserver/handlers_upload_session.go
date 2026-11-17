@@ -1111,6 +1111,7 @@ func (s *server) auditUploadSessionCommitted(
 	if dErr == nil {
 		mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin)
 	}
+	mergeAgentAudit(data, r)
 	s.audit.EmitAs(ctx, resolvedActor, "upload.session_committed", &acct.ID, data)
 	if dErr == nil {
 		s.recordDeploymentActivity(ctx, r, acct, app, d,

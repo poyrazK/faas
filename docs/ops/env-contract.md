@@ -1180,6 +1180,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES` | vmmd | `dropin` |  |  | `` | boolean switch: volatile resource journal commits go only to the tmpfs copies and skip the disk fsync (ADR-20261026113920); code default off; ansible vmmd_resource_journal_volatile_writes (group_vars/compute_nodes, true) renders zz-faas-restore-speedups.conf in node_join.yml; enable only where the rollback target is this release or later |
 | `FAAS_VMMD_ROLE` | vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_SCHEDD_TARGET` | vmmd | `dropin` |  |  | `` |  |
+| `FAAS_VMMD_SEALED_FORMAT` | vmmd | `default` |  | v1 | `` | ADR-20261110210000 slice 3d-5: v2 writes sealed captures in crashcrypt's chunked format (4 MiB chunks, zero chunks left out, ChaCha20-Poly1305 per chunk, authenticated trailer), which a wake opens in parallel; v1 is one age stream. Every vmmd reads both; set v2 only once every vmmd that may restore a capture runs a release that reads it |
+| `FAAS_VMMD_SEALED_PLAIN_CACHE_DIR` | vmmd | `default` |  |  | `` | ADR-20261110210000 slice 3d-5: absolute directory (created 0700) where vmmd keeps one decrypted copy of each sealed snapshot it restored, so later wakes hardlink it like an unsealed snapshot instead of decrypting again; unused entries expire after 24 h and the oldest go over FAAS_VMMD_SEALED_PLAIN_CACHE_MB. Empty decrypts every wake |
+| `FAAS_VMMD_SEALED_PLAIN_CACHE_MB` | vmmd | `default` |  | 20480 | `` | ADR-20261110210000 slice 3d-5: disk budget in MiB (allocated, so sparse memory counts its data only) of FAAS_VMMD_SEALED_PLAIN_CACHE_DIR |
 | `FAAS_VMMD_SPANS_WRITER_TARGET` | vmmd | `dropin` |  |  | `` | split-box apid private mTLS listener for guest trace exports; empty uses the single-box socket (ADR-958) |
 | `FAAS_VMMD_STREAM_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_TARGET_URL` | vmmd | `dropin` |  |  | `` |  |

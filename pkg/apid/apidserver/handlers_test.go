@@ -563,7 +563,8 @@ func TestCreateDeployment_Overrides_RejectsInvalid(t *testing.T) {
 		{
 			name: "env-key-violates-grammar",
 			overrides: &api.CreateDeploymentOverrides{
-				Env: map[string]string{"lower_case": "v"},
+				// Lowercase names are valid since #7424; a hyphen never is.
+				Env: map[string]string{"BAD-KEY": "v"},
 			},
 			wantInBody: "Invalid env var key",
 		},

@@ -33,9 +33,7 @@ func TestManagedPostgresRollbackRestore(t *testing.T) {
 	hidden := hiddenCapabilities(t, tg)
 	skipHidden(t, hidden, "database-rollbacks")
 	skipHidden(t, hidden, "release-commands")
-	if j.databaseLimit < pgJourneysDatabases {
-		t.Skipf("the PostgreSQL journeys hold up to %d databases at once; this account's limit is %d", pgJourneysDatabases, j.databaseLimit)
-	}
+	j.needRoomForAllJourneys(t)
 	j.app = tg.app(t, "pg-rb")
 	j.db = tg.slug("pg-rb")
 	// The copy is purged first (cleanups run last-registered first): a
@@ -75,9 +73,7 @@ func TestManagedPostgresRollbackCancelled(t *testing.T) {
 	hidden := hiddenCapabilities(t, tg)
 	skipHidden(t, hidden, "database-rollbacks")
 	skipHidden(t, hidden, "release-commands")
-	if j.databaseLimit < pgJourneysDatabases {
-		t.Skipf("the PostgreSQL journeys hold up to %d databases at once; this account's limit is %d", pgJourneysDatabases, j.databaseLimit)
-	}
+	j.needRoomForAllJourneys(t)
 	j.app = tg.app(t, "pg-rc")
 	j.db = tg.slug("pg-rc")
 	t.Cleanup(func() { j.purge(t, j.db) })
@@ -101,7 +97,12 @@ func TestManagedPostgresRollbackCancelled(t *testing.T) {
 			t.Skipf("switch %s reached switching before the cancel landed: %s", id, res.problem())
 		}
 		sw = object(t, res.stdout)
-		j.restored = str(sw, "target_name")
+		// target_name is chosen when the switch starts; a copy exists only once
+		// the switch reserved it (target_database_id). A cancel that lands while
+		// it is still restoring leaves no copy (production 2026-11-17).
+		if str(sw, "target_database_id") != "" {
+			j.restored = str(sw, "target_name")
+		}
 		if str(sw, "phase") != "cancelled" {
 			t.Fatalf("the cancelled switch ended %q: %s", str(sw, "phase"), compact(sw))
 		}
@@ -116,7 +117,7 @@ func TestManagedPostgresRollbackCancelled(t *testing.T) {
 	})
 	s.check("restored_copy_kept", func(t *testing.T) {
 		if j.restored == "" {
-			t.Skip("the switch was cancelled before it named its copy")
+			t.Skip("the switch was cancelled before it reserved a copy")
 		}
 		res := tg.run(t, time.Minute, "postgres", "get", j.restored)
 		if res.exit != 0 {
@@ -196,5 +197,23 @@ func (j *postgresJourney) restoredCopy(t *testing.T) {
 	}
 	if until := str(doc, "restore_slot_until"); until != "" {
 		t.Errorf("the app's database after the switch holds the restore slot until %s: %s", until, compact(doc))
+	}
+}
+
+// needRoomForAllJourneys skips a journey that would race the others for the
+// account's database slots. It counts the databases the account already holds,
+// not just the plan's limit: on production 2026-11-17 the owner account held 7
+// of its 10, and the journeys failed with managed_postgres_quota_exceeded.
+func (j *postgresJourney) needRoomForAllJourneys(t *testing.T) {
+	t.Helper()
+	held := 0
+	for _, item := range items(object(t, j.tg.ok(t, time.Minute, "postgres", "list").stdout), "items") {
+		if str(item, "state") != "deleted" {
+			held++
+		}
+	}
+	if free := j.databaseLimit - held; free < pgJourneysDatabases {
+		t.Skipf("the PostgreSQL journeys hold up to %d databases at once; this account has %d of %d free (it holds %d)",
+			pgJourneysDatabases, free, j.databaseLimit, held)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -49,8 +50,13 @@ func TestRunGitCmd_HungGitTimesOutWithNoticeAndCommand(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("runGitCmd took %s; want it bounded by the metadata timeout", elapsed)
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v; want a deadline error", err)
+	if !errors.Is(err, main.ErrLocalGitTimeout) {
+		t.Fatalf("err = %v; want ErrLocalGitTimeout", err)
+	}
+	// A local timeout is not a network failure: printErr renders
+	// context.DeadlineExceeded as "Could not reach Gregale" (rc.349).
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v; a local git timeout must not look like a transport timeout", err)
 	}
 	for _, want := range []string{"git status --porcelain did not finish within", "core.fsmonitor", "outside the repository"} {
 		if !strings.Contains(err.Error(), want) {
@@ -78,6 +84,43 @@ func TestRunGitCmd_InheritedPipeDoesNotHang(t *testing.T) {
 	// output git wrote before exiting is not what matters here, the bound is.
 	_ = out
 	_ = err
+}
+
+// rc.349 follow-up: in a repository whose git hangs, a project dry run
+// reported "Could not reach Gregale … the request timed out" before making
+// any request, because the git timeout wrapped context.DeadlineExceeded.
+func TestProjectDryRunHungGitReportsGitNotNetwork(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "compose.yaml"), []byte("services:\n  web:\n    image: nginx:1.27\n    ports: [\"8080:80\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "init"}} {
+		cmd := exec.Command(realGit, args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	fakeGit(t, "exec sleep 30")
+	shortGitBudgets(t)
+	t.Setenv("FAAS_API", "http://127.0.0.1:1")
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Chdir(repo)
+	main.WithResetJSONOutput(t, false)
+	stdout, stderr, restore := main.SwapIO(t)
+	code := main.CmdDeployTarball([]string{"--project", "--name", "demo", "--dry-run"})
+	restore()
+	out := stdout.String() + stderr()
+	if code == 0 || strings.Contains(out, "Could not reach Gregale") || strings.Contains(out, "request timed out") {
+		t.Fatalf("exit=%d; a hung local git was reported as a network failure:\n%s", code, out)
+	}
+	if !strings.Contains(out, "did not finish within") {
+		t.Fatalf("exit=%d; output does not name the timeout:\n%s", code, out)
+	}
 }
 
 func TestRunGitCmd_FastGitHasNoNotice(t *testing.T) {
