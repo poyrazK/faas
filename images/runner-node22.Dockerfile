@@ -2,6 +2,15 @@
 # §4.9). The base is content-addressed and staged once as drive0; app images
 # still contribute only their dependency/code delta as drive1.
 # Content-addressed, staged to /srv/fc/base/runner-node22.ext4.
+# Debug tools for `gregale app exec --debug` (ADR-20261117070620): the pinned
+# static BusyBox (root:root 0111) with applet links, at /usr/lib/gregale/debug.
+# guest-init mounts it only into a debug session's private mount namespace; it
+# is not on any PATH. Every runtime base carries the same BusyBox.
+FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools
+RUN set -eu; mkdir -p /out/bin; cp /bin/busybox /out/busybox; \
+    for applet in $(/bin/busybox --list); do ln -s ../busybox "/out/bin/$applet"; done; \
+    chmod 0111 /out/busybox
+
 FROM mirror.gcr.io/library/node:22-alpine@sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
 # `make images-lock-update` is the only way to bump the digest.
@@ -36,3 +45,6 @@ RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt ap
 COPY --chmod=0644 guest/profiling/node.cjs /opt/gregale/profiling/node.cjs
 COPY --chmod=0644 guest/tracing/node.cjs /opt/gregale/tracing/node.cjs
 WORKDIR /app
+
+# ADR-20261117070620: debug tools for `gregale app exec --debug`.
+COPY --from=gregale-debug-tools /out/ /usr/lib/gregale/debug/

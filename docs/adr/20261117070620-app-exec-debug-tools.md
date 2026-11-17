@@ -45,8 +45,9 @@ fetch path into tenant VMs.
    scope, IDOR-safe app load), timeout and VM lifecycle as any `app exec`
    session. No new scope.
 
-2. **Tools ship in every runtime base.** Every runtime base image (base-minimal,
-   the runner bases and agent-base) carries the same pinned static busybox at
+2. **Tools ship in every runtime base.** Every runtime base an app boots on
+   (base-minimal and the go, node and python runner bases; not agent-base or
+   the staging-only Debian parent) carries the same pinned static busybox at
    `/usr/lib/gregale/debug/busybox`, `root:root` mode `0111`, with
    `/usr/lib/gregale/debug/bin/<applet>` symlinks for its applets. It comes
    from the busybox stage `base-minimal` already pins, so all bases carry one

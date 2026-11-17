@@ -1907,6 +1907,8 @@ var cliCommands = []cliCommand{
 			{Name: subExec, Common: true, Short: "Run a command in a fresh VM of the live deployment", Flags: []cliFlag{
 				{Name: "interactive", Short: "attach stdin and stream output live (-i; default command /bin/sh)"},
 				{Name: "tty", Short: "allocate a remote terminal (-t; use -it)"},
+				{Name: "debug", Short: "add busybox tools for images without a shell (distroless, scratch); implies -it, default command sh"},
+				{Name: "no-tty", Short: "with --debug, no remote terminal"},
 				{Name: "shell", Short: "interpret one command string through the app shell"},
 				{Name: "detach", Short: "return after the task is queued"},
 				{Name: "timeout-seconds", Short: "server-side command timeout", Value: "N"},

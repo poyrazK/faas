@@ -29,6 +29,31 @@ func TestAppTaskSessionBuiltinValidation(t *testing.T) {
 	}
 }
 
+// Debug sessions (ADR-20261117070620) are interactive, tty or not, never
+// shell-interpreted, and carry a command after the marker.
+func TestAppTaskDebugCommandValidation(t *testing.T) {
+	valid := []CreateAppTaskRequest{
+		{Interactive: true, TTY: true, Command: []string{AppTaskDebugCommand, AppTaskDebugDefaultCommand}},
+		{Interactive: true, Command: []string{AppTaskDebugCommand, "ls", "-la", "/"}},
+	}
+	for _, request := range valid {
+		if _, problem := request.Resolve(); problem != nil {
+			t.Fatalf("%v rejected: %s", request.Command, problem.Detail)
+		}
+	}
+	invalid := map[string]CreateAppTaskRequest{
+		"batch":      {Command: []string{AppTaskDebugCommand, "sh"}},
+		"no command": {Interactive: true, Command: []string{AppTaskDebugCommand}},
+		"blank":      {Interactive: true, Command: []string{AppTaskDebugCommand, " "}},
+		"shell":      {Interactive: true, CommandShell: true, Command: []string{AppTaskDebugCommand, "ls"}},
+	}
+	for name, request := range invalid {
+		if _, problem := request.Resolve(); problem == nil {
+			t.Errorf("%s: %v accepted", name, request.Command)
+		}
+	}
+}
+
 func TestCreateAppTaskRequestInteractiveDefaults(t *testing.T) {
 	resolved, problem := (CreateAppTaskRequest{Interactive: true, TTY: true}).Resolve()
 	if problem != nil {
