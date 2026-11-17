@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261116193733100_support_grants.sql
+-- filename: 20261117064345100_support_grants.sql
 
 -- +goose Up
 -- Customer-granted support access (ADR-20261116163508).
