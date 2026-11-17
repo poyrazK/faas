@@ -16,6 +16,19 @@ from ..workflows import NonRetryableError
 from .files import FileBucket, FileOptions
 
 
+def _parse_pipeline_trigger(value: Any) -> dict[str, Any]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"version", "kind", "identity"}
+        or type(value["version"]) is not int
+        or value["version"] != 1
+        or value["kind"] not in ("event", "schedule", "tool")
+        or not _hash(value["identity"])
+    ):
+        raise PipelineError("receipt_conflict")
+    return copy.deepcopy(value)
+
+
 class PipelineError(NonRetryableError):
     def __init__(self, code: str, step: str | None = None, job_run_id: str | None = None):
         super().__init__("pipeline:" + code + (":" + step if step else "") + (":" + job_run_id if job_run_id else ""))
