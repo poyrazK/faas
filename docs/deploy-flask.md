@@ -31,17 +31,21 @@ flask
 gunicorn
 ```
 
-Gregale looks for the module that creates `Flask(...)` and infers:
-
-```text
-gunicorn app:app --bind 0.0.0.0:$PORT
-```
-
-If it cannot find one it falls back to `app:app` and warns. For an app
-factory or more workers, set the command:
+Set the start command yourself. `gregale deploy --dry-run` shows the command
+Gregale infers from the module that creates `Flask(...)` (here
+`gunicorn app:app`), but a source build without a `Procfile` can start
+`gunicorn main:app` instead, which fails with
+`ModuleNotFoundError: No module named 'main'` unless the app lives in
+`main.py`. A `Procfile` line settles it:
 
 ```text
 # Procfile
+web: gunicorn app:app --bind 0.0.0.0:$PORT
+```
+
+For an app factory or more workers:
+
+```text
 web: gunicorn "myapp:create_app()" --bind 0.0.0.0:$PORT --workers 2
 ```
 

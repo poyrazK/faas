@@ -36,10 +36,21 @@ func main() {
 `":" + port` listens on every interface. Do not bind `localhost:` or
 `127.0.0.1:`. With Gin, `router.Run(":" + port)` does the same.
 
-With the main package at the module root, nothing else is needed. For
-another layout (for example `cmd/server`), check what
-`gregale deploy --dry-run` finds; if it finds no runnable start command, add
-a `Dockerfile` (see [Container compatibility](container-compatibility.md)).
+With the main package at the module root, nothing else is needed: the build
+compiles it to `./out` and runs that. For another layout (for example
+`cmd/server`), check what `gregale deploy --dry-run` finds; if it finds no
+runnable start command, add a `Dockerfile` (see
+[Container compatibility](container-compatibility.md)).
+
+A `Procfile` from Heroku's Go buildpack names a binary that buildpack
+installs (`web: my-app`); on Gregale that command does not exist and the app
+crashes at start. Point the start command at the build's binary:
+
+```yaml
+# gregale.yaml
+hosting:
+  start: ./out
+```
 
 To name the health path explicitly:
 

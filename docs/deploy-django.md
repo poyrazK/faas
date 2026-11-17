@@ -95,15 +95,37 @@ if it fails, the previous version keeps serving. See
 
 ## Static files
 
-The filesystem is ephemeral and there is no shared disk, so serve static
-files from the app with [WhiteNoise](https://whitenoise.readthedocs.io/) and
-collect them when the app starts:
+The build does not run `collectstatic`, and the app's own directory is
+read-only while it runs, so a `STATIC_ROOT` inside the project fails with a
+permission error. Collect into a writable directory when the app starts, and
+serve the files from the app with [WhiteNoise](https://whitenoise.readthedocs.io/):
+
+```python
+STATIC_ROOT = os.environ.get("STATIC_ROOT", "/tmp/staticfiles")
+```
 
 ```text
 web: python manage.py collectstatic --noinput && gunicorn mysite.wsgi:application --bind 0.0.0.0:$PORT
 ```
 
-User uploads belong in object storage, not `MEDIA_ROOT`.
+The filesystem is ephemeral and there is no shared disk: user uploads belong
+in object storage, not `MEDIA_ROOT`.
+
+## HTTPS
+
+Gregale terminates TLS and passes requests to the app with
+`X-Forwarded-Proto: https`. To redirect plain HTTP with Django, trust that
+header, and keep the health route out of the redirect, because Gregale's
+health check calls the app over plain HTTP inside the instance:
+
+```python
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = True
+SECURE_REDIRECT_EXEMPT = [r"^healthz$"]
+```
+
+Without a health route Gregale only waits for the port, and nothing needs
+exempting.
 
 ## Choose the Python version
 

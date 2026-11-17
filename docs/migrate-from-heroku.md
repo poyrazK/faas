@@ -29,6 +29,15 @@ Gregale's and walks through a move.
   it already does on Heroku.
 - `web:` must start a production server (Gunicorn, Uvicorn, `node`), not a
   development one.
+- Settings that switch on Heroku's `DYNO` variable stay off on Gregale.
+  Heroku's own getting-started apps open `ALLOWED_HOSTS`, the database and
+  HTTPS settings only when `DYNO` is set; key them on a variable you set
+  with `gregale env set` instead.
+- Heroku's buildpacks do work at build time that Gregale does not: Django's
+  `collectstatic` (run it when the app starts, into a writable
+  `STATIC_ROOT`; see [Deploy a Django app](deploy-django.md#static-files)),
+  and a Go binary named after the app (start `./out`; see
+  [Deploy a Go app](deploy-go.md)).
 - Keep the Heroku app running until the Gregale one serves real traffic.
 
 Check what Gregale detects, from the repository root:

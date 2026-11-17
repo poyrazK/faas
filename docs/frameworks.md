@@ -43,8 +43,10 @@ The command an app runs is, in order of precedence:
 3. the start command the build detects;
 4. the command in the table above, when the build found none.
 
-Inference covers the common layouts. For a predictable deploy, write the
-command down, in either place:
+`gregale deploy --dry-run` shows the command from step 4. When the build
+detects a command of its own (step 3), that one runs instead, and the two can
+differ: a Flask app without a `Procfile` can be started as `main:app`. For a
+predictable deploy, write the command down, in either place:
 
 ```yaml
 # gregale.yaml
@@ -91,6 +93,11 @@ Keep it cheap and free of side effects. A running app must keep answering
 its health path; see [Deployment overrides](deploy-overrides.md) for how
 Gregale restarts an instance that stops answering.
 
+Do not use `/` as the health path. Gregale can answer an app's public health
+path at its edge without running the app, so with `/` visitors get
+`{"status":"ok","source":"edge"}` instead of your page. Add a small route
+such as `/healthz` instead.
+
 ## Runtime versions
 
 With no version declared, Node apps build on Node 24 and Python apps on
@@ -116,8 +123,16 @@ gregale app health my-api --errors
 gregale logs my-api
 ```
 
-On plans where a new app is private, its URL answers `401` until you allow
-anonymous requests; see [Quickstart](quickstart.md).
+A new app can be private: its URL answers `401` until you allow anonymous
+requests. Two settings control it, and a public app needs both:
+
+```bash
+gregale app update my-api --no-require-authn
+gregale app update my-api --public-auth open
+```
+
+See [Quickstart](quickstart.md) for testing a private app without making it
+public.
 
 ## Configuration, secrets and databases
 
