@@ -274,7 +274,7 @@ func run(args []string) (status int) {
 	// Help is always local and comes from the same manifest as completion and
 	// the generated reference. This also handles flags preceding --help.
 	if len(args) > 1 && args[0] != "help" && hasHelpFlag(args[1:]) {
-		if command, ok := lookupDiscoverableCommand(args[0]); ok {
+		if command, ok := lookupNamedHelpCommand(args[0]); ok {
 			if printManifestHelpAs(typed, args, command, args[1:]) {
 				return 0
 			}
@@ -315,7 +315,7 @@ func run(args []string) (status int) {
 			_, _ = fmt.Fprint(osStdout, topLevelUsage(showAll, showOperator))
 			return 0
 		}
-		if command, ok := lookupDiscoverableCommand(args[1]); ok && cliCommandAvailable(command.Name) {
+		if command, ok := lookupNamedHelpCommand(args[1]); ok && cliCommandAvailable(command.Name) {
 			if printManifestHelpAs(typed, args, command, args[2:]) {
 				return 0
 			}

@@ -67,11 +67,17 @@ func (r DeploymentResponseCheckRequest) Validate() error {
 	if r.EnvironmentID != "" && r.ProjectID == "" {
 		return errors.New("environment_id requires project_id")
 	}
-	u, err := url.Parse(r.Path)
-	if err != nil || len(r.Path) > DeploymentResponseCheckMaxPathBytes || !strings.HasPrefix(r.Path, "/") || strings.HasPrefix(r.Path, "//") || strings.Contains(r.Path, "\\") || strings.ContainsRune(r.Path, '#') || u.Host != "" || u.Scheme != "" || strings.IndexFunc(r.Path, unicode.IsControl) >= 0 {
+	if !ValidDeploymentResponseCheckPath(r.Path) {
 		return errors.New("path must be a bounded app-relative GET path without a fragment or controls")
 	}
 	return nil
+}
+
+// ValidDeploymentResponseCheckPath reports whether path is a bounded
+// app-relative GET path without a host, scheme, fragment, backslash or controls.
+func ValidDeploymentResponseCheckPath(path string) bool {
+	u, err := url.Parse(path)
+	return err == nil && len(path) <= DeploymentResponseCheckMaxPathBytes && strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && !strings.Contains(path, "\\") && !strings.ContainsRune(path, '#') && u.Host == "" && u.Scheme == "" && strings.IndexFunc(path, unicode.IsControl) < 0
 }
 
 // DeploymentResponseCheckResult is ephemeral response evidence, not a public

@@ -137,6 +137,18 @@ func toolSuccessSchema(name string) map[string]any {
 		props["bill_estimate_available"] = map[string]any{"type": "boolean", "const": false}
 		props["meters"] = map[string]any{"type": "array", "items": map[string]any{"type": "object", "required": []string{"meter", "coverage", "quantity", "net_millicents", "allocations"}}}
 		props["missing_bill_components"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+	case name == "gregale_search_docs":
+		required = []string{"query", "results", "retrieved_at", "next"}
+		add("string", "query", "next")
+		add("boolean", "stale")
+		props["results"] = map[string]any{"type": "array", "items": map[string]any{"type": "object", "required": []string{"page", "title", "url", "snippet"}}}
+		props["retrieved_at"] = map[string]any{"type": "string", "format": "date-time"}
+	case name == "gregale_get_docs_page":
+		required = []string{"page", "title", "url", "markdown", "headings", "retrieved_at"}
+		add("string", "page", "title", "summary", "url", "section", "markdown", "next")
+		add("boolean", "truncated", "stale")
+		props["headings"] = map[string]any{"type": "array", "items": map[string]any{"type": "object"}}
+		props["retrieved_at"] = map[string]any{"type": "string", "format": "date-time"}
 	case name == "gregale_get_app":
 		required = []string{"id", "slug", "status"}
 		add("string", "id", "slug", "type", "status", "url", "canonical_url")

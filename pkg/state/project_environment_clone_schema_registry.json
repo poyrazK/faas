@@ -14164,6 +14164,37 @@
     "kind": "account_identity"
   },
   {
+    "table": "support_grant_requests",
+    "columns": [
+      "created_at",
+      "decided_at",
+      "decided_by_account_id",
+      "expires_at",
+      "id",
+      "operator_account_id",
+      "org_id",
+      "reason",
+      "status"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "support_grants",
+    "columns": [
+      "app_ids",
+      "created_at",
+      "created_by_account_id",
+      "expires_at",
+      "id",
+      "org_id",
+      "reason",
+      "request_id",
+      "revoked_at",
+      "revoked_by_account_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "org_security_policies",
     "columns": [
       "org_id",

@@ -126,6 +126,40 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchSupportAccess,
+		DocSlug: "support-access",
+		Short:   "Ask for, list and use customer-granted support access (deploy, retry, cancel, rollback, restart)",
+		Subcommands: []cliSub{
+			{Name: "request", Short: "Ask an organization's owners and admins for access", Flags: []cliFlag{
+				{Name: "org", Short: "organization slug", Req: true}, {Name: "reason", Short: "why; the customer reads it", Req: true},
+			}},
+			{Name: "grants", Short: "List live grants customers gave support"},
+			{Name: "status", Short: "Show an app's latest deployment under a grant", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
+			}},
+			{Name: "deploy", Short: "Build and deploy the app's connected repository at its production branch", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
+				{Name: "repo", Short: "connected GitHub repository (owner/name)", Req: true}, {Name: "ref", Short: "the app's production branch", Req: true},
+				{Name: "reason", Short: "reason recorded on the deployment"},
+			}},
+			{Name: "retry", Short: "Retry a deployment from a stage", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "deployment", Short: "deployment id", Req: true},
+				{Name: "from-stage", Short: "stage to retry from (default build)"},
+			}},
+			{Name: "cancel", Short: "Cancel a deployment", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true}, {Name: "deployment", Short: "deployment id", Req: true},
+			}},
+			{Name: "rollback", Short: "Roll an app back", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
+				{Name: "to", Short: "target deployment id (default: previous)"}, {Name: "reason", Short: "reason recorded on the rollback"},
+			}},
+			{Name: "restart", Short: "Restart an app", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
+				{Name: "fresh", Short: "discard snapshots and cold boot"},
+			}},
+		},
+	},
+	{
 		Name:    dispatchBilling,
 		DocSlug: "billing",
 		Short:   "Operator billing catalog, credits, refunds, reconciliation, and webhook diagnostics",

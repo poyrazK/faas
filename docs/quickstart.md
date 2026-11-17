@@ -85,27 +85,78 @@ that omits its deployment identity is followed by an owner-authorized check,
 labeled separately from public URL verification. Gateway health responses cannot
 verify the app; choose another GET path that reaches an application route.
 
-Useful follow-ups:
+## Know what was verified
+
+| Result | What it establishes |
+| --- | --- |
+| Deployment ready | The deployment reached the platform's ready state. |
+| Application response verified | An application route returned 2xx from the accepted deployment. The output names the deployment and check method. |
+| Public access verified | A credential-free request reached that deployment through its public URL. An owner-authorized check alone does not establish this. |
+
+`gregale start` checks the first response automatically. For a public app, it
+tries the deployment URL without account credentials. If the public response
+cannot identify its deployment, it performs an owner-authorized check and labels
+that result separately. For a private or internal app, it checks the exact
+deployment through your authenticated Gregale account.
+
+## Test a private app
+
+Use the deployment UUID from your launch receipt to repeat an owner-authorized
+GET, on any plan:
 
 ```bash
-gregale invocation run my-api --method GET --path /
-gregale logs my-api --follow
-gregale metric my-api
-gregale open my-api
-gregale feature list
+gregale release verify DEPLOYMENT_UUID --app my-api --path /
 ```
 
-On Hobby, Pro and Scale a new app is private: every request needs an API key
-as `Authorization: Bearer <key>`, so opening its URL in a browser shows
-`401 unauthorized`. `gregale invocation run` sends the request with your login and is
-the way to test it; never put a key in a URL. To make the app public on
-purpose, run `gregale app update my-api --no-require-authn`. On a public
-app the `/healthz` URL answers `{"status":"ok","source":"edge"}` from
-Gregale's edge without a key; on a private app it answers
-`401 unauthorized` without one, like every other path. The edge answer does
-not show your code ran; use
-`gregale invocation run my-api --method GET --path /healthz` to reach your handler's own
-health route.
+This uses deployment-write access and the same verification service as Start.
+It keeps the app's access settings and sends no account credentials to your
+application. The result includes the actual application HTTP status and a bounded
+response preview. Only 2xx verifies the response; application-owned authentication
+can still return 401 or 403. The check can wake the app and use compute allowance.
+
+In the dashboard, choose **Verify response** after **Deployment ready**. It runs
+the same owner-authorized check, including on Free. **Open public request URL**
+and curl are separate ways to test public access when public access is configured.
+
+On plans where a new app is private, opening its URL without the required
+credentials can return `401 unauthorized` even after a successful deployment.
+You can test it without making it public. To intentionally allow anonymous
+requests, review the access change and run:
+
+```bash
+gregale app update my-api --no-require-authn
+```
+
+Then test an application route on the public URL. The public `/healthz` can
+answer from Gregale's edge without running your code; it is not application
+response verification. An internal app has no public endpoint.
+
+For a named environment, use the accepted deployment UUID. `release verify`
+looks up the project and environment identities from the deployment's app; pass
+`--project-id UUID --environment-id UUID` only to pin them explicitly. Checks
+never fall back to another deployment or scope. A redirect (3xx) is not
+verified: rerun with `--path` set to the route it leads to.
+
+## Keep building
+
+```bash
+gregale logs my-api --follow
+gregale metric my-api
+gregale inspect my-api
+```
+
+For scripts and coding agents, use the existing deployment commands instead of
+interactive Start:
+
+```bash
+gregale --non-interactive --json deploy --path ./my-api --source=worktree --name my-api --yes
+gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api --path /
+```
+
+Use the accepted UUID in the deployment receipt. A response check exits nonzero
+for a non-2xx application status; JSON includes `verified` and
+`public_access_verified` separately. See [coding agents](agents.md) for credentials
+and the automation contract.
 
 Apps park when idle and wake on the next request; this saves idle cost but the
 first request after a park can be slower. Gregale is stateless: use [sealed

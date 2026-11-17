@@ -60980,6 +60980,49 @@ ALTER TABLE public.support_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS 
 
 
 --
+-- Name: support_grant_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_grant_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    operator_account_id uuid NOT NULL,
+    reason text NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    decided_at timestamp with time zone,
+    decided_by_account_id uuid,
+    CONSTRAINT support_grant_requests_decision_check CHECK (((status = 'open'::text) = (decided_at IS NULL))),
+    CONSTRAINT support_grant_requests_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '24:00:00'::interval)))),
+    CONSTRAINT support_grant_requests_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 400))),
+    CONSTRAINT support_grant_requests_status_check CHECK ((status = ANY (ARRAY['open'::text, 'approved'::text, 'declined'::text])))
+);
+
+
+--
+-- Name: support_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    app_ids uuid[],
+    created_by_account_id uuid NOT NULL,
+    request_id uuid,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    revoked_by_account_id uuid,
+    CONSTRAINT support_grants_apps_check CHECK (((app_ids IS NULL) OR ((cardinality(app_ids) >= 1) AND (cardinality(app_ids) <= 100)))),
+    CONSTRAINT support_grants_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '7 days'::interval)))),
+    CONSTRAINT support_grants_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 400))),
+    CONSTRAINT support_grants_revoked_check CHECK (((revoked_by_account_id IS NULL) OR (revoked_at IS NOT NULL)))
+);
+
+
+--
 -- Name: support_messages; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -76141,6 +76184,22 @@ ALTER TABLE ONLY public.support_events
 
 
 --
+-- Name: support_grant_requests support_grant_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_grants support_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: support_messages support_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87545,6 +87604,20 @@ CREATE INDEX support_episodes_started_idx ON public.support_episodes USING btree
 --
 
 CREATE INDEX support_events_ticket_idx ON public.support_events USING btree (ticket_id, sequence);
+
+
+--
+-- Name: support_grant_requests_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_grant_requests_open_idx ON public.support_grant_requests USING btree (org_id, created_at DESC) WHERE (status = 'open'::text);
+
+
+--
+-- Name: support_grants_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_grants_org_idx ON public.support_grants USING btree (org_id, created_at DESC);
 
 
 --
@@ -112272,6 +112345,62 @@ ALTER TABLE ONLY public.support_events
 
 ALTER TABLE ONLY public.support_events
     ADD CONSTRAINT support_events_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_decided_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_decided_by_account_id_fkey FOREIGN KEY (decided_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_operator_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_operator_account_id_fkey FOREIGN KEY (operator_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grants support_grants_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grants support_grants_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grants support_grants_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.support_grant_requests(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_grants support_grants_revoked_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_revoked_by_account_id_fkey FOREIGN KEY (revoked_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --
