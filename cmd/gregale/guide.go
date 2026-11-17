@@ -136,7 +136,7 @@ var guidePages = []guidePage{
 			{Do: "Read an app's logs", Command: "gregale logs <app>"},
 			{Do: "Read a failed deployment's build and startup logs", Command: "gregale logs <app> --deployment <deployment>"},
 			{Do: "See an app's state, park reason and recommendations", Command: "gregale inspect <app>"},
-			{Do: "Run a command against the live deployment", Command: "gregale app exec <app> -- <command>"},
+			{Do: "Run a command in a fresh VM of the live deployment (not the serving instance)", Command: "gregale app exec <app> -- <command>"},
 			{Do: "Check the source locally", Command: "gregale doctor"},
 		},
 		Notes: []string{
