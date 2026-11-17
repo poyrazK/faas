@@ -5277,6 +5277,10 @@ type Querier interface {
 	// and those bound for the organization the key acts in (§3).
 	NotificationChannelsForAgentApproval(ctx context.Context, db DBTX, arg NotificationChannelsForAgentApprovalParams) ([]NotificationChannel, error)
 	NotificationClaimAttempts(ctx context.Context, db DBTX, arg NotificationClaimAttemptsParams) (int32, error)
+	// Undelivered durable handoffs per channel: how many, and the age of the
+	// oldest. The claim indexes cover exactly these states, so this reads only the
+	// live backlog, never the retained history.
+	NotificationOutboxBacklog(ctx context.Context, db DBTX) ([]NotificationOutboxBacklogRow, error)
 	NotifyAlertRollbackTraffic(ctx context.Context, db DBTX, arg NotifyAlertRollbackTrafficParams) error
 	NotifyAlertServiceRollback(ctx context.Context, db DBTX, arg NotifyAlertServiceRollbackParams) error
 	NotifyApplicationStandardControlsChanged(ctx context.Context, db DBTX, appID string) error

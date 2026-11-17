@@ -31,9 +31,23 @@ type HostedTaskSourceIntent struct {
 	CreatedAt                  time.Time       `json:"created_at"`
 	ExpiresAt                  time.Time       `json:"expires_at"`
 	SourceState                string          `json:"source_state"`
+	ReviewStatus               string          `json:"review_status,omitempty"`
+	DecidedAt                  *time.Time      `json:"decided_at,omitempty"`
 	ReadyToApply               bool            `json:"ready_to_apply"`
 	BindingsVerified           bool            `json:"bindings_verified"`
 	OwnerAuthorizationRequired bool            `json:"owner_authorization_required"`
+}
+
+// HostedTaskSourceCheck rechecks the retained review without granting execution.
+type HostedTaskSourceCheck struct {
+	ReviewSHA256 string `json:"review_sha256"`
+}
+
+// HostedTaskSourceDecision binds an owner decision to the complete retained intent.
+type HostedTaskSourceDecision struct {
+	IntentSHA256 string `json:"intent_sha256"`
+	ReviewSHA256 string `json:"review_sha256"`
+	Decision     string `json:"decision"`
 }
 
 func (c *Client) PrepareHostedTaskSourceIntent(ctx context.Context, id string, in HostedTaskSourcePrepare) (HostedTaskSourceIntent, error) {
@@ -44,6 +58,18 @@ func (c *Client) PrepareHostedTaskSourceIntent(ctx context.Context, id string, i
 func (c *Client) GetHostedTaskSourceIntent(ctx context.Context, id string) (HostedTaskSourceIntent, error) {
 	var out HostedTaskSourceIntent
 	err := c.do(ctx, http.MethodGet, "/v1/task-tool-source-intents/"+url.PathEscape(id), nil, &out)
+	return out, err
+}
+
+func (c *Client) CheckHostedTaskSourceIntent(ctx context.Context, id string, in HostedTaskSourceCheck) (HostedTaskSourceIntent, error) {
+	var out HostedTaskSourceIntent
+	err := c.doWithoutIdempotencyKey(ctx, http.MethodPost, "/v1/task-tool-source-intents/"+url.PathEscape(id)+"/check", in, &out)
+	return out, err
+}
+
+func (c *Client) DecideHostedTaskSourceIntent(ctx context.Context, id string, in HostedTaskSourceDecision) (HostedTaskSourceIntent, error) {
+	var out HostedTaskSourceIntent
+	err := c.doWithoutIdempotencyKey(ctx, http.MethodPut, "/v1/task-tool-source-intents/"+url.PathEscape(id)+"/decision", in, &out)
 	return out, err
 }
 

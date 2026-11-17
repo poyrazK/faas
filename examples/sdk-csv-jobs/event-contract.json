@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "type": "import.requested",
+  "data": {
+    "type": "object",
+    "properties": { "import_id": { "type": "string", "minLength": 36, "maxLength": 36 } },
+    "required": ["import_id"],
+    "additionalProperties": false
+  }
+}

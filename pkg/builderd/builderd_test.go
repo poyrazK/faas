@@ -602,8 +602,8 @@ func TestProcessOne_ParentBuilderSliceOOMIsAttributed(t *testing.T) {
 func TestBoundedGuestBuildLogTailKeepsNewestDiagnostic(t *testing.T) {
 	raw := strings.Repeat("x", 4*1024) + "\nrailpack: script start.sh not found\n"
 	got := boundedGuestBuildLogTail(raw)
-	if len(got) > 3*1024 {
-		t.Fatalf("bounded tail = %d bytes, want <= 3072", len(got))
+	if len(got) > guestBuildLogTailMaxBytes {
+		t.Fatalf("bounded tail = %d bytes, want <= %d", len(got), guestBuildLogTailMaxBytes)
 	}
 	if !strings.Contains(got, "railpack: script start.sh not found") {
 		t.Fatalf("bounded tail lost newest diagnostic: %q", got)
@@ -654,8 +654,8 @@ func TestBoundedGuestBuildLogTailKeepsTheCustomerBuildOutput(t *testing.T) {
 	daemon := strings.Repeat("github.com/moby/buildkit/solver.(*sharedOp).Exec.func2\n\tjobs.go:1248\n", 400)
 	raw := "[build]\n" + strings.Repeat("#5 sha256:layer done\n", 300) + customer + "\n[buildkitd]\n" + daemon
 	got := boundedGuestBuildLogTail(raw)
-	if len(got) > 3*1024 {
-		t.Fatalf("bounded tail = %d bytes, want <= 3072", len(got))
+	if len(got) > guestBuildLogTailMaxBytes {
+		t.Fatalf("bounded tail = %d bytes, want <= %d", len(got), guestBuildLogTailMaxBytes)
 	}
 	for _, want := range []string{"h9 compiling", "exit code: 3", "[build]", "[buildkitd]"} {
 		if !strings.Contains(got, want) {
