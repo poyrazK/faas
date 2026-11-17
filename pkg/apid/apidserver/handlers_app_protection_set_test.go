@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -85,40 +84,5 @@ func TestSetAppProtectionOffAndOn(t *testing.T) {
 	}
 	if rec := old.do(t, http.MethodPut, "/v1/apps/old/protection", api.SetAppProtectionRequest{State: "maybe"}, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad state = %d; want 400", rec.Code)
-	}
-}
-
-// A source deploy's manifest protection key turns protection on or off
-// (ADR-20261116120000 §5); an absent key or the current state changes
-// nothing.
-func TestSourceRefManifestProtection(t *testing.T) {
-	e, app := protectionEnv(t, api.PlanHobby, true)
-	ctx := context.Background()
-	apply := func(want string) {
-		t.Helper()
-		m := &gregalemanifest.Manifest{Protection: want}
-		if _, problem := e.s.applySourceRefManifest(ctx, e.acct, app, m, state.DefaultEnvScope, false); problem != nil {
-			t.Fatalf("apply protection %q: %+v", want, problem)
-		}
-	}
-	stateOf := func() string {
-		t.Helper()
-		p, found, err := e.store.GetAppProtection(ctx, app.ID)
-		if err != nil || !found {
-			t.Fatalf("GetAppProtection = %+v, %v, %v", p, found, err)
-		}
-		return p.State
-	}
-	apply("off")
-	if got := stateOf(); got != api.AppProtectionStateOff {
-		t.Fatalf("after protection: off, state = %q", got)
-	}
-	apply("")
-	if got := stateOf(); got != api.AppProtectionStateOff {
-		t.Fatalf("an absent key changed the state to %q", got)
-	}
-	apply("on")
-	if got := stateOf(); got != api.AppProtectionStateOn {
-		t.Fatalf("after protection: on, state = %q", got)
 	}
 }

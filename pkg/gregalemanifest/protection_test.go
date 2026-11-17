@@ -9,10 +9,10 @@ import (
 // (ADR-20261116120000 §5); unquoted on and off stay strings.
 func TestManifestProtection(t *testing.T) {
 	for doc, want := range map[string]string{
-		"protection: on\n":    "on",
-		"protection: off\n":   "off",
+		"protection: on\n":     "on",
+		"protection: off\n":    "off",
 		"protection: \"on\"\n": "on",
-		"labels:\n  a: b\n":   "",
+		"labels:\n  a: b\n":    "",
 	} {
 		m, err := ParseBytes([]byte(doc))
 		if err != nil {
