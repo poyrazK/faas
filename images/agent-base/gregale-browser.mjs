@@ -23,7 +23,8 @@
 //                                            text, truncated} (a browse
 //                                            task, ADR-20261116182615 §3)
 //   gregale-browser act <kind> [--ref N] [--key K] [--direction up|down]
-//                       [--submit] [--max-chars N] [--timeout S] [-- value]
+//                       [--submit] [--max-chars N] [--timeout S]
+//                       [--screenshot PATH] [-- value]
 //                                            act on the session's page and
 //                                            print its snapshot {url, title,
 //                                            status, elements, text,
@@ -31,11 +32,14 @@
 //                                            ADR-20261117065818); kind is
 //                                            navigate (value: url), click,
 //                                            type (value: text), press,
-//                                            scroll, back or snapshot
+//                                            scroll, back or snapshot;
+//                                            --screenshot also writes the
+//                                            viewport as a JPEG to PATH
+//                                            (ADR-20261117065818 §5)
 //
 // Only Node built-ins: it runs from the read-only agent-base drive0.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 
@@ -165,7 +169,7 @@ function launch(profile, extra) {
   // namespaces for Chromium's own. The background flags keep Chromium from
   // calling home (updates, sync, metrics) through the session's egress.
   const args = ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run',
-    '--no-default-browser-check', '--disable-background-networking', '--disable-component-update', '--disable-sync',
+    '--no-default-browser-check', '--window-size=1280,800', '--disable-background-networking', '--disable-component-update', '--disable-sync',
     '--disable-domain-reliability', '--metrics-recording-only', '--no-pings', '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${CDP_PORT}`,
     '--remote-allow-origins=*', `--user-data-dir=${profile}`, ...extra, 'about:blank'];
   return spawn(chromiumPath(), args, { stdio: ['ignore', 'inherit', 'inherit'] });
@@ -427,6 +431,13 @@ export function actArgs(argv) {
       out.key = raw;
       continue;
     }
+    if (flag === '--screenshot') {
+      if (!/^\/workspace\/\.gregale-screenshot-[0-9a-f-]{36}\.jpg$/.test(raw || '')) {
+        throw new Error('gregale-browser act: --screenshot must be /workspace/.gregale-screenshot-<uuid>.jpg');
+      }
+      out.screenshot = raw;
+      continue;
+    }
     if (flag === '--direction') {
       if (raw !== 'up' && raw !== 'down') {
         throw new Error('gregale-browser act: --direction must be up or down');
@@ -677,8 +688,15 @@ export async function actOn(port, args) {
         break;
     }
     const snap = await evaluate(snapshotScript(args.maxChars));
-    return { url: snap.url, title: snap.title, status, elements: snap.elements, more_elements: snap.more_elements,
+    const page = { url: snap.url, title: snap.title, status, elements: snap.elements, more_elements: snap.more_elements,
       text: snap.text, truncated: snap.truncated };
+    if (args.screenshot) {
+      const shot = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 70 });
+      const image = Buffer.from(shot.data, 'base64');
+      writeFileSync(args.screenshot, image, { mode: 0o600 });
+      page.screenshot_bytes = image.length;
+    }
+    return page;
   } finally {
     ws.close();
   }

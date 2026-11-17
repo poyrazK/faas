@@ -59557,6 +59557,8 @@ CREATE TABLE public.sandbox_actions (
     started_at timestamp with time zone,
     finished_at timestamp with time zone,
     delivered_at timestamp with time zone,
+    screenshot_key text,
+    screenshot_bytes bigint,
     CONSTRAINT sandbox_actions_args_check CHECK (((jsonb_typeof(args) = 'object'::text) AND (octet_length((args)::text) <= 8192))),
     CONSTRAINT sandbox_actions_check CHECK (((state = 'done'::text) = (finished_at IS NOT NULL))),
     CONSTRAINT sandbox_actions_kind_check CHECK ((kind = ANY (ARRAY['navigate'::text, 'click'::text, 'type'::text, 'press'::text, 'scroll'::text, 'back'::text, 'snapshot'::text]))),
@@ -75564,6 +75566,22 @@ ALTER TABLE ONLY public.sandbox_actions
 
 
 --
+-- Name: sandbox_actions sandbox_actions_screenshot_bytes_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_screenshot_bytes_check CHECK (((screenshot_bytes IS NULL) OR ((screenshot_bytes >= 1) AND (screenshot_bytes <= 1048576)))) NOT VALID;
+
+
+--
+-- Name: sandbox_actions sandbox_actions_screenshot_key_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_screenshot_key_check CHECK (((screenshot_key IS NULL) OR (screenshot_key ~ '^sandbox-screenshots/[0-9a-f-]{36}/[0-9a-f-]{36}/[0-9a-f-]{36}\.jpg$'::text))) NOT VALID;
+
+
+--
 -- Name: sandbox_actions sandbox_actions_session_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87313,6 +87331,13 @@ CREATE INDEX sandbox_actions_account_idx ON public.sandbox_actions USING btree (
 --
 
 CREATE INDEX sandbox_actions_open_idx ON public.sandbox_actions USING btree (session_id, seq) WHERE (state <> 'done'::text);
+
+
+--
+-- Name: sandbox_actions_screenshots_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_actions_screenshots_idx ON public.sandbox_actions USING btree (session_id) WHERE (screenshot_key IS NOT NULL);
 
 
 --

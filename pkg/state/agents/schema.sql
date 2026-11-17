@@ -275,7 +275,9 @@ CREATE TABLE sandbox_actions (
  created_at timestamptz NOT NULL DEFAULT now(),
  started_at timestamptz,
  finished_at timestamptz,
- delivered_at timestamptz
+ delivered_at timestamptz,
+ screenshot_key text,
+ screenshot_bytes bigint
 );
 CREATE TABLE sandbox_session_usage (
  sandbox_id uuid PRIMARY KEY,

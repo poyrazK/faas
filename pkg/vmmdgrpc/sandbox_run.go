@@ -17,10 +17,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/sandboxproto"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"google.golang.org/grpc/codes"
@@ -513,6 +516,13 @@ func sandboxActionCommand(a *vmmdpb.RunSandboxAction, plan api.Plan) (argv []str
 	}
 	argv = []string{"gregale-browser", "act", a.GetKind(), "--max-chars", strconv.Itoa(int(a.GetMaxChars())),
 		"--timeout", strconv.Itoa(int(timeout.Seconds()))}
+	if a.GetScreenshot() {
+		path, ok := sandboxScreenshotPath(a.GetActionId())
+		if !ok {
+			return nil, 0, 0, "a screenshot needs an action_id that is a UUID"
+		}
+		argv = append(argv, "--screenshot", path)
+	}
 	ref := func() bool {
 		if a.GetRef() < 1 || a.GetRef() > 10_000 {
 			return false
@@ -604,6 +614,81 @@ func (s *Server) sandboxActionEnd(ctx context.Context, runner sandboxTaskRunner,
 	if err != nil {
 		return actionDone(a.GetActionId(), err.Error())
 	}
+	var shot int64
+	if a.GetScreenshot() {
+		if res.ExitCode == 0 {
+			shot = s.storeScreenshot(ctx, wake, a.GetActionId())
+		}
+		s.removeScreenshot(ctx, wake, a.GetActionId())
+	}
 	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_ActionDone{ActionDone: &vmmdpb.RunSandboxActionDone{
-		ActionId: a.GetActionId(), ExitCode: int32(res.ExitCode), Output: res.Output, TimedOut: res.TimedOut, Truncated: res.Truncated}}}
+		ActionId: a.GetActionId(), ExitCode: int32(res.ExitCode), Output: res.Output, TimedOut: res.TimedOut, Truncated: res.Truncated,
+		ScreenshotBytes: shot}}}
+}
+
+// sandboxScreenshotPath is where gregale-browser act writes an action's
+// screenshot: in the session's workspace, which the guest's file operations
+// are confined to (ADR-20261117065818 §5).
+func sandboxScreenshotPath(actionID string) (string, bool) {
+	id, err := uuid.Parse(actionID)
+	if err != nil || id.String() != actionID {
+		return "", false
+	}
+	return "/workspace/.gregale-screenshot-" + actionID + ".jpg", true
+}
+
+// storeScreenshot streams an action's screenshot from the guest to the
+// artifact store and returns its size, or 0 when none was kept: no store,
+// no file, a failure, or an image over SandboxScreenshotMaxBytes.
+func (s *Server) storeScreenshot(ctx context.Context, wake fcvm.SandboxWakeRequest, actionID string) int64 {
+	sessions, ok := s.vmm.(sandboxSessions)
+	if !ok || s.sandboxStorage == nil {
+		return 0
+	}
+	path, _ := sandboxScreenshotPath(actionID)
+	key := storagekey.SandboxScreenshot(wake.AccountID, wake.SandboxID, actionID)
+	conn, err := sessions.DialSandboxSession(ctx, wake.Instance, wake.SandboxID)
+	if err != nil {
+		return 0
+	}
+	pr, pw := io.Pipe()
+	stored := make(chan error, 1)
+	go func() {
+		err := s.sandboxStorage.Put(ctx, key, pr)
+		_ = pr.CloseWithError(err)
+		stored <- err
+	}()
+	var result sandboxproto.TransferResult
+	req := sandboxproto.Request{Op: sandboxproto.OpFileRead, Path: path, MaxBytes: int64(api.SandboxScreenshotMaxBytes)}
+	guestErr := sandboxproto.Do(ctx, conn, req, func(_ uint32, body []byte) error {
+		_, err := pw.Write(body)
+		return err
+	}, &result)
+	_ = pw.CloseWithError(guestErr)
+	storeErr := <-stored
+	if guestErr == nil && storeErr == nil && !result.Truncated && result.Bytes > 0 {
+		return result.Bytes
+	}
+	if storeErr != nil {
+		s.log.Warn("sandbox: screenshot store failed", "instance", wake.Instance, "err", storeErr)
+	}
+	s.deleteWorkspaceArchive(ctx, key)
+	return 0
+}
+
+// removeScreenshot deletes an action's screenshot from the guest, kept or
+// not.
+func (s *Server) removeScreenshot(ctx context.Context, wake fcvm.SandboxWakeRequest, actionID string) {
+	sessions, ok := s.vmm.(sandboxSessions)
+	if !ok {
+		return
+	}
+	path, _ := sandboxScreenshotPath(actionID)
+	conn, err := sessions.DialSandboxSession(ctx, wake.Instance, wake.SandboxID)
+	if err != nil {
+		return
+	}
+	var out struct{}
+	_ = sandboxproto.Do(ctx, conn, sandboxproto.Request{Op: sandboxproto.OpFileRemove, Path: path},
+		func(uint32, []byte) error { return nil }, &out)
 }

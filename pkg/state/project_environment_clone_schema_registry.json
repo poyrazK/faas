@@ -21356,6 +21356,8 @@
       "issued_at",
       "kind",
       "output",
+      "screenshot_bytes",
+      "screenshot_key",
       "seq",
       "session_id",
       "started_at",

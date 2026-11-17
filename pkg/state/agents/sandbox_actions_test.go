@@ -58,7 +58,7 @@ func TestSandboxActions(t *testing.T) {
 		t.Fatalf("a session running an action was given another: %+v, %v", next, err)
 	}
 	code := 0
-	if err := s.FinishSandboxAction(ctx, first.ID, "tok", &code, []byte(`{"title":"Example"}`)); err != nil {
+	if err := s.FinishSandboxAction(ctx, first.ID, "tok", &code, []byte(`{"title":"Example"}`), agents.SandboxScreenshot{}); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -132,7 +132,8 @@ func TestBrowserSessions(t *testing.T) {
 		t.Fatalf("a running action is listed for delivery: %+v, %v", ends, err)
 	}
 	code := 0
-	if err := s.FinishSandboxAction(ctx, next[0].ID, "tok", &code, []byte(`{"title":"E"}`)); err != nil {
+	shot := agents.SandboxScreenshot{Key: "sandbox-screenshots/" + account + "/" + sb.ID + "/" + next[0].ID + ".jpg", Bytes: 1234}
+	if err := s.FinishSandboxAction(ctx, next[0].ID, "tok", &code, []byte(`{"title":"E"}`), shot); err != nil {
 		t.Fatal(err)
 	}
 	ends, err := s.UndeliveredSandboxActions(ctx, 10)
@@ -140,12 +141,33 @@ func TestBrowserSessions(t *testing.T) {
 		t.Fatalf("undelivered = %+v, %v", ends, err)
 	}
 	if end := ends[0]; end.SessionID != sb.ID || end.Seq != 1 || end.Call.ToolCallID != "call_open" || end.Args.URL != "https://example.com/" ||
-		end.ExitCode == nil || *end.ExitCode != 0 || string(end.Output) != `{"title":"E"}` || end.SessionState == "" {
+		end.ExitCode == nil || *end.ExitCode != 0 || string(end.Output) != `{"title":"E"}` || end.SessionState == "" || end.ScreenshotBytes != 1234 {
 		t.Fatalf("end = %+v", end)
 	}
 	res, err := s.SandboxActionResult(ctx, account, sb.ID, 1)
-	if err != nil || res.Kind != "navigate" || res.State != agents.SandboxActionDone || string(res.Output) != `{"title":"E"}` {
+	if err != nil || res.Kind != "navigate" || res.State != agents.SandboxActionDone || string(res.Output) != `{"title":"E"}` || res.Screenshot != shot {
 		t.Fatalf("result = %+v, %v", res, err)
+	}
+	// adr: 20261117065818 §5 — a screenshot is swept only once its session
+	// ended its retention ago, and its key is then forgotten.
+	if due, err := s.ExpiredSandboxScreenshots(ctx, time.Hour, 10); err != nil || len(due) != 0 {
+		t.Fatalf("a live session's screenshot is due: %+v, %v", due, err)
+	}
+	if err := s.FinishSandbox(ctx, sb.ID, "tok", agents.SandboxClosed, "closed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE sandbox_sessions SET closed_at = now() - interval '2 hours' WHERE id = $1`, sb.ID); err != nil {
+		t.Fatal(err)
+	}
+	due, err := s.ExpiredSandboxScreenshots(ctx, time.Hour, 10)
+	if err != nil || len(due) != 1 || due[0].ActionID != next[0].ID || due[0].Key != shot.Key {
+		t.Fatalf("due = %+v, %v", due, err)
+	}
+	if err := s.ClearSandboxScreenshot(ctx, next[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if due, err := s.ExpiredSandboxScreenshots(ctx, time.Hour, 10); err != nil || len(due) != 0 {
+		t.Fatalf("a cleared screenshot is due again: %+v, %v", due, err)
 	}
 	if _, err := s.SandboxActionResult(ctx, account, sb.ID, 2); !errors.Is(err, agents.ErrNotFound) {
 		t.Fatalf("a missing action: %v", err)

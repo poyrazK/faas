@@ -287,3 +287,11 @@ func SandboxImageIdentity(imageKey string) string {
 	}
 	return imageKey
 }
+
+// SandboxScreenshot is the artifact key of a gregale_browser action's
+// screenshot (ADR-20261117065818 §5). vmmd derives it from the session it
+// runs and the action's ID, so no key travels on the wire; every part is a
+// UUID.
+func SandboxScreenshot(accountID, sandboxID, actionID string) string {
+	return "sandbox-screenshots/" + accountID + "/" + sandboxID + "/" + actionID + ".jpg"
+}

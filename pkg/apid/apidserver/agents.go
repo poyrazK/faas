@@ -116,6 +116,11 @@ func (s *server) withAgentOutputFiles(backend storage.StorageBackend) {
 	if s.agentAPI != nil {
 		s.agentAPI.Files = backend
 	}
+	// ADR-20261117065818 §5: gregale_browser's screenshots live in the
+	// same store.
+	if s.sandboxAPI != nil {
+		s.sandboxAPI.Files = backend
+	}
 }
 
 func (s *server) getAgentRunOutputFile(w http.ResponseWriter, r *http.Request, acct state.Account) {

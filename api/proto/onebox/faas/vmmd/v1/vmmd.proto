@@ -3579,6 +3579,9 @@ message RunSandboxAction {
   int32 max_chars = 9;
   int64 timeout_ms = 10;
   int64 max_output_bytes = 11;
+  // screenshot has the action also capture the viewport as a JPEG, which
+  // vmmd stores at storagekey.SandboxScreenshot (ADR-20261117065818 §5).
+  bool screenshot = 12;
 }
 
 // RunSandboxActionDone is an action's end: the command's exit code and
@@ -3591,6 +3594,9 @@ message RunSandboxActionDone {
   bool truncated = 5;
   // error is why the command could not run, when it never did.
   string error = 6;
+  // screenshot_bytes is the size of the screenshot vmmd stored, or 0 when
+  // none was asked or kept.
+  int64 screenshot_bytes = 7;
 }
 
 // RunSandboxTask is a sandbox task: a closed set of kinds, each a fixed

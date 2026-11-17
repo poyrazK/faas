@@ -85,16 +85,19 @@ type SandboxAction struct {
 	MaxChars       int
 	Timeout        time.Duration
 	MaxOutputBytes int64
+	// Screenshot has vmmd also store the viewport (ADR-20261117065818 §5).
+	Screenshot bool
 }
 
 // SandboxActionDone is a browser action's end as vmmd reports it.
 type SandboxActionDone struct {
-	ActionID  string
-	ExitCode  int
-	Output    []byte
-	TimedOut  bool
-	Truncated bool
-	Error     string
+	ActionID        string
+	ExitCode        int
+	Output          []byte
+	TimedOut        bool
+	Truncated       bool
+	Error           string
+	ScreenshotBytes int64
 }
 
 // SandboxTaskDone is a sandbox task's end as vmmd reports it.
@@ -451,7 +454,7 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 			if hooks.ActionDone != nil {
 				d := event.GetActionDone()
 				err = hooks.ActionDone(ctx, SandboxActionDone{ActionID: d.GetActionId(), ExitCode: int(d.GetExitCode()), Output: d.GetOutput(),
-					TimedOut: d.GetTimedOut(), Truncated: d.GetTruncated(), Error: d.GetError()})
+					TimedOut: d.GetTimedOut(), Truncated: d.GetTruncated(), Error: d.GetError(), ScreenshotBytes: d.GetScreenshotBytes()})
 			}
 		default:
 			return errors.New("sched: sandbox stream returned an empty event")
@@ -485,7 +488,8 @@ func sandboxControlFrame(req SandboxControl) *vmmdpb.RunSandboxRequest {
 		if a := req.Action; a != nil {
 			return &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Action{Action: &vmmdpb.RunSandboxAction{
 				ActionId: a.ID, Kind: a.Kind, Url: a.URL, Ref: int32(a.Ref), Text: a.Text, Submit: a.Submit, Key: a.Key,
-				Direction: a.Direction, MaxChars: int32(a.MaxChars), TimeoutMs: a.Timeout.Milliseconds(), MaxOutputBytes: a.MaxOutputBytes}}}
+				Direction: a.Direction, MaxChars: int32(a.MaxChars), TimeoutMs: a.Timeout.Milliseconds(), MaxOutputBytes: a.MaxOutputBytes,
+				Screenshot: a.Screenshot}}}
 		}
 	}
 	return nil

@@ -70,6 +70,8 @@ type browserArguments struct {
 	Key       string  `json:"key"`
 	Direction string  `json:"direction"`
 	MaxChars  int     `json:"max_chars"`
+	// Screenshot also keeps the viewport as a JPEG (ADR-20261117065818 §5).
+	Screenshot bool `json:"screenshot"`
 }
 
 func browserTool() rapTool {
@@ -93,6 +95,8 @@ func browserTool() rapTool {
 				"submit":    map[string]any{"type": "boolean", "description": "type presses Enter after the text"},
 				"key":       map[string]any{"type": "string", "enum": browserKeys, "description": "press's key"},
 				"direction": map[string]any{"type": "string", "enum": []string{"up", "down"}, "description": "scroll's direction"},
+				"screenshot": map[string]any{"type": "boolean",
+					"description": "Also capture the viewport as a JPEG; the result's screenshot_url serves it for a day after the session ends"},
 				"max_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": api.SandboxBrowseMaxChars,
 					"description": fmt.Sprintf("The most page text the snapshot keeps; %d when omitted", api.SandboxBrowserSnapshotDefaultChars)},
 			},
@@ -113,7 +117,7 @@ func browserArgs(raw json.RawMessage) (browserArguments, agentstore.SandboxActio
 		return args, agentstore.SandboxActionArgs{}, "arguments must be an object with an action and that action's fields"
 	}
 	act := agentstore.SandboxActionArgs{URL: args.URL, Ref: args.Ref, Submit: args.Submit, Key: args.Key, Direction: args.Direction,
-		MaxChars: args.MaxChars}
+		MaxChars: args.MaxChars, Screenshot: args.Screenshot}
 	if args.Text != nil {
 		act.Text = *args.Text
 	}
@@ -279,7 +283,11 @@ type browserToolResult struct {
 	Text         string            `json:"text,omitempty"`
 	Truncated    bool              `json:"truncated,omitempty"`
 	ResultURL    string            `json:"result_url,omitempty"`
-	Error        string            `json:"error,omitempty"`
+	// ScreenshotURL serves the action's screenshot; ScreenshotError says
+	// why an asked-for one was not kept.
+	ScreenshotURL   string `json:"screenshot_url,omitempty"`
+	ScreenshotError string `json:"screenshot_error,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 // browserSnapshot is gregale-browser act's output.
@@ -325,6 +333,13 @@ func browserEndResult(end agentstore.SandboxActionEnd) browserToolResult {
 func (h *Handler) browserEndPost(grant CallbackToken, inv rapInvocation, end agentstore.SandboxActionEnd) api.AgentCallbackPost {
 	result := browserEndResult(end)
 	result.ResultURL = h.CallbackBaseURL + "/v1/sandboxes/" + end.SessionID + "/actions/" + strconv.Itoa(end.Seq)
+	switch {
+	case end.ScreenshotBytes > 0:
+		result.ScreenshotURL = result.ResultURL + "/screenshot"
+	case end.Args.Screenshot && result.Error == "":
+		result.ScreenshotError = fmt.Sprintf("the screenshot was not kept: the page could not be captured, or it was over %d bytes",
+			api.SandboxScreenshotMaxBytes)
+	}
 	for {
 		text, _ := json.Marshal(result)
 		post, problem := toolResultPost(grant, inv, string(text))
