@@ -153,10 +153,11 @@ func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
 	}
 }
 
-// TestDunning_Suspended21d_AdvancesToDeletedPending is the second half
-// of audit-finding #2: the suspended → deleted_pending transition
-// fires after 21 days total from past_due_at.
-func TestDunning_Suspended21d_AdvancesToDeletedPending(t *testing.T) {
+// TestDunning_Suspended21d_MovesToFree is the second half of audit-finding
+// 2, as amended by billing review R9-1: non-payment never deletes. An account
+// the old ladder suspended past the 21-day mark moves to the Free plan and is
+// active again.
+func TestDunning_Suspended21d_MovesToFree(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
@@ -193,7 +194,7 @@ func TestDunning_Suspended21d_AdvancesToDeletedPending(t *testing.T) {
 		t.Fatalf("backdate past_due_at: %v", err)
 	}
 
-	// Poll for the deleted_pending transition.
+	// Poll for the move to Free.
 	deadline := time.Now().Add(dunningInterval + 5*time.Second)
 	for {
 		got, err := store.AccountByID(ctx, acct.ID)
@@ -201,11 +202,14 @@ func TestDunning_Suspended21d_AdvancesToDeletedPending(t *testing.T) {
 			t.Fatalf("AccountByID: %v", err)
 		}
 		if got.Status == state.AccountDeletedPending {
+			t.Fatal("non-payment moved the account to deleted_pending; it must move to Free (R9-1)")
+		}
+		if got.Status == state.AccountActive && got.Plan == api.PlanFree {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("account.status = %s after %s; want deleted_pending",
-				got.Status, dunningInterval+5*time.Second)
+			t.Fatalf("account status=%s plan=%s after %s; want active on Free",
+				got.Status, got.Plan, dunningInterval+5*time.Second)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
