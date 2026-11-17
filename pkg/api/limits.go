@@ -1062,6 +1062,11 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// ImagedVerifiedBaseFiles bounds how many base artifacts one imaged remembers
+// verifying from its node cache (ADR-595 amendment 2026-11-17). One entry per
+// base key: the runtime matrix has about ten bases per architecture.
+const ImagedVerifiedBaseFiles = 64
+
 // BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
 // builderd remembers the digest of, so a cache hit skips re-reading the
 // artifact to check it. A node's cache holds a few hundred entries.

@@ -106,6 +106,9 @@ type Handler struct {
 	// layerDigests remembers the digest of each layer this process just
 	// published, so the deploy scan does not hash the same bytes again.
 	layerDigests *publishedLayerDigests
+	// verifiedBases remembers the base artifacts this process verified
+	// from its node cache (ADR-595 amendment 2026-11-17).
+	verifiedBases *verifiedBaseFiles
 	// layerReuse is the app layer reuse index (ADR-20261112170911); nil
 	// turns reuse off.
 	layerReuse       *layerReuseIndex
@@ -377,7 +380,7 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 		puller = oci.DefaultPuller{}
 	}
 	return &Handler{
-		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{},
+		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{}, verifiedBases: &verifiedBaseFiles{},
 		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log, servingSince: time.Now().UTC(),
 	}
 }
