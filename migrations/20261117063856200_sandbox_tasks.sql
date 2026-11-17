@@ -11,15 +11,38 @@ SET LOCAL lock_timeout = '5s';
 -- command and ends. apid records the task; agentd records its exit code and
 -- output as it finishes the session. Nullable, so older binaries keep
 -- working.
+-- The columns are added bare and their CHECKs NOT VALID, so the lock
+-- never scans sandbox_sessions; every existing row has them all NULL.
 ALTER TABLE sandbox_sessions
-    ADD COLUMN IF NOT EXISTS task_kind text CHECK (task_kind IS NULL OR task_kind IN ('browse')),
-    ADD COLUMN IF NOT EXISTS task_url text CHECK (task_url IS NULL OR char_length(task_url) BETWEEN 1 AND 2048),
-    ADD COLUMN IF NOT EXISTS task_max_chars integer CHECK (task_max_chars IS NULL OR task_max_chars BETWEEN 1 AND 200000),
+    ADD COLUMN IF NOT EXISTS task_kind text,
+    ADD COLUMN IF NOT EXISTS task_url text,
+    ADD COLUMN IF NOT EXISTS task_max_chars integer,
     ADD COLUMN IF NOT EXISTS task_exit_code integer,
-    ADD COLUMN IF NOT EXISTS task_output bytea CHECK (task_output IS NULL OR octet_length(task_output) <= 262144);
-ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_task_check;
-ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_task_check
-    CHECK ((task_kind IS NULL) = (task_url IS NULL) AND (task_kind IS NULL) = (task_max_chars IS NULL)) NOT VALID;
+    ADD COLUMN IF NOT EXISTS task_output bytea;
+DO $tasks$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'sandbox_sessions'::regclass AND conname = 'sandbox_sessions_task_kind_check') THEN
+    ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_task_kind_check
+      CHECK (task_kind IS NULL OR task_kind IN ('browse')) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'sandbox_sessions'::regclass AND conname = 'sandbox_sessions_task_url_check') THEN
+    ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_task_url_check
+      CHECK (task_url IS NULL OR char_length(task_url) BETWEEN 1 AND 2048) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'sandbox_sessions'::regclass AND conname = 'sandbox_sessions_task_max_chars_check') THEN
+    ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_task_max_chars_check
+      CHECK (task_max_chars IS NULL OR task_max_chars BETWEEN 1 AND 200000) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'sandbox_sessions'::regclass AND conname = 'sandbox_sessions_task_output_check') THEN
+    ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_task_output_check
+      CHECK (task_output IS NULL OR octet_length(task_output) <= 262144) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'sandbox_sessions'::regclass AND conname = 'sandbox_sessions_task_check') THEN
+    ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_task_check
+      CHECK ((task_kind IS NULL) = (task_url IS NULL) AND (task_kind IS NULL) = (task_max_chars IS NULL)) NOT VALID;
+  END IF;
+END
+$tasks$;
 COMMENT ON COLUMN sandbox_sessions.task_kind IS
     'ADR-20261116182615: the sandbox task the session runs (browse), or NULL for an ordinary session.';
 COMMENT ON COLUMN sandbox_sessions.task_output IS
@@ -48,7 +71,6 @@ COMMENT ON TABLE agent_sandbox_task_calls IS
 -- +goose Down
 -- +goose StatementBegin
 DROP TABLE IF EXISTS agent_sandbox_task_calls;
-ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_task_check;
 ALTER TABLE sandbox_sessions
     DROP COLUMN IF EXISTS task_output,
     DROP COLUMN IF EXISTS task_exit_code,

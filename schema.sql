@@ -59627,11 +59627,7 @@ CREATE TABLE public.sandbox_sessions (
     CONSTRAINT sandbox_sessions_outcome_message_check CHECK (((outcome_message IS NULL) OR (char_length(outcome_message) <= 2048))),
     CONSTRAINT sandbox_sessions_preset_check CHECK (((char_length(preset) >= 1) AND (char_length(preset) <= 64))),
     CONSTRAINT sandbox_sessions_ram_mb_check CHECK ((((ram_mb >= 512) AND (ram_mb <= 4096)) AND ((ram_mb % 512) = 0))),
-    CONSTRAINT sandbox_sessions_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text, 'closed'::text, 'expired'::text, 'failed'::text]))),
-    CONSTRAINT sandbox_sessions_task_kind_check CHECK (((task_kind IS NULL) OR (task_kind = 'browse'::text))),
-    CONSTRAINT sandbox_sessions_task_max_chars_check CHECK (((task_max_chars IS NULL) OR ((task_max_chars >= 1) AND (task_max_chars <= 200000)))),
-    CONSTRAINT sandbox_sessions_task_output_check CHECK (((task_output IS NULL) OR (octet_length(task_output) <= 262144))),
-    CONSTRAINT sandbox_sessions_task_url_check CHECK (((task_url IS NULL) OR ((char_length(task_url) >= 1) AND (char_length(task_url) <= 2048))))
+    CONSTRAINT sandbox_sessions_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text, 'closed'::text, 'expired'::text, 'failed'::text])))
 );
 
 
@@ -75466,6 +75462,38 @@ ALTER TABLE ONLY public.sandbox_sessions
 
 ALTER TABLE public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_task_check CHECK ((((task_kind IS NULL) = (task_url IS NULL)) AND ((task_kind IS NULL) = (task_max_chars IS NULL)))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_task_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_task_kind_check CHECK (((task_kind IS NULL) OR (task_kind = 'browse'::text))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_task_max_chars_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_task_max_chars_check CHECK (((task_max_chars IS NULL) OR ((task_max_chars >= 1) AND (task_max_chars <= 200000)))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_task_output_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_task_output_check CHECK (((task_output IS NULL) OR (octet_length(task_output) <= 262144))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_task_url_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_task_url_check CHECK (((task_url IS NULL) OR ((char_length(task_url) >= 1) AND (char_length(task_url) <= 2048)))) NOT VALID;
 
 
 --
