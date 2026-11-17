@@ -157,7 +157,14 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 			"sh", "id", "ls", "grep", "sed", "touch", "cat")
 	}
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
+	deployBaseRef := registry.Host() + "/onebox-faas/deploy-base:latest"
+	if busyboxErr == nil {
+		// A host's real staged bases may predate the debug tools; the stub
+		// base carries them, so use it even where real bases resolve.
+		e2etest.ForceDeployBase(t, deployBaseRef)
+	} else {
+		e2etest.OverrideDeployBase(t, deployBaseRef)
+	}
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake,
 		"FAAS_APP_TASK_API_ENABLED=1", "FAAS_INTERACTIVE_APP_TASKS=1", "FAAS_APP_TASK_DISPATCH=1")
@@ -177,9 +184,12 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
-	deployCtx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	// A fresh harness scans the host's real builder base before it serves
+	// this deploy; on the 2-vCPU acceptance host that scan alone ran past
+	// 4 minutes (2026-11-17), so the first deploy gets 10.
+	deployCtx, cancel := context.WithTimeout(context.Background(), 660*time.Second)
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, parseImageDeployment(t, body), 240*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, parseImageDeployment(t, body), 600*time.Second); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
 
