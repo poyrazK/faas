@@ -21,9 +21,7 @@ func TestManagedPostgresRestoreSwitch(t *testing.T) {
 	hidden := hiddenCapabilities(t, tg)
 	skipHidden(t, hidden, "database-rollbacks")
 	skipHidden(t, hidden, "release-commands")
-	if j.databaseLimit < pgJourneysDatabases {
-		t.Skipf("the PostgreSQL journeys hold up to %d databases at once; this account's limit is %d", pgJourneysDatabases, j.databaseLimit)
-	}
+	j.needRoomForAllJourneys(t)
 	j.app = tg.app(t, "pg-rs")
 	j.db = tg.slug("pg-rs")
 	copyName := tg.slug("pg-rs-copy")

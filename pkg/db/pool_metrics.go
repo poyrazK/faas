@@ -45,6 +45,7 @@ type PoolCollector struct {
 	emptyAcquires  *prometheus.Desc
 	canceled       *prometheus.Desc
 	acquireWait    *prometheus.Desc
+	denied         *prometheus.Desc
 	hubConns       *prometheus.Desc
 	hubSubscribers *prometheus.Desc
 	hubChannels    *prometheus.Desc
@@ -86,6 +87,11 @@ func NewPoolCollector(prefix string, pool *pgxpool.Pool) *PoolCollector {
 			"Cumulative seconds spent blocked waiting for a pool connection. Near-zero growth on a busy daemon is the positive evidence that a cap has headroom to give back; divided by acquires_total it gives the mean wait per acquisition, which separates 'rarely waits but waits a long time' from 'waits constantly but briefly'.",
 			nil, nil,
 		),
+		denied: prometheus.NewDesc(
+			prefix+"_db_permission_denied_total",
+			"Cumulative statements Postgres refused with SQLSTATE 42501 (insufficient privilege) on this daemon's pool. With each daemon logging in as its own role, any increase means the role's grants miss a table or verb its code uses: a narrowed grant set that is too narrow, or a new query the grants were not updated for (ADR-20261023104734 step 3). It must stay zero for a week before a daemon's grants are narrowed further, and any rise after a narrowing is rolled back by restoring the role's faas_runtime membership.",
+			nil, nil,
+		),
 		hubConns: prometheus.NewDesc(
 			prefix+"_db_notify_hub_conns",
 			"Connections this daemon's pool has parked on the ADR-190 LISTEN hub: 1 while the hub is running, 0 otherwise. Before the hub, every SubscribeWithReconnect call parked its own connection; this gauge read against _db_notify_hub_subscribers is the direct evidence of how many sessions the hub is saving. A 0 here with a non-zero subscriber count means FAAS_DB_NOTIFY_HUB=0 is set and the daemon is back to one connection per subscriber.",
@@ -111,7 +117,7 @@ func (c *PoolCollector) Describe(ch chan<- *prometheus.Desc) {
 	}
 	for _, d := range []*prometheus.Desc{
 		c.conns, c.maxConns, c.acquires, c.emptyAcquires,
-		c.canceled, c.acquireWait, c.hubConns, c.hubSubscribers, c.hubChannels,
+		c.canceled, c.acquireWait, c.denied, c.hubConns, c.hubSubscribers, c.hubChannels,
 	} {
 		ch <- d
 	}
@@ -148,6 +154,9 @@ func (c *PoolCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	counter(c.canceled, float64(canceled))
 	counter(c.acquireWait, stat.AcquireDuration().Seconds())
+	if denied, ok := permissionDenied(c.pool); ok {
+		counter(c.denied, float64(denied))
+	}
 
 	hub := NotifyHubStatsFor(c.pool)
 	var hubConns float64
