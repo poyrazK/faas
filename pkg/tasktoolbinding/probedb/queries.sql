@@ -1,7 +1,13 @@
+-- name: TaskBindingInitialSchema :one
+SELECT pg_catalog.current_schema()::pg_catalog.text;
+
+-- name: RestrictTaskBindingLookupPath :exec
+SET LOCAL search_path TO pg_catalog;
+
 -- name: TaskBindingIdentity :one
 SELECT session_user::text AS login, current_user::text AS role_name,
  pg_catalog.current_database()::text AS database_name,
- pg_catalog.current_schema()::text AS schema_name,
+ sqlc.arg(schema_name)::text AS schema_name,
  COALESCE(pg_catalog.inet_server_addr()::text,'')::text AS server_address,
  COALESCE(pg_catalog.inet_server_port(),0)::integer AS server_port,
  n.nspowner::pg_catalog.regrole::text AS schema_owner,
@@ -16,7 +22,7 @@ SELECT session_user::text AS login, current_user::text AS role_name,
  (pg_catalog.current_setting('transaction_read_only')='on')::boolean AS read_only,
  (pg_catalog.current_setting('row_security')='on')::boolean AS row_security
 FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_roles e ON e.rolname=current_user
-JOIN pg_catalog.pg_namespace n ON n.nspname=pg_catalog.current_schema()
+JOIN pg_catalog.pg_namespace n ON n.nspname=sqlc.arg(schema_name)::text
 WHERE r.rolname=session_user;
 
 -- name: TaskBindingTablePrivileges :many
@@ -31,7 +37,7 @@ SELECT c.relname::text AS name,
  OR pg_catalog.has_any_column_privilege(current_user,c.oid,'REFERENCES'))::boolean AS can_administer,
  (c.relowner=n.nspowner)::boolean AS owned_by_schema_owner
 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-WHERE n.nspname=pg_catalog.current_schema() AND c.relkind IN ('r','p') AND c.relname ~ '^gregale_mcp_task'
+WHERE n.nspname=sqlc.arg(schema_name)::text AND c.relkind IN ('r','p') AND c.relname ~ '^gregale_mcp_task'
 ORDER BY c.relname LIMIT sqlc.arg(max_tables)::integer;
 
 -- name: TaskBindingObserverUnsafe :one

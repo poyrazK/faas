@@ -93,6 +93,17 @@ func TestHostedTaskBindingPostgresRoles(t *testing.T) {
 	for i := range 4 {
 		check(i, "passed")
 	}
+	// Explicitly putting pg_catalog last allows tenant types/operators to shadow
+	// builtins. Catalog probes must never evaluate this user-defined domain check.
+	exec("CREATE FUNCTION public.binding_shadow_text(pg_catalog.text) RETURNS boolean LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''tenant text cast executed''; END'")
+	exec("CREATE DOMAIN public.text AS pg_catalog.text CHECK(public.binding_shadow_text(VALUE))")
+	for _, role := range roles {
+		exec("ALTER ROLE " + ident(role) + " SET search_path=public,pg_catalog")
+	}
+	for i := range 4 {
+		check(i, "passed")
+	}
+
 	exec("GRANT INSERT ON gregale_mcp_tasks TO " + ident(roles[3]))
 	check(3, "failed")
 	exec("REVOKE INSERT ON gregale_mcp_tasks FROM " + ident(roles[3]))

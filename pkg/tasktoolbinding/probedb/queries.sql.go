@@ -9,10 +9,19 @@ import (
 	"context"
 )
 
+const restrictTaskBindingLookupPath = `-- name: RestrictTaskBindingLookupPath :exec
+SET LOCAL search_path TO pg_catalog
+`
+
+func (q *Queries) RestrictTaskBindingLookupPath(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, restrictTaskBindingLookupPath)
+	return err
+}
+
 const taskBindingIdentity = `-- name: TaskBindingIdentity :one
 SELECT session_user::text AS login, current_user::text AS role_name,
  pg_catalog.current_database()::text AS database_name,
- pg_catalog.current_schema()::text AS schema_name,
+ $1::text AS schema_name,
  COALESCE(pg_catalog.inet_server_addr()::text,'')::text AS server_address,
  COALESCE(pg_catalog.inet_server_port(),0)::integer AS server_port,
  n.nspowner::pg_catalog.regrole::text AS schema_owner,
@@ -27,7 +36,7 @@ SELECT session_user::text AS login, current_user::text AS role_name,
  (pg_catalog.current_setting('transaction_read_only')='on')::boolean AS read_only,
  (pg_catalog.current_setting('row_security')='on')::boolean AS row_security
 FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_roles e ON e.rolname=current_user
-JOIN pg_catalog.pg_namespace n ON n.nspname=pg_catalog.current_schema()
+JOIN pg_catalog.pg_namespace n ON n.nspname=$1::text
 WHERE r.rolname=session_user
 `
 
@@ -49,8 +58,8 @@ type TaskBindingIdentityRow struct {
 	RowSecurity      bool
 }
 
-func (q *Queries) TaskBindingIdentity(ctx context.Context, db DBTX) (TaskBindingIdentityRow, error) {
-	row := db.QueryRow(ctx, taskBindingIdentity)
+func (q *Queries) TaskBindingIdentity(ctx context.Context, db DBTX, schemaName string) (TaskBindingIdentityRow, error) {
+	row := db.QueryRow(ctx, taskBindingIdentity, schemaName)
 	var i TaskBindingIdentityRow
 	err := row.Scan(
 		&i.Login,
@@ -70,6 +79,17 @@ func (q *Queries) TaskBindingIdentity(ctx context.Context, db DBTX) (TaskBinding
 		&i.RowSecurity,
 	)
 	return i, err
+}
+
+const taskBindingInitialSchema = `-- name: TaskBindingInitialSchema :one
+SELECT pg_catalog.current_schema()::pg_catalog.text
+`
+
+func (q *Queries) TaskBindingInitialSchema(ctx context.Context, db DBTX) (interface{}, error) {
+	row := db.QueryRow(ctx, taskBindingInitialSchema)
+	var column_1 interface{}
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const taskBindingObserverUnsafe = `-- name: TaskBindingObserverUnsafe :one
@@ -110,9 +130,14 @@ SELECT c.relname::text AS name,
  OR pg_catalog.has_any_column_privilege(current_user,c.oid,'REFERENCES'))::boolean AS can_administer,
  (c.relowner=n.nspowner)::boolean AS owned_by_schema_owner
 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-WHERE n.nspname=pg_catalog.current_schema() AND c.relkind IN ('r','p') AND c.relname ~ '^gregale_mcp_task'
-ORDER BY c.relname LIMIT $1::integer
+WHERE n.nspname=$1::text AND c.relkind IN ('r','p') AND c.relname ~ '^gregale_mcp_task'
+ORDER BY c.relname LIMIT $2::integer
 `
+
+type TaskBindingTablePrivilegesParams struct {
+	SchemaName string
+	MaxTables  int32
+}
 
 type TaskBindingTablePrivilegesRow struct {
 	Name               string
@@ -123,8 +148,8 @@ type TaskBindingTablePrivilegesRow struct {
 	OwnedBySchemaOwner bool
 }
 
-func (q *Queries) TaskBindingTablePrivileges(ctx context.Context, db DBTX, maxTables int32) ([]TaskBindingTablePrivilegesRow, error) {
-	rows, err := db.Query(ctx, taskBindingTablePrivileges, maxTables)
+func (q *Queries) TaskBindingTablePrivileges(ctx context.Context, db DBTX, arg TaskBindingTablePrivilegesParams) ([]TaskBindingTablePrivilegesRow, error) {
+	rows, err := db.Query(ctx, taskBindingTablePrivileges, arg.SchemaName, arg.MaxTables)
 	if err != nil {
 		return nil, err
 	}

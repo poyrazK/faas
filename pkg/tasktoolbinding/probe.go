@@ -113,11 +113,21 @@ func probeDatabase(ctx context.Context, dsn string, connect Connect, observer bo
 		return out, ErrProbe
 	}
 	q := probedb.New()
-	out.identity, err = q.TaskBindingIdentity(ctx, tx)
+	// Capture the initial target using only a qualified builtin and type. Then
+	// restrict all operator/type/function resolution before catalog predicates.
+	rawSchema, err := q.TaskBindingInitialSchema(ctx, tx)
+	schema, ok := rawSchema.(string)
+	if err != nil || !ok || schema == "" {
+		return out, ErrProbe
+	}
+	if err := q.RestrictTaskBindingLookupPath(ctx, tx); err != nil {
+		return out, ErrProbe
+	}
+	out.identity, err = q.TaskBindingIdentity(ctx, tx, schema)
 	if err != nil {
 		return out, ErrProbe
 	}
-	out.tables, err = q.TaskBindingTablePrivileges(ctx, tx, int32(api.HostedTaskBindingCatalogMaxTables+1))
+	out.tables, err = q.TaskBindingTablePrivileges(ctx, tx, probedb.TaskBindingTablePrivilegesParams{SchemaName: schema, MaxTables: int32(api.HostedTaskBindingCatalogMaxTables + 1)})
 	if err != nil || len(out.tables) > api.HostedTaskBindingCatalogMaxTables {
 		return out, ErrProbe
 	}

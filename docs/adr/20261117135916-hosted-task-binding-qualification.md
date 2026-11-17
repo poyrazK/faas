@@ -41,7 +41,9 @@ private workers, one SQL connection at a time, a fifteen-second total budget,
 five-second statement/connect limits and one-second independent cleanup.
 Production connections require public destinations, whole-answer DNS validation,
 pinned IP dialing, verified TLS hostname identity and no host PGOPTIONS or client
-certificate inheritance. Fixed SQLC catalog queries run in read-only transactions;
+certificate inheritance. The target schema is read with qualified builtins, then the transaction lookup path
+is restricted to pg_catalog so tenant types/operators cannot shadow probe SQL.
+Fixed SQLC catalog queries run in read-only transactions;
 no customer function, migration, source, task operation or data mutation runs.
 
 Checks cover namespace, configured owner/previous key agreement, configured
