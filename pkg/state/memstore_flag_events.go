@@ -14,6 +14,8 @@ type memFlagEvents struct {
 	// experiments by ID, and units by experiment ID then customer.
 	experiments map[string]*FlagExperiment
 	units       map[string]map[string]*memFlagExperimentUnit
+	// latency histograms by experiment, variant and bucket.
+	latency map[string]map[string]map[int]int64
 }
 
 type flagConversionKeyMem struct {

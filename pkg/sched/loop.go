@@ -942,6 +942,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyRuntimeConfigRestart,
 		db.NotifyDeploymentChanged,
 		db.NotifySnapshotPrime,
+		db.NotifyLayerPublished,                  // ADR-038 amendment 2026-11-17: verify a layer before its prime.
 		db.NotifyCronRunNow,                      // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
 		db.NotifyAppDelete,                       // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
 		db.NotifyJobChanged,                      // issue #1184: wake job dispatch and reconcile cancelled task VMs on the existing LISTEN.
@@ -2477,6 +2478,8 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 //     replica target; other transitions remain informational.
 //   - snapshot_prime: imaged finished building a deployment's layer; boot it
 //     once, snapshot it, and park it (spec §5 step 6, ADR-018).
+//   - layer_published: imaged stored and replicated a deployment's layer;
+//     verify it now so its prime does not (ADR-038 amendment 2026-11-17).
 func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppWake:
@@ -2607,6 +2610,8 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			return
 		}
 		l.dispatchPrime(ctx, p.AppID, p.DeploymentID)
+	case db.NotifyLayerPublished:
+		l.dispatchLayerVerify(ctx, n.Payload)
 	case db.NotifyCronRunNow:
 		// PR-D / issue #791: fire-now wake. The notify payload is
 		// informational (the row in cron_fire_now_requests is the

@@ -20639,7 +20639,7 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 }
 
 // AppendNetworkUsageObservationExcludingInternal mirrors PgStore (billing
-// review R8-2). MemStore keeps no gateway service reply queue.
+// review R8-2).
 func (m *MemStore) AppendNetworkUsageObservationExcludingInternal(_ context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internalCumulative int64) (int64, int64, int64, error) {
 	if internalCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
@@ -20669,6 +20669,7 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 
 	billingAccountID := m.usage[usageIndex].AccountID
 	checkpoint := m.networkUsageCheckpoints[instanceID]
+	previousTxValid := checkpoint.netTxValid
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
 		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
@@ -20694,7 +20695,7 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 	if internal != nil {
 		var nextPending int64
 		excluded, nextPending = internalEgressStep(checkpoint.internalTx, checkpoint.internalTxValid,
-			checkpoint.internalTxPending, 0, *internal, netTxDelta)
+			previousTxValid, checkpoint.internalTxPending, *internal, netTxDelta)
 		netTxDelta -= excluded
 		checkpoint.internalTx = *internal
 		checkpoint.internalTxValid = true

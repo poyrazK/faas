@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "2f39068d4f86ce760ffdd2568f92ae33b759d48b8057c1ac5221af1b98df2784",
+      "revision": "0becbf23f289c3da019cb17f62c7654e58545bf440eb53dce8d3b7719c879e49",
       "files": [
         "faas.rules.yml"
       ],
@@ -54,11 +54,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasResidentGbPerCustomerHigh",
           "definition": {
-            "expression_hash": "e296b319042a76099753e2a41a86c31aa5d0e5a577069f28cf275d9b64dafed7",
+            "expression_hash": "f52244faadcb86d942da698698d3a130a94cbfe0512c7717fd07e938a3b976ce",
             "labels_hash": "31b64f8538eda7c137ba4dea12241d2783f8bd18cee13f2470f508072fe52462",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f1bb515b6509b1b22c9795ac727f3cf44176ad99de34af91f00ccd6e8887d3ff"
+            "fingerprint": "6ddc9bc3375d10f7496bb77900982e5acdb607ecd5110d0108470490019cc6ff"
           }
         },
         {
@@ -7410,7 +7410,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "aba7bf8ca2be1c6a32962b0dcb40f25f7bc25db37f68429a3ea48a1034583cbe",
+      "revision": "5d9c6b8b70e8267f55e6de2ec86b9d90e7cabeec591105d5684df5569a062507",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7477,11 +7477,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasResidentGbPerCustomerHigh",
           "definition": {
-            "expression_hash": "e296b319042a76099753e2a41a86c31aa5d0e5a577069f28cf275d9b64dafed7",
+            "expression_hash": "f52244faadcb86d942da698698d3a130a94cbfe0512c7717fd07e938a3b976ce",
             "labels_hash": "31b64f8538eda7c137ba4dea12241d2783f8bd18cee13f2470f508072fe52462",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f1bb515b6509b1b22c9795ac727f3cf44176ad99de34af91f00ccd6e8887d3ff"
+            "fingerprint": "6ddc9bc3375d10f7496bb77900982e5acdb607ecd5110d0108470490019cc6ff"
           }
         },
         {

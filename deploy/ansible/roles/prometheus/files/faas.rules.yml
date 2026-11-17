@@ -4425,12 +4425,15 @@ groups:
 
       # ─────────────────────────────────────────────────────────────────
       # Resident GB per paying customer (meterd / metrics endpoint)
-      # Spec §12 row: "resident GB per paying customer | 0.305 (=312 MB) | > 0.45 warn".
-      # ADR-031 splits the metric by plan so an operator can see which
-      # segment is migrating toward the §12 page threshold (0.45). The
-      # alert fans out per-plan via {{ $labels.plan }}; the alertmanager
-      # inhibit rule groups on family=residency so a per-plan page-tier
-      # crossing suppresses any per-plan warn on the same group.
+      # Each plan is compared with its own financial-model value,
+      # meterd_resident_gb_per_customer_planned (planned resident
+      # concurrency × plan RAM + 8 MB, api.PlannedResidentGBPerCustomer),
+      # and warns above 1.5× it, the margin validation V7 accepts
+      # (api.ResidentGBPerCustomerWarnFactor). The §12 0.305 GB target is
+      # the blend across the plan mix: a single 0.45 threshold per plan
+      # fired on every Pro or Scale customer using what its plan models
+      # (ADR-20261117070932). A missing planned series (meterd older than
+      # the rule) keeps the alert quiet.
       #
       # Plan label is the canonical api.Plan string (free|hobby|pro|scale)
       # emitted by meterd's Residency tick (pkg/meter/residency.go).
@@ -4439,7 +4442,8 @@ groups:
       # not a density signal, so the alert waits for five paying customers.
       - alert: FaasResidentGbPerCustomerHigh
         expr: |
-          max by (plan) (meterd_resident_gb_per_customer) > 0.45
+          max by (plan) (meterd_resident_gb_per_customer)
+            > 1.5 * max by (plan) (meterd_resident_gb_per_customer_planned)
           and on (plan)
           max by (plan) (meterd_resident_paying_customers) >= 5
         for: 1h
@@ -4451,8 +4455,8 @@ groups:
           # request-path alerts report customer-visible degradation separately.
           public_status: internal
         annotations:
-          summary: "Resident GB per paying customer > 0.45 (plan {{ $labels.plan }})"
-          description: "Plan {{ $labels.plan }} has been above the §12 threshold (0.45 average resident GB / paying customer) for 1h with at least five paying customers. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
+          summary: "Resident GB per paying customer > 1.5x plan model (plan {{ $labels.plan }})"
+          description: "Plan {{ $labels.plan }} has averaged {{ $value | printf \"%.2f\" }} resident GB per paying customer for 1h, more than 1.5x the financial model's value for the plan (meterd_resident_gb_per_customer_planned), with at least five paying customers. Find the accounts driving it before treating it as a pricing signal."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResidentGbPerCustomerHigh.md"
 
       # ─────────────────────────────────────────────────────────────────
