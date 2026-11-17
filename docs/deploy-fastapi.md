@@ -4,6 +4,9 @@ Gregale deploys a FastAPI app from its source: it finds `fastapi` in your
 dependencies, installs them, and starts the app with Uvicorn. What every
 framework shares is on [Deploy a web framework](frameworks.md).
 
+To check an existing repository and verify its exact release through MCP,
+follow the [FastAPI agent quickstart](agents.md#agent-quickstart-for-an-existing-fastapi-repo).
+
 ## Prepare the app
 
 ```python

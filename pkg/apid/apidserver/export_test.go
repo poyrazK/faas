@@ -928,6 +928,9 @@ func (r *appSecretCredentialSink) Identities() *func() []*age.X25519Identity { r
 func (r *appSecretCredentialSink) Probe() *func(context.Context, string, managedpostgres.CredentialAccess, int) error {
 	return &r.probe
 }
+func (r *appSecretCredentialSink) CutoverProbe() *func(context.Context, managedpostgres.Cutover, managedpostgres.CutoverCredential, managedpostgres.Database) error {
+	return &r.cutoverProbe
+}
 
 // Members of auditor
 func (r *auditor) CloseSignal() *chan struct{}    { return &r.closeSignal }

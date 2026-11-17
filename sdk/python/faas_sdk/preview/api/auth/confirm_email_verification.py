@@ -33,6 +33,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         response_200 = response.text
         return response_200
 
+    if response.status_code == 401:
+        response_401 = Problem.from_dict(response.json())
+
+        return response_401
+
     if response.status_code == 403:
         response_403 = Problem.from_dict(response.json())
 
@@ -69,9 +74,10 @@ def sync_detailed(
 ) -> Response[Any | Problem | str]:
     """Confirm an email verification from its confirmation page.
 
-     The confirmation page's form posts the token here. It is consumed and
-    the account email marked verified; the HTML answer asks the customer
-    to sign in again rather than creating a session.
+     The confirmation page posts the token here. A live session for the
+    account is required to consume it and mark the address verified.
+    Other browser sessions receive instructions for signing into the
+    correct account. No session is created.
 
     Args:
         body (ConfirmEmailVerificationBody):
@@ -102,9 +108,10 @@ def sync(
 ) -> Any | Problem | str | None:
     """Confirm an email verification from its confirmation page.
 
-     The confirmation page's form posts the token here. It is consumed and
-    the account email marked verified; the HTML answer asks the customer
-    to sign in again rather than creating a session.
+     The confirmation page posts the token here. A live session for the
+    account is required to consume it and mark the address verified.
+    Other browser sessions receive instructions for signing into the
+    correct account. No session is created.
 
     Args:
         body (ConfirmEmailVerificationBody):
@@ -130,9 +137,10 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | str]:
     """Confirm an email verification from its confirmation page.
 
-     The confirmation page's form posts the token here. It is consumed and
-    the account email marked verified; the HTML answer asks the customer
-    to sign in again rather than creating a session.
+     The confirmation page posts the token here. A live session for the
+    account is required to consume it and mark the address verified.
+    Other browser sessions receive instructions for signing into the
+    correct account. No session is created.
 
     Args:
         body (ConfirmEmailVerificationBody):
@@ -161,9 +169,10 @@ async def asyncio(
 ) -> Any | Problem | str | None:
     """Confirm an email verification from its confirmation page.
 
-     The confirmation page's form posts the token here. It is consumed and
-    the account email marked verified; the HTML answer asks the customer
-    to sign in again rather than creating a session.
+     The confirmation page posts the token here. A live session for the
+    account is required to consume it and mark the address verified.
+    Other browser sessions receive instructions for signing into the
+    correct account. No session is created.
 
     Args:
         body (ConfirmEmailVerificationBody):

@@ -202,10 +202,14 @@ type usageCollectionWork struct {
 	observedAt  time.Time
 	to          time.Time
 	completed   bool
-	discover    bool
-	requests    int
-	included    bool
-	err         error
+	// finalWindowOpen marks a deleted database whose final window has not
+	// closed: to stops at the last closed window and the database is not yet
+	// complete.
+	finalWindowOpen bool
+	discover        bool
+	requests        int
+	included        bool
+	err             error
 }
 
 func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Database, to time.Time) *usageCollectionWork {
@@ -241,10 +245,18 @@ func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Da
 			return work
 		}
 		work.to = usageEnd(*database.DeletedAt, c.policy.Window)
-		// Never ask the provider for a still-open final window.
-		if work.to.IsZero() || work.to.After(to) {
+		if work.to.IsZero() {
 			work.err = ErrUsageStale
 			return work
+		}
+		// Never ask the provider for a still-open final window, but collect
+		// the windows that have closed before it. Skipping them left a
+		// database deleted in the window after the one it was created in with
+		// no coverage at all until its final window closed, which admission
+		// reads as missing coverage: production 2026-11-17, every restore,
+		// create and resize on the account was refused for an hour.
+		if work.to.After(to) {
+			work.to, work.finalWindowOpen = to, true
 		}
 	}
 	progress, err := c.store.UsageProgress(ctx, database.AccountID, database.ID, c.policy.Window)
@@ -257,7 +269,7 @@ func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Da
 	// Keep replaying the final correction tail until every window has an
 	// observation beyond the existing three-window correction horizon. Retained
 	// tombstones remain in admission checks, but stop consuming provider calls.
-	work.completed = database.State == StateDeleted && !progress.CollectedUntil.Before(to) &&
+	work.completed = database.State == StateDeleted && !work.finalWindowOpen && !progress.CollectedUntil.Before(to) &&
 		!progress.CorrectionObservedAt.Before(to.Add(recentUsageCorrectionWindows*c.policy.Window))
 	work.from = to.Add(-c.policy.Window)
 	if !progress.CollectedUntil.IsZero() {

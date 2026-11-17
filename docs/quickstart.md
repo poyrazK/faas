@@ -1,5 +1,9 @@
 # Quickstart
 
+Using a coding agent with an existing FastAPI repo? Follow the
+[FastAPI agent quickstart](agents.md#agent-quickstart-for-an-existing-fastapi-repo)
+to check compatibility and verify the deployed release through MCP.
+
 Gregale deploys stateless APIs into isolated Firecracker microVMs. The fastest
 guided path from an existing project to a URL is:
 
