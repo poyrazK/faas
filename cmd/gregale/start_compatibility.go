@@ -26,10 +26,6 @@ const (
 	verificationDenied                                 // the account lacks deployment-write access
 )
 
-func startUnsupportedVerification() error {
-	return startVerificationError(verificationUnsupported)
-}
-
 func startVerificationError(failure verificationFailure) error {
 	switch failure {
 	case verificationUnsupported:

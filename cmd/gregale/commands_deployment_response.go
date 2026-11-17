@@ -46,7 +46,7 @@ func cmdDeploymentCheckResponse(args []string) int {
 	result, err := deploymentResponseCheck(interruptCtx, client, *app, fs.Arg(0), request)
 	if err != nil {
 		if interruptCtx.Err() != nil {
-			fmt.Fprintln(osStderr, "Interrupted; the deployment is unchanged.")
+			_, _ = fmt.Fprintln(osStderr, "Interrupted; the deployment is unchanged.")
 			return 130
 		}
 		return printErr("Could not verify application response", err)
