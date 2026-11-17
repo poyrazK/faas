@@ -45,6 +45,7 @@ loader pkg/internalmail/keyring_config.go 2
 plain account_email_changes.token_hash
 plain accounts.mfa_recovery_codes_hash
 plain agent_approval_requests.body_sha256
+plain analytics_events.subject_hash
 plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
 plain app_basic_auth_verifiers.sealed_sha256
