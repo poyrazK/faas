@@ -2,6 +2,28 @@
 
 Day-to-day use of the `gregale` CLI: choosing a command, selecting an app, shell completion and man pages, and how commands report what they did. The pages listed at the end cover Jobs, workflows, logs, secrets and more.
 
+## Verify a deployed application
+
+The guided first-deploy path is `gregale start [path]`; see the
+[quickstart](quickstart.md). Deployment readiness, a verified application response,
+and public access are separate results.
+
+To test the exact deployment from your launch receipt, including a private or
+internal app, use your Gregale account:
+
+```bash
+gregale release verify DEPLOYMENT_UUID --app my-api --path /
+```
+
+The check is available on every plan with deployment-write access. It reports
+the actual application HTTP status and verifies only a 2xx response. Account
+credentials are not forwarded to the app. A private endpoint may return 401 in
+a browser without its required credentials after a successful deploy; you can
+verify it without making it public. Application-owned authentication still
+applies. An owner-authorized check does not establish anonymous public access.
+In the dashboard, the equivalent action is **Verify response**.
+
+
 ## Choosing a task
 
 Use `logs views delete NAME --dry-run` to check preferred-view impact before

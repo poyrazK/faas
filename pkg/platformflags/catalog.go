@@ -85,6 +85,10 @@ const (
 	// platform when the fence itself refuses healthy traffic.
 	TrafficRevocationFence = "traffic_revocation_fence"
 
+	// SupportGrants releases customer-granted support access
+	// (ADR-20261116163508). Its kill switch refuses every grant at once.
+	SupportGrants = "support_grants"
+
 	// Edge rule features released by platform flags (ADR-20261023113721).
 	EdgeWAFBlocking = "edge_waf_blocking"
 	EdgeChallenge   = "edge_challenge"
@@ -410,6 +414,17 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan},
 		RetireBy:    "2027-01-31",
+	},
+	{
+		Key:   SupportGrants,
+		Label: "Support access grants",
+		Description: "Let organization owners and admins grant Gregale support time-limited access to deploy, roll back and restart their apps, " +
+			"and let support request it. Decided per organization. Off, customers cannot create or approve grants and every existing grant is refused; " +
+			"disabling the flag is the kill switch.",
+		ADR:        "ADR-20261116163508",
+		Consumers:  []string{"apid"},
+		Attributes: []Attribute{AttributeOrg},
+		RetireBy:   "2027-06-30",
 	},
 	{
 		Key:   QuietPauseUnbilled,

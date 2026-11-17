@@ -347,7 +347,7 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery, approval waits, the agent's own activity and undo |
+| `core` (default) | Context, docs search, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery, approval waits, the agent's own activity and undo |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
 | `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
@@ -386,6 +386,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 |---|---|
 | `gregale_preflight` | Read-only consent, native operation authorization, release-review/health/operations compatibility and durable-state checks. `operation` is `deploy` (default), `restart`, `scale` or `env_change`; admission is checked separately. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
+| `gregale_search_docs` | Search the published docs at gregale.dev: up to 10 ranked sections (`limit`, default 5), at most two per page, each with its page, heading anchor, URL and a snippet. |
+| `gregale_get_docs_page` | One published docs page as Markdown with its heading anchors, or one `section` of it; `page` takes a slug or a gregale.dev/docs URL. Output stops at 48 KiB and says so. |
 | `gregale_list_actions` | Bounded connection-local deploy, rollback, service/worker rollout, service abort, configuration, scaling, cron, route-budget and regression-triage history for one exact app/environment, with keyset continuation. |
 | `gregale_get_action` | One recorded plan's attempts, redacted native receipts and recovery guidance; historical acceptance does not prove deployment completion. |
 | `gregale_list_environment_actions` | Connection-local promotion/rollback history for an exact project and target environment; requires consent for both environments and every project workload. |

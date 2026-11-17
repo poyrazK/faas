@@ -1,4 +1,4 @@
--- filename: 20261117064320100_flag_experiment_guardrails.sql
+-- filename: 20261117072240100_flag_experiment_guardrails.sql
 -- migration-compat: expand
 -- ADR 20261116190208: flag experiment guardrails, mean metrics and stop
 -- reasons. Units gain per-customer request, server error, latency-tested and

@@ -102,6 +102,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release attempt retry", "deploy retry"},
 	{"release logs", "deploys logs"},
 	{"release wait", "deployment wait"},
+	{"release verify", "deployment verify"},
 	{"release status", "deployment status"},
 	{"release cancel", "deploys cancel"},
 	{"release retry", "deploys retry"},
@@ -1181,10 +1182,20 @@ type cliTreeEntry struct {
 // cliTreeDiscovery is the discoverable manifest, read once per help screen.
 type cliTreeDiscovery struct {
 	commands map[string]cliCommand
+	// named answers help for a path the user typed when a logged-in CLI
+	// could not read its account view and the hidden set is only the
+	// tier-default guess: listings stay filtered, but `gregale app exec
+	// --help` shows exec's page rather than the parent's (retail-store
+	// GREG-06).
+	named map[string]cliCommand
 }
 
 func newCliTreeDiscovery() cliTreeDiscovery {
-	return cliTreeDiscoveryOf(discoverableCliCommands())
+	d := cliTreeDiscoveryOf(discoverableCliCommands())
+	if discoveryCapabilityView().unconfirmed {
+		d.named = cliTreeDiscoveryOf(visibleCliCommands()).commands
+	}
+	return d
 }
 
 // cliTreeDiscoveryOf indexes manifest, for a surface that documents more
@@ -1204,7 +1215,16 @@ func cliTreeDiscoveryOf(manifest []cliCommand) cliTreeDiscovery {
 // (ADR-20261023115741), and an operator command stays out of the tree.
 func (d cliTreeDiscovery) node(path string) (cliTreeNode, bool) {
 	words := strings.Fields(path)
+	if len(words) == 0 {
+		return cliTreeNode{}, false
+	}
 	command, ok := d.commands[words[0]]
+	if ok && command.Audience == cliAudienceCustomer {
+		if node, found := walkCliTreeNode(command, words[1:]); found {
+			return node, true
+		}
+	}
+	command, ok = d.named[words[0]]
 	if !ok || command.Audience != cliAudienceCustomer {
 		return cliTreeNode{}, false
 	}
@@ -1351,6 +1371,10 @@ func treeHelpWords(typed []string) ([]string, bool) {
 // run() then prints today's help under the typed name.
 func printTreeManifestHelp(w io.Writer, words []string) bool {
 	d := newCliTreeDiscovery()
+	if len(leadingTreeWords(words)) > 1 && d.named != nil {
+		// Help for a verb the user named; see cliTreeDiscovery.named.
+		d.commands = d.named
+	}
 	var command cliCommand
 	if noun, ok := lookupCliTreeNoun(words[0]); ok {
 		// An operator command (postgres) stays out of the tree.

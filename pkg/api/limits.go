@@ -315,6 +315,29 @@ const (
 	UnverifiedAccountExpiryBatch = 100
 )
 
+// Customer-granted support access (ADR-20261116163508). A grant lasts
+// SupportGrantDefaultTTL unless its owner or admin picks another duration,
+// at most SupportGrantMaxTTL, and names at most SupportGrantMaxApps apps. A
+// support request waits SupportGrantRequestTTL for a decision, and one
+// organization has at most SupportGrantMaxOpenRequests open at once. Owners
+// and admins get at most one "support changed something" mail per
+// SupportActionMailInterval; the activity log records every action.
+const (
+	SupportGrantDefaultTTL      = 24 * time.Hour
+	SupportGrantMaxTTL          = 7 * 24 * time.Hour
+	SupportGrantMaxApps         = 100
+	SupportGrantRequestTTL      = 24 * time.Hour
+	SupportGrantMaxOpenRequests = 3
+	SupportActionMailInterval   = 10 * time.Minute
+	// SupportGrantHistoryLimit is how many ended grants an organization's
+	// support-access view lists after every live one.
+	SupportGrantHistoryLimit = 50
+	// SupportReasonMinChars and SupportReasonMaxChars bound a grant's or a
+	// request's reason, in characters.
+	SupportReasonMinChars = 3
+	SupportReasonMaxChars = 400
+)
+
 // EmailChangeRevertWindow is how long after a confirmed sign-in email
 // change an operator can move the account back to the previous address
 // (`gregalectl accounts revert-email`, ADR 20261110100000).

@@ -2810,9 +2810,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 		if len(unsupported) > 0 {
-			return printErr("Unsupported project deploy flags", fmt.Errorf(
-				"%s cannot be combined with project scope controls; project deploy policy is not yet supported",
-				strings.Join(unsupported, ", ")))
+			return printErr("Unsupported project deploy flags", projectDeployFlagRefusal(unsupported))
 		}
 	}
 	if explicit["wait"] && explicit["no-wait"] {
@@ -3533,6 +3531,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			appEnv = &loaded
 		}
 		rep := runDoctorChecksForApp(sourceDir, doctorShape, appEnv)
+		if projectRequested {
+			// The project root is not one app: the plan scans each Compose
+			// service on its own, and an image-only project has no source
+			// framework at all. A root profile warned "framework_not_detected
+			// ... supply an explicit Dockerfile" for a valid project of
+			// digest-pinned images (retail-store GREG-05).
+			rep.Profile = nil
+		}
 		if *doctorStrict && rep.HasErrors() {
 			if jsonOutput {
 				_ = json.NewEncoder(osStderr).Encode(struct {
@@ -4127,7 +4133,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		var projectWaitTimeouts []projectWaitTimeout
 		if waitForDeploy && !*safeProjectDeploy && len(apply.Builds) > 0 {
-			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(ctx, client, apply,
+			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(withProjectWaitProgress(ctx, osStderr, jsonOutput), client, apply,
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		return renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)

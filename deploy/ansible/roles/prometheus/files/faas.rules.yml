@@ -3454,7 +3454,8 @@ groups:
 
       # ─────────────────────────────────────────────────────────────────
       # LV-fc usage (vmmd — schedd /metrics/fcvm)
-      # Spec §12 row: "lv_fc_used_pct > 80 warn, > 90 page".
+      # Spec §12 row: "lv_fc_used_pct > 80 warn, > 90 page"; the warn moved
+      # to 87 with ADR-20261114182830 amendment 1 (below).
       # Note: §8 (line 365) says imaged refuses > 90% and pages at 80%;
       # §12 says warn at 80, page at 90. This rule uses §12 verbatim.
       # The §8 / §12 contradiction is an ADR-worthy spec drift surfaced
@@ -3472,16 +3473,20 @@ groups:
           description: "The fc logical volume is past 90% used for 5m. imaged will start refusing new deploys; tenant snapshots can no longer be parked."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
 
+      # The warn sits above the artifact cache's free-space floor
+      # (ADR-20261114182830 amendment 1): the cache fills /srv/fc to its
+      # disk less api.ArtifactCacheReservePercent (15%) by design, so a
+      # healthy full node reads ~85% and an 80% warn fired on every one.
       - alert: FaasLvFcUsageHighWarn
-        expr: max(fcvm_lv_fc_used_pct) > 80 and max(fcvm_lv_fc_used_pct) <= 90
+        expr: max(fcvm_lv_fc_used_pct) > 87 and max(fcvm_lv_fc_used_pct) <= 90
         for: 10m
         labels:
           severity: warn
           component: vmmd
           family: lv_fc
         annotations:
-          summary: "lv-fc usage > 80%"
-          description: "lv-fc usage between 80% and 90% for 10m. Schedule the next LV-resize runbook before the page-tier crossing."
+          summary: "lv-fc usage > 87%"
+          description: "lv-fc usage between 87% and 90% for 10m: above the 85% the artifact cache fills to and defends by eviction, so eviction is not keeping up or something outside the cache is filling /srv/fc. Find it before the page-tier crossing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
 
       # ADR-20261103163954 §4: public connections share the conntrack table

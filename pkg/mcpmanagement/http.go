@@ -101,6 +101,8 @@ type remoteServer struct {
 	cliAccounts accountSlots
 	// metadataClient fetches client metadata documents; nil disables them.
 	metadataClient *http.Client
+	// docs is shared by every connection, so the docs corpus is fetched once.
+	docs *docsLibrary
 }
 
 type grantContextKey struct{}
@@ -170,7 +172,7 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	if opts.Hosted {
 		issuer = opts.ResourceURL
 	}
-	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}}
+	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}, docs: newDocsLibrary(docsSiteURL, nil)}
 	if opts.Hosted && opts.UploadDir != "" {
 		if r.uploads, err = newUploadStore(opts.UploadDir, opts.ResourceURL); err != nil {
 			return nil, err
