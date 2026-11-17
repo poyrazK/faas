@@ -59,6 +59,22 @@ func Entries(page objectstorage.ObjectPage, fromSource bool) []Entry {
 // request.
 type Lister func(ctx context.Context, req objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error)
 
+// ProviderLister lists bucket on p from a start-after boundary, counting
+// each provider request with count. A provider without start-after listing
+// is unsupported: a merged page cannot resume from a provider cursor.
+func ProviderLister(p objectstorage.Provider, bucket string, count Counter) Lister {
+	return func(ctx context.Context, req objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error) {
+		lister, ok := p.(objectstorage.ObjectV2Lister)
+		if !ok {
+			return objectstorage.ObjectPage{}, objectstorage.ErrUnsupported
+		}
+		if err := count(); err != nil {
+			return objectstorage.ObjectPage{}, err
+		}
+		return lister.ListObjectsV2(ctx, bucket, req)
+	}
+}
+
 // Source is the bucket a branch reads through to: its current objects
 // (List), or, when At is set, its objects as of the branch point read from
 // Versions in Bucket, counting each provider page with Count.
