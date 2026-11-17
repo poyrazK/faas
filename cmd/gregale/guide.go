@@ -10,6 +10,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // guidePage is one task an agent or a person looks up with `gregale guide
@@ -225,26 +227,17 @@ func cmdGuide(args []string) int {
 	return 0
 }
 
-// agentMarkers are the environment variables coding agents set in the
-// shells they run, confirmed against each agent's release (2026-11-14:
-// Claude Code, Gemini CLI, Codex CLI, Cursor agent).
-var agentMarkers = []string{"CLAUDECODE", "GEMINI_CLI", "CODEX_THREAD_ID", "CODEX_SANDBOX", "CURSOR_AGENT"}
-
 const agentHint = "Agent: run `gregale guide` for a task index; `gregale deploy --dry-run` lists the features this repo uses."
 
-// runByAgent reports a known agent marker, unless GREGALE_NO_AGENT_HINT=1.
-// It only adds a pointer on stderr (ADR-20261112223000 §5): no default,
-// prompt or successful command's stdout changes.
+// runByAgent reports a known agent marker (api.CodingAgents), unless
+// GREGALE_NO_AGENT_HINT=1. It only adds a pointer on stderr
+// (ADR-20261112223000 §5): no default, prompt or successful command's
+// stdout changes.
 func runByAgent() bool {
 	if os.Getenv("GREGALE_NO_AGENT_HINT") == "1" {
 		return false
 	}
-	for _, marker := range agentMarkers {
-		if os.Getenv(marker) != "" {
-			return true
-		}
-	}
-	return false
+	return api.CodingAgentFromEnv(os.Getenv) != ""
 }
 
 // printAgentHint writes the pointer once per process.
