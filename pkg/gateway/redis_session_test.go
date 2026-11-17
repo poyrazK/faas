@@ -340,6 +340,27 @@ func TestRedisSessionRefusesPlatformCommands(t *testing.T) {
 	}
 }
 
+// A refused command pipelined behind a command the cache has not answered yet
+// is answered after it: Redis replies to a pipeline in order.
+func TestRedisSessionRefusalKeepsPipelineOrder(t *testing.T) {
+	f := newFakeRedis()
+	c, _, _ := startRedisSession(t, f, time.Hour)
+	if got := c.do("SET", "k", "v"); got != "+OK\r\n" {
+		t.Fatalf("SET = %q", got)
+	}
+	pipeline := append(respEncodeCommand([]byte("BLPOP"), []byte("q"), []byte("0")),
+		respEncodeCommand([]byte("CONFIG"), []byte("GET"), []byte("maxmemory"))...)
+	pipeline = append(pipeline, respEncodeCommand([]byte("PING"))...)
+	go func() { _, _ = c.conn.Write(pipeline) }()
+	time.Sleep(50 * time.Millisecond) // CONFIG is read while BLPOP is outstanding
+	close(f.block)
+	for i, want := range []string{"*-1\r\n", "-ERR CONFIG", "+PONG\r\n"} {
+		if got := c.read(); !strings.HasPrefix(got, want) {
+			t.Fatalf("reply %d = %q, want %q first", i, got, want)
+		}
+	}
+}
+
 func TestRedisSessionQuitWhileDetached(t *testing.T) {
 	f := newFakeRedis()
 	c, _, done := startRedisSession(t, f, time.Hour)

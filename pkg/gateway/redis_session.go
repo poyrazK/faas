@@ -92,10 +92,14 @@ type redisSession struct {
 
 	pending atomic.Int64 // replies the cache still owes the client
 	swallow atomic.Int64 // replay replies to drop before pending ones
+	// drained is signalled when pending reaches zero or a leg ends, so a
+	// reply the session makes itself waits behind the cache's replies to
+	// earlier commands (see writeOwnReply).
+	drained chan struct{}
 }
 
 func newRedisSession(client net.Conn, attach redisAttachFunc) *redisSession {
-	return &redisSession{client: client, attachFn: attach, detachAfter: redisDetachAfter, now: time.Now}
+	return &redisSession{client: client, attachFn: attach, detachAfter: redisDetachAfter, now: time.Now, drained: make(chan struct{}, 1)}
 }
 
 // run serves the session until the client leaves or a leg fails with
@@ -138,7 +142,7 @@ func (s *redisSession) handle(ctx context.Context, r *bufio.Reader, cmd respComm
 				return false, err
 			}
 		}
-		return false, s.writeClient([]byte("-ERR " + cmd.name + " is not allowed on a managed cache\r\n"))
+		return false, s.writeOwnReply(ctx, []byte("-ERR "+cmd.name+" is not allowed on a managed cache\r\n"))
 	}
 	if redisKeptCommands[cmd.name] {
 		if err := cmd.readRest(r); err != nil {
@@ -155,7 +159,7 @@ func (s *redisSession) handle(ctx context.Context, r *bufio.Reader, cmd respComm
 					return false, err
 				}
 			}
-			return quit, s.writeClient(reply)
+			return quit, s.writeOwnReply(ctx, reply)
 		}
 		if err := s.attach(ctx); err != nil {
 			if cmd.rest > 0 {
@@ -163,7 +167,7 @@ func (s *redisSession) handle(ctx context.Context, r *bufio.Reader, cmd respComm
 					return false, err
 				}
 			}
-			return false, s.writeClient([]byte(redisUnavailableReply))
+			return false, s.writeOwnReply(ctx, []byte(redisUnavailableReply))
 		}
 	}
 	s.remember(cmd)
@@ -194,7 +198,7 @@ func (s *redisSession) handle(ctx context.Context, r *bufio.Reader, cmd respComm
 				return false, err
 			}
 		}
-		return false, s.writeClient([]byte(redisUnavailableReply))
+		return false, s.writeOwnReply(ctx, []byte(redisUnavailableReply))
 	}
 	if cmd.rest > 0 {
 		if err := cmd.copyRest(r, up); err != nil {
@@ -337,7 +341,9 @@ func (s *redisSession) pump(up net.Conn, legDone chan struct{}) {
 			s.swallow.Add(-1)
 			continue
 		}
-		s.pending.Add(-1)
+		if s.pending.Add(-1) == 0 {
+			s.signalDrained()
+		}
 	}
 }
 
@@ -356,6 +362,38 @@ func (s *redisSession) legEnded(up net.Conn) {
 	if current && (s.pending.Load() != 0 || stateful) {
 		_ = s.client.Close()
 	}
+	s.signalDrained()
+}
+
+func (s *redisSession) signalDrained() {
+	select {
+	case s.drained <- struct{}{}:
+	default:
+	}
+}
+
+// writeOwnReply writes a reply the session makes itself (a refusal, a local
+// PING, an unavailable error). Redis answers a pipeline in order, so it first
+// waits until the cache has answered every command already sent upstream, or
+// that leg is gone. Writing it at once put a refused CONFIG's error ahead of
+// the replies to the SET and GET pipelined before it (native run
+// redis-20261117T171321).
+func (s *redisSession) writeOwnReply(ctx context.Context, b []byte) error {
+	for s.pending.Load() > 0 {
+		s.mu.Lock()
+		done := s.upDone
+		s.mu.Unlock()
+		if done == nil {
+			break
+		}
+		select {
+		case <-s.drained:
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.writeClient(b)
 }
 
 // dropLeg forgets a leg the client goroutine found dead.
