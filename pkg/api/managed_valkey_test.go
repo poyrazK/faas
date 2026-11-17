@@ -1,6 +1,7 @@
 package api
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -73,6 +74,43 @@ func TestManagedValkeyURL(t *testing.T) {
 	}
 	if strings.Contains(ManagedValkeyServerCommand(64, "noeviction")[2], "requirepass") {
 		t.Fatal("cache must run without a password")
+	}
+}
+
+func TestManagedValkeyHandoffCommand(t *testing.T) {
+	argv := ManagedValkeyHandoffCommand("sessions", 256, "allkeys-lru", 1_900_000_000)
+	if len(argv) != 3 || argv[0] != "/bin/sh" || argv[1] != "-c" {
+		t.Fatalf("argv = %q", argv)
+	}
+	script := argv[2]
+	for _, want := range []string{
+		`[ "$(date +%s)" -ge 1900000000 ]`,      // after the window: plain start
+		"--port 0 ",                             // TCP closed while copying
+		"--replicaof sessions.svc.gregale 6379", // copy the running cache
+		"CLIENT PAUSE 300000 WRITE",             // freeze writes before the switch
+		"REPLICAOF NO ONE",                      // promote
+		"CONFIG SET port 6379",                  // open: readiness passes
+		"CLIENT UNPAUSE",                        // a failed handoff lifts the pause
+		"--maxmemory 256mb",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("handoff script lacks %q", want)
+		}
+	}
+	// The port opens last: readiness must not pass before the promotion.
+	if strings.Index(script, "CONFIG SET port") < strings.Index(script, "REPLICAOF NO ONE") {
+		t.Fatal("port opens before promotion")
+	}
+}
+
+func TestManagedValkeyCommandFences(t *testing.T) {
+	for _, platform := range []string{"REPLICAOF", "PSYNC", "SYNC", "CONFIG"} {
+		if slices.Contains(ManagedValkeyBlockedCommands, platform) {
+			t.Errorf("%s is renamed away, but the handoff needs it", platform)
+		}
+		if !slices.Contains(ManagedValkeyClientDeniedCommands, platform) {
+			t.Errorf("%s must be refused for customer sessions", platform)
+		}
 	}
 }
 

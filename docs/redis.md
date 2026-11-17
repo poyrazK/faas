@@ -72,13 +72,27 @@ The cache is a cache: it has no disk persistence or replica.
 Keep data you cannot lose in [managed PostgreSQL](postgres.md) or object
 storage.
 
+## Resize, upgrade and restart
+
+```bash
+gregale redis resize sessions --memory 256
+gregale redis upgrade sessions
+gregale redis restart sessions
+```
+
+All three keep your data. A resize or upgrade starts a new VM that copies the
+cache before it takes over; writes pause for a moment at the switch. Shrinking
+below the data the cache holds needs `--evict`, which lets the cache evict keys
+by its policy. A restart saves the cache's memory and restores it.
+
 ## Limits
 
 - Commands that change the server (`CONFIG`, `DEBUG`, `MODULE`, `SHUTDOWN`,
   `SAVE`, `BGSAVE`, `BGREWRITEAOF`, `REPLICAOF`, `SLAVEOF`, `FAILOVER`,
-  `CLUSTER`, `ACL`, `MONITOR`, `SYNC`, `PSYNC`) are disabled. Lua scripts,
+  `CLUSTER`, `ACL`, `MONITOR`, `SYNC`, `PSYNC`, `REPLCONF`) are refused. Lua scripts,
   functions, pub/sub, streams and transactions work.
-- You cannot deploy your own image to a cache. Recreate it to change its size.
+- You cannot deploy your own image to a cache. Use `gregale redis resize` to
+  change its size.
 
 ## Delete a cache
 

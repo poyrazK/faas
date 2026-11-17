@@ -31,6 +31,8 @@ type ManagedValkeyStore interface {
 	// deleted, oldest first.
 	ListManagedValkeyCaches(ctx context.Context, accountID string) ([]ManagedValkeyCache, error)
 	DeleteManagedValkeyCache(ctx context.Context, appID string) error
+	// UpdateManagedValkeyCache records a resize or policy change.
+	UpdateManagedValkeyCache(ctx context.Context, appID string, memoryMB int, evictionPolicy string) (ManagedValkeyCache, error)
 }
 
 var _ ManagedValkeyStore = (*PgStore)(nil)
@@ -93,6 +95,36 @@ func (s *PgStore) ListManagedValkeyCaches(ctx context.Context, accountID string)
 func (s *PgStore) DeleteManagedValkeyCache(ctx context.Context, appID string) error {
 	_, err := s.pool.Exec(ctx, `delete from managed_valkey_caches where app_id = $1`, appID)
 	return mapErr(err)
+}
+
+// UpdateManagedValkeyCache records a cache's new size and policy.
+func (s *PgStore) UpdateManagedValkeyCache(ctx context.Context, appID string, memoryMB int, evictionPolicy string) (ManagedValkeyCache, error) {
+	var cache ManagedValkeyCache
+	err := s.pool.QueryRow(ctx, `
+		update managed_valkey_caches set memory_mb = $2, eviction_policy = $3
+		where app_id = $1
+		returning app_id::text, account_id::text, memory_mb, eviction_policy, created_at`,
+		appID, memoryMB, evictionPolicy).
+		Scan(&cache.AppID, &cache.AccountID, &cache.MemoryMB, &cache.EvictionPolicy, &cache.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ManagedValkeyCache{}, ErrNotFound
+	}
+	if err != nil {
+		return ManagedValkeyCache{}, mapErr(err)
+	}
+	return cache, nil
+}
+
+// UpdateManagedValkeyCache implements ManagedValkeyStore in memory.
+func (m *MemStore) UpdateManagedValkeyCache(ctx context.Context, appID string, memoryMB int, evictionPolicy string) (ManagedValkeyCache, error) {
+	value, ok := m.managedValkeyCaches.Load(appID)
+	if !ok {
+		return ManagedValkeyCache{}, ErrNotFound
+	}
+	cache := value.(ManagedValkeyCache)
+	cache.MemoryMB, cache.EvictionPolicy = memoryMB, evictionPolicy
+	m.managedValkeyCaches.Store(appID, cache)
+	return cache, nil
 }
 
 // CreateManagedValkeyCache implements ManagedValkeyStore in memory.

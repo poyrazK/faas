@@ -106,6 +106,43 @@ func TestRedisCacheRestartKeepsSnapshots(t *testing.T) {
 	}
 }
 
+func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
+	e := setupSecrets(t, api.PlanPro)
+	ctx := context.Background()
+	if rec := e.do(t, "POST", "/v1/redis", api.CreateRedisCacheRequest{Name: "sessions", MemoryMB: 256}, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	app, _ := e.store.AppBySlug(ctx, "sessions")
+
+	if rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{MemoryMB: 128}, map[string]string{"Idempotency-Key": "shrink"}); rec.Code != http.StatusConflict {
+		t.Fatalf("shrink without evict: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{MemoryMB: 512}, map[string]string{"Idempotency-Key": "grow"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("grow: %d %s", rec.Code, rec.Body.String())
+	}
+	var change api.RedisCacheChange
+	if err := json.Unmarshal(rec.Body.Bytes(), &change); err != nil || change.Cache.MemoryMB != 512 || change.DeploymentID == "" {
+		t.Fatalf("change = %s", rec.Body.String())
+	}
+	app, _ = e.store.AppBySlug(ctx, "sessions")
+	if app.RAMMB != 512+api.ManagedValkeyVMOverheadMB {
+		t.Fatalf("app RAM = %d", app.RAMMB)
+	}
+	dep, err := e.store.LatestDeployment(ctx, app.ID)
+	if err != nil || dep.ImageDigest != api.ManagedValkeyImage {
+		t.Fatalf("handoff deployment: %+v %v", dep, err)
+	}
+
+	up := e.do(t, "POST", "/v1/redis/sessions/upgrade", nil, map[string]string{"Idempotency-Key": "upgrade"})
+	if up.Code != http.StatusAccepted {
+		t.Fatalf("upgrade: %d %s", up.Code, up.Body.String())
+	}
+	if rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{}, map[string]string{"Idempotency-Key": "noop"}); rec.Code != http.StatusBadRequest && rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty change: %d", rec.Code)
+	}
+}
+
 func TestRedisCachePlanGates(t *testing.T) {
 	free := setupSecrets(t, api.PlanFree)
 	if rec := free.do(t, "POST", "/v1/redis", api.CreateRedisCacheRequest{Name: "c1"}, nil); rec.Code != http.StatusForbidden ||

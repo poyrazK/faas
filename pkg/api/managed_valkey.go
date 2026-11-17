@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -62,13 +63,25 @@ var ManagedValkeyEvictionPolicies = []string{
 	"noeviction",
 }
 
-// ManagedValkeyBlockedCommands are renamed away so a client cannot reach
-// them: they change the server's configuration, persistence, replication or
-// lifecycle, which the platform owns.
+// ManagedValkeyBlockedCommands are renamed away inside Valkey: nothing, the
+// platform included, ever needs them on a cache.
 var ManagedValkeyBlockedCommands = []string{
-	"CONFIG", "DEBUG", "MODULE", "SHUTDOWN", "SAVE", "BGSAVE", "BGREWRITEAOF",
-	"REPLICAOF", "SLAVEOF", "FAILOVER", "CLUSTER", "ACL", "MONITOR", "SYNC", "PSYNC",
+	"DEBUG", "MODULE", "SHUTDOWN", "SAVE", "BGSAVE", "BGREWRITEAOF",
+	"FAILOVER", "CLUSTER", "ACL", "MONITOR",
 }
+
+// ManagedValkeyClientDeniedCommands are refused by the service proxy for
+// every customer session. Valkey keeps them because the platform's resize
+// and upgrade handoff uses them (replication, promotion, port change); the
+// proxy is the only way into a cache, so it is where they are fenced.
+var ManagedValkeyClientDeniedCommands = append([]string{
+	"CONFIG", "REPLICAOF", "SLAVEOF", "SYNC", "PSYNC", "REPLCONF",
+}, ManagedValkeyBlockedCommands...)
+
+// ManagedValkeyHandoffWindowS is how long after a resize or upgrade is
+// created its new VM boots as a replica of the running cache. A cold boot
+// after the window starts empty, like any cache cold boot.
+const ManagedValkeyHandoffWindowS = 15 * 60
 
 // ManagedValkeyCachesFor is the number of caches a plan includes. Free has
 // none (owner, 2026-11-16: Hobby and up).
@@ -161,9 +174,15 @@ func ValidateManagedValkeyIdleTimeout(seconds int) *Problem {
 // the cache has no public address, and the private service proxy admits only
 // authorized callers in the cache's account.
 func ManagedValkeyServerCommand(memoryMB int, policy string) []string {
+	return []string{"/bin/sh", "-c", "exec " + managedValkeyServerArgs(memoryMB, policy, strconv.Itoa(ManagedValkeyPort))}
+}
+
+// managedValkeyServerArgs is the valkey-server command line, listening on
+// port (0 = TCP closed).
+func managedValkeyServerArgs(memoryMB int, policy, port string) string {
 	args := []string{
 		"valkey-server",
-		"--port", strconv.Itoa(ManagedValkeyPort),
+		"--port", port,
 		"--bind", "0.0.0.0",
 		"--protected-mode", "no",
 		"--save", "''",
@@ -174,10 +193,48 @@ func ManagedValkeyServerCommand(memoryMB int, policy string) []string {
 	for _, command := range ManagedValkeyBlockedCommands {
 		args = append(args, "--rename-command", command, "''")
 	}
-	script := "exec"
-	for _, arg := range args {
-		script += " " + arg
-	}
+	return strings.Join(args, " ")
+}
+
+// ManagedValkeyHandoffCommand is the argv of a resize or upgrade
+// (ADR-20261116192126, slice 4). Until handoffUntil (unix seconds) the new VM
+// copies the running cache before it serves:
+//
+//  1. Valkey starts with TCP closed, on a unix socket, as a replica of the
+//     cache's own service address. Its deployment has no traffic yet, so the
+//     address reaches the running VM, waking it if it is parked.
+//  2. After the full sync it pauses writes on the running VM (CLIENT PAUSE
+//     WRITE, up to 300 s), waits until its offset matches, then promotes
+//     itself and opens port 6379.
+//  3. Readiness (TCP accept on 6379) passes, the ordinary rollout moves
+//     traffic, and the old VM stops. Writes paused on it were never
+//     acknowledged; their clients reconnect to the new VM.
+//
+// Any failure exits before port 6379 opens: the deployment never becomes
+// ready, the rollout fails, and the running VM keeps serving (its pause is
+// lifted, or expires). After the window the script starts an empty cache,
+// as any cold boot does; inside the window a cold boot fails until it ends.
+func ManagedValkeyHandoffCommand(name string, memoryMB int, policy string, handoffUntil int64) []string {
+	source := ManagedValkeyHost(name)
+	port := strconv.Itoa(ManagedValkeyPort)
+	script := strings.Join([]string{
+		`if [ "$(date +%s)" -ge ` + strconv.FormatInt(handoffUntil, 10) + ` ]; then exec ` + managedValkeyServerArgs(memoryMB, policy, port) + `; fi`,
+		`S=/tmp/valkey.sock`,
+		managedValkeyServerArgs(memoryMB, policy, "0") + ` --unixsocket $S --unixsocketperm 700 --replicaof ` + source + ` ` + port + ` &`,
+		`P=$!`,
+		`l() { valkey-cli -s $S "$@"; }`,
+		`r() { valkey-cli -h ` + source + ` -p ` + port + ` "$@"; }`,
+		`f() { l INFO replication | tr -d '\r' | sed -n "s/^$1://p"; }`,
+		`fail() { r CLIENT UNPAUSE >/dev/null 2>&1; kill $P; exit 1; }`,
+		`i=0; until [ "$(f master_link_status)" = up ] && [ "$(f master_sync_in_progress)" = 0 ]; do i=$((i+1)); [ $i -gt 1200 ] && fail; sleep 0.5; done`,
+		`r CLIENT PAUSE 300000 WRITE >/dev/null || fail`,
+		`T=$(r INFO replication | tr -d '\r' | sed -n 's/^master_repl_offset://p')`,
+		`[ -n "$T" ] || fail`,
+		`i=0; until [ "$(f slave_repl_offset)" -ge "$T" ] 2>/dev/null; do i=$((i+1)); [ $i -gt 300 ] && fail; sleep 0.1; done`,
+		`l REPLICAOF NO ONE >/dev/null || fail`,
+		`l CONFIG SET port ` + port + ` >/dev/null || fail`,
+		`wait $P`,
+	}, "\n")
 	return []string{"/bin/sh", "-c", script}
 }
 
@@ -226,6 +283,22 @@ type CreateRedisCacheRequest struct {
 type ListRedisCachesResponse struct {
 	Caches []RedisCache `json:"caches"`
 	Limit  int          `json:"limit"`
+}
+
+// UpdateRedisCacheRequest is PATCH /v1/redis/{name}: a resize or eviction
+// policy change. The cache's data is copied to the new VM before it serves.
+type UpdateRedisCacheRequest struct {
+	MemoryMB       int    `json:"memory_mb,omitempty"`
+	EvictionPolicy string `json:"eviction_policy,omitempty"`
+	// Evict allows shrinking below the data the cache holds; keys are then
+	// evicted by its policy during the copy.
+	Evict bool `json:"evict,omitempty"`
+}
+
+// RedisCacheChange answers a resize, policy change or upgrade.
+type RedisCacheChange struct {
+	Cache        RedisCache `json:"cache"`
+	DeploymentID string     `json:"deployment_id"`
 }
 
 // BindRedisCacheRequest is POST /v1/redis/{name}/bindings.

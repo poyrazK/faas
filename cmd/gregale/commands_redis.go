@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const redisUsage = "usage: gregale redis <list|create|get|bind|restart|delete>"
+const redisUsage = "usage: gregale redis <list|create|get|bind|resize|upgrade|restart|delete>"
 
 func cmdRedis(args []string) int {
 	if len(args) == 0 {
@@ -29,6 +29,10 @@ func cmdRedis(args []string) int {
 		return cmdRedisGet(args[1:])
 	case "bind":
 		return cmdRedisBind(args[1:])
+	case "resize":
+		return cmdRedisResize(args[1:])
+	case "upgrade":
+		return cmdRedisUpgrade(args[1:])
 	case "restart":
 		return cmdRedisRestart(args[1:])
 	case "delete":
@@ -147,6 +151,57 @@ func cmdRedisBind(args []string) int {
 		return jsonOut(writeJSON(binding))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Set %s on %s; it takes effect at the app's next deploy or wake.\n", binding.EnvKey, binding.App)
+	return 0
+}
+
+func cmdRedisResize(args []string) int {
+	const usage = "usage: gregale redis resize NAME [--memory MB] [--eviction-policy POLICY] [--evict]"
+	flags, positional := splitArgsForFlags(args, "evict")
+	fs := newFlagSet("redis resize", flag.ContinueOnError)
+	memory := fs.Int("memory", 0, "new data size in MB")
+	policy := fs.String("eviction-policy", "", "new maxmemory policy")
+	evict := fs.Bool("evict", false, "allow shrinking below the data the cache holds")
+	if err := fs.Parse(append(flags, positional...)); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 || (*memory == 0 && *policy == "") {
+		PrintUsage(os.Stderr, usage, "redis")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	out, err := client.UpdateRedisCache(context.Background(), fs.Arg(0), api.UpdateRedisCacheRequest{MemoryMB: *memory, EvictionPolicy: *policy, Evict: *evict})
+	if err != nil {
+		return printErr("Could not resize Redis cache", err)
+	}
+	return printRedisChange(out, "Resizing")
+}
+
+func cmdRedisUpgrade(args []string) int {
+	fs := newFlagSet("redis upgrade", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale redis upgrade NAME", "redis")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	out, err := client.UpgradeRedisCache(context.Background(), fs.Arg(0))
+	if err != nil {
+		return printErr("Could not upgrade Redis cache", err)
+	}
+	return printRedisChange(out, "Upgrading")
+}
+
+func printRedisChange(out api.RedisCacheChange, verb string) int {
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	_, _ = fmt.Fprintf(osStdout, "%s Redis cache %s (%d MB, %s). The new VM copies the data before it serves; writes pause for a moment at the switch. Deployment %s.\n",
+		verb, out.Cache.Name, out.Cache.MemoryMB, out.Cache.EvictionPolicy, out.DeploymentID)
 	return 0
 }
 

@@ -112,7 +112,6 @@ func (f *fakeRedis) snapshot() ([][]string, int) {
 	return out, f.open
 }
 
-
 type redisTestClient struct {
 	t    *testing.T
 	conn net.Conn
@@ -318,6 +317,27 @@ func (c *redisTestClient) read2(args ...string) string {
 	c.t.Helper()
 	first := c.do(args...)
 	return first + c.read()
+}
+
+func TestRedisSessionRefusesPlatformCommands(t *testing.T) {
+	f := newFakeRedis()
+	c, _, _ := startRedisSession(t, f, time.Hour)
+	for _, args := range [][]string{
+		{"CONFIG", "SET", "maxmemory", "0"},
+		{"REPLICAOF", "evil.example", "6379"},
+		{"PSYNC", "?", "-1"},
+		{"replconf", "listening-port", "1"},
+	} {
+		if got := c.do(args...); !strings.HasPrefix(got, "-ERR ") || !strings.Contains(got, "not allowed") {
+			t.Fatalf("%v = %q", args, got)
+		}
+	}
+	if legs, _ := f.snapshot(); len(legs) != 0 {
+		t.Fatalf("a refused command reached the cache: %v", legs)
+	}
+	if got := c.do("SET", "k", "v"); got != "+OK\r\n" {
+		t.Fatalf("session unusable after refusals: %q", got)
+	}
 }
 
 func TestRedisSessionQuitWhileDetached(t *testing.T) {

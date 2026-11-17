@@ -23,6 +23,8 @@ func (s *server) registerRedisRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/redis", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createRedisCache))))))
 	mux.HandleFunc("GET /v1/redis/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRedisCache))))
 	mux.HandleFunc("DELETE /v1/redis/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteRedisCache))))
+	mux.HandleFunc("PATCH /v1/redis/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.updateRedisCache))))))
+	mux.HandleFunc("POST /v1/redis/{name}/upgrade", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.upgradeRedisCache))))))
 	mux.HandleFunc("POST /v1/redis/{name}/restart", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.restartRedisCache)))))
 	mux.HandleFunc("POST /v1/redis/{name}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.requireVerifiedEmail(s.bindRedisCache)))))
 }
@@ -244,6 +246,126 @@ func (s *server) deleteRedisCache(w http.ResponseWriter, r *http.Request, acct s
 	// marker row goes with the app (ON DELETE CASCADE at purge).
 	r.SetPathValue("slug", app.Slug)
 	s.deleteApp(w, r, acct)
+}
+
+// updateRedisCache resizes a cache or changes its eviction policy through the
+// replication handoff (ADR-20261116192126 slice 4): the new VM copies the
+// running cache before it serves, so no data is lost.
+func (s *server) updateRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, cache, ok := s.loadRedisCache(w, r, acct)
+	if !ok {
+		return
+	}
+	var req api.UpdateRedisCacheRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	next := cache
+	if req.MemoryMB != 0 {
+		next.MemoryMB = req.MemoryMB
+	}
+	if req.EvictionPolicy != "" {
+		next.EvictionPolicy = req.EvictionPolicy
+	}
+	if next.MemoryMB == cache.MemoryMB && next.EvictionPolicy == cache.EvictionPolicy {
+		api.WriteProblem(w, api.ErrValidation("nothing to change: give memory_mb or eviction_policy"))
+		return
+	}
+	if problem := firstProblem(api.ValidateManagedValkeyMemory(acct.Plan, next.MemoryMB), api.ValidateManagedValkeyEvictionPolicy(next.EvictionPolicy)); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if next.MemoryMB < cache.MemoryMB && !req.Evict {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "cache_shrink_needs_evict", "Shrinking needs evict",
+			"a smaller cache may not hold the current data; repeat with evict to let the cache evict keys by its policy"))
+		return
+	}
+	s.handOffRedisCache(w, r, acct, app, next)
+}
+
+// upgradeRedisCache moves a cache to the current Valkey image through the
+// same handoff, keeping its size, policy and data.
+func (s *server) upgradeRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, cache, ok := s.loadRedisCache(w, r, acct)
+	if !ok {
+		return
+	}
+	s.handOffRedisCache(w, r, acct, app, cache)
+}
+
+// handOffRedisCache records the cache's next settings and deploys a VM that
+// copies the running cache before it serves.
+func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, next state.ManagedValkeyCache) {
+	store, ok := s.redisStore(w)
+	if !ok {
+		return
+	}
+	previous, err := store.GetManagedValkeyCache(r.Context(), app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load Redis cache"))
+		return
+	}
+	previousRAM := app.RAMMB
+	rollback := func() {
+		if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{RAMMB: &previousRAM}); err != nil {
+			s.log.Warn("apid: redis cache change rollback", "app_id", app.ID, "err", err)
+		}
+		if _, err := store.UpdateManagedValkeyCache(r.Context(), app.ID, previous.MemoryMB, previous.EvictionPolicy); err != nil {
+			s.log.Warn("apid: redis cache change rollback", "app_id", app.ID, "err", err)
+		}
+	}
+	ram := api.ManagedValkeyVMRAMMB(next.MemoryMB)
+	if ram != app.RAMMB {
+		updated, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{RAMMB: &ram})
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not resize Redis cache"))
+			return
+		}
+		app = updated
+	}
+	cache, err := store.UpdateManagedValkeyCache(r.Context(), app.ID, next.MemoryMB, next.EvictionPolicy)
+	if err != nil {
+		rollback()
+		api.WriteProblem(w, api.ErrCapacity("could not record Redis cache change"))
+		return
+	}
+	until := timeNow().Unix() + api.ManagedValkeyHandoffWindowS
+	rec := httptest.NewRecorder()
+	s.createImageDeployment(rec, r, acct, app, api.MustLimitsFor(acct.Plan), api.CreateDeploymentRequest{
+		Image: api.ManagedValkeyImage,
+		Overrides: &api.CreateDeploymentOverrides{
+			Entrypoint: api.ManagedValkeyHandoffCommand(app.Slug, cache.MemoryMB, cache.EvictionPolicy, until),
+			Port:       api.ManagedValkeyPort,
+		},
+	}, false)
+	if rec.Code != http.StatusAccepted {
+		// The running VM keeps serving with its old settings.
+		rollback()
+		var problem api.Problem
+		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || problem.Code == "" {
+			api.WriteProblem(w, api.ErrCapacity("could not deploy the Redis cache change"))
+			return
+		}
+		problem.Status = rec.Code
+		api.WriteProblem(w, &problem)
+		return
+	}
+	var dep api.DeploymentResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &dep)
+	s.audit.Emit(r.Context(), "redis.handoff_started", &acct.ID, map[string]any{
+		"app_id": app.ID, "name": app.Slug, "memory_mb": cache.MemoryMB, "eviction_policy": cache.EvictionPolicy, "deployment_id": dep.ID,
+	})
+	writeJSON(w, http.StatusAccepted, api.RedisCacheChange{Cache: redisCacheResponse(app, cache), DeploymentID: dep.ID})
+}
+
+func firstProblem(problems ...*api.Problem) *api.Problem {
+	for _, problem := range problems {
+		if problem != nil {
+			return problem
+		}
+	}
+	return nil
 }
 
 // restartRedisCache restarts a cache's VM and keeps its data: schedd's normal

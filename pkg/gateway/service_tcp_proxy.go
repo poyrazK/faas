@@ -272,7 +272,9 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 			}
 		}
 	}
-	if target.Redis {
+	// A cache calling its own service address is the resize/upgrade
+	// handoff: replication bytes are not commands, so they pass raw.
+	if target.Redis && callerAppID != target.AppID {
 		outcome, reason, woke, err = p.serveRedis(ctx, conn, caller, target, deploymentID, int(dst.Port()))
 		return outcome, reason, err
 	}

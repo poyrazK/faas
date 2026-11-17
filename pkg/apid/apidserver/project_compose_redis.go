@@ -262,4 +262,3 @@ func planRedisProvision(provision composeRedisProvision) *api.PlanManagedProvisi
 	}
 	return out
 }
-

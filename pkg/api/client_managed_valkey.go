@@ -32,6 +32,22 @@ func (c *Client) DeleteRedisCache(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/redis/"+url.PathEscape(name), nil, nil)
 }
 
+// UpdateRedisCache resizes a cache or changes its eviction policy, keeping
+// its data.
+func (c *Client) UpdateRedisCache(ctx context.Context, name string, request UpdateRedisCacheRequest) (RedisCacheChange, error) {
+	var out RedisCacheChange
+	err := c.do(ctx, http.MethodPatch, "/v1/redis/"+url.PathEscape(name), request, &out)
+	return out, err
+}
+
+// UpgradeRedisCache moves a cache to the current Valkey release, keeping its
+// data.
+func (c *Client) UpgradeRedisCache(ctx context.Context, name string) (RedisCacheChange, error) {
+	var out RedisCacheChange
+	err := c.do(ctx, http.MethodPost, "/v1/redis/"+url.PathEscape(name)+"/upgrade", nil, &out)
+	return out, err
+}
+
 // RestartRedisCache restarts a cache's VM, keeping its data.
 func (c *Client) RestartRedisCache(ctx context.Context, name string) (AppRestartResponse, error) {
 	var out AppRestartResponse

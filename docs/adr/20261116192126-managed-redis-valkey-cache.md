@@ -333,6 +333,34 @@ closed by a later slice:
   environment and a hash), when the `managed-redis` capability is on for the
   account and the plan has room. A key that is already set keeps its value.
   The deploy plan lists each provision or the reason there is none.
+- **Restart, resize and upgrade (slice 4, code written, not yet run on metal).**
+  - `POST /v1/redis/{name}/restart` is schedd's ordinary restart, which
+    snapshots the running VM and wakes from the snapshot. `fresh` is never
+    used for a cache.
+  - `PATCH /v1/redis/{name}` (size, eviction policy; shrinking needs
+    `evict`) and `POST /v1/redis/{name}/upgrade` deploy
+    `api.ManagedValkeyHandoffCommand`. Within a 15-minute window from
+    creation, the new VM starts with TCP closed, replicates from the cache's
+    own service address (which reaches the running VM, because the new
+    deployment has no traffic), pauses writes there (`CLIENT PAUSE WRITE`,
+    at most 300 s), waits for its offset to match, promotes itself, then opens
+    port 6379. Readiness passes, the ordinary rollout moves traffic, and the
+    old VM stops. Client sessions re-attach to the new VM on their next
+    command. Any failure exits before the port opens and lifts the pause, so
+    the old VM keeps serving. After the window, a cold boot of that
+    deployment starts empty, like any cache cold boot.
+  - This replaces the vsock replication relay above. Replication goes
+    through the cache's own service address instead. The proxy passes a
+    cache's calls to itself raw, because replication bytes are not commands.
+    For every customer session it refuses `CONFIG`, `REPLICAOF`, `SLAVEOF`,
+    `SYNC`, `PSYNC`, `REPLCONF` and the renamed commands. Valkey keeps these,
+    because the handoff needs them.
+  - Not yet verified, and must pass on metal before release:
+    - that the service authorizer admits a cache calling its own address;
+    - that the rollout runs the new VM next to the old one under the
+      cache's `max_instances: 1` (the rollout concurrency grant);
+    - that `CONFIG SET port` opens TCP on a running Valkey 8.1;
+    - the 100-handoff no-lost-writes test from the phasing list.
 - **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
   and adding it would break customers who deploy Valkey themselves. That is
   left for an owner decision.

@@ -6188,6 +6188,12 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app that receives the URL", Req: true, Value: "APP"},
 				{Name: "env", Short: "environment variable (default REDIS_URL)", Value: "KEY"},
 			}, Examples: []string{"gregale redis bind sessions --app web"}},
+			{Name: "resize", Short: "Change a cache's size or eviction policy; its data is kept", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "memory", Short: "new data size in MB", Value: "MB"},
+				{Name: "eviction-policy", Short: "new eviction policy", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
+				{Name: "evict", Short: "allow shrinking below the data the cache holds"},
+			}, Examples: []string{"gregale redis resize sessions --memory 256"}},
+			{Name: "upgrade", Short: "Move a cache to the current Valkey release; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "restart", Short: "Restart a managed Redis cache; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "delete", Short: "Delete a managed Redis cache and its data", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "yes", Short: "skip the typed confirmation"},

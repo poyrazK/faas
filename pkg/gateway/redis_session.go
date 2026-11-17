@@ -28,6 +28,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // redisDetachAfter is how long a session stays attached with no data
@@ -40,6 +42,16 @@ var redisHousekeeping = map[string]bool{
 	"CLIENT": true, "QUIT": true, "RESET": true, "INFO": true, "COMMAND": true,
 	"READONLY": true, "READWRITE": true,
 }
+
+// redisDeniedCommands are refused for customer sessions: they belong to the
+// platform (configuration, replication, lifecycle).
+var redisDeniedCommands = func() map[string]bool {
+	out := map[string]bool{}
+	for _, name := range api.ManagedValkeyClientDeniedCommands {
+		out[name] = true
+	}
+	return out
+}()
 
 // redisKeptCommands are read whole so the session can answer or replay them.
 var redisKeptCommands = map[string]bool{
@@ -119,6 +131,14 @@ func (s *redisSession) wokeAny() bool {
 func (s *redisSession) handle(ctx context.Context, r *bufio.Reader, cmd respCommand) (done bool, err error) {
 	if cmd.name == "" {
 		return false, nil
+	}
+	if redisDeniedCommands[cmd.name] {
+		if cmd.rest > 0 {
+			if err := cmd.skipRest(r); err != nil {
+				return false, err
+			}
+		}
+		return false, s.writeClient([]byte("-ERR " + cmd.name + " is not allowed on a managed cache\r\n"))
 	}
 	if redisKeptCommands[cmd.name] {
 		if err := cmd.readRest(r); err != nil {
