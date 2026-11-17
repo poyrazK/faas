@@ -1,6 +1,6 @@
 # ADR-20261115180000: Shared-store object deletion moves to the control plane
 
-- Status: Accepted (slice 1 implemented, off by default)
+- Status: Accepted (slices 1 and 2 implemented, off by default)
 - Date: 2026-11-15
 - Amends: ADR-054 (compute nodes write and delete the shared artifact store),
   ADR-733 (crash capture GC runs on compute)
@@ -75,7 +75,24 @@ control plane.
    - It rewrites any write such a login makes into a fresh request stamped
      with the node's name. A node cannot record an outcome or bring its own
      request forward.
-4. **Then compute loses the right (operations).**
+4. **Exclusive artifacts retire by generation (slice 2).**
+   - Native capture cohorts retire each object conditioned on the
+     generation its publication acknowledged
+     (`storage.RetireExclusiveArtifact`), so a replacement written under
+     the same key survives.
+   - In defer mode the node checks the receipt as before, then records
+     `(key, generation)` in `storage_object_deletions.generation` instead
+     of deleting. A deferrer that cannot record a generation makes the
+     retirement fail; it never becomes an unconditional request.
+   - The worker applies the same reference checks. A due row with a
+     generation goes through `storage.DeleteGeneration`: the matching
+     generation is deleted, a missing object counts as deleted, and a key
+     that now holds another generation is refused. A generation row never
+     falls back to deleting the key.
+   - The node's publication journal marks the retirement complete once it
+     is recorded. Crash recovery records it again, which only resets the
+     request.
+5. **Then compute loses the right (operations).**
    - Once every compute node runs in defer mode and the worker keeps up,
      compute credentials drop delete.
    - On GCS, `objectCreator` plus `objectViewer` also blocks overwrites.
@@ -90,10 +107,9 @@ control plane.
   than today.
 - The control-plane schedd must address the same store as compute: the same
   `FAAS_STORAGE_*`, with credentials that can delete.
-- Not covered by slice 1:
-  - Exclusive-artifact retirement (`RetireExclusiveArtifact`, used by native
-    capture cohorts) still deletes from the node. The IAM step waits until
-    it moves too.
+- With slice 2, no compute code path needs delete in defer mode, so the
+  IAM step (slice 3) can proceed once every node runs it.
+- Not covered:
   - A node that can still rewrite database rows (shared logins, slice 1c of
     ADR-20261110210000) can make a live object look unreferenced.
 
@@ -102,5 +118,5 @@ control plane.
 | slice | content |
 |---|---|
 | 1 | Outbox table and trigger, `storage.DeferDeletes`, defer mode in imaged and vmmd, control-plane worker with reference checks (this change; both switches off) |
-| 2 | Exclusive-artifact retirement through the outbox |
+| 2 | Exclusive-artifact retirement through the outbox: `generation` column, `GenerationRetireDeferrer`, `storage.DeleteGeneration` on the worker (implemented; rides `FAAS_STORAGE_DELETE_MODE=defer`) |
 | 3 | Per-backend IAM: compute credentials without delete; runbook check that a compute delete is refused |
