@@ -18165,6 +18165,16 @@
     "kind": "operational"
   },
   {
+    "table": "sandbox_session_domains",
+    "columns": [
+      "domain",
+      "first_seen",
+      "refused",
+      "sandbox_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "sandbox_session_usage",
     "columns": [
       "account_id",
@@ -18194,6 +18204,8 @@
       "close_requested_at",
       "closed_at",
       "created_at",
+      "egress_allow",
+      "egress_deny",
       "expires_at",
       "id",
       "idle_timeout_sec",
@@ -18222,6 +18234,16 @@
       "tenant_id",
       "updated_at",
       "workspace_snapshot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_egress_policies",
+    "columns": [
+      "account_id",
+      "allow_rules",
+      "deny_rules",
+      "updated_at"
     ],
     "kind": "operational"
   },

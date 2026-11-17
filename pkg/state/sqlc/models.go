@@ -15900,6 +15900,14 @@ type SandboxAction struct {
 	ScreenshotBytes pgtype.Int8
 }
 
+// ADR-20261117091026 account default web-mode domain policy, written by apid.
+type SandboxEgressPolicy struct {
+	AccountID  pgtype.UUID
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 // ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
@@ -15948,7 +15956,17 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput []byte
+	TaskOutput  []byte
+	EgressAllow []string
+	EgressDeny  []string
+}
+
+// ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
+type SandboxSessionDomain struct {
+	SandboxID pgtype.UUID
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
 }
 
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.

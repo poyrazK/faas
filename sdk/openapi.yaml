@@ -2037,11 +2037,10 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        A browser (Accept text/html) gets an HTML page whose button posts the
-        token back, and nothing is consumed, so a mail scanner that prefetches
-        the link cannot use up the token. Any other client consumes the
-        24-hour, single-use token here and the account email is marked
-        verified. No session is created.
+        A browser (Accept text/html) gets confirmation or sign-in guidance.
+        Opening the page does not consume the token. Other GET clients consume
+        the 24-hour, single-use token only with a live session for its account.
+        No session is created.
       parameters:
         - in: query
           name: token
@@ -2050,10 +2049,11 @@ paths:
           schema: {type: string}
       responses:
         '200':
-          description: The confirmation page, or for a non-browser client the verified-email page.
+          description: Confirmation, sign-in guidance, or the verified-email page.
           content:
             text/html:
               schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '410':
           description: Verification link expired, invalid, or already used.
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -2062,9 +2062,10 @@ paths:
       operationId: confirmEmailVerification
       summary: Confirm an email verification from its confirmation page.
       description: |
-        The confirmation page's form posts the token here. It is consumed and
-        the account email marked verified; the HTML answer asks the customer
-        to sign in again rather than creating a session.
+        The confirmation page posts the token here. A live session for the
+        account is required to consume it and mark the address verified.
+        Other browser sessions receive instructions for signing into the
+        correct account. No session is created.
       requestBody:
         required: true
         content:
@@ -2078,10 +2079,11 @@ paths:
                   description: The verification token from the confirmation page's form.
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: Email verified or sign-in guidance for a browser.
           content:
             text/html:
               schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '410':
           description: The posted token is expired, unknown, or was already used.
@@ -2556,19 +2558,25 @@ paths:
         unverified, at most once a minute and five times an hour. Returns
         `already_verified` when there is nothing to send. Available after the
         30-day verification period ends, when other routes answer
-        `email_verification_required`.
+        `email_verification_required`. The browser forms also accept a
+        form-encoded CSRF token from the signed-in account and render HTML.
       responses:
         '200':
           description: The address is already verified.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+            text/html:
+              schema: {type: string}
         '202':
           description: A link was sent, or held back by the per-account limit.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+            text/html:
+              schema: {type: string}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/auth/sessions/revoke_all:
     post:
