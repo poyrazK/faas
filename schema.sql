@@ -42767,6 +42767,19 @@ CREATE TABLE public.flag_event_usage (
 
 
 --
+-- Name: flag_experiment_latency; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_experiment_latency (
+    experiment_id uuid NOT NULL,
+    variant text NOT NULL,
+    bucket smallint NOT NULL,
+    requests bigint NOT NULL,
+    CONSTRAINT flag_experiment_latency_chk CHECK ((((length(variant) >= 1) AND (length(variant) <= 128)) AND (bucket >= 0) AND (requests > 0)))
+);
+
+
+--
 -- Name: flag_experiment_units; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -42777,7 +42790,13 @@ CREATE TABLE public.flag_experiment_units (
     first_exposed_at timestamp with time zone NOT NULL,
     converted_at timestamp with time zone,
     crossed boolean DEFAULT false NOT NULL,
-    CONSTRAINT flag_experiment_units_chk CHECK ((((length(variant) >= 1) AND (length(variant) <= 128)) AND ((converted_at IS NULL) OR (converted_at >= first_exposed_at))))
+    requests bigint DEFAULT 0 NOT NULL,
+    errors bigint DEFAULT 0 NOT NULL,
+    latency_requests bigint DEFAULT 0 NOT NULL,
+    slow_requests bigint DEFAULT 0 NOT NULL,
+    value_sum bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT flag_experiment_units_chk CHECK ((((length(variant) >= 1) AND (length(variant) <= 128)) AND ((converted_at IS NULL) OR (converted_at >= first_exposed_at)))),
+    CONSTRAINT flag_experiment_units_counts_chk CHECK (((requests >= 0) AND ((errors >= 0) AND (errors <= requests)) AND ((latency_requests >= 0) AND (latency_requests <= requests)) AND ((slow_requests >= 0) AND (slow_requests <= latency_requests))))
 );
 
 
@@ -42805,7 +42824,12 @@ CREATE TABLE public.flag_experiments (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     started_at timestamp with time zone,
     stopped_at timestamp with time zone,
-    CONSTRAINT flag_experiments_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = 'conversion'::text) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL))))
+    guardrails jsonb DEFAULT '{}'::jsonb NOT NULL,
+    latency_threshold_ms integer,
+    stop_reason text DEFAULT ''::text NOT NULL,
+    breach jsonb,
+    value_through_day date,
+    CONSTRAINT flag_experiments_v2_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL))))
 );
 
 
@@ -68133,6 +68157,14 @@ ALTER TABLE ONLY public.flag_event_names
 
 ALTER TABLE ONLY public.flag_event_usage
     ADD CONSTRAINT flag_event_usage_pkey PRIMARY KEY (account_id, month);
+
+
+--
+-- Name: flag_experiment_latency flag_experiment_latency_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiment_latency
+    ADD CONSTRAINT flag_experiment_latency_pkey PRIMARY KEY (experiment_id, variant, bucket);
 
 
 --
@@ -102985,6 +103017,14 @@ ALTER TABLE ONLY public.flag_event_names
 
 ALTER TABLE ONLY public.flag_event_usage
     ADD CONSTRAINT flag_event_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_experiment_latency flag_experiment_latency_experiment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiment_latency
+    ADD CONSTRAINT flag_experiment_latency_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.flag_experiments(id) ON DELETE CASCADE;
 
 
 --

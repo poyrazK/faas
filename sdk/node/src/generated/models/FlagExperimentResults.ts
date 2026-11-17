@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { FlagExperiment } from './FlagExperiment.js';
 import type { FlagExperimentArm } from './FlagExperimentArm.js';
+import type { FlagExperimentGuardrail } from './FlagExperimentGuardrail.js';
+import type { FlagExperimentLatency } from './FlagExperimentLatency.js';
+import type { FlagExperimentRecommendation } from './FlagExperimentRecommendation.js';
 import type { FlagExperimentVariantResult } from './FlagExperimentVariantResult.js';
 /**
  * A flag experiment's sequential results.
@@ -18,5 +21,8 @@ export type FlagExperimentResults = {
    * Customers that saw more than one variant and are left out.
    */
   crossed_units: number;
+  guardrails?: Array<FlagExperimentGuardrail>;
+  latency?: Array<FlagExperimentLatency>;
+  recommendation?: FlagExperimentRecommendation;
 };
 

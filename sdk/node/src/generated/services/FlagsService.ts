@@ -11,6 +11,8 @@ import type { FlagExperiment } from '../models/FlagExperiment.js';
 import type { FlagExperimentCreateRequest } from '../models/FlagExperimentCreateRequest.js';
 import type { FlagExperimentList } from '../models/FlagExperimentList.js';
 import type { FlagExperimentResults } from '../models/FlagExperimentResults.js';
+import type { FlagExperimentShipRequest } from '../models/FlagExperimentShipRequest.js';
+import type { FlagExperimentShipResponse } from '../models/FlagExperimentShipResponse.js';
 import type { FlagLifecycleReport } from '../models/FlagLifecycleReport.js';
 import type { FlagOutcomesResponse } from '../models/FlagOutcomesResponse.js';
 import type { FlagRolloutPromotion } from '../models/FlagRolloutPromotion.js';
@@ -780,6 +782,56 @@ export class FlagsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Serve one variant to every customer of an experiment's rule.
+   * Publishes the flag configuration with the experiment's rule serving the variant, and stops the experiment if it is still running. The previous configuration version can be restored.
+   * @returns FlagExperimentShipResponse The experiment and the published configuration version.
+   * @throws ApiError
+   */
+  public static shipProjectFlagExperiment({
+    slug,
+    environment,
+    key,
+    requestBody,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Experiment key, unique within the environment.
+     */
+    key: string,
+    requestBody: FlagExperimentShipRequest,
+  }): CancelablePromise<FlagExperimentShipResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/experiments/{key}/ship',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | env_var_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

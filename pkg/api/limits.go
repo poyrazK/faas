@@ -2829,6 +2829,23 @@ const (
 	// FlagExperimentMaxUnitsPerPass bounds new units one reconciler pass adds
 	// to one experiment.
 	FlagExperimentMaxUnitsPerPass = 50000
+	// FlagExperimentMixingEffect is the default mixing standard deviation of
+	// mean metrics, as a standardized effect size (ADR 20261116190208 §2).
+	FlagExperimentMixingEffect = 0.1
+	// FlagExperimentGuardrailErrorTolerance and
+	// FlagExperimentGuardrailLatencyTolerance are the default guardrail
+	// tolerances: the absolute increase over control in the server error
+	// rate, and in the share of requests slower than control's p95
+	// (ADR 20261116190208 §1).
+	FlagExperimentGuardrailErrorTolerance   = 0.005
+	FlagExperimentGuardrailLatencyTolerance = 0.02
+	// FlagExperimentGuardrailAlpha is the guardrails' confidence level; it is
+	// stricter than results' because a breach acts on its own.
+	FlagExperimentGuardrailAlpha = 0.01
+	// FlagExperimentGuardrailMinRequests is the requests each arm needs
+	// before a guardrail can breach, and that control needs before its p95
+	// latency is fixed as the latency threshold.
+	FlagExperimentGuardrailMinRequests = 1000
 )
 
 // Progressive rollout controls are structural bounds, not plan allowances.
