@@ -17,3 +17,16 @@ func TestSandboxWebHostAdmitsPublicNamesOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestValidSandboxBrowseURL(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://example.com/docs?q=1": true, "http://www.example.org": true, "https://example.com:443/": true,
+		"": false, "ftp://example.com": false, "https://user:pw@example.com": false, "https://localhost/": false,
+		"https://10.0.0.1/": false, "https://api.svc.gregale/": false, "https://example.com:8080/": false,
+		"javascript:alert(1)": false, "https://exa mple.com": false, "file:///etc/passwd": false,
+	} {
+		if got := ValidSandboxBrowseURL(raw); got != want {
+			t.Errorf("ValidSandboxBrowseURL(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}

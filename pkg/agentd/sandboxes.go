@@ -42,6 +42,7 @@ type SandboxStore interface {
 	DeleteSandboxSnapshot(ctx context.Context, id string) error
 	SweepableSandboxSnapshots(ctx context.Context, pendingTTL time.Duration, limit int) ([]agentstore.SweepableSandboxSnapshot, error)
 	RecordSandboxUsage(ctx context.Context, id, token string, u agentstore.SandboxUsage) (bool, error)
+	RecordSandboxTaskResult(ctx context.Context, id, token string, exitCode int, output []byte) error
 }
 
 // SandboxSchedd opens RunSandbox streams; scheddpb.ScheddClient implements
@@ -93,6 +94,14 @@ const (
 	// sandboxOutcomeImage: the seller image the session boots was deleted
 	// or evicted after the claim.
 	sandboxOutcomeImage = "image_unavailable"
+	// sandboxOutcomeTaskDone and sandboxOutcomeTaskFailed end a sandbox
+	// task (ADR-20261116182615 §3): its command ran, or could not, or never
+	// reported within its timeout.
+	sandboxOutcomeTaskDone   = "task_done"
+	sandboxOutcomeTaskFailed = "task_failed"
+	// sandboxTaskBootSlack is the time a task may take to boot and start
+	// its browser beyond the task's own timeout.
+	sandboxTaskBootSlack = 90 * time.Second
 )
 
 // Sandboxes drives one replica's sandbox sessions.
@@ -266,7 +275,7 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		SandboxId: claim.ID, AccountId: claim.AccountID, Plan: claim.Plan, RamMb: int32(claim.RAMMB), Vcpu: int32(vcpu),
 		CpuMillicores: int32(vcpu * 1000), NetworkMode: claim.Network, WorkspaceKey: claim.WorkspaceKey,
 		ImageKey: claim.ImageKey, StartCmd: claim.StartCmd, ReadyCmd: claim.ReadyCmd, ReadyTimeoutMs: claim.ReadyTimeout.Milliseconds(),
-		Browser: claim.Browser,
+		Browser: claim.Browser, Task: sandboxTaskToProto(claim),
 	}}}); err != nil {
 		s.requeue(ctx, claim, err)
 		return
@@ -274,6 +283,16 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	ss := &session{claim: claim, lease: claim.SandboxLease, lastActivity: s.now(), persists: map[string]string{}}
 	closeVM := func() {
 		_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Close{Close: &scheddpb.SandboxRunClose{}}})
+	}
+	if claim.Task != nil {
+		// A vmmd that never reports the task (one from before tasks) must
+		// not keep the session to its lifetime.
+		deadline := time.AfterFunc(sandboxTaskTimeout(claim)+sandboxTaskBootSlack, func() {
+			if ss.decide(agentstore.SandboxFailed, sandboxOutcomeTaskFailed, "the task did not finish within its timeout") {
+				closeVM()
+			}
+		})
+		defer deadline.Stop()
 	}
 	lost := make(chan struct{})
 	go s.keepSession(streamCtx, ss, closeVM, stop, lost)
@@ -371,6 +390,10 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			go s.recordPersist(ctx, ss, ev.GetPersistDone(), send)
 		case ev.GetUsage() != nil:
 			s.recordUsage(ctx, ss, ev.GetUsage())
+		case ev.GetTaskDone() != nil:
+			if err := s.finishTask(ctx, ss, ev.GetTaskDone(), send); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -487,4 +510,45 @@ func (s *Sandboxes) recordUsage(ctx context.Context, ss *session, u *scheddpb.Ag
 	if _, err := s.store.RecordSandboxUsage(ctx, ss.claim.ID, ss.claim.LeaseToken, usage); err != nil {
 		s.log.Warn("agentd: record sandbox usage", "sandbox_id", ss.claim.ID, "err", err)
 	}
+}
+
+// sandboxTaskTimeout is a task's command timeout on its plan.
+func sandboxTaskTimeout(claim agentstore.SandboxClaim) time.Duration {
+	plan := api.Plan(claim.Plan)
+	if !plan.Valid() {
+		return 0
+	}
+	return time.Duration(api.SandboxTaskTimeoutSec[plan.PlanIndex()]) * time.Second
+}
+
+// sandboxTaskToProto is a claim's task as vmmd runs it, or nil.
+func sandboxTaskToProto(claim agentstore.SandboxClaim) *scheddpb.SandboxRunTask {
+	if claim.Task == nil {
+		return nil
+	}
+	return &scheddpb.SandboxRunTask{Kind: claim.Task.Kind, Url: claim.Task.URL, MaxChars: int32(claim.Task.MaxChars),
+		TimeoutMs: sandboxTaskTimeout(claim).Milliseconds(), MaxOutputBytes: int64(api.SandboxTaskOutputMaxBytes)}
+}
+
+// finishTask records a sandbox task's end and closes its session
+// (ADR-20261116182615 §3). A command that ran is task_done whatever its exit
+// code, which the result carries; one that could not run is task_failed.
+func (s *Sandboxes) finishTask(ctx context.Context, ss *session, d *scheddpb.SandboxRunTaskDone, send func(*scheddpb.SandboxRunRequest) error) error {
+	if ss.claim.Task == nil {
+		return nil
+	}
+	if err := s.store.RecordSandboxTaskResult(ctx, ss.claim.ID, ss.claim.LeaseToken, int(d.GetExitCode()), d.GetOutput()); err != nil {
+		return err
+	}
+	state, code, message := agentstore.SandboxClosed, sandboxOutcomeTaskDone, ""
+	switch {
+	case d.GetError() != "":
+		state, code, message = agentstore.SandboxFailed, sandboxOutcomeTaskFailed, "the task could not run"
+	case d.GetTimedOut():
+		state, code, message = agentstore.SandboxFailed, sandboxOutcomeTaskFailed, "the task's command timed out"
+	}
+	if ss.decide(state, code, message) {
+		_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Close{Close: &scheddpb.SandboxRunClose{}}})
+	}
+	return nil
 }

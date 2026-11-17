@@ -509,6 +509,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/sandboxes/{id}/ports":                              true,
 	"GET /v1/sandboxes/{id}/ports/{port}":                       true,
 	"DELETE /v1/sandboxes/{id}/ports/{port}":                    true,
+	"GET /v1/sandboxes/{id}/task":                               true,
 	"GET /v1/agents":                                            true,
 	"GET /v1/agents/{agent}":                                    true,
 	"DELETE /v1/agents/{agent}":                                 true,

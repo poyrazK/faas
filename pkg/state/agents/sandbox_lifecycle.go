@@ -41,7 +41,10 @@ type SandboxClaim struct {
 	ReadyTimeout time.Duration
 	// Browser boots a preset session with the sandbox browser running
 	// (ADR-20261116182615 §1).
-	Browser    bool
+	Browser bool
+	// Task is the session's sandbox task, if it is one
+	// (ADR-20261116182615 §3).
+	Task       *SandboxTask
 	LeaseToken string
 	SandboxLease
 }
@@ -91,10 +94,14 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 	if err != nil {
 		return SandboxClaim{}, false, fmt.Errorf("read claimed session: %w", err)
 	}
+	var task *SandboxTask
+	if row.TaskKind != "" {
+		task = &SandboxTask{Kind: row.TaskKind, URL: row.TaskUrl, MaxChars: int(row.TaskMaxChars)}
+	}
 	return SandboxClaim{ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
 		ImageMissing: row.FromImage && row.ImageKey == "", StartCmd: row.StartCmd, ReadyCmd: row.ReadyCmd,
-		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, LeaseToken: token,
+		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, Task: task, LeaseToken: token,
 		SandboxLease: SandboxLease{CloseRequested: row.CloseRequested, IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second,
 			ExpiresAt: row.ExpiresAt.Time.UTC()}}, true, nil
 }
