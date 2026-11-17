@@ -45,6 +45,8 @@ servers:
         description: API hostname.
 
 tags:
+  - name: mcp-management
+    description: Preview management MCP source intents; no owner or execution authority.
   - name: support
     description: Gregale customer assistance, public conversations and resolution episodes.
   - name: operations
@@ -340,6 +342,84 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/task-tool-source-intents/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Caller-chosen immutable source intent identity
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+    get:
+      operationId: getHostedTaskSourceIntent
+      summary: Recover hosted Task source intent metadata
+      description: Requester or personal owner reads the retained source review and fixed expiry. Requires a fresh
+        unscoped account key with deployment authority, or an authenticated personal owner. No source retrieval, renewal,
+        owner decision or execution.
+      tags:
+      - mcp-management
+      responses:
+        '400':
+          description: The requested hosted source intent identity is malformed.
+        '401':
+          description: Authenticate before inspecting hosted source intent metadata.
+        '403':
+          description: This source intent requires an unscoped personal-account inspector.
+        '404':
+          description: No hosted source intent is visible to this inspecting principal.
+        '409':
+          description: The retained source metadata cannot be inspected in its current form.
+        '429':
+          description: Hosted source intent inspection is currently rate-limited.
+        '503':
+          description: The native source intent journal is temporarily unavailable for inspection.
+        '200':
+          description: Immutable hosted source intent metadata, projected as expired after its fixed retention deadline.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskSourceIntent'
+    put:
+      operationId: prepareHostedTaskSourceIntent
+      summary: Retain reviewed authored Task source under a stable identity
+      description: 'Opt-in preview: requires FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION=1, independent Account-domain sealing,
+        unscoped personal deploy-write authority and MFA policy. Atomically saves encrypted exact source bundles and
+        immutable native app/config/policy metadata for fifteen minutes. Maximum 2 MiB and 1024 entries per role,
+        two active source intents, 16 MiB ciphertext and 256 lifetime identities per account. Exact retries preserve
+        the original expiry; different reviews conflict. Native current app baselines are checked on first creation.
+        Metadata is not current readiness evidence. No owner decision, credentials, build, migration or execution
+        is authorized.'
+      tags:
+      - mcp-management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskSourcePrepare'
+      responses:
+        '400':
+          description: Authored Task bundles or their review failed bounded source validation.
+        '401':
+          description: Authenticate the requesting publisher before retaining Task source.
+        '403':
+          description: Preparing retained source requires personal deploy-write authority and the account MFA policy.
+        '404':
+          description: The requesting Task publisher is no longer a fresh authorized key.
+        '409':
+          description: The source intent identity, requesting key or native app baseline differs from this preparation.
+        '429':
+          description: The account source retention identity, active-intent or ciphertext quota is exhausted.
+        '503':
+          description: New source retention is disabled or independent Account-domain sealing is unavailable.
+        '200':
+          description: Newly retained or identically replayed Task source intent with its original expiry and no execution
+            authority.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskSourceIntent'
   /v1/task-tool-release-intents/{id}:
     parameters:
     - name: id
@@ -74449,6 +74529,259 @@ components:
           type: string
         review:
           $ref: '#/components/schemas/AppReleaseReview'
+    TaskReviewLimits:
+      type: object
+      additionalProperties: false
+      description: Explicit configured Task overrides only; no binding or readiness evidence.
+      properties:
+        ttl_seconds:
+          type: integer
+        worker_concurrency:
+          type: integer
+        max_attempts:
+          type: integer
+        max_running:
+          type: integer
+        max_running_per_owner:
+          type: integer
+        max_outstanding:
+          type: integer
+        max_outstanding_per_owner:
+          type: integer
+        shutdown_timeout_ms:
+          type: integer
+    TaskReleaseReview:
+      type: object
+      description: Offline credential-free Task source review; never executable.
+      required:
+      - version
+      - status
+      - release_fingerprint
+      - protocol
+      - web_app
+      - worker_app
+      - worker_runtime
+      - observer_app
+      - observer_metric_app
+      - previous_worker_apps
+      - endpoint
+      - access_mode
+      - tool_scopes
+      - readiness_roles
+      - required_setup
+      - release_timeout_seconds
+      - web_configured_limits
+      - worker_configured_limits
+      - migrations_required
+      - bindings_verified
+      - ready_to_apply
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        status:
+          type: string
+          enum:
+          - review_only
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        protocol:
+          type: string
+        web_app:
+          type: string
+        worker_app:
+          type: string
+        worker_runtime:
+          type: string
+          enum:
+          - node
+        observer_app:
+          type: string
+        observer_metric_app:
+          type: string
+        previous_worker_apps:
+          type: array
+          items:
+            type: string
+        endpoint:
+          type: string
+        access_mode:
+          type: string
+        tool_scopes:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        readiness_roles:
+          type: array
+          maxItems: 0
+          items:
+            type: string
+        required_setup:
+          type: array
+          items:
+            type: string
+        release_timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 600
+        web_configured_limits:
+          $ref: '#/components/schemas/TaskReviewLimits'
+        worker_configured_limits:
+          $ref: '#/components/schemas/TaskReviewLimits'
+        migrations_required:
+          type: boolean
+          description: True because deploying the reviewed Task stack still requires its separately authorized migration
+            workflow.
+        bindings_verified:
+          type: boolean
+          description: False because offline source review does not resolve database, key or namespace bindings.
+        ready_to_apply:
+          type: boolean
+          description: False because an offline Task review is not an authorized executable release plan.
+    HostedTaskSourceReview:
+      description: Canonical hosted source review, including source digests and native app baselines.
+      allOf:
+      - $ref: '#/components/schemas/TaskReleaseReview'
+      - type: object
+        required:
+        - kind
+        - account_id
+        - source_sha256
+        - apps
+        properties:
+          kind:
+            type: string
+            enum:
+            - hosted_task_source_review
+          account_id:
+            type: string
+            format: uuid
+          source_sha256:
+            type: object
+            required:
+            - web
+            - worker
+            additionalProperties: false
+            properties:
+              web:
+                type: string
+                pattern: ^[0-9a-f]{64}$
+              worker:
+                type: string
+                pattern: ^[0-9a-f]{64}$
+          apps:
+            type: array
+            minItems: 3
+            maxItems: 35
+            items:
+              $ref: '#/components/schemas/TaskToolReleaseApp'
+      unevaluatedProperties: false
+    HostedTaskSourceEntry:
+      type: object
+      additionalProperties: false
+      description: Authored regular file or explicit directory. Normalized paths, root directory, private modes and
+        2 MiB/1024 entries per role are mandatory. Content is base64-encoded bytes, accepted only by prepare and never
+        returned.
+      required:
+      - path
+      - mode
+      properties:
+        path:
+          type: string
+        mode:
+          type: integer
+          enum:
+          - 384
+          - 448
+        directory:
+          type: boolean
+        content:
+          type: string
+          format: byte
+          writeOnly: true
+    HostedTaskSourcePrepare:
+      type: object
+      additionalProperties: false
+      required:
+      - review
+      - sources
+      properties:
+        review:
+          $ref: '#/components/schemas/HostedTaskSourceReview'
+        sources:
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 1024
+            items:
+              $ref: '#/components/schemas/HostedTaskSourceEntry'
+      description: Exact reviewed Node Task bundles submitted for encrypted retention under an immutable caller-chosen
+        identity.
+    HostedTaskSourceIntent:
+      type: object
+      additionalProperties: false
+      description: Immutable source intent metadata. Not an owner decision or execution plan. Expired ciphertext cannot
+        be renewed under the same identity.
+      required:
+      - version
+      - id
+      - account_id
+      - requester_key_id
+      - intent_sha256
+      - review_sha256
+      - review
+      - created_at
+      - expires_at
+      - source_state
+      - ready_to_apply
+      - bindings_verified
+      - owner_authorization_required
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        id:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        account_id:
+          type: string
+          format: uuid
+        requester_key_id:
+          type: string
+          format: uuid
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review:
+          $ref: '#/components/schemas/HostedTaskSourceReview'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        source_state:
+          type: string
+          enum:
+          - retained
+          - expired
+        ready_to_apply:
+          type: boolean
+          description: False because retained source alone has no owner execution authorization.
+        bindings_verified:
+          type: boolean
+          description: False because storing authored Task source does not verify runtime credential bindings.
+        owner_authorization_required:
+          type: boolean
+          description: True because a separate owner decision is required before any retained Task source can execute.
     TaskToolReleaseIntent:
       type: object
       additionalProperties: false

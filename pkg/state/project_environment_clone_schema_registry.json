@@ -7678,7 +7678,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": ["capture", "materialize"],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app",
       "live": [
@@ -21964,6 +21967,17 @@
       "id",
       "payload",
       "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_source_intents",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "expires_at",
+      "id",
+      "payload"
     ],
     "kind": "operational"
   },
