@@ -254,7 +254,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "id", Short: "retained hosted source review identity", Value: "ID", Req: true},
 				{Name: "review-sha256", Short: "exact review fingerprint for checks and decisions", Value: "SHA256"},
 				{Name: "intent-sha256", Short: "exact intent digest for owner decisions", Value: "SHA256"},
-			}, Examples: []string{"gregale mcp server tasks source-review get --id INTENT", "gregale mcp server tasks source-review approve --id INTENT --intent-sha256 DIGEST --review-sha256 REVIEW"}},
+			}, Examples: []string{"gregale mcp server tasks audit get --id INTENT", "gregale mcp server tasks audit approve --id INTENT --intent-sha256 DIGEST --review-sha256 REVIEW"}},
 			{Name: "execution", Short: "Authorize, inspect or plan recovery for a guarded Task release", Positionals: []string{"<authorize|apply|get|guard|inspect|plan-recovery|retire-qualify|retire-approve|retire-revoke|retire>"}, Notes: []string{"Execution authority is separate from review approval. Only the requesting key can apply. Inspect and plan-recovery use native GET APIs and require no local files or bindings. Recovery plans include lifecycle progress and the next step, never grant execution, and never resume fenced executors or repeat committed recovery work. Retirement requires retained restore/quarantine results, separate owner qualification/approval and execution consent. Pending retirement only reconciles shutdown."}, Flags: []cliFlag{
 				{Name: "id", Short: "exact reviewed intent identity", Value: "ID", Req: true},
 				{Name: "operation-id", Short: "immutable owner-selected execution identity", Value: "ID"},
