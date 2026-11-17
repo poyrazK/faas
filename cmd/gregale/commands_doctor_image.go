@@ -76,6 +76,8 @@ type doctorImage struct {
 	ServingPort     int                         `json:"serving_port,omitempty"`
 	ExposedPorts    []string                    `json:"exposed_ports,omitempty"`
 	VolumePaths     []string                    `json:"volume_paths,omitempty"`
+	// Layers summarizes compressed layer sizes from the image manifest.
+	Layers *doctorImageLayers `json:"layers,omitempty"`
 }
 
 func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspector, strict, asJSON bool) int {
@@ -124,11 +126,14 @@ func runDoctorImageChecks(ctx context.Context, ref string, auth *oci.BasicAuth, 
 	rep.Checks = append(rep.Checks, doctorImageListenerCheck(result.Config))
 	rep.Checks = append(rep.Checks, doctorImageHealthcheck(result.Config.Healthcheck))
 	rep.Checks = append(rep.Checks, doctorImageStopSignal(result.Config.StopSignal))
+	sizeCheck, layers := doctorImageSize(ctx, result)
+	rep.Image.Layers = layers
+	rep.Checks = append(rep.Checks, sizeCheck)
 	if len(result.Config.Volumes) > 0 {
 		rep.Checks = append(rep.Checks, doctorCheck{Name: "volumes", Status: "warn", Hint: "Image VOLUME declarations do not provision persistent storage. Snapshots are a startup cache; filesystem contents are not guaranteed across instances, cold fallback, redeployment or node failure.", Fix: "Keep durable state in object storage or an external database; use local paths only for disposable data."})
 	}
 	for _, name := range []string{"startup-and-port", "filesystem-and-user", "plan-and-deployment-policy"} {
-		rep.Checks = append(rep.Checks, doctorCheck{Name: name, Status: "skipped", Reason: "Metadata inspection cannot verify running processes, layer contents, or account/deployment settings. Deployment validation remains authoritative."})
+		rep.Checks = append(rep.Checks, doctorCheck{Name: name, Status: "skipped", Reason: "Metadata inspection cannot verify running processes, unpacked layer contents and filesystem overhead, or account/deployment settings; image-size is an estimate from compressed layers. Deployment validation remains authoritative."})
 	}
 	return rep
 }

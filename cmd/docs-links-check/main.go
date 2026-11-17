@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/docsmarkers"
 	"github.com/onebox-faas/faas/pkg/productcap"
 )
 
@@ -288,25 +289,6 @@ func checkCapabilityRoutes(cat catalog, capabilities []productcap.Capability) er
 	return nil
 }
 
-// internalMarkerRE finds operator and engineering material on a customer
-// page. Each alternative names something a customer cannot act on.
-var internalMarkerRE = regexp.MustCompile(strings.Join([]string{
-	`\bADRs?[- ]?\d`,
-	`\]\((?:\.\./)*(?:adr|ops|runbooks|drills)/`,
-	`\b(?:apid|schedd|vmmd|builderd|imaged|meterd|githubd|outboundd|pgproxyd|gatewayd(?:-public|-internal)?)\b`,
-	`\bpkg/(?:api|apid|state|sched|fcvm|netns|oci|rootfs|meter|billing|wire|imaged|builderd|githubd|legal|secretbox|servicecaller)\b`,
-	`\bmigrations/\d`,
-	`faas_implementation_spec|\bspec ?§|spec-§`,
-	`\bFAAS_[A-Z0-9_]+`,
-	`/etc/faas/(?:secrets|[a-z-]+\.env)|journalctl|systemctl`,
-	`native (?:qualification|acceptance|KVM)|qualified (?:server|installation)|qualification harness`,
-	`operators? (?:can|must|may) (?:set|enable|configure)|ask (?:your|the) operator|Gregale operator`,
-}, "|"))
-
-// customerEnvRE matches the FAAS_ names customers do use: the CLI's settings
-// and the variables Gregale sets inside an app.
-var customerEnvRE = regexp.MustCompile(`^FAAS_(?:TOKEN|API|JSON|COMPLETION_CACHE_PATH|DEVELOPER_ID|DEVELOPER_ENVIRONMENT|RUNTIME|APP_ID|APP_SLUG|TENANT_ID|DEPLOYMENT_ID|DEPLOYMENT_TAG|DEPLOYMENT_CREATED_AT|INSTANCE_ID|INSTANCE_IDENTITY_FILE|NODE_ID|REGION|COMMIT_SHA|IMAGE_DIGEST|EVENT_PUBLISH_ENDPOINT|METADATA_ENV_ENDPOINT|SECRETS_[A-Z_]+|WORKLOAD_[A-Z0-9_]*)$`)
-
 // checkPublishedContent refuses internal material on every page the docs
 // site serves.
 func checkPublishedContent(cat catalog, read func(string) ([]byte, error)) error {
@@ -322,10 +304,7 @@ func checkPublishedContent(cat catalog, read func(string) ([]byte, error)) error
 			return fmt.Errorf("route %q source %q: %w", r.Path, r.Source, err)
 		}
 		for i, line := range strings.Split(string(b), "\n") {
-			for _, m := range internalMarkerRE.FindAllString(line, -1) {
-				if customerEnvRE.MatchString(m) {
-					continue
-				}
+			for _, m := range docsmarkers.Internal(line) {
 				findings = append(findings, fmt.Sprintf("%s:%d: published page %q mentions internal %q", r.Source, i+1, r.Path, m))
 			}
 		}

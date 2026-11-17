@@ -424,6 +424,10 @@ from ._event_deadline_policy import (
     EventDeadlineRatioOptions,
     EventDeadlineTarget,
 )
+from ._event_outbox_protocol import EVENT_OUTBOX_SCHEMA
+from ._pipeline_compensation_protocol import PIPELINE_COMPENSATION_SCHEMA
+from ._pipeline_tool_protocol import PIPELINE_TOOL_SCHEMA
+from ._stripe_webhook_protocol import STRIPE_WEBHOOK_SCHEMA
 from ._wrapper import FaaSClient as FaaSClient
 from .ai_gateway import (
     AI_CALL_HEADER,
@@ -610,6 +614,7 @@ from .event_consumer_transactions import (
     new_event_consumer_request,
     with_event_consumer_transaction,
 )
+from .event_contract import EventContract
 from .event_deadline_checkpoint import acknowledge_event_deadline_alerts, validate_event_deadline_checkpoint
 from .event_deadline_investigation import (
     EventDeadlineInvestigationOptions,
@@ -621,6 +626,38 @@ from .event_deadline_watch import (
     EventDeadlineWatchCancelled,
     EventDeadlineWatchOptions,
     awatch_event_subscription_deadlines,
+)
+from .event_outbox import EventOutbox, EventOutboxReconciliation, EventOutboxRecoveryOptions, EventPublisher
+from .event_outbox_state import (
+    EventOutboxError,
+    EventOutboxOutcome,
+    EventOutboxRetryPolicy,
+    EventOutboxStatus,
+    EventPublicationOptions,
+    EventPublicationOutcome,
+    EventPublicationReceipt,
+)
+from .event_outbox_transaction import (
+    EventOutboxConnection,
+    EventOutboxPool,
+    EventOutboxTransaction,
+    PsycopgEventOutboxPool,
+    with_event_outbox_transaction,
+)
+from .event_pipeline_state import (
+    EVENT_PIPELINE_SCHEMA,
+    EventPipelineError,
+    EventPipelineReceipt,
+    EventPipelineStore,
+    PostgresEventPipelineStore,
+    event_pipeline_identity,
+)
+from .event_pipelines import (
+    EventPipeline,
+    EventPipelineAction,
+    EventPipelineDelivery,
+    EventPipelineOutcome,
+    PipelineEvent,
 )
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
 from .file_pipelines import (
@@ -748,6 +785,28 @@ from .pipeline_children_state import (
     pipeline_children_identity,
     pipeline_children_intent,
 )
+from .pipeline_compensation_mcp import CompensationMCP
+from .pipeline_compensation_state import (
+    CompensationAction,
+    CompensationActor,
+    CompensationCommand,
+    CompensationEffect,
+    CompensationError,
+    CompensationInput,
+    CompensationOutcome,
+    CompensationPlan,
+    CompensationResult,
+    CompensationStore,
+    CompensationTask,
+    PostgresCompensationStore,
+    compensation_contracts,
+)
+from .pipeline_compensations import (
+    CompensationContext,
+    CompensationSource,
+    CompensationSourceStage,
+    PipelineCompensation,
+)
 from .pipeline_gates import (
     PIPELINE_GATE_SCHEMA,
     NativePipelineGateTransport,
@@ -763,6 +822,20 @@ from .pipeline_gates import (
     PostgresPipelineGateStore,
     pipeline_gate_intent,
 )
+from .pipeline_schedule_state import (
+    PipelineSchedule,
+    PipelineScheduleCatchUp,
+    PipelineScheduleDST,
+    PipelineScheduleError,
+    PipelineScheduleFire,
+    PipelineScheduleHistory,
+    PipelineScheduleInfo,
+    PipelineScheduleInspection,
+    PipelineScheduleOccurrence,
+    PipelineSchedulePreview,
+    PipelineScheduleReplayOutcome,
+)
+from .pipeline_schedules import PipelineScheduleAction, PipelineScheduleClient, ScheduledPipelineRun
 from .pipeline_state import (
     PIPELINE_JOB_SCHEMA,
     PipelineError,
@@ -774,6 +847,22 @@ from .pipeline_state import (
     pipeline_failure,
     pipeline_job_identity,
     read_pipeline_artifact,
+)
+from .pipeline_tool_mcp import PipelineToolMCP, PipelineToolMCPError
+from .pipeline_tool_state import (
+    PipelineToolAction,
+    PipelineToolActor,
+    PipelineToolError,
+    PipelineToolReceipt,
+    PipelineToolStore,
+    PostgresPipelineToolStore,
+)
+from .pipeline_tools import (
+    PipelineTool,
+    PipelineToolApproval,
+    PipelineToolRequest,
+    PipelineToolStart,
+    PipelineToolStatus,
 )
 from .realtime_activity import RealtimeActivity, RealtimeActivityTracker
 from .realtime_backpressure import RealtimeBackpressureMonitor, RealtimeBackpressureStatus, RealtimeProcessingStatus
@@ -862,8 +951,106 @@ from .realtime_workers import (
     consume_realtime_consumer_group,
     consume_realtime_consumer_group_with_credential,
 )
+from .stripe_webhook_state import (
+    StripeDeliveryContext,
+    StripeWebhookDecision,
+    StripeWebhookDelivery,
+    StripeWebhookError,
+    StripeWebhookEvent,
+    StripeWebhookIgnore,
+    StripeWebhookIgnoreReason,
+    StripeWebhookOutcome,
+    StripeWebhookReceipt,
+    StripeWebhookStage,
+    stripe_delivery_context_from_headers,
+)
+from .stripe_webhooks import StripeWebhookAction, StripeWebhookAdapter
 
 __all__ = (
+    "PIPELINE_COMPENSATION_SCHEMA",
+    "CompensationActor",
+    "CompensationAction",
+    "CompensationCommand",
+    "CompensationError",
+    "CompensationEffect",
+    "CompensationInput",
+    "CompensationOutcome",
+    "CompensationTask",
+    "CompensationResult",
+    "CompensationPlan",
+    "CompensationStore",
+    "PostgresCompensationStore",
+    "compensation_contracts",
+    "PipelineCompensation",
+    "CompensationSource",
+    "CompensationSourceStage",
+    "CompensationContext",
+    "CompensationMCP",
+
+    'PIPELINE_TOOL_SCHEMA',
+    'PipelineToolAction',
+    'PipelineToolActor',
+    'PipelineToolError',
+    'PipelineToolReceipt',
+    'PipelineToolStore',
+    'PostgresPipelineToolStore',
+    'PipelineTool',
+    'PipelineToolRequest',
+    'PipelineToolStart',
+    'PipelineToolStatus',
+    'PipelineToolApproval',
+    'PipelineToolMCP',
+    'PipelineToolMCPError',
+
+    "StripeWebhookAdapter",
+    "StripeWebhookAction",
+    "StripeWebhookDelivery",
+    "StripeDeliveryContext",
+    "StripeWebhookEvent",
+    "StripeWebhookDecision",
+    "StripeWebhookStage",
+    "StripeWebhookIgnore",
+    "StripeWebhookIgnoreReason",
+    "StripeWebhookReceipt",
+    "StripeWebhookOutcome",
+    "StripeWebhookError",
+    "stripe_delivery_context_from_headers",
+    "STRIPE_WEBHOOK_SCHEMA",
+
+    "PipelineScheduleClient",
+    "PipelineScheduleAction",
+    "ScheduledPipelineRun",
+    "PipelineSchedule",
+    "PipelineScheduleError",
+    "PipelineScheduleInfo",
+    "PipelineScheduleHistory",
+    "PipelineScheduleInspection",
+    "PipelineSchedulePreview",
+    "PipelineScheduleOccurrence",
+    "PipelineScheduleReplayOutcome",
+    "PipelineScheduleFire",
+    "PipelineScheduleDST",
+    "PipelineScheduleCatchUp",
+
+    "EventPublisher",
+    "EventOutbox",
+    "EventOutboxRecoveryOptions",
+    "EventOutboxReconciliation",
+    "EventOutboxError",
+    "EventOutboxStatus",
+    "EventOutboxOutcome",
+    "EventOutboxRetryPolicy",
+    "EventPublicationOptions",
+    "EventPublicationOutcome",
+    "EventPublicationReceipt",
+    "EventOutboxPool",
+    "EventOutboxConnection",
+    "EventOutboxTransaction",
+    "PsycopgEventOutboxPool",
+    "with_event_outbox_transaction",
+    "EVENT_OUTBOX_SCHEMA",
+
+    'EventContract', 'EventPipeline', 'EventPipelineAction', 'EventPipelineDelivery', 'EventPipelineOutcome', 'PipelineEvent', 'EVENT_PIPELINE_SCHEMA', 'EventPipelineError', 'EventPipelineReceipt', 'EventPipelineStore', 'PostgresEventPipelineStore', 'event_pipeline_identity',
     'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
     'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
     'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',

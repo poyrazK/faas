@@ -48,6 +48,31 @@ func (v *LocalVerifier) RequireV2(on bool) *LocalVerifier {
 // isSignatureV1 reports a raw 64-byte P-256 r||s signature.
 func isSignatureV1(sig []byte) bool { return len(sig) == 64 }
 
+// refreshV1Signature rereads a v1 signature from the canonical store when
+// RequireV2 is on. The node cache serves a signature it already holds, so a
+// v1 copy cached before `artifact resign` rewrote the object would otherwise
+// fail every boot of that layer. A failed refresh keeps the cached bytes,
+// which RequireV2 then refuses.
+func (v *LocalVerifier) refreshV1Signature(ctx context.Context, sigKey string, sig []byte) []byte {
+	if !v.requireV2 || !isSignatureV1(sig) {
+		return sig
+	}
+	cache := storage.AsCacheBackend(v.stor)
+	if cache == nil {
+		return sig
+	}
+	rc, err := cache.Refresh(ctx, sigKey)
+	if err != nil {
+		return sig
+	}
+	defer func() { _ = rc.Close() }()
+	fresh, err := io.ReadAll(io.LimitReader(rc, maxSignatureV2Bytes+1))
+	if err != nil {
+		return sig
+	}
+	return fresh
+}
+
 // NewLocalVerifier parses the SPKI PEM at path (mode ≤ 0o444
 // enforced by LoadPublicKeyFile) and wires a LocalVerifier that
 // reads both layer and signature blobs from stor. Returns an
@@ -104,6 +129,7 @@ func (v *LocalVerifier) CheckPresent(ctx context.Context, layerKey, sigKey strin
 	if err != nil {
 		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
 	}
+	sig = v.refreshV1Signature(ctx, sigKey, sig)
 	if v.requireV2 && isSignatureV1(sig) {
 		return api.NewProblem(503, "sig_invalid",
 			"unbound signature for cold-boot layer",
@@ -210,6 +236,7 @@ func (v *LocalVerifier) verify(ctx context.Context, layerKey, sigKey, cacheKey s
 	// A v1 signature covers only the digest, so a signed layer and its
 	// signature copied over another app's key would verify. Once every
 	// stored layer is re-signed, RequireV2 closes that replay.
+	sig = v.refreshV1Signature(ctx, sigKey, sig)
 	if v.requireV2 && isSignatureV1(sig) {
 		return api.NewProblem(503, "sig_invalid",
 			"unbound signature for cold-boot layer",

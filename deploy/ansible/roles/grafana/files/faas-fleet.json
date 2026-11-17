@@ -686,7 +686,8 @@
     },
     {
       "type": "stat",
-      "title": "Resident GB per paying customer (per plan)",
+      "title": "Resident GB per paying customer vs plan model (per plan)",
+      "description": "Each plan's month-to-date resident GB per paying customer divided by its financial-model value (meterd_resident_gb_per_customer_planned). FaasResidentGbPerCustomerHigh warns above 1.5 with five or more paying customers (ADR-20261117070932).",
       "id": 12,
       "gridPos": {
         "h": 8,
@@ -700,14 +701,14 @@
       },
       "targets": [
         {
-          "expr": "meterd_resident_gb_per_customer{plan=~\".+\"}",
+          "expr": "meterd_resident_gb_per_customer{plan=~\".+\"} / meterd_resident_gb_per_customer_planned",
           "legendFormat": "{{plan}}",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "decgbytes",
+          "unit": "percentunit",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -717,11 +718,11 @@
               },
               {
                 "color": "yellow",
-                "value": 0.305
+                "value": 1
               },
               {
                 "color": "red",
-                "value": 0.45
+                "value": 1.5
               }
             ]
           }
