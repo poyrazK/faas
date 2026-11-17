@@ -2443,6 +2443,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261115194000: Platform alerts for outages and failing crons](20261115194000-platform-alerts.md) — accepted; schedd pauses an HTTP cron after 10 failed runs over 24 h and meterd emails accounts about it and about apps at ≥90% 5xx, unless they have their own error-rate rule
 
 - [ADR-20261116163708: Hosted read-only Task recovery inspection](20261116163708-hosted-task-recovery-inspection.md) — accepted; opt-in original-requester agent keys inspect native Task checkpoints and recovery guidance without local files, cross-key delegation or execution authority.
-
+- [ADR-20261116183445: The management MCP server searches the published docs](20261116183445-management-mcp-docs-search.md) — accepted; core tools gregale_search_docs and gregale_get_docs_page rank and read sections of gregale.dev's llms.txt/llms-full.txt, cached hourly per process with a 24 h stale fallback.
 - [ADR-20261116183545: Durable hosted Task source intents](20261116183545-hosted-task-source-intents.md)
 - [ADR-20261116213000: Custom Postgres group roles](20261116213000-custom-postgres-group-roles.md) — proposed; customers declare NOLOGIN group roles (BYPASSRLS allowed, refused on Data API/Auth databases, Hobby+) granted to their own Gregale logins, created by the platform admin path, so tools like Windmill run on managed Postgres.
