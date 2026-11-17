@@ -32,7 +32,15 @@ func newMetalVMM(t *testing.T, timeout time.Duration) *JailerVMM {
 			t.Fatal("mount helper requires a dynamic loader; rebuild vmmd with CGO_ENABLED=0")
 		}
 	}
-	v := NewJailerVMM(JailChrootBase, timeout)
+	// FAAS_TEST_JAIL_CHROOT_BASE gives a run its own jailer chroot base. On a
+	// shared metal host another run's native ownership journal under
+	// JailChrootBase makes this legacy-allocator VMM refuse every boot, and
+	// that journal is not this run's to move.
+	chrootBase := JailChrootBase
+	if dir := os.Getenv("FAAS_TEST_JAIL_CHROOT_BASE"); dir != "" {
+		chrootBase = dir
+	}
+	v := NewJailerVMM(chrootBase, timeout)
 	v.mountHelperPath = path
 	// adr: 907 — FAAS_TEST_FREE_PAGE_REPORTING=1 runs the metal suite with
 	// the free-page-reporting balloon on every cold boot, as production
