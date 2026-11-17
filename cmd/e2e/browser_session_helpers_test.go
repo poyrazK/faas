@@ -26,11 +26,14 @@ func startAPIDWithSessions(t *testing.T, pool *pgxpool.Pool) (*e2etest.Harness, 
 	if _, err := rand.Read(keyBytes); err != nil {
 		t.Fatalf("rand: %v", err)
 	}
+	// NewManager zeroes the caller's key slice: encode it first so apid gets
+	// the key the test seals with.
+	keyHex := hex.EncodeToString(keyBytes)
 	mgr, err := session.NewManager(keyBytes, 7*24*time.Hour)
 	if err != nil {
 		t.Fatalf("session.NewManager: %v", err)
 	}
-	h := e2etest.StartWithEnv(t, pool, e2etest.APID, []string{"FAAS_SESSION_KEY=" + hex.EncodeToString(keyBytes)})
+	h := e2etest.StartWithEnv(t, pool, e2etest.APID, []string{"FAAS_SESSION_KEY=" + keyHex})
 	return h, mgr
 }
 

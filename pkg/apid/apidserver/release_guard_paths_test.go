@@ -284,18 +284,19 @@ func TestReleaseSafetyDashboardShowsTheAppsGuards(t *testing.T) {
 	}
 }
 
-func TestRollbackRestoreDatabasesIsHiddenWithoutDatabaseRollbacks(t *testing.T) {
+func TestRollbackRestoreDatabasesRefusedOnPlansWithoutDatabaseRollbacks(t *testing.T) {
 	f := newSwitchFixture(t)
 	if err := f.env.InstallCapabilityGate(); err != nil {
 		t.Fatal(err)
 	}
-	// database-rollbacks is GA on Hobby and up (PG-03); Free never has it.
+	// database-rollbacks is GA on Hobby and up (PG-03): the field is public,
+	// and a plan without it gets the switch refused, never started.
 	if err := (*f.env.Store()).UpdateAccountPlan(t.Context(), *f.env.AcctID(), api.PlanFree); err != nil {
 		t.Fatal(err)
 	}
 	w := f.do(t, http.MethodPost, "/v1/apps/"+f.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true})
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `unknown field \"restore_databases\"`) {
-		t.Fatalf("restore_databases on a plan without database-rollbacks = %d %s, want the unknown-field answer", w.Code, w.Body)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "database_switch_unavailable") {
+		t.Fatalf("restore_databases on Free = %d %s, want 409 database_switch_unavailable", w.Code, w.Body)
 	}
 }
 
