@@ -60,7 +60,7 @@ CODEX_FAILURE = [
 class TaskTests(unittest.TestCase):
     def test_shipped_tasks_load(self):
         tasks = ev.load_tasks()
-        self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store", "deploy-voting-app"])
+        self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store", "deploy-voting-app", "first-hour-private", "first-hour-edit"])
 
     def test_invalid_tasks_are_refused(self):
         good = {"id": "ok-task", "prompt": "deploy {app}", "template": "hello-node", "checks": [{"kind": "answer", "pattern": "x"}], "budget_usd": 1, "timeout_s": 60}
@@ -607,6 +607,69 @@ class GradeTests(unittest.TestCase):
         records = [{"task": "t", "agent": "gemini", "toolset": "none", "success": False, "feature_score": 0.25, "anti_patterns": ["raw_api_call"], "traps": ["ui:liveness_exhausted"]},
                    {"task": "t", "agent": "gemini", "toolset": "none", "success": True, "feature_score": 0.75, "anti_patterns": ["raw_api_call", "manual_tarball"], "traps": []}]
         self.assertIn("| 0.5 | manual_tarball×1, raw_api_call×2 | 1/2 |", ev.summarize(records))
+
+
+class OwnerResponseTests(unittest.TestCase):
+    def test_existing_slug_is_refused_before_setup_or_agent_execution(self):
+        client = ev.Gregale("/bin/echo", "https://api.example.test", "fixture-token")
+        client.inventory = mock.Mock(return_value={"apps": {"existing"}, "projects": set()})
+        client.cli = mock.Mock()
+        options = mock.Mock(keep_apps=False, keep_dirs=False)
+        task = next(task for task in ev.load_tasks() if task["id"] == "first-hour-private")
+        with mock.patch.object(ev, "app_slug", return_value="existing"), mock.patch.object(ev, "invoke") as invoke:
+            record = ev.run_one(task, "codex", "none", client, options)
+        self.assertFalse(record["success"])
+        self.assertIn("already exists", record["error"])
+        client.cli.assert_not_called()
+        invoke.assert_not_called()
+
+    def test_private_response_requires_exact_identity_status_and_source(self):
+        class PrivateGregale:
+            def get(self, path):
+                if path.endswith("/health"):
+                    return {"latest_deployment_id": "d2", "serving_deployment_ids": ["d2"]}
+                if "/deployments?" in path:
+                    return {"items": [{"id": "d2", "app_id": "a1", "status": "live"}, {"id": "d1", "app_id": "a1", "status": "live"}]}
+                return {"id": "a1", "require_authn": True}
+
+            def cli(self, *args, **kwargs):
+                self.args = args
+                return mock.Mock(returncode=0, stdout=json.dumps(self.evidence))
+
+        original = {"app_id": "a1", "deployment_id": "d2", "scope": "default", "instance_id": "1" * 32,
+                    "verified": True, "public_access_verified": False, "http_status": 200, "body": "first-hour-v2"}
+        for mutation in ({}, {"deployment_id": "d1"}, {"app_id": "other"}, {"http_status": 401}, {"http_status": 200.5},
+                         {"public_access_verified": True}, {"verified": False}, {"instance_id": "0" * 32},
+                         {"body": "old source"}, {"body": "x" * 4097}, {"scope": "preview"}):
+            with self.subTest(mutation=mutation):
+                client = PrivateGregale()
+                client.evidence = {**original, **mutation}
+                ok, detail = ev.owner_response_check(client, "test-app", {"contains": "first-hour-v2", "min_deployments": 2})
+                self.assertEqual(ok, not mutation)
+                self.assertEqual(client.args, ("release", "verify", "d2", "--app", "test-app", "--path", "/"))
+                self.assertNotIn(client.evidence["body"], detail)
+
+    def test_public_app_is_not_graded_as_private(self):
+        client = mock.Mock()
+        client.get.return_value = {"id": "a1", "require_authn": False}
+        self.assertFalse(ev.owner_response_check(client, "test-app", {})[0])
+        client.cli.assert_not_called()
+
+    def test_edit_cannot_replace_the_original_app(self):
+        client = mock.Mock()
+        client.get.return_value = {"id": "replacement", "require_authn": True}
+        self.assertFalse(ev.owner_response_check(client, "test-app", {}, expected_app_id="original")[0])
+        client.cli.assert_not_called()
+
+    def test_staged_release_is_not_a_serving_update(self):
+        client = mock.Mock()
+        client.get.side_effect = [
+            {"id": "a1", "require_authn": True},
+            {"items": [{"id": "d2", "app_id": "a1", "status": "live"}]},
+            {"latest_deployment_id": "d2", "serving_deployment_ids": ["d1"]},
+        ]
+        self.assertFalse(ev.owner_response_check(client, "test-app", {})[0])
+        client.cli.assert_not_called()
 
 
 if __name__ == "__main__":

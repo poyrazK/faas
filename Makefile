@@ -490,8 +490,9 @@ migrations-land: ## Merge origin/main into a migration-carrying branch: take mai
 	python3 scripts/migrations_land.py
 
 .PHONY: agent-eval-test
-agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
+agent-eval-test: ## Unit tests of agent-eval and first-hour reports; no live runs (ADR-20261026152009)
 	python3 scripts/agent-eval/agent_eval_test.py
+	python3 -I scripts/first-hour/baseline_test.py
 
 AGENT_EVAL_AGENTS ?= claude
 AGENT_EVAL_TOOLSETS ?= core,all
@@ -2094,3 +2095,7 @@ check-binding-runner-sync:
 .PHONY: test-data-pipeline
 test-data-pipeline: ## Real TLS Postgres replication and signed HTTP acceptance (Docker, Node, Go)
 	@$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) bash scripts/test-data-pipeline.sh
+
+.PHONY: first-hour-check
+first-hour-check: agent-eval-test ## Validate first-hour evidence and agent task graders without deploying
+	@$(GO_TEST) -p 1 ./tests/journeys -run '^TestHarnessFirstHour' -count=1
