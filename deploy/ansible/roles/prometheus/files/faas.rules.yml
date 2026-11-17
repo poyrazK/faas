@@ -4095,6 +4095,22 @@ groups:
           description: "{{ $labels.job }} has callers giving up while waiting for a pool connection. Compare <daemon>_db_pool_conns against <daemon>_db_pool_max_conns: at the cap, the daemon's DaemonMaxConnections entry is too small for its concurrency; below the cap, connections are being held too long by a slow query or a leaked transaction."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
 
+      # ADR-20261023104734 step 3: each daemon logs in as its own role, and
+      # narrowed grants ship behind their own switch. A statement refused with
+      # SQLSTATE 42501 means the role lacks a privilege its code uses: a grant
+      # set narrowed too far, or a new query nobody granted. Page: that query
+      # path is failing for customers until the grant is restored.
+      - alert: FaasDBPermissionDenied
+        expr: sum by (job, instance, pool) (increase(label_replace({__name__=~".+_db_permission_denied_total"}, "pool", "$1", "__name__", "(.+)_db_permission_denied_total")[10m:30s])) > 0
+        labels:
+          severity: page
+          component: platform
+          family: db_pool
+        annotations:
+          summary: "Postgres refused {{ $labels.job }}'s statements for missing privileges ({{ $labels.pool }} pool)"
+          description: "{{ $labels.job }} ran statements its database role is not granted (SQLSTATE 42501) in the last 10 minutes. If this daemon's grants were just narrowed, roll back by restoring the role's faas_runtime membership; otherwise grant the missing table and verb. The Postgres log names the statement and role."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPermissionDenied.md"
+
       # ADR-191: rows schedd believes are live that the owning vmmd is
       # not reporting. Each is billing the customer and holding an
       # admission slot. Warn, not page: the sweep ships report-only

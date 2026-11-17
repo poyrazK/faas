@@ -253,6 +253,7 @@ type browserFlow struct {
 	client    *http.Client
 	requestID string
 	csrf      string
+	cookie    *http.Cookie
 }
 
 var hiddenInput = regexp.MustCompile(`name="(request_id|csrf)" value="([^"]+)"`)
@@ -286,6 +287,11 @@ func (f *remoteFixture) beginAt(ctx context.Context, authorizationURL string) br
 		f.t.Fatalf("authorize=%d error=%v", response.StatusCode, err)
 	}
 	flow := browserFlow{client: &client}
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == flowCookieName {
+			flow.cookie = cookie
+		}
+	}
 	for _, match := range hiddenInput.FindAllStringSubmatch(string(data), -1) {
 		if match[1] == "request_id" {
 			flow.requestID = match[2]

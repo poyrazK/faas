@@ -7510,7 +7510,8 @@ type Querier interface {
 	RequestSDKCrashCapture(ctx context.Context, db DBTX, arg RequestSDKCrashCaptureParams) (CrashCapture, error)
 	// ADR-20261115180000: object deletion moves to the control plane.
 	// A fresh request, whatever the row held before; the trigger stamps a
-	// per-node login's node.
+	// per-node login's node. generation (slice 2) conditions the delete on one
+	// object generation; NULL deletes whatever the key holds.
 	RequestStorageObjectDeletion(ctx context.Context, db DBTX, arg RequestStorageObjectDeletionParams) error
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.
