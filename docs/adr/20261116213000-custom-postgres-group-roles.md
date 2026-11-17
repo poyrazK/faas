@@ -197,7 +197,33 @@ and restores is a follow-up.
 - Settled: Windmill 1.875 switches roles with `SET LOCAL ROLE windmill_user`
   / `windmill_admin` on its user transactions, and wraps its own role
   creation in exception handlers, so pre-created roles with `SET`-only grants
-  are enough. It runs its migrations at every start, so its apps bind with
-  the `migration` access mode.
-- Windmill's `uuid-ossp` extension must be allowed for the `migration` login;
-  not yet verified end to end.
+  are enough.
+- Corrected 2026-11-17: Windmill runs its migrations at every start, but an
+  app cannot bind with the `migration` access mode. schedd delivers
+  `migration` credentials to release tasks only (`pkg/sched/engine.go`), and
+  that boundary stays. Windmill's app instead runs a release command that
+  starts the server against `MIGRATION_DATABASE_URL`, waits until
+  `/api/version` answers (migrations applied), and stops it; the serving app
+  binds `read_write`. See the Windmill guide in `docs/postgres-custom-roles.md`.
+- Settled 2026-11-17 (live run on prod, rc.349): Windmill 1.875's migrations
+  through the role grants and the `uuid-ossp` extension pass with the
+  `migration` login.
+
+## Amendment 1 (2026-11-17): `TEMPORARY` for the schema owner on Neon
+
+The live Windmill run stopped at migration `20260714230440`
+(`wrap session gucs in rls policies`), which defines a helper function in
+`pg_temp`: `permission denied to create temporary tables`. On Neon the
+database belongs to the platform owner, and the schema owner was granted only
+`CONNECT, CREATE`. It now also gets `TEMPORARY`.
+
+Only the `migration` login is a member of the schema owner (`NOINHERIT`,
+reached through `SET ROLE`), so only migration sessions gain temporary
+objects. Runtime, read-only, Data API and Auth logins are not members and
+stay without `TEMPORARY`; the credential probes keep asserting that. Native
+Firecracker databases are owned by the schema owner, which already holds
+`TEMPORARY` implicitly, so the two backends now match.
+
+The grant is applied by `initializeCredentialSchema`, which runs on every
+credential issue or rotation and every custom-role apply, so existing Neon
+databases pick it up the next time any of those runs.
