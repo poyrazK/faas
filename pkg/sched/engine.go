@@ -1043,6 +1043,11 @@ func (e *Engine) ownsInstanceApp(ctx context.Context, appID string) bool {
 	return e.ownsAppDecision(app)
 }
 
+// ClaimNodeID is the node whose apps this scheduler owns besides apps with
+// no node, or "" when it owns every app. The durable replay worker claims only
+// the wakes and restarts of these apps.
+func (e *Engine) ClaimNodeID() string { return e.claimNodeID() }
+
 // claimNodeID is the node whose apps ownsAppDecision accepts besides apps
 // with no node, or "" when this engine owns every app.
 func (e *Engine) claimNodeID() string {

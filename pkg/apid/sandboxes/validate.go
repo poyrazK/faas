@@ -64,6 +64,7 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 		func() *api.Problem { return validTenant(&a, in.Tenant) },
 		func() *api.Problem { return validNetwork(&a, in.Network, h.WebNetwork) },
 		func() *api.Problem { return h.validPorts(acct, &a, in.Ports) },
+		func() *api.Problem { return h.validBrowser(acct, &a, in) },
 		func() *api.Problem { return resourcelabels.Problem(labels.Change{Set: in.Labels}.Validate()) },
 	}
 	for _, check := range checks {
@@ -106,6 +107,37 @@ func (h *Handler) validPorts(acct state.Account, a *agentstore.SandboxAdmission,
 		seen[p.Port] = true
 		a.Ports = append(a.Ports, agentstore.SandboxPort{Port: p.Port, Visibility: p.Visibility})
 	}
+	return nil
+}
+
+// validBrowser admits browser: true (ADR-20261116182615 §1) for a preset
+// session with SandboxBrowserRAMMBMin, where the operator turned it on, and
+// exposes the browser's DevTools port privately with the session when
+// previews are on. It runs after validPreset and validPorts.
+func (h *Handler) validBrowser(acct state.Account, a *agentstore.SandboxAdmission, in api.CreateSandboxRequest) *api.Problem {
+	switch {
+	case !in.Browser:
+		return nil
+	case !h.Browser:
+		return api.ErrSandboxUnsupported("browser", "the sandbox browser is not on for this control plane yet; start it with gregale-browser in the session")
+	case in.Image != "" || in.Template != "":
+		return api.ErrValidation("browser goes with a preset session, not an image or template")
+	case a.RAMMB < api.SandboxBrowserRAMMBMin:
+		return api.ErrValidation(fmt.Sprintf("browser needs ram_mb of at least %d; got %d", api.SandboxBrowserRAMMBMin, a.RAMMB))
+	}
+	a.Browser = true
+	if h.PreviewDomain == "" {
+		return nil
+	}
+	for _, p := range a.Ports {
+		if p.Port == api.SandboxBrowserCDPPort {
+			return nil
+		}
+	}
+	if max := api.SandboxExposedPortsMax[acct.Plan.PlanIndex()]; len(a.Ports) >= max {
+		return api.ErrAgentLimit(acct.Plan, "SandboxExposedPortsMax", max, len(a.Ports)+1)
+	}
+	a.Ports = append(a.Ports, agentstore.SandboxPort{Port: api.SandboxBrowserCDPPort, Visibility: api.SandboxPortPrivate})
 	return nil
 }
 

@@ -31405,6 +31405,31 @@ COMMENT ON COLUMN public.agent_runs.lease_owner IS 'ADR-20261027090014 agentd re
 
 
 --
+-- Name: agent_sandbox_task_calls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_sandbox_task_calls (
+    sandbox_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    endpoint_id uuid NOT NULL,
+    thread_id text NOT NULL,
+    tool_call_id text NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    delivered_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_sandbox_task_calls_thread_id_check CHECK (((char_length(thread_id) >= 1) AND (char_length(thread_id) <= 64))),
+    CONSTRAINT agent_sandbox_task_calls_tool_call_id_check CHECK (((char_length(tool_call_id) >= 1) AND (char_length(tool_call_id) <= 512)))
+);
+
+
+--
+-- Name: TABLE agent_sandbox_task_calls; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_sandbox_task_calls IS 'ADR-20261116182615 gregale_browse links written by apid: the thread and tool call a finished sandbox task answers.';
+
+
+--
 -- Name: agent_undo_records; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59511,6 +59536,48 @@ CREATE TABLE public.sales_tasks (
 
 
 --
+-- Name: sandbox_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_actions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    session_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    seq integer NOT NULL,
+    kind text NOT NULL,
+    args jsonb DEFAULT '{}'::jsonb NOT NULL,
+    endpoint_id uuid NOT NULL,
+    thread_id text NOT NULL,
+    tool_call_id text NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    exit_code integer,
+    output bytea,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    delivered_at timestamp with time zone,
+    screenshot_key text,
+    screenshot_bytes bigint,
+    CONSTRAINT sandbox_actions_args_check CHECK (((jsonb_typeof(args) = 'object'::text) AND (octet_length((args)::text) <= 8192))),
+    CONSTRAINT sandbox_actions_check CHECK (((state = 'done'::text) = (finished_at IS NOT NULL))),
+    CONSTRAINT sandbox_actions_kind_check CHECK ((kind = ANY (ARRAY['navigate'::text, 'click'::text, 'type'::text, 'press'::text, 'scroll'::text, 'back'::text, 'snapshot'::text]))),
+    CONSTRAINT sandbox_actions_output_check CHECK (((output IS NULL) OR (octet_length(output) <= 262144))),
+    CONSTRAINT sandbox_actions_seq_check CHECK ((seq >= 1)),
+    CONSTRAINT sandbox_actions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text]))),
+    CONSTRAINT sandbox_actions_thread_id_check CHECK (((char_length(thread_id) >= 1) AND (char_length(thread_id) <= 64))),
+    CONSTRAINT sandbox_actions_tool_call_id_check CHECK (((char_length(tool_call_id) >= 1) AND (char_length(tool_call_id) <= 512)))
+);
+
+
+--
+-- Name: TABLE sandbox_actions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_actions IS 'ADR-20261117065818 gregale_browser actions: written by apid, run and ended by agentd under the session lease.';
+
+
+--
 -- Name: sandbox_ports; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59605,6 +59672,12 @@ CREATE TABLE public.sandbox_sessions (
     image_ref text,
     image_job_id uuid,
     template_id uuid,
+    browser boolean DEFAULT false NOT NULL,
+    task_kind text,
+    task_url text,
+    task_max_chars integer,
+    task_exit_code integer,
+    task_output bytea,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_image_ref_check CHECK (((image_ref IS NULL) OR ((char_length(image_ref) >= 1) AND (char_length(image_ref) <= 512)))),
@@ -59643,6 +59716,27 @@ COMMENT ON COLUMN public.sandbox_sessions.image_job_id IS 'ADR-20261027090013: t
 --
 
 COMMENT ON COLUMN public.sandbox_sessions.template_id IS 'ADR-20261027090013: the sandbox template the session boots; NULL for a preset or image session, or once the template is deleted.';
+
+
+--
+-- Name: COLUMN sandbox_sessions.browser; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sandbox_sessions.browser IS 'ADR-20261116182615: the session boots with the sandbox browser running (gregale-browser) and CDP on port 9222.';
+
+
+--
+-- Name: COLUMN sandbox_sessions.task_kind; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sandbox_sessions.task_kind IS 'ADR-20261116182615: the sandbox task the session runs (browse), or NULL for an ordinary session.';
+
+
+--
+-- Name: COLUMN sandbox_sessions.task_output; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sandbox_sessions.task_output IS 'ADR-20261116182615: the task command''s standard output, capped at SandboxTaskOutputMaxBytes.';
 
 
 --
@@ -63037,6 +63131,22 @@ ALTER TABLE ONLY public.agent_run_usage
 
 ALTER TABLE ONLY public.agent_runs
     ADD CONSTRAINT agent_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_sandbox_task_calls agent_sandbox_task_calls_endpoint_id_thread_id_tool_call_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_sandbox_task_calls
+    ADD CONSTRAINT agent_sandbox_task_calls_endpoint_id_thread_id_tool_call_id_key UNIQUE (endpoint_id, thread_id, tool_call_id);
+
+
+--
+-- Name: agent_sandbox_task_calls agent_sandbox_task_calls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_sandbox_task_calls
+    ADD CONSTRAINT agent_sandbox_task_calls_pkey PRIMARY KEY (sandbox_id);
 
 
 --
@@ -75440,6 +75550,46 @@ ALTER TABLE ONLY public.sales_tasks
 
 
 --
+-- Name: sandbox_actions sandbox_actions_endpoint_id_thread_id_tool_call_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_endpoint_id_thread_id_tool_call_id_key UNIQUE (endpoint_id, thread_id, tool_call_id);
+
+
+--
+-- Name: sandbox_actions sandbox_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sandbox_actions sandbox_actions_screenshot_bytes_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_screenshot_bytes_check CHECK (((screenshot_bytes IS NULL) OR ((screenshot_bytes >= 1) AND (screenshot_bytes <= 1048576)))) NOT VALID;
+
+
+--
+-- Name: sandbox_actions sandbox_actions_screenshot_key_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_screenshot_key_check CHECK (((screenshot_key IS NULL) OR (screenshot_key ~ '^sandbox-screenshots/[0-9a-f-]{36}/[0-9a-f-]{36}/[0-9a-f-]{36}\.jpg$'::text))) NOT VALID;
+
+
+--
+-- Name: sandbox_actions sandbox_actions_session_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_session_id_seq_key UNIQUE (session_id, seq);
+
+
+--
 -- Name: sandbox_ports sandbox_ports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75461,6 +75611,46 @@ ALTER TABLE ONLY public.sandbox_session_usage
 
 ALTER TABLE ONLY public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_task_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_task_check CHECK ((((task_kind IS NULL) = (task_url IS NULL)) AND ((task_kind IS NULL) = (task_max_chars IS NULL)))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_task_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_task_kind_check CHECK (((task_kind IS NULL) OR (task_kind = 'browse'::text))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_task_max_chars_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_task_max_chars_check CHECK (((task_max_chars IS NULL) OR ((task_max_chars >= 1) AND (task_max_chars <= 200000)))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_task_output_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_task_output_check CHECK (((task_output IS NULL) OR (octet_length(task_output) <= 262144))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_task_url_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_task_url_check CHECK (((task_url IS NULL) OR ((char_length(task_url) >= 1) AND (char_length(task_url) <= 2048)))) NOT VALID;
 
 
 --
@@ -77232,6 +77422,20 @@ CREATE INDEX agent_runs_queue_idx ON public.agent_runs USING btree (queued_at, i
 --
 
 CREATE INDEX agent_runs_workflow_finished_idx ON public.agent_runs USING btree (finished_at, id) WHERE ((workflow_run_id IS NOT NULL) AND (finished_at IS NOT NULL));
+
+
+--
+-- Name: agent_sandbox_task_calls_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_sandbox_task_calls_account_idx ON public.agent_sandbox_task_calls USING btree (account_id);
+
+
+--
+-- Name: agent_sandbox_task_calls_undelivered_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_sandbox_task_calls_undelivered_idx ON public.agent_sandbox_task_calls USING btree (created_at) WHERE (delivered_at IS NULL);
 
 
 --
@@ -87116,6 +87320,34 @@ CREATE INDEX sales_tasks_lead ON public.sales_tasks USING btree (lead_id);
 
 
 --
+-- Name: sandbox_actions_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_actions_account_idx ON public.sandbox_actions USING btree (account_id);
+
+
+--
+-- Name: sandbox_actions_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_actions_open_idx ON public.sandbox_actions USING btree (session_id, seq) WHERE (state <> 'done'::text);
+
+
+--
+-- Name: sandbox_actions_screenshots_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_actions_screenshots_idx ON public.sandbox_actions USING btree (session_id) WHERE (screenshot_key IS NOT NULL);
+
+
+--
+-- Name: sandbox_actions_undelivered_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_actions_undelivered_idx ON public.sandbox_actions USING btree (finished_at) WHERE ((state = 'done'::text) AND (delivered_at IS NULL));
+
+
+--
 -- Name: sandbox_session_usage_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -96497,6 +96729,30 @@ ALTER TABLE ONLY public.agent_runs
 
 ALTER TABLE ONLY public.agent_runs
     ADD CONSTRAINT agent_runs_version_fkey FOREIGN KEY (agent_id, agent_version) REFERENCES public.agent_versions(agent_id, version) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_sandbox_task_calls agent_sandbox_task_calls_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_sandbox_task_calls
+    ADD CONSTRAINT agent_sandbox_task_calls_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_sandbox_task_calls agent_sandbox_task_calls_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_sandbox_task_calls
+    ADD CONSTRAINT agent_sandbox_task_calls_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_sandbox_task_calls agent_sandbox_task_calls_sandbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_sandbox_task_calls
+    ADD CONSTRAINT agent_sandbox_task_calls_sandbox_id_fkey FOREIGN KEY (sandbox_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
 
 
 --
@@ -111577,6 +111833,30 @@ ALTER TABLE ONLY public.sales_tasks
 
 ALTER TABLE ONLY public.sales_tasks
     ADD CONSTRAINT sales_tasks_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sandbox_actions sandbox_actions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_actions sandbox_actions_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_actions sandbox_actions_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_actions
+    ADD CONSTRAINT sandbox_actions_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
 
 
 --

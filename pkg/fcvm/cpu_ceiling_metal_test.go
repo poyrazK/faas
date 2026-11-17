@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 20261101160231
+// adr: 20261109172421
 
 package fcvm
 
@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +19,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// TestMetalScaleTwoCoreCeiling pins ADR-20261101160231 step 4 on real
-// Firecracker and cgroupfs: a Scale VM boots, parks and restores with two
-// vCPUs under a two-core cpu.max, the live CPU policy moves it between one and
-// two cores, and a plan whose ceiling is one core refuses two.
-func TestMetalScaleTwoCoreCeiling(t *testing.T) {
+// TestMetalAppCPUFollowsSize pins ADR-20261109172421 steps 2 and 6.3 on real
+// Firecracker and cgroupfs. An app VM runs without a CPU quota whatever its
+// plan, with its size's cpu.weight and the vCPUs it was booted with, through
+// cold boot, park and restore. A live CPU policy of 500 millicores caps it
+// and 1000 or more lifts the cap again. It replaces the ADR-20261101160231
+// step 4 test, whose Hobby two-core refusal and two-core quota went with
+// step 6.3 (#6935): no vmmd CPU value reads the plan.
+func TestMetalAppCPUFollowsSize(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 	fcVersion, err := DetectFirecrackerVersion(context.Background())
 	if err != nil {
@@ -43,35 +47,28 @@ func TestMetalScaleTwoCoreCeiling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// A Hobby app's ceiling is one core: two are refused before any VM runs.
-	const refused = "cpu-ceiling-hobby"
-	t.Cleanup(func() { _ = m.Destroy(context.Background(), refused) })
-	_, err = m.ColdBoot(ctx, ColdBootRequest{AppID: "app-" + refused, Instance: refused, Plan: api.PlanHobby,
-		BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, CPUMillicores: 2000})
-	if err == nil || !strings.Contains(err.Error(), "cpu_millicores") {
-		t.Fatalf("Hobby cold boot at 2000 m: err = %v, want a cpu_millicores refusal", err)
-	}
-	t.Logf("Hobby at 2000 m refused: %v", err)
-	_ = m.Destroy(ctx, refused)
-
-	const instance = "cpu-ceiling-scale"
-	const appID = "app-" + instance
-	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
-	parent := ParentCgroupFor(api.PlanScale)
-	if m.flatTenantCgroups {
-		parent = CgroupMountRoot // ADR-20261109172421 step 6.5
-	}
-	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(instance))
-	period := cpuMaxPeriodUS
-	check := func(stage string, wantMillicores int) {
+	const (
+		vcpus    = 2
+		memMiB   = 128
+		uncapped = "max 100000"
+	)
+	wantWeight := strconv.Itoa(api.SizeCPUWeight(memMiB))
+	check := func(stage string, plan api.Plan, instance, wantCPUMax string) {
 		t.Helper()
-		raw, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
-		if err != nil {
-			t.Fatalf("%s: read cpu.max: %v", stage, err)
+		scope := filepath.Join(cgroupRoot, tenantCgroupParent(Lease{Instance: instance, Plan: plan}), PerInstanceScope(instance))
+		read := func(name string) string {
+			t.Helper()
+			raw, err := os.ReadFile(filepath.Join(scope, name))
+			if err != nil {
+				t.Fatalf("%s: read %s: %v", stage, name, err)
+			}
+			return strings.TrimSpace(string(raw))
 		}
-		want := itoa(wantMillicores*period/1000) + " " + itoa(period)
-		if got := strings.TrimSpace(string(raw)); got != want {
-			t.Fatalf("%s: cpu.max = %q, want %q", stage, got, want)
+		if got := read("cpu.max"); got != wantCPUMax {
+			t.Fatalf("%s: cpu.max = %q, want %q", stage, got, wantCPUMax)
+		}
+		if got := read("cpu.weight"); got != wantWeight {
+			t.Fatalf("%s: cpu.weight = %s, want %s (the size's weight)", stage, got, wantWeight)
 		}
 		pid, ok := v.InstancePID(instance)
 		if !ok {
@@ -81,20 +78,36 @@ func TestMetalScaleTwoCoreCeiling(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: count vCPU threads: %v", stage, err)
 		}
-		if n != 2 {
-			t.Fatalf("%s: %d vCPU threads, want 2", stage, n)
+		if n != vcpus {
+			t.Fatalf("%s: %d vCPU threads, want %d", stage, n, vcpus)
 		}
-		t.Logf("%s: cpu.max %q, %d vCPUs", stage, want, n)
+		t.Logf("%s: cpu.max %q, cpu.weight %s, %d vCPUs", stage, wantCPUMax, wantWeight, n)
 	}
 
+	// The plan bounds nothing: a Hobby VM of the same size runs the same
+	// machine as a Scale one.
+	const hobby = "cpu-size-hobby"
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), hobby) })
+	if _, err := m.ColdBoot(ctx, ColdBootRequest{AppID: "app-" + hobby, Instance: hobby, Plan: api.PlanHobby,
+		BaseKey: base, LayerKey: layer, VcpuCount: vcpus, MemSizeMiB: memMiB}); err != nil {
+		t.Fatalf("Hobby cold boot: %v", err)
+	}
+	check("Hobby cold boot", api.PlanHobby, hobby, uncapped)
+	if err := m.Destroy(ctx, hobby); err != nil {
+		t.Fatalf("destroy Hobby: %v", err)
+	}
+
+	const instance = "cpu-size-scale"
+	const appID = "app-" + instance
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{AppID: appID, Instance: instance, Plan: api.PlanScale,
-		BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, CPUMillicores: 2000}); err != nil {
+		BaseKey: base, LayerKey: layer, VcpuCount: vcpus, MemSizeMiB: memMiB, CPUMillicores: 2000}); err != nil {
 		t.Fatalf("Scale cold boot at 2000 m: %v", err)
 	}
-	check("cold boot", 2000)
+	check("Scale cold boot at 2000 m", api.PlanScale, instance, uncapped)
 
 	snap := &Snapshot{
-		FCVersion: fcVersion, StorageKey: "snap/cpu-ceiling/mem", VMStateStorageKey: "snap/cpu-ceiling/vmstate",
+		FCVersion: fcVersion, StorageKey: "snap/cpu-size/mem", VMStateStorageKey: "snap/cpu-size/vmstate",
 		VMStatePath: filepath.Join(t.TempDir(), "vmstate"),
 	}
 	spec := SnapshotSpec{VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey, VMStateStorageKey: snap.VMStateStorageKey}
@@ -102,23 +115,30 @@ func TestMetalScaleTwoCoreCeiling(t *testing.T) {
 		t.Fatalf("park: %v", err)
 	}
 	out, err := m.Wake(ctx, WakeRequest{AppID: appID, Instance: instance, Plan: api.PlanScale,
-		BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, CPUMillicores: 2000, Snapshot: snap})
+		BaseKey: base, LayerKey: layer, VcpuCount: vcpus, MemSizeMiB: memMiB, CPUMillicores: 2000, Snapshot: snap})
 	if err != nil {
 		t.Fatalf("wake: %v", err)
 	}
 	if out.Method != WakeRestore {
 		t.Fatalf("wake = %s, want restore", out.Method)
 	}
-	check("restore", 2000)
+	check("restore", api.PlanScale, instance, uncapped)
 
-	if err := m.UpdateAppCPULimit(ctx, appID, 1, 1000); err != nil {
-		t.Fatalf("live policy to 1000 m: %v", err)
+	// A 250 or 500 millicore choice stays a cap (ADR-152), also across live
+	// policy updates; the default and above run uncapped.
+	for i, step := range []struct {
+		millicores int
+		cpuMax     string
+	}{
+		{500, "50000 100000"},
+		{1000, uncapped},
+		{2000, uncapped},
+	} {
+		if err := m.UpdateAppCPULimit(ctx, appID, int64(i+1), step.millicores); err != nil {
+			t.Fatalf("live policy to %d m: %v", step.millicores, err)
+		}
+		check("policy "+strconv.Itoa(step.millicores)+" m", api.PlanScale, instance, step.cpuMax)
 	}
-	check("policy 1000 m", 1000)
-	if err := m.UpdateAppCPULimit(ctx, appID, 2, 2000); err != nil {
-		t.Fatalf("live policy to 2000 m: %v", err)
-	}
-	check("policy 2000 m", 2000)
 
 	if err := m.Destroy(ctx, instance); err != nil {
 		t.Fatalf("destroy: %v", err)

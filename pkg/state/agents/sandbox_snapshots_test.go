@@ -104,6 +104,21 @@ func TestSandboxFromASnapshot(t *testing.T) {
 	}
 }
 
+// ADR-20261116182615 §1: a browser session's flag reaches its view and
+// agentd's claim.
+func TestSandboxBrowserFlag(t *testing.T) {
+	_, s := agentdFixture(t)
+	ctx := context.Background()
+	sb, err := s.CreateSandbox(ctx, sandboxAdmission(agents.SandboxAdmission{Browser: true}))
+	if err != nil || !sb.Browser {
+		t.Fatalf("create = %+v, %v", sb, err)
+	}
+	claim, found, err := s.ClaimSandbox(ctx, "agentd", "tok", ttl, maxLive(5))
+	if err != nil || !found || claim.ID != sb.ID || !claim.Browser {
+		t.Fatalf("claim = %+v, %v, %v", claim, found, err)
+	}
+}
+
 func TestSweepableSandboxSnapshots(t *testing.T) {
 	pool, s := agentdFixture(t)
 	ctx := context.Background()

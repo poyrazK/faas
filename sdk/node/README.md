@@ -36,6 +36,11 @@ for usage and delivery-ID deduplication guidance.
 > public API may shift between `0.x` releases. Pin to an exact version
 > in your `package.json` until `1.0.0` ships.
 
+Typed application CloudEvents can start durable Job pipelines through the
+preview SDK, with generated payload types, current owner authorization and
+shared Node/Python start receipts. See [event-triggered pipelines](../../docs/sdk-event-pipelines.md)
+and the [reviewed CSV example](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
 ## Requirements
 
 - Node ≥ 22.10 for the Node SDK entry point (uses
@@ -4928,3 +4933,48 @@ an application-owned PostgreSQL ledger and never automatically repeats unknown
 starts. Existing pipelines opt in through a coordinator; their APIs stay intact.
 See [usage and recovery](../../docs/sdk-pipeline-composition.md) and the
 [reviewed batch CSV example](../../examples/sdk-csv-jobs/README.md#batch-imports-preview).
+
+## Typed transactional events (preview)
+
+Stage generated event payloads with business writes through `createEventPublisher`
+and `withEventOutboxTransaction`, then run bounded `createEventOutbox` recovery.
+The application-owned PostgreSQL protocol interoperates with upgraded Go/Python
+workers and honors persisted retry policy, publishing pause and rate limits.
+See [migration, authorization and recovery](../../docs/sdk-event-outbox.md) and
+the [complete CSV flow](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
+## Typed scheduled pipelines (preview)
+
+Use `definePipelineSchedule` to bind generated inputs to a native calendar and
+emit a deployment trigger. `createPipelineScheduleClient` previews upcoming fires,
+reads bounded history, explicitly replays skipped occurrences and attaches typed
+runs, rechecking current application authorization. See
+[usage and recovery](../../docs/sdk-pipeline-schedules.md) and the
+[nightly reviewed CSV example](../../examples/sdk-csv-jobs/README.md#scheduled-reviewed-imports).
+
+## Typed Stripe webhook pipelines (preview)
+
+`createStripeWebhookAdapter` projects native verified Stripe snapshot deliveries
+into generated business events. Current-owner authorization, business writes and
+outbox intent share one PostgreSQL transaction and a cross-language handoff
+receipt. See [setup and recovery](../../docs/sdk-stripe-webhooks.md) and the
+[paid CSV flow](../../examples/sdk-csv-jobs/README.md#stripe-paid-reviewed-imports).
+
+## Typed pipeline tools (preview)
+
+`definePipelineTool` exposes existing generated business pipelines with durable
+start receipts, current authorization, typed results and human-review status.
+`createPipelineToolMCP` supplies five generated descriptors and bounded call
+handling for an existing MCP host. Node/Python share PostgreSQL receipts and
+verified run reconciliation. See [setup and recovery](../../docs/sdk-pipeline-tools.md)
+and the [CSV agent flow](../../examples/sdk-csv-jobs/README.md#agent-tools-for-reviewed-imports).
+
+## Reviewed pipeline compensation (preview)
+
+`definePipelineCompensation` prepares immutable typed undo commands from verified
+failed-pipeline evidence and runs them in a separate, human-approved workflow.
+`compensationContracts` derives the worker/root/review contracts; SQL handlers
+atomically commit business changes and typed effect receipts. `createCompensationMCP`
+adds planning to the durable tool lifecycle. Current authorization and application
+row-version guards preserve later edits. See [setup, limits and recovery](../../docs/sdk-pipeline-compensations.md)
+and the [CSV cleanup journey](../../examples/sdk-csv-jobs/README.md#reviewed-cleanup-after-report-failure).

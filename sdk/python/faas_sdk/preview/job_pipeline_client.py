@@ -18,6 +18,7 @@ from .pipeline_state import (
     PipelineScope,
     _hash,
     _parse_pipeline_lineage,
+    _parse_pipeline_trigger,
     _uuid,
     pipeline_failure,
     pipeline_name,
@@ -244,6 +245,7 @@ class JobPipelineClient(Generic[I, O]):
             "contract_sha256": self.contract.sha256,
             field: content,
             **({"lineage": _parse_pipeline_lineage(value["lineage"])} if "lineage" in value else {}),
+            **({"trigger": _parse_pipeline_trigger(value["trigger"])} if "trigger" in value else {}),
         }
 
     def _checkpoint(self, run_id: str, value: Any) -> PipelineCheckpoint:
@@ -301,12 +303,19 @@ class JobPipelineClient(Generic[I, O]):
         return await self._operation(timeout, work)
 
     async def start(
-        self, value: I, *, timeout: float, idempotency_key: str, lineage: dict[str, Any] | None = None
+        self,
+        value: I,
+        *,
+        timeout: float,
+        idempotency_key: str,
+        lineage: dict[str, Any] | None = None,
+        trigger: dict[str, Any] | None = None,
     ) -> TypedPipelineRun[O]:
         import re
 
         captured = self.contract.input(value)
         bound_lineage = _parse_pipeline_lineage(lineage) if lineage is not None else None
+        bound_trigger = _parse_pipeline_trigger(trigger) if trigger is not None else None
         if not isinstance(idempotency_key, str) or re.fullmatch(r"[!-~]{1,128}", idempotency_key) is None:
             raise PipelineError("invalid_input")
 
@@ -319,6 +328,7 @@ class JobPipelineClient(Generic[I, O]):
                 "owner_id": self.owner_id,
                 "input": captured,
                 **({"lineage": bound_lineage} if bound_lineage is not None else {}),
+                **({"trigger": bound_trigger} if bound_trigger is not None else {}),
             }
             try:
                 accepted = await request(

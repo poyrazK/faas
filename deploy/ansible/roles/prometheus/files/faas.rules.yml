@@ -494,6 +494,24 @@ groups:
   - name: durable_background_workers
     interval: 30s
     rules:
+      # Every schedd exports the shared outbox's backlog; max takes one view.
+      # The longest intentional delay on a new row is seconds and the replay
+      # retry backoff tops out at five minutes, so a row undelivered for 15
+      # minutes is stuck (production 2026-11-16: a credential rotation's
+      # restart sat pending for hours and nothing fired).
+      - alert: FaasNotificationOutboxStuck
+        expr: max by (channel) (faas_notification_outbox_oldest_undelivered_seconds) > 900
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: durable_background_workers
+          public_status: internal
+        annotations:
+          summary: "A durable notification has been undelivered for over 15 minutes"
+          description: "The oldest pending notification_outbox row on channel {{ $labels.channel }} is {{ $value | humanizeDuration }} old. The wake, restart or handoff it carries has not run; for runtime_config_restart a credential rotation or binding change is waiting on it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNotificationOutboxStuck.md"
+
       - alert: FaasManagedRealtimeDrainClaimFailed
         expr: increase(apid_ops_total{op="managed_realtime_drain_claim",code="err"}[5m]) > 0
         for: 2m

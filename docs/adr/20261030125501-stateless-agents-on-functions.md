@@ -74,7 +74,7 @@ The invocation limit is the app's request timeout under ADR-1180: Hobby 1 min, P
 
 The capability gateway (ADR-20261027090016) serves these platform tools over RAP. They acknowledge at once and post their results to the callback URL.
 
-Amendment (2026-11-02): until the gateway exists, apid serves them as a RAP toolset at `/v1/agent-tools` (rollout step 5). RAP tool names allow letters, digits, `_` and `-`, and model APIs refuse dots, so each tool's operation name is written with `_`: `gregale_sleep`, `gregale_run`, `gregale_github_subscribe`.
+Amendment (2026-11-02): until the gateway exists, apid serves them as a RAP toolset at `/v1/agent-tools` (rollout step 5). RAP tool names allow letters, digits, `_` and `-`, and model APIs refuse dots, so each tool's operation name is written with `_`: `gregale_sleep`, `gregale_run`, `gregale_github_subscribe`, `gregale_browse` (ADR-20261116182615 §4), and `gregale_browser` (ADR-20261117065818).
 
 | Tool | What it does |
 |---|---|

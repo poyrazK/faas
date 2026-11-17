@@ -356,6 +356,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/sandboxes/{id}/ports":                              true,
 	"GET /v1/sandboxes/{id}/ports/{port}":                       true,
 	"DELETE /v1/sandboxes/{id}/ports/{port}":                    true,
+	"GET /v1/sandboxes/{id}/task":                               true,
+	"GET /v1/sandboxes/{id}/actions/{seq}":                      true,
+	"GET /v1/sandboxes/{id}/actions/{seq}/screenshot":           true,
 	"GET /v1/agents":                                            true,
 	"GET /v1/agents/{agent}":                                    true,
 	"DELETE /v1/agents/{agent}":                                 true,
@@ -430,6 +433,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
 	"GET /v1/admin/obs/recording-coverage":                           true, // private explicitly selected recording coverage
 	"GET /v1/admin/obs/input-health":                                 true, // private explicitly selected telemetry inputs
+	"GET /v1/admin/obs/runtime-builds":                               true, // private sampled daemon identity evidence
 	"GET /v1/admin/obs/incidents/platform_alert/summary":             true, // private retained-alert workload summary
 	"GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history": true, // private sanitized operator triage receipts
 	"GET /v1/admin/obs/incidents/{kind}/{id}/context":                true, // private operator incident context
@@ -646,6 +650,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/task-tool-release-intents/{id}/recovery/restore": "RestoreTaskToolRecovery",
 	"GET /v1/task-tool-source-intents/{id}":                    "GetHostedTaskSourceIntent",
 	"PUT /v1/task-tool-source-intents/{id}":                    "PrepareHostedTaskSourceIntent",
+	"POST /v1/task-tool-source-intents/{id}/check":             "CheckHostedTaskSourceIntent",
+	"PUT /v1/task-tool-source-intents/{id}/decision":           "DecideHostedTaskSourceIntent",
 	"GET /v1/task-tool-release-intents/{id}":                   "GetTaskToolReleaseIntent",
 	"PUT /v1/task-tool-release-intents/{id}":                   "PrepareTaskToolReleaseIntent",
 	"POST /v1/task-tool-release-intents/{id}/check":            "CheckTaskToolReleaseIntent",

@@ -29,7 +29,7 @@ from report_generated import contract as report_contract
 from validate_generated import contract as validate_contract
 
 
-async def main() -> None:
+async def execute(request_path: str) -> dict[str, Any]:
     async with FaaSClient(
         base_url=os.environ["FAAS_API"], token=os.environ["FAAS_TOKEN"]
     ) as client:
@@ -147,8 +147,8 @@ async def main() -> None:
             run=run,
         )
         if os.environ.get("GREGALE_REVIEWED_PIPELINE") == "1":
-            from reviewed_pipeline import reviewed_csv_pipeline
             from faas_sdk.preview import PostgresPipelineGateStore
+            from reviewed_pipeline import reviewed_csv_pipeline
             pipeline = reviewed_csv_pipeline(scope=scope, store=PostgresPipelineJobStore(query), gate_store=PostgresPipelineGateStore(query), validate=validate, importer=importer, report=report)
         if os.environ.get("GREGALE_PIPELINE_BARRIER"):
             async with await psycopg.AsyncConnection.connect(
@@ -168,18 +168,17 @@ async def main() -> None:
                     await asyncio.sleep(0.005)
                 else:
                     raise RuntimeError("Fixture driver startup expired")
-        request = json.loads(Path(sys.argv[1]).read_text())
+        request = json.loads(Path(request_path).read_text())
         if request["workflow"] == "csv-batch-pipeline":
             from batch_pipeline import csv_batch_pipeline
             from faas_sdk.preview import PostgresPipelineChildrenStore
             pipeline, _coordinator = csv_batch_pipeline(scope=scope, token=os.environ["FAAS_TOKEN"], store=PostgresPipelineJobStore(query), children_store=PostgresPipelineChildrenStore(query), gate_store=PostgresPipelineGateStore(query), request_timeout=30)
-        print(
-            json.dumps(
-                await run_workflow_invocation(
-                    pipeline.definition, request
-                )
-            )
-        )
+        if request["workflow"].startswith("recover-"):
+            from compensation_backend import backend
+            async with backend(os.environ.get("GREGALE_COMP_REVIEW_URL", "http://127.0.0.1/")) as (recovery, _handler):
+                return await run_workflow_invocation(recovery.definition, request)
+        return await run_workflow_invocation(pipeline.definition, request)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    print(json.dumps(asyncio.run(execute(sys.argv[1]))))

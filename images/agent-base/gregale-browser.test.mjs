@@ -6,7 +6,7 @@ import net from 'node:net';
 import { test } from 'node:test';
 
 process.env.GREGALE_BROWSER_PORT = '19222';
-const { isLocal, relay, rewriteBody, upgradeHead } = await import('./gregale-browser.mjs');
+const { ACT_KEYS, actArgs, fetchArgs, isLocal, pageResult, refScript, relay, rewriteBody, snapshotScript, upgradeHead } = await import('./gregale-browser.mjs');
 
 test('answers point WebSocket URLs at the caller', () => {
   const body = '{"webSocketDebuggerUrl":"ws://127.0.0.1:19221/devtools/browser/b","devtoolsFrontendUrl":"/x?ws=127.0.0.1:19221/devtools/page/p"}';
@@ -63,4 +63,55 @@ test('the relay forwards /json and WebSocket upgrades', async (t) => {
   assert.match(reply, /^HTTP\/1\.1 101/);
   assert.ok(reply.endsWith('hello'));
   assert.deepEqual(seen, ['127.0.0.1:19221', '127.0.0.1:19221']);
+});
+
+test('fetch reads its flags and takes the URL only after --', () => {
+  assert.deepEqual(fetchArgs(['--max-chars', '500', '--timeout', '30', '--', 'https://example.com/a']),
+    { maxChars: 500, timeout: 30, url: 'https://example.com/a' });
+  assert.deepEqual(fetchArgs(['--', 'http://example.com']), { maxChars: 20000, timeout: 60, url: 'http://example.com' });
+  for (const argv of [['https://example.com'], ['--', 'file:///etc/passwd'], ['--max-chars', '0', '--', 'https://e.com'],
+    ['--bogus', '1', '--', 'https://e.com'], ['--', '--max-chars']]) {
+    assert.throws(() => fetchArgs(argv), /gregale-browser fetch/, argv.join(' '));
+  }
+});
+
+test('a page result keeps at most max_chars characters, whole', () => {
+  const page = pageResult('https://e.com', 'https://e.com/', 200, 'Title', 'héllo 😀 world', 7);
+  assert.equal(page.text, 'héllo 😀');
+  assert.ok(page.truncated);
+  const whole = pageResult('https://e.com', '', 0, undefined, 'short', 100);
+  assert.deepEqual(whole, { url: 'https://e.com', final_url: 'https://e.com', status: 0, title: '', text: 'short', truncated: false });
+});
+
+test('act reads its kind, flags and value, and refuses what the kind lacks', () => {
+  assert.deepEqual(actArgs(['navigate', '--max-chars', '500', '--', 'https://example.com/']),
+    { kind: 'navigate', maxChars: 500, timeout: 30, value: 'https://example.com/', submit: false });
+  assert.deepEqual(actArgs(['type', '--ref', '3', '--submit', '--', '--not-a-flag']),
+    { kind: 'type', maxChars: 4000, timeout: 30, value: '--not-a-flag', submit: true, ref: 3 });
+  assert.equal(actArgs(['type', '--ref', '3', '--', '']).value, '');
+  assert.equal(actArgs(['press', '--key', 'Enter']).key, 'Enter');
+  assert.equal(actArgs(['scroll', '--direction', 'up']).direction, 'up');
+  assert.equal(actArgs(['snapshot']).kind, 'snapshot');
+  for (const bad of [['open'], ['navigate', '--', 'file:///etc/passwd'], ['click'], ['click', '--ref', '0'],
+    ['type', '--ref', '2'], ['press', '--key', 'F12'], ['press', '--key', 'constructor'], ['scroll', '--direction', 'left'],
+    ['back', '--ref', '1x'], ['snapshot', '--bogus', '1']]) {
+    assert.throws(() => actArgs(bad), /gregale-browser act/, bad.join(' '));
+  }
+  assert.ok(Object.keys(ACT_KEYS).includes('PageDown'));
+});
+
+test('page scripts embed only the numbers act validated', () => {
+  assert.match(refScript(12), /data-gregale-ref="12"/);
+  assert.match(refScript('12"]; alert(1); //'), /data-gregale-ref="NaN"/);
+  assert.match(snapshotScript(4000), /maxChars = 4000, limit = 150/);
+  assert.doesNotThrow(() => new Function(snapshotScript(10)));
+  assert.doesNotThrow(() => new Function(refScript(1)));
+});
+
+test('act takes a screenshot path only where vmmd puts it', () => {
+  const path = '/workspace/.gregale-screenshot-0b6f8c1e-4d2a-4c3b-9f00-1234567890ab.jpg';
+  assert.equal(actArgs(['snapshot', '--screenshot', path]).screenshot, path);
+  for (const bad of ['/etc/passwd', '/workspace/.gregale-screenshot-x.jpg', '/tmp/../etc/gregale-screenshot-0b6f8c1e-4d2a-4c3b-9f00-1234567890ab.jpg', '']) {
+    assert.throws(() => actArgs(['snapshot', '--screenshot', bad]), /--screenshot must be/, bad);
+  }
 });
