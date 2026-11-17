@@ -96,7 +96,8 @@ Gregale restarts an instance that stops answering.
 Do not use `/` as the health path. Gregale can answer an app's public health
 path at its edge without running the app, so with `/` visitors get
 `{"status":"ok","source":"edge"}` instead of your page. Add a small route
-such as `/healthz` instead.
+such as `/healthz` instead. `gregale deploy --dry-run` and `gregale doctor` flag a
+`/` health path as `health_path_root`.
 
 ## Runtime versions
 

@@ -47,6 +47,11 @@ var warningRules = map[string]warningRule{
 		title:  "Source may bind to localhost",
 		remedy: "Bind to 0.0.0.0 and read the port from $PORT, or traffic cannot reach the app.",
 	},
+	"health_path_root": {
+		level:  LevelAmber,
+		title:  "Health path is the home page",
+		remedy: "Gregale answers the health path at its edge, so `/` would never reach your app. Add a route such as `/healthz` and set `hosting.health` to it.",
+	},
 	"profile_input_truncated": {
 		level:  LevelAmber,
 		title:  "Source too large to inspect fully",
