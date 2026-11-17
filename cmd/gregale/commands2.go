@@ -2703,7 +2703,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// `canary preset "--canary-stages requires …" is not in the
 		// closed-set catalog`.
 		problem := api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidCanaryPreset, "Invalid canary rollout", canaryErr.Error()).
-			WithDocs("https://gregale.dev/docs/deployments#canary-presets")
+			WithDocs("https://gregale.dev/docs/rollouts#how-a-rollout-proceeds")
 		return printErr("Invalid canary rollout", &api.APIError{Problem: *problem})
 	}
 	if explicit["traffic-percent"] && canarySpec != nil {

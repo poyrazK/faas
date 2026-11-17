@@ -4181,7 +4181,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/wake-timeline:
@@ -4309,7 +4309,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/usage:
@@ -4401,7 +4401,7 @@ paths:
                 status: 402
                 code: "plan_app_usage_summary_not_allowed"
                 detail: "the free plan does not include the per-app usage summary; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#usage-summary"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/analytics:

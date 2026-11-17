@@ -113,12 +113,12 @@ function functionInputProblem(env, headers) {
 }
 function emitInputProblem(out, detail) {
   emitWhole(out, 422, { "content-type": "application/problem+json" }, Buffer.from(JSON.stringify({
-    type: "https://gregale.dev/docs/errors#function_input_invalid",
+    type: "https://gregale.dev/docs/error-codes#function_input_invalid",
     title: "Function input invalid",
     status: 422,
     code: "function_input_invalid",
     detail,
-    docs_url: "https://gregale.dev/docs/errors#function_input_invalid",
+    docs_url: "https://gregale.dev/docs/error-codes#function_input_invalid",
   })));
 }
 `
@@ -231,7 +231,7 @@ def _input_problem(request):
             detail = "input must be JSON"
     if detail is None:
         return None
-    docs = "https://gregale.dev/docs/errors#function_input_invalid"
+    docs = "https://gregale.dev/docs/error-codes#function_input_invalid"
     body = json.dumps({"type": docs, "title": "Function input invalid", "status": 422,
                        "code": "function_input_invalid", "detail": detail, "docs_url": docs})
     return {"status": 422, "headers": {"content-type": "application/problem+json"},
