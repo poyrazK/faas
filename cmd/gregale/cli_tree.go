@@ -506,7 +506,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp server tasks review", "mcp tasks intent"},
 	{"mcp server tasks run", "mcp tasks execution"},
 	// Retained hosted Task source review takes its action as an argument too.
-	{"mcp server tasks source", "mcp tasks source-review"},
+	{"mcp server tasks source review", "mcp tasks source-review"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},
