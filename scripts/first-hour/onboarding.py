@@ -296,7 +296,7 @@ class Run:
             if apps:
                 raise Blocked("free_account_requires_an_unused_app_slot")
             self.report["proof"]["initial_app_count"] = len(apps)
-            result = self.call("app", "get", self.slug, expect=1)
+            result = self.call("app", "get", self.slug, expect=4)
             problem = documents(result.stderr)
             native.require(len(problem) == 1 and problem[0].get("code") == "not_found", "test app name was not proven absent")
 
@@ -376,7 +376,7 @@ class Run:
                         if self.session:
                             native.require(selected[0].get("id") == self.session["app_id"], "cleanup refused a replaced app")
                         self.call("app", "delete", self.slug, "--yes")
-                    missing = self.call("app", "get", self.slug, expect=1)
+                    missing = self.call("app", "get", self.slug, expect=4)
                     native.require(any(row.get("code") == "not_found" for row in documents(missing.stderr)), "test app still resolves after cleanup")
                     remaining = self.call("app", "list")
                     self.report["proof"]["final_app_count"] = len(remaining)

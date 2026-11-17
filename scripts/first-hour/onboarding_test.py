@@ -177,6 +177,28 @@ class OwnershipContracts(unittest.TestCase):
     def make_run(self, root):
         return ob.Run(argparse.Namespace(out=root / "evidence", api="https://api.fixture.test", expected_email="private@example.test"))
 
+    def test_missing_app_exit_four_is_accepted_before_start_and_after_cleanup(self):
+        # Recorded rc.349 contract: a 404 not_found exits 4, not the generic 1.
+        # Exercise call() through a process so a mismatched exit code fails.
+        with tempfile.TemporaryDirectory() as temp:
+            run = self.make_run(Path(temp))
+            run.account = {"id": str(uuid.uuid4()), "plan": "free"}
+            run.cli.parent.mkdir()
+            run.cli.write_text("#!" + sys.executable + "\nimport json,sys\n"
+                               "args=sys.argv[1:]\n"
+                               "if args[-2:]==['app','list']:\n print('[]')\n"
+                               "elif args[-3:-1]==['app','get']:\n"
+                               " print(json.dumps({'status':404,'code':'not_found','exit_code':4}),file=sys.stderr)\n"
+                               " sys.exit(4)\n"
+                               "else:\n sys.exit(99)\n")
+            run.cli.chmod(0o700)
+            run.preflight()
+            self.assertEqual(run.report["proof"]["initial_app_count"], 0)
+            run.registered = True
+            self.assertEqual(run.cleanup(), [])
+            self.assertEqual(run.report["phases"]["cleanup_app"]["status"], "passed")
+            self.assertEqual(run.report["proof"]["final_app_count"], 0)
+
     def test_free_plan_gate_does_not_downgrade_or_mutate_another_plan(self):
         with tempfile.TemporaryDirectory() as temp:
             run = self.make_run(Path(temp))

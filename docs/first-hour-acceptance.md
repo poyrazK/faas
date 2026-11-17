@@ -158,6 +158,13 @@ sign-in must be available to the observer. A Scale account or an occupied Free
 account blocks before Start creates anything. The runner does not change plans,
 reuse an existing app, copy a credential, or accept a token argument.
 
+Complete email verification before starting the measured run. Open the emailed
+link in the browser signed in to that Free account, click **Verify email**, and
+require the final **Email verified** page. Opening the link alone only renders
+the confirmation form; another browser's login may belong to a different
+account. CLI authorization requires the verified address even when the
+dashboard already allows the new account to sign in.
+
 For an installation-only preflight, pass `--install-only` and omit the email.
 That mode performs no browser login or deployment, keeps the overall outcome
 `blocked`, and exits nonzero because full onboarding has not been qualified.
