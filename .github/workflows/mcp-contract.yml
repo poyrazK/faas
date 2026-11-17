@@ -218,9 +218,9 @@ jobs:
 
   go-contracts:
     runs-on: ubuntu-latest
-    # Cold race compilation of the state and CLI test units can consume the
-    # former twenty-minute job budget before the final contracts execute.
-    timeout-minutes: 45
+    # A cold race build took 43 minutes before the final PostgreSQL contracts;
+    # allow both unchanged test steps to finish without the job deadline racing exit.
+    timeout-minutes: 60
     services:
       postgres:
         # Match the shared CI cache to avoid Docker Hub pull limits.
