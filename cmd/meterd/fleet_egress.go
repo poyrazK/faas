@@ -34,13 +34,6 @@ type gatewayUsageEventStore interface {
 	AppendGatewayEdgeUsageEvent(ctx context.Context, nodeID, eventID, appID string, minute time.Time, txBytes int64) error
 }
 
-// gatewayServiceReplyStore persists a frame together with the reply bytes
-// its instance sent to other apps' service calls, queued for subtraction
-// from billed egress (billing review R8-2 slice 3). PgStore implements it.
-type gatewayServiceReplyStore interface {
-	AppendGatewayUsageEventWithServiceReply(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32, serviceReplyBytes int64) error
-}
-
 type fleetEgressMetrics struct {
 	registry  *prometheus.Registry
 	expected  prometheus.Gauge
@@ -95,9 +88,6 @@ type fleetGatewayEgressAdapter struct {
 	now     func() time.Time
 	log     *slog.Logger
 	metrics *fleetEgressMetrics
-	// serviceReplyUnbilled is [meter] internal_egress_unbilled: frames'
-	// service reply bytes are queued for subtraction only when it is on.
-	serviceReplyUnbilled bool
 
 	mu      sync.Mutex
 	active  map[string]*fleetEgressEntry
@@ -179,12 +169,6 @@ func (a *fleetGatewayEgressAdapter) reconcile(ctx context.Context) {
 				if frame.GetAppId() != "" {
 					err = a.store.AppendGatewayEdgeUsageEvent(
 						persistCtx, nodeID, frame.GetEventId(), frame.GetAppId(), frame.GetMinute().AsTime(), int64(frame.GetBytes()))
-				} else if replies, ok := a.store.(gatewayServiceReplyStore); ok && a.serviceReplyUnbilled && frame.GetServiceReplyBytes() > 0 {
-					err = replies.AppendGatewayUsageEventWithServiceReply(
-						persistCtx, nodeID, frame.GetEventId(), frame.GetInstanceId(), frame.GetMinute().AsTime(),
-						int64(frame.GetRequests()), int64(frame.GetBytes()), int32(frame.GetColdBoots()),
-						int64(frame.GetServiceReplyBytes()),
-					)
 				} else {
 					err = a.store.AppendGatewayUsageEvent(
 						persistCtx, nodeID, frame.GetEventId(), frame.GetInstanceId(), frame.GetMinute().AsTime(),

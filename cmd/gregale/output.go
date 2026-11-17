@@ -423,20 +423,24 @@ func PrintUsage(w io.Writer, usage, topic string) {
 // PrintUsage remains the public call site so the doc-slug audit can continue
 // checking literal command topics.
 func printUsage(w io.Writer, usage, topic string) {
+	printUsageWithCLI(w, usage, topic, nil)
+}
+
+func printUsageWithCLI(w io.Writer, usage, topic string, advice *cliFlagDiagnostic) {
 	if flagHelpPrinted {
 		return
 	}
 	printAgentHint(osStderr) // ADR-20261112223000 §5; stderr only
 	usage = spellUsageForTree(usage)
 	if jsonOutput && !jsonUsageHelp {
-		_ = writeJSONProblemWithExit(w, api.Problem{
+		_ = writeJSONProblemWithCLI(w, api.Problem{
 			Type:    docsSiteURL + "/errors/invalid-request",
 			Title:   "Invalid command usage",
 			Status:  400,
 			Code:    api.CodeValidation,
 			Detail:  usage,
 			DocsURL: docsURLForTopic(topic),
-		}, 1)
+		}, 1, advice)
 		return
 	}
 	_, _ = fmt.Fprintf(w, "%s\n", compactUsage(usage))

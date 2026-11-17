@@ -8,11 +8,19 @@
 - name: seal_domains — require the control domain identity
   ansible.builtin.assert:
     that:
-      - faas_seal_domain_control_identity_src | length > 0
+      - faas_seal_domain_control_identity_src | length > 0 or (faas_seal_domain_control_retired_on_compute | bool)
+      - not (faas_seal_domain_control_retired_on_compute | bool) or faas_box_role | default('single-box') == 'compute-only'
+      - not (faas_seal_domain_control_retired_on_compute | bool) or (faas_seal_domain_control_contracted | bool)
+      - not (faas_seal_domain_control_retired_on_compute | bool) or (faas_schedd_secretd_internal_svc | default(false) | bool)
+      - not (faas_seal_domain_control_retired_on_compute | bool) or faas_secretd_target | default('') | length > 0
     fail_msg: >-
       Set faas_seal_domain_control_identity_src to the control.age from
       `gregalectl seal-domain init --domain control`. Every host that runs
-      schedd stages it.
+      schedd stages it, except a compute-only host with
+      faas_seal_domain_control_retired_on_compute (ADR-20261110210000 slice
+      3k-2), which needs schedd's contract step
+      (faas_seal_domain_control_contracted), faas_schedd_secretd_internal_svc
+      and faas_secretd_target.
 
 # 0400 root:root. systemd hands the identity to schedd alone as a
 # credential; fleet-seal verify reads it as root at node join.
@@ -25,6 +33,24 @@
     mode: "0400"
   no_log: true
   notify: restart faas-schedd for seal domains
+  when: not (faas_seal_domain_control_retired_on_compute | bool)
+
+# ADR-20261110210000 slice 3k-2: a retired compute node holds no control
+# identity. Its schedd asks secretd for internal-service and workflow
+# outbound tokens and refuses to start while the identity is still loaded.
+# The probe result the node published earlier is stale, so it goes too.
+- name: seal_domains — take the control domain identity off a retired compute node
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  notify: restart faas-schedd for seal domains
+  loop:
+    - /etc/faas/secrets/domains/control.age
+    - /etc/faas/secrets/domains/control.age.previous
+    - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_control.prom"
+  when:
+    - faas_box_role | default('single-box') == 'compute-only'
+    - faas_seal_domain_control_retired_on_compute | bool
 
 # Key rotation (ADR 20261022111812): while the previous identity is
 # set it stays beside the new one, so values sealed to it still open until
@@ -40,6 +66,7 @@
   notify: restart faas-schedd for seal domains
   when:
     - faas_seal_domain_control_previous_identity_src | length > 0
+    - not (faas_seal_domain_control_retired_on_compute | bool)
 
 - name: seal_domains — remove the previous control domain identity
   ansible.builtin.file:
@@ -88,9 +115,9 @@
       - --db-env
       - "{{ faas_seal_domain_db_env }}"
       - --json
-  # A node whose delivery identity is retired cannot open delivery values;
-  # the control plane's converge runs that check.
-  loop: "{{ ['control'] if (faas_seal_domain_delivery_retired_on_compute | bool) else ['control', 'delivery'] }}"
+  # A node whose control or delivery identity is retired cannot open that
+  # domain's values; the control plane's converge runs that check.
+  loop: "{{ ([] if (faas_seal_domain_control_retired_on_compute | bool) else ['control']) + ([] if (faas_seal_domain_delivery_retired_on_compute | bool) else ['delivery']) }}"
   changed_when: false
   when: faas_seal_domain_control_contracted | bool
 
@@ -139,3 +166,4 @@
       - --json
   register: faas_seal_domain_control_verify
   changed_when: (faas_seal_domain_control_verify.stdout | from_json).probe_written | default(false)
+  when: not (faas_seal_domain_control_retired_on_compute | bool)

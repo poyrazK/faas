@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
 	"io"
 	"net/http"
 	"os"
@@ -39,7 +40,7 @@ const (
 	unpackFactor             = 4
 	maxUploadEntries         = 10_000
 	maxInlineFiles           = 200
-	maxInlineBytes           = 96 << 10
+	maxInlineBytes           = api.MCPInlineSourceMaxBytes
 	maxUploadPath            = 1024
 )
 

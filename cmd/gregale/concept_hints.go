@@ -43,8 +43,8 @@ var conceptHints = map[string][]conceptHint{
 	"secret":    {{Sub: "secrets", Then: "set KEY=<value>", Why: "set a secret"}},
 	"forward":   {{Sub: "port-forward", Then: "[LOCAL:]HOST:PORT", Why: "reach a private port from your machine"}},
 	"tunnel":    {{Sub: "port-forward", Then: "[LOCAL:]HOST:PORT", Why: "reach a private port from your machine"}},
-	"ssh":       {{Sub: "exec", Then: "-- <command>", Why: "run a command against the live deployment"}},
-	"shell":     {{Sub: "exec", Then: "-- <command>", Why: "run a command against the live deployment"}},
+	"ssh":       {{Sub: "exec", Then: "-- <command>", Why: "run a command in a fresh VM of the live deployment"}},
+	"shell":     {{Sub: "exec", Then: "-- <command>", Why: "run a command in a fresh VM of the live deployment"}},
 	"min":       {{Flag: "min", Then: "<N>", Why: "instances kept warm"}},
 	"always-on": {{Flag: "min", Then: "1", Why: "keep one instance running"}},
 }

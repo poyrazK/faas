@@ -65,6 +65,7 @@ Commands:
   compute-nodes  Compute-node state and release readiness (add|list|show|release-status|drain|activate|retire)
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart|wait)
   accounts     Authenticated tenant support and lifecycle controls (list|find|attention|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|make-org-owner|object-storage-ceiling|complimentary|abuse-hold|egress-flows)
+  support-access  Customer-granted support access (request|grants|status|deploy|retry|cancel|rollback|restart)
   billing      Operator billing catalog, credits, refunds, Postgres accounting, reconciliation, and webhook diagnostics
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
   audit        Correlate operator intents and events by trace ID (audit trace)
@@ -237,6 +238,10 @@ func run(args []string) int {
 		// mutations require a recent MFA step-up, confirmation, reason,
 		// idempotency key, and trace ID through apid.
 		return cmdAccountsDispatch(args[1:])
+	case dispatchSupportAccess:
+		// Customer-granted support access (ADR-20261116163508): requests,
+		// grants, and app operations under a grant from the operator session.
+		return cmdSupportAccessDispatch(args[1:])
 	case dispatchBilling:
 		return cmdBillingDispatch(args[1:])
 	case dispatchConfig:

@@ -34,6 +34,13 @@ func openLogArchive(log *slog.Logger) (logarchive.Config, *logarchive.S3Client) 
 		log.Info("logarchive.disabled", "reason", "FAAS_LOG_ARCHIVE_BUCKET unset")
 		return cfg, nil
 	}
+	// apid erases archived logs, which lists and deletes; a write-only
+	// envelope belongs on a compute node (ADR-20261110210000 slice 3l).
+	if cfg.WriteOnly {
+		log.Error("logarchive.write_only_envelope_on_apid", "path", credsPath,
+			"reason", "apid reads, lists and deletes archived logs; stage a read-write envelope on the control plane")
+		return cfg, nil
+	}
 	client, err := logarchive.NewS3Client(cfg.Endpoint, cfg.Region, cfg.Bucket, cfg.KeyID, cfg.Secret, cfg.AuthMode)
 	if err != nil {
 		log.Warn("logarchive.s3client_init_failed", "err", err)

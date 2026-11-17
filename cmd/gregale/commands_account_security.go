@@ -282,8 +282,7 @@ func noArgs(name string, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale "+name, "account")
+	if rejectArgumentCount(name, "usage: gregale "+name, "account", fs.NArg(), 0, 0) {
 		return 1
 	}
 	return 0

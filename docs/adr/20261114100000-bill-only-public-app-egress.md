@@ -145,3 +145,29 @@ own interface and was never in the veth counter.
 - Not covered: private TCP services (`service_tcp_listen`), whose copy path
   uses kernel splice that a counting wrapper would lose. Their replies stay
   billed.
+
+## Amendment 2026-11-17: slice 3 withdrawn (billing review R12)
+
+- Slice 3 subtracted bytes that were never billed. A service call from the
+  gateway reaches the callee inside its network namespace: the bridge enters
+  the namespace and dials the guest over tap0 (ADR-1749), so the callee's
+  reply never crosses the root-side veth that `net_tx_bytes` counts. Only
+  hosts with public forwarding route public bridges through the veth, and
+  service calls stay namespace-local there too. Subtracting the reply bytes
+  took the same amount of the instance's real outbound egress off its bill
+  (R12-2).
+- The gateway no longer counts service replies, meterd no longer queues them,
+  and `meter_network_checkpoints.service_reply_pending` is reset and never
+  read (the column stays; migrations are append-only).
+  `BytesFrame.service_reply_bytes` (field 8) is deprecated and never set; it
+  is removed after a release.
+- The first internal reading of an instance whose egress checkpoint already
+  exists sets the baseline only (R12-3). Without it, turning
+  `internal_egress_unbilled` on while instances ran subtracted each one's
+  whole internal history since vmmd started from its next minute, wiping out
+  that minute's real egress.
+- Open (R12-1): on hosts without public forwarding, which is every production
+  node today, responses to public requests do not cross the veth either, so
+  `net_tx_bytes` holds only connections the guest opens plus edge bytes. The
+  gateway's response bytes (`usage_minutes.tx_bytes`) are not billed as
+  egress. Which counter bills public responses is an owner decision.

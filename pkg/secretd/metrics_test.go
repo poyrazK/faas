@@ -94,8 +94,8 @@ func TestMetricsCountOpensAndRefusalsByReason(t *testing.T) {
 			t.Errorf("%s%v = %v, want %v", tc.name, tc.labels, got, tc.want)
 		}
 	}
-	// Alerts take increase() over pre-created series: 10 RPCs x 9 reasons.
-	if n, err := testutil.GatherAndCount(reg, "faas_secretd_refusals_total"); err != nil || n != 90 {
+	// Alerts take increase() over pre-created series: 11 RPCs x 9 reasons.
+	if n, err := testutil.GatherAndCount(reg, "faas_secretd_refusals_total"); err != nil || n != 99 {
 		t.Fatalf("refusal series = %d, %v", n, err)
 	}
 	// Slice 3j-4: the three build registry scope results are pre-created.

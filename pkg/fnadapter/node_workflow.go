@@ -11,6 +11,22 @@ const isWorkflowCall = (headers) => {
   }
   return false;
 };
+// A workflow function (FAAS_FUNCTION_WORKFLOW=1, stamped by imaged) runs
+// only through workflow runs. Any other request, such as a browser GET, the
+// deploy's smoke probe or a sibling's call(), gets a 404 problem instead of
+// handler(event, ctx), which would reach wf.call on the ctx and answer 500
+// (2026-11-16 prod journeys).
+const isWorkflowFunction = process.env.FAAS_FUNCTION_WORKFLOW === "1";
+function emitWorkflowFunctionPlainCall(out) {
+  emitWhole(out, 404, { "content-type": "application/problem+json" }, Buffer.from(JSON.stringify({
+    type: "https://gregale.dev/docs/errors#workflow_function_not_invocable",
+    title: "Workflow function",
+    status: 404,
+    code: "workflow_function_not_invocable",
+    detail: "this function is a workflow: start a run with functions.<name>.start() or gregale workflow run",
+    docs_url: "https://gregale.dev/docs/errors#workflow_function_not_invocable",
+  })));
+}
 let workflowSDK;
 // The SDK is the function's dependency: resolve it beside the adapter (a
 // deployed function), else from the handler's directory upward (the adapter

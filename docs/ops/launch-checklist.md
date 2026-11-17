@@ -118,8 +118,9 @@ production deployment.
 - **Verify:** before turning R8-2 on, `make test-metal` and `make leakcheck`
   pass on a native KVM host with the release that adds the per-instance
   `faas_internal_tx` counter, every compute node runs that vmmd, and only
-  then `[meter] internal_egress_unbilled = true` is set on meterd. Replies on
-  private TCP services stay billed.
+  then `[meter] internal_egress_unbilled = true` is set on meterd. Turned on
+  while instances run, each instance's first internal reading is a baseline
+  only (billing review R12-3).
 - **Signed:** ____________________  date: _________
 
 ## Known limits at launch

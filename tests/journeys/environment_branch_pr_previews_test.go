@@ -36,9 +36,10 @@ func TestEnvironmentBranchPRPreviews(t *testing.T) {
 		}
 	}
 	t.Parallel()
+	skipHidden(t, hiddenCapabilities(t, tg), "environment-branches")
 	project := tg.slug("brpr")
 	switch res := tg.runWithEnv(t, branchesCLI, time.Minute, "environment", "branch", project, "--list"); {
-	case res.problemCode() == "environment_branch_unavailable":
+	case res.problemCode() == "environment_branch_unavailable" || branchesHidden(res):
 		t.Skip("environment branches are off on this target")
 	case res.exit != 0 && res.problemCode() == "":
 		t.Skipf("this CLI cannot branch environments: %s", tg.redact(tail(res.problem(), 300)))

@@ -43,6 +43,8 @@ type MemoryStore struct {
 	overageDeliveries         map[memoryOverageKey]OverageDelivery
 	overagePending            map[memoryOverageKey]OveragePendingStep
 	usageWaivers              map[string][]usageWaiver
+	// customRoles holds declared custom roles by database (ADR-20261116213000).
+	customRoles map[string]map[string]CustomRole
 }
 
 func NewMemoryStore() *MemoryStore {

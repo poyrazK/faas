@@ -3366,6 +3366,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
 	manifest = applyFunctionInputSchema(applyFunctionCallables(applyFunctionConcurrency(h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct), app), app), app)
+	manifest = applyFunctionWorkflow(manifest, app, dep)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)

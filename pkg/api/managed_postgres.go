@@ -418,6 +418,37 @@ type CreateManagedPostgresBindingRequest struct {
 	Access         string `json:"access"`
 }
 
+// ManagedPostgresCustomRole is a custom group role declared on a managed
+// database (ADR-20261116213000): a NOLOGIN role the platform creates and
+// grants to the database's own logins, which may SET ROLE to it.
+type ManagedPostgresCustomRole struct {
+	DatabaseID string `json:"database_id"`
+	Name       string `json:"name"`
+	BypassRLS  bool   `json:"bypass_rls"`
+	// GrantedTo lists the access modes whose logins may SET ROLE to it:
+	// migration, read_write (session logins too) and read_only.
+	GrantedTo []string `json:"granted_to"`
+	// MemberOf lists other custom roles of the database it is a member of.
+	MemberOf []string `json:"member_of"`
+	// State is pending until the role is applied to the database, ready
+	// after, and deleting until a deleted role is dropped.
+	State         string `json:"state"`
+	LastErrorCode string `json:"last_error_code,omitempty"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+type ManagedPostgresCustomRoleList struct {
+	Items []ManagedPostgresCustomRole `json:"items"`
+}
+
+// PutManagedPostgresCustomRoleRequest declares or replaces a custom role.
+type PutManagedPostgresCustomRoleRequest struct {
+	BypassRLS bool     `json:"bypass_rls"`
+	GrantedTo []string `json:"granted_to"`
+	MemberOf  []string `json:"member_of"`
+}
+
 // ManagedPostgresCutover reports staging and control-plane SQL evidence only.
 // Credentials remain unpublished and workloads continue using the source.
 type ManagedPostgresCutover struct {

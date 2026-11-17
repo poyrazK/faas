@@ -40,7 +40,7 @@ func TestWakeSandboxRejectsIncompleteRequests(t *testing.T) {
 		"no memory":      func(r *SandboxWakeRequest) { r.MemSizeMiB = 0 },
 		"negative pause": func(r *SandboxWakeRequest) { r.QuietPauseAfter = -time.Second },
 		"no network":     func(r *SandboxWakeRequest) { r.Network = "" },
-		"web network":    func(r *SandboxWakeRequest) { r.Network = api.SandboxNetworkWeb },
+		"open network":   func(r *SandboxWakeRequest) { r.Network = "open" },
 	} {
 		req := full
 		mutate(&req)

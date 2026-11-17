@@ -297,3 +297,88 @@ nominal budget, is covered the same way.
 
 **Validation.** `TestSeedLedgerKeepsResidentRowsPastTheBareCeiling` and
 `TestAdmit_ResidentRecoveryAccountsRAMAndVCPUWithoutAllowingGrowth`.
+
+## Amendment 3 — Reservations may reach 250% of the ceiling (2026-11-16)
+
+**Problem.** On production-us the 200% reservation cap, not memory, decides
+how many instances a node takes. With the 16 GB nodes' 8,381 MB ceiling:
+
+- 2026-11-05 to 11-12: bookings peaked at 14,200 MB (169%) while measured
+  memory peaked at 4,640 MB (55%); on average 3,000 MB booked against
+  740 MB measured.
+- 2026-11-13 to 11-16 (rc.343 onward): bookings peaked at 14,080 MB (168%,
+  fsn-2), measured memory at 2,800–3,660 MB per node in normal running.
+  At peaks, measured memory was 26–40% of bookings.
+- The idle ladder's freeze-level discount (ADR-20261107122928) was meant to
+  lift this. Three days of `observe` on both nodes showed every idle instance
+  is a `when_idle` app, which the discount does not cover, and that its
+  activity guard would pause those apps 3–4 times a second per node, each
+  pause ended by the app's own background work. It is not the lever yet.
+
+**Decision.** `MeasuredAdmissionMaxOvercommitPercent` becomes 250, and the
+durable node guard (`admission_reserve_node`, migration
+20261116171808537) clamps the scheduler's allowance at 250. Invariant 2 now
+reads: a node's measured memory stays under its admission ceiling,
+Σ(plan RAM + 8 MB) stays under 2.5 times that ceiling, and schedd evicts
+when measured memory crosses the ceiling. Billing is unchanged.
+
+Why not 300%: at the measured-to-booked ratio above, 300% of bookings would
+put peak measured memory at 100–120% of the ceiling, so eviction would run
+at ordinary daily peaks. At 250% the same ratio gives 65–100%.
+
+**What stays the same.** Every VM keeps `memory.max = plan + 8 MB`;
+eviction to `MeasuredEvictionTargetPercent` (90%) still bounds a node that
+crosses the ceiling; the idle ladder discount stays bounded at 200% of the
+ceiling, so bookings with it reach at most 450%.
+
+**Known squeeze.** A rollout drains one node at a time, and the other then
+carries both nodes' instances: on 2026-11-16 at 01:07, with fsn-2 drained,
+fsn-3's measured memory reached 8,280 MB (99%). More bookings per node make
+that window more likely to evict. Eviction takes best-effort instances
+before reserved ones; an evicted instance's next request restores it from
+its snapshot or cold-boots it (ADR-005).
+
+**Compatibility.** The previous release's scheduler sends at most 200, which
+the new guard accepts. Rolling back the scheduler leaves rows booked past
+200%; startup recovery keeps them (amendment 2) and new admissions on that
+node wait until it drains under 200%. The migration's Down restores the
+200% clamp.
+
+**Watch after release.** `schedd_node_memory_measured_mb` against the
+ceiling, `schedd_evicted_priority_total{reason="eviction_ram"}` and
+`schedd_eviction_fired_total`, and wake refusals for node capacity. Revert
+to 200 if eviction fires outside rollouts.
+
+**Financial model.** The model's node capacity still assumes reservations;
+it understates tenants per node further (see "Decision").
+
+## Amendment 4 — The RAM page reads the memory admission counts (2026-11-16)
+
+**Problem.** Spec §12 pages when `resident_ram_pct` passes 92% and warns past
+80%. `FaasHighResidentRamPct` read `fcvm_resident_ram_pct`, the bookings
+Σ(ram_mb + 8) over the node's ceiling (ADR 20261102072403). Under measured
+admission bookings may reach 250% of the ceiling (amendment 3), so the page
+fired at ordinary load: on 2026-11-16 fsn-3 was booked at 136% of its
+8,381 MB ceiling, and 159% at the 6-hour peak, while its measured memory was
+2,825 MB (34%). Its text said new wakes would fail admission, which was not
+true.
+
+**Decision.** schedd exports `fcvm_admission_ram_pct`: the memory RAM
+admission counts on its node over the node's ceiling. Under measured
+admission that is the node's measured memory. Under reservation admission,
+and on a single-box scheduler without a node of its own, it is the bookings,
+the same value as `fcvm_resident_ram_pct`. `FaasHighResidentRamPct` (> 92%,
+page) and `FaasHighResidentRamPctWarn` (> 80%) read it. Spec §12's
+`resident_ram_pct` row therefore means the memory admission counts.
+
+`fcvm_resident_ram_pct` keeps its meaning (bookings over the ceiling) for
+dashboards and builderd's second-slot check.
+
+**No bookings alert.** An alert on bookings near the 250% cap would be wrong
+too: `fcvm_resident_ram_pct` counts frozen instances at their plan RAM, and
+frozen bookings sit outside the cap (ADR-1151), so it can pass the cap
+without a refusal.
+
+**Compatibility.** Until schedd runs this release, `fcvm_admission_ram_pct`
+does not exist and the RAM page cannot fire. The deploy order (control plane
+before nodes) keeps that window to one rollout.

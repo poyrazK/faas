@@ -6654,6 +6654,80 @@ type FinancialUsageEvidence struct {
 	AdjustmentReason pgtype.Text
 }
 
+type FlagConversionDaily struct {
+	EnvironmentID pgtype.UUID
+	EventName     string
+	CustomerID    pgtype.UUID
+	Day           pgtype.Date
+	AccountID     pgtype.UUID
+	Count         int64
+	ValueSum      int64
+	FirstAt       pgtype.Timestamptz
+	LastAt        pgtype.Timestamptz
+}
+
+type FlagEventName struct {
+	EnvironmentID pgtype.UUID
+	Name          string
+	AccountID     pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type FlagEventUsage struct {
+	AccountID pgtype.UUID
+	Month     pgtype.Date
+	Accepted  int64
+	Dropped   int64
+}
+
+type FlagExperiment struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	Key                string
+	FlagKey            string
+	RuleID             string
+	Control            string
+	MetricEvent        string
+	MetricKind         string
+	Status             string
+	MixingLift         float64
+	Weights            []byte
+	MinPValues         []byte
+	TelemetryCursor    pgtype.Timestamptz
+	CreatedBy          string
+	CreatedAt          pgtype.Timestamptz
+	StartedAt          pgtype.Timestamptz
+	StoppedAt          pgtype.Timestamptz
+	Guardrails         []byte
+	LatencyThresholdMs pgtype.Int4
+	StopReason         string
+	Breach             []byte
+	ValueThroughDay    pgtype.Date
+}
+
+type FlagExperimentLatency struct {
+	ExperimentID pgtype.UUID
+	Variant      string
+	Bucket       int16
+	Requests     int64
+}
+
+type FlagExperimentUnit struct {
+	ExperimentID    pgtype.UUID
+	CustomerID      pgtype.UUID
+	Variant         string
+	FirstExposedAt  pgtype.Timestamptz
+	ConvertedAt     pgtype.Timestamptz
+	Crossed         bool
+	Requests        int64
+	Errors          int64
+	LatencyRequests int64
+	SlowRequests    int64
+	ValueSum        int64
+}
+
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
 type FleetSealDomainProbe struct {
 	ID         int16
@@ -6895,6 +6969,14 @@ type Honeytoken struct {
 	Label       string
 	PlantedAt   pgtype.Timestamptz
 	RetiredAt   pgtype.Timestamptz
+}
+
+type HostedTaskSourceIntent struct {
+	AccountID  pgtype.UUID
+	ID         string
+	Payload    []byte
+	Ciphertext []byte
+	ExpiresAt  pgtype.Timestamptz
 }
 
 type HostingAutomationCredential struct {
@@ -8759,6 +8841,22 @@ type ManagedPostgresCreationReceipt struct {
 	ProviderCreatedAt  pgtype.Timestamptz
 	RecordedAt         pgtype.Timestamptz
 	CleanupStartedAt   pgtype.Timestamptz
+}
+
+type ManagedPostgresCustomRole struct {
+	DatabaseID   pgtype.UUID
+	AccountID    pgtype.UUID
+	Name         string
+	BypassRls    bool
+	GrantedTo    []string
+	MemberOf     []string
+	State        string
+	Revision     int64
+	LastError    string
+	AttemptCount int32
+	RetryAt      pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type ManagedPostgresCutover struct {
@@ -16517,6 +16615,31 @@ type SupportEvent struct {
 	Kind      string
 	Data      []byte
 	CreatedAt pgtype.Timestamptz
+}
+
+type SupportGrant struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	AppIds             []pgtype.UUID
+	CreatedByAccountID pgtype.UUID
+	RequestID          pgtype.UUID
+	Reason             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RevokedByAccountID pgtype.UUID
+}
+
+type SupportGrantRequest struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	OperatorAccountID  pgtype.UUID
+	Reason             string
+	Status             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	DecidedAt          pgtype.Timestamptz
+	DecidedByAccountID pgtype.UUID
 }
 
 type SupportMessage struct {

@@ -129,7 +129,7 @@ func TestSandboxRunnerRefusals(t *testing.T) {
 		"free plan": func(a *sched.SandboxAdmission) { a.Plan = api.PlanFree },
 		"odd RAM":   func(a *sched.SandboxAdmission) { a.RAMMB = 1000 },
 		"no vCPU":   func(a *sched.SandboxAdmission) { a.VCPU = 0 },
-		"web":       func(a *sched.SandboxAdmission) { a.Network = api.SandboxNetworkWeb },
+		"open net":  func(a *sched.SandboxAdmission) { a.Network = "open" },
 	} {
 		a := sandboxAdmission()
 		edit(&a)

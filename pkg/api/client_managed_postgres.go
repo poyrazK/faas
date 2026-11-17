@@ -230,3 +230,25 @@ func (c *Client) GetManagedPostgresCutoverPreflight(ctx context.Context, id stri
 	err := c.do(ctx, http.MethodGet, "/v1/postgres/cutovers/"+url.PathEscape(id)+"/preflight", nil, &out)
 	return out, err
 }
+
+// ListManagedPostgresCustomRoles lists a database's custom group roles
+// (ADR-20261116213000).
+func (c *Client) ListManagedPostgresCustomRoles(ctx context.Context, databaseID string) (ManagedPostgresCustomRoleList, error) {
+	var out ManagedPostgresCustomRoleList
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases/"+url.PathEscape(databaseID)+"/roles", nil, &out)
+	return out, err
+}
+
+// PutManagedPostgresCustomRole declares or replaces one custom group role.
+func (c *Client) PutManagedPostgresCustomRole(ctx context.Context, databaseID, name string, req PutManagedPostgresCustomRoleRequest) (ManagedPostgresCustomRole, error) {
+	var out ManagedPostgresCustomRole
+	err := c.do(ctx, http.MethodPut, "/v1/postgres/databases/"+url.PathEscape(databaseID)+"/roles/"+url.PathEscape(name), req, &out)
+	return out, err
+}
+
+// DeleteManagedPostgresCustomRole drops one custom group role.
+func (c *Client) DeleteManagedPostgresCustomRole(ctx context.Context, databaseID, name string) (ManagedPostgresCustomRole, error) {
+	var out ManagedPostgresCustomRole
+	err := c.do(ctx, http.MethodDelete, "/v1/postgres/databases/"+url.PathEscape(databaseID)+"/roles/"+url.PathEscape(name), nil, &out)
+	return out, err
+}

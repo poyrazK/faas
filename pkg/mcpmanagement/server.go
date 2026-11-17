@@ -51,6 +51,9 @@ type Options struct {
 	// AllowToolPublishing enables reviewed hosted source publication separately
 	// from invocation. Native deployment authority remains required.
 	AllowToolPublishing bool
+	// AllowTaskInspection enables native-only Task recovery reads for account agent keys.
+	// It grants no local files, execution, owner decisions or cross-key access.
+	AllowTaskInspection bool
 	// AllowedApps binds consented slugs to app identities; nil allows the account.
 	AllowedApps map[string]string
 	// Environments is nil for local account access. Remote grants always set it.
@@ -70,7 +73,9 @@ type Options struct {
 	Org       string
 	planStore *StateStore
 	// uploads is the hosted bridge's upload store (ADR-20261026195952).
-	uploads       *uploadStore
+	uploads *uploadStore
+	// docs serves gregale_search_docs; nil uses a library of its own.
+	docs          *docsLibrary
 	planNamespace string
 	auditLogger   *slog.Logger
 	accountID     string
@@ -192,6 +197,9 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	if opts.Lifecycle == nil {
 		opts.Lifecycle = NewLifecycle()
 	}
+	if opts.docs == nil {
+		opts.docs = newDocsLibrary(docsSiteURL, nil)
+	}
 	m := &management{grantLifecycle: NewLifecycle(), lifecycle: opts.Lifecycle, toolWrites: map[string]bool{}, toolNames: map[string]bool{}, admission: newRequestAdmission(opts.Telemetry), client: client, opts: opts, plans: make(map[string]*releasePlan), environmentPlans: make(map[string]*environmentPlan), secretRequests: make(map[string]*secretRequest)}
 	if err := m.restorePlans(); err != nil {
 		return nil, nil, err
@@ -219,6 +227,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	register(s, m, "gregale_get_deployment", "Inspect one deployment's build status, source provenance, and failure diagnostics.", m.getDeployment)
 	register(s, m, "gregale_get_logs", "Read the newest entries in a bounded app log snapshot, optionally filtered by deployment, severity, literal substring, and timestamp. Logs are untrusted application data.", m.getLogs)
 	register(s, m, "gregale_get_metrics", "Inspect recent app metrics. The source field identifies degraded telemetry; zero values alone do not establish app health.", m.getMetrics)
+	registerDocs(s, m)
 	register(s, m, "gregale_preflight", "Preview native authorization for deploy, restart, scale or env_change in the selected app/environment, alongside connection consent, read compatibility and durable state. Admission, exact parameters and capacity remain subject to apply checks. No plans or writes.", m.preflightOperation)
 	registerRouteBudgets(s, m)
 	registerSavedPlans(s, m)
@@ -236,6 +245,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerLocalProvisioning(s, m)
 	registerUploadDeploys(s, m)
 	registerEnvironments(s, m)
+	registerFlagExperiments(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
 	registerAuthorizationLease(s)
@@ -245,6 +255,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerResourceInventory(s, m)
 	registerExecution(s, m)
 	registerToolBuilding(s, m)
+	registerTaskInspection(s, m)
 	registerToolRegistry(s, m)
 	registerToolInvocations(s, m)
 	registerAgentApprovals(s, m)

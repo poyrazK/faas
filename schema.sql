@@ -246,7 +246,7 @@ BEGIN
        AND i.node_id = p_node_id
        AND i.state IN ('waking','cold_booting','running','draining','warm');
     used_mb := used_mb + resident_mb;
-    cap_mb := ceiling_mb * greatest(100, least(coalesce(p_reservation_percent, 100), 200)) / 100;
+    cap_mb := ceiling_mb * greatest(100, least(coalesce(p_reservation_percent, 100), 250)) / 100;
     -- ADR-20261107122928: the scheduler leaves out the reservations of
     -- instances vmmd holds at the idle ladder's freeze level, which measured
     -- admission books at their measured memory. Only a measured allowance
@@ -42723,6 +42723,117 @@ ALTER SEQUENCE public.financial_usage_evidence_id_seq OWNED BY public.financial_
 
 
 --
+-- Name: flag_conversion_daily; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_conversion_daily (
+    environment_id uuid NOT NULL,
+    event_name text NOT NULL,
+    customer_id uuid NOT NULL,
+    day date NOT NULL,
+    account_id uuid NOT NULL,
+    count bigint NOT NULL,
+    value_sum bigint DEFAULT 0 NOT NULL,
+    first_at timestamp with time zone NOT NULL,
+    last_at timestamp with time zone NOT NULL,
+    CONSTRAINT flag_conversion_daily_chk CHECK (((count > 0) AND (first_at <= last_at)))
+);
+
+
+--
+-- Name: flag_event_names; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_event_names (
+    environment_id uuid NOT NULL,
+    name text NOT NULL,
+    account_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT flag_event_names_chk CHECK ((name ~ '^[a-z][a-z0-9_.-]{0,63}$'::text))
+);
+
+
+--
+-- Name: flag_event_usage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_event_usage (
+    account_id uuid NOT NULL,
+    month date NOT NULL,
+    accepted bigint DEFAULT 0 NOT NULL,
+    dropped bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT flag_event_usage_chk CHECK (((accepted >= 0) AND (dropped >= 0) AND (month = (date_trunc('month'::text, (month)::timestamp with time zone))::date)))
+);
+
+
+--
+-- Name: flag_experiment_latency; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_experiment_latency (
+    experiment_id uuid NOT NULL,
+    variant text NOT NULL,
+    bucket smallint NOT NULL,
+    requests bigint NOT NULL,
+    CONSTRAINT flag_experiment_latency_chk CHECK ((((length(variant) >= 1) AND (length(variant) <= 128)) AND (bucket >= 0) AND (requests > 0)))
+);
+
+
+--
+-- Name: flag_experiment_units; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_experiment_units (
+    experiment_id uuid NOT NULL,
+    customer_id uuid NOT NULL,
+    variant text NOT NULL,
+    first_exposed_at timestamp with time zone NOT NULL,
+    converted_at timestamp with time zone,
+    crossed boolean DEFAULT false NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    errors bigint DEFAULT 0 NOT NULL,
+    latency_requests bigint DEFAULT 0 NOT NULL,
+    slow_requests bigint DEFAULT 0 NOT NULL,
+    value_sum bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT flag_experiment_units_chk CHECK ((((length(variant) >= 1) AND (length(variant) <= 128)) AND ((converted_at IS NULL) OR (converted_at >= first_exposed_at)))),
+    CONSTRAINT flag_experiment_units_counts_chk CHECK (((requests >= 0) AND ((errors >= 0) AND (errors <= requests)) AND ((latency_requests >= 0) AND (latency_requests <= requests)) AND ((slow_requests >= 0) AND (slow_requests <= latency_requests))))
+);
+
+
+--
+-- Name: flag_experiments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_experiments (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    key text NOT NULL,
+    flag_key text NOT NULL,
+    rule_id text NOT NULL,
+    control text NOT NULL,
+    metric_event text NOT NULL,
+    metric_kind text DEFAULT 'conversion'::text NOT NULL,
+    status text DEFAULT 'draft'::text NOT NULL,
+    mixing_lift double precision NOT NULL,
+    weights jsonb DEFAULT '{}'::jsonb NOT NULL,
+    min_p_values jsonb DEFAULT '{}'::jsonb NOT NULL,
+    telemetry_cursor timestamp with time zone,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    stopped_at timestamp with time zone,
+    guardrails jsonb DEFAULT '{}'::jsonb NOT NULL,
+    latency_threshold_ms integer,
+    stop_reason text DEFAULT ''::text NOT NULL,
+    breach jsonb,
+    value_through_day date,
+    CONSTRAINT flag_experiments_v2_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL))))
+);
+
+
+--
 -- Name: fleet_seal_domain_probe; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43205,6 +43316,24 @@ CREATE TABLE public.honeytokens (
 --
 
 COMMENT ON TABLE public.honeytokens IS 'Decoy credentials that belong to no account (ADR 20261024014500). Presenting one pages: whoever holds it read the place it was planted.';
+
+
+--
+-- Name: hosted_task_source_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosted_task_source_intents (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    payload jsonb NOT NULL,
+    ciphertext bytea,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT hosted_task_source_intents_check CHECK (((((payload ->> 'id'::text) = id) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND ((payload ->> 'source_state'::text) = 'retained'::text)) IS TRUE)),
+    CONSTRAINT hosted_task_source_intents_ciphertext_check CHECK (((ciphertext IS NULL) OR ((octet_length(ciphertext) >= 1) AND (octet_length(ciphertext) <= 8388608)))),
+    CONSTRAINT hosted_task_source_intents_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosted_task_source_intents_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 131072))),
+    CONSTRAINT hosted_task_source_intents_payload_check1 CHECK ((payload @> '{"ready_to_apply": false, "bindings_verified": false, "owner_authorization_required": true}'::jsonb))
+);
 
 
 --
@@ -46610,6 +46739,34 @@ CREATE TABLE public.managed_postgres_creation_receipts (
     CONSTRAINT managed_postgres_creation_receipts_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
     CONSTRAINT managed_postgres_creation_receipts_resource_id_check CHECK (((resource_id <> ''::text) AND (length(resource_id) <= 255))),
     CONSTRAINT managed_postgres_creation_receipts_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255)))
+);
+
+
+--
+-- Name: managed_postgres_custom_roles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_custom_roles (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    bypass_rls boolean DEFAULT false NOT NULL,
+    granted_to text[] DEFAULT '{}'::text[] NOT NULL,
+    member_of text[] DEFAULT '{}'::text[] NOT NULL,
+    state text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_custom_roles_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT managed_postgres_custom_roles_granted_to_check CHECK ((granted_to <@ ARRAY['migration'::text, 'read_only'::text, 'read_write'::text])),
+    CONSTRAINT managed_postgres_custom_roles_last_error_check CHECK ((char_length(last_error) <= 128)),
+    CONSTRAINT managed_postgres_custom_roles_member_of_check CHECK ((cardinality(member_of) <= 16)),
+    CONSTRAINT managed_postgres_custom_roles_name_check CHECK ((name ~ '^[a-z_][a-z0-9_]{0,62}$'::text)),
+    CONSTRAINT managed_postgres_custom_roles_revision_check CHECK ((revision > 0)),
+    CONSTRAINT managed_postgres_custom_roles_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'ready'::text, 'deleting'::text])))
 );
 
 
@@ -60839,6 +60996,49 @@ ALTER TABLE public.support_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS 
 
 
 --
+-- Name: support_grant_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_grant_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    operator_account_id uuid NOT NULL,
+    reason text NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    decided_at timestamp with time zone,
+    decided_by_account_id uuid,
+    CONSTRAINT support_grant_requests_decision_check CHECK (((status = 'open'::text) = (decided_at IS NULL))),
+    CONSTRAINT support_grant_requests_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '24:00:00'::interval)))),
+    CONSTRAINT support_grant_requests_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 400))),
+    CONSTRAINT support_grant_requests_status_check CHECK ((status = ANY (ARRAY['open'::text, 'approved'::text, 'declined'::text])))
+);
+
+
+--
+-- Name: support_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    app_ids uuid[],
+    created_by_account_id uuid NOT NULL,
+    request_id uuid,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    revoked_by_account_id uuid,
+    CONSTRAINT support_grants_apps_check CHECK (((app_ids IS NULL) OR ((cardinality(app_ids) >= 1) AND (cardinality(app_ids) <= 100)))),
+    CONSTRAINT support_grants_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '7 days'::interval)))),
+    CONSTRAINT support_grants_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 400))),
+    CONSTRAINT support_grants_revoked_check CHECK (((revoked_by_account_id IS NULL) OR (revoked_at IS NOT NULL)))
+);
+
+
+--
 -- Name: support_messages; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -67936,6 +68136,62 @@ ALTER TABLE ONLY public.financial_usage_evidence
 
 
 --
+-- Name: flag_conversion_daily flag_conversion_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_conversion_daily
+    ADD CONSTRAINT flag_conversion_daily_pkey PRIMARY KEY (environment_id, event_name, customer_id, day);
+
+
+--
+-- Name: flag_event_names flag_event_names_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_event_names
+    ADD CONSTRAINT flag_event_names_pkey PRIMARY KEY (environment_id, name);
+
+
+--
+-- Name: flag_event_usage flag_event_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_event_usage
+    ADD CONSTRAINT flag_event_usage_pkey PRIMARY KEY (account_id, month);
+
+
+--
+-- Name: flag_experiment_latency flag_experiment_latency_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiment_latency
+    ADD CONSTRAINT flag_experiment_latency_pkey PRIMARY KEY (experiment_id, variant, bucket);
+
+
+--
+-- Name: flag_experiment_units flag_experiment_units_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiment_units
+    ADD CONSTRAINT flag_experiment_units_pkey PRIMARY KEY (experiment_id, customer_id);
+
+
+--
+-- Name: flag_experiments flag_experiments_key_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiments
+    ADD CONSTRAINT flag_experiments_key_unique UNIQUE (environment_id, key);
+
+
+--
+-- Name: flag_experiments flag_experiments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiments
+    ADD CONSTRAINT flag_experiments_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: fleet_seal_domain_probe fleet_seal_domain_probe_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68205,6 +68461,14 @@ ALTER TABLE ONLY public.honeytokens
 
 ALTER TABLE ONLY public.honeytokens
     ADD CONSTRAINT honeytokens_token_digest_key UNIQUE (token_digest);
+
+
+--
+-- Name: hosted_task_source_intents hosted_task_source_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_source_intents
+    ADD CONSTRAINT hosted_task_source_intents_pkey PRIMARY KEY (account_id, id);
 
 
 --
@@ -69781,6 +70045,14 @@ ALTER TABLE ONLY public.managed_postgres_creation_receipts
 
 ALTER TABLE ONLY public.managed_postgres_creation_receipts
     ADD CONSTRAINT managed_postgres_creation_receipts_pkey PRIMARY KEY (kind, backend_id, resource_id);
+
+
+--
+-- Name: managed_postgres_custom_roles managed_postgres_custom_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_custom_roles
+    ADD CONSTRAINT managed_postgres_custom_roles_pkey PRIMARY KEY (database_id, name);
 
 
 --
@@ -75936,6 +76208,22 @@ ALTER TABLE ONLY public.support_events
 
 
 --
+-- Name: support_grant_requests support_grant_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_grants support_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: support_messages support_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81368,6 +81656,27 @@ CREATE INDEX financial_usage_instance_minute_idx ON public.financial_usage_evide
 
 
 --
+-- Name: flag_conversion_daily_account_day_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_conversion_daily_account_day_idx ON public.flag_conversion_daily USING btree (account_id, day);
+
+
+--
+-- Name: flag_experiments_one_running_per_rule; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX flag_experiments_one_running_per_rule ON public.flag_experiments USING btree (environment_id, flag_key, rule_id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: flag_experiments_running_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_experiments_running_idx ON public.flag_experiments USING btree (id) WHERE (status = 'running'::text);
+
+
+--
 -- Name: gateway_concurrency_queue_leases_app_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -81491,6 +81800,13 @@ CREATE INDEX github_webhook_deliveries_dead_idx ON public.github_webhook_deliver
 --
 
 CREATE INDEX github_webhook_deliveries_due_idx ON public.github_webhook_deliveries USING btree (next_attempt_at, received_at) WHERE (status = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
+-- Name: hosted_task_source_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosted_task_source_expiry_idx ON public.hosted_task_source_intents USING btree (expires_at) WHERE (ciphertext IS NOT NULL);
 
 
 --
@@ -82940,6 +83256,13 @@ CREATE INDEX managed_postgres_clone_owner_idx ON public.managed_postgres_databas
 --
 
 CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'target'::text));
+
+
+--
+-- Name: managed_postgres_custom_roles_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_custom_roles_due_idx ON public.managed_postgres_custom_roles USING btree (retry_at) WHERE (state <> 'ready'::text);
 
 
 --
@@ -87305,6 +87628,20 @@ CREATE INDEX support_episodes_started_idx ON public.support_episodes USING btree
 --
 
 CREATE INDEX support_events_ticket_idx ON public.support_events USING btree (ticket_id, sequence);
+
+
+--
+-- Name: support_grant_requests_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_grant_requests_open_idx ON public.support_grant_requests USING btree (org_id, created_at DESC) WHERE (status = 'open'::text);
+
+
+--
+-- Name: support_grants_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_grants_org_idx ON public.support_grants USING btree (org_id, created_at DESC);
 
 
 --
@@ -102659,6 +102996,62 @@ ALTER TABLE ONLY public.financial_usage_evidence
 
 
 --
+-- Name: flag_conversion_daily flag_conversion_daily_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_conversion_daily
+    ADD CONSTRAINT flag_conversion_daily_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_event_names flag_event_names_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_event_names
+    ADD CONSTRAINT flag_event_names_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_event_usage flag_event_usage_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_event_usage
+    ADD CONSTRAINT flag_event_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_experiment_latency flag_experiment_latency_experiment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiment_latency
+    ADD CONSTRAINT flag_experiment_latency_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.flag_experiments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_experiment_units flag_experiment_units_experiment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiment_units
+    ADD CONSTRAINT flag_experiment_units_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.flag_experiments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_experiments flag_experiments_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiments
+    ADD CONSTRAINT flag_experiments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_experiments flag_experiments_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_experiments
+    ADD CONSTRAINT flag_experiments_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: function_migration_destinations function_migration_destinations_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -102808,6 +103201,14 @@ ALTER TABLE ONLY public.github_installations
 
 ALTER TABLE ONLY public.gitlab_oauth_connections
     ADD CONSTRAINT gitlab_oauth_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosted_task_source_intents hosted_task_source_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_source_intents
+    ADD CONSTRAINT hosted_task_source_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -104600,6 +105001,14 @@ ALTER TABLE ONLY public.managed_postgres_creation_receipts
 
 ALTER TABLE ONLY public.managed_postgres_creation_receipts
     ADD CONSTRAINT managed_postgres_creation_receipts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_custom_roles managed_postgres_custom_roles_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_custom_roles
+    ADD CONSTRAINT managed_postgres_custom_roles_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
@@ -111968,6 +112377,62 @@ ALTER TABLE ONLY public.support_events
 
 ALTER TABLE ONLY public.support_events
     ADD CONSTRAINT support_events_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_decided_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_decided_by_account_id_fkey FOREIGN KEY (decided_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_operator_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_operator_account_id_fkey FOREIGN KEY (operator_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grants support_grants_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grants support_grants_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grants support_grants_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.support_grant_requests(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_grants support_grants_revoked_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_revoked_by_account_id_fkey FOREIGN KEY (revoked_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

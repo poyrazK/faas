@@ -194,6 +194,10 @@ async function handleOne(input, out) {
     await serveWorkflowCall(env, out);
     return;
   }
+  if (isWorkflowFunction) {
+    emitWorkflowFunctionPlainCall(out);
+    return;
+  }
   setupBackground(env, out);
   const raw = Buffer.from(env.body_b64 || "", "base64").toString("utf8");
   let body = raw;

@@ -535,10 +535,30 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	// server, in this tab (ADR-20261028205920). The target never comes from
 	// the request, so the form field cannot redirect anywhere else.
 	if continueURL := h.srv.hostedMCPContinueURL(); continueURL != "" && isMCPAuthCode(rawCode) && r.PostForm.Get("return") == "mcp" {
-		http.Redirect(w, r, continueURL, http.StatusSeeOther)
+		h.continueMCPApproval(w, r, continueURL)
 		return
 	}
 	http.Redirect(w, r, cliAuthDashboard, http.StatusFound)
+}
+
+// Finish the native form before navigating from the console to the API origin
+// (ADR-20261116170000). A cross-origin 303 is blocked by form-action 'self' in
+// Chromium. The caller supplies only the configured hosted continuation URL.
+func (h *cliAuthHandlers) continueMCPApproval(w http.ResponseWriter, r *http.Request, target string) {
+	w.Header().Add("Vary", "Accept")
+	if !api.AcceptsHTML(r) {
+		http.Redirect(w, r, target, http.StatusSeeOther)
+		return
+	}
+	page := dashboard.Page{
+		Title: "Continue to agent review",
+		Body:  "cli_auth",
+		Data:  map[string]any{"MCP": true, "MCPContinueURL": target},
+	}
+	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
+		h.log.Error("cli_auth.render_mcp_continue", "err", err)
+		renderProblem(w, h.log, err)
+	}
 }
 
 // hostedMCPContinueURL is where the hosted MCP server continues a connection
@@ -554,11 +574,17 @@ func (s *server) hostedMCPContinueURL() string {
 // renderCliAuthError renders the cli_auth template with the error
 // flag set, so the form is replaced with a banner.
 func (h *cliAuthHandlers) renderCliAuthError(w http.ResponseWriter, r *http.Request, title, detail string) {
+	isMCP := isMCPAuthCode(r.FormValue("code"))
+	if isMCP {
+		// An earlier POST may have claimed the code even when the browser
+		// could not continue. Do not promise that nothing was authorized.
+		detail = "This connection attempt can no longer continue."
+	}
 	page := dashboard.Page{
 		Title: title,
 		Body:  "cli_auth",
 		Flash: detail,
-		Data:  map[string]any{"Error": true},
+		Data:  map[string]any{"Error": true, "MCP": isMCP},
 	}
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		h.log.Error("cli_auth.render_error", "err", err)

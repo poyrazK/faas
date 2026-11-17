@@ -434,7 +434,10 @@ the binding reconciler revokes that identity with retry-safe cleanup. The
 response sets `rotation_pending` while the previous identity is still retained;
 retries during that interval reuse the same generation and wake ID. If the app
 has no live deployment or resident instances, the previous identity is queued
-for cleanup immediately.
+for cleanup immediately. The refresh's outbox row stays closed to replay for
+`api.ManagedPostgresRotationRefreshWakeDelay` (5 s), like every other runtime
+restart, so the app's owning scheduler claims the live notification before a
+peer scheduler's replay worker can take it.
 
 ## Neon backend configuration
 
@@ -675,7 +678,7 @@ served since a later release command ran is refused with
 command for each database the release commands can migrate, at the moment
 before the earliest of them
 ([ADR-1448](adr/1448-releases-that-change-the-database.md); see
-[Releases that change the database](deploys.md#releases-that-change-the-database)).
+[Releases that change the database](releases.md#releases-that-change-the-database)).
 
 Migration sessions automatically switch to the schema owner. `SET ROLE NONE`
 removes DDL access until that owner is selected again, so normal migrations do
@@ -1474,7 +1477,7 @@ no activation operation. Only a rollback that restores the database activates it
 own cutover: it fences and drains the app, then moves the bindings in one
 transaction, and the cutover becomes `activated`, which is final. It accepts the
 loss of writes made after the restore point, so it does not need the writer
-isolation above; see [Rollbacks that restore the database](deploys.md#rollbacks-that-restore-the-database)
+isolation above; see [Rollbacks that restore the database](releases.md#rollbacks-that-restore-the-database)
 and [ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md).
 For other cutovers, both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.

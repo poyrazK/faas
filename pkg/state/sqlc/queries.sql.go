@@ -82924,12 +82924,13 @@ WITH previous AS (
  AND payload::jsonb->>'wake_id'=$2::text
  ORDER BY (state IN ('pending','processing')) DESC,id DESC LIMIT 1 FOR UPDATE
 ), retried AS (
- UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp(),
+ UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp()+make_interval(secs=>$3::double precision),
  claimed_by=NULL,claimed_at=NULL,lease_until=NULL,delivered_at=NULL,last_error=NULL
  WHERE id IN (SELECT id FROM previous) AND state IN ('delivered','dead_letter') RETURNING id,payload
 ), inserted AS (
- INSERT INTO notification_outbox(channel,payload)
- SELECT 'runtime_config_restart',json_build_object('app_id',$1::text,'wake_id',$2::text)::text
+ INSERT INTO notification_outbox(channel,payload,available_at)
+ SELECT 'runtime_config_restart',json_build_object('app_id',$1::text,'wake_id',$2::text)::text,
+ clock_timestamp()+make_interval(secs=>$3::double precision)
  WHERE NOT EXISTS (SELECT 1 FROM previous) RETURNING id,payload
 )
 SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbox_id',id,'_notification_payload',payload)::text)
@@ -82937,14 +82938,21 @@ SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbo
 `
 
 type QueueManagedPostgresRotationRefreshParams struct {
-	AppID  string
-	WakeID string
+	AppID            string
+	WakeID           string
+	WakeDelaySeconds float64
 }
 
 // App and binding locks serialize publication, retries and old-worker repair.
 // Replay terminal handoffs under the same wake ID until retirement is proven.
+// Like every runtime_config_restart, the row opens to replay only after the
+// wake delay: every schedd's replay worker polls the outbox, and a row that
+// opened at once could be claimed by a peer before the app's owner claimed the
+// live notification. The owner's claim then found the row leased, and the
+// peer's deferral returned it to a replay the owner never won (production
+// 2026-11-16: a credential rotation's restart stayed pending for hours).
 func (q *Queries) QueueManagedPostgresRotationRefresh(ctx context.Context, db DBTX, arg QueueManagedPostgresRotationRefreshParams) error {
-	_, err := db.Exec(ctx, queueManagedPostgresRotationRefresh, arg.AppID, arg.WakeID)
+	_, err := db.Exec(ctx, queueManagedPostgresRotationRefresh, arg.AppID, arg.WakeID, arg.WakeDelaySeconds)
 	return err
 }
 
@@ -100692,6 +100700,69 @@ func (q *Queries) ReleaseProjectEnvironmentCloneWorkerLease(ctx context.Context,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const releaseRunReplacing = `-- name: ReleaseRunReplacing :many
+SELECT t.deployment_id::text AS deployment_id, d.revision, t.status, t.started_at::timestamptz AS started_at
+FROM deployments target
+JOIN app_tasks t ON t.app_id = target.app_id
+  AND t.kind = 'release'
+  AND t.started_at IS NOT NULL
+  AND t.deployment_id <> target.id
+  AND coalesce(nullif(t.deployment_scope, ''), 'default') = coalesce(nullif(target.scope, ''), 'default')
+  AND t.started_at > target.created_at
+  AND t.started_at <= target.serving_ended_at
+JOIN deployments d ON d.id = t.deployment_id
+  AND (d.status = 'live' OR d.serving_ended_at >= target.serving_ended_at)
+WHERE target.id = $1::text::uuid AND target.app_id = $2::text::uuid
+  AND target.serving_ended_at IS NOT NULL
+ORDER BY t.started_at DESC, t.id DESC
+LIMIT 1
+`
+
+type ReleaseRunReplacingParams struct {
+	TargetID string
+	AppID    string
+}
+
+type ReleaseRunReplacingRow struct {
+	DeploymentID string
+	Revision     int32
+	Status       string
+	StartedAt    pgtype.Timestamptz
+}
+
+// ADR-20261023181931 amendment: the release task of the deployment that
+// replaced a rollback target, which ADR-1448 does not count as crossed
+// because it started while the target served. It is the newest started
+// release task of another deployment in the target's scope between the
+// target's creation and the moment it last stopped serving, whose deployment
+// still served at that moment: it is live, or it stopped serving no earlier
+// than the target did. A release that served and was rolled back to the
+// target before then stopped serving earlier, so it is not it.
+func (q *Queries) ReleaseRunReplacing(ctx context.Context, db DBTX, arg ReleaseRunReplacingParams) ([]ReleaseRunReplacingRow, error) {
+	rows, err := db.Query(ctx, releaseRunReplacing, arg.TargetID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReleaseRunReplacingRow{}
+	for rows.Next() {
+		var i ReleaseRunReplacingRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.Revision,
+			&i.Status,
+			&i.StartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const releaseRunsCrossedBy = `-- name: ReleaseRunsCrossedBy :many

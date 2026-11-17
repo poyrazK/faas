@@ -117,7 +117,8 @@
     paths: /run/credentials/faas-schedd.service
   register: faas_seal_domain_schedd_credentials
   failed_when: >-
-    'faas_seal_domain_control' not in (faas_seal_domain_schedd_credentials.files | map(attribute='path') | map('basename') | list) or
+    ('faas_seal_domain_control' not in (faas_seal_domain_schedd_credentials.files | map(attribute='path') | map('basename') | list)
+     and not (faas_seal_domain_control_retired_on_compute | bool)) or
     'faas_seal_domain_delivery' not in (faas_seal_domain_schedd_credentials.files | map(attribute='path') | map('basename') | list) or
     'faas_sign_pub' not in (faas_seal_domain_schedd_credentials.files | map(attribute='path') | map('basename') | list) or
     'fleet.age' in (faas_seal_domain_schedd_credentials.files | map(attribute='path') | map('basename') | list)
@@ -127,14 +128,16 @@
     - not (faas_seal_domain_delivery_retired_on_compute | bool)
     - not (faas_join_defer_service_handlers | default(false) | bool)
 
-# A retired schedd holds its control identity, host.age and the signing
-# public key, and neither a delivery nor a fleet identity.
+# A retired schedd holds its control identity (unless that is retired too,
+# slice 3k-2), host.age and the signing public key, and neither a delivery
+# nor a fleet identity.
 - name: seal_domains — prove a retired schedd runs without the delivery and fleet identities
   ansible.builtin.find:
     paths: /run/credentials/faas-schedd.service
   register: faas_seal_domain_schedd_retired_credentials
   failed_when: >-
-    'faas_seal_domain_control' not in (faas_seal_domain_schedd_retired_credentials.files | map(attribute='path') | map('basename') | list) or
+    ('faas_seal_domain_control' not in (faas_seal_domain_schedd_retired_credentials.files | map(attribute='path') | map('basename') | list)
+     and not (faas_seal_domain_control_retired_on_compute | bool)) or
     (faas_seal_domain_schedd_retired_credentials.files | map(attribute='path') | map('basename') |
      select('in', ['faas_seal_domain_delivery', 'faas_seal_domain_delivery_previous', 'fleet.age']) | list | length) > 0
   when:

@@ -109,7 +109,9 @@ var cgroupRoot = "/sys/fs/cgroup"
 // PerInstanceScope for the lockstep definition.
 //
 // The +8 MB is the per-VM overhead accounted for by
-// api.PerVMOverheadMB (pkg/api/limits.go).
+// api.PerVMOverheadMB (pkg/api/limits.go). The fence itself sits a further
+// api.AppVMHeadroomMB above it (ADR-20261116191801): a cold-booting guest
+// fills its RAM and Firecracker's own pages did not fit in 8 MB.
 //
 // Note: the original spec text used `vm-{instance}.scope`; jailer
 // v1.7's --id validator rejects '.' (panic: "Invalid char (.) at
@@ -309,7 +311,7 @@ func writeMemoryMaxAt(scope string, memoryMB int) error {
 // fully-resolved scope path. Idempotent. Public so the cgroup unit
 // test can exercise it directly without spinning up a Manager.
 func writeMemoryMaxTo(scope string, planMB int) error {
-	return writeMemoryMaxAt(scope, api.BillableRAMMB(planMB))
+	return writeMemoryMaxAt(scope, api.AppVMMemoryMaxMB(planMB))
 }
 
 // snapshotMemoryLimits returns the VM scope with its ordinary memory.max and
@@ -320,7 +322,7 @@ func snapshotMemoryLimits(l Lease) (scope string, ordinaryMB, widenedMB int) {
 			api.BuilderMemoryMaxMB(l.MemoryMaxMiB), api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)
 	}
 	return filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance)),
-		api.BillableRAMMB(l.MemoryMaxMiB), api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)
+		api.AppVMMemoryMaxMB(l.MemoryMaxMiB), api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)
 }
 
 // widenSnapshotMemoryCgroup temporarily raises the VM's host-side memory.max

@@ -256,7 +256,7 @@ func resumeSavedProjectDeploy(ctx context.Context, c *Client, s *savedDeploySess
 	if s.record.Project.SafeRelease != nil {
 		return waitForSafeProjectRelease(waitCtx, c, s, deadline)
 	}
-	apply, timeouts := waitForProjectApplyTimeouts(waitCtx, c, s.projectApplyReceipt(), deadline)
+	apply, timeouts := waitForProjectApplyTimeouts(withProjectWaitProgress(waitCtx, osStderr, jsonOutput), c, s.projectApplyReceipt(), deadline)
 	return renderProjectDeployReceiptAfterWait(api.PlanResponse{}, apply, s, timeouts)
 }
 

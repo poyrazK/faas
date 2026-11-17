@@ -15,17 +15,19 @@ Use it with an operator-qualified Job preview after the required evidence passes
 gregale init --template customer-operation-job-export --path customer-operation-job-export
 ```
 
-The SDK is internal and unpublished. From an authorized checkout, build and pack
-it, then include the archive in this source directory:
+The Node SDK is not on npm yet. Build it from its public repository,
+[gregale-dev/gregale-js](https://github.com/gregale-dev/gregale-js), then copy
+the package into this source directory:
 
 ```sh
-cd <gregale-checkout>/sdk/node
+git clone --depth 1 https://github.com/gregale-dev/gregale-js
+cd gregale-js/packages/sdk-node
 npm ci --ignore-scripts
 npm run build
 npm pack --ignore-scripts
 cd <generated-source>/customer-operation-job-export
 mkdir -p packages
-cp <gregale-checkout>/sdk/node/gregale-sdk-node-0.1.0.tgz packages/gregale-sdk.tgz
+cp /path/to/gregale-js/packages/sdk-node/gregale-sdk-node-*.tgz packages/gregale-sdk.tgz
 npm install --ignore-scripts
 npm test
 gregale operation validate --dir . --app <slug> --plan pro

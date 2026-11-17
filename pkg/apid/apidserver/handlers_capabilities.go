@@ -70,6 +70,13 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
 				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
 			}
+		case "app-tasks", "tcp-listeners", "udp-listeners", dataAPICapability:
+			// Prod findings 2026-11-15 #25: these were listed as available
+			// while their runtime was off and every request was refused.
+			available = s.capabilityRuntimeReady(capabilities.Capabilities[i].Key)
+			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
+				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
+			}
 		case "custom-domains":
 			// production-us hunt #8: with ADR-520 on-demand TLS off, a
 			// customer hostname can never obtain a certificate or reach
@@ -133,6 +140,24 @@ func (s *server) hiddenCapabilities(subject platformflags.Subject) []string {
 		}
 	}
 	return hidden
+}
+
+// capabilityRuntimeReady reports whether this control plane runs what a
+// capability's requests need: the app-task API gate, tcpd/udpd at the edge,
+// or the managed PostgreSQL bindings the Data API is set up from
+// (configurePipelineDataAPI).
+func (s *server) capabilityRuntimeReady(key string) bool {
+	switch key {
+	case "app-tasks":
+		return s.appTaskAPIEnabled
+	case "tcp-listeners":
+		return s.tcpListenersEnabled
+	case "udp-listeners":
+		return s.udpListenersEnabled
+	case dataAPICapability:
+		return s.managedPostgres != nil && s.managedPostgresBindings != nil && s.notif != nil
+	}
+	return true
 }
 
 // Plan restrictions take precedence when both gates deny access. Runtime

@@ -121,3 +121,17 @@ func TestPrivateToolInvocationDefaultsOff(t *testing.T) {
 		t.Fatal("private invocation flags widened publication", err)
 	}
 }
+
+func TestHostedTaskInspectionDefaultsOff(t *testing.T) {
+	base := []string{"--state-key-file", "/k", "--oauth-redirect-uri", "http://localhost/callback"}
+	for _, enabled := range []bool{false, true} {
+		args := append([]string{}, base...)
+		if enabled {
+			args = append(args, "--allow-task-inspection")
+		}
+		cfg, err := parse(t, args...)
+		if err != nil || cfg.allowTaskInspection != enabled || cfg.allowToolPublishing || cfg.allowToolInvocation {
+			t.Fatalf("Task inspection config: %+v %v", cfg, err)
+		}
+	}
+}
