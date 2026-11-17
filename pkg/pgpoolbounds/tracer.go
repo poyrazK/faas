@@ -2,9 +2,11 @@ package pgpoolbounds
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -12,8 +14,13 @@ import (
 // typed as pgx.QueryTracer. Its query hooks also bound calls without a caller
 // deadline, including when a transaction pooler cannot accept session settings.
 type Tracer struct {
-	abandoned atomic.Int64
+	abandoned        atomic.Int64
+	permissionDenied atomic.Int64
 }
+
+// insufficientPrivilege is SQLSTATE 42501, what Postgres returns when the
+// connected role lacks a privilege on the object a statement touches.
+const insufficientPrivilege = "42501"
 
 // precanceledAcquireKey marks an acquisition whose context had ended before
 // it began. Only that rare path allocates.
@@ -24,6 +31,18 @@ type queryCancelKey struct{}
 // AbandonedAcquires counts callers whose context ended while waiting, excluding
 // contexts that had already ended before acquisition began.
 func (t *Tracer) AbandonedAcquires() int64 { return t.abandoned.Load() }
+
+// PermissionDenied counts statements Postgres refused with SQLSTATE 42501.
+// With each daemon on its own role, a non-zero rate means the role's grants
+// miss something its code does (ADR-20261023104734 step 3).
+func (t *Tracer) PermissionDenied() int64 { return t.permissionDenied.Load() }
+
+func (t *Tracer) observe(err error) {
+	var pgErr *pgconn.PgError
+	if err != nil && errors.As(err, &pgErr) && pgErr.Code == insufficientPrivilege {
+		t.permissionDenied.Add(1)
+	}
+}
 
 func (t *Tracer) TraceAcquireStart(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireStartData) context.Context {
 	if ctx.Err() != nil {
@@ -50,7 +69,8 @@ func (t *Tracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQu
 	return boundQuery(ctx)
 }
 
-func (t *Tracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryEndData) {
+func (t *Tracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	t.observe(data.Err)
 	finishQuery(ctx)
 }
 
@@ -74,20 +94,27 @@ func finishQuery(ctx context.Context) {
 func (t *Tracer) TraceBatchStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
 	return boundQuery(ctx)
 }
-func (t *Tracer) TraceBatchQuery(context.Context, *pgx.Conn, pgx.TraceBatchQueryData) {}
+
+// TraceBatchQuery counts each refused statement of a batch; TraceBatchEnd's
+// error repeats the first of them, so it is not counted again.
+func (t *Tracer) TraceBatchQuery(_ context.Context, _ *pgx.Conn, data pgx.TraceBatchQueryData) {
+	t.observe(data.Err)
+}
 func (t *Tracer) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchEndData) {
 	finishQuery(ctx)
 }
 func (t *Tracer) TraceCopyFromStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceCopyFromStartData) context.Context {
 	return boundQuery(ctx)
 }
-func (t *Tracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TraceCopyFromEndData) {
+func (t *Tracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceCopyFromEndData) {
+	t.observe(data.Err)
 	finishQuery(ctx)
 }
 
 func (t *Tracer) TracePrepareStart(ctx context.Context, _ *pgx.Conn, _ pgx.TracePrepareStartData) context.Context {
 	return boundQuery(ctx)
 }
-func (t *Tracer) TracePrepareEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TracePrepareEndData) {
+func (t *Tracer) TracePrepareEnd(ctx context.Context, _ *pgx.Conn, data pgx.TracePrepareEndData) {
+	t.observe(data.Err)
 	finishQuery(ctx)
 }
