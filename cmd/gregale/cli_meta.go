@@ -5428,6 +5428,26 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"[<slug>]"},
 	},
 	{
+		Name:      "insights",
+		DocSlug:   "flags",
+		Short:     "Product analytics over track() events: series, funnels, retention and requests by flag",
+		HelpNotes: []string{"Events come from the Flags SDK's track(). Breakdowns take flag:KEY or property:KEY; a unit's flag value is the one on its anchor event, else its earliest event that carries the flag."},
+		Subcommands: []cliSub{
+			{Name: "events", Short: "Count an event per day or hour", Positionals: []string{"<event>"}, Flags: append(insightsMetaCommon(),
+				cliFlag{Name: "interval", Short: "day (default) or hour", Value: "INTERVAL"},
+				cliFlag{Name: "where", Short: "property filter KEY:VALUE (repeatable)", Value: "KEY:VALUE", Repeatable: true})},
+			{Name: "funnel", Short: "Count units that complete steps in order within a window", Positionals: []string{"<step>", "<step>", "[<step>...]"}, Flags: append(insightsMetaCommon(),
+				cliFlag{Name: "window", Short: "conversion window, 1h to 720h (default 168h)", Value: "DURATION"})},
+			{Name: "retention", Short: "Show how many units come back after their first start event", Positionals: []string{"<start-event>", "<return-event>"}, Flags: append(insightsMetaCommon(),
+				cliFlag{Name: "period", Short: "day (default) or week", Value: "PERIOD"},
+				cliFlag{Name: "periods", Short: "periods after the cohort, 1 to 12 (default 7)", Value: "N"})},
+			{Name: "requests", Short: "Show requests, server errors and p95 latency per value of a flag", Flags: []cliFlag{
+				{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"},
+				{Name: "flag", Short: "the flag to split by", Value: "KEY", Req: true},
+				{Name: "from", Short: "RFC 3339 time or duration ago such as 36h (default 1 day)", Value: "TIME"}, {Name: "until", Short: "RFC 3339 time or duration ago (default now)", Value: "TIME"}}},
+		},
+	},
+	{
 		Name:      "mfa",
 		DocSlug:   "mfa",
 		Short:     "Set up and manage multi-factor authentication",
