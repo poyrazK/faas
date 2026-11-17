@@ -8,6 +8,8 @@
   enforce-mode deployment carries its own scan) and
   ADR-20261028102540 (scan reuse by scanner identity) are unchanged.
 - **Switch:** imaged `FAAS_IMAGED_LAYER_REUSE`, default off.
+- **Amended:** 2026-11-16, amendment 1 (the key is computed before the
+  image's layers are read).
 
 ## Context
 
@@ -117,3 +119,39 @@ imaged's "image preparation timing" log):
   - The scanner identity probe (ADR-20261028102540) as the reuse
     identity. Today a scan is reused only within an hour of a real scan on
     the node.
+
+## Amendment 1 (2026-11-16): key before the layers are read
+
+**Context.** Production, the 24 hours to 2026-11-16, both compute nodes:
+
+- **Reuse fires.** 49 of 57 build-cache hits reused their layer.
+- **A reuse is barely faster.** imaged's layer phase was still 26 s at the median on a reused layer, against 25–27 s for all deployments:
+  - Republishing took 11.6 s at the median. Every reused layer was a 2 GiB ext4.
+  - The other ~15 s ran before the key was computed. imaged extracted every layer blob of the image to temporary files, decompressed and hashed each layer against the config's diff IDs, and, for a shared runner base, decompressed the layers above the base again to split them.
+  - A reused layer uses none of that: its bytes are the recorded layer's.
+
+**Decision.** Decision item 1 changes. imaged computes the key from inputs it knows before it reads the image's layers:
+
+1. **Image.** The OCI manifest digest. It is read and checked with the index, the manifest and the config, each against its descriptor. These are small reads; the tar passes seek over the layer blobs.
+2. **Shared runner split.** The split's inputs replace its result:
+   - the runtime;
+   - the runner base's layer diff IDs;
+   - the app's start command;
+   - the app manifest *before* the split.
+
+   With the image, these determine everything the split produces: which layers the app layer keeps, why it keeps more than `/app` (the split's reason), and the start command and `PATH` it writes into the manifest.
+3. **The imaged build** (`wire.Version`). The split and the `/app` filter are code. A new imaged builds each layer once before it reuses again. Under v1, a change to the filter could have reused a layer the new code would build differently.
+4. **Unchanged inputs.** The account, the guest-init digest and the plan stay in the key.
+
+**How a deploy proceeds:**
+
+- **Hit:** imaged republishes the recorded layer before reading any layer blob.
+- **Miss, or a failed republish:** imaged extracts and verifies the layers, splits them and builds the layer, exactly as before, then records it under the key.
+- **Key version:** the key format becomes `app-layer-reuse/v2`, so v1 records never match. The index prunes them like any other old record.
+
+**Integrity.**
+
+- **Why skipping the layer checks is safe.** A reuse no longer verifies the new archive's layer blobs. It does not use them: the manifest digest names each layer blob by digest, and the recorded layer was built from blobs that matched those digests.
+- **What is still checked.** The manifest and config are verified as before. Republish still checks the bytes it copies against the record and signs the new key over them. A build still verifies every layer.
+
+**Expected effect.** A reused layer's phase drops from about 26 s to the republish (about 12 s), so a build-cache hit saves about 14 s.

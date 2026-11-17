@@ -51,6 +51,13 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresUndelete(args[1:])
 	case "previews":
 		return cmdPostgresPreviews(args[1:])
+	case "roles":
+		// ADR-20261116213000: dark until released (postgres_custom_roles_cli.go).
+		if !postgresCustomRolesCLI() {
+			printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
+			return unknownSubcommandChoices(os.Stderr, "postgres", nestedCliCommand("postgres"), args[0])
+		}
+		return cmdPostgresRoles(args[1:])
 	case "compute-policy":
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":

@@ -385,8 +385,14 @@ func (c *LocalCacheBackend) Exists(ctx context.Context, key string) (bool, error
 // filename. The hash is hex-encoded SHA-256 (64 lowercase hex
 // chars), with the leading 2 chars used as the bucket directory
 // so a single flat directory doesn't grow unbounded.
+//
+// A generation-routed key (RouteGeneration) is kept under its parent name,
+// so each generation of a runtime base has its own file and generation
+// marker (ADR-20261116190000). A release that pre-stages another generation
+// then never replaces the file the serving vmmd boots, and the node need not
+// drain for it.
 func (c *LocalCacheBackend) cacheFileFor(key string) (path string, metaPath string) {
-	full := CacheFileForKey(c.root, key)
+	full := CacheFileForKey(c.root, c.parentKey(key))
 	return full, full + ".meta"
 }
 
@@ -572,7 +578,7 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	keep = true
 	_ = os.Remove(path + ".generation")
 	_ = os.Chmod(path, 0o644)
-	if err := os.WriteFile(metaPath, []byte(key), 0o644); err != nil {
+	if err := os.WriteFile(metaPath, []byte(c.parentKey(key)), 0o644); err != nil {
 		// Sidecar failure is non-fatal but degrades List.
 		_ = err
 	}
@@ -1051,7 +1057,9 @@ func (c *LocalCacheBackend) installLocked(key, tmpPath string) error {
 	}
 	_ = os.Chmod(path, 0o664)
 	_ = os.Remove(path + ".generation")
-	if err := os.WriteFile(metaPath, []byte(key), 0o644); err != nil {
+	// The sidecar names the file's own key: a routed entry's parent name,
+	// which resolves to this file in every daemon, routed or not.
+	if err := os.WriteFile(metaPath, []byte(c.parentKey(key)), 0o644); err != nil {
 		// The blob remains usable; without its sidecar it is simply
 		// invisible to List and will be treated as a cache miss later.
 		_ = err
@@ -1206,6 +1214,8 @@ func (c *LocalCacheBackend) evictCache(key string) {
 // cannot fill the disk that builder drives and capture staging share; that
 // eviction spares protect, the entry just installed. Caller holds c.mu.
 func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
+	// Entries carry their sidecar's key, which is a routed key's parent name.
+	protect = c.parentKey(protect)
 	entries, err := c.snapshotCacheLocked()
 	if err != nil {
 		return err
