@@ -1050,7 +1050,10 @@ const BuilderdVerifiedCacheArtifacts = 1024
 const ImagedLayerReuseMaxRecords = 4096
 
 // ImagedLayerReuseRecordMaxBytes bounds one reuse index record imaged reads.
-const ImagedLayerReuseRecordMaxBytes = 4096
+// A record carries the layer's input and final app manifests so a runtime
+// settings change can patch the manifest instead of rebuilding; a record
+// over the bound reads as a miss.
+const ImagedLayerReuseRecordMaxBytes = 256 << 10
 
 // ImagedLayerReuseSBOMMaxBytes bounds the SBOM imaged copies for a reused app
 // layer; syft's CycloneDX JSON for a large image is a few MB.

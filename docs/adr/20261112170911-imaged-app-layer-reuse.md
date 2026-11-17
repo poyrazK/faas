@@ -155,3 +155,25 @@ imaged's "image preparation timing" log):
 - **What is still checked.** The manifest and config are verified as before. Republish still checks the bytes it copies against the record and signs the new key over them. A build still verifies every layer.
 
 **Expected effect.** A reused layer's phase drops from about 26 s to the republish (about 12 s), so a build-cache hit saves about 14 s.
+
+## Amendment 2 (2026-11-17): runtime settings patch the embedded manifest
+
+**Context.** A Kroki deployment on 2026-11-17 (CLI v0.1.18-rc.347) changed only runtime settings between revisions v8 and v9; the image digest was the same, and both converted the image again. The v2 key hashed the whole app manifest, but most manifest fields (ports, environment, health checks, hooks, release and gateway settings) only change the one file a build writes from it, `/etc/faas/app.json`.
+
+**Decision.**
+
+1. **Key.** The key covers the manifest's *layer content* fields: the entrypoint, working directory, user, execution mode and the `PATH` and `VIRTUAL_ENV` environment entries (the shared runner split reads the entrypoint and rewrites those three). Every other field is runtime-only. `TestLayerManifestFieldsAreClassified` fails when an `AppManifest` field is in neither list, so a new field cannot leave the key unnoticed. The key format becomes `app-layer-reuse/v3`.
+2. **Record.** A record carries the input manifest (before the split) and the final manifest (embedded in the layer). A record without them is never used.
+3. **Same input manifest:** republish, as before.
+4. **Different runtime settings:** imaged replays the split's recorded rewrites on the new manifest and `rootfs.RepublishWithManifest` publishes a copy of the recorded layer with the new `/etc/faas/app.json`. Like the base guest-init patch, it uses debugfs at a pinned time (no mount, no root), and it refuses unless:
+   - the copy's digest matches the record;
+   - the embedded manifest is byte-for-byte the recorded final manifest;
+   - afterwards the file holds exactly the new bytes, with the old owner and mode, and the image passes `e2fsck -fn`.
+
+   A refusal builds the layer and keeps the record; any other failure drops it.
+
+**Integrity.** The patched layer is published and signed like a build, over the digest of the bytes storage received. Its digest is new, so it has no scan source and is scanned. Its SBOM is the source's: the files it describes are unchanged.
+
+**Metric.** `imaged_app_layer_reuse_total{outcome="patched"}`.
+
+**Not covered.** Registry images still convert on every deployment: their publication records per-layer consumption evidence that a reuse does not produce.
