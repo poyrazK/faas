@@ -12,8 +12,10 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -64,6 +66,10 @@ type sandboxActivity struct {
 	persists sandboxPersists
 	// usage measures the VM, or is nil when the VMM cannot.
 	usage fcvm.SandboxUsageMeter
+	// runAction runs one browser action (ADR-20261117065818 §2), or is nil
+	// for a session that takes none; actionMu runs them one at a time.
+	runAction func(ctx context.Context, a *vmmdpb.RunSandboxAction)
+	actionMu  sync.Mutex
 }
 
 func newSandboxActivity(sandboxID string, plan api.Plan) *sandboxActivity {
@@ -169,8 +175,11 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		close(act.done)
 		s.sandboxRuns.Delete(wake.Instance)
 	}()
+	if runner != nil && wake.Browser && wake.Network == api.SandboxNetworkWeb && task == nil {
+		act.runAction = func(ctx context.Context, a *vmmdpb.RunSandboxAction) { s.runSandboxAction(ctx, runner, wake, act, a) }
+	}
 	if err := stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Booted{Booted: &vmmdpb.RunSandboxBooted{
-		Method: wakeMethodFrom(inst.Method), BootMs: time.Since(started).Milliseconds(),
+		Method: wakeMethodFrom(inst.Method), BootMs: time.Since(started).Milliseconds(), Actions: act.runAction != nil,
 	}}}); err != nil {
 		opErr = err
 		return err
@@ -244,6 +253,12 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 				act.persists.deliver(msg.GetPersistGrant().GetRequestId(), msg)
 			case msg.GetPersistRecorded() != nil:
 				act.persists.deliver(msg.GetPersistRecorded().GetRequestId(), msg)
+			case msg.GetAction() != nil:
+				if act.runAction == nil {
+					ev = actionDone(msg.GetAction().GetActionId(), "this session takes no browser actions")
+					break
+				}
+				go act.runAction(ctx, msg.GetAction())
 			}
 		case ev = <-act.outbox:
 		case <-act.thawed:
@@ -480,4 +495,115 @@ func runSandboxTask(ctx context.Context, runner sandboxTaskRunner, wake fcvm.San
 	case <-act.done:
 	case <-ctx.Done():
 	}
+}
+
+// sandboxActionCommand validates a browser action and builds its command
+// (ADR-20261117065818 §2). The command is fixed; the caller's fields reach
+// it only as validated flags and, after "--", one value.
+func sandboxActionCommand(a *vmmdpb.RunSandboxAction, plan api.Plan) (argv []string, timeout time.Duration, maxOutput int64, problem string) {
+	idx := plan.PlanIndex()
+	timeout = time.Duration(a.GetTimeoutMs()) * time.Millisecond
+	switch {
+	case timeout <= 0 || timeout > time.Duration(api.SandboxBrowserActionTimeoutSec[idx])*time.Second:
+		return nil, 0, 0, "timeout_ms is outside the plan"
+	case a.GetMaxOutputBytes() < 1 || a.GetMaxOutputBytes() > int64(api.SandboxTaskOutputMaxBytes):
+		return nil, 0, 0, "max_output_bytes is out of range"
+	case a.GetMaxChars() < 1 || int(a.GetMaxChars()) > api.SandboxBrowseMaxChars:
+		return nil, 0, 0, "max_chars is out of range"
+	}
+	argv = []string{"gregale-browser", "act", a.GetKind(), "--max-chars", strconv.Itoa(int(a.GetMaxChars())),
+		"--timeout", strconv.Itoa(int(timeout.Seconds()))}
+	ref := func() bool {
+		if a.GetRef() < 1 || a.GetRef() > 10_000 {
+			return false
+		}
+		argv = append(argv, "--ref", strconv.Itoa(int(a.GetRef())))
+		return true
+	}
+	switch a.GetKind() {
+	case "navigate":
+		if !api.ValidSandboxBrowseURL(a.GetUrl()) {
+			return nil, 0, 0, "url must be an http or https URL of a public host"
+		}
+		argv = append(argv, "--", a.GetUrl())
+	case "click":
+		if !ref() {
+			return nil, 0, 0, "ref is out of range"
+		}
+	case "type":
+		if !ref() {
+			return nil, 0, 0, "ref is out of range"
+		}
+		if utf8.RuneCountInString(a.GetText()) > api.SandboxBrowserTypeMaxChars || !utf8.ValidString(a.GetText()) ||
+			strings.ContainsRune(a.GetText(), 0) {
+			return nil, 0, 0, "text is too long or not text"
+		}
+		if a.GetSubmit() {
+			argv = append(argv, "--submit")
+		}
+		argv = append(argv, "--", a.GetText())
+	case "press":
+		if !sandboxActionKeys[a.GetKey()] {
+			return nil, 0, 0, "key is not one press takes"
+		}
+		argv = append(argv, "--key", a.GetKey())
+	case "scroll":
+		if a.GetDirection() != "up" && a.GetDirection() != "down" {
+			return nil, 0, 0, "direction must be up or down"
+		}
+		argv = append(argv, "--direction", a.GetDirection())
+	case "back", "snapshot":
+	default:
+		return nil, 0, 0, "kind must be navigate, click, type, press, scroll, back or snapshot"
+	}
+	return argv, timeout, a.GetMaxOutputBytes(), ""
+}
+
+// sandboxActionKeys are the keys press takes, as gregale-browser's ACT_KEYS.
+var sandboxActionKeys = map[string]bool{"Enter": true, "Tab": true, "Escape": true, "Backspace": true, "ArrowUp": true,
+	"ArrowDown": true, "ArrowLeft": true, "ArrowRight": true, "PageUp": true, "PageDown": true, "Home": true, "End": true}
+
+func actionDone(id, problem string) *vmmdpb.RunSandboxEvent {
+	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_ActionDone{ActionDone: &vmmdpb.RunSandboxActionDone{
+		ActionId: id, ExitCode: -1, Error: problem}}}
+}
+
+// runSandboxAction runs one browser action and puts its end on the
+// session's stream. It is a call: a frozen VM is thawed first, and the VM
+// does not freeze under it.
+func (s *Server) runSandboxAction(ctx context.Context, runner sandboxTaskRunner, wake fcvm.SandboxWakeRequest, act *sandboxActivity,
+	a *vmmdpb.RunSandboxAction) {
+	ev := s.sandboxActionEnd(ctx, runner, wake, act, a)
+	select {
+	case act.outbox <- ev:
+	case <-act.done:
+	case <-ctx.Done():
+	}
+}
+
+func (s *Server) sandboxActionEnd(ctx context.Context, runner sandboxTaskRunner, wake fcvm.SandboxWakeRequest, act *sandboxActivity,
+	a *vmmdpb.RunSandboxAction) *vmmdpb.RunSandboxEvent {
+	argv, timeout, maxOutput, problem := sandboxActionCommand(a, wake.Plan)
+	if problem != "" {
+		return actionDone(a.GetActionId(), problem)
+	}
+	act.actionMu.Lock()
+	defer act.actionMu.Unlock()
+	s.beginActivity(wake.Instance)
+	defer s.endActivity(wake.Instance)
+	act.begin()
+	defer func() { act.end(time.Now()) }()
+	if err := s.thawSandbox(ctx, wake.Instance, act); err != nil {
+		s.log.Warn("sandbox: thaw before an action failed", "instance", wake.Instance, "err", err)
+		return actionDone(a.GetActionId(), "the session could not be thawed")
+	}
+	if err := s.prepareGuest(ctx, wake.Instance); err != nil {
+		return actionDone(a.GetActionId(), "the session is resuming")
+	}
+	res, err := runner.RunSandboxTask(ctx, wake.Instance, wake.SandboxID, argv, timeout, maxOutput)
+	if err != nil {
+		return actionDone(a.GetActionId(), err.Error())
+	}
+	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_ActionDone{ActionDone: &vmmdpb.RunSandboxActionDone{
+		ActionId: a.GetActionId(), ExitCode: int32(res.ExitCode), Output: res.Output, TimedOut: res.TimedOut, Truncated: res.Truncated}}}
 }

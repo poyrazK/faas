@@ -21312,6 +21312,29 @@
     "kind": "operational"
   },
   {
+    "table": "sandbox_actions",
+    "columns": [
+      "account_id",
+      "args",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "exit_code",
+      "finished_at",
+      "id",
+      "issued_at",
+      "kind",
+      "output",
+      "seq",
+      "session_id",
+      "started_at",
+      "state",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_run_ai_spend",
     "columns": [
       "account_id",

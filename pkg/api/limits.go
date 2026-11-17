@@ -11249,6 +11249,19 @@ var (
 	// SandboxBrowseDefaultChars is its default.
 	SandboxBrowseMaxChars     = 100_000
 	SandboxBrowseDefaultChars = 20_000
+	// Interactive browser sessions (ADR-20261117065818). A session gregale_browser
+	// opens closes after SandboxBrowserIdleCloseSec with no action, and at
+	// SandboxBrowserLifetimeSec at the latest; it runs at most
+	// SandboxBrowserActionsMax actions, each within
+	// SandboxBrowserActionTimeoutSec. A snapshot's page text defaults to
+	// SandboxBrowserSnapshotDefaultChars, and type enters at most
+	// SandboxBrowserTypeMaxChars.
+	SandboxBrowserIdleCloseSec         = [4]int{0, 300, 600, 600}
+	SandboxBrowserLifetimeSec          = [4]int{0, 1800, 3600, 3600}
+	SandboxBrowserActionsMax           = [4]int{0, 200, 500, 500}
+	SandboxBrowserActionTimeoutSec     = [4]int{0, 30, 30, 30}
+	SandboxBrowserSnapshotDefaultChars = 4000
+	SandboxBrowserTypeMaxChars         = 2048
 	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
 	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
 	// it. A browser touches many domains per page, so it is above the per-run

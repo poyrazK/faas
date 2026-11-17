@@ -1287,6 +1287,9 @@ message SandboxRunRequest {
     SandboxRunClose close = 4;
     SandboxRunPersistGrant persist_grant = 5;
     SandboxRunPersistRecorded persist_recorded = 6;
+    // action relays a browser action to vmmd (ADR-20261117065818 §2). An
+    // older schedd ignores it; agentd sends one only after booted.actions.
+    SandboxRunAction action = 7;
   }
 }
 
@@ -1332,6 +1335,42 @@ message SandboxRunTask {
   int64 max_output_bytes = 5;
 }
 
+// SandboxRunAction is a browser action, as vmmd's RunSandboxAction.
+message SandboxRunAction {
+  string action_id = 1;
+  // kind is one of navigate, click, type, press, scroll, back, snapshot:
+  // gregale-browser act <kind>. vmmd builds the command from the validated
+  // fields below, never from shell text.
+  string kind = 2;
+  // url is navigate's page, http or https on a public host.
+  string url = 3;
+  // ref is click's and type's element, from the last snapshot.
+  int32 ref = 4;
+  // text is what type enters, at most SandboxBrowserTypeMaxChars.
+  string text = 5;
+  // submit has type press Enter after entering text.
+  bool submit = 6;
+  // key is press's key, one of a closed set.
+  string key = 7;
+  // direction is scroll's, up or down.
+  string direction = 8;
+  // max_chars bounds the page text the snapshot returns.
+  int32 max_chars = 9;
+  int64 timeout_ms = 10;
+  int64 max_output_bytes = 11;
+}
+
+// SandboxRunActionDone is an action's end, as vmmd's RunSandboxActionDone.
+message SandboxRunActionDone {
+  string action_id = 1;
+  int32 exit_code = 2;
+  bytes output = 3;
+  bool timed_out = 4;
+  bool truncated = 5;
+  // error is why the command could not run, when it never did.
+  string error = 6;
+}
+
 // SandboxRunTaskDone is a sandbox task's end, as vmmd's RunSandboxTaskDone.
 message SandboxRunTaskDone {
   int32 exit_code = 1;
@@ -1359,6 +1398,8 @@ message SandboxRunEvent {
     AgentRunUsage usage = 9;
     // task_done ends a sandbox task (ADR-20261116182615 §3).
     SandboxRunTaskDone task_done = 10;
+    // action_done ends a browser action (ADR-20261117065818 §2).
+    SandboxRunActionDone action_done = 11;
   }
 }
 
@@ -1474,6 +1515,9 @@ message AgentRunPlaced {
 message AgentRunBooted {
   string method = 1;
   int64 boot_ms = 2;
+  // actions relays vmmd's RunSandboxBooted.actions for a sandbox session
+  // (ADR-20261117065818 §2); an agent run leaves it unset.
+  bool actions = 3;
 }
 
 message AgentRunOutput {

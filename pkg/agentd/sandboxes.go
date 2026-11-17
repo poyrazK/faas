@@ -113,6 +113,9 @@ type Sandboxes struct {
 	log     *slog.Logger
 	metrics *Metrics
 	now     func() time.Time
+	// actions are the held sessions that take browser actions
+	// (ADR-20261117065818 §2).
+	actions sandboxActions
 }
 
 // NewSandboxes returns a replica's session driver; cfg is the replica's
@@ -125,6 +128,7 @@ func (a *Agentd) NewSandboxes(store SandboxStore, schedd SandboxSchedd, scfg San
 // leases.
 func (s *Sandboxes) Run(ctx context.Context) error {
 	go s.sweep(ctx)
+	go s.pumpActions(ctx)
 	slots := make(chan struct{}, s.scfg.Concurrency)
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -281,6 +285,9 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		return
 	}
 	ss := &session{claim: claim, lease: claim.SandboxLease, lastActivity: s.now(), persists: map[string]string{}}
+	// A running action of an earlier claim ran in a VM that is gone.
+	s.endOpenActions(ctx, claim, agentstore.SandboxActionRunning)
+	defer s.actions.remove(claim.ID)
 	closeVM := func() {
 		_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Close{Close: &scheddpb.SandboxRunClose{}}})
 	}
@@ -353,6 +360,9 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			ss.mu.Unlock()
 			s.log.Info("agentd: sandbox ready", "sandbox_id", ss.claim.ID, "node", placed.GetNodeId(),
 				"method", ev.GetBooted().GetMethod(), "boot_ms", ev.GetBooted().GetBootMs())
+			if ev.GetBooted().GetActions() && ss.claim.Browser && ss.claim.Task == nil {
+				s.actions.add(ss, send)
+			}
 		case ev.GetActivity() != nil:
 			a := ev.GetActivity()
 			ss.mu.Lock()
@@ -394,6 +404,8 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			if err := s.finishTask(ctx, ss, ev.GetTaskDone(), send); err != nil {
 				return err
 			}
+		case ev.GetActionDone() != nil:
+			s.actionDone(ctx, ss, ev.GetActionDone())
 		}
 	}
 }
@@ -473,6 +485,8 @@ func (s *Sandboxes) timeSession(ctx context.Context, ss *session, send func(*sch
 }
 
 func (s *Sandboxes) finish(ctx context.Context, claim agentstore.SandboxClaim, end *sessionEnd) {
+	s.actions.remove(claim.ID)
+	s.endOpenActions(ctx, claim, agentstore.SandboxActionPending, agentstore.SandboxActionRunning)
 	if err := s.store.FinishSandbox(context.WithoutCancel(ctx), claim.ID, claim.LeaseToken, end.state, end.code, end.message); err != nil {
 		s.log.Warn("agentd: finish sandbox failed", "sandbox_id", claim.ID, "err", err)
 		return

@@ -546,6 +546,29 @@ func (q *Queries) EndAgentDeliveryAttempt(ctx context.Context, db DBTX, arg EndA
 	return run_id, err
 }
 
+const endOpenSandboxActions = `-- name: EndOpenSandboxActions :execrows
+UPDATE sandbox_actions a SET state='done', finished_at=now()
+ FROM sandbox_sessions sb
+ WHERE a.session_id=$1::text::uuid AND a.state = ANY($2::text[]) AND sb.id=a.session_id
+ AND sb.lease_token=$3::text
+`
+
+type EndOpenSandboxActionsParams struct {
+	SessionID  string
+	States     []string
+	LeaseToken string
+}
+
+// Ends a session's actions that will not run to their end: on a fresh
+// claim (a running action's VM is gone) and as the session ends.
+func (q *Queries) EndOpenSandboxActions(ctx context.Context, db DBTX, arg EndOpenSandboxActionsParams) (int64, error) {
+	result, err := db.Exec(ctx, endOpenSandboxActions, arg.SessionID, arg.States, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const enterAgentRunDelivering = `-- name: EnterAgentRunDelivering :execrows
 UPDATE agent_runs SET state='delivering', exit_code=$1::integer, signal=$2::integer,
   lease_token=NULL, lease_expires_at=NULL, updated_at=now()
@@ -775,6 +798,35 @@ func (q *Queries) FinishDeliveringAgentRun(ctx context.Context, db DBTX, arg Fin
 		arg.OutcomeCode,
 		arg.OutcomeMessage,
 		arg.RunID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishSandboxAction = `-- name: FinishSandboxAction :execrows
+UPDATE sandbox_actions a SET state='done', exit_code=$1::integer, output=$2::bytea, finished_at=now()
+ FROM sandbox_sessions sb
+ WHERE a.id=$3::text::uuid AND a.state='running' AND sb.id=a.session_id
+ AND sb.lease_token=$4::text
+`
+
+type FinishSandboxActionParams struct {
+	ExitCode   pgtype.Int4
+	Output     []byte
+	ID         string
+	LeaseToken string
+}
+
+// agentd records a running action's end under its session's lease. A nil
+// exit code is an action that never ran to its end.
+func (q *Queries) FinishSandboxAction(ctx context.Context, db DBTX, arg FinishSandboxActionParams) (int64, error) {
+	result, err := db.Exec(ctx, finishSandboxAction,
+		arg.ExitCode,
+		arg.Output,
+		arg.ID,
+		arg.LeaseToken,
 	)
 	if err != nil {
 		return 0, err
@@ -1825,6 +1877,50 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
 	)
+	return i, err
+}
+
+const insertSandboxAction = `-- name: InsertSandboxAction :one
+INSERT INTO sandbox_actions (session_id, account_id, seq, kind, args, endpoint_id, thread_id, tool_call_id, issued_at)
+SELECT $1::text::uuid, $2::text::uuid,
+  coalesce((SELECT max(a.seq) FROM sandbox_actions a WHERE a.session_id = $1::text::uuid), 0) + 1,
+  $3::text, $4::jsonb, $5::text::uuid, $6::text,
+  $7::text, $8::timestamptz
+ON CONFLICT (endpoint_id, thread_id, tool_call_id) DO NOTHING
+RETURNING id::text AS id, seq
+`
+
+type InsertSandboxActionParams struct {
+	SessionID  string
+	AccountID  string
+	Kind       string
+	Args       []byte
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+	IssuedAt   pgtype.Timestamptz
+}
+
+type InsertSandboxActionRow struct {
+	ID  string
+	Seq int32
+}
+
+// ADR-20261117065818 §2: apid records a gregale_browser action on a live
+// session as the session's next, once per tool call.
+func (q *Queries) InsertSandboxAction(ctx context.Context, db DBTX, arg InsertSandboxActionParams) (InsertSandboxActionRow, error) {
+	row := db.QueryRow(ctx, insertSandboxAction,
+		arg.SessionID,
+		arg.AccountID,
+		arg.Kind,
+		arg.Args,
+		arg.EndpointID,
+		arg.ThreadID,
+		arg.ToolCallID,
+		arg.IssuedAt,
+	)
+	var i InsertSandboxActionRow
+	err := row.Scan(&i.ID, &i.Seq)
 	return i, err
 }
 
@@ -3029,6 +3125,50 @@ func (q *Queries) MarkSandboxTaskCallDelivered(ctx context.Context, db DBTX, san
 	return err
 }
 
+const nextSandboxActions = `-- name: NextSandboxActions :many
+SELECT DISTINCT ON (a.session_id) a.id::text AS id, a.session_id::text AS session_id, a.seq, a.kind, a.args
+ FROM sandbox_actions a
+ WHERE a.session_id = ANY($1::text[]::uuid[]) AND a.state = 'pending'
+ AND NOT EXISTS (SELECT 1 FROM sandbox_actions r WHERE r.session_id = a.session_id AND r.state = 'running')
+ ORDER BY a.session_id, a.seq
+`
+
+type NextSandboxActionsRow struct {
+	ID        string
+	SessionID string
+	Seq       int32
+	Kind      string
+	Args      []byte
+}
+
+// Each listed session's next pending action, for the sessions that run none:
+// agentd sends a session one action at a time.
+func (q *Queries) NextSandboxActions(ctx context.Context, db DBTX, sessionIds []string) ([]NextSandboxActionsRow, error) {
+	rows, err := db.Query(ctx, nextSandboxActions, sessionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NextSandboxActionsRow{}
+	for rows.Next() {
+		var i NextSandboxActionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Seq,
+			&i.Kind,
+			&i.Args,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordAgentRunBoot = `-- name: RecordAgentRunBoot :execrows
 UPDATE agent_runs SET boot_ms=$1::integer, updated_at=now()
  WHERE id=$2::text::uuid AND lease_token=$3::text AND state='running'
@@ -3423,6 +3563,31 @@ func (q *Queries) RevokeAgentCallbacks(ctx context.Context, db DBTX, arg RevokeA
 	return revoked_at, err
 }
 
+const sandboxActionByCall = `-- name: SandboxActionByCall :one
+SELECT id::text AS id, session_id::text AS session_id, seq FROM sandbox_actions
+ WHERE endpoint_id=$1::text::uuid AND thread_id=$2::text
+ AND tool_call_id=$3::text
+`
+
+type SandboxActionByCallParams struct {
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+}
+
+type SandboxActionByCallRow struct {
+	ID        string
+	SessionID string
+	Seq       int32
+}
+
+func (q *Queries) SandboxActionByCall(ctx context.Context, db DBTX, arg SandboxActionByCallParams) (SandboxActionByCallRow, error) {
+	row := db.QueryRow(ctx, sandboxActionByCall, arg.EndpointID, arg.ThreadID, arg.ToolCallID)
+	var i SandboxActionByCallRow
+	err := row.Scan(&i.ID, &i.SessionID, &i.Seq)
+	return i, err
+}
+
 const sandboxSnapshotBytesUsed = `-- name: SandboxSnapshotBytesUsed :one
 SELECT coalesce(sum(coalesce(bytes, reserved_bytes)), 0)::bigint FROM sandbox_workspace_snapshots
  WHERE account_id=$1::text::uuid
@@ -3536,6 +3701,27 @@ func (q *Queries) StartAgentRun(ctx context.Context, db DBTX, arg StartAgentRunP
 		arg.TtlSeconds,
 		arg.RunID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startSandboxAction = `-- name: StartSandboxAction :execrows
+UPDATE sandbox_actions a SET state='running', started_at=now()
+ FROM sandbox_sessions sb
+ WHERE a.id=$1::text::uuid AND a.state='pending' AND sb.id=a.session_id
+ AND sb.lease_token=$2::text
+`
+
+type StartSandboxActionParams struct {
+	ID         string
+	LeaseToken string
+}
+
+// agentd starts a pending action under its session's lease.
+func (q *Queries) StartSandboxAction(ctx context.Context, db DBTX, arg StartSandboxActionParams) (int64, error) {
+	result, err := db.Exec(ctx, startSandboxAction, arg.ID, arg.LeaseToken)
 	if err != nil {
 		return 0, err
 	}

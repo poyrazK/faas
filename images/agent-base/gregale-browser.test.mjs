@@ -6,7 +6,7 @@ import net from 'node:net';
 import { test } from 'node:test';
 
 process.env.GREGALE_BROWSER_PORT = '19222';
-const { fetchArgs, isLocal, pageResult, relay, rewriteBody, upgradeHead } = await import('./gregale-browser.mjs');
+const { ACT_KEYS, actArgs, fetchArgs, isLocal, pageResult, refScript, relay, rewriteBody, snapshotScript, upgradeHead } = await import('./gregale-browser.mjs');
 
 test('answers point WebSocket URLs at the caller', () => {
   const body = '{"webSocketDebuggerUrl":"ws://127.0.0.1:19221/devtools/browser/b","devtoolsFrontendUrl":"/x?ws=127.0.0.1:19221/devtools/page/p"}';
@@ -81,4 +81,29 @@ test('a page result keeps at most max_chars characters, whole', () => {
   assert.ok(page.truncated);
   const whole = pageResult('https://e.com', '', 0, undefined, 'short', 100);
   assert.deepEqual(whole, { url: 'https://e.com', final_url: 'https://e.com', status: 0, title: '', text: 'short', truncated: false });
+});
+
+test('act reads its kind, flags and value, and refuses what the kind lacks', () => {
+  assert.deepEqual(actArgs(['navigate', '--max-chars', '500', '--', 'https://example.com/']),
+    { kind: 'navigate', maxChars: 500, timeout: 30, value: 'https://example.com/', submit: false });
+  assert.deepEqual(actArgs(['type', '--ref', '3', '--submit', '--', '--not-a-flag']),
+    { kind: 'type', maxChars: 4000, timeout: 30, value: '--not-a-flag', submit: true, ref: 3 });
+  assert.equal(actArgs(['type', '--ref', '3', '--', '']).value, '');
+  assert.equal(actArgs(['press', '--key', 'Enter']).key, 'Enter');
+  assert.equal(actArgs(['scroll', '--direction', 'up']).direction, 'up');
+  assert.equal(actArgs(['snapshot']).kind, 'snapshot');
+  for (const bad of [['open'], ['navigate', '--', 'file:///etc/passwd'], ['click'], ['click', '--ref', '0'],
+    ['type', '--ref', '2'], ['press', '--key', 'F12'], ['press', '--key', 'constructor'], ['scroll', '--direction', 'left'],
+    ['back', '--ref', '1x'], ['snapshot', '--bogus', '1']]) {
+    assert.throws(() => actArgs(bad), /gregale-browser act/, bad.join(' '));
+  }
+  assert.ok(Object.keys(ACT_KEYS).includes('PageDown'));
+});
+
+test('page scripts embed only the numbers act validated', () => {
+  assert.match(refScript(12), /data-gregale-ref="12"/);
+  assert.match(refScript('12"]; alert(1); //'), /data-gregale-ref="NaN"/);
+  assert.match(snapshotScript(4000), /maxChars = 4000, limit = 150/);
+  assert.doesNotThrow(() => new Function(snapshotScript(10)));
+  assert.doesNotThrow(() => new Function(refScript(1)));
 });

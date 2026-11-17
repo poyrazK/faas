@@ -3495,6 +3495,10 @@ message RunSandboxRequest {
     RunSandboxClose close = 3;
     RunSandboxPersistGrant persist_grant = 4;
     RunSandboxPersistRecorded persist_recorded = 5;
+    // action acts on the session's browser (ADR-20261117065818 §2). vmmd
+    // runs one at a time and answers each with action_done. An older vmmd
+    // ignores it; agentd sends one only after booted.actions.
+    RunSandboxAction action = 6;
   }
 }
 
@@ -3548,6 +3552,45 @@ message RunSandboxStart {
   // task_done; the caller then closes the session. An older vmmd ignores it
   // and never reports task_done, so agentd ends a task past its timeout.
   RunSandboxTask task = 19;
+}
+
+// RunSandboxAction is one browser action on a live session
+// (ADR-20261117065818 §2).
+message RunSandboxAction {
+  // action_id is agentd's, echoed on action_done.
+  string action_id = 1;
+  // kind is one of navigate, click, type, press, scroll, back, snapshot:
+  // gregale-browser act <kind>. vmmd builds the command from the validated
+  // fields below, never from shell text.
+  string kind = 2;
+  // url is navigate's page, http or https on a public host.
+  string url = 3;
+  // ref is click's and type's element, from the last snapshot.
+  int32 ref = 4;
+  // text is what type enters, at most SandboxBrowserTypeMaxChars.
+  string text = 5;
+  // submit has type press Enter after entering text.
+  bool submit = 6;
+  // key is press's key, one of a closed set.
+  string key = 7;
+  // direction is scroll's, up or down.
+  string direction = 8;
+  // max_chars bounds the page text the snapshot returns.
+  int32 max_chars = 9;
+  int64 timeout_ms = 10;
+  int64 max_output_bytes = 11;
+}
+
+// RunSandboxActionDone is an action's end: the command's exit code and
+// standard output, the page snapshot as JSON when it exited 0.
+message RunSandboxActionDone {
+  string action_id = 1;
+  int32 exit_code = 2;
+  bytes output = 3;
+  bool timed_out = 4;
+  bool truncated = 5;
+  // error is why the command could not run, when it never did.
+  string error = 6;
 }
 
 // RunSandboxTask is a sandbox task: a closed set of kinds, each a fixed
@@ -3619,12 +3662,17 @@ message RunSandboxEvent {
     AgentRunUsage usage = 8;
     // task_done ends a sandbox task (ADR-20261116182615 §3).
     RunSandboxTaskDone task_done = 9;
+    // action_done ends an action (ADR-20261117065818 §2).
+    RunSandboxActionDone action_done = 10;
   }
 }
 
 message RunSandboxBooted {
   WakeMethod method = 1;
   int64 boot_ms = 2;
+  // actions is set by a vmmd that runs browser actions on this session
+  // (ADR-20261117065818 §2): a browser session in web mode.
+  bool actions = 3;
 }
 
 // RunSandboxActivity reports the session's calls, at most once a second
