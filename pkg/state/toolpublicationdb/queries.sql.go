@@ -581,6 +581,68 @@ func (q *Queries) LockDelegatedToolGrant(ctx context.Context, db DBTX, arg LockD
 	return payload, err
 }
 
+const lockHostedTaskSourceIntent = `-- name: LockHostedTaskSourceIntent :one
+SELECT payload,ciphertext FROM hosted_task_source_intents WHERE account_id=$1 AND id=$2 FOR UPDATE
+`
+
+type LockHostedTaskSourceIntentParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type LockHostedTaskSourceIntentRow struct {
+	Payload    []byte
+	Ciphertext []byte
+}
+
+func (q *Queries) LockHostedTaskSourceIntent(ctx context.Context, db DBTX, arg LockHostedTaskSourceIntentParams) (LockHostedTaskSourceIntentRow, error) {
+	row := db.QueryRow(ctx, lockHostedTaskSourceIntent, arg.AccountID, arg.ID)
+	var i LockHostedTaskSourceIntentRow
+	err := row.Scan(&i.Payload, &i.Ciphertext)
+	return i, err
+}
+
+const lockHostedTaskSourceOwnerKey = `-- name: LockHostedTaskSourceOwnerKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
+AND k.scopes @> ARRAY['admin']::text[] AND NOT k.scopes @> ARRAY['agent']::text[] AND k.label IS DISTINCT FROM 'mcp-login'
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k
+`
+
+type LockHostedTaskSourceOwnerKeyParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) LockHostedTaskSourceOwnerKey(ctx context.Context, db DBTX, arg LockHostedTaskSourceOwnerKeyParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockHostedTaskSourceOwnerKey, arg.AccountID, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockHostedTaskSourceRequesterKey = `-- name: LockHostedTaskSourceRequesterKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
+AND (k.scopes @> ARRAY['admin']::text[] OR k.scopes @> ARRAY['apps:read','deploy:write']::text[])
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k
+`
+
+type LockHostedTaskSourceRequesterKeyParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+// Account API keys are distinct from app, tenant and hosting-site credentials.
+func (q *Queries) LockHostedTaskSourceRequesterKey(ctx context.Context, db DBTX, arg LockHostedTaskSourceRequesterKeyParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockHostedTaskSourceRequesterKey, arg.AccountID, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockPublicationReadinessEvidence = `-- name: LockPublicationReadinessEvidence :many
 SELECT evidence FROM deployment_mcp_readiness_evidence WHERE deployment_id=$1 FOR SHARE
 `
@@ -1169,6 +1231,21 @@ func (q *Queries) ToolGrantEntries(ctx context.Context, db DBTX, arg ToolGrantEn
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateHostedTaskSourceIntentReview = `-- name: UpdateHostedTaskSourceIntentReview :exec
+UPDATE hosted_task_source_intents SET payload=$3 WHERE account_id=$1 AND id=$2
+`
+
+type UpdateHostedTaskSourceIntentReviewParams struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+}
+
+func (q *Queries) UpdateHostedTaskSourceIntentReview(ctx context.Context, db DBTX, arg UpdateHostedTaskSourceIntentReviewParams) error {
+	_, err := db.Exec(ctx, updateHostedTaskSourceIntentReview, arg.AccountID, arg.ID, arg.Payload)
+	return err
 }
 
 const updateTaskToolReleaseIntent = `-- name: UpdateTaskToolReleaseIntent :exec
