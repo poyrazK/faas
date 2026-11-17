@@ -493,6 +493,7 @@ migrations-land: ## Merge origin/main into a migration-carrying branch: take mai
 agent-eval-test: ## Unit tests of agent-eval and first-hour reports; no live runs (ADR-20261026152009)
 	python3 scripts/agent-eval/agent_eval_test.py
 	python3 -I scripts/first-hour/baseline_test.py
+	python3 -I scripts/first-hour/qualify_release_test.py
 
 AGENT_EVAL_AGENTS ?= claude
 AGENT_EVAL_TOOLSETS ?= core,all

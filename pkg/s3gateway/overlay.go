@@ -276,7 +276,9 @@ func overlayListEntries(page objectstorage.ObjectPage) []overlayListEntry {
 // source. Both lists start after the same boundary; the branch's entry wins
 // a key both hold, a tombstoned source key is skipped, and the page stops at
 // the first truncated list's last entry so that no key is skipped. A source
-// common prefix whose keys the branch all deleted still lists.
+// common prefix the branch does not hold lists only when it holds a key the
+// branch reads (overlayPrefixVisible); a page that has checked
+// overlayPrefixProbes of them ends before the next.
 func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req, through requestContext, list objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error) {
 	list.Cursor = ""
 	if !h.recordProviderRequest(w, r, req) {
@@ -298,7 +300,7 @@ func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req
 		}
 	}
 	store, _ := h.store.(state.ObjectBucketOverlayStore)
-	hidden, err := store.ObjectBucketOverlayTombstones(r.Context(), req.bucket.ID, keys)
+	hidden, err := overlayTombstones(r, store, req.bucket.ID, keys)
 	if err != nil {
 		return objectstorage.ObjectPage{}, objectstorage.ErrUnavailable
 	}
@@ -314,9 +316,11 @@ func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req
 		horizon = sourceHorizon
 	}
 	var out []overlayListEntry
-	i, j, full := 0, 0, false
+	var last *overlayListEntry // the last entry decided, emitted or not
+	i, j, full, cut, probes := 0, 0, false, false, 0
 	for i < len(branch) || j < len(source) {
 		var e overlayListEntry
+		sourceOnly := false
 		if j >= len(source) || i < len(branch) && branch[i].key <= source[j].key {
 			e = branch[i]
 			if j < len(source) && source[j].key == e.key {
@@ -326,7 +330,9 @@ func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req
 		} else {
 			e = source[j]
 			j++
+			sourceOnly = true
 			if !e.prefix && hidden[e.key] {
+				last = &e
 				continue
 			}
 		}
@@ -337,7 +343,23 @@ func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req
 			full = true
 			break
 		}
+		if sourceOnly && e.prefix {
+			if probes == overlayPrefixProbes {
+				cut = true
+				break
+			}
+			probes++
+			visible, err := h.overlayPrefixVisible(w, r, req, through, e.key)
+			if err != nil {
+				return objectstorage.ObjectPage{}, err
+			}
+			if !visible {
+				last = &e
+				continue
+			}
+		}
 		out = append(out, e)
+		last = &e
 	}
 	page := objectstorage.ObjectPage{}
 	for _, e := range out {
@@ -352,6 +374,9 @@ func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req
 	switch {
 	case full:
 		page.NextCursor = encodeOverlayListCursor(out[len(out)-1].after())
+	case cut:
+		// Every entry up to last is decided; the next page starts after it.
+		page.NextCursor = encodeOverlayListCursor(last.after())
 	case horizon != nil:
 		page.NextCursor = encodeOverlayListCursor(horizon.after())
 	}

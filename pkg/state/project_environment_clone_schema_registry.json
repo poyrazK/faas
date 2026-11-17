@@ -20404,6 +20404,7 @@
     "columns": [
       "attempts",
       "decided_at",
+      "generation",
       "last_error",
       "next_attempt_at",
       "reason",

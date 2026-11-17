@@ -125,6 +125,108 @@ func TestWorker_RetriesFailures(t *testing.T) {
 	}
 }
 
+// generationBackend deletes one generation: a key holding another
+// generation refuses, a missing key is done.
+type generationBackend struct {
+	fakeBackend
+	generations map[string]int64
+	retired     []string
+}
+
+func (b *generationBackend) DeleteGeneration(_ context.Context, key string, generation int64) error {
+	g, ok := b.generations[key]
+	switch {
+	case !ok:
+		return nil
+	case g != generation:
+		return storage.ErrArtifactReceiptMismatch
+	}
+	delete(b.generations, key)
+	b.retired = append(b.retired, key)
+	return nil
+}
+
+// Slice 2: a retirement deletes only the generation it names, never the key.
+func TestWorker_RetiresOnlyTheRecordedGeneration(t *testing.T) {
+	now := time.Now()
+	const (
+		retire   = "snap/d/captures/c1/v2/mem"
+		replaced = "snap/d/captures/c2/v2/mem"
+		gone     = "snap/d/captures/c3/v2/mem"
+		inUse    = "snap/d/captures/c4/v2/mem"
+	)
+	store := &fakeStore{
+		due: []state.StorageObjectDeletion{
+			{StorageKey: retire, RequestedAt: now, Generation: 7},
+			{StorageKey: replaced, RequestedAt: now, Generation: 7},
+			{StorageKey: gone, RequestedAt: now, Generation: 7},
+			{StorageKey: inUse, RequestedAt: now, Generation: 7},
+		},
+		referenced: map[string]bool{inUse: true},
+		decided:    map[string]string{}, retried: map[string]time.Time{},
+	}
+	be := &generationBackend{generations: map[string]int64{retire: 7, replaced: 8, inUse: 7}}
+	if err := objectgc.NewWorker(store, be, nil, nil).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(be.deleted) != 0 {
+		t.Fatalf("unconditional deletes %v, want none for generation retirements", be.deleted)
+	}
+	if len(be.retired) != 1 || be.retired[0] != retire || be.generations[replaced] != 8 || be.generations[inUse] != 7 {
+		t.Fatalf("retired %v, left %v; want only the matching unreferenced generation gone", be.retired, be.generations)
+	}
+	want := map[string]string{retire: state.StorageObjectDeleted, replaced: state.StorageObjectRefused, gone: state.StorageObjectDeleted}
+	for key, outcome := range want {
+		if store.decided[key] != outcome {
+			t.Errorf("%s decided %q, want %q", key, store.decided[key], outcome)
+		}
+	}
+	if _, ok := store.retried[inUse]; !ok {
+		t.Fatal("a referenced retirement was not retried")
+	}
+}
+
+// A backend that cannot delete one generation retries; it never falls back
+// to deleting the whole key.
+func TestWorker_GenerationRetirementNeverDeletesTheKey(t *testing.T) {
+	key := "snap/d/captures/c1/v2/mem"
+	store := &fakeStore{due: []state.StorageObjectDeletion{{StorageKey: key, RequestedAt: time.Now(), Generation: 3}},
+		decided: map[string]string{}, retried: map[string]time.Time{}}
+	be := &fakeBackend{}
+	if err := objectgc.NewWorker(store, be, nil, nil).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(be.deleted) != 0 || len(store.decided) != 0 {
+		t.Fatalf("deleted %v decided %v, want neither", be.deleted, store.decided)
+	}
+	if _, ok := store.retried[key]; !ok {
+		t.Fatal("want a retry")
+	}
+}
+
+type recordingRetirer struct {
+	recordingRequester
+	generations []int64
+}
+
+func (r *recordingRetirer) RequestStorageObjectRetirement(_ context.Context, key string, generation int64, reason string) error {
+	r.keys, r.reasons, r.generations = append(r.keys, key), append(r.reasons, reason), append(r.generations, generation)
+	return nil
+}
+
+func TestDeferrer_DeferRetireGeneration(t *testing.T) {
+	r := &recordingRetirer{}
+	if err := (objectgc.Deferrer{Requests: r, Reason: "vmmd"}).DeferRetireGeneration(context.Background(), "k", 9); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.keys) != 1 || r.keys[0] != "k" || r.generations[0] != 9 || r.reasons[0] != "vmmd" {
+		t.Fatalf("recorded %v %v %v", r.keys, r.generations, r.reasons)
+	}
+	if err := (objectgc.Deferrer{Requests: &recordingRequester{}}).DeferRetireGeneration(context.Background(), "k", 9); err == nil {
+		t.Fatal("a store without generation retirements accepted one")
+	}
+}
+
 type recordingRequester struct{ keys, reasons []string }
 
 func (r *recordingRequester) RequestStorageObjectDeletion(_ context.Context, key, reason string) error {

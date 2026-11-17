@@ -2124,6 +2124,7 @@ func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountVi
 		AppCount:                   n,
 		EmailVerified:              acct.EmailVerified(),
 		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
+		LegalNotice:                legalChangeNotice(),
 	}
 }
 

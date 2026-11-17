@@ -349,7 +349,7 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
-	s.audit.Emit(r.Context(), "app.created", &acct.ID, map[string]any{
+	s.audit.Emit(r.Context(), "app.created", &acct.ID, mergeAgentAudit(map[string]any{
 		"app_id":                   created.ID,
 		"slug":                     created.Slug,
 		"type":                     string(created.Type),
@@ -360,7 +360,7 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		"runtime":                  created.Runtime,
 		"visibility":               string(created.Visibility),
 		"platform_tenant_required": created.PlatformTenantRequired,
-	})
+	}, r))
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponseWithContext(r.Context(), created, acct.Plan)
 	resp.Status = api.AppStatusUndeployed
