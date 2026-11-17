@@ -29,7 +29,7 @@ from report_generated import contract as report_contract
 from validate_generated import contract as validate_contract
 
 
-async def main() -> None:
+async def execute(request_path: str) -> dict[str, Any]:
     async with FaaSClient(
         base_url=os.environ["FAAS_API"], token=os.environ["FAAS_TOKEN"]
     ) as client:
@@ -168,18 +168,13 @@ async def main() -> None:
                     await asyncio.sleep(0.005)
                 else:
                     raise RuntimeError("Fixture driver startup expired")
-        request = json.loads(Path(sys.argv[1]).read_text())
+        request = json.loads(Path(request_path).read_text())
         if request["workflow"] == "csv-batch-pipeline":
             from batch_pipeline import csv_batch_pipeline
             from faas_sdk.preview import PostgresPipelineChildrenStore
             pipeline, _coordinator = csv_batch_pipeline(scope=scope, token=os.environ["FAAS_TOKEN"], store=PostgresPipelineJobStore(query), children_store=PostgresPipelineChildrenStore(query), gate_store=PostgresPipelineGateStore(query), request_timeout=30)
-        print(
-            json.dumps(
-                await run_workflow_invocation(
-                    pipeline.definition, request
-                )
-            )
-        )
+        return await run_workflow_invocation(pipeline.definition, request)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    print(json.dumps(asyncio.run(execute(sys.argv[1]))))

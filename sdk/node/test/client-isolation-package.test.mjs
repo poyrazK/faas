@@ -61,6 +61,7 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(sourceSdk.createEventOutbox,undefined);assert.equal(publicBrowser.createEventPublisher,undefined);
     assert.ok(previewSdk.eventOutboxSchema.includes('gregale_event_outbox'));
     assert.equal(typeof previewSdk.createStripeWebhookAdapter,'function');assert.equal(typeof previewSdk.stripeDeliveryContextFromHeaders,'function');
+    assert.equal(typeof previewSdk.definePipelineTool,'function');assert.equal(typeof previewSdk.createPipelineToolMCP,'function');assert.ok(previewSdk.pipelineToolSchema.includes('gregale_pipeline_tool_starts'));assert.equal(sourceSdk.definePipelineTool,undefined);assert.equal(fileBrowser.createPipelineToolMCP,undefined);
     assert.ok(previewSdk.stripeWebhookSchema.includes('gregale_stripe_webhook_receipts'));assert.equal(sourceSdk.createStripeWebhookAdapter,undefined);assert.equal(fileBrowser.createStripeWebhookAdapter,undefined);
     assert.equal(typeof previewSdk.definePipelineSchedule,'function');assert.equal(typeof previewSdk.createPipelineScheduleClient,'function');assert.equal(sourceSdk.definePipelineSchedule,undefined);assert.equal(publicBrowser.createPipelineScheduleClient,undefined);
     const {EventContract}=await import('@gregale/sdk-node/preview/events/runtime');
@@ -241,6 +242,19 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
       stripe.inspect(stripeDelivery,1,{timeoutMs:1000});
       // @ts-expect-error projection must return the generated event payload
       const bad:StripeWebhookDefinition<string,{id:string}>={...stripeDefinition,apply:async()=>({state:'stage',input:7})};void bad;
+    }
+    import {definePipelineTool,createPipelineToolMCP,type PipelineToolDefinition,type PipelineToolStatus} from '@gregale/sdk-node/preview';
+    declare const toolDefinition:PipelineToolDefinition<string,{id:string}>;
+    const pipelineTool=definePipelineTool(jobContract,toolDefinition);
+    async function usePipelineTool():Promise<void>{
+      const output:number=await pipelineTool.result('request',{id:'alice'},{timeoutMs:1000});void output;
+      const status:PipelineToolStatus|null=await pipelineTool.inspect('request',{id:'alice'},{timeoutMs:1000});void status;
+      await pipelineTool.start('hello','request',{id:'alice'},{timeoutMs:1000});
+      // @ts-expect-error payload must match generated pipeline input
+      pipelineTool.start(7,'request',{id:'alice'},{timeoutMs:1000});
+      // @ts-expect-error application access context is preserved
+      pipelineTool.cancel('request',7,{timeoutMs:1000});
+      const adapter=createPipelineToolMCP(pipelineTool);await adapter.call('tool',{}, {id:'alice'},{timeoutMs:1000});
     }
     const client: GregaleClient = createClient('https://api.test');
     const typedJob=client.jobs.defineJob(jobContract);

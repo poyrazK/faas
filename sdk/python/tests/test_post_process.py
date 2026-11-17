@@ -180,6 +180,10 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/preview/pipeline_schedule_state.py": b"# uncommitted schedule metadata\n",
         "faas_sdk/preview/_stripe_webhook_protocol.py": b"# uncommitted Stripe adapter\n",
         "faas_sdk/preview/stripe_webhook_state.py": b"# uncommitted Stripe adapter\n",
+        "faas_sdk/preview/_pipeline_tool_protocol.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/pipeline_tool_state.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/pipeline_tools.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/pipeline_tool_mcp.py": b"# uncommitted pipeline tools\n",
         "faas_sdk/preview/stripe_webhooks.py": b"# uncommitted Stripe adapter\n",
         "faas_sdk/preview/event_pipelines.py": b"# uncommitted event adapters\n",
         "faas_sdk/preview/pipeline_children.py": b"# uncommitted child runtime\n",
@@ -437,6 +441,16 @@ def test_regenerated_preview_preserves_stripe_webhooks(tmp_path, monkeypatch):
     for module in ("_stripe_webhook_protocol.py", "stripe_webhook_state.py", "stripe_webhooks.py"):
         assert module in generator.PREVIEW_WRAPPER_MODULES
     for name in ("StripeWebhookAdapter", "StripeWebhookStage", "StripeWebhookReceipt", "STRIPE_WEBHOOK_SCHEMA"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_pipeline_tools(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_pipeline_tool_protocol.py", "pipeline_tool_state.py", "pipeline_tools.py", "pipeline_tool_mcp.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PIPELINE_TOOL_SCHEMA"):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")

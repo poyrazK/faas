@@ -30,6 +30,9 @@ from psycopg.rows import dict_row
 
 
 async def execute(request: dict[str, Any]) -> dict[str, Any] | None:
+    if request["action"].startswith("tool-"):
+        from tool_driver import execute as tool_execute
+        return await tool_execute(request)
     if request["action"].startswith("outbox-"):
         from outbox_driver import execute as outbox_execute
         return await outbox_execute(request)

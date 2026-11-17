@@ -15,6 +15,7 @@ import {liveFixture} from './live-fixture.mjs';
 import {createPipelineReviewServer} from './pipeline-review-api.mjs';
 import {csvEventPipeline} from './pipeline-events.mjs';
 import {stageCsvImport} from './pipeline-producer.mjs';
+import {csvPipelineTool} from './pipeline-tool.mjs';
 import {paidCsvAdapter} from './paid-producer.mjs';
 import {csvPipelineSchedule} from './pipeline-schedule.mjs';
 
@@ -24,9 +25,10 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<1000;i++){try{if(await fn())return;}catch{}await pause(20);}throw new Error('Fixture did not become ready');}
 async function stop(child){if(child.exitCode!==null)return;const done=new Promise(r=>child.once('exit',r));child.kill('SIGTERM');await done;}
 
+const toolMode=process.env.GREGALE_CSV_TOOL_PIPELINE==='1';
 const paid=process.env.GREGALE_CSV_STRIPE_PIPELINE==='1';
 const eventTriggered=paid||process.env.GREGALE_CSV_EVENT_PIPELINE==='1',scheduled=process.env.GREGALE_CSV_SCHEDULED_PIPELINE==='1';
-for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${paid?'Stripe-paid ':eventTriggered?'event-triggered ':scheduled?'scheduled ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered||scheduled?600000:240000},async t=>{
+for(const reviewed of eventTriggered||scheduled||toolMode?[true]:[false,true])test(`CSV ${toolMode?'agent-tool ':paid?'Stripe-paid ':eventTriggered?'event-triggered ':scheduled?'scheduled ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered||scheduled||toolMode?600000:240000},async t=>{
   try{await access(python);await access(join(pgBin,'initdb'));}catch{t.skip('Set GREGALE_LOCAL_PYTHON and GREGALE_LOCAL_PG_BIN');return;}
   const home=await mkdtemp(join(tmpdir(),'gregale-csv-pipeline-')),cleanup=[];t.after(async()=>{try{for(const close of cleanup.reverse())await close();}finally{await rm(home,{recursive:true,force:true});}});
   await cp(here,join(home,'app'),{recursive:true,filter:p=>!p.includes('node_modules')});await symlink(join(root,'sdk/node/node_modules'),join(home,'app/node_modules'));
@@ -39,6 +41,7 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
   await pool.query('CREATE TABLE sdk_pipeline_runs (id uuid PRIMARY KEY, record jsonb NOT NULL, journal jsonb NOT NULL)');
   await pool.query('CREATE TABLE sdk_pipeline_barrier (driver text PRIMARY KEY)');
   if(eventTriggered){await pool.query(sdk.eventOutboxSchema);await pool.query(sdk.eventPipelineSchema);await pool.query('CREATE TABLE sdk_csv_event_inputs (import_id uuid PRIMARY KEY,owner_id text NOT NULL,input jsonb NOT NULL)');}
+  if(toolMode){await pool.query(sdk.pipelineToolSchema);await pool.query('CREATE TABLE sdk_csv_tool_imports (request_id uuid PRIMARY KEY,owner_id text NOT NULL,enabled boolean NOT NULL DEFAULT true,input jsonb NOT NULL)');}
   const accountId=randomUUID(),jobs=new Map(),templates=new Map(),workflowKeys=new Map(),jobKeys=new Map(),work=new Set(),children=new Set();
   for(const [stage,file]of [['validate','validate-contract.json'],['import','contract.json'],['report','report-contract.json']]){const spec=JSON.parse(await readFile(new URL(file,import.meta.url),'utf8'));templates.set(spec.name,{stage,spec,id:randomUUID()});}
   const storage=fileStorageFixture(()=>env.FAAS_API,{accountId});
@@ -100,7 +103,7 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
           if(workflowKeys.has(key)){send(200,workflowKeys.get(key));return;}
           const record={id:randomUUID(),app_id:storage.app,workflow_name:reviewed?'csv-reviewed-pipeline':'csv-pipeline',status:'running',input};
           await pool.query('INSERT INTO sdk_pipeline_runs VALUES ($1,$2,$3)',[record.id,record,'[]']);workflowKeys.set(key,record);
-          if(eventTriggered&&key?.startsWith('event-pipeline:')){res.destroy();return;}
+          if(eventTriggered&&key?.startsWith('event-pipeline:')||toolMode&&key?.startsWith('pipeline-tool:')){res.destroy();return;}
           send(201,record);return;
         }
         const id=parts[4],row=(await pool.query('SELECT record,journal FROM sdk_pipeline_runs WHERE id=$1',[id])).rows[0];if(!row){send(404,{});return;}
@@ -141,8 +144,51 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
   const gateStore=sdk.postgresPipelineGateStore((sql,values)=>pool.query(sql,values));
   const {contract,pipeline,reviewContract}=await csvPipeline({sdk,client,scope,reviewed,gateStore,store:sdk.postgresPipelineJobStore((sql,values)=>pool.query(sql,values)),jobStore:await files.jobStore({timeoutMs:10000})});
   const typed=sdk.createJobPipelineClient({baseURL:env.FAAS_API,token:'fixture-owner',scope,ownerId:'alice',contract});
+  let toolMCP,makeTool,pythonTool,toolInvoke,toolRequestId;
   let run,outboxKey='csv-import:'+importId;
-  if(eventTriggered){
+  if(toolMode){
+    toolRequestId=randomUUID();const input={import_id:importId,source};
+    await pool.query('INSERT INTO sdk_csv_tool_imports(request_id,owner_id,input) VALUES ($1,$2,$3)',[toolRequestId,'alice',input]);
+    makeTool=async reviewBaseURL=>sdk.createPipelineToolMCP(await csvPipelineTool({sdk,scope,token:'fixture-owner',reviewBaseURL,valueHash:runtime.jobValueHash,
+      store:sdk.postgresPipelineToolStore((sql,values)=>pool.query(sql,values)),gateStore,
+      loadImport:async id=>(await pool.query('SELECT owner_id,enabled,input FROM sdk_csv_tool_imports WHERE request_id=$1',[id])).rows[0],
+    }));
+    toolMCP=await makeTool('http://127.0.0.1/');
+    // A tiny authenticated JSON-RPC fixture exercises registration/call output.
+    // Production registers the adapter with an existing MCP transport/lifecycle host.
+    const toolServer=createServer(async(req,res)=>{
+      const actor=req.headers.authorization==='Bearer agent-alice'?'alice':req.headers.authorization==='Bearer agent-bob'?'bob':null;
+      if(!actor){res.writeHead(401);res.end();return;}
+      const chunks=[];for await(const chunk of req)chunks.push(chunk);const packet=JSON.parse(Buffer.concat(chunks).toString());
+      if(packet.method==='notifications/initialized'){res.writeHead(202);res.end();return;}
+      let reply;
+      try{
+        const result=packet.method==='initialize'?{protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'csv-pipeline-fixture',version:'1'}}:packet.method==='tools/list'?{tools:toolMCP.tools}:packet.method==='tools/call'?await toolMCP.call(packet.params.name,packet.params.arguments,actor,{timeoutMs:10000}):(()=>{throw new sdk.PipelineToolMCPError(-32601);})();
+        reply={jsonrpc:'2.0',id:packet.id,result};
+      }catch(error){reply={jsonrpc:'2.0',id:packet.id,error:{code:[-32601,-32602].includes(error.code)?error.code:-32603,message:'Pipeline tool request rejected'}};}
+      res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(reply));
+    });
+    await new Promise(r=>toolServer.listen(0,'127.0.0.1',r));cleanup.push(()=>new Promise(r=>toolServer.close(r)));
+    const rpc=async(method,params={},access='alice')=>{const response=await fetch(`http://127.0.0.1:${toolServer.address().port}`,{method:'POST',headers:{authorization:'Bearer agent-'+access,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:randomUUID(),method,params})});return (await response.json()).result;};
+    toolInvoke=(operation,args={request_id:toolRequestId},access='alice')=>rpc('tools/call',{name:'csv_import_'+operation,arguments:args},access);
+    assert.equal((await rpc('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'agent-fixture',version:'1'}})).protocolVersion,'2025-11-25');
+    const descriptor=await rpc('tools/list');assert.equal(descriptor.tools.length,5);assert.ok(descriptor.tools.every(t=>t.outputSchema));
+    const worker=spawn(python,[join(home,'app/event_driver.py'),'--stdio'],{env,stdio:['pipe','pipe','pipe']});children.add(worker);
+    let ready,errors='',sequence=0;const pending=new Map(),lines=createInterface({input:worker.stdout});worker.stderr.on('data',b=>errors+=b);
+    const started=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Python tool fixture startup timed out')),120000);ready=()=>{clearTimeout(timer);resolve();};worker.once('exit',code=>{clearTimeout(timer);reject(Error('Python tool fixture stopped '+code+' '+errors));});});
+    lines.on('line',line=>{const packet=JSON.parse(line);if(packet.ready){ready();return;}pending.get(packet.request_id)?.(packet.result);pending.delete(packet.request_id);});worker.once('exit',()=>children.delete(worker));cleanup.push(()=>lines.close());await started;
+    pythonTool=(operation,args={request_id:toolRequestId},access='alice',review_base_url='http://127.0.0.1/')=>new Promise((resolve,reject)=>{const request_id=String(sequence++),timer=setTimeout(()=>{pending.delete(request_id);reject(Error('Python tool request timed out '+errors));},30000);pending.set(request_id,value=>{clearTimeout(timer);resolve(value);});worker.stdin.write(JSON.stringify({request_id,action:operation==='list'?'tool-list':operation==='drive'?'tool-drive':'tool-call',name:'csv_import_'+operation,arguments:args,access,review_base_url})+'\n');});
+    assert.deepEqual(await pythonTool('list'),descriptor);
+    assert.equal((await toolInvoke('start',{request_id:toolRequestId,input},'bob')).isError,true);
+    const starts=await Promise.all([toolInvoke('start',{request_id:toolRequestId,input}),pythonTool('start',{request_id:toolRequestId,input})]);
+    assert.ok(starts.every(r=>r.structuredContent?.state==='start_unknown'),JSON.stringify(starts));assert.equal(starts.filter(r=>r.structuredContent.replayed===false).length,1);assert.equal(workflowKeys.size,1);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM gregale_pipeline_tool_starts')).rows[0].n,1);
+    const retained=(await pool.query('SELECT id FROM sdk_pipeline_runs')).rows[0].id;
+    const adopted=await pythonTool('reconcile',{request_id:toolRequestId,run_id:retained});assert.equal(adopted.structuredContent.state,'started');
+    const repeated=await toolInvoke('start',{request_id:toolRequestId,input});assert.equal(repeated.structuredContent.receipt.run_id,retained);assert.equal(repeated.structuredContent.replayed,true);assert.equal(workflowKeys.size,1);
+    await pool.query('UPDATE sdk_csv_tool_imports SET enabled=false');assert.equal((await pythonTool('status')).isError,true);await pool.query('UPDATE sdk_csv_tool_imports SET enabled=true');
+    run=await typed.resumeById(retained,{timeoutMs:10000});
+  }else if(eventTriggered){
     // The authenticated producer names an immutable business record, not an owner/file supplied by the event.
     if(paid){
       env.GREGALE_CSV_STRIPE_KEY=stripeKey;
@@ -252,7 +298,7 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
   let page,browser,reviewURL,approved=false;const browserErrors=[];
   if(reviewed){
     const server=createPipelineReviewServer({sdk,client,scope,files,contract,pipeline,reviewContract,gateStore,token:'fixture-owner',users:{alice:{token:'alice-review',owner_id:'alice',roles:['reviewer']},bob:{token:'bob-review',owner_id:'bob',roles:['reviewer']}},realtime:{...realtime.config(),pollDelayMs:50}});
-    await new Promise(r=>server.listen(0,'127.0.0.1',r));reviewURL=`http://127.0.0.1:${server.address().port}`;cleanup.push(()=>new Promise(r=>server.close(r)));
+    await new Promise(r=>server.listen(0,'127.0.0.1',r));reviewURL=`http://127.0.0.1:${server.address().port}`;if(toolMode)toolMCP=await makeTool(reviewURL+'/');cleanup.push(()=>new Promise(r=>server.close(r)));
     const chrome=process.env.GREGALE_LOCAL_CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';await access(chrome);
     const {chromium}=await import(new URL('../../sdk/node/node_modules/playwright-core/index.mjs',import.meta.url));browser=await chromium.launch({headless:true,executablePath:chrome});cleanup.push(()=>browser.close());page=await browser.newPage();page.on('pageerror',e=>browserErrors.push(e.message));
     page.on('request',r=>assert.notEqual(r.headers().authorization,'Bearer fixture-owner'));
@@ -263,7 +309,7 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
     const request={protocol:'gregale.workflow.code/v1',run_id:run.checkpoint.run_id,workflow:contract.spec.name,input:row.record.input,invocation:invocation+1,journal:row.journal};
     const path=join(home,'request.json');await writeFile(path,JSON.stringify(request));
     const usePython=invocation%2===1;
-    const drive=async usePython=>{const result=await exec(usePython?python:process.execPath,[join(home,'app','pipeline_driver.'+(usePython?'py':'mjs')),path],{env:{...env,...(invocation===0?{GREGALE_PIPELINE_BARRIER:'1'}:{})},timeout:30000});const reply=JSON.parse(result.stdout);if(result.stderr)reply.fixture_stderr=result.stderr;return reply;};
+    const drive=async usePython=>{if(toolMode&&usePython)return pythonTool('drive',{path,barrier:invocation===0});const result=await exec(usePython?python:process.execPath,[join(home,'app','pipeline_driver.'+(usePython?'py':'mjs')),path],{env:{...env,...(invocation===0?{GREGALE_PIPELINE_BARRIER:'1'}:{})},timeout:30000});const reply=JSON.parse(result.stdout);if(result.stderr)reply.fixture_stderr=result.stderr;return reply;};
     let reply;
     if(invocation===0){const replies=await Promise.all([drive(false),drive(true)]);assert.ok(replies.every(r=>r.ops[0]?.status==='succeeded'),JSON.stringify({replies,barrier:(await pool.query('SELECT * FROM sdk_pipeline_barrier')).rows}));reply=replies[0];}
     else reply=await drive(usePython);
@@ -276,6 +322,13 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
     if(wait&&reviewed&&!approved){
       assert.equal(jobPosts,1);assert.equal((await pool.query('SELECT count(*)::int AS n FROM sdk_csv_rows')).rows[0].n,0);
       for(const action of ['gate','snapshot','ticket'])assert.equal((await fetch(`${reviewURL}/runs/${run.checkpoint.run_id}/${action}`,{headers:{Authorization:'Bearer bob-review'}})).status,404);
+      if(toolMode){
+        const waiting=await toolInvoke('status'),pythonWaiting=await pythonTool('status',undefined,'alice',reviewURL+'/');
+        assert.deepEqual(waiting,pythonWaiting);assert.equal(waiting.structuredContent.state,'awaiting_approval');
+        assert.equal((await toolInvoke('result')).structuredContent.state,'awaiting_approval');
+        assert.equal(new URL(waiting.structuredContent.approval.review_url).origin,reviewURL);assert.equal((await toolInvoke('status',undefined,'bob')).isError,true);
+        assert.equal((await pool.query('SELECT decision FROM gregale_pipeline_gates')).rows[0].decision,null);
+      }
       await page.goto(reviewURL+'/?run='+run.checkpoint.run_id);await page.fill('#token','alice-review');await page.click('#attach');await page.waitForFunction(()=>document.querySelector('#status').textContent==='Awaiting approval',{},{timeout:30000});
       assert.ok((await page.textContent('#data')).includes(source.sha256));assert.equal(await page.isDisabled('#report'),true);
       await page.fill('#reason','Reviewed exact source and rows');await page.click('#approve');await page.waitForFunction(()=>document.querySelector('#status').textContent==='Decision saved: approved',{},{timeout:30000});
@@ -297,7 +350,7 @@ for(const reviewed of eventTriggered||scheduled?[true]:[false,true])test(`CSV ${
     const downloadEvent=page.waitForEvent('download');await page.click('#report');const download=await downloadEvent;await download.saveAs(join(home,'reviewed.csv'));assert.ok((await readFile(join(home,'reviewed.csv'),'utf8')).includes('invalid_email'));
     await page.fill('#token','bob-review');assert.equal(await page.isVisible('#review'),false);assert.equal(await page.textContent('#data'),'');assert.equal(await page.isDisabled('#report'),true);assert.deepEqual(browserErrors,[]);
   }
-  const restored=await typed.resumeById(run.checkpoint.run_id,{timeoutMs:10000}),output=await restored.result({timeoutMs:10000});assert.equal(output.saved,2);assert.equal(output.rejected,1);assert.equal(live.at(-1).report,'ready');assert.equal(live.at(-1).succeeded,3);
+  const restored=await typed.resumeById(run.checkpoint.run_id,{timeoutMs:10000}),output=await restored.result({timeoutMs:10000});assert.equal(output.saved,2);assert.equal(output.rejected,1);if(toolMode){const result=await toolInvoke('result'),pythonResult=await pythonTool('result',undefined,'alice',reviewURL+'/');assert.deepEqual(result,pythonResult);assert.deepEqual(result.structuredContent.output,output);assert.equal(result.structuredContent.state,'succeeded');assert.equal(JSON.stringify(result).includes('fixture-owner'),false);}assert.equal(live.at(-1).report,'ready');assert.equal(live.at(-1).succeeded,3);
   const report=await sdk.readPipelineArtifact(files,output.report,'alice',{timeoutMs:10000,maxBytes:1024*1024});assert.ok(new TextDecoder().decode(report).includes(importId+':3,invalid_email'));
   await assert.rejects(async()=>sdk.readPipelineArtifact(files,output.report,'bob',{timeoutMs:1000}),{code:'artifact_changed'});
   if(reviewed){

@@ -22,7 +22,7 @@ def _parse_pipeline_trigger(value: Any) -> dict[str, Any]:
         or set(value) != {"version", "kind", "identity"}
         or type(value["version"]) is not int
         or value["version"] != 1
-        or value["kind"] not in ("event", "schedule")
+        or value["kind"] not in ("event", "schedule", "tool")
         or not _hash(value["identity"])
     ):
         raise PipelineError("receipt_conflict")

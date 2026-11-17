@@ -41,7 +41,7 @@ import faas_sdk.preview as preview
 from faas_sdk.preview.event_contract import EventContract
 assert preview.EventContract is EventContract
 assert EventContract({"version":1,"type":"example.event","data":{"type":"string"}}).input("hello") == "hello"
-for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore", "EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction", "StripeWebhookAdapter", "StripeWebhookDelivery", "StripeWebhookStage", "StripeWebhookIgnore", "STRIPE_WEBHOOK_SCHEMA", "stripe_delivery_context_from_headers", "PipelineSchedule", "PipelineScheduleClient", "PipelineSchedulePreview", "ScheduledPipelineRun"):
+for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore", "EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction", "PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PostgresPipelineToolStore", "PIPELINE_TOOL_SCHEMA", "StripeWebhookAdapter", "StripeWebhookDelivery", "StripeWebhookStage", "StripeWebhookIgnore", "STRIPE_WEBHOOK_SCHEMA", "stripe_delivery_context_from_headers", "PipelineSchedule", "PipelineScheduleClient", "PipelineSchedulePreview", "ScheduledPipelineRun"):
     assert hasattr(preview,name) and not hasattr(faas_sdk,name)
 for name in ("BuildWaitOptions", "DeploymentWaitOptions", "WaiterError", "WaiterFailureCode", "WaiterOptions", "WaiterProgress", "WaiterTimeoutError", "SourceUploadCheckpoint", "SourceUploadOptions", "SourceUploadError", "save_source_upload_checkpoint", "load_source_upload_checkpoint"):
     assert getattr(preview, name) is getattr(faas_sdk, name)
@@ -204,6 +204,15 @@ async def typed_stripe(client:StripeWebhookAdapter[str,str],delivery:StripeWebho
     decision:StripeWebhookDecision[str]=StripeWebhookStage(input="hello")
     if decision.state=="stage":
         assert_type(decision.input,str)
+from faas_sdk.preview import PipelineTool,PipelineToolRequest,PipelineToolStatus,PipelineToolStart,PipelineToolMCP
+async def typed_pipeline_tool(tool:PipelineTool[str,int,str],request:PipelineToolRequest[str])->None:
+    assert_type(await tool.start("hello","request","alice",timeout=1),PipelineToolStart)
+    assert_type(await tool.inspect("request","alice",timeout=1),PipelineToolStatus | None)
+    assert_type(await tool.result("request","alice",timeout=1),int)
+    assert_type(await tool.cancel("request","alice",timeout=1),PipelineToolStatus)
+    if request.input is not None:
+        assert_type(request.input,str)
+    await PipelineToolMCP(tool).call("tool",{},"alice",timeout=1)
 async def typed_event_pipeline(client:EventPipeline[str,str,int,str],delivery:EventPipelineDelivery)->None:
     assert_type(await client.handle(delivery,"alice",timeout=1),EventPipelineOutcome)
     assert_type(await client.inspect(delivery,"alice",timeout=1),EventPipelineOutcome | None)
@@ -365,6 +374,10 @@ def invalid_stripe() -> None:
     decision:StripeWebhookStage[str]=StripeWebhookStage(input=7)
 async def invalid_stripe_access(client:StripeWebhookAdapter[str,str],delivery:StripeWebhookDelivery)->None:
     await client.handle(delivery,7,timeout=1)
+from faas_sdk.preview import PipelineTool
+async def invalid_pipeline_tool(tool:PipelineTool[str,int,str])->None:
+    await tool.start(7,"request","alice",timeout=1)
+    await tool.cancel("request",7,timeout=1)
 def check(options: RequestOptions, info: ResponseInfo) -> None:
     options.timeout = 2
     info.status = 200

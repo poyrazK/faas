@@ -3884,3 +3884,11 @@ Stripe snapshot deliveries into generated business events. Current-owner checks,
 business writes and typed outbox intent commit together with a cross-language
 handoff receipt. See [setup and recovery](../../docs/sdk-stripe-webhooks.md) and
 the [paid CSV flow](../../examples/sdk-csv-jobs/README.md#stripe-paid-reviewed-imports).
+
+`PipelineTool[Input, Output, Access]`, `PipelineToolMCP` and
+`PostgresPipelineToolStore` in `faas_sdk.preview` expose typed business pipelines
+with durable invocation receipts, current authorization, human-review status and
+verified results. The MCP adapter registers with an existing authenticated host;
+Node and Python share receipt/reconciliation semantics. See
+[setup and recovery](../../docs/sdk-pipeline-tools.md) and the
+[CSV agent flow](../../examples/sdk-csv-jobs/README.md#agent-tools-for-reviewed-imports).

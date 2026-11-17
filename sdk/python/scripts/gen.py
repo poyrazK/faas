@@ -210,6 +210,10 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "_pipeline_tool_protocol.py",
+    "pipeline_tool_state.py",
+    "pipeline_tools.py",
+    "pipeline_tool_mcp.py",
     "_stripe_webhook_protocol.py",
     "stripe_webhook_state.py",
     "stripe_webhooks.py",
@@ -1304,6 +1308,10 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from ._pipeline_tool_protocol import PIPELINE_TOOL_SCHEMA
+from .pipeline_tool_state import PipelineToolAction, PipelineToolActor, PipelineToolError, PipelineToolReceipt, PipelineToolStore, PostgresPipelineToolStore
+from .pipeline_tools import PipelineTool, PipelineToolRequest, PipelineToolStart, PipelineToolStatus, PipelineToolApproval
+from .pipeline_tool_mcp import PipelineToolMCP, PipelineToolMCPError
 from .pipeline_schedules import PipelineScheduleClient, PipelineScheduleAction, ScheduledPipelineRun
 from .pipeline_schedule_state import PipelineSchedule, PipelineScheduleError, PipelineScheduleInfo, PipelineScheduleHistory, PipelineScheduleInspection, PipelineSchedulePreview, PipelineScheduleOccurrence, PipelineScheduleReplayOutcome, PipelineScheduleFire, PipelineScheduleDST, PipelineScheduleCatchUp
 from .stripe_webhooks import StripeWebhookAdapter, StripeWebhookAction
@@ -1851,6 +1859,21 @@ from .event_acknowledgment_intent_recovery_pass import (
 )
 
 __all__ = (
+    'PIPELINE_TOOL_SCHEMA',
+    'PipelineToolAction',
+    'PipelineToolActor',
+    'PipelineToolError',
+    'PipelineToolReceipt',
+    'PipelineToolStore',
+    'PostgresPipelineToolStore',
+    'PipelineTool',
+    'PipelineToolRequest',
+    'PipelineToolStart',
+    'PipelineToolStatus',
+    'PipelineToolApproval',
+    'PipelineToolMCP',
+    'PipelineToolMCPError',
+
     "StripeWebhookAdapter",
     "StripeWebhookAction",
     "StripeWebhookDelivery",

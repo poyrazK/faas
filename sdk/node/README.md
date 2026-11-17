@@ -4959,3 +4959,12 @@ into generated business events. Current-owner authorization, business writes and
 outbox intent share one PostgreSQL transaction and a cross-language handoff
 receipt. See [setup and recovery](../../docs/sdk-stripe-webhooks.md) and the
 [paid CSV flow](../../examples/sdk-csv-jobs/README.md#stripe-paid-reviewed-imports).
+
+## Typed pipeline tools (preview)
+
+`definePipelineTool` exposes existing generated business pipelines with durable
+start receipts, current authorization, typed results and human-review status.
+`createPipelineToolMCP` supplies five generated descriptors and bounded call
+handling for an existing MCP host. Node/Python share PostgreSQL receipts and
+verified run reconciliation. See [setup and recovery](../../docs/sdk-pipeline-tools.md)
+and the [CSV agent flow](../../examples/sdk-csv-jobs/README.md#agent-tools-for-reviewed-imports).

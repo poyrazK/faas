@@ -568,3 +568,40 @@ repeat the payment effect. Forged delivery, another user and revoked access fail
 The test then recovers lost publication/start replies and completes the full
 mixed-worker reviewed report flow with Chrome. Native APIs, ingress and event
 transport are fixtures; a deployed Stripe/broker integration is not exercised.
+
+## Agent tools for reviewed imports
+
+[pipeline-tool.mjs](pipeline-tool.mjs) and [pipeline_tool.py](pipeline_tool.py)
+expose the existing reviewed pipeline as five generated MCP tools: start,
+status, result, cancel and reconcile. The Python definition preserves the
+[generated input/output types](reviewed_pipeline_generated.py). Each stable
+request ID names an immutable authorized import record; supplied input must
+match that record. Credentials and model-supplied owner fields cannot grant
+access. Configure both the receipt store and existing human gate store.
+
+Install the exported `pipelineToolSchema` / `PIPELINE_TOOL_SCHEMA` with the
+application migration role on the same primary used by both SDKs. The local
+fixture adds `sdk_csv_tool_imports(request_id,owner_id,enabled,input)` for current
+access and immutable input lookup. In production, authenticate the principal in
+your MCP host and register `adapter.tools` / `adapter.call` with its existing
+transport; the private Python pipe is only a local test driver.
+
+After building Node and installing Python with `psycopg[binary]`, run from the
+repository root:
+
+```sh
+GREGALE_CSV_TOOL_PIPELINE=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+An authenticated JSON-RPC fixture exercises initialization, tool discovery and
+calls. Concurrent Node/Python starts share one PostgreSQL receipt despite a lost
+native acceptance reply. Python reconciles the exact retained run; a new Node
+call reuses it. Another user and revoked access are rejected. Both SDKs then
+report `awaiting_approval` and the private human-review link without deciding
+the gate. Chrome approves the exact source and rows; mixed workers complete the
+import and both tools retrieve the same validated report output.
+
+This uses real PostgreSQL and Chrome with native API and MCP transport fixtures.
+It is not a deployed MCP publication or model-provider integration. See
+[the complete tool contract](../../docs/sdk-pipeline-tools.md), especially receipt
+retention, total deadlines, explicit cancellation and unresolved-start recovery.

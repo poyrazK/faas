@@ -425,6 +425,7 @@ from ._event_deadline_policy import (
     EventDeadlineTarget,
 )
 from ._event_outbox_protocol import EVENT_OUTBOX_SCHEMA
+from ._pipeline_tool_protocol import PIPELINE_TOOL_SCHEMA
 from ._stripe_webhook_protocol import STRIPE_WEBHOOK_SCHEMA
 from ._wrapper import FaaSClient as FaaSClient
 from .ai_gateway import (
@@ -824,6 +825,22 @@ from .pipeline_state import (
     pipeline_job_identity,
     read_pipeline_artifact,
 )
+from .pipeline_tool_mcp import PipelineToolMCP, PipelineToolMCPError
+from .pipeline_tool_state import (
+    PipelineToolAction,
+    PipelineToolActor,
+    PipelineToolError,
+    PipelineToolReceipt,
+    PipelineToolStore,
+    PostgresPipelineToolStore,
+)
+from .pipeline_tools import (
+    PipelineTool,
+    PipelineToolApproval,
+    PipelineToolRequest,
+    PipelineToolStart,
+    PipelineToolStatus,
+)
 from .realtime_activity import RealtimeActivity, RealtimeActivityTracker
 from .realtime_backpressure import RealtimeBackpressureMonitor, RealtimeBackpressureStatus, RealtimeProcessingStatus
 from .realtime_catch_up import RealtimeCatchUpStatus, RealtimeCatchUpTracker, RealtimeCatchUpWaitError
@@ -927,6 +944,21 @@ from .stripe_webhook_state import (
 from .stripe_webhooks import StripeWebhookAction, StripeWebhookAdapter
 
 __all__ = (
+    'PIPELINE_TOOL_SCHEMA',
+    'PipelineToolAction',
+    'PipelineToolActor',
+    'PipelineToolError',
+    'PipelineToolReceipt',
+    'PipelineToolStore',
+    'PostgresPipelineToolStore',
+    'PipelineTool',
+    'PipelineToolRequest',
+    'PipelineToolStart',
+    'PipelineToolStatus',
+    'PipelineToolApproval',
+    'PipelineToolMCP',
+    'PipelineToolMCPError',
+
     "StripeWebhookAdapter",
     "StripeWebhookAction",
     "StripeWebhookDelivery",
