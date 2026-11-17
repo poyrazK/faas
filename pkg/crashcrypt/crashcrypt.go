@@ -86,17 +86,10 @@ func Encrypt(dst io.Writer, src io.Reader, recipient age.Recipient) error {
 	return aw.Close()
 }
 
-// Decrypt returns a reader of src's plaintext.
+// Decrypt returns a reader of src's plaintext, in either format (Encrypt's
+// age stream or EncryptChunked's v2).
 func Decrypt(src io.Reader, identity age.Identity) (io.ReadCloser, error) {
-	ar, err := age.Decrypt(src, identity)
-	if err != nil {
-		return nil, err
-	}
-	zr, err := zstd.NewReader(ar, zstd.WithDecoderConcurrency(1))
-	if err != nil {
-		return nil, err
-	}
-	return zr.IOReadCloser(), nil
+	return openStream(src, identity)
 }
 
 // Backend stores one capture's objects encrypted in Inner: Put writes only
@@ -106,6 +99,10 @@ func Decrypt(src io.Reader, identity age.Identity) (io.ReadCloser, error) {
 type Backend struct {
 	Inner    storage.StorageBackend
 	Identity *age.X25519Identity
+	// Chunked writes the v2 format (EncryptChunked), which a wake opens in
+	// parallel without touching zero pages. Readers take both formats; turn
+	// it on only once every vmmd that may restore the object reads v2.
+	Chunked bool
 }
 
 var _ storage.StorageBackend = Backend{}
@@ -114,7 +111,11 @@ func (b Backend) Put(ctx context.Context, key string, r io.Reader) error {
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		err := Encrypt(pw, r, b.Identity.Recipient())
+		encrypt := Encrypt
+		if b.Chunked {
+			encrypt = EncryptChunked
+		}
+		err := encrypt(pw, r, b.Identity.Recipient())
 		_ = pw.CloseWithError(err)
 		done <- err
 	}()
@@ -138,6 +139,21 @@ func (b Backend) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("crashcrypt: decrypt %s: %w", key, err)
 	}
 	return readClosers{Reader: plain, closers: []io.Closer{plain, src}}, nil
+}
+
+// MaterializeTo decrypts key's plaintext into dst in parallel, leaving zero
+// chunks as holes (DecryptToFile).
+func (b Backend) MaterializeTo(ctx context.Context, key string, dst *os.File) (int64, error) {
+	src, err := b.Inner.Get(ctx, key+Suffix)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = src.Close() }()
+	n, err := DecryptToFile(ctx, dst, src, b.Identity)
+	if err != nil {
+		return 0, fmt.Errorf("crashcrypt: decrypt %s: %w", key, err)
+	}
+	return n, nil
 }
 
 func (b Backend) Delete(ctx context.Context, key string) error {
