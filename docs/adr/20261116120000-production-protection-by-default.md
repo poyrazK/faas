@@ -241,7 +241,8 @@ outage detector fires, so the baseline alert arrives first.
 4. a. `PUT /v1/apps/{slug}/protection`, CLI `gregale app protection
       [on|off]` and the status line.
    b. The `gregale.yaml` `protection:` key.
-5. Docs page and rollout.
+5. Docs page (`docs/production-protection.md`, unpublished while in
+   preview) and rollout (§8).
 
 ## Alternatives considered
 
