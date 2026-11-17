@@ -542,6 +542,37 @@ func fixtureLayerDiffID(blob []byte) string {
 // here means the two helpers produce bit-identical layer bytes — and
 // therefore identical diff_ids — without copy-pasting the gzip+tar dance.
 func buildHelloLayer(body string) []byte {
+	return buildHelloLayerWith(body, nil)
+}
+
+// DebugToolsBaseLayerImage is BaseLayerImage plus the debug tools every
+// runtime base ships (ADR-20261117070620): busybox, a static binary the
+// caller supplies, at /usr/lib/gregale/debug/busybox (0555) with bin/<applet>
+// symlinks for applets.
+func DebugToolsBaseLayerImage(repo, body string, busybox []byte, applets ...string) (fakeImage, string) {
+	layer := buildHelloLayerWith(body, func(tw *tar.Writer) error {
+		for _, dir := range []string{"usr/", "usr/lib/", "usr/lib/gregale/", "usr/lib/gregale/debug/", "usr/lib/gregale/debug/bin/"} {
+			if err := tw.WriteHeader(&tar.Header{Name: dir, Mode: 0o755, Typeflag: tar.TypeDir}); err != nil {
+				return err
+			}
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: "usr/lib/gregale/debug/busybox", Mode: 0o555, Size: int64(len(busybox)), Typeflag: tar.TypeReg}); err != nil {
+			return err
+		}
+		if _, err := tw.Write(busybox); err != nil {
+			return err
+		}
+		for _, applet := range applets {
+			if err := tw.WriteHeader(&tar.Header{Name: "usr/lib/gregale/debug/bin/" + applet, Mode: 0o777, Linkname: "../busybox", Typeflag: tar.TypeSymlink}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return singleLayerImage(repo, layer, map[string]any{"Entrypoint": []string{"/bin/true"}, "Env": []string{}})
+}
+
+func buildHelloLayerWith(body string, extra func(*tar.Writer) error) []byte {
 	var layerBuf bytes.Buffer
 	zw := gzip.NewWriter(&layerBuf)
 	tw := tar.NewWriter(zw)
@@ -572,6 +603,11 @@ func buildHelloLayer(body string) []byte {
 	}
 	if _, err := tw.Write([]byte(body)); err != nil {
 		panic(fmt.Sprintf("fakeregistry: write tar body: %v", err))
+	}
+	if extra != nil {
+		if err := extra(tw); err != nil {
+			panic(fmt.Sprintf("fakeregistry: write extra entries: %v", err))
+		}
 	}
 	if err := tw.Close(); err != nil {
 		panic(fmt.Sprintf("fakeregistry: close tar: %v", err))
