@@ -11332,6 +11332,12 @@ var (
 	// it. A browser touches many domains per page, so it is above the per-run
 	// fetch limits of ADR-20261027090014 §4.7.
 	SandboxWebDistinctDomains = [4]int{0, 200, 1000, 5000}
+
+	// AgentEgressHandshakeMaxAgeSec bounds how old the agent tunnel's latest
+	// WireGuard handshake may be when a sandbox session boots on it
+	// (ADR-20261117185346 §3). WireGuard rekeys every two minutes while
+	// traffic flows, and keepalives hold an idle tunnel's handshake fresh.
+	AgentEgressHandshakeMaxAgeSec = 180
 	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
 	// command.
 	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}

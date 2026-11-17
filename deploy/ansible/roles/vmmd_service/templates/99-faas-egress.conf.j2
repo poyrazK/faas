@@ -59,3 +59,9 @@ Environment="FAAS_PUBLIC_INGRESS_CIDRS={{ ((faas_cloudflare_ipv4_cidrs | default
 # ADR-372: wake-time host policy routes tenant egress through the gateway tunnel.
 Environment="FAAS_TENANT_EGRESS_IFACE={{ faas_tenant_egress_iface }}"
 {% endif %}
+{% if faas_agent_egress_iface | default('') %}
+# ADR-20261117185346: the agent tunnel and this node's slice of it. Sessions
+# use it only with FAAS_AGENT_EGRESS_GATEWAY=1.
+Environment="FAAS_AGENT_EGRESS_IFACE={{ faas_agent_egress_iface }}"
+Environment="FAAS_AGENT_EGRESS_SLICE={{ faas_agent_egress_node_slice }}"
+{% endif %}
