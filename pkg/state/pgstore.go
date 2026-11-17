@@ -22903,17 +22903,7 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 // and applies its counters in the same transaction. The caller may ACK the
 // frame only after this method returns nil.
 func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32) error {
-	return s.AppendGatewayUsageEventWithServiceReply(ctx, nodeID, eventID, instanceID, minute, requests, txBytes, coldBoots, 0)
-}
-
-// AppendGatewayUsageEventWithServiceReply is AppendGatewayUsageEvent that also
-// queues the reply bytes the instance sent to other apps' service calls for
-// subtraction from its billed egress (billing review R8-2 slice 3), in the
-// same transaction as the frame's idempotency row, so a replayed frame queues
-// nothing twice. It queues only for an instance whose node reports internal
-// egress; elsewhere the bytes stay billed.
-func (s *PgStore) AppendGatewayUsageEventWithServiceReply(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32, serviceReplyBytes int64) error {
-	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 || serviceReplyBytes < 0 {
+	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 {
 		return fmt.Errorf("state: invalid gateway usage counters")
 	}
 	node, err := parsePgUUID(nodeID)
@@ -22954,11 +22944,6 @@ func (s *PgStore) AppendGatewayUsageEventWithServiceReply(ctx context.Context, n
 		}
 		if rows != 1 {
 			return fmt.Errorf("state: gateway usage instance %s not found", instanceID)
-		}
-		if serviceReplyBytes > 0 {
-			if _, err := tx.Exec(ctx, serviceReplyQueue, instanceID, serviceReplyBytes); err != nil {
-				return fmt.Errorf("state: queue service reply bytes: %w", err)
-			}
 		}
 	}
 	return tx.Commit(ctx)
@@ -23008,15 +22993,15 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	var previousTx, previousRx, previousInternal, internalPending, serviceReplies int64
+	var previousTx, previousRx, previousInternal, internalPending int64
 	var previousTxValid, previousRxValid, previousInternalValid bool
 	err = tx.QueryRow(ctx,
 		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid,
-		        internal_tx_bytes, internal_tx_valid, internal_tx_pending, service_reply_pending
+		        internal_tx_bytes, internal_tx_valid, internal_tx_pending
 		   from meter_network_checkpoints
 		  where instance_id = $1
 		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid,
-		&previousInternal, &previousInternalValid, &internalPending, &serviceReplies)
+		&previousInternal, &previousInternalValid, &internalPending)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -23053,7 +23038,7 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 	var excluded, nextInternalPending int64
 	if internal != nil {
 		excluded, nextInternalPending = internalEgressStep(previousInternal, previousInternalValid,
-			internalPending, serviceReplies, *internal, netTxDelta)
+			previousTxValid, internalPending, *internal, netTxDelta)
 		netTxDelta -= excluded
 	}
 

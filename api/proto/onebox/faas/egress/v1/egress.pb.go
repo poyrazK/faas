@@ -131,9 +131,11 @@ type BytesFrame struct {
 	// app_id is set on an edge frame (ADR-20261104132753). instance_id then
 	// holds the app's edge usage ID, not an instances row.
 	AppId string `protobuf:"bytes,7,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
-	// service_reply_bytes (billing review R8-2 slice 3) is the bytes the
-	// instance sent in reply to other apps' service calls in that minute. They
-	// are internal egress; older gateways never set it.
+	// service_reply_bytes is deprecated and never set: service calls never
+	// cross the veth that bills egress (ADR-1749, billing review R12). Remove
+	// after a release.
+	//
+	// Deprecated: Marked as deprecated in onebox/faas/egress/v1/egress.proto.
 	ServiceReplyBytes uint64 `protobuf:"varint,8,opt,name=service_reply_bytes,json=serviceReplyBytes,proto3" json:"service_reply_bytes,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
@@ -218,6 +220,7 @@ func (x *BytesFrame) GetAppId() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in onebox/faas/egress/v1/egress.proto.
 func (x *BytesFrame) GetServiceReplyBytes() uint64 {
 	if x != nil {
 		return x.ServiceReplyBytes
@@ -320,7 +323,7 @@ const file_onebox_faas_egress_v1_egress_proto_rawDesc = "" +
 	"\"onebox/faas/egress/v1/egress.proto\x12\x15onebox.faas.egress.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"5\n" +
 	"\x12StreamBytesRequest\x12\x1f\n" +
 	"\vedge_frames\x18\x01 \x01(\bR\n" +
-	"edgeFrames\"\x94\x02\n" +
+	"edgeFrames\"\x98\x02\n" +
 	"\n" +
 	"BytesFrame\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
@@ -331,8 +334,8 @@ const file_onebox_faas_egress_v1_egress_proto_rawDesc = "" +
 	"\n" +
 	"cold_boots\x18\x05 \x01(\x04R\tcoldBoots\x12\x19\n" +
 	"\bevent_id\x18\x06 \x01(\tR\aeventId\x12\x15\n" +
-	"\x06app_id\x18\a \x01(\tR\x05appId\x12.\n" +
-	"\x13service_reply_bytes\x18\b \x01(\x04R\x11serviceReplyBytes\".\n" +
+	"\x06app_id\x18\a \x01(\tR\x05appId\x122\n" +
+	"\x13service_reply_bytes\x18\b \x01(\x04B\x02\x18\x01R\x11serviceReplyBytes\".\n" +
 	"\x0fAckBytesRequest\x12\x1b\n" +
 	"\tevent_ids\x18\x01 \x03(\tR\beventIds\"6\n" +
 	"\x10AckBytesResponse\x12\"\n" +

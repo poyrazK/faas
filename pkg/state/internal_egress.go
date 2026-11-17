@@ -15,9 +15,11 @@ type InternalEgressObserver interface {
 	// AppendNetworkUsageObservationExcludingInternal is
 	// AppendNetworkUsageObservation that also takes vmmd's cumulative
 	// internal-egress reading. The internal bytes since the checkpoint (a
-	// reading below it is a counter reset: all of it is new), plus any
-	// service reply bytes the gateway queued, come off the egress this
-	// observation adds, never below zero; what it cannot absorb carries to
+	// reading below it is a counter reset: all of it is new) come off the
+	// egress this observation adds, never below zero. The first internal
+	// reading of an instance whose egress checkpoint already exists (the
+	// switch turned on while it ran) is a baseline only: its history was
+	// billed before, so none of it is subtracted (billing review R12-3); what it cannot absorb carries to
 	// the next observation, at most what arrived since the last one. Financial
 	// usage evidence is append-only, so billed egress is reduced before it is
 	// written. It returns the billed egress delta, the ingress delta and the
@@ -26,15 +28,20 @@ type InternalEgressObserver interface {
 }
 
 // internalEgressStep is the checkpoint arithmetic both stores share: the new
-// bytes since prev plus the service reply bytes the gateway queued since the
-// last call (fresh), the bytes to subtract from a row holding rowNetTx, and
-// the carry left for the next reading.
-func internalEgressStep(prev int64, prevValid bool, pending, fresh, cumulative, rowNetTx int64) (subtract, nextPending int64) {
+// bytes since prev, the bytes to subtract from a row holding rowNetTx, and the
+// carry left for the next reading. netPrevValid says the egress checkpoint
+// existed before this observation: a first internal reading then only sets
+// the baseline (billing review R12-3), since the egress it would subtract was
+// counted by earlier observations.
+func internalEgressStep(prev int64, prevValid, netPrevValid bool, pending, cumulative, rowNetTx int64) (subtract, nextPending int64) {
+	if !prevValid && netPrevValid {
+		return 0, 0
+	}
 	delta := cumulative
 	if prevValid && cumulative >= prev {
 		delta = cumulative - prev
 	}
-	arrived := saturatingAdd(delta, max(fresh, 0))
+	arrived := delta
 	want := saturatingAdd(arrived, pending)
 	subtract = min(want, max(rowNetTx, 0))
 	// A carry larger than what arrived since the last call would mean the
@@ -51,6 +58,8 @@ func saturatingAdd(a, b int64) int64 {
 }
 
 const (
+	// service_reply_pending (R8-2 slice 3, withdrawn in billing review R12)
+	// is reset and never read.
 	internalEgressCheckpointUpdate = `update meter_network_checkpoints
 	    set internal_tx_bytes = $2,
 	        internal_tx_valid = true,
@@ -58,12 +67,4 @@ const (
 	        service_reply_pending = 0,
 	        updated_at = now()
 	  where instance_id = $1`
-	// serviceReplyQueue adds a gateway frame's service reply bytes to the
-	// next subtraction, only once the node reports internal egress.
-	serviceReplyQueue = `update meter_network_checkpoints
-	    set service_reply_pending = case
-	          when service_reply_pending > 9223372036854775807 - $2 then 9223372036854775807
-	          else service_reply_pending + $2 end,
-	        updated_at = now()
-	  where instance_id = $1 and internal_tx_valid`
 )
