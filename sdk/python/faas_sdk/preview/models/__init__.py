@@ -2397,9 +2397,13 @@ from .guarded_debug_regression_action_request import GuardedDebugRegressionActio
 from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
 from .held_link_review import HeldLinkReview
 from .held_links_response import HeldLinksResponse
+from .hosted_task_source_check import HostedTaskSourceCheck
+from .hosted_task_source_decision import HostedTaskSourceDecision
+from .hosted_task_source_decision_decision import HostedTaskSourceDecisionDecision
 from .hosted_task_source_entry import HostedTaskSourceEntry
 from .hosted_task_source_entry_mode import HostedTaskSourceEntryMode
 from .hosted_task_source_intent import HostedTaskSourceIntent
+from .hosted_task_source_intent_review_status import HostedTaskSourceIntentReviewStatus
 from .hosted_task_source_intent_source_state import HostedTaskSourceIntentSourceState
 from .hosted_task_source_intent_version import HostedTaskSourceIntentVersion
 from .hosted_task_source_prepare import HostedTaskSourcePrepare
@@ -9113,9 +9117,13 @@ __all__ = (
     "GuardedDebugRegressionActionRequestAction",
     "HeldLinkReview",
     "HeldLinksResponse",
+    "HostedTaskSourceCheck",
+    "HostedTaskSourceDecision",
+    "HostedTaskSourceDecisionDecision",
     "HostedTaskSourceEntry",
     "HostedTaskSourceEntryMode",
     "HostedTaskSourceIntent",
+    "HostedTaskSourceIntentReviewStatus",
     "HostedTaskSourceIntentSourceState",
     "HostedTaskSourceIntentVersion",
     "HostedTaskSourcePrepare",

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { HostedTaskSourceReview } from './HostedTaskSourceReview.js';
 /**
- * Immutable source intent metadata. Not an owner decision or execution plan. Expired ciphertext cannot be renewed under the same identity.
+ * Immutable hosted source identity and last observed owner review metadata. Source review approval does not grant credential or execution authority. Expired ciphertext cannot be renewed under the same identity.
  */
 export type HostedTaskSourceIntent = {
   version: 1;
@@ -18,7 +18,15 @@ export type HostedTaskSourceIntent = {
   expires_at: string;
   source_state: 'retained' | 'expired';
   /**
-   * False because retained source alone has no owner execution authorization.
+   * Last recorded hosted source review state; absent on older receipts means pending until source expiry.
+   */
+  review_status?: 'pending' | 'approved' | 'rejected' | 'revoked' | 'stale' | 'expired';
+  /**
+   * Original hosted source owner decision time, retained unchanged by exact repeats.
+   */
+  decided_at?: string;
+  /**
+   * False because approval of a retained hosted source review is not permission to execute it.
    */
   ready_to_apply: boolean;
   /**
@@ -26,7 +34,7 @@ export type HostedTaskSourceIntent = {
    */
   bindings_verified: boolean;
   /**
-   * True because a separate owner decision is required before any retained Task source can execute.
+   * True until separate owner-controlled execution authorization and runtime credential qualification exist.
    */
   owner_authorization_required: boolean;
 };
