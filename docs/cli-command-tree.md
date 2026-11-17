@@ -480,6 +480,7 @@ touch them. The tables below map each earlier name.
 | `gregale orgs standards local-intent` | `gregale org standards local set` |
 | `gregale orgs standards operation abort` | `gregale org standards operation cancel` |
 | `gregale orgs standards reviews preview` | `gregale org standards reviews approve --dry-run` |
+| `gregale orgs support-access` | `gregale org support` |
 | `gregale orgs transfer-ownership` | `gregale org owner set` |
 | `gregale pipeline access` | `gregale pipeline access approve` |
 | `gregale pipeline access` | `gregale pipeline access check` |

@@ -63,6 +63,9 @@ type Sandbox struct {
 	// ImageRef is the seller image the session boots, normalized; empty for
 	// a preset.
 	ImageRef string
+	// Browser is a session created with the sandbox browser running
+	// (ADR-20261116182615 §1).
+	Browser bool
 }
 
 // SandboxAdmission is a session to admit. QueuedMax is the plan's
@@ -89,6 +92,8 @@ type SandboxAdmission struct {
 	// TemplateID boots the session from a sandbox template's newest
 	// finished build; ImageRef is then template:<name>.
 	TemplateID string
+	// Browser boots the session with the sandbox browser running.
+	Browser bool
 	// Ports are exposed with the session (ExposeSandboxPort's rows).
 	Ports []SandboxPort
 }
@@ -131,7 +136,7 @@ func (s *Store) CreateSandbox(ctx context.Context, a SandboxAdmission) (Sandbox,
 		id, err = s.q.InsertSandboxSession(ctx, tx, sqlc.InsertSandboxSessionParams{AccountID: a.AccountID, TenantID: optText(a.TenantID),
 			Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
 			ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID),
-			ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID)})
+			ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID), Browser: a.Browser})
 		if err != nil {
 			return fmt.Errorf("insert sandbox session: %w", err)
 		}
@@ -251,7 +256,7 @@ func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 		ExpiresAt: row.ExpiresAt.Time.UTC(), OutcomeCode: row.OutcomeCode.String, OutcomeMessage: row.OutcomeMessage.String,
 		CloseRequestedAt: optTime(row.CloseRequestedAt), LastActivityAt: row.LastActivityAt.Time.UTC(),
 		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(), ClosedAt: optTime(row.ClosedAt),
-		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef}
+		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef, Browser: row.Browser}
 	if err := json.Unmarshal(row.Labels, &sb.Labels); err != nil {
 		return Sandbox{}, fmt.Errorf("decode sandbox labels: %w", err)
 	}

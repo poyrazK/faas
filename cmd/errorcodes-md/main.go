@@ -68,6 +68,9 @@ func run(root string, w io.Writer) error {
 	if unused := ex.unused(entries); len(unused) > 0 {
 		return fmt.Errorf("%s: entries match no code, remove them: %s", exclusionsPath, strings.Join(unused, ", "))
 	}
+	if bad := entryLinks(c, entries, ex); len(bad) > 0 {
+		return fmt.Errorf("problems link entries this page does not list, so the link lands at the top of the page: %s", strings.Join(bad, ", "))
+	}
 	_, err = io.WriteString(w, render(entries, ex))
 	return err
 }
@@ -157,6 +160,42 @@ func aggregate(c *collection, pg pages) map[string]*entry {
 		}
 	}
 	return entries
+}
+
+// generatedRoute is the docs route this command's page is served at.
+const generatedRoute = "error-codes"
+
+// entryLinks names the problems whose docs link points at an entry of this
+// page that it does not list: a code left out, or no code at all. The API's
+// errors#<code> links pointed at headings errors.md never had.
+func entryLinks(c *collection, entries map[string]*entry, ex *exclusions) []string {
+	var bad []string
+	seen := map[string]bool{}
+	for _, s := range c.sites {
+		code, ok := c.resolve(s.code)
+		if !ok {
+			continue
+		}
+		for _, d := range s.docs {
+			u, ok := c.resolve(d)
+			if !ok {
+				continue
+			}
+			path, anchor, ok := route(u)
+			if !ok || path != generatedRoute || anchor == "" {
+				continue
+			}
+			if e := entries[anchor]; e != nil && !e.hidden(ex) {
+				continue
+			}
+			if msg := fmt.Sprintf("%s → %s#%s", code, generatedRoute, anchor); !seen[msg] {
+				seen[msg] = true
+				bad = append(bad, msg)
+			}
+		}
+	}
+	sort.Strings(bad)
+	return bad
 }
 
 // customerStatus is the status a customer receives for a problem built with

@@ -3380,8 +3380,12 @@ type SandboxRunStart struct {
 	StartCmd       string `protobuf:"bytes,10,opt,name=start_cmd,json=startCmd,proto3" json:"start_cmd,omitempty"`
 	ReadyCmd       string `protobuf:"bytes,11,opt,name=ready_cmd,json=readyCmd,proto3" json:"ready_cmd,omitempty"`
 	ReadyTimeoutMs int64  `protobuf:"varint,12,opt,name=ready_timeout_ms,json=readyTimeoutMs,proto3" json:"ready_timeout_ms,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// browser boots a preset session with the sandbox browser running
+	// (ADR-20261116182615 §1): vmmd starts it with its own commands, and the
+	// warm snapshot is the browser shape's. Never set with start_cmd.
+	Browser       bool `protobuf:"varint,13,opt,name=browser,proto3" json:"browser,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxRunStart) Reset() {
@@ -3496,6 +3500,13 @@ func (x *SandboxRunStart) GetReadyTimeoutMs() int64 {
 		return x.ReadyTimeoutMs
 	}
 	return 0
+}
+
+func (x *SandboxRunStart) GetBrowser() bool {
+	if x != nil {
+		return x.Browser
+	}
+	return false
 }
 
 type SandboxRunFreeze struct {
@@ -7282,7 +7293,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05close\x18\x04 \x01(\v2&.onebox.faas.schedd.v1.SandboxRunCloseH\x00R\x05close\x12T\n" +
 	"\rpersist_grant\x18\x05 \x01(\v2-.onebox.faas.schedd.v1.SandboxRunPersistGrantH\x00R\fpersistGrant\x12]\n" +
 	"\x10persist_recorded\x18\x06 \x01(\v20.onebox.faas.schedd.v1.SandboxRunPersistRecordedH\x00R\x0fpersistRecordedB\a\n" +
-	"\x05frame\"\xfe\x02\n" +
+	"\x05frame\"\x98\x03\n" +
 	"\x0fSandboxRunStart\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
@@ -7298,7 +7309,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\tstart_cmd\x18\n" +
 	" \x01(\tR\bstartCmd\x12\x1b\n" +
 	"\tready_cmd\x18\v \x01(\tR\breadyCmd\x12(\n" +
-	"\x10ready_timeout_ms\x18\f \x01(\x03R\x0ereadyTimeoutMs\"\x12\n" +
+	"\x10ready_timeout_ms\x18\f \x01(\x03R\x0ereadyTimeoutMs\x12\x18\n" +
+	"\abrowser\x18\r \x01(\bR\abrowser\"\x12\n" +
 	"\x10SandboxRunFreeze\"\x11\n" +
 	"\x0fSandboxRunClose\"\xb7\x05\n" +
 	"\x0fSandboxRunEvent\x12?\n" +

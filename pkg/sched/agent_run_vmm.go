@@ -268,7 +268,7 @@ func (c *VMMClient) CaptureSandboxSnapshot(ctx context.Context, spec SandboxSpec
 	resp, err := c.cli.CaptureSandboxSnapshot(wire.WithCorrelationOutgoing(ctx, fields), &vmmdpb.CaptureSandboxSnapshotRequest{
 		Instance: spec.Instance, AccountId: spec.AccountID, Plan: string(spec.Plan), BaseKey: spec.BaseKey, LayerKey: spec.LayerKey,
 		ImageKey: spec.ImageKey, VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB), CpuMillicores: int32(spec.CPUMillicores),
-		NetworkMode: spec.Network, Namespace: namespace, CaptureId: captureID,
+		NetworkMode: spec.Network, Namespace: namespace, CaptureId: captureID, Browser: spec.Browser,
 	})
 	if err != nil {
 		return nil, liftErr(err)

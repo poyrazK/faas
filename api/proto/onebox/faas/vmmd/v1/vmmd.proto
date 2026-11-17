@@ -3538,6 +3538,11 @@ message RunSandboxStart {
   // mode; a failed restore cold-boots (ADR-005), and booted reports which.
   // An older vmmd ignores it and cold-boots.
   AgentRunSnapshot snapshot = 17;
+  // browser starts the sandbox browser as the session's start command and
+  // waits for it as its ready command, after a cold boot or a restore
+  // (ADR-20261116182615 §1). vmmd owns both commands; it is refused with
+  // start_cmd. An older vmmd ignores it.
+  bool browser = 18;
 }
 
 // CaptureSandboxSnapshotRequest is the session machine to capture, without
@@ -3556,6 +3561,10 @@ message CaptureSandboxSnapshotRequest {
   string network_mode = 10;
   string namespace = 11;
   string capture_id = 12;
+  // browser captures the browser shape: vmmd prewarms Chromium (starts,
+  // waits for, stops it and deletes its profile) before the capture, so
+  // nothing that runs is in the snapshot (ADR-20261116182615 §2).
+  bool browser = 13;
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),
