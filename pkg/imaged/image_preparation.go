@@ -233,6 +233,7 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 		return imageRecoveryError(err)
 	}
 	markPreparationPhase(ctx, "replicate")
+	h.announceLayerPublished(ctx, app.ID, dep)
 	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
