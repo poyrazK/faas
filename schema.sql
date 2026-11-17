@@ -31771,6 +31771,56 @@ COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, w
 
 
 --
+-- Name: analytics_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_events (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    customer_id uuid NOT NULL,
+    subject_hash bytea,
+    name text NOT NULL,
+    at timestamp with time zone NOT NULL,
+    value bigint DEFAULT 0 NOT NULL,
+    properties jsonb DEFAULT '{}'::jsonb NOT NULL,
+    flags jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT analytics_events_chk CHECK (((name ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND ((subject_hash IS NULL) OR (length(subject_hash) = 32)) AND (jsonb_typeof(properties) = 'object'::text) AND (jsonb_typeof(flags) = 'object'::text)))
+);
+
+
+--
+-- Name: analytics_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.analytics_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: analytics_events_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.analytics_events_id_seq OWNED BY public.analytics_events.id;
+
+
+--
+-- Name: analytics_property_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_property_keys (
+    environment_id uuid NOT NULL,
+    key text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT analytics_property_keys_chk CHECK ((key ~ '^[a-z][a-z0-9_]{0,63}$'::text))
+);
+
+
+--
 -- Name: api_consumer_billing_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62658,6 +62708,13 @@ ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_teleme
 
 
 --
+-- Name: analytics_events id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events ALTER COLUMN id SET DEFAULT nextval('public.analytics_events_id_seq'::regclass);
+
+
+--
 -- Name: compute_node_heartbeats id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -63157,6 +63214,22 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_test_sends
     ADD CONSTRAINT alert_test_sends_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: analytics_events analytics_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events
+    ADD CONSTRAINT analytics_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: analytics_property_keys analytics_property_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_property_keys
+    ADD CONSTRAINT analytics_property_keys_pkey PRIMARY KEY (environment_id, key);
 
 
 --
@@ -77435,6 +77508,34 @@ CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btre
 --
 
 CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (created_at) WHERE (state <> 'done'::text);
+
+
+--
+-- Name: analytics_events_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_events_at_idx ON public.analytics_events USING btree (at);
+
+
+--
+-- Name: analytics_events_customer_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_events_customer_at_idx ON public.analytics_events USING btree (customer_id, at);
+
+
+--
+-- Name: analytics_events_env_name_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_events_env_name_at_idx ON public.analytics_events USING btree (environment_id, name, at);
+
+
+--
+-- Name: analytics_events_subject_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_events_subject_at_idx ON public.analytics_events USING btree (environment_id, subject_hash, at) WHERE (subject_hash IS NOT NULL);
 
 
 --
@@ -96673,6 +96774,38 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_test_sends
     ADD CONSTRAINT alert_test_sends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_events analytics_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events
+    ADD CONSTRAINT analytics_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_events analytics_events_customer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events
+    ADD CONSTRAINT analytics_events_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_events analytics_events_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events
+    ADD CONSTRAINT analytics_events_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_property_keys analytics_property_keys_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_property_keys
+    ADD CONSTRAINT analytics_property_keys_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

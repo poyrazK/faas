@@ -697,6 +697,25 @@ type AlertTestSend struct {
 	CompletedAt  pgtype.Timestamptz
 }
 
+type AnalyticsEvent struct {
+	ID            int64
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	CustomerID    pgtype.UUID
+	SubjectHash   []byte
+	Name          string
+	At            pgtype.Timestamptz
+	Value         int64
+	Properties    []byte
+	Flags         []byte
+}
+
+type AnalyticsPropertyKey struct {
+	EnvironmentID pgtype.UUID
+	Key           string
+	CreatedAt     pgtype.Timestamptz
+}
+
 type ApiConsumer struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID

@@ -89,6 +89,11 @@ const (
 	// (ADR-20261116163508). Its kill switch refuses every grant at once.
 	SupportGrants = "support_grants"
 
+	// ProductAnalytics keeps raw track() events and serves event series,
+	// funnels and retention (ADR-20261117084505). Off, events still feed
+	// experiments and no raw event is stored.
+	ProductAnalytics = "product_analytics"
+
 	// Edge rule features released by platform flags (ADR-20261023113721).
 	EdgeWAFBlocking = "edge_waf_blocking"
 	EdgeChallenge   = "edge_challenge"
@@ -425,6 +430,17 @@ var catalog = []Spec{
 		Consumers:  []string{"apid"},
 		Attributes: []Attribute{AttributeOrg},
 		RetireBy:   "2027-06-30",
+	},
+	{
+		Key:   ProductAnalytics,
+		Label: "Product analytics",
+		Description: "Keep raw track() events for the plan's analytics retention and serve event series, flag breakdowns, funnels and retention. " +
+			"Off, events still feed flag experiments, no raw event is stored and the insights routes refuse.",
+		ADR:          "ADR-20261117084505",
+		Consumers:    []string{"apid"},
+		Attributes:   []Attribute{AttributePlan, AttributeOrg},
+		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/insights/events"},
+		RetireBy:     "2027-06-30",
 	},
 	{
 		Key:   QuietPauseUnbilled,
