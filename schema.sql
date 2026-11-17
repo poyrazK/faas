@@ -59511,6 +59511,27 @@ CREATE TABLE public.sales_tasks (
 
 
 --
+-- Name: sandbox_egress_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_egress_policies (
+    account_id uuid NOT NULL,
+    allow_rules text[] DEFAULT '{}'::text[] NOT NULL,
+    deny_rules text[] DEFAULT '{}'::text[] NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sandbox_egress_policies_allow_rules_check CHECK ((cardinality(allow_rules) <= 100)),
+    CONSTRAINT sandbox_egress_policies_deny_rules_check CHECK ((cardinality(deny_rules) <= 100))
+);
+
+
+--
+-- Name: TABLE sandbox_egress_policies; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_egress_policies IS 'ADR-20261117091026 account default web-mode domain policy, written by apid.';
+
+
+--
 -- Name: sandbox_ports; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59605,6 +59626,8 @@ CREATE TABLE public.sandbox_sessions (
     image_ref text,
     image_job_id uuid,
     template_id uuid,
+    egress_allow text[],
+    egress_deny text[],
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_image_ref_check CHECK (((image_ref IS NULL) OR ((char_length(image_ref) >= 1) AND (char_length(image_ref) <= 512)))),
@@ -75440,6 +75463,14 @@ ALTER TABLE ONLY public.sales_tasks
 
 
 --
+-- Name: sandbox_egress_policies sandbox_egress_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_egress_policies
+    ADD CONSTRAINT sandbox_egress_policies_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: sandbox_ports sandbox_ports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75453,6 +75484,22 @@ ALTER TABLE ONLY public.sandbox_ports
 
 ALTER TABLE ONLY public.sandbox_session_usage
     ADD CONSTRAINT sandbox_session_usage_pkey PRIMARY KEY (sandbox_id);
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_egress_allow_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_egress_allow_check CHECK (((egress_allow IS NULL) OR (cardinality(egress_allow) <= 100))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_egress_deny_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_egress_deny_check CHECK (((egress_deny IS NULL) OR (cardinality(egress_deny) <= 200))) NOT VALID;
 
 
 --
@@ -111577,6 +111624,14 @@ ALTER TABLE ONLY public.sales_tasks
 
 ALTER TABLE ONLY public.sales_tasks
     ADD CONSTRAINT sales_tasks_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sandbox_egress_policies sandbox_egress_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_egress_policies
+    ADD CONSTRAINT sandbox_egress_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

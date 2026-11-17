@@ -11281,6 +11281,9 @@ var (
 	// it. A browser touches many domains per page, so it is above the per-run
 	// fetch limits of ADR-20261027090014 §4.7.
 	SandboxWebDistinctDomains = [4]int{0, 200, 1000, 5000}
+	// SandboxEgressRulesMax bounds each list of a web-mode domain policy
+	// (ADR-20261117091026 §1), an account's default and a session's own.
+	SandboxEgressRulesMax = 100
 	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
 	// command.
 	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}

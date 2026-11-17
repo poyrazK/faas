@@ -250,6 +250,13 @@ type PlatformTenant struct {
 	Status    string
 }
 
+type SandboxEgressPolicy struct {
+	AccountID  pgtype.UUID
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
 	AccountID  pgtype.UUID
@@ -286,6 +293,8 @@ type SandboxSession struct {
 	TemplateID          pgtype.UUID
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.UUID
+	EgressAllow         []string
+	EgressDeny          []string
 }
 
 type SandboxSessionUsage struct {

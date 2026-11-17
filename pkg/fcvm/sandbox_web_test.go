@@ -142,3 +142,38 @@ func TestSandboxWebDomainIsRegistrable(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261117091026 §3 — a session's domain policy is on its instance
+// from boot; the grant refuses a name it does not allow, naming the
+// policy, and a refused name never counts against the domain budget.
+func TestWebSandboxDomainPolicy(t *testing.T) {
+	withTenantEgressGateway(t, "wg-tenant")
+	m := newTestManager(&fakeInputRunner{}, &sandboxTestVMM{fakeVMM: &fakeVMM{}})
+	wake := webSandboxWake("sbx-policy")
+	wake.EgressAllow, wake.EgressDeny = []string{"example.com"}, []string{"admin.example.com"}
+	inst, err := m.WakeSandbox(t.Context(), wake)
+	if err != nil {
+		t.Fatalf("WakeSandbox: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "sbx-policy") })
+	source := inst.Net.HostIP
+	owner := resolvedOwner(t, m, source)
+	grant := func(name string, last byte) error {
+		return m.AllowResolvedEgressNamed(t.Context(), source, owner, name, []netip.Addr{netip.AddrFrom4([4]byte{198, 51, 100, last})}, time.Minute, 0)
+	}
+	if err := grant("docs.example.com", 1); err != nil {
+		t.Fatalf("an allowed name was refused: %v", err)
+	}
+	for i, name := range []string{"example.org", "admin.example.com", "cdn.admin.example.com"} {
+		err := grant(name, byte(10+i))
+		if ResolvedEgressRefusal(err) == "" || !strings.Contains(err.Error(), "egress policy") {
+			t.Fatalf("%s = %v; want the policy's refusal", name, err)
+		}
+	}
+	m.mu.Lock()
+	counted := len(inst.webDomains)
+	m.mu.Unlock()
+	if counted != 1 {
+		t.Fatalf("%d domains counted; refused names must not count", counted)
+	}
+}

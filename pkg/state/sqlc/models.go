@@ -15836,6 +15836,14 @@ type SalesTask struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+// ADR-20261117091026 account default web-mode domain policy, written by apid.
+type SandboxEgressPolicy struct {
+	AccountID  pgtype.UUID
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 // ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
@@ -15875,7 +15883,9 @@ type SandboxSession struct {
 	// ADR-20261027090013: the image-run runner job (ADR-1161) caching the session image; a live session keeps it from eviction.
 	ImageJobID pgtype.UUID
 	// ADR-20261027090013: the sandbox template the session boots; NULL for a preset or image session, or once the template is deleted.
-	TemplateID pgtype.UUID
+	TemplateID  pgtype.UUID
+	EgressAllow []string
+	EgressDeny  []string
 }
 
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.

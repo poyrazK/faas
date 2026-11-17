@@ -15077,7 +15077,14 @@ type RunSandboxStart struct {
 	// CaptureSandboxSnapshot made of the same drives, machine and network
 	// mode; a failed restore cold-boots (ADR-005), and booted reports which.
 	// An older vmmd ignores it and cold-boots.
-	Snapshot      *AgentRunSnapshot `protobuf:"bytes,17,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	Snapshot *AgentRunSnapshot `protobuf:"bytes,17,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	// egress_allow and egress_deny are a web-mode session's domain policy
+	// (ADR-20261117091026 §3): vmmd grants a name only when no deny rule
+	// matches it and allow is empty or an allow rule matches it. Fields 18
+	// and 19 are reserved for the browser session and task fields of the
+	// ADR-20261116182615 changes.
+	EgressAllow   []string `protobuf:"bytes,20,rep,name=egress_allow,json=egressAllow,proto3" json:"egress_allow,omitempty"`
+	EgressDeny    []string `protobuf:"bytes,21,rep,name=egress_deny,json=egressDeny,proto3" json:"egress_deny,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -15227,6 +15234,20 @@ func (x *RunSandboxStart) GetReadyTimeoutMs() int64 {
 func (x *RunSandboxStart) GetSnapshot() *AgentRunSnapshot {
 	if x != nil {
 		return x.Snapshot
+	}
+	return nil
+}
+
+func (x *RunSandboxStart) GetEgressAllow() []string {
+	if x != nil {
+		return x.EgressAllow
+	}
+	return nil
+}
+
+func (x *RunSandboxStart) GetEgressDeny() []string {
+	if x != nil {
+		return x.EgressDeny
 	}
 	return nil
 }
@@ -15625,9 +15646,14 @@ func (*RunSandboxEvent_PersistDone) isRunSandboxEvent_Frame() {}
 func (*RunSandboxEvent_Usage) isRunSandboxEvent_Frame() {}
 
 type RunSandboxBooted struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Method        WakeMethod             `protobuf:"varint,1,opt,name=method,proto3,enum=onebox.faas.vmmd.v1.WakeMethod" json:"method,omitempty"`
-	BootMs        int64                  `protobuf:"varint,2,opt,name=boot_ms,json=bootMs,proto3" json:"boot_ms,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Method WakeMethod             `protobuf:"varint,1,opt,name=method,proto3,enum=onebox.faas.vmmd.v1.WakeMethod" json:"method,omitempty"`
+	BootMs int64                  `protobuf:"varint,2,opt,name=boot_ms,json=bootMs,proto3" json:"boot_ms,omitempty"`
+	// egress_policy is set by a vmmd that enforces a session's domain policy
+	// (ADR-20261117091026 §3); agentd closes a session with a policy that
+	// boots without it. Field 3 is reserved for the browser actions flag
+	// (ADR-20261117065818).
+	EgressPolicy  bool `protobuf:"varint,4,opt,name=egress_policy,json=egressPolicy,proto3" json:"egress_policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -15674,6 +15700,13 @@ func (x *RunSandboxBooted) GetBootMs() int64 {
 		return x.BootMs
 	}
 	return 0
+}
+
+func (x *RunSandboxBooted) GetEgressPolicy() bool {
+	if x != nil {
+		return x.EgressPolicy
+	}
+	return false
 }
 
 // RunSandboxActivity reports the session's calls, at most once a second
@@ -23107,7 +23140,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05close\x18\x03 \x01(\v2$.onebox.faas.vmmd.v1.RunSandboxCloseH\x00R\x05close\x12R\n" +
 	"\rpersist_grant\x18\x04 \x01(\v2+.onebox.faas.vmmd.v1.RunSandboxPersistGrantH\x00R\fpersistGrant\x12[\n" +
 	"\x10persist_recorded\x18\x05 \x01(\v2..onebox.faas.vmmd.v1.RunSandboxPersistRecordedH\x00R\x0fpersistRecordedB\a\n" +
-	"\x05frame\"\xdc\x04\n" +
+	"\x05frame\"\xa0\x05\n" +
 	"\x0fRunSandboxStart\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -23130,7 +23163,10 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\tstart_cmd\x18\x0e \x01(\tR\bstartCmd\x12\x1b\n" +
 	"\tready_cmd\x18\x0f \x01(\tR\breadyCmd\x12(\n" +
 	"\x10ready_timeout_ms\x18\x10 \x01(\x03R\x0ereadyTimeoutMs\x12A\n" +
-	"\bsnapshot\x18\x11 \x01(\v2%.onebox.faas.vmmd.v1.AgentRunSnapshotR\bsnapshot\"\x8b\x03\n" +
+	"\bsnapshot\x18\x11 \x01(\v2%.onebox.faas.vmmd.v1.AgentRunSnapshotR\bsnapshot\x12!\n" +
+	"\fegress_allow\x18\x14 \x03(\tR\vegressAllow\x12\x1f\n" +
+	"\vegress_deny\x18\x15 \x03(\tR\n" +
+	"egressDeny\"\x8b\x03\n" +
 	"\x1dCaptureSandboxSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -23160,10 +23196,11 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x11persist_requested\x18\x06 \x01(\v2/.onebox.faas.vmmd.v1.RunSandboxPersistRequestedH\x00R\x10persistRequested\x12O\n" +
 	"\fpersist_done\x18\a \x01(\v2*.onebox.faas.vmmd.v1.RunSandboxPersistDoneH\x00R\vpersistDone\x12:\n" +
 	"\x05usage\x18\b \x01(\v2\".onebox.faas.vmmd.v1.AgentRunUsageH\x00R\x05usageB\a\n" +
-	"\x05frame\"d\n" +
+	"\x05frame\"\x89\x01\n" +
 	"\x10RunSandboxBooted\x127\n" +
 	"\x06method\x18\x01 \x01(\x0e2\x1f.onebox.faas.vmmd.v1.WakeMethodR\x06method\x12\x17\n" +
-	"\aboot_ms\x18\x02 \x01(\x03R\x06bootMs\"r\n" +
+	"\aboot_ms\x18\x02 \x01(\x03R\x06bootMs\x12#\n" +
+	"\regress_policy\x18\x04 \x01(\bR\fegressPolicy\"r\n" +
 	"\x12RunSandboxActivity\x12&\n" +
 	"\x0fcalls_in_flight\x18\x01 \x01(\x05R\rcallsInFlight\x124\n" +
 	"\x17last_call_ended_unix_ms\x18\x02 \x01(\x03R\x13lastCallEndedUnixMs\"\x12\n" +

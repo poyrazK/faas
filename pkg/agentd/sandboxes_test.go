@@ -7,6 +7,7 @@ package agentd_test
 import (
 	"context"
 	"net"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -59,7 +60,8 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 	if frame, err := stream.Recv(); err != nil || frame.GetProceed() == nil {
 		return status.Error(codes.Aborted, "not told to proceed")
 	}
-	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: "WAKE_COLD_BOOT", BootMs: 700}}}); err != nil {
+	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: "WAKE_COLD_BOOT", BootMs: 700,
+		EgressPolicy: script == "egress"}}}); err != nil {
 		return err
 	}
 	// vmmd's usage of the session VM, cumulative (step 11).
@@ -241,6 +243,48 @@ func TestSandboxOutcomesBeforeAndAfterBoot(t *testing.T) {
 			}
 			if sb := sandboxState(t, store, id); sb.State != tc.state || sb.OutcomeCode != tc.outcome {
 				t.Fatalf("session = %s %q, want %s %q", sb.State, sb.OutcomeCode, tc.state, tc.outcome)
+			}
+		})
+	}
+}
+
+// adr: 20261117091026 §3 — agentd sends a session's domain policy on its
+// start frame, and closes a session with a policy whose node boots it
+// without enforcing one.
+func TestSandboxEgressPolicyFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		script, state, outcome string
+	}{
+		{"egress", agentstore.SandboxReady, ""},
+		{"", agentstore.SandboxFailed, "egress_policy_unsupported"},
+	} {
+		t.Run("script="+tc.script, func(t *testing.T) {
+			_, store := openStore(t)
+			sb, err := store.CreateSandbox(context.Background(), agentstore.SandboxAdmission{AccountID: account, Kind: "ephemeral",
+				Preset: "codex", RAMMB: 1024, NetworkMode: "web", IdleTimeoutSec: 600, ExpiresAt: time.Now().Add(time.Hour), QueuedMax: 100,
+				EgressAllow: []string{"example.com"}, EgressDeny: []string{"admin.example.com"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fake := &fakeSandboxSchedd{scripts: map[string]string{sb.ID: tc.script}}
+			done := holdSandbox(t, newSandboxes(t, store, fake, agentd.SandboxConfig{}))
+			if tc.state == agentstore.SandboxReady {
+				waitFor(t, "ready", func() bool { return sandboxState(t, store, sb.ID).State == agentstore.SandboxReady })
+				if _, err := store.CloseSandbox(context.Background(), account, sb.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !<-done {
+				t.Fatal("nothing was claimed")
+			}
+			if tc.outcome != "" {
+				if got := sandboxState(t, store, sb.ID); got.State != tc.state || got.OutcomeCode != tc.outcome {
+					t.Fatalf("session = %s %q", got.State, got.OutcomeCode)
+				}
+			}
+			start := fake.starts[0]
+			if !slices.Equal(start.GetEgressAllow(), []string{"example.com"}) || !slices.Equal(start.GetEgressDeny(), []string{"admin.example.com"}) {
+				t.Fatalf("start policy %v / %v", start.GetEgressAllow(), start.GetEgressDeny())
 			}
 		})
 	}

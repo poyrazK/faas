@@ -1,6 +1,7 @@
 package sandboxes
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -37,7 +38,7 @@ var notYet = []struct {
 
 // admission checks a create request against the plan and returns the
 // session to admit.
-func (h *Handler) admission(acct state.Account, body createBody) (agentstore.SandboxAdmission, *api.Problem) {
+func (h *Handler) admission(ctx context.Context, acct state.Account, body createBody) (agentstore.SandboxAdmission, *api.Problem) {
 	idx := acct.Plan.PlanIndex()
 	if api.SandboxMaxLifetimeSec[idx] == 0 {
 		return agentstore.SandboxAdmission{}, api.ErrAgentLimit(acct.Plan, "SandboxMaxLifetimeSec", 0, 1)
@@ -63,6 +64,7 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 		func() *api.Problem { return validImageSource(in) },
 		func() *api.Problem { return validTenant(&a, in.Tenant) },
 		func() *api.Problem { return validNetwork(&a, in.Network, h.WebNetwork) },
+		func() *api.Problem { return h.applyEgress(ctx, acct, &a, in.Network) },
 		func() *api.Problem { return h.validPorts(acct, &a, in.Ports) },
 		func() *api.Problem { return resourcelabels.Problem(labels.Change{Set: in.Labels}.Validate()) },
 	}

@@ -37,6 +37,8 @@ type fakeStore struct {
 	now      func() time.Time
 	sessions []agentstore.Sandbox
 	admitted agentstore.SandboxAdmission
+	// egress is the account's default egress policy.
+	egress agentstore.SandboxEgressPolicy
 	queued   int // queued agent runs, which share the cap
 	err      error
 	// snapshots are persisted workspaces, newest first.

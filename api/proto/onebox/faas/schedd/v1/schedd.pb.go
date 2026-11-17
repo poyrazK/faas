@@ -3380,8 +3380,15 @@ type SandboxRunStart struct {
 	StartCmd       string `protobuf:"bytes,10,opt,name=start_cmd,json=startCmd,proto3" json:"start_cmd,omitempty"`
 	ReadyCmd       string `protobuf:"bytes,11,opt,name=ready_cmd,json=readyCmd,proto3" json:"ready_cmd,omitempty"`
 	ReadyTimeoutMs int64  `protobuf:"varint,12,opt,name=ready_timeout_ms,json=readyTimeoutMs,proto3" json:"ready_timeout_ms,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// egress_allow and egress_deny are a web-mode session's domain policy
+	// (ADR-20261117091026 §3): vmmd grants a name only when no deny rule
+	// matches it and allow is empty or an allow rule matches it. Fields 13
+	// and 14 are reserved for the browser session and task fields of the
+	// ADR-20261116182615 changes.
+	EgressAllow   []string `protobuf:"bytes,15,rep,name=egress_allow,json=egressAllow,proto3" json:"egress_allow,omitempty"`
+	EgressDeny    []string `protobuf:"bytes,16,rep,name=egress_deny,json=egressDeny,proto3" json:"egress_deny,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxRunStart) Reset() {
@@ -3496,6 +3503,20 @@ func (x *SandboxRunStart) GetReadyTimeoutMs() int64 {
 		return x.ReadyTimeoutMs
 	}
 	return 0
+}
+
+func (x *SandboxRunStart) GetEgressAllow() []string {
+	if x != nil {
+		return x.EgressAllow
+	}
+	return nil
+}
+
+func (x *SandboxRunStart) GetEgressDeny() []string {
+	if x != nil {
+		return x.EgressDeny
+	}
+	return nil
 }
 
 type SandboxRunFreeze struct {
@@ -4756,9 +4777,14 @@ func (x *AgentRunPlaced) GetNodeId() string {
 }
 
 type AgentRunBooted struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Method        string                 `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"`
-	BootMs        int64                  `protobuf:"varint,2,opt,name=boot_ms,json=bootMs,proto3" json:"boot_ms,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Method string                 `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"`
+	BootMs int64                  `protobuf:"varint,2,opt,name=boot_ms,json=bootMs,proto3" json:"boot_ms,omitempty"`
+	// egress_policy is set by a vmmd that enforces a session's domain policy
+	// (ADR-20261117091026 §3); agentd closes a session with a policy that
+	// boots without it. Field 3 is reserved for the browser actions flag
+	// (ADR-20261117065818).
+	EgressPolicy  bool `protobuf:"varint,4,opt,name=egress_policy,json=egressPolicy,proto3" json:"egress_policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4805,6 +4831,13 @@ func (x *AgentRunBooted) GetBootMs() int64 {
 		return x.BootMs
 	}
 	return 0
+}
+
+func (x *AgentRunBooted) GetEgressPolicy() bool {
+	if x != nil {
+		return x.EgressPolicy
+	}
+	return false
 }
 
 type AgentRunOutput struct {
@@ -7282,7 +7315,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05close\x18\x04 \x01(\v2&.onebox.faas.schedd.v1.SandboxRunCloseH\x00R\x05close\x12T\n" +
 	"\rpersist_grant\x18\x05 \x01(\v2-.onebox.faas.schedd.v1.SandboxRunPersistGrantH\x00R\fpersistGrant\x12]\n" +
 	"\x10persist_recorded\x18\x06 \x01(\v20.onebox.faas.schedd.v1.SandboxRunPersistRecordedH\x00R\x0fpersistRecordedB\a\n" +
-	"\x05frame\"\xfe\x02\n" +
+	"\x05frame\"\xc2\x03\n" +
 	"\x0fSandboxRunStart\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
@@ -7298,7 +7331,10 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\tstart_cmd\x18\n" +
 	" \x01(\tR\bstartCmd\x12\x1b\n" +
 	"\tready_cmd\x18\v \x01(\tR\breadyCmd\x12(\n" +
-	"\x10ready_timeout_ms\x18\f \x01(\x03R\x0ereadyTimeoutMs\"\x12\n" +
+	"\x10ready_timeout_ms\x18\f \x01(\x03R\x0ereadyTimeoutMs\x12!\n" +
+	"\fegress_allow\x18\x0f \x03(\tR\vegressAllow\x12\x1f\n" +
+	"\vegress_deny\x18\x10 \x03(\tR\n" +
+	"egressDeny\"\x12\n" +
 	"\x10SandboxRunFreeze\"\x11\n" +
 	"\x0fSandboxRunClose\"\xb7\x05\n" +
 	"\x0fSandboxRunEvent\x12?\n" +
@@ -7380,10 +7416,11 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05frame\"E\n" +
 	"\x0eAgentRunPlaced\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x17\n" +
-	"\anode_id\x18\x02 \x01(\tR\x06nodeId\"A\n" +
+	"\anode_id\x18\x02 \x01(\tR\x06nodeId\"f\n" +
 	"\x0eAgentRunBooted\x12\x16\n" +
 	"\x06method\x18\x01 \x01(\tR\x06method\x12\x17\n" +
-	"\aboot_ms\x18\x02 \x01(\x03R\x06bootMs\">\n" +
+	"\aboot_ms\x18\x02 \x01(\x03R\x06bootMs\x12#\n" +
+	"\regress_policy\x18\x04 \x01(\bR\fegressPolicy\">\n" +
 	"\x0eAgentRunOutput\x12\x16\n" +
 	"\x06stream\x18\x01 \x01(\tR\x06stream\x12\x14\n" +
 	"\x05chunk\x18\x02 \x01(\fR\x05chunk\"(\n" +

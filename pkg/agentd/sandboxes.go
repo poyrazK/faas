@@ -93,6 +93,9 @@ const (
 	// sandboxOutcomeImage: the seller image the session boots was deleted
 	// or evicted after the claim.
 	sandboxOutcomeImage = "image_unavailable"
+	// sandboxOutcomeEgressPolicy: the session has a domain policy and the
+	// node's vmmd cannot enforce one (ADR-20261117091026 §3).
+	sandboxOutcomeEgressPolicy = "egress_policy_unsupported"
 )
 
 // Sandboxes drives one replica's sandbox sessions.
@@ -266,6 +269,7 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		SandboxId: claim.ID, AccountId: claim.AccountID, Plan: claim.Plan, RamMb: int32(claim.RAMMB), Vcpu: int32(vcpu),
 		CpuMillicores: int32(vcpu * 1000), NetworkMode: claim.Network, WorkspaceKey: claim.WorkspaceKey,
 		ImageKey: claim.ImageKey, StartCmd: claim.StartCmd, ReadyCmd: claim.ReadyCmd, ReadyTimeoutMs: claim.ReadyTimeout.Milliseconds(),
+		EgressAllow: claim.EgressAllow, EgressDeny: claim.EgressDeny,
 	}}}); err != nil {
 		s.requeue(ctx, claim, err)
 		return
@@ -324,6 +328,13 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 		case ev.GetBooted() != nil:
 			if placed == nil {
 				return status.Error(codes.Internal, "schedd booted a session it never placed")
+			}
+			// A policy the node cannot enforce must not run (fails closed).
+			if len(ss.claim.EgressAllow)+len(ss.claim.EgressDeny) > 0 && !ev.GetBooted().GetEgressPolicy() {
+				if ss.decide(agentstore.SandboxFailed, sandboxOutcomeEgressPolicy, "the node cannot enforce the session's egress policy") {
+					_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Close{Close: &scheddpb.SandboxRunClose{}}})
+				}
+				continue
 			}
 			if err := s.store.MarkSandboxReady(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId(), placed.GetInstance()); err != nil {
 				return err

@@ -51,7 +51,8 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 	admission := sched.SandboxAdmission{SandboxID: start.GetSandboxId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
 		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
 		Network: start.GetNetworkMode(), WorkspaceKey: start.GetWorkspaceKey(), ImageKey: start.GetImageKey(),
-		StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(), ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond}
+		StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(), ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond,
+		EgressAllow: start.GetEgressAllow(), EgressDeny: start.GetEgressDeny()}
 	ctx := stream.Context()
 	var sendMu sync.Mutex
 	send := func(ev *scheddpb.SandboxRunEvent) error {
@@ -75,8 +76,9 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		}
 	}
 	hooks := sched.SandboxHooks{
-		Booted: func(_ context.Context, method string, bootMs int64) error {
-			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: method, BootMs: bootMs}}})
+		Booted: func(_ context.Context, b sched.SandboxBooted) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: b.Method,
+				BootMs: b.BootMs, EgressPolicy: b.EgressPolicy}}})
 		},
 		Activity: func(_ context.Context, a sched.SandboxActivity) error {
 			ev := &scheddpb.SandboxRunActivity{CallsInFlight: int32(a.CallsInFlight)}

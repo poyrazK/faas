@@ -47,6 +47,18 @@ type SandboxAdmission struct {
 	StartCmd     string
 	ReadyCmd     string
 	ReadyTimeout time.Duration
+	// EgressAllow and EgressDeny are a web-mode session's domain policy
+	// (ADR-20261117091026 §3); vmmd validates and enforces them.
+	EgressAllow []string
+	EgressDeny  []string
+}
+
+// SandboxBooted is vmmd's report of a booted session VM. EgressPolicy is
+// set when vmmd enforces the session's domain policy (ADR-20261117091026 §3).
+type SandboxBooted struct {
+	Method       string
+	BootMs       int64
+	EgressPolicy bool
 }
 
 // network is the mode the session boots with.
@@ -75,6 +87,9 @@ type SandboxSpec struct {
 	StartCmd        string
 	ReadyCmd        string
 	ReadyTimeout    time.Duration
+	// EgressAllow and EgressDeny are the session's domain policy.
+	EgressAllow []string
+	EgressDeny  []string
 	// Snapshot restores the session from a warm snapshot of the same drives,
 	// machine and network mode (ADR-20261027090013 §12).
 	Snapshot *AgentRunSnapshot
@@ -139,7 +154,7 @@ type SandboxActivity struct {
 // SandboxHooks observe a live session. Booted runs once; the others as vmmd
 // reports them. A hook's error ends the session.
 type SandboxHooks struct {
-	Booted        func(ctx context.Context, method string, bootMs int64) error
+	Booted        func(ctx context.Context, b SandboxBooted) error
 	Activity      func(ctx context.Context, a SandboxActivity) error
 	Frozen        func(ctx context.Context) error
 	FreezeRefused func(ctx context.Context, reason string) error
@@ -201,15 +216,16 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	spec := SandboxSpec{Instance: placement.Instance, SandboxID: a.SandboxID, AccountID: a.AccountID, Plan: a.Plan,
 		BaseKey: r.cfg.BaseKey, LayerKey: r.cfg.SandboxLayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB,
 		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network(),
-		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout}
+		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout,
+		EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny}
 	shape := r.sandboxShape(placement.NodeID, spec)
 	spec.Snapshot = r.sandboxSnapshotFor(shape, spec)
 	var method string
 	booted := hooks.Booted
-	hooks.Booted = func(ctx context.Context, m string, bootMs int64) error {
-		method = m
+	hooks.Booted = func(ctx context.Context, b SandboxBooted) error {
+		method = b.Method
 		if booted != nil {
-			return booted(ctx, m, bootMs)
+			return booted(ctx, b)
 		}
 		return nil
 	}
@@ -276,6 +292,7 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		CpuMillicores: int32(spec.CPUMillicores), QuietPauseAfterMs: spec.QuietPauseAfter.Milliseconds(), NetworkMode: spec.Network,
 		WorkspaceKey: spec.WorkspaceKey, ImageKey: spec.ImageKey, StartCmd: spec.StartCmd, ReadyCmd: spec.ReadyCmd,
 		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot),
+		EgressAllow: spec.EgressAllow, EgressDeny: spec.EgressDeny,
 	}}}); err != nil {
 		return liftErr(err)
 	}
@@ -335,7 +352,8 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 		switch {
 		case event.GetBooted() != nil:
 			if hooks.Booted != nil {
-				err = hooks.Booted(ctx, event.GetBooted().GetMethod().String(), event.GetBooted().GetBootMs())
+				b := event.GetBooted()
+				err = hooks.Booted(ctx, SandboxBooted{Method: b.GetMethod().String(), BootMs: b.GetBootMs(), EgressPolicy: b.GetEgressPolicy()})
 			}
 		case event.GetActivity() != nil:
 			if hooks.Activity != nil {

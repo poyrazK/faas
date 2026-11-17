@@ -3538,6 +3538,13 @@ message RunSandboxStart {
   // mode; a failed restore cold-boots (ADR-005), and booted reports which.
   // An older vmmd ignores it and cold-boots.
   AgentRunSnapshot snapshot = 17;
+  // egress_allow and egress_deny are a web-mode session's domain policy
+  // (ADR-20261117091026 §3): vmmd grants a name only when no deny rule
+  // matches it and allow is empty or an allow rule matches it. Fields 18
+  // and 19 are reserved for the browser session and task fields of the
+  // ADR-20261116182615 changes.
+  repeated string egress_allow = 20;
+  repeated string egress_deny = 21;
 }
 
 // CaptureSandboxSnapshotRequest is the session machine to capture, without
@@ -3586,6 +3593,11 @@ message RunSandboxEvent {
 message RunSandboxBooted {
   WakeMethod method = 1;
   int64 boot_ms = 2;
+  // egress_policy is set by a vmmd that enforces a session's domain policy
+  // (ADR-20261117091026 §3); agentd closes a session with a policy that
+  // boots without it. Field 3 is reserved for the browser actions flag
+  // (ADR-20261117065818).
+  bool egress_policy = 4;
 }
 
 // RunSandboxActivity reports the session's calls, at most once a second

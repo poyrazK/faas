@@ -213,6 +213,12 @@ CREATE TABLE agent_callback_revocations (
  revoked_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY (endpoint_id, thread_id)
 );
+CREATE TABLE sandbox_egress_policies (
+ account_id uuid PRIMARY KEY,
+ allow_rules text[] NOT NULL DEFAULT '{}',
+ deny_rules text[] NOT NULL DEFAULT '{}',
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE sandbox_sessions (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  account_id uuid NOT NULL,
@@ -240,7 +246,9 @@ CREATE TABLE sandbox_sessions (
  workspace_snapshot_id uuid,
  template_id uuid,
  image_ref text,
- image_job_id uuid
+ image_job_id uuid,
+ egress_allow text[],
+ egress_deny text[]
 );
 CREATE TABLE sandbox_session_usage (
  sandbox_id uuid PRIMARY KEY,

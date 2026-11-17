@@ -61,6 +61,11 @@ func (m *Manager) resolvedEgressRefusalLocked(inst *Instance, source netip.Addr,
 // names why it is refused. A domain once granted stays granted. Caller holds
 // m.mu.
 func admitSandboxWebDomain(inst *Instance, name string) string {
+	// The session's domain policy comes first, so a refused name never
+	// counts against the budget (ADR-20261117091026 §3).
+	if !api.SandboxEgressAllows(inst.webAllow, inst.webDeny, name) {
+		return "sandbox egress policy refuses " + sandboxWebDomain(name)
+	}
 	domain := sandboxWebDomain(name)
 	if _, ok := inst.webDomains[domain]; ok {
 		return ""

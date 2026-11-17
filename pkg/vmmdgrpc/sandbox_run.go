@@ -11,6 +11,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -158,7 +160,7 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		s.sandboxRuns.Delete(wake.Instance)
 	}()
 	if err := stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Booted{Booted: &vmmdpb.RunSandboxBooted{
-		Method: wakeMethodFrom(inst.Method), BootMs: time.Since(started).Milliseconds(),
+		Method: wakeMethodFrom(inst.Method), BootMs: time.Since(started).Milliseconds(), EgressPolicy: true,
 	}}}); err != nil {
 		opErr = err
 		return err
@@ -340,6 +342,9 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 	if (wake.StartCmd != "" || wake.ReadyCmd != "") && wake.ImageKey == "" {
 		return fcvm.SandboxWakeRequest{}, invalid("start_cmd and ready_cmd need image_key")
 	}
+	if problem := sandboxEgressPolicy(start, &wake, invalid); problem != nil {
+		return fcvm.SandboxWakeRequest{}, problem
+	}
 	if wake.ReadyTimeout < 0 || wake.ReadyTimeout > time.Duration(api.SandboxTemplateReadyTimeoutSecMax)*time.Second ||
 		wake.ReadyCmd != "" && wake.ReadyTimeout == 0 {
 		return fcvm.SandboxWakeRequest{}, invalid("ready_timeout_ms is out of range")
@@ -398,4 +403,28 @@ func (s *Server) CaptureSandboxSnapshot(ctx context.Context, req *vmmdpb.Capture
 	return &vmmdpb.CaptureAgentSnapshotResponse{VmstateBytes: info.VMStateBytes, Snapshot: &vmmdpb.AgentRunSnapshot{
 		StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey, FcVersion: snap.FCVersion, MemBytes: snap.MemBytes,
 	}}, nil
+}
+
+// sandboxEgressPolicy validates a start frame's domain policy
+// (ADR-20261117091026 §3) and puts it on the wake: rules only for a web-mode
+// session, each a domain rule, within SandboxEgressRulesMax (deny may hold
+// the account's and the session's).
+func sandboxEgressPolicy(start *vmmdpb.RunSandboxStart, wake *fcvm.SandboxWakeRequest, invalid func(string) *api.Problem) *api.Problem {
+	allow, deny := start.GetEgressAllow(), start.GetEgressDeny()
+	if len(allow)+len(deny) == 0 {
+		return nil
+	}
+	if wake.Network != api.SandboxNetworkWeb {
+		return invalid("egress_allow and egress_deny need network_mode web")
+	}
+	if len(allow) > api.SandboxEgressRulesMax || len(deny) > 2*api.SandboxEgressRulesMax {
+		return invalid("the egress policy holds too many rules")
+	}
+	for _, rule := range append(slices.Clone(allow), deny...) {
+		if !api.ValidSandboxEgressRule(rule) {
+			return invalid("egress policy rule " + strconv.Quote(rule) + " is not a domain rule")
+		}
+	}
+	wake.EgressAllow, wake.EgressDeny = slices.Clone(allow), slices.Clone(deny)
+	return nil
 }
