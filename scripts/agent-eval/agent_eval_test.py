@@ -60,7 +60,39 @@ CODEX_FAILURE = [
 class TaskTests(unittest.TestCase):
     def test_shipped_tasks_load(self):
         tasks = ev.load_tasks()
-        self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store", "deploy-voting-app"])
+        self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store", "deploy-voting-app",
+                                                    "deploy-express-render", "migrate-fastapi-render", "deploy-flask-render", "migrate-django-heroku", "deploy-go-heroku"])
+
+    def test_framework_tasks_grade_the_fix_not_the_repo(self):
+        # The pristine repositories leave these features unused; only the
+        # change an agent has to make (pin uvicorn on $PORT, open Django's
+        # ALLOWED_HOSTS beyond Heroku, replace the buildpack binary name)
+        # counts as using them.
+        tasks = {t["id"]: t for t in ev.load_tasks()}
+        cases = [
+            ("migrate-fastapi-render", "render.yaml", "    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT\n",
+             "Procfile", "web: uvicorn main:app --host 0.0.0.0 --port $PORT\n", "start-command-pinned"),
+            ("migrate-django-heroku", "gettingstarted/settings.py", 'ALLOWED_HOSTS = ["*"]\n',
+             "gettingstarted/settings.py", 'ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")\n', "allowed-hosts-for-gregale"),
+            # Baseline run 2026-11-17: the agent gated Heroku's production
+            # block on its own flag instead of editing ALLOWED_HOSTS.
+            ("migrate-django-heroku", "gettingstarted/settings.py",
+             'IS_HEROKU_APP = "DYNO" in os.environ and "CI" not in os.environ\n\nif IS_HEROKU_APP:\n    # On Heroku\n    ALLOWED_HOSTS = ["*"]\n',
+             "gettingstarted/settings.py",
+             'IS_HEROKU_APP = "DYNO" in os.environ and "CI" not in os.environ\nIS_PRODUCTION = IS_HEROKU_APP or os.environ.get("ENVIRONMENT") == "production"\n\nif IS_PRODUCTION:\n    # On Heroku\n    ALLOWED_HOSTS = ["*"]\n',
+             "allowed-hosts-for-gregale"),
+            ("deploy-go-heroku", "Procfile", "web: go-getting-started\n",
+             "gregale.yaml", "hosting:\n  start: ./out\n", "start-command-fixed"),
+        ]
+        for tid, pristine_file, pristine, fixed_file, fixed, feature in cases:
+            with self.subTest(tid), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp)
+                (project / pristine_file).parent.mkdir(parents=True, exist_ok=True)
+                (project / pristine_file).write_text(pristine)
+                self.assertNotIn(feature, ev.grade_features(tasks[tid], [], project, {})["features_used"])
+                (project / fixed_file).parent.mkdir(parents=True, exist_ok=True)
+                (project / fixed_file).write_text(fixed)
+                self.assertIn(feature, ev.grade_features(tasks[tid], [], project, {})["features_used"])
 
     def test_invalid_tasks_are_refused(self):
         good = {"id": "ok-task", "prompt": "deploy {app}", "template": "hello-node", "checks": [{"kind": "answer", "pattern": "x"}], "budget_usd": 1, "timeout_s": 60}
