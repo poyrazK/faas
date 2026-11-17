@@ -1064,10 +1064,51 @@ cleanup removes expired live ciphertext in bounded sweeps; database outages,
 backlogs and backup retention can delay physical removal.
 
 These intents always say `ready_to_apply=false`, `bindings_verified=false`, and
-`owner_authorization_required=true`. No owner decision, credential binding,
-build, deployment, Task migration, fixture or traffic change is authorized.
+`owner_authorization_required=true`. Source review approval is separate from
+credential binding, build, deployment, Task migration, fixtures and traffic authority.
 The existing uploaded planner continues to remove staged source without saving
 an intent. See [ADR 20261116183545](adr/20261116183545-hosted-task-source-intents.md).
+
+### Owner review of hosted Task source
+
+The owner uses a personal non-agent administrator connection to inspect the
+retained review, including its source digests, permissions, native app pins,
+`intent_sha256`, `review_sha256` and original `expires_at`:
+
+```sh
+gregale mcp server tasks audit get --id "$INTENT_ID" --json
+gregale mcp server tasks audit approve --id "$INTENT_ID" \
+  --intent-sha256 "$INTENT_SHA256" --review-sha256 "$REVIEW_SHA256" --json
+```
+
+Approval names both digests. It requires source retention to remain enabled,
+the original source to remain available, a fresh original requester, and exact
+native app configuration and serving baselines. Agent and MCP-login credentials
+cannot decide, even when they also carry an administrator scope. The API rechecks
+owner keys under lock; the account's MFA policy also applies. Decisions never
+renew the source's original fifteen-minute lifetime. An exact repeat retains
+the original decision time.
+
+`review_status` is `pending`, `approved`, `rejected`, `revoked`, `stale` or
+`expired`. Native GET and the hosted get tool show the last recorded observation.
+Use `gregale_check_uploaded_task_tool_deploy` with `intent_id` and
+`expected_review_sha256`, or `source-review check --id "$INTENT_ID"
+--review-sha256 "$REVIEW_SHA256"`, for a fresh native observation. The hosted
+check needs publishing/write consent because observed drift permanently makes
+the review stale. Restoring the previous facts cannot revive it.
+
+The owner can also use `source-review reject` or `source-review revoke`, naming
+the same two digests. Cancellation does not require the old requester or apps
+to remain live. Rejected, revoked, stale and expired states remain terminal;
+the CLI reports a nonzero exit when a requested decision was not reached.
+Metadata and decisions survive reconnects and native journal restarts. No API
+returns the retained source bytes. Source review approval still leaves
+`ready_to_apply=false`, `bindings_verified=false` and
+`owner_authorization_required=true`: credential qualification and execution
+need a separate owner-controlled workflow. The agent catalog gains a check
+tool and no owner decision tool.
+
+See [ADR 20261117070839](adr/20261117070839-hosted-task-source-owner-review.md).
 
 ### Durable Task release intents
 

@@ -283,6 +283,11 @@ test('the browser starts once and is reached over a private CDP port', async () 
   assert.deepEqual(browser.headers, { Authorization: 'Bearer sbxp1.secret' });
   assert.equal(JSON.stringify(session.state).includes('secret'), false);
 
+  const browserSession = await client.create({ options: { browser: true, ramMb: 1024 } });
+  assert.equal(fake.created?.browser, true);
+  assert.equal(fake.created?.ram_mb, 1024);
+  await browserSession.close();
+
   fake.browserUp = true;
   fake.commands.length = 0;
   await session.startBrowser();

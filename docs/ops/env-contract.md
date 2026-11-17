@@ -946,6 +946,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SALES_MANAGER_EMAILS` | apid, shared | `dropin` |  |  | `` | Ansible control_plane_service sales drop-in: Comma-separated Gregale account emails granted team-wide sales management; verified email and session MFA required |
 | `FAAS_SALES_STALE_DAYS` | apid, shared | `dropin` |  | 14 | `` | Ansible control_plane_service sales drop-in: Days without a recorded conversation before an open lead is marked stalled |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_SANDBOX_BROWSER` | apid | `default` |  |  | `` | ADR-20261116182615 rollout: 1 admits sandbox create with browser: true once vmmd, schedd and agentd carry it |
 | `FAAS_SANDBOX_PREVIEW_DOMAIN` | apid, gatewayd-internal | `default` |  |  | `` | ADR-20261027090013 §11 sandbox previews: the domain preview hosts <port>-<sandbox id>.<domain> live under (a wildcard DNS name routed to the nodes' public gateways); apid writes preview URLs with it and gatewayd-internal serves them; unset turns previews off |
 | `FAAS_SANDBOX_WEB_NETWORK` | apid | `default` |  |  | `` | ADR-20261112121456 §6: 1 admits sandbox network.mode web; set only on a fleet whose manifest declares egress.tenant_gateway, after the owner's production test |
 | `FAAS_SANDBOX_WEB_NODE_EGRESS` | vmmd | `dev-only` |  |  | `` | ADR-20261112121456 §3: 1 lets web-mode sandbox sessions leave from the node's own address when the host has no tenant egress gateway; must never be set on a production host |
@@ -1178,6 +1179,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES` | vmmd | `dropin` |  |  | `` | boolean switch: volatile resource journal commits go only to the tmpfs copies and skip the disk fsync (ADR-20261026113920); code default off; ansible vmmd_resource_journal_volatile_writes (group_vars/compute_nodes, true) renders zz-faas-restore-speedups.conf in node_join.yml; enable only where the rollback target is this release or later |
 | `FAAS_VMMD_ROLE` | vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_SCHEDD_TARGET` | vmmd | `dropin` |  |  | `` |  |
+| `FAAS_VMMD_SEALED_FORMAT` | vmmd | `default` |  | v1 | `` | ADR-20261110210000 slice 3d-5: v2 writes sealed captures in crashcrypt's chunked format (4 MiB chunks, zero chunks left out, ChaCha20-Poly1305 per chunk, authenticated trailer), which a wake opens in parallel; v1 is one age stream. Every vmmd reads both; set v2 only once every vmmd that may restore a capture runs a release that reads it |
+| `FAAS_VMMD_SEALED_PLAIN_CACHE_DIR` | vmmd | `default` |  |  | `` | ADR-20261110210000 slice 3d-5: absolute directory (created 0700) where vmmd keeps one decrypted copy of each sealed snapshot it restored, so later wakes hardlink it like an unsealed snapshot instead of decrypting again; unused entries expire after 24 h and the oldest go over FAAS_VMMD_SEALED_PLAIN_CACHE_MB. Empty decrypts every wake |
+| `FAAS_VMMD_SEALED_PLAIN_CACHE_MB` | vmmd | `default` |  | 20480 | `` | ADR-20261110210000 slice 3d-5: disk budget in MiB (allocated, so sparse memory counts its data only) of FAAS_VMMD_SEALED_PLAIN_CACHE_DIR |
 | `FAAS_VMMD_SPANS_WRITER_TARGET` | vmmd | `dropin` |  |  | `` | split-box apid private mTLS listener for guest trace exports; empty uses the single-box socket (ADR-958) |
 | `FAAS_VMMD_STREAM_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_TARGET_URL` | vmmd | `dropin` |  |  | `` |  |

@@ -3408,7 +3408,7 @@ func ErrAPIRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("This account's plan allows %d API requests a minute. Retry after %d seconds.", limit, retryAfterS)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs(docsBase + "/errors#api_rate_limited")
+		WithDocs(docsBase + "/error-codes#api_rate_limited")
 }
 
 // ErrFunctionSendRateLimited refuses a function send() past the target app's
@@ -3437,7 +3437,7 @@ func ErrColdWakeRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("This network may wake %d different parked apps a minute. Retry after %d seconds.", limit, retryAfterS)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs(docsBase + "/errors#cold_wake_rate_limited")
+		WithDocs(docsBase + "/error-codes#cold_wake_rate_limited")
 }
 
 // DetailServerFailure is the detail of a 5xx problem whose cause is an
@@ -3680,7 +3680,7 @@ func ErrQueueReceiveBusy(limit, observed int) *Problem {
 		fmt.Sprintf("At most %d queue receive long-polls may wait at once; %d are waiting. Retry after one returns.", limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithHeader("Retry-After", "1").
-		WithDocs(docsBase + "/errors#queue_receive_busy")
+		WithDocs(docsBase + "/error-codes#queue_receive_busy")
 }
 
 // ErrUploadSessionAlreadyCommitted is returned by POST /v1/uploads/{id}/commit
@@ -3764,7 +3764,7 @@ func ErrAppNotListening(observedPort string) *Problem {
 		"No process listening on $PORT",
 		fmt.Sprintf("readiness probe found no listener on port %s after the wake timeout.",
 			observedPort)).
-		WithDocs(docsBase + "/errors#app_not_listening")
+		WithDocs(docsBase + "/error-codes#app_not_listening")
 }
 
 // ErrAppLoopbackBound is returned when the customer's app binds its
@@ -3778,7 +3778,7 @@ func ErrAppLoopbackBound(observedBind string) *Problem {
 		"Application bound to loopback",
 		fmt.Sprintf("app is listening on %s; the per-VM bridge proxies requests to 10.0.0.2, "+
 			"so loopback-only binds never receive traffic.", observedBind)).
-		WithDocs(docsBase + "/errors#app_loopback_bound")
+		WithDocs(docsBase + "/error-codes#app_loopback_bound")
 }
 
 // ErrAppArchMismatch is returned when the build VM cannot execute the
@@ -3792,7 +3792,7 @@ func ErrAppArchMismatch(observedArch, requiredArch string) *Problem {
 		fmt.Sprintf("binary is %s; this control plane runs %s. "+
 			"rebuild with the matching target.",
 			observedArch, requiredArch)).
-		WithDocs(docsBase + "/errors#app_arch_mismatch")
+		WithDocs(docsBase + "/error-codes#app_arch_mismatch")
 }
 
 // ErrEnvVarMissing is returned when a deploy-time preflight detects
@@ -3807,7 +3807,7 @@ func ErrEnvVarMissing(envVar string) *Problem {
 		"Missing environment variable",
 		fmt.Sprintf("source references $%s but it is not declared in the app's env config.",
 			envVar)).
-		WithDocs(docsBase + "/errors#env_var_missing")
+		WithDocs(docsBase + "/error-codes#env_var_missing")
 }
 
 // ErrAppHealthzUnauthorized is returned when the customer's health
@@ -3821,7 +3821,7 @@ func ErrAppHealthzUnauthorized(observedStatus int) *Problem {
 		"Health endpoint returning 401",
 		fmt.Sprintf("/healthz returned %d; consecutive 401s flip the deployment to failed.",
 			observedStatus)).
-		WithDocs(docsBase + "/errors#app_healthz_unauthorized")
+		WithDocs(docsBase + "/error-codes#app_healthz_unauthorized")
 }
 
 // ErrAppRuntimeOOM is returned when the cgroup OOM-killer terminates
@@ -3854,7 +3854,7 @@ func ErrAppRuntimeOOM(observedPeakMB, planMB int) *Problem {
 		"Container out of memory",
 		fmt.Sprintf("cgroup OOM-kill fired at %d MB (plan cap %d MB); upgrade plan or trim in-memory state.",
 			observedPeakMB, planMB)).
-		WithDocs(docsBase + "/errors#app_runtime_oom")
+		WithDocs(docsBase + "/error-codes#app_runtime_oom")
 }
 
 // ErrDepInstallFailed is returned when the build VM's dependency
@@ -3869,7 +3869,7 @@ func ErrDepInstallFailed(pkgManager, observedCmd string) *Problem {
 		"Dependency installation failure",
 		fmt.Sprintf("%s install failed: %s — see build log for the failing command.",
 			pkgManager, observedCmd)).
-		WithDocs(docsBase + "/errors#dep_install_failed")
+		WithDocs(docsBase + "/error-codes#dep_install_failed")
 }
 
 // ErrAppStartupTimeout is returned when the customer's app does not
@@ -3883,7 +3883,7 @@ func ErrAppStartupTimeout(stuckReason, observedDuration string) *Problem {
 		"Application startup timeout",
 		fmt.Sprintf("app did not become ready after %s (stuck_reason=%s).",
 			observedDuration, stuckReason)).
-		WithDocs(docsBase + "/errors#app_startup_timeout")
+		WithDocs(docsBase + "/error-codes#app_startup_timeout")
 }
 
 // ErrDomainNotVerified is returned when a customer tries to bind a domain
@@ -6172,8 +6172,8 @@ func ErrDeploymentCancelLiveForbidden(id string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDeploymentCancelLiveForbidden,
 		"Cannot cancel a live deployment",
 		fmt.Sprintf("deployment %s is live; cancelling a live deploy would orphan the §6.2 INV 3 'always-live-snapshot-OR-rootfs' guarantee.", id)).
-		WithHint("Use 'gregale deploys rollback <id>' to swap to a previous deployment.").
-		WithFix("Run: gregale deploys rollback --app <slug> --to <previous-deployment-id>").
+		WithHint("Use 'gregale release rollback <id>' to swap to a previous deployment.").
+		WithFix("Run: gregale release rollback --app <slug> --to <previous-deployment-id>").
 		WithWhy("Cancelling a live deployment has no well-defined semantics: it would either scale the app to zero (kills §6.2 INV 4) or park the app (kills INV 3). The deploys-rollback path is the user-correct escape.").
 		WithDocs(docsBase + "/deploys#cancel")
 }

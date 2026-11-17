@@ -190,7 +190,7 @@ HTTP 409 or 422 · Many operations send this code; the response's `title` and `d
 
 HTTP 422 · No process listening on $PORT; App listens on a different port
 
-See [Deployment overrides](deploy-overrides.md), [Errors](errors.md).
+See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md).
 
 ### `app_not_restorable`
 
@@ -608,7 +608,7 @@ The response's `title` and `detail` describe the failure.
 
 HTTP 409 · Cannot cancel a live deployment
 
-Use 'gregale deploys rollback &lt;id>' to swap to a previous deployment.
+Use 'gregale release rollback &lt;id>' to swap to a previous deployment.
 
 See [Deploys](deploys.md#cancel).
 
@@ -2814,7 +2814,7 @@ See [Deploys](deploys.md#deploy-freezes), [Release approvals, freezes and schedu
 
 HTTP 409 · Too many release gates
 
-Delete a gate you no longer need with `gregale release-gates rm`.
+Delete a gate you no longer need with `gregale release gate rm`.
 
 See [Deploys](deploys.md#release-gates).
 
@@ -2822,7 +2822,7 @@ See [Deploys](deploys.md#release-gates).
 
 HTTP 404 · Release gate not found
 
-List gates with `gregale release-gates list`.
+List gates with `gregale release gate list`.
 
 ### `release_graph_changed`
 

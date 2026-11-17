@@ -42,7 +42,7 @@ func (f *fakeSandboxRunner) RunSandbox(ctx context.Context, a sched.SandboxAdmis
 		return err
 	}
 	close(f.booted)
-	_ = hooks.Booted(ctx, "WAKE_COLD_BOOT", 700)
+	_ = hooks.Booted(ctx, sched.SandboxBooted{Method: "WAKE_COLD_BOOT", BootMs: 700})
 	_ = hooks.Activity(ctx, sched.SandboxActivity{LastCallEnded: time.UnixMilli(1_800_000_000_000)})
 	if f.persist {
 		_ = hooks.PersistRequested(ctx, "req-1")

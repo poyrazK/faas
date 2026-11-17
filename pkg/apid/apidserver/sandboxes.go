@@ -30,6 +30,9 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) stri
 		// ADR-20261112121456 §6: web egress is on only where the operator
 		// says the fleet routes tenant egress through its gateway.
 		WebNetwork: strings.TrimSpace(getenv("FAAS_SANDBOX_WEB_NETWORK")) == "1",
+		// ADR-20261116182615 rollout: browser sessions are on once vmmd,
+		// schedd and agentd carry them.
+		Browser: strings.TrimSpace(getenv("FAAS_SANDBOX_BROWSER")) == "1",
 		Audit: func(ctx context.Context, action, accountID string, fields map[string]any) {
 			s.audit.Emit(ctx, action, &accountID, fields)
 		},
@@ -50,6 +53,14 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) stri
 		}
 	}
 	s.sandboxAPI = h
+	// ADR-20261116182615 §4: gregale_browse admits its tasks as browser
+	// sessions, under the same switches and plan limits.
+	if s.agentAPI != nil && h.Store != nil {
+		s.agentAPI.Browse = h.AdmitBrowse
+		// ADR-20261117065818 §3: gregale_browser opens its sessions the
+		// same way.
+		s.agentAPI.BrowserOpen = h.AdmitBrowserSession
+	}
 	return nil
 }
 

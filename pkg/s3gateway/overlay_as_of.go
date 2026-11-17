@@ -113,8 +113,8 @@ func asOfElements(page objectstorage.ObjectVersionListPage) []asOfElement {
 // listing. A key is decided only once all its versions are in: a provider
 // page stops at its next marker, whose key may continue on the next page.
 // A common prefix lists when the provider reports one, even if it holds
-// only keys written after the branch point (a known limit, as for a prefix
-// whose keys the branch deleted).
+// only keys written after the branch point; listOverlayObjects checks it
+// before the branch sees it (overlayPrefixVisible).
 func listAsOf(ctx context.Context, lister objectstorage.ObjectVersionLister, bucket string, list objectstorage.ObjectListRequest, at time.Time, countRequest func() bool) (asOfListing, error) {
 	request := objectstorage.ObjectVersionListRequest{Prefix: list.Prefix, Delimiter: list.Delimiter, KeyMarker: list.StartAfter, Limit: asOfVersionPage}
 	var out asOfListing

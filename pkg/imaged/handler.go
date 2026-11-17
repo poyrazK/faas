@@ -109,6 +109,10 @@ type Handler struct {
 	// verifiedBases remembers the base artifacts this process verified
 	// from its node cache (ADR-595 amendment 2026-11-17).
 	verifiedBases *verifiedBaseFiles
+	// deferredScans runs the deploy scan after the snapshot handoff when
+	// the app does not gate on it (ADR-075 amendment 2026-11-17); nil
+	// scans every deploy before the handoff.
+	deferredScans *deferredScans
 	// layerReuse is the app layer reuse index (ADR-20261112170911); nil
 	// turns reuse off.
 	layerReuse       *layerReuseIndex
@@ -1397,7 +1401,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		"deployment", dep.ID, "app", app.Slug,
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
 		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
-		"reused_from", result.ReusedFrom,
+		"reused_from", result.ReusedFrom, "deferred", deferredScan(ctx),
 	}, append(timing.attrs(), scan.phaseAttrs()...)...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
