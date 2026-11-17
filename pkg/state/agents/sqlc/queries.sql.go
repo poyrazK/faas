@@ -1207,6 +1207,41 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 	return i, err
 }
 
+const getSandboxAction = `-- name: GetSandboxAction :one
+SELECT a.kind, a.args, a.state, a.exit_code, a.output
+ FROM sandbox_actions a
+ WHERE a.session_id = $1::text::uuid AND a.account_id = $2::text::uuid
+ AND a.seq = $3::integer
+`
+
+type GetSandboxActionParams struct {
+	SessionID string
+	AccountID string
+	Seq       int32
+}
+
+type GetSandboxActionRow struct {
+	Kind     string
+	Args     []byte
+	State    string
+	ExitCode pgtype.Int4
+	Output   []byte
+}
+
+// One action of the account's session, for GET /v1/sandboxes/{id}/actions/{seq}.
+func (q *Queries) GetSandboxAction(ctx context.Context, db DBTX, arg GetSandboxActionParams) (GetSandboxActionRow, error) {
+	row := db.QueryRow(ctx, getSandboxAction, arg.SessionID, arg.AccountID, arg.Seq)
+	var i GetSandboxActionRow
+	err := row.Scan(
+		&i.Kind,
+		&i.Args,
+		&i.State,
+		&i.ExitCode,
+		&i.Output,
+	)
+	return i, err
+}
+
 const getSandboxPreviewRoute = `-- name: GetSandboxPreviewRoute :one
 SELECT sb.account_id::text AS account_id, a.plan, sb.state, coalesce(sb.node_id, '')::text AS node_id,
   coalesce(sb.instance_id, '')::text AS instance_id,
@@ -2856,6 +2891,70 @@ func (q *Queries) ListUndeliveredAgentRunCallbacks(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const listUndeliveredSandboxActions = `-- name: ListUndeliveredSandboxActions :many
+SELECT a.id::text AS id, a.session_id::text AS session_id, a.account_id::text AS account_id, a.seq, a.kind, a.args,
+  a.endpoint_id::text AS endpoint_id, a.thread_id, a.tool_call_id, a.issued_at, a.exit_code, a.output,
+  sb.state AS session_state, coalesce(sb.outcome_code, '')::text AS outcome_code
+ FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
+ WHERE a.state = 'done' AND a.delivered_at IS NULL
+ ORDER BY a.finished_at, a.id LIMIT $1::integer
+`
+
+type ListUndeliveredSandboxActionsRow struct {
+	ID           string
+	SessionID    string
+	AccountID    string
+	Seq          int32
+	Kind         string
+	Args         []byte
+	EndpointID   string
+	ThreadID     string
+	ToolCallID   string
+	IssuedAt     pgtype.Timestamptz
+	ExitCode     pgtype.Int4
+	Output       []byte
+	SessionState string
+	OutcomeCode  string
+}
+
+// Ended gregale_browser actions whose result apid has not yet published
+// into their thread. The mark is written after the publish, which is
+// idempotent, so an interrupted delivery is retried and lands once.
+func (q *Queries) ListUndeliveredSandboxActions(ctx context.Context, db DBTX, maxRows int32) ([]ListUndeliveredSandboxActionsRow, error) {
+	rows, err := db.Query(ctx, listUndeliveredSandboxActions, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUndeliveredSandboxActionsRow{}
+	for rows.Next() {
+		var i ListUndeliveredSandboxActionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.AccountID,
+			&i.Seq,
+			&i.Kind,
+			&i.Args,
+			&i.EndpointID,
+			&i.ThreadID,
+			&i.ToolCallID,
+			&i.IssuedAt,
+			&i.ExitCode,
+			&i.Output,
+			&i.SessionState,
+			&i.OutcomeCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUndeliveredSandboxTaskCalls = `-- name: ListUndeliveredSandboxTaskCalls :many
 SELECT c.sandbox_id::text AS sandbox_id, c.account_id::text AS account_id, c.endpoint_id::text AS endpoint_id, c.thread_id,
   c.tool_call_id, c.issued_at, sb.state, coalesce(sb.outcome_code, '')::text AS outcome_code,
@@ -3087,6 +3186,15 @@ func (q *Queries) MarkAgentRunRunning(ctx context.Context, db DBTX, arg MarkAgen
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const markSandboxActionDelivered = `-- name: MarkSandboxActionDelivered :exec
+UPDATE sandbox_actions SET delivered_at = now() WHERE id = $1::text::uuid AND delivered_at IS NULL
+`
+
+func (q *Queries) MarkSandboxActionDelivered(ctx context.Context, db DBTX, id string) error {
+	_, err := db.Exec(ctx, markSandboxActionDelivered, id)
+	return err
 }
 
 const markSandboxSessionReady = `-- name: MarkSandboxSessionReady :execrows
@@ -3585,6 +3693,39 @@ func (q *Queries) SandboxActionByCall(ctx context.Context, db DBTX, arg SandboxA
 	row := db.QueryRow(ctx, sandboxActionByCall, arg.EndpointID, arg.ThreadID, arg.ToolCallID)
 	var i SandboxActionByCallRow
 	err := row.Scan(&i.ID, &i.SessionID, &i.Seq)
+	return i, err
+}
+
+const sandboxActionThread = `-- name: SandboxActionThread :one
+SELECT sb.state, a.endpoint_id::text AS endpoint_id, a.thread_id,
+  (SELECT count(*) FROM sandbox_actions c WHERE c.session_id = sb.id)::integer AS actions
+ FROM sandbox_sessions sb JOIN sandbox_actions a ON a.session_id = sb.id AND a.seq = 1
+ WHERE sb.id = $1::text::uuid AND sb.account_id = $2::text::uuid
+`
+
+type SandboxActionThreadParams struct {
+	SessionID string
+	AccountID string
+}
+
+type SandboxActionThreadRow struct {
+	State      string
+	EndpointID string
+	ThreadID   string
+	Actions    int32
+}
+
+// ADR-20261117065818 §3: the thread a gregale_browser session answers (its
+// first action's), its state, and how many actions it has had.
+func (q *Queries) SandboxActionThread(ctx context.Context, db DBTX, arg SandboxActionThreadParams) (SandboxActionThreadRow, error) {
+	row := db.QueryRow(ctx, sandboxActionThread, arg.SessionID, arg.AccountID)
+	var i SandboxActionThreadRow
+	err := row.Scan(
+		&i.State,
+		&i.EndpointID,
+		&i.ThreadID,
+		&i.Actions,
+	)
 	return i, err
 }
 

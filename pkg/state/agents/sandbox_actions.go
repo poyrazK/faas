@@ -130,3 +130,155 @@ func (s *Store) EndOpenSandboxActions(ctx context.Context, sessionID, token stri
 	}
 	return nil
 }
+
+// CreateBrowserSession admits a gregale_browser session and records its
+// first action (a navigate) linked to call, in one transaction
+// (ADR-20261117065818 §3). A call already recorded returns its session with
+// existing set, so a retried open admits nothing more.
+func (s *Store) CreateBrowserSession(ctx context.Context, a SandboxAdmission, args SandboxActionArgs, call SandboxTaskCall) (sb Sandbox,
+	existing bool, err error) {
+	if !a.Browser || a.Task != nil || args.URL == "" {
+		return Sandbox{}, false, errors.New("create browser session: a browser session opens on a url")
+	}
+	if !isUUID(call.EndpointID) || call.ThreadID == "" || call.ToolCallID == "" {
+		return Sandbox{}, false, errors.New("create browser session: incomplete call")
+	}
+	labels, err := json.Marshal(nonNilLabels(a.Labels))
+	if err != nil {
+		return Sandbox{}, false, fmt.Errorf("encode labels: %w", err)
+	}
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return Sandbox{}, false, fmt.Errorf("encode sandbox action: %w", err)
+	}
+	var id string
+	err = s.locked(ctx, a.AccountID, func(tx pgx.Tx) error {
+		found, err := s.q.SandboxActionByCall(ctx, tx, sqlc.SandboxActionByCallParams{EndpointID: call.EndpointID,
+			ThreadID: call.ThreadID, ToolCallID: call.ToolCallID})
+		if err == nil {
+			id, existing = found.SessionID, true
+			return nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("read sandbox action: %w", err)
+		}
+		if id, err = s.insertSandbox(ctx, tx, a, labels); err != nil {
+			return err
+		}
+		if _, err := s.q.InsertSandboxAction(ctx, tx, sqlc.InsertSandboxActionParams{SessionID: id, AccountID: a.AccountID,
+			Kind: "navigate", Args: raw, EndpointID: call.EndpointID, ThreadID: call.ThreadID, ToolCallID: call.ToolCallID,
+			IssuedAt: pgtype.Timestamptz{Time: call.IssuedAt, Valid: true}}); err != nil {
+			return fmt.Errorf("insert sandbox action: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Sandbox{}, false, err
+	}
+	sb, err = s.Sandbox(ctx, a.AccountID, id)
+	return sb, existing, err
+}
+
+// SandboxThread is the thread a gregale_browser session answers, its state
+// and how many actions it has had.
+type SandboxThread struct {
+	State      string
+	EndpointID string
+	ThreadID   string
+	Actions    int
+}
+
+// BrowserSessionThread reads the account's gregale_browser session id. A
+// session gregale_browser did not open is ErrNotFound.
+func (s *Store) BrowserSessionThread(ctx context.Context, accountID, id string) (SandboxThread, error) {
+	if !isUUID(id) {
+		return SandboxThread{}, ErrNotFound
+	}
+	row, err := s.q.SandboxActionThread(ctx, s.pool, sqlc.SandboxActionThreadParams{SessionID: id, AccountID: accountID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SandboxThread{}, ErrNotFound
+	}
+	if err != nil {
+		return SandboxThread{}, fmt.Errorf("read browser session: %w", err)
+	}
+	return SandboxThread{State: row.State, EndpointID: row.EndpointID, ThreadID: row.ThreadID, Actions: int(row.Actions)}, nil
+}
+
+// SandboxActionEnd is an ended action whose result apid has not yet
+// published into its thread. ExitCode is nil when the action never ran to
+// its end.
+type SandboxActionEnd struct {
+	SandboxAction
+	AccountID    string
+	Call         SandboxTaskCall
+	ExitCode     *int
+	Output       []byte
+	SessionState string
+	OutcomeCode  string
+}
+
+// UndeliveredSandboxActions lists up to limit ended actions not yet
+// published.
+func (s *Store) UndeliveredSandboxActions(ctx context.Context, limit int) ([]SandboxActionEnd, error) {
+	rows, err := s.q.ListUndeliveredSandboxActions(ctx, s.pool, int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list undelivered sandbox actions: %w", err)
+	}
+	out := make([]SandboxActionEnd, 0, len(rows))
+	for _, row := range rows {
+		end := SandboxActionEnd{SandboxAction: SandboxAction{ID: row.ID, SessionID: row.SessionID, Seq: int(row.Seq), Kind: row.Kind},
+			AccountID: row.AccountID, Output: row.Output, SessionState: row.SessionState, OutcomeCode: row.OutcomeCode,
+			Call: SandboxTaskCall{EndpointID: row.EndpointID, ThreadID: row.ThreadID, ToolCallID: row.ToolCallID, IssuedAt: row.IssuedAt.Time.UTC()}}
+		if err := json.Unmarshal(row.Args, &end.Args); err != nil {
+			return nil, fmt.Errorf("decode sandbox action %s: %w", row.ID, err)
+		}
+		if row.ExitCode.Valid {
+			code := int(row.ExitCode.Int32)
+			end.ExitCode = &code
+		}
+		out = append(out, end)
+	}
+	return out, nil
+}
+
+// MarkSandboxActionDelivered records that an action's result reached its
+// thread, or that it never will.
+func (s *Store) MarkSandboxActionDelivered(ctx context.Context, id string) error {
+	if err := s.q.MarkSandboxActionDelivered(ctx, s.pool, id); err != nil {
+		return fmt.Errorf("mark sandbox action delivered: %w", err)
+	}
+	return nil
+}
+
+// SandboxActionResult is one action as GET /v1/sandboxes/{id}/actions/{seq}
+// shows it.
+type SandboxActionResult struct {
+	Kind     string
+	Args     SandboxActionArgs
+	State    string
+	ExitCode *int
+	Output   []byte
+}
+
+// SandboxActionResult reads the account's session id's action seq.
+func (s *Store) SandboxActionResult(ctx context.Context, accountID, id string, seq int) (SandboxActionResult, error) {
+	if !isUUID(id) || seq < 1 {
+		return SandboxActionResult{}, ErrNotFound
+	}
+	row, err := s.q.GetSandboxAction(ctx, s.pool, sqlc.GetSandboxActionParams{SessionID: id, AccountID: accountID, Seq: int32(seq)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SandboxActionResult{}, ErrNotFound
+	}
+	if err != nil {
+		return SandboxActionResult{}, fmt.Errorf("read sandbox action: %w", err)
+	}
+	out := SandboxActionResult{Kind: row.Kind, State: row.State, Output: row.Output}
+	if err := json.Unmarshal(row.Args, &out.Args); err != nil {
+		return SandboxActionResult{}, fmt.Errorf("decode sandbox action: %w", err)
+	}
+	if row.ExitCode.Valid {
+		code := int(row.ExitCode.Int32)
+		out.ExitCode = &code
+	}
+	return out, nil
+}

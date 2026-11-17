@@ -548,6 +548,24 @@ func ErrSandboxPreviewsOff() *Problem {
 		"this installation has no sandbox preview domain, so ports cannot be exposed")
 }
 
+// SandboxActionResult is one gregale_browser action, as GET
+// /v1/sandboxes/{id}/actions/{seq} returns it (ADR-20261117065818 §2): its
+// kind and arguments, its state and, once it ended, the page snapshot as
+// result or why it failed as output.
+type SandboxActionResult struct {
+	SandboxID string          `json:"sandbox_id"`
+	Seq       int             `json:"seq"`
+	Kind      string          `json:"kind"`
+	URL       string          `json:"url,omitempty"`
+	Ref       int             `json:"ref,omitempty"`
+	Key       string          `json:"key,omitempty"`
+	Direction string          `json:"direction,omitempty"`
+	State     string          `json:"state"`
+	ExitCode  *int            `json:"exit_code,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Output    string          `json:"output,omitempty"`
+}
+
 // SandboxTaskResult is GET /v1/sandboxes/{id}/task (ADR-20261116182615 §3):
 // a task session's arguments and, once it ended, its result. Result is the
 // command's JSON output when it exited 0; Output is its output otherwise.

@@ -61,6 +61,9 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	if tasks, ok := h.Store.(agents.SandboxTaskStore); ok {
 		h.SandboxTasks = tasks
 	}
+	if browsers, ok := h.Store.(agents.BrowserSessionStore); ok {
+		h.BrowserSessions = browsers
+	}
 	if subs, ok := h.Store.(agents.GitHubSubscriptionStore); ok {
 		h.GitHubSubscriptions = subs
 	}

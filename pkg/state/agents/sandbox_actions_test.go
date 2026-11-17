@@ -6,6 +6,7 @@ package agents_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -84,5 +85,75 @@ func TestSandboxActions(t *testing.T) {
 	}
 	if state != agents.SandboxActionDone || exit != nil {
 		t.Fatalf("an ended open action = %s, %v", state, exit)
+	}
+}
+
+// adr: 20261117065818 §3 — gregale_browser opens a session and its first
+// action in one transaction, once per call; the session answers its first
+// action's thread; ended actions are listed for delivery until marked.
+func TestBrowserSessions(t *testing.T) {
+	pool, s := agentdFixture(t)
+	ctx := context.Background()
+	const endpoint = "55555555-5555-5555-5555-555555555555"
+	if _, err := pool.Exec(ctx, `INSERT INTO managed_realtime_endpoints VALUES ($1)`, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	call := agents.SandboxTaskCall{EndpointID: endpoint, ThreadID: "thread-1", ToolCallID: "call_open", IssuedAt: time.Now().UTC()}
+	admission := sandboxAdmission(agents.SandboxAdmission{Browser: true, NetworkMode: "web"})
+	sb, existing, err := s.CreateBrowserSession(ctx, admission, agents.SandboxActionArgs{URL: "https://example.com/", MaxChars: 4000}, call)
+	if err != nil || existing {
+		t.Fatalf("open = %+v, %v, %v", sb, existing, err)
+	}
+	again, existing, err := s.CreateBrowserSession(ctx, admission, agents.SandboxActionArgs{URL: "https://example.com/"}, call)
+	if err != nil || !existing || again.ID != sb.ID {
+		t.Fatalf("a retried open = %+v, %v, %v; want %s", again, existing, err, sb.ID)
+	}
+	th, err := s.BrowserSessionThread(ctx, account, sb.ID)
+	if err != nil || th.EndpointID != endpoint || th.ThreadID != "thread-1" || th.Actions != 1 || th.State != agents.SandboxQueued {
+		t.Fatalf("thread = %+v, %v", th, err)
+	}
+	plain := admitSandbox(t, s, agents.SandboxAdmission{})
+	if _, err := s.BrowserSessionThread(ctx, account, plain.ID); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("a session gregale_browser did not open: %v", err)
+	}
+
+	claim, found, err := s.ClaimSandbox(ctx, "agentd", "tok", ttl, maxLive(5))
+	if err != nil || !found || claim.ID != sb.ID {
+		t.Fatalf("claim = %+v, %v, %v", claim, found, err)
+	}
+	next, err := s.NextSandboxActions(ctx, []string{sb.ID})
+	if err != nil || len(next) != 1 || next[0].Seq != 1 || next[0].Kind != "navigate" {
+		t.Fatalf("next = %+v, %v", next, err)
+	}
+	if ok, err := s.StartSandboxAction(ctx, next[0].ID, "tok"); err != nil || !ok {
+		t.Fatalf("start = %v, %v", ok, err)
+	}
+	if ends, err := s.UndeliveredSandboxActions(ctx, 10); err != nil || len(ends) != 0 {
+		t.Fatalf("a running action is listed for delivery: %+v, %v", ends, err)
+	}
+	code := 0
+	if err := s.FinishSandboxAction(ctx, next[0].ID, "tok", &code, []byte(`{"title":"E"}`)); err != nil {
+		t.Fatal(err)
+	}
+	ends, err := s.UndeliveredSandboxActions(ctx, 10)
+	if err != nil || len(ends) != 1 {
+		t.Fatalf("undelivered = %+v, %v", ends, err)
+	}
+	if end := ends[0]; end.SessionID != sb.ID || end.Seq != 1 || end.Call.ToolCallID != "call_open" || end.Args.URL != "https://example.com/" ||
+		end.ExitCode == nil || *end.ExitCode != 0 || string(end.Output) != `{"title":"E"}` || end.SessionState == "" {
+		t.Fatalf("end = %+v", end)
+	}
+	res, err := s.SandboxActionResult(ctx, account, sb.ID, 1)
+	if err != nil || res.Kind != "navigate" || res.State != agents.SandboxActionDone || string(res.Output) != `{"title":"E"}` {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	if _, err := s.SandboxActionResult(ctx, account, sb.ID, 2); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("a missing action: %v", err)
+	}
+	if err := s.MarkSandboxActionDelivered(ctx, ends[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if ends, err := s.UndeliveredSandboxActions(ctx, 10); err != nil || len(ends) != 0 {
+		t.Fatalf("a delivered action is listed again: %+v, %v", ends, err)
 	}
 }

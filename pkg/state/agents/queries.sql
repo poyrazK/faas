@@ -851,3 +851,32 @@ UPDATE sandbox_actions a SET state='done', finished_at=now()
  FROM sandbox_sessions sb
  WHERE a.session_id=sqlc.arg(session_id)::text::uuid AND a.state = ANY(sqlc.arg(states)::text[]) AND sb.id=a.session_id
  AND sb.lease_token=sqlc.arg(lease_token)::text;
+
+-- name: SandboxActionThread :one
+-- ADR-20261117065818 §3: the thread a gregale_browser session answers (its
+-- first action's), its state, and how many actions it has had.
+SELECT sb.state, a.endpoint_id::text AS endpoint_id, a.thread_id,
+  (SELECT count(*) FROM sandbox_actions c WHERE c.session_id = sb.id)::integer AS actions
+ FROM sandbox_sessions sb JOIN sandbox_actions a ON a.session_id = sb.id AND a.seq = 1
+ WHERE sb.id = sqlc.arg(session_id)::text::uuid AND sb.account_id = sqlc.arg(account_id)::text::uuid;
+
+-- name: ListUndeliveredSandboxActions :many
+-- Ended gregale_browser actions whose result apid has not yet published
+-- into their thread. The mark is written after the publish, which is
+-- idempotent, so an interrupted delivery is retried and lands once.
+SELECT a.id::text AS id, a.session_id::text AS session_id, a.account_id::text AS account_id, a.seq, a.kind, a.args,
+  a.endpoint_id::text AS endpoint_id, a.thread_id, a.tool_call_id, a.issued_at, a.exit_code, a.output,
+  sb.state AS session_state, coalesce(sb.outcome_code, '')::text AS outcome_code
+ FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
+ WHERE a.state = 'done' AND a.delivered_at IS NULL
+ ORDER BY a.finished_at, a.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: MarkSandboxActionDelivered :exec
+UPDATE sandbox_actions SET delivered_at = now() WHERE id = sqlc.arg(id)::text::uuid AND delivered_at IS NULL;
+
+-- name: GetSandboxAction :one
+-- One action of the account's session, for GET /v1/sandboxes/{id}/actions/{seq}.
+SELECT a.kind, a.args, a.state, a.exit_code, a.output
+ FROM sandbox_actions a
+ WHERE a.session_id = sqlc.arg(session_id)::text::uuid AND a.account_id = sqlc.arg(account_id)::text::uuid
+ AND a.seq = sqlc.arg(seq)::integer;

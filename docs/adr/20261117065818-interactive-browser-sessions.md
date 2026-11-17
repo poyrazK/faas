@@ -47,7 +47,7 @@ A sandbox SDK user can already do this: `startBrowser()` and the CDP preview URL
 ### 3. The session's life
 
 - `open` admits a session exactly as a browse task does (`browser: true`, network `web`, the plan's sandbox limits and concurrency), without a task. It is linked to the thread, so only that thread's calls can act on it.
-- The session closes on `close`, after `SandboxBrowserIdleCloseSec` with no action (the session's existing idle timeout, which agentd already enforces: an action counts as a call), at its lifetime cap (`SandboxBrowserLifetimeSec`), or when the thread closes.
+- The session closes on `close`, after `SandboxBrowserIdleCloseSec` with no action (the session's existing idle timeout, which agentd already enforces: an action counts as a call), at its lifetime cap (`SandboxBrowserLifetimeSec`), or when an action's result finds the thread can no longer receive it (its callback URLs revoked). A thread closed with no action pending is left to the idle close.
 - A running action whose session is claimed again (its agentd or VM was lost) ends without an exit code. So does every open action once the session ends. apid reports either as "the session ended".
 - Between actions the session freezes after `SandboxIdleFreezeSec`, like any session. It is billed as sandbox compute (ADR-20261027090013 §5). The next action thaws it.
 - `SandboxBrowserActionsMax` bounds the actions per session. Each action runs within `SandboxBrowserActionTimeoutSec`.
@@ -71,7 +71,7 @@ A sandbox SDK user can already do this: `startBrowser()` and the CDP preview URL
 ## Rollout
 
 - **PR A:** `sandbox_actions` (expand migration), `gregale-browser act`, the `RunSandboxAction` frames through schedd and vmmd, and agentd's action pump.
-- **PR B:** the `gregale_browser` tool, action delivery into threads, `GET /v1/sandboxes/{id}/actions/{seq}`, and docs.
+- **PR B:** the `gregale_browser` tool, action delivery into threads, and `GET /v1/sandboxes/{id}/actions/{seq}`. `open` admits the session and its first action (a `navigate`) in one transaction, so a retried open finds its session.
 - An older schedd or vmmd ignores an action frame it does not know. agentd sends actions only to a session whose vmmd announced action support (`RunSandboxBooted.actions`). apid admits `open` only behind `FAAS_SANDBOX_BROWSER` and `FAAS_SANDBOX_WEB_NETWORK`.
 - A metal check of a click and type round trip, including one across a freeze and thaw, comes before the switches are turned on.
 
