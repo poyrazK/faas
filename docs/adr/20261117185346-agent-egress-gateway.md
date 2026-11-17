@@ -3,13 +3,13 @@
 - **Status:** proposed (owner decisions, 2026-11-17: "same host, own addresses", "all agent-pool egress", "phased PRs")
 - **Date:** 2026-11-17
 - **Amends (when accepted):**
-  - ADR-20261027090014 §4.4: the agent gateway shares the tenant gateway's host and keeps its own addresses and tunnel; it carries every agent VM's egress, not only the browser tier's.
+  - ADR-20261027090014 §4.4: the agent gateway shares the tenant gateway's host and keeps its own addresses and tunnel; it carries every agent VM's egress (sandbox sessions in every mode with egress), not only the browser tier's.
   - ADR-20261112121456 §1: sandbox sessions leave the tenant gateway path once this ships.
 - **Builds on:** ADR-372 (tenant egress gateway), ADR-361 (default-deny tenant egress and connection rates), ADR-373 (DNS-gated egress), ADR-371 (flow log), ADR-20261117091026 (sandbox egress domain policy and reached-domain log).
 
 ## Context
 
-Sandbox sessions and agent runs leave through the ADR-372 tenant gateway, on the same public addresses as customer apps (ADR-20261112121456 §1). A site that blocks an agent's address blocks customer apps with it, and an abuse report against that address cannot be told apart from app traffic until the flow log is read.
+Sandbox sessions with egress leave through the ADR-372 tenant gateway, on the same public addresses as customer apps (ADR-20261112121456 §1). A site that blocks an agent's address blocks customer apps with it, and an abuse report against that address cannot be told apart from app traffic until the flow log is read.
 
 ADR-20261027090014 §4.4 decided a dedicated agent gateway and address pool, a politeness proxy that reads the destination without decrypting, and a log that maps every connection to one run. None of it exists. Today:
 
@@ -28,7 +28,7 @@ ADR-20261027090014 §4.4 decided a dedicated agent gateway and address pool, a p
 
 ### 2. Which traffic
 
-- **Every agent VM**, wherever it is placed: sandbox sessions in every network mode that has egress (`registries` and `web`), and agent runs. Customer apps keep `wg-tenant`, even on the same node.
+- **Every agent VM with egress**, wherever it is placed: sandbox sessions in every network mode that has egress (`registries` and `web`). Agent runs have no network device today (they reach their model over the vsock relay); one that gains egress joins this path. Customer apps keep `wg-tenant`, even on the same node.
 - Steering is per VM, not per node. vmmd marks an agent VM's traffic on the host (the ADR-119 static-egress fwmark pattern), and a policy-routing rule sends marked traffic to the `wg-agent` table.
 - **Per-VM source addresses.** WireGuard routes a reply by its destination, and guests' host-side addresses repeat across nodes. So each node gets a slice of the agent tunnel range (`node_prefix`, by default a /22), and vmmd source-NATs each agent VM to its own address in the slice for the VM's life. The gateway then sees one address per VM.
 
@@ -79,10 +79,10 @@ These are starting values. A headless browser opens about six connections per ho
 
 ## Rollout
 
-1. **PR 1:** the manifest stanza, ansible (`wg-agent` on the gateway host and the nodes), vmmd's per-VM marking and source NAT, and the handshake check. Behind `FAAS_AGENT_EGRESS_GATEWAY`. Without the proxy, the gateway forwards agent traffic directly.
+1. **PR 1:** the manifest stanza, ansible (`wg-agent` on the gateway host and the nodes), vmmd's per-VM marking and source NAT, the policy rules (mark → agent table, then unreachable), and the handshake check. Behind `FAAS_AGENT_EGRESS_GATEWAY` (vmmd). Without the proxy, the gateway forwards agent traffic directly.
 2. **PR 2:** `agentproxyd`, with registration, caps, blocklist and metrics. vmmd registers VMs and refuses a boot it cannot register.
 3. **PR 3:** the connection log, its shipping, and the runbook entry for abuse reports.
-4. **Before the switch is on:** the owner provisions the agent addresses on the gateway host. A metal check covers a web session and an agent run through `wg-agent`, a refusal with the tunnel down, and each cap's refusal. Then one node, then the fleet.
+4. **Before the switch is on:** the owner provisions the agent addresses on the gateway host. A metal check covers a web session and a registries session through `wg-agent`, a refusal with the tunnel down, and each cap's refusal. Then one node, then the fleet.
 
 ## Rejected alternatives
 
