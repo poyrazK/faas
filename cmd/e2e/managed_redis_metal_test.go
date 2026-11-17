@@ -143,8 +143,28 @@ func waitRedisDeploymentLive(t *testing.T, ctx context.Context, f *privateTCPIma
 	}
 }
 
-// redisMetalDo runs Redis commands from inside the caller's guest.
+// redisMetalDo runs Redis commands from inside the caller's guest. A gateway
+// refusal of the caller's HTTP request (502/503/504, or a transport error) is
+// the test client's path into the guest failing, not the cache: on a loaded
+// node the gateway's route lookup can miss its deadline and answer 503
+// policy_unavailable (native run redis-20261117T163259). Those are retried
+// for up to two minutes; any reply from the fixture itself is returned.
 func redisMetalDo(t *testing.T, f *privateTCPImageFixture, host string, cmds ...string) redisMetalReply {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		got := redisMetalDoOnce(t, f, host, cmds...)
+		transient := got.status == 0 || got.status == http.StatusBadGateway && got.Error == "" ||
+			got.status == http.StatusServiceUnavailable || got.status == http.StatusGatewayTimeout
+		if !transient || time.Now().After(deadline) {
+			return got
+		}
+		t.Logf("redis %v: caller path refused (status=%d err=%s); retrying", cmds, got.status, got.Error)
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func redisMetalDoOnce(t *testing.T, f *privateTCPImageFixture, host string, cmds ...string) redisMetalReply {
 	t.Helper()
 	query := url.Values{"host": {host}, "port": {strconv.Itoa(api.ManagedValkeyPort)}, "cmd": cmds}
 	req, err := http.NewRequest(http.MethodGet, f.h.GatewayURL+"/redis?"+query.Encode(), nil)
