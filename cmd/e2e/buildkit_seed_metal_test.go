@@ -43,6 +43,14 @@ const buildKitSeededLine = "BuildKit started from this node's seed"
 // tick and a cold seed run on a two-vCPU acceptance host.
 const buildKitSeedWait = 30 * time.Minute
 
+// buildKitSeedStartupDeadlineS is the Pro plan's startup window. On a
+// two-vCPU acceptance host the first app's prime shares both vCPUs with the
+// seed run: its layer verification plus its cold boot came to about the
+// 30 s COLD_BOOTING window, and the watchdog stopped it at 13.9 s into the
+// boot (2026-11-17). The longer deadline extends the prime's budgets
+// (primeStartupExtension); the test checks seeding, not cold-boot latency.
+const buildKitSeedStartupDeadlineS = 60
+
 func TestBuildKitSeedMetal(t *testing.T) {
 	if os.Getenv("FAAS_TEST_KERNEL") == "" || os.Getenv("FAAS_BUILDER_BASE_PATH") == "" {
 		t.Skip("FAAS_TEST_KERNEL / FAAS_BUILDER_BASE_PATH unset; skipping metal BuildKit seed test")
@@ -105,11 +113,12 @@ func TestBuildKitSeedMetal(t *testing.T) {
 func createOpenApp(t *testing.T, h *e2etest.Harness, key, slug string) {
 	t.Helper()
 	public := false
+	startup := buildKitSeedStartupDeadlineS
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &public}); got != http.StatusCreated {
 		t.Fatalf("create app %s: status=%d", slug, got)
 	}
 	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{RequireAuthn: &public,
-		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}, StartupDeadlineS: &startup}); status != http.StatusOK {
 		t.Fatalf("open app auth %s: status=%d", slug, status)
 	}
 }
