@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -91,9 +92,7 @@ func ClassifyStorageObject(key string) (class, memKey, family string) {
 }
 
 func (s *PgStore) RequestStorageObjectDeletion(ctx context.Context, key, reason string) error {
-	if len(reason) > 200 {
-		reason = reason[:200]
-	}
+	reason = safetext.Truncate(reason, 200)
 	if err := sqlc.New().RequestStorageObjectDeletion(ctx, s.pool, sqlc.RequestStorageObjectDeletionParams{StorageKey: key, Reason: reason}); err != nil {
 		return fmt.Errorf("state: request deletion of %q: %w", key, mapErr(err))
 	}

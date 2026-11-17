@@ -1267,7 +1267,9 @@
       "routes": [
         "/dashboard/orgs/{}/support",
         "/dashboard/support",
+        "/dashboard/support-access",
         "/v1/orgs/{}/support",
+        "/v1/orgs/{}/support-access",
         "/v1/support"
       ]
     },
@@ -4047,6 +4049,7 @@
         "/v1/orgs/{}/invitations",
         "/v1/orgs/{}/leave",
         "/v1/orgs/{}/members",
+        "/v1/orgs/{}/security-policy",
         "/v1/orgs/{}/transfer_ownership"
       ],
       "cli": [

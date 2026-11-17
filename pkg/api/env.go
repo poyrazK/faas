@@ -2,8 +2,9 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Customer env-var DTOs (issue #395 / ADR-045). The wire shape mirrors
@@ -107,7 +108,7 @@ type AppEnvListResponse struct {
 // mirror this pattern (migration 20261116100000000).
 const EnvKeyPattern = `^[A-Za-z][A-Za-z0-9_]*$`
 
-var envKeyRe = regexp.MustCompile(EnvKeyPattern)
+var envKeyRe = lazyregexp.New(EnvKeyPattern)
 
 // ValidateEnvKey returns nil when key matches EnvKeyPattern, is within
 // MaxSecretKeyLen bytes, and is not another spelling of a platform-provided
