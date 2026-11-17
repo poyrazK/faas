@@ -63225,6 +63225,116 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/insights/events:
+    get:
+      tags: [flags]
+      operationId: getProjectInsightEvents
+      summary: Read a product analytics event series.
+      description: "Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by properties and broken down by a flag's served value or a property (ADR 20261117084505). Requires the product_analytics platform flag and a plan with analytics retention. The range defaults to the last 7 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: event, in: query, required: true, description: Event name., schema: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' } }
+        - { name: interval, in: query, required: false, description: Bucket size., schema: { type: string, enum: [hour, day], default: day } }
+        - { name: unit, in: query, required: false, description: What Units counts., schema: { type: string, enum: [customer, subject], default: customer } }
+        - { name: by, in: query, required: false, description: "Breakdown: flag:KEY or property:KEY.", schema: { type: string, maxLength: 80 } }
+        - { name: where, in: query, required: false, description: "Repeatable KEY:VALUE property filter.", schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - { name: from, in: query, required: false, description: Range start (RFC 3339)., schema: { type: string, format: date-time } }
+        - { name: until, in: query, required: false, description: Range end (RFC 3339); defaults to now., schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: The event series.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightEventSeries' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/funnel:
+    post:
+      tags: [flags]
+      operationId: postProjectInsightFunnel
+      summary: Compute a product analytics funnel.
+      description: "Read-only. Units that did the steps in order, each step after the previous one, within the window from the first step (ADR 20261117084505). A flag breakdown uses the flag value carried by the unit's first-step event."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InsightFunnelRequest' }
+      responses:
+        '200':
+          description: Units and conversion per step, overall and per breakdown value.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightFunnel' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/retention:
+    post:
+      tags: [flags]
+      operationId: postProjectInsightRetention
+      summary: Compute product analytics retention.
+      description: "Read-only. Cohorts units by the period of their first start event and reports which sent the return event in each following period; only ended periods count (ADR 20261117084505). The range defaults to the last 28 days."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InsightRetentionRequest' }
+      responses:
+        '200':
+          description: Overall, per-cohort and per-breakdown retention.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightRetention' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/requests:
+    get:
+      tags: [flags]
+      operationId: getProjectInsightRequests
+      summary: Read request telemetry by flag value.
+      description: "Requests, server errors and p95 latency per served value of one flag, from request telemetry and within its retention (ADR 20261117084505). The range defaults to the last day."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: flag, in: query, required: true, description: Flag key., schema: { type: string } }
+        - { name: from, in: query, required: false, description: Range start (RFC 3339)., schema: { type: string, format: date-time } }
+        - { name: until, in: query, required: false, description: Range end (RFC 3339); defaults to now., schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Request telemetry per flag value.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightRequests' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/runtime/flags/events:
     post:
       tags: [flags]
@@ -63235,7 +63345,7 @@ paths:
         - name: X-Faas-Flags-Capabilities
           in: header
           required: false
-          description: Comma-separated optional runtime SDK capabilities. SDKs that report events advertise track-v1.
+          description: Comma-separated optional runtime SDK capabilities. SDKs that report events advertise track-v1; SDKs that send subject, properties and flags also advertise track-v2.
           schema: { type: string, maxLength: 256 }
       security:
         - flagsWorkloadIdentity: []
@@ -89745,6 +89855,147 @@ components:
         customer_id: { type: string, format: uuid, description: Verified customer (platform tenant) of the request the event belongs to. }
         value: { type: integer, format: int64, minimum: -1000000000000, maximum: 1000000000000, description: "Optional integer value, such as cents." }
         at: { type: string, format: date-time, description: "When the event happened; within the last 24 hours. Defaults to now." }
+        subject: { type: string, maxLength: 128, description: "Optional end-user subject of the request; only its hash is stored (ADR 20261117084505)." }
+        properties:
+          type: object
+          maxProperties: 10
+          description: "Optional string properties; keys match ^[a-z][a-z0-9_]{0,63}$, values are at most 256 bytes."
+          additionalProperties: { type: string, maxLength: 256 }
+        flags:
+          type: object
+          maxProperties: 32
+          description: "Served value, as a string, of each flag the request evaluated before the event."
+          additionalProperties: { type: string }
+    InsightEventPoint:
+      description: One time bucket and breakdown value of an event series.
+      type: object
+      required: [start, events, units, value]
+      properties:
+        start: { type: string, format: date-time }
+        breakdown: { type: string, description: "Breakdown value; (none) without the flag or property, (other) past the breakdown bound." }
+        events: { type: integer, format: int64 }
+        units: { type: integer, format: int64, description: "Distinct customers or subjects; for (other) a sum that may count a unit more than once." }
+        value: { type: integer, format: int64 }
+    InsightEventSeries:
+      description: A product analytics event series.
+      type: object
+      required: [event, unit, interval, from, until, points]
+      properties:
+        event: { type: string }
+        unit: { type: string, enum: [customer, subject] }
+        interval: { type: string, enum: [hour, day] }
+        by: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        points: { type: array, items: { $ref: '#/components/schemas/InsightEventPoint' } }
+    InsightStepRequest:
+      description: "A funnel or retention step: an event and property values its events must carry."
+      type: object
+      additionalProperties: false
+      required: [event]
+      properties:
+        event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' }
+        where: { type: object, maxProperties: 10, additionalProperties: { type: string }, description: Property values the step's events must carry. }
+    InsightFunnelRequest:
+      description: A funnel query.
+      type: object
+      additionalProperties: false
+      required: [steps]
+      properties:
+        steps: { type: array, minItems: 2, maxItems: 6, items: { $ref: '#/components/schemas/InsightStepRequest' } }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        window: { type: string, description: "Go duration from the first step to the last, 1h to 720h; default 168h." }
+        unit: { type: string, enum: [customer, subject], default: customer }
+        by: { type: string, description: "flag:KEY or property:KEY." }
+    InsightFunnelStep:
+      description: Units and conversion of one funnel step.
+      type: object
+      required: [event, units, conversion_from_first, conversion_from_previous]
+      properties:
+        event: { type: string }
+        units: { type: integer, format: int64 }
+        conversion_from_first: { type: number, format: double }
+        conversion_from_previous: { type: number, format: double }
+    InsightFunnelBreakdown:
+      description: A funnel for one breakdown value.
+      type: object
+      required: [value, steps]
+      properties:
+        value: { type: string }
+        steps: { type: array, items: { $ref: '#/components/schemas/InsightFunnelStep' } }
+    InsightFunnel:
+      description: A funnel result.
+      type: object
+      required: [unit, window, from, until, steps, truncated]
+      properties:
+        unit: { type: string, enum: [customer, subject] }
+        window: { type: string }
+        by: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        steps: { type: array, items: { $ref: '#/components/schemas/InsightFunnelStep' } }
+        breakdowns: { type: array, items: { $ref: '#/components/schemas/InsightFunnelBreakdown' } }
+        truncated: { type: boolean, description: The query read AnalyticsQueryMaxUnits units and left the rest out. }
+    InsightRetentionRequest:
+      description: A retention query.
+      type: object
+      additionalProperties: false
+      required: [start, return]
+      properties:
+        start: { $ref: '#/components/schemas/InsightStepRequest' }
+        return: { $ref: '#/components/schemas/InsightStepRequest' }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        period: { type: string, enum: [day, week], default: day }
+        periods: { type: integer, minimum: 1, maximum: 12 }
+        unit: { type: string, enum: [customer, subject], default: customer }
+        by: { type: string, description: "flag:KEY or property:KEY." }
+    InsightRetentionRow:
+      description: A retention cohort, breakdown value or the overall row.
+      type: object
+      required: [units, eligible, returned, rates]
+      properties:
+        start: { type: string, format: date-time, description: Cohort start; absent on the overall and breakdown rows. }
+        value: { type: string, description: Breakdown value. }
+        units: { type: integer, format: int64 }
+        eligible: { type: array, items: { type: integer, format: int64 }, description: "Units whose period k has ended (index k-1)." }
+        returned: { type: array, items: { type: integer, format: int64 } }
+        rates: { type: array, items: { type: number, format: double } }
+    InsightRetention:
+      description: A retention result.
+      type: object
+      required: [unit, period, periods, from, until, overall, cohorts, truncated]
+      properties:
+        unit: { type: string, enum: [customer, subject] }
+        period: { type: string, enum: [day, week] }
+        periods: { type: integer }
+        by: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        overall: { $ref: '#/components/schemas/InsightRetentionRow' }
+        cohorts: { type: array, items: { $ref: '#/components/schemas/InsightRetentionRow' } }
+        breakdowns: { type: array, items: { $ref: '#/components/schemas/InsightRetentionRow' } }
+        truncated: { type: boolean }
+    InsightRequestVariant:
+      description: Request telemetry for one value of a flag.
+      type: object
+      required: [value, requests, server_errors, server_error_rate, p95_ms]
+      properties:
+        value: { type: string }
+        requests: { type: integer, format: int64 }
+        server_errors: { type: integer, format: int64 }
+        server_error_rate: { type: number, format: double }
+        p95_ms: { type: integer, format: int64 }
+    InsightRequests:
+      description: Request telemetry by flag value.
+      type: object
+      required: [flag, from, until, variants]
+      properties:
+        flag: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        variants: { type: array, items: { $ref: '#/components/schemas/InsightRequestVariant' } }
     FlagEventsRequest:
       description: A batch of runtime conversion events.
       type: object

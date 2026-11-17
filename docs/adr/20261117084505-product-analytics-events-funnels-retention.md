@@ -135,7 +135,10 @@ units and says so when it is truncated.
 - SDKs (Node, Python, Go): `track(name, {value, properties, subject})`
   attaches the request's subject and flag decisions automatically. The
   capability is `track-v2`; older SDKs keep working without properties or
-  flags.
+  flags. Go keeps `Track(ctx, name, value)` and adds
+  `TrackWith(ctx, name, TrackOptions{...})`.
+- MCP: four read-only tools in the diagnose toolset,
+  `gregale_get_insight_events`, `_funnel`, `_retention` and `_requests`.
 
 ## Consequences
 

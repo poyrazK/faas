@@ -7061,6 +7061,24 @@ Neither tool ships or stops an experiment. The recommendation's commands are
 for the owner to run; only a guardrail breach changes a flag without an
 owner's request.
 
+## Read product analytics
+
+Four read-only tools in the `diagnose` toolset query product analytics (see
+[Flags](flags.md#analyze-product-events)). All take `project` and
+`environment`; the first three also take optional `from`, `until` (RFC 3339),
+`unit` (`customer` or `subject`) and `by` (`flag:KEY` or `property:KEY`).
+
+- `gregale_get_insight_events` takes `event`, `interval` and `where`, and
+  returns the event's series.
+- `gregale_get_insight_funnel` takes 2 to 6 `steps` and a `window`.
+- `gregale_get_insight_retention` takes `start`, `return`, `period` and
+  `periods`.
+- `gregale_get_insight_requests` takes `flag` and returns requests, server
+  errors and p95 latency per variant.
+
+Each result carries guidance: a flag breakdown is observational, so causal
+claims need an experiment.
+
 ## Watch one rollout
 
 `gregale_watch_rollout` accepts `app`, `deployment_id`, optional `project` and
