@@ -27,6 +27,7 @@ func TestHostedTaskSourceIntentThroughHTTP(t *testing.T) {
 			rows := map[string]api.HostedTaskSourceIntent{}
 			writes := 0
 			lose := true
+			nativeFresh := true
 			requester := uuid.NewString()
 			hook := func(w http.ResponseWriter, r *http.Request, _ string) bool {
 				prefix := "/v1/task-tool-source-intents/"
@@ -40,6 +41,23 @@ func TestHostedTaskSourceIntentThroughHTTP(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 				id := strings.TrimPrefix(r.URL.Path, prefix)
+				if r.Method == http.MethodPost && strings.HasSuffix(id, "/check") {
+					id = strings.TrimSuffix(id, "/check")
+					var check api.HostedTaskSourceCheck
+					if json.NewDecoder(r.Body).Decode(&check) != nil {
+						w.WriteHeader(400)
+						return true
+					}
+					out, err := tasktoolsource.Change(rows[id], "check", api.HostedTaskSourceDecision{ReviewSHA256: check.ReviewSHA256}, nativeFresh, true, time.Now())
+					if err != nil {
+						t.Error(err)
+						w.WriteHeader(400)
+						return true
+					}
+					rows[id] = out
+					_ = json.NewEncoder(w).Encode(out)
+					return true
+				}
 				if r.Method == http.MethodGet {
 					record, ok := rows[id]
 					if !ok {
@@ -113,11 +131,51 @@ func TestHostedTaskSourceIntentThroughHTTP(t *testing.T) {
 
 			publicationCall(t, ctx, cs, "gregale_prepare_uploaded_task_tool_deploy", prepare, true)
 			_ = cs.Close()
+			// The separately authenticated owner acts outside the agent catalog.
+			mu.Lock()
+			retained := rows[prepare.IntentID]
+			approved, err := tasktoolsource.Change(retained, "decide", api.HostedTaskSourceDecision{IntentSHA256: retained.IntentSHA256, ReviewSHA256: retained.ReviewSHA256, Decision: "approve"}, true, true, time.Now())
+			if err != nil {
+				mu.Unlock()
+				t.Fatal(err)
+			}
+			rows[prepare.IntentID] = approved
+			mu.Unlock()
 			remote = makeBridge()
 			cs, ctx = connectAgentCatalog(t, remote, token, ToolsetBuildTools, protocol)
+			mu.Lock()
 			lose = false
+			mu.Unlock()
 			got := publicationCall(t, ctx, cs, "gregale_get_uploaded_task_tool_deploy", getUploadedTaskIntentArgs{prepare.IntentID}, false)
 			publicationCall(t, ctx, cs, "gregale_prepare_uploaded_task_tool_deploy", prepare, false)
+			assertReview := func(got any, want string) {
+				t.Helper()
+				body, _ := json.Marshal(got)
+				var view api.HostedTaskSourceIntent
+				if json.Unmarshal(body, &view) != nil || view.ReviewStatus != want || view.DecidedAt == nil || !view.DecidedAt.Equal(*approved.DecidedAt) || !view.ExpiresAt.Equal(retained.ExpiresAt) || view.ReadyToApply || view.BindingsVerified || !view.OwnerAuthorizationRequired {
+					t.Fatalf("hosted approval receipt %s: %s", want, body)
+				}
+			}
+			assertReview(got, "approved")
+			check := checkUploadedTaskIntentArgs{IntentID: prepare.IntentID, ExpectedReviewSHA256: review.Fingerprint}
+			assertReview(publicationCall(t, ctx, cs, "gregale_check_uploaded_task_tool_deploy", check, false), "approved")
+			mu.Lock()
+			nativeFresh = false
+			mu.Unlock()
+			assertReview(publicationCall(t, ctx, cs, "gregale_check_uploaded_task_tool_deploy", check, false), "stale")
+			mu.Lock()
+			nativeFresh = true
+			mu.Unlock()
+			assertReview(publicationCall(t, ctx, cs, "gregale_check_uploaded_task_tool_deploy", check, false), "stale")
+			catalog, err := cs.ListTools(ctx, &mcp.ListToolsParams{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tool := range catalog.Tools {
+				if strings.Contains(tool.Name, "uploaded_task") && (strings.Contains(tool.Name, "approve") || strings.Contains(tool.Name, "reject") || strings.Contains(tool.Name, "revoke")) {
+					t.Fatal("owner decision leaked into the agent catalog", tool.Name)
+				}
+			}
 			mu.Lock()
 			count := writes
 			mu.Unlock()

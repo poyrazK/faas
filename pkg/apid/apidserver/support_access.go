@@ -35,7 +35,14 @@ func (s *server) supportGrantsEnabled(orgID, accountID string) bool {
 	return s.platformFlagFor(platformflags.SupportGrants, platformflags.Subject{AccountID: accountID, OrgID: orgID})
 }
 
+// supportAccessService returns the server's support-access service, built on
+// first use, or nil when the store cannot hold support grants.
 func (s *server) supportAccessService() *supportaccess.Service {
+	s.supportAccessOnce.Do(func() { s.supportAccessSvc = s.newSupportAccessService() })
+	return s.supportAccessSvc
+}
+
+func (s *server) newSupportAccessService() *supportaccess.Service {
 	store, ok := s.store.(supportaccess.Store)
 	if !ok {
 		return nil

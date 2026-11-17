@@ -577,8 +577,12 @@ type server struct {
 	// preflight handler (GET /v1/preflight). It is built on first use so the
 	// egress-guarded HTTP client and verdict cache are not allocated on
 	// deployments that never receive a check.
-	preflightOnce      sync.Once
-	preflightHandler   *preflight.Handler
+	preflightOnce    sync.Once
+	preflightHandler *preflight.Handler
+	// supportAccessOnce guards lazy construction of the support-access
+	// service (ADR-20261116163508), shared by every request.
+	supportAccessOnce  sync.Once
+	supportAccessSvc   *supportaccess.Service
 	statusMetrics      *statusMetrics
 	idempotencyMetrics *idempotencyMetrics
 	signupMetrics      *signupMetrics
@@ -3153,6 +3157,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/tool-publications/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Handler(s.store, os.Getenv("FAAS_MCP_PRIVATE_TOOL_PUBLICATION") == "1"))))
 	mux.HandleFunc("GET /v1/task-tool-source-intents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.privateTools.HostedTaskSourceIntent())))
 	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.HostedTaskSourceIntent()))))
+	// Review changes recheck authority and pins in their own journal transaction;
+	// a generic Idempotency-Key response replay must never bypass those checks.
+	mux.HandleFunc("POST /v1/task-tool-source-intents/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.HostedTaskSourceIntent()))))
+	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/decision", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskSourceIntent()))))
 	mux.HandleFunc("GET /v1/task-tool-release-intents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.privateTools.TaskReleaseIntent())))
 	mux.HandleFunc("PUT /v1/task-tool-release-intents/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.TaskReleaseIntent()))))
 	mux.HandleFunc("POST /v1/task-tool-release-intents/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.TaskReleaseIntent()))))
@@ -3528,6 +3536,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Get)))))
 	mux.HandleFunc("PATCH /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Update)))))
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Close)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/task", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).Task)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/actions/{seq}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ActionResult)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/actions/{seq}/screenshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ActionScreenshot)))))
 	mux.HandleFunc("GET /v1/sandboxes/{id}/egress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).GetEgress)))))
 	mux.HandleFunc("GET /v1/sandbox-egress-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).GetEgressPolicy)))))
 	mux.HandleFunc("PUT /v1/sandbox-egress-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.sandboxRoute((*sandboxes.Handler).PutEgressPolicy))))))
@@ -4838,6 +4849,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireOperatorRead(s.obsRuleCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireOperatorRead(s.obsRecordingCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireOperatorRead(s.obsInputHealth)))
+	mux.HandleFunc("GET /v1/admin/obs/runtime-builds", s.authLimited(s.requireOperatorRead(s.obsRuntimeBuilds)))
 	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
 		s.authLimited(s.requireOperatorSessionRead(s.getOperatorDataRepairHealth)))
 	// Unified incident inbox. This is a read-only correlation projection over

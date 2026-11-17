@@ -608,7 +608,7 @@ The response's `title` and `detail` describe the failure.
 
 HTTP 409 · Cannot cancel a live deployment
 
-Use 'gregale deploys rollback &lt;id>' to swap to a previous deployment.
+Use 'gregale release rollback &lt;id>' to swap to a previous deployment.
 
 See [Deploys](deploys.md#cancel).
 
@@ -2728,7 +2728,7 @@ HTTP 409 · Regression changed
 
 HTTP 409 · Release approvals need a canary; Release approvals need an approved promotion
 
-Deploy with --rollout safe or fast (or without --rollout immediate and --traffic-percent), or remove the policy with `gregale approvals off`.
+Deploy with --rollout safe or fast (or without --rollout immediate and --traffic-percent), or remove the policy with `gregale release approval disable`.
 
 See [Deploys](deploys.md#release-approvals), [Release approvals, freezes and schedules](release-controls.md).
 
@@ -2784,7 +2784,7 @@ See [Safe releases](releases.md).
 
 HTTP 409 · Too many freezes
 
-Lift freezes you no longer need with `gregale freeze lift`.
+Lift freezes you no longer need with `gregale release freeze lift`.
 
 See [Deploys](deploys.md#deploy-freezes).
 
@@ -2792,13 +2792,13 @@ See [Deploys](deploys.md#deploy-freezes).
 
 HTTP 404 · Freeze not found
 
-List freezes with `gregale freeze list`. A company's freezes are lifted with --org ORG, or --app APP for a freeze on one app.
+List freezes with `gregale release freeze list`. A company's freezes are lifted with --org ORG, or --app APP for a freeze on one app.
 
 ### `release_freeze_override_not_allowed`
 
 HTTP 403 · Freeze override not allowed
 
-Ask an owner or admin to lift the freeze with `gregale freeze lift`, or to deploy with --override-freeze.
+Ask an owner or admin to lift the freeze with `gregale release freeze lift`, or to deploy with --override-freeze.
 
 See [Deploys](deploys.md#deploy-freezes).
 
@@ -2806,7 +2806,7 @@ See [Deploys](deploys.md#deploy-freezes).
 
 HTTP 409 · Production releases are frozen
 
-Wait for the freeze to end, lift it with `gregale freeze lift`, or release anyway with override_freeze and a reason (CLI: --override-freeze REASON); the override is audited.
+Wait for the freeze to end, lift it with `gregale release freeze lift`, or release anyway with override_freeze and a reason (CLI: --override-freeze REASON); the override is audited.
 
 See [Deploys](deploys.md#deploy-freezes), [Release approvals, freezes and schedules](release-controls.md).
 
@@ -2814,7 +2814,7 @@ See [Deploys](deploys.md#deploy-freezes), [Release approvals, freezes and schedu
 
 HTTP 409 · Too many release gates
 
-Delete a gate you no longer need with `gregale release-gates rm`.
+Delete a gate you no longer need with `gregale release gate rm`.
 
 See [Deploys](deploys.md#release-gates).
 
@@ -2822,7 +2822,7 @@ See [Deploys](deploys.md#release-gates).
 
 HTTP 404 · Release gate not found
 
-List gates with `gregale release-gates list`.
+List gates with `gregale release gate list`.
 
 ### `release_graph_changed`
 

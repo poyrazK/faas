@@ -509,6 +509,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/sandboxes/{id}/ports":                              true,
 	"GET /v1/sandboxes/{id}/ports/{port}":                       true,
 	"DELETE /v1/sandboxes/{id}/ports/{port}":                    true,
+	"GET /v1/sandboxes/{id}/task":                               true,
+	"GET /v1/sandboxes/{id}/actions/{seq}":                      true,
+	"GET /v1/sandboxes/{id}/actions/{seq}/screenshot":           true,
 	"GET /v1/sandboxes/{id}/egress":                             true,
 	"GET /v1/sandbox-egress-policy":                             true,
 	"PUT /v1/sandbox-egress-policy":                             true,
@@ -2212,6 +2215,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
 	}
+	addRuntimeBuildSchemas(t, root, spec, dtos)
 	// This public SDK schema names an inline Go map. Verify its actual wire
 	// shape before including it in both directions of schema parity.
 	checkReleaseSecretVersionMap(t, root, spec)

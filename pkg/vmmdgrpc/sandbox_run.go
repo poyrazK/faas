@@ -13,13 +13,18 @@ import (
 	"io"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/sandboxproto"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"google.golang.org/grpc/codes"
@@ -74,6 +79,10 @@ type sandboxActivity struct {
 	persists sandboxPersists
 	// usage measures the VM, or is nil when the VMM cannot.
 	usage fcvm.SandboxUsageMeter
+	// runAction runs one browser action (ADR-20261117065818 §2), or is nil
+	// for a session that takes none; actionMu runs them one at a time.
+	runAction func(ctx context.Context, a *vmmdpb.RunSandboxAction)
+	actionMu  sync.Mutex
 }
 
 func newSandboxActivity(sandboxID string, plan api.Plan) *sandboxActivity {
@@ -140,6 +149,17 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		opErr = problem
 		return grpcerr.ToStatus(problem)
 	}
+	task, problem := sandboxTaskFromProto(first.GetStart(), wake)
+	if problem != nil {
+		opErr = problem
+		return grpcerr.ToStatus(problem)
+	}
+	runner, _ := s.vmm.(sandboxTaskRunner)
+	if task != nil && runner == nil {
+		problem := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented, "Sandbox tasks unavailable", "this vmm cannot run sandbox tasks")
+		opErr = problem
+		return grpcerr.ToStatus(problem)
+	}
 	ctx := stream.Context()
 	inst, err := sandboxVMM.WakeSandbox(ctx, wake)
 	if err != nil {
@@ -168,13 +188,19 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		close(act.done)
 		s.sandboxRuns.Delete(wake.Instance)
 	}()
+	if runner != nil && wake.Browser && wake.Network == api.SandboxNetworkWeb && task == nil {
+		act.runAction = func(ctx context.Context, a *vmmdpb.RunSandboxAction) { s.runSandboxAction(ctx, runner, wake, act, a) }
+	}
 	if err := stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Booted{Booted: &vmmdpb.RunSandboxBooted{
-		Method: wakeMethodFrom(inst.Method), BootMs: time.Since(started).Milliseconds(), EgressPolicy: true,
+		Method: wakeMethodFrom(inst.Method), BootMs: time.Since(started).Milliseconds(), Actions: act.runAction != nil, EgressPolicy: true,
 	}}}); err != nil {
 		opErr = err
 		return err
 	}
 	act.webLog = first.GetStart().GetWebDomainLog()
+	if task != nil {
+		go runSandboxTask(ctx, runner, wake, *task, act)
+	}
 	opErr = s.serveSandbox(ctx, stream, wake.Instance, act)
 	return opErr
 }
@@ -244,6 +270,12 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 				act.persists.deliver(msg.GetPersistGrant().GetRequestId(), msg)
 			case msg.GetPersistRecorded() != nil:
 				act.persists.deliver(msg.GetPersistRecorded().GetRequestId(), msg)
+			case msg.GetAction() != nil:
+				if act.runAction == nil {
+					ev = actionDone(msg.GetAction().GetActionId(), "this session takes no browser actions")
+					break
+				}
+				go act.runAction(ctx, msg.GetAction())
 			}
 		case ev = <-act.outbox:
 		case <-act.thawed:
@@ -353,7 +385,7 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		BaseKey: start.GetBaseKey(), LayerKey: start.GetLayerKey(), VcpuCount: int(start.GetVcpuCount()),
 		MemSizeMiB: int(start.GetMemSizeMib()), CPUMillicores: int(start.GetCpuMillicores()), Network: start.GetNetworkMode(),
 		ImageKey: start.GetImageKey(), StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(),
-		ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond,
+		ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond, Browser: start.GetBrowser(),
 	}
 	// A schedd from before network modes sends none.
 	if wake.Network == "" {
@@ -377,6 +409,9 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 	// the platform sandbox layer carries none.
 	if (wake.StartCmd != "" || wake.ReadyCmd != "") && wake.ImageKey == "" {
 		return fcvm.SandboxWakeRequest{}, invalid("start_cmd and ready_cmd need image_key")
+	}
+	if wake.Browser && wake.ImageKey != "" {
+		return fcvm.SandboxWakeRequest{}, invalid("browser goes with a preset session, not image_key")
 	}
 	if problem := sandboxEgressPolicy(start, &wake, invalid); problem != nil {
 		return fcvm.SandboxWakeRequest{}, problem
@@ -420,7 +455,7 @@ func (s *Server) CaptureSandboxSnapshot(ctx context.Context, req *vmmdpb.Capture
 	wake, problem := sandboxStartFromProto(&vmmdpb.RunSandboxStart{Instance: req.GetInstance(), SandboxId: req.GetCaptureId(),
 		AccountId: req.GetAccountId(), Plan: req.GetPlan(), BaseKey: req.GetBaseKey(), LayerKey: req.GetLayerKey(),
 		ImageKey: req.GetImageKey(), VcpuCount: req.GetVcpuCount(), MemSizeMib: req.GetMemSizeMib(),
-		CpuMillicores: req.GetCpuMillicores(), NetworkMode: req.GetNetworkMode()})
+		CpuMillicores: req.GetCpuMillicores(), NetworkMode: req.GetNetworkMode(), Browser: req.GetBrowser()})
 	if problem == nil {
 		if req.GetNamespace() != storagekey.SandboxSnapshotNamespace(wake.AccountID, wake.ImageKey != "") {
 			problem = api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid sandbox capture",
@@ -463,4 +498,261 @@ func sandboxEgressPolicy(start *vmmdpb.RunSandboxStart, wake *fcvm.SandboxWakeRe
 	}
 	wake.EgressAllow, wake.EgressDeny = slices.Clone(allow), slices.Clone(deny)
 	return nil
+}
+
+// sandboxTaskRunner runs a sandbox task's command in its session VM
+// (ADR-20261116182615 §3); *fcvm.Manager implements it.
+type sandboxTaskRunner interface {
+	RunSandboxTask(ctx context.Context, instance, sandboxID string, argv []string, timeout time.Duration, maxOutput int64) (fcvm.SandboxTaskResult, error)
+}
+
+// sandboxTask is a validated sandbox task: the command vmmd runs and its
+// bounds.
+type sandboxTask struct {
+	argv      []string
+	timeout   time.Duration
+	maxOutput int64
+}
+
+// sandboxTaskFromProto validates a start frame's task and builds its
+// command. A kind is a fixed command; the caller's fields reach it only as
+// validated arguments after "--", never as shell text.
+func sandboxTaskFromProto(start *vmmdpb.RunSandboxStart, wake fcvm.SandboxWakeRequest) (*sandboxTask, *api.Problem) {
+	t := start.GetTask()
+	if t == nil {
+		return nil, nil
+	}
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid sandbox task", detail)
+	}
+	timeout := time.Duration(t.GetTimeoutMs()) * time.Millisecond
+	idx := wake.Plan.PlanIndex()
+	switch {
+	case t.GetKind() != "browse":
+		return nil, invalid("task kind must be browse")
+	case !wake.Browser || wake.Network != api.SandboxNetworkWeb:
+		return nil, invalid("a browse task needs a browser session in web mode")
+	case !api.ValidSandboxBrowseURL(t.GetUrl()):
+		return nil, invalid("url must be an http or https URL of a public host")
+	case t.GetMaxChars() < 1 || int(t.GetMaxChars()) > api.SandboxBrowseMaxChars:
+		return nil, invalid("max_chars is out of range")
+	case timeout <= 0 || timeout > time.Duration(api.SandboxTaskTimeoutSec[idx])*time.Second:
+		return nil, invalid("timeout_ms is outside the plan")
+	case t.GetMaxOutputBytes() < 1 || t.GetMaxOutputBytes() > int64(api.SandboxTaskOutputMaxBytes):
+		return nil, invalid("max_output_bytes is out of range")
+	}
+	argv := []string{"gregale-browser", "fetch", "--max-chars", strconv.Itoa(int(t.GetMaxChars())), "--timeout", strconv.Itoa(int(timeout.Seconds())),
+		"--", t.GetUrl()}
+	return &sandboxTask{argv: argv, timeout: timeout, maxOutput: t.GetMaxOutputBytes()}, nil
+}
+
+// runSandboxTask runs the task once the session is booted and puts its end
+// on the session's stream. It counts as a call, so the session does not
+// freeze under it.
+func runSandboxTask(ctx context.Context, runner sandboxTaskRunner, wake fcvm.SandboxWakeRequest, task sandboxTask, act *sandboxActivity) {
+	act.begin()
+	res, err := runner.RunSandboxTask(ctx, wake.Instance, wake.SandboxID, task.argv, task.timeout, task.maxOutput)
+	act.end(time.Now())
+	done := &vmmdpb.RunSandboxTaskDone{ExitCode: int32(res.ExitCode), Output: res.Output, TimedOut: res.TimedOut, Truncated: res.Truncated}
+	if err != nil {
+		done = &vmmdpb.RunSandboxTaskDone{ExitCode: -1, Error: err.Error()}
+	}
+	select {
+	case act.outbox <- &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_TaskDone{TaskDone: done}}:
+	case <-act.done:
+	case <-ctx.Done():
+	}
+}
+
+// sandboxActionCommand validates a browser action and builds its command
+// (ADR-20261117065818 §2). The command is fixed; the caller's fields reach
+// it only as validated flags and, after "--", one value.
+func sandboxActionCommand(a *vmmdpb.RunSandboxAction, plan api.Plan) (argv []string, timeout time.Duration, maxOutput int64, problem string) {
+	idx := plan.PlanIndex()
+	timeout = time.Duration(a.GetTimeoutMs()) * time.Millisecond
+	switch {
+	case timeout <= 0 || timeout > time.Duration(api.SandboxBrowserActionTimeoutSec[idx])*time.Second:
+		return nil, 0, 0, "timeout_ms is outside the plan"
+	case a.GetMaxOutputBytes() < 1 || a.GetMaxOutputBytes() > int64(api.SandboxTaskOutputMaxBytes):
+		return nil, 0, 0, "max_output_bytes is out of range"
+	case a.GetMaxChars() < 1 || int(a.GetMaxChars()) > api.SandboxBrowseMaxChars:
+		return nil, 0, 0, "max_chars is out of range"
+	}
+	argv = []string{"gregale-browser", "act", a.GetKind(), "--max-chars", strconv.Itoa(int(a.GetMaxChars())),
+		"--timeout", strconv.Itoa(int(timeout.Seconds()))}
+	if a.GetScreenshot() {
+		path, ok := sandboxScreenshotPath(a.GetActionId())
+		if !ok {
+			return nil, 0, 0, "a screenshot needs an action_id that is a UUID"
+		}
+		argv = append(argv, "--screenshot", path)
+	}
+	ref := func() bool {
+		if a.GetRef() < 1 || a.GetRef() > 10_000 {
+			return false
+		}
+		argv = append(argv, "--ref", strconv.Itoa(int(a.GetRef())))
+		return true
+	}
+	switch a.GetKind() {
+	case "navigate":
+		if !api.ValidSandboxBrowseURL(a.GetUrl()) {
+			return nil, 0, 0, "url must be an http or https URL of a public host"
+		}
+		argv = append(argv, "--", a.GetUrl())
+	case "click":
+		if !ref() {
+			return nil, 0, 0, "ref is out of range"
+		}
+	case "type":
+		if !ref() {
+			return nil, 0, 0, "ref is out of range"
+		}
+		if utf8.RuneCountInString(a.GetText()) > api.SandboxBrowserTypeMaxChars || !utf8.ValidString(a.GetText()) ||
+			strings.ContainsRune(a.GetText(), 0) {
+			return nil, 0, 0, "text is too long or not text"
+		}
+		if a.GetSubmit() {
+			argv = append(argv, "--submit")
+		}
+		argv = append(argv, "--", a.GetText())
+	case "press":
+		if !sandboxActionKeys[a.GetKey()] {
+			return nil, 0, 0, "key is not one press takes"
+		}
+		argv = append(argv, "--key", a.GetKey())
+	case "scroll":
+		if a.GetDirection() != "up" && a.GetDirection() != "down" {
+			return nil, 0, 0, "direction must be up or down"
+		}
+		argv = append(argv, "--direction", a.GetDirection())
+	case "back", "snapshot":
+	default:
+		return nil, 0, 0, "kind must be navigate, click, type, press, scroll, back or snapshot"
+	}
+	return argv, timeout, a.GetMaxOutputBytes(), ""
+}
+
+// sandboxActionKeys are the keys press takes, as gregale-browser's ACT_KEYS.
+var sandboxActionKeys = map[string]bool{"Enter": true, "Tab": true, "Escape": true, "Backspace": true, "ArrowUp": true,
+	"ArrowDown": true, "ArrowLeft": true, "ArrowRight": true, "PageUp": true, "PageDown": true, "Home": true, "End": true}
+
+func actionDone(id, problem string) *vmmdpb.RunSandboxEvent {
+	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_ActionDone{ActionDone: &vmmdpb.RunSandboxActionDone{
+		ActionId: id, ExitCode: -1, Error: problem}}}
+}
+
+// runSandboxAction runs one browser action and puts its end on the
+// session's stream. It is a call: a frozen VM is thawed first, and the VM
+// does not freeze under it.
+func (s *Server) runSandboxAction(ctx context.Context, runner sandboxTaskRunner, wake fcvm.SandboxWakeRequest, act *sandboxActivity,
+	a *vmmdpb.RunSandboxAction) {
+	ev := s.sandboxActionEnd(ctx, runner, wake, act, a)
+	select {
+	case act.outbox <- ev:
+	case <-act.done:
+	case <-ctx.Done():
+	}
+}
+
+func (s *Server) sandboxActionEnd(ctx context.Context, runner sandboxTaskRunner, wake fcvm.SandboxWakeRequest, act *sandboxActivity,
+	a *vmmdpb.RunSandboxAction) *vmmdpb.RunSandboxEvent {
+	argv, timeout, maxOutput, problem := sandboxActionCommand(a, wake.Plan)
+	if problem != "" {
+		return actionDone(a.GetActionId(), problem)
+	}
+	act.actionMu.Lock()
+	defer act.actionMu.Unlock()
+	s.beginActivity(wake.Instance)
+	defer s.endActivity(wake.Instance)
+	act.begin()
+	defer func() { act.end(time.Now()) }()
+	if err := s.thawSandbox(ctx, wake.Instance, act); err != nil {
+		s.log.Warn("sandbox: thaw before an action failed", "instance", wake.Instance, "err", err)
+		return actionDone(a.GetActionId(), "the session could not be thawed")
+	}
+	if err := s.prepareGuest(ctx, wake.Instance); err != nil {
+		return actionDone(a.GetActionId(), "the session is resuming")
+	}
+	res, err := runner.RunSandboxTask(ctx, wake.Instance, wake.SandboxID, argv, timeout, maxOutput)
+	if err != nil {
+		return actionDone(a.GetActionId(), err.Error())
+	}
+	var shot int64
+	if a.GetScreenshot() {
+		if res.ExitCode == 0 {
+			shot = s.storeScreenshot(ctx, wake, a.GetActionId())
+		}
+		s.removeScreenshot(ctx, wake, a.GetActionId())
+	}
+	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_ActionDone{ActionDone: &vmmdpb.RunSandboxActionDone{
+		ActionId: a.GetActionId(), ExitCode: int32(res.ExitCode), Output: res.Output, TimedOut: res.TimedOut, Truncated: res.Truncated,
+		ScreenshotBytes: shot}}}
+}
+
+// sandboxScreenshotPath is where gregale-browser act writes an action's
+// screenshot: in the session's workspace, which the guest's file operations
+// are confined to (ADR-20261117065818 §5).
+func sandboxScreenshotPath(actionID string) (string, bool) {
+	id, err := uuid.Parse(actionID)
+	if err != nil || id.String() != actionID {
+		return "", false
+	}
+	return "/workspace/.gregale-screenshot-" + actionID + ".jpg", true
+}
+
+// storeScreenshot streams an action's screenshot from the guest to the
+// artifact store and returns its size, or 0 when none was kept: no store,
+// no file, a failure, or an image over SandboxScreenshotMaxBytes.
+func (s *Server) storeScreenshot(ctx context.Context, wake fcvm.SandboxWakeRequest, actionID string) int64 {
+	sessions, ok := s.vmm.(sandboxSessions)
+	if !ok || s.sandboxStorage == nil {
+		return 0
+	}
+	path, _ := sandboxScreenshotPath(actionID)
+	key := storagekey.SandboxScreenshot(wake.AccountID, wake.SandboxID, actionID)
+	conn, err := sessions.DialSandboxSession(ctx, wake.Instance, wake.SandboxID)
+	if err != nil {
+		return 0
+	}
+	pr, pw := io.Pipe()
+	stored := make(chan error, 1)
+	go func() {
+		err := s.sandboxStorage.Put(ctx, key, pr)
+		_ = pr.CloseWithError(err)
+		stored <- err
+	}()
+	var result sandboxproto.TransferResult
+	req := sandboxproto.Request{Op: sandboxproto.OpFileRead, Path: path, MaxBytes: int64(api.SandboxScreenshotMaxBytes)}
+	guestErr := sandboxproto.Do(ctx, conn, req, func(_ uint32, body []byte) error {
+		_, err := pw.Write(body)
+		return err
+	}, &result)
+	_ = pw.CloseWithError(guestErr)
+	storeErr := <-stored
+	if guestErr == nil && storeErr == nil && !result.Truncated && result.Bytes > 0 {
+		return result.Bytes
+	}
+	if storeErr != nil {
+		s.log.Warn("sandbox: screenshot store failed", "instance", wake.Instance, "err", storeErr)
+	}
+	s.deleteWorkspaceArchive(ctx, key)
+	return 0
+}
+
+// removeScreenshot deletes an action's screenshot from the guest, kept or
+// not.
+func (s *Server) removeScreenshot(ctx context.Context, wake fcvm.SandboxWakeRequest, actionID string) {
+	sessions, ok := s.vmm.(sandboxSessions)
+	if !ok {
+		return
+	}
+	path, _ := sandboxScreenshotPath(actionID)
+	conn, err := sessions.DialSandboxSession(ctx, wake.Instance, wake.SandboxID)
+	if err != nil {
+		return
+	}
+	var out struct{}
+	_ = sandboxproto.Do(ctx, conn, sandboxproto.Request{Op: sandboxproto.OpFileRemove, Path: path},
+		func(uint32, []byte) error { return nil }, &out)
 }

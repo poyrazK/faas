@@ -33,6 +33,8 @@ type fakeSandboxSchedd struct {
 	closes  int
 	// persists is what agentd answered the "persist" script's exchanges.
 	persists []persistAnswer
+	// actions are the browser actions the "actions" script was sent.
+	actions []*scheddpb.SandboxRunAction
 }
 
 func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
@@ -61,7 +63,7 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 		return status.Error(codes.Aborted, "not told to proceed")
 	}
 	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: "WAKE_COLD_BOOT", BootMs: 700,
-		EgressPolicy: script == "egress"}}}); err != nil {
+		Actions: script == "actions", EgressPolicy: script == "egress"}}}); err != nil {
 		return err
 	}
 	// vmmd's usage of the session VM, cumulative (step 11).
@@ -82,6 +84,18 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 		time.Sleep(50 * time.Millisecond)
 		return status.Error(codes.Unavailable, "vmmd went away")
 	}
+	switch script {
+	case "task":
+		if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_TaskDone{TaskDone: &scheddpb.SandboxRunTaskDone{
+			ExitCode: 0, Output: []byte(`{"title":"Example"}`)}}}); err != nil {
+			return err
+		}
+	case "task-timeout":
+		if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_TaskDone{TaskDone: &scheddpb.SandboxRunTaskDone{
+			ExitCode: -1, TimedOut: true, Output: []byte("partial")}}}); err != nil {
+			return err
+		}
+	}
 	if script == "persist" {
 		if err := f.persist(stream); err != nil {
 			return err
@@ -94,6 +108,17 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			return err
 		}
 		switch {
+		case frame.GetAction() != nil:
+			a := frame.GetAction()
+			f.mu.Lock()
+			f.actions = append(f.actions, a)
+			f.mu.Unlock()
+			var shot int64
+			if a.GetScreenshot() {
+				shot = 2048
+			}
+			_ = stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_ActionDone{ActionDone: &scheddpb.SandboxRunActionDone{
+				ActionId: a.GetActionId(), Output: []byte(`{"title":"` + a.GetKind() + `"}`), ScreenshotBytes: shot}}})
 		case frame.GetFreeze() != nil:
 			f.mu.Lock()
 			f.freezes++
@@ -254,6 +279,133 @@ func TestSandboxOutcomesBeforeAndAfterBoot(t *testing.T) {
 				t.Fatalf("session = %s %q, want %s %q", sb.State, sb.OutcomeCode, tc.state, tc.outcome)
 			}
 		})
+	}
+}
+
+// adr: 20261116182615 §3 — a task's start carries its kind and arguments,
+// and its end records the result and closes the session, final usage
+// included.
+func TestSandboxTaskRecordsItsResultAndCloses(t *testing.T) {
+	for _, tc := range []struct {
+		script, state, outcome, output string
+		exit                           int
+	}{
+		{"task", agentstore.SandboxClosed, "task_done", `{"title":"Example"}`, 0},
+		{"task-timeout", agentstore.SandboxFailed, "task_failed", "partial", -1},
+	} {
+		t.Run(tc.script, func(t *testing.T) {
+			_, store := openStore(t)
+			sb, err := store.CreateSandbox(context.Background(), agentstore.SandboxAdmission{AccountID: account, Kind: "ephemeral",
+				Preset: "codex", RAMMB: 1024, NetworkMode: "web", Browser: true, IdleTimeoutSec: 600, ExpiresAt: time.Now().Add(time.Hour),
+				QueuedMax: 100, Task: &agentstore.SandboxTask{Kind: agentstore.SandboxTaskBrowse, URL: "https://example.com/", MaxChars: 300}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fake := &fakeSandboxSchedd{scripts: map[string]string{sb.ID: tc.script}}
+			if found := <-holdSandbox(t, newSandboxes(t, store, fake, agentd.SandboxConfig{})); !found {
+				t.Fatal("nothing was claimed")
+			}
+			if got := sandboxState(t, store, sb.ID); got.State != tc.state || got.OutcomeCode != tc.outcome {
+				t.Fatalf("session = %s %q, want %s %q", got.State, got.OutcomeCode, tc.state, tc.outcome)
+			}
+			res, err := store.SandboxTaskResult(context.Background(), account, sb.ID)
+			if err != nil || res.ExitCode == nil || *res.ExitCode != tc.exit || string(res.Output) != tc.output {
+				t.Fatalf("result = %+v, %v", res, err)
+			}
+			task := fake.starts[0].GetTask()
+			if task.GetKind() != "browse" || task.GetUrl() != "https://example.com/" || task.GetMaxChars() != 300 ||
+				task.GetTimeoutMs() != 120_000 || task.GetMaxOutputBytes() != 256<<10 || !fake.starts[0].GetBrowser() {
+				t.Fatalf("start task = %v", task)
+			}
+			if _, _, closes := fake.counts(); closes != 1 {
+				t.Fatalf("%d closes; the final usage comes with the close", closes)
+			}
+			if _, found, err := store.SandboxSessionUsage(context.Background(), account, sb.ID); err != nil || !found {
+				t.Fatalf("no final usage: %v %v", found, err)
+			}
+		})
+	}
+}
+
+// adr: 20261117065818 §2 — agentd sends a browser session its pending
+// actions one at a time once vmmd announced actions, records each end
+// under the lease, and ends the open ones as the session ends.
+func TestSandboxActionsRunInOrderAndEndWithTheSession(t *testing.T) {
+	pool, store := openStore(t)
+	ctx := context.Background()
+	const endpoint = "55555555-5555-5555-5555-555555555555"
+	if _, err := pool.Exec(ctx, `INSERT INTO managed_realtime_endpoints VALUES ($1)`, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	sb, err := store.CreateSandbox(ctx, agentstore.SandboxAdmission{AccountID: account, Kind: "ephemeral", Preset: "codex",
+		RAMMB: 1024, NetworkMode: "web", Browser: true, IdleTimeoutSec: 600, ExpiresAt: time.Now().Add(time.Hour), QueuedMax: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	act := func(call, kind string, args agentstore.SandboxActionArgs) agentstore.SandboxAction {
+		a, _, err := store.CreateSandboxAction(ctx, account, sb.ID, kind, args, agentstore.SandboxTaskCall{EndpointID: endpoint,
+			ThreadID: "thread-1", ToolCallID: call, IssuedAt: time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	nav := act("call_1", "navigate", agentstore.SandboxActionArgs{URL: "https://example.com/"})
+	click := act("call_2", "click", agentstore.SandboxActionArgs{Ref: 4, MaxChars: 900, Screenshot: true})
+	fake := &fakeSandboxSchedd{scripts: map[string]string{sb.ID: "actions"}}
+	sbx := newSandboxes(t, store, fake, agentd.SandboxConfig{})
+	done := holdSandbox(t, sbx)
+	waitFor(t, "ready", func() bool { return sandboxState(t, store, sb.ID).State == agentstore.SandboxReady })
+	actionState := func(id string) (state string, exit *int, output string) {
+		var out []byte
+		if err := pool.QueryRow(ctx, `SELECT state, exit_code, output FROM sandbox_actions WHERE id=$1`, id).Scan(&state, &exit, &out); err != nil {
+			t.Fatal(err)
+		}
+		return state, exit, string(out)
+	}
+	waitFor(t, "both actions", func() bool {
+		if err := sbx.PumpActionsOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		state, _, _ := actionState(click.ID)
+		return state == agentstore.SandboxActionDone
+	})
+	for _, tc := range []struct{ id, title string }{{nav.ID, "navigate"}, {click.ID, "click"}} {
+		if state, exit, out := actionState(tc.id); state != agentstore.SandboxActionDone || exit == nil || *exit != 0 ||
+			out != `{"title":"`+tc.title+`"}` {
+			t.Fatalf("action %s = %s %v %q", tc.title, state, exit, out)
+		}
+	}
+	fake.mu.Lock()
+	sent := fake.actions
+	fake.mu.Unlock()
+	if len(sent) != 2 || sent[0].GetKind() != "navigate" || sent[0].GetUrl() != "https://example.com/" ||
+		sent[0].GetMaxChars() != 4000 || sent[0].GetTimeoutMs() != 30_000 || sent[1].GetKind() != "click" ||
+		sent[1].GetRef() != 4 || sent[1].GetMaxChars() != 900 || sent[1].GetMaxOutputBytes() != 256<<10 || sent[0].GetScreenshot() ||
+		!sent[1].GetScreenshot() {
+		t.Fatalf("sent %v", sent)
+	}
+	// adr: 20261117065818 §5 — a kept screenshot is recorded at the key vmmd
+	// derives from the session and the action.
+	var navKey, clickKey *string
+	var clickBytes *int64
+	if err := pool.QueryRow(ctx, `SELECT (SELECT screenshot_key FROM sandbox_actions WHERE id=$1), screenshot_key, screenshot_bytes
+		FROM sandbox_actions WHERE id=$2`, nav.ID, click.ID).Scan(&navKey, &clickKey, &clickBytes); err != nil {
+		t.Fatal(err)
+	}
+	if want := "sandbox-screenshots/" + account + "/" + sb.ID + "/" + click.ID + ".jpg"; navKey != nil || clickKey == nil || *clickKey != want ||
+		clickBytes == nil || *clickBytes != 2048 {
+		t.Fatalf("screenshots: navigate %v, click %v (%v)", navKey, clickKey, clickBytes)
+	}
+	pending := act("call_3", "snapshot", agentstore.SandboxActionArgs{})
+	if _, err := store.CloseSandbox(ctx, account, sb.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !<-done {
+		t.Fatal("nothing was claimed")
+	}
+	if state, exit, _ := actionState(pending.ID); state != agentstore.SandboxActionDone || exit != nil {
+		t.Fatalf("a pending action at the session's end = %s %v", state, exit)
 	}
 }
 

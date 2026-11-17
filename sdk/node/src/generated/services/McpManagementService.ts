@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { HostedTaskSourceCheck } from '../models/HostedTaskSourceCheck.js';
+import type { HostedTaskSourceDecision } from '../models/HostedTaskSourceDecision.js';
 import type { HostedTaskSourceIntent } from '../models/HostedTaskSourceIntent.js';
 import type { HostedTaskSourcePrepare } from '../models/HostedTaskSourcePrepare.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -72,6 +74,76 @@ export class McpManagementService {
         409: `The source intent identity, requesting key or native app baseline differs from this preparation.`,
         429: `The account source retention identity, active-intent or ciphertext quota is exhausted.`,
         503: `New source retention is disabled or independent Account-domain sealing is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Recheck retained hosted Task source review
+   * Revalidates the original personal requester and locked native app configuration and serving pins. Observed drift permanently makes the review stale. Source expiry cannot renew. The original publisher or personal owner may check; this creates no owner decision, credential binding or execution authority. HTTP response idempotency caching is excluded so every call rechecks current facts.
+   * @returns HostedTaskSourceIntent Current hosted source review observation, including permanently stale or expired outcomes.
+   * @throws ApiError
+   */
+  public static checkHostedTaskSourceIntent({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Retained hosted source identity to observe for drift
+     */
+    id: string,
+    requestBody: HostedTaskSourceCheck,
+  }): CancelablePromise<HostedTaskSourceIntent> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/task-tool-source-intents/{id}/check',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `The hosted source freshness check fingerprint is invalid.`,
+        401: `Authenticate before rechecking the retained hosted source review.`,
+        403: `Hosted source freshness checks require personal publishing authority and the account MFA policy.`,
+        404: `The retained hosted review is not visible to this checking requester.`,
+        409: `The retained hosted source review cannot be checked against this request.`,
+        429: `Hosted source freshness observations are currently rate-limited.`,
+        503: `The native source review freshness journal is temporarily unavailable.`,
+      },
+    });
+  }
+  /**
+   * Record an owner decision on hosted Task source
+   * An authenticated personal owner or fresh unscoped non-agent personal administrator approves, rejects or revokes the exact retained intent and review digests. Agent and MCP-login credentials cannot decide. Approval requires enabled source retention and rechecks retained source availability, original requester authority and native app baselines atomically. Rejection and revocation do not require live requester or app facts; stale and expired reviews stay terminal. Exact retries preserve the first decision timestamp and fixed deadline. Approval is only a source review; readiness, credential verification and execution authorization remain absent. Native journal idempotency rechecks authority on every call instead of replaying an HTTP response cache.
+   * @returns HostedTaskSourceIntent Recorded hosted source owner review or a terminal stale or expired review that cannot be approved.
+   * @throws ApiError
+   */
+  public static decideHostedTaskSourceIntent({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Exact retained hosted source identity named by its personal owner
+     */
+    id: string,
+    requestBody: HostedTaskSourceDecision,
+  }): CancelablePromise<HostedTaskSourceIntent> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/task-tool-source-intents/{id}/decision',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `The hosted source owner decision or its digest selectors are malformed.`,
+        401: `Authenticate the personal owner before deciding this retained source review.`,
+        403: `A hosted source decision requires personal non-agent owner authority and the account MFA policy.`,
+        404: `The source review or current deciding owner is unavailable within this account.`,
+        409: `The hosted source decision targets a different digest or conflicts with its retained terminal state.`,
+        429: `Owner decisions for hosted source reviews are currently rate-limited.`,
+        503: `Source review approval is disabled or the owner review journal is temporarily unavailable.`,
       },
     });
   }

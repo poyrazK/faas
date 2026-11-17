@@ -561,6 +561,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
+		WithDeferredDeployScans().
 		WithReleasePrestage(prestageOnlyFromEnv(getenv)).
 		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
 		WithArtifactReplicator(artifactReplicator).
@@ -630,7 +631,8 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// release command waits out the break-glass release pause.
 	h.WithReleasePause(startReleasePauseWatcher(ctx, store, pool, log))
 	// ADR-20261029174438: prepare several deployments at once, off by default.
-	parallelPrep, err := parseBoolEnv("FAAS_IMAGED_PARALLEL_PREP", getenv("FAAS_IMAGED_PARALLEL_PREP"))
+	// db sizes imaged's direct pool from the same variable.
+	parallelPrep, err := parseBoolEnv(db.ImagedParallelPrepEnv, getenv(db.ImagedParallelPrepEnv))
 	if err != nil {
 		return err
 	}

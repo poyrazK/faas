@@ -55,6 +55,19 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(fileBrowser.createLiveJob,previewSdk.createLiveJob);assert.equal(typeof fileBrowser.realtimeLiveJobSource,'function');
     assert.equal(typeof previewSdk.defineJobPipeline,'function');assert.equal(typeof previewSdk.createJobPipelineClient,'function');assert.equal(typeof previewSdk.jobPipelineLiveSnapshot,'function');
     assert.equal(sourceSdk.defineJobPipeline,undefined);assert.equal(fileBrowser.defineJobPipeline,undefined);
+    assert.equal(sourceSdk.createEventPipeline,undefined);assert.equal(publicBrowser.createEventPipeline,undefined);assert.equal(fileBrowser.createEventPipeline,undefined);
+    assert.equal(typeof previewSdk.createEventPipeline,'function');assert.equal(typeof previewSdk.postgresEventPipelineStore,'function');
+    assert.equal(typeof previewSdk.createEventPublisher,'function');assert.equal(typeof previewSdk.createEventOutbox,'function');assert.equal(typeof previewSdk.withEventOutboxTransaction,'function');
+    assert.equal(sourceSdk.createEventOutbox,undefined);assert.equal(publicBrowser.createEventPublisher,undefined);
+    assert.ok(previewSdk.eventOutboxSchema.includes('gregale_event_outbox'));
+    assert.equal(typeof previewSdk.createStripeWebhookAdapter,'function');assert.equal(typeof previewSdk.stripeDeliveryContextFromHeaders,'function');
+    assert.equal(typeof previewSdk.definePipelineCompensation,'function');assert.equal(typeof previewSdk.createCompensationMCP,'function');assert.ok(previewSdk.pipelineCompensationSchema.includes('gregale_compensation_effects'));assert.equal(sourceSdk.definePipelineCompensation,undefined);assert.equal(fileBrowser.createCompensationMCP,undefined);
+    assert.equal(typeof previewSdk.definePipelineTool,'function');assert.equal(typeof previewSdk.createPipelineToolMCP,'function');assert.ok(previewSdk.pipelineToolSchema.includes('gregale_pipeline_tool_starts'));assert.equal(sourceSdk.definePipelineTool,undefined);assert.equal(fileBrowser.createPipelineToolMCP,undefined);
+    assert.ok(previewSdk.stripeWebhookSchema.includes('gregale_stripe_webhook_receipts'));assert.equal(sourceSdk.createStripeWebhookAdapter,undefined);assert.equal(fileBrowser.createStripeWebhookAdapter,undefined);
+    assert.equal(typeof previewSdk.definePipelineSchedule,'function');assert.equal(typeof previewSdk.createPipelineScheduleClient,'function');assert.equal(sourceSdk.definePipelineSchedule,undefined);assert.equal(publicBrowser.createPipelineScheduleClient,undefined);
+    const {EventContract}=await import('@gregale/sdk-node/preview/events/runtime');
+    assert.equal(EventContract,previewSdk.EventContract);
+    assert.deepEqual(new EventContract({version:1,type:'example.event',data:{type:'string'}}).input('hello'),'hello');
     const sourceOptions = {timeoutMs:10000,onCheckpoint:value => sourceSdk.saveSourceUploadCheckpoint('source-state.json',value)};
     const staged = await sourceClient.uploads.uploadSource({path:'source.tar.gz',appSlug:'api'},sourceOptions);
     assert.equal(staged.stage,'ready');
@@ -180,11 +193,83 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
   const schema={version:1,name:'typed-job',input:{type:'string',minLength:1},output:{type:'integer',minimum:0}};
   await writeFile(join(app,'job-contract.json'),JSON.stringify(schema));
   await exec(process.execPath,[join(app,'node_modules/.bin/gregale-job-types'),join(app,'job-contract.json'),'typescript',join(app,'typed-job.ts')],{cwd:app});
+  await writeFile(join(app,'event-contract.json'),JSON.stringify({version:1,type:'example.created',data:{type:'string'}}));
+  await exec(process.execPath,[join(app,'node_modules/.bin/gregale-event-types'),join(app,'event-contract.json'),'typescript',join(app,'typed-event.ts')],{cwd:app});
   await writeFile(join(app, 'app.ts'), `
     import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, type RequestOptions, type ResponseInfo, type ResponseObserver, type PaginationOptions, type DeploymentPagination, type DeploymentResponse, type DeploymentListResponse, type BuildResponse, type BuildListResponse, PaginationError, FaaSClient, AppsService, DeploymentsService } from '@gregale/sdk-node';
+    import {contract as eventContract} from './typed-event.js';
+    import {createEventPipeline,type EventPipelineDefinition,type EventPipelineDelivery,type EventPipelineOutcome} from '@gregale/sdk-node/preview';
+    import {createEventPublisher,createEventOutbox,withEventOutboxTransaction,type EventOutboxPool,type EventOutboxStatus,type EventPublicationOutcome} from '@gregale/sdk-node/preview';
+    declare const outboxPool:EventOutboxPool;
+    declare const eventScope:import('@gregale/sdk-node/preview').PipelineScope;
+    const publisher=createEventPublisher(eventContract,{scope:eventScope});
+    async function useOutbox():Promise<void>{
+      const result:EventOutboxStatus=await withEventOutboxTransaction(outboxPool,tx=>publisher.stage(tx,'typed',{key:'one'}),{timeoutMs:1000});
+      const direct:EventPublicationOutcome=await publisher.publish('typed',{key:'two',timeoutMs:1000});
+      void result;void direct;
+      // @ts-expect-error generated event payload is a string
+      await publisher.publish(7,{key:'three',timeoutMs:1000});
+      await createEventOutbox(outboxPool,{scope:eventScope,token:'secret'}).recover({maxEvents:10,timeoutMs:1000});
+    }
+    declare const eventDefinition:EventPipelineDefinition<string,string,number,{id:string}>;
+    declare const eventDelivery:EventPipelineDelivery;
+    const triggeredPipelines=createEventPipeline(eventContract,eventDefinition);
+    async function useEvent():Promise<void>{
+      const result:EventPipelineOutcome=await triggeredPipelines.handle(eventDelivery,{id:'alice'},{timeoutMs:1000});
+      if(result.state==='started'){const id:string=result.receipt.checkpoint.run_id;void id;}
+      // @ts-expect-error principal must match application authorization context
+      await triggeredPipelines.handle(eventDelivery,1,{timeoutMs:1000});
+      // @ts-expect-error mapper must produce the pipeline's generated input
+      const wrong:EventPipelineDefinition<string,string,number,{id:string}>={...eventDefinition,map:async()=>42};
+      void wrong;
+    }
     import { createClient as createPreviewClient, type GregaleClient as PreviewClient, type ExecutionResponse, type ExecutionEvent, type ExecutionHelpers, type RequestOptions as PreviewOptions } from '@gregale/sdk-node/preview';
     import { type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters, type ReleaseTimeline, type WaiterSnapshot, type WaiterProgress, WaiterError } from '@gregale/sdk-node';
     import {contract as jobContract} from './typed-job.js';
+    import {definePipelineSchedule,createPipelineScheduleClient,type TypedPipelineRun} from '@gregale/sdk-node/preview';
+    const schedule=definePipelineSchedule(jobContract,'input',{scope:eventScope,ownerId:'alice',cron:'0 2 * * *'});
+    const scheduleInput:string=schedule.trigger.input.input;
+    // @ts-expect-error schedule input must match the generated contract
+    definePipelineSchedule(jobContract,7,{scope:eventScope,ownerId:'alice',cron:'0 2 * * *'});
+    const schedules=createPipelineScheduleClient(schedule,{deploymentId:'id',token:'server',authorize:async(access:{id:string})=>access.id==='alice'});
+    async function useSchedule():Promise<void>{const run:TypedPipelineRun<number>=await schedules.attach('occurrence',{id:'alice'},{timeoutMs:1000});const output:number=await run.result({timeoutMs:1000});void output;}
+    import {createStripeWebhookAdapter,type StripeWebhookDefinition,type StripeWebhookDelivery,type StripeWebhookOutcome} from '@gregale/sdk-node/preview';
+    declare const stripeDefinition:StripeWebhookDefinition<string,{id:string}>;
+    declare const stripeDelivery:StripeWebhookDelivery;
+    const stripe=createStripeWebhookAdapter(eventContract,stripeDefinition);
+    async function useStripe():Promise<void>{
+      const outcome:StripeWebhookOutcome=await stripe.handle(stripeDelivery,{id:'alice'},{timeoutMs:1000});void outcome;
+      // @ts-expect-error principal must match application context
+      stripe.inspect(stripeDelivery,1,{timeoutMs:1000});
+      // @ts-expect-error projection must return the generated event payload
+      const bad:StripeWebhookDefinition<string,{id:string}>={...stripeDefinition,apply:async()=>({state:'stage',input:7})};void bad;
+    }
+    import {definePipelineTool,createPipelineToolMCP,type PipelineToolDefinition,type PipelineToolStatus} from '@gregale/sdk-node/preview';
+    declare const toolDefinition:PipelineToolDefinition<string,{id:string}>;
+    const pipelineTool=definePipelineTool(jobContract,toolDefinition);
+    async function usePipelineTool():Promise<void>{
+      const output:number=await pipelineTool.result('request',{id:'alice'},{timeoutMs:1000});void output;
+      const status:PipelineToolStatus|null=await pipelineTool.inspect('request',{id:'alice'},{timeoutMs:1000});void status;
+      await pipelineTool.start('hello','request',{id:'alice'},{timeoutMs:1000});
+      // @ts-expect-error payload must match generated pipeline input
+      pipelineTool.start(7,'request',{id:'alice'},{timeoutMs:1000});
+      // @ts-expect-error application access context is preserved
+      pipelineTool.cancel('request',7,{timeoutMs:1000});
+      const adapter=createPipelineToolMCP(pipelineTool);await adapter.call('tool',{}, {id:'alice'},{timeoutMs:1000});
+    }
+    import {definePipelineCompensation,createCompensationMCP,type PipelineCompensationDefinition,type CompensationResult,type CompensationPlan} from '@gregale/sdk-node/preview';
+    declare const recoveryDefinition:PipelineCompensationDefinition<string,number,{id:string}>;
+    const recovery=definePipelineCompensation(jobContract,recoveryDefinition);
+    async function useRecovery():Promise<void>{
+      const plan:CompensationPlan<string>=await recovery.plan('source',{id:'alice'},{timeoutMs:1000});
+      const input:string=plan.commands[0]!.input;void input;
+      const output:CompensationResult<number>=await recovery.tool.result('attempt',{id:'alice'},{timeoutMs:1000});const result:number=output.results[0]!.outcome.result;void result;
+      const adapter=createCompensationMCP(recovery);await adapter.call('tool',{}, {id:'alice'},{timeoutMs:1000});
+      // @ts-expect-error recovery principals retain application types
+      recovery.plan('source',7,{timeoutMs:1000});
+      // @ts-expect-error declared compensation commands retain their business input type
+      const wrong:import('@gregale/sdk-node/preview').CompensationCommand<string>={id:'one',effect_id:'one',description:'undo',input:7};void wrong;
+    }
     const client: GregaleClient = createClient('https://api.test');
     const typedJob=client.jobs.defineJob(jobContract);
     const typedSubmission:Promise<import('@gregale/sdk-node').TypedJobRun<number>>=typedJob.submit([{id:'one',value:'input'}],{timeoutMs:1000,idempotencyKey:'one'});

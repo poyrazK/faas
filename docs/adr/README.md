@@ -1,3 +1,4 @@
+- [ADR-20261116165500: Typed event-triggered pipelines](20261116165500-sdk-event-triggered-pipelines.md) — accepted; SDK preview
 - [ADR-20261116190208: Flag experiments: guardrails, numeric metrics and recommendations](20261116190208-flag-experiment-guardrails-and-numeric-metrics.md) — accepted; default server-error-rate and p95-latency guardrails per customer (delta-method mSPRT against a tolerance) that roll the rule back to control and stop the experiment, `mean` metrics on track() values with winsorizing, results recommendations, `ship`, and read-only MCP tools (amends ADR-20261115163113)
 - [ADR-20261115163113: Flag experiments: conversion events and sequential results](20261115163113-flag-experiments.md) — accepted; experiments on a variant flag's weighted rule with customer units, SDK `track()` conversion events (`track-v1`) folded into daily per-customer rows with plan telemetry retention, per-experiment unit rows for the experiment's lifetime, monthly per-plan event quota (dropped, never billed), mSPRT always-valid results with a sample ratio mismatch check (amends ADR-377, ADR-20261114150000)
 - [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
@@ -16,6 +17,22 @@
 - [ADR-20261114150000: Flags usability: short commands, attribute targeting, gateway kill switch, lifecycle](20261114150000-flags-usability.md) — accepted; read-modify-write CLI verbs (`flags create/set/on/off/percent/rule/rm/kill/stale`), rule `attributes` on gateway-verified `gregale.country`/`gregale.ua_family` and app-supplied `app.*` (SDK capability `attribute-targeting-v1`), `killed` flags served as the app fallback and stamped by the gateway in `X-Faas-Flag-Kills`, flag `owner`/`expires_at` with a lifecycle report and hourly `flags.lifecycle_attention` audit events (amends ADR-377)
 - [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)
 
+- [ADR-20261116090001 · Observed app-task operation outcomes](20261116090001-observed-app-task-operation-outcomes.md) — monitoring implementation; operational activation separate
+- [ADR-20261116080000 · Advisory command-cron admission evidence](20261116080000-advisory-command-cron-admission-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115210001 · Advisory app-task and release-command evidence](20261115210001-advisory-app-task-and-release-command-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115200000 · Advisory build recovery and cleanup evidence](20261115200000-advisory-build-recovery-and-cleanup-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115190001 · Advisory post-capture activation evidence](20261115190001-advisory-post-capture-activation-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115180001 · Advisory snapshot-priming evidence](20261115180001-advisory-snapshot-priming-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115170001 · Advisory image-preparation phase evidence](20261115170001-advisory-image-preparation-phase-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115160001 · Advisory build-to-image handoff evidence](20261115160001-advisory-build-image-handoff-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115150000 · Advisory builder progress and pressure](20261115150000-advisory-builder-progress-and-pressure.md) — monitoring implementation; operational activation separate
+- [ADR-20261115140001 · Advisory work-loop health](20261115140001-advisory-work-loop-health.md) — monitoring implementation; operational activation separate
+- [ADR-20261115130000 · Sampled daemon process continuity](20261115130000-sampled-daemon-process-continuity.md) — monitoring implementation; operational activation separate
+- [ADR-20261115120001 · Advisory daemon readiness evidence](20261115120001-advisory-daemon-readiness-evidence.md) — monitoring implementation; operational activation separate
+- [ADR-20261115110000 · Versioned build-service coverage profiles](20261115110000-versioned-build-service-profiles.md) — monitoring implementation; operational activation separate
+- [ADR-20261115100001 · Observed build history during verification](20261115100001-observed-build-history.md) — monitoring implementation; operational activation separate
+- [ADR-20261115090001 · Build evidence in deployment monitoring collection](20261115090001-monitoring-build-evidence-transport.md) — collection implementation; operational activation separate
+- [ADR-20261115080000 · Advisory running-build evidence](20261115080000-advisory-runtime-build-evidence.md) — monitoring implementation; production convergence separate
 - [ADR-20261114090001 · Deployment qualification changes and wait timing](20261114090001-deployment-qualification-progress.md) — monitoring implementation; production convergence separate
 - [ADR-20261114080000 · Diagnostics for unqualified deployment evidence](20261114080000-deployment-qualification-evidence.md) — monitoring implementation; production convergence separate
 - [ADR-20261114070000 · Deployment source read diagnostics](20261114070000-deployment-source-read-diagnostics.md) — monitoring implementation; production convergence separate
@@ -2443,9 +2460,28 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261115183908: Owner-approved Task worker retirement](20261115183908-owner-approved-task-worker-retirement.md) — separate expiring approval, atomic conditional parking and read-only shutdown reconciliation.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)
 - [ADR-20261115194000: Platform alerts for outages and failing crons](20261115194000-platform-alerts.md) — accepted; schedd pauses an HTTP cron after 10 failed runs over 24 h and meterd emails accounts about it and about apps at ≥90% 5xx, unless they have their own error-rate rule
+- [ADR-20261116183958: Typed transactional event publication across SDKs](20261116183958-sdk-typed-transactional-events.md) — shared Go outbox protocol, bounded Node/Python workers, explicit payload-erasure migration and typed CSV producer flow.
+- [ADR-20261116192409: Typed scheduled pipelines](20261116192409-sdk-typed-scheduled-pipelines.md) — generated native triggers, pinned owner-authorized calendar/history/replay clients and precise cross-language run attachment.
+- [ADR-20261116203545: Typed Stripe webhook pipelines](20261116203545-sdk-typed-stripe-webhook-pipelines.md) — native verified delivery, shared atomic business/event handoff receipts and mixed SDK paid CSV recovery.
+- [ADR-20261117065811: Typed pipeline tools](20261117065811-sdk-typed-pipeline-tools.md) — portable durable starts, current authorization, human review views and a shared MCP adapter.
+- [ADR-20261117085348: Reviewed SQL pipeline compensation](20261117085348-sdk-pipeline-compensations.md) — immutable source-bound plans, separate approved recovery attempts and atomic typed effect receipts across Node/Python.
 - [ADR-20261116163508: Customer-granted support access](20261116163508-customer-granted-support-access.md) — accepted, dark behind support_grants; owners/admins grant support deploy, rollback and restart on chosen apps for 24 h (max 7 d), support may request; the operator acts as itself under a fenced, audited, revocable grant.
 
 - [ADR-20261116163708: Hosted read-only Task recovery inspection](20261116163708-hosted-task-recovery-inspection.md) — accepted; opt-in original-requester agent keys inspect native Task checkpoints and recovery guidance without local files, cross-key delegation or execution authority.
 - [ADR-20261116183445: The management MCP server searches the published docs](20261116183445-management-mcp-docs-search.md) — accepted; core tools gregale_search_docs and gregale_get_docs_page rank and read sections of gregale.dev's llms.txt/llms-full.txt, cached hourly per process with a 24 h stale fallback.
 - [ADR-20261116183545: Durable hosted Task source intents](20261116183545-hosted-task-source-intents.md)
 - [ADR-20261116213000: Custom Postgres group roles](20261116213000-custom-postgres-group-roles.md) — proposed; customers declare NOLOGIN group roles (BYPASSRLS allowed, refused on Data API/Auth databases, Hobby+) granted to their own Gregale logins, created by the platform admin path, so tools like Windmill run on managed Postgres.
+- [ADR-20261116100000 · Observed app-task completion and recovery](20261116100000-observed-app-task-completion-and-recovery.md)
+
+- [ADR-20261116110000 · Bounded runtime history compaction](20261116110000-bounded-runtime-history-compaction.md)
+
+- [ADR-20261116120000 · Observed command-cron outcomes](20261116120000-observed-command-cron-outcomes.md)
+
+- [ADR-20261116130000 · Observed command-cron admission timing](20261116130000-observed-command-cron-admission-timing.md)
+
+- [ADR-20261116140000 · Observed HTTP cron delivery outcomes](20261116140000-observed-http-cron-delivery-outcomes.md)
+
+- [ADR-20261117010000 · Targeted runtime diagnostic selection](20261117010000-targeted-runtime-diagnostic-selection.md)
+
+- [ADR-20261117020000 · Observed delayed-task dispatch outcomes](20261117020000-observed-delayed-task-dispatch-outcomes.md)
+- [ADR-20261117070839: Owner review of retained hosted Task source](20261117070839-hosted-task-source-owner-review.md) — fixed-expiry source review decisions, separate from credential and execution authority.

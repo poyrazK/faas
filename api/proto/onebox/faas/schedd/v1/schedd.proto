@@ -1287,6 +1287,9 @@ message SandboxRunRequest {
     SandboxRunClose close = 4;
     SandboxRunPersistGrant persist_grant = 5;
     SandboxRunPersistRecorded persist_recorded = 6;
+    // action relays a browser action to vmmd (ADR-20261117065818 §2). An
+    // older schedd ignores it; agentd sends one only after booted.actions.
+    SandboxRunAction action = 7;
   }
 }
 
@@ -1314,17 +1317,82 @@ message SandboxRunStart {
   string start_cmd = 10;
   string ready_cmd = 11;
   int64 ready_timeout_ms = 12;
+  // browser boots a preset session with the sandbox browser running
+  // (ADR-20261116182615 §1): vmmd starts it with its own commands, and the
+  // warm snapshot is the browser shape's. Never set with start_cmd.
+  bool browser = 13;
+  // task makes the session a sandbox task (ADR-20261116182615 §3); see
+  // vmmd's RunSandboxTask.
+  SandboxRunTask task = 14;
   // egress_allow and egress_deny are a web-mode session's domain policy
   // (ADR-20261117091026 §3): vmmd grants a name only when no deny rule
-  // matches it and allow is empty or an allow rule matches it. Fields 13
-  // and 14 are reserved for the browser session and task fields of the
-  // ADR-20261116182615 changes.
+  // matches it and allow is empty or an allow rule matches it.
   repeated string egress_allow = 15;
   repeated string egress_deny = 16;
   // web_domain_log asks for the session's domain log (web_domains frames,
   // ADR-20261117091026 §4). A sender sets it only when it reads them, since
   // an older reader ends a session on a frame it does not know.
   bool web_domain_log = 17;
+}
+
+// SandboxRunTask is a sandbox task, as vmmd's RunSandboxTask.
+message SandboxRunTask {
+  string kind = 1;
+  string url = 2;
+  int32 max_chars = 3;
+  int64 timeout_ms = 4;
+  int64 max_output_bytes = 5;
+}
+
+// SandboxRunAction is a browser action, as vmmd's RunSandboxAction.
+message SandboxRunAction {
+  string action_id = 1;
+  // kind is one of navigate, click, type, press, scroll, back, snapshot:
+  // gregale-browser act <kind>. vmmd builds the command from the validated
+  // fields below, never from shell text.
+  string kind = 2;
+  // url is navigate's page, http or https on a public host.
+  string url = 3;
+  // ref is click's and type's element, from the last snapshot.
+  int32 ref = 4;
+  // text is what type enters, at most SandboxBrowserTypeMaxChars.
+  string text = 5;
+  // submit has type press Enter after entering text.
+  bool submit = 6;
+  // key is press's key, one of a closed set.
+  string key = 7;
+  // direction is scroll's, up or down.
+  string direction = 8;
+  // max_chars bounds the page text the snapshot returns.
+  int32 max_chars = 9;
+  int64 timeout_ms = 10;
+  int64 max_output_bytes = 11;
+  // screenshot has the action also capture the viewport as a JPEG, which
+  // vmmd stores at storagekey.SandboxScreenshot (ADR-20261117065818 §5).
+  bool screenshot = 12;
+}
+
+// SandboxRunActionDone is an action's end, as vmmd's RunSandboxActionDone.
+message SandboxRunActionDone {
+  string action_id = 1;
+  int32 exit_code = 2;
+  bytes output = 3;
+  bool timed_out = 4;
+  bool truncated = 5;
+  // error is why the command could not run, when it never did.
+  string error = 6;
+  // screenshot_bytes is the size of the screenshot vmmd stored, or 0 when
+  // none was asked or kept.
+  int64 screenshot_bytes = 7;
+}
+
+// SandboxRunTaskDone is a sandbox task's end, as vmmd's RunSandboxTaskDone.
+message SandboxRunTaskDone {
+  int32 exit_code = 1;
+  bytes output = 2;
+  bool timed_out = 3;
+  bool truncated = 4;
+  string error = 5;
 }
 
 message SandboxRunFreeze {}
@@ -1343,6 +1411,10 @@ message SandboxRunEvent {
     SandboxRunPersistDone persist_done = 8;
     // usage relays vmmd's cumulative usage of the session VM.
     AgentRunUsage usage = 9;
+    // task_done ends a sandbox task (ADR-20261116182615 §3).
+    SandboxRunTaskDone task_done = 10;
+    // action_done ends a browser action (ADR-20261117065818 §2).
+    SandboxRunActionDone action_done = 11;
     // web_domains relays vmmd's domain log (ADR-20261117091026 §4).
     SandboxRunWebDomains web_domains = 12;
   }
@@ -1473,10 +1545,12 @@ message AgentRunPlaced {
 message AgentRunBooted {
   string method = 1;
   int64 boot_ms = 2;
+  // actions relays vmmd's RunSandboxBooted.actions for a sandbox session
+  // (ADR-20261117065818 §2); an agent run leaves it unset.
+  bool actions = 3;
   // egress_policy is set by a vmmd that enforces a session's domain policy
   // (ADR-20261117091026 §3); agentd closes a session with a policy that
-  // boots without it. Field 3 is reserved for the browser actions flag
-  // (ADR-20261117065818).
+  // boots without it.
   bool egress_policy = 4;
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sandboxtoken"
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // Store is the state the handlers need; *agentstore.Store implements it.
@@ -58,9 +59,15 @@ type Handler struct {
 	EnsureImage func(ctx context.Context, acct state.Account, src api.SandboxImageSource) (jobID, ref string, prob *api.Problem)
 	// TemplateApps creates and deletes sandbox templates' build apps.
 	TemplateApps TemplateApps
+	// Browser is FAAS_SANDBOX_BROWSER: it admits browser: true
+	// (ADR-20261116182615 §1). Off, browser is sandbox_unsupported.
+	Browser bool
 	// WebNetwork is FAAS_SANDBOX_WEB_NETWORK: it admits network.mode web
 	// (ADR-20261112121456 §6). Off, web is sandbox_unsupported.
 	WebNetwork bool
+	// Files is the artifact store gregale_browser's screenshots are kept in
+	// (ADR-20261117065818 §5); nil: they cannot be read from this host.
+	Files storage.StorageBackend
 	// EgressPolicy is FAAS_SANDBOX_EGRESS_POLICY: it admits web-mode domain
 	// policies (ADR-20261117091026 §3). Off, a non-empty one is
 	// sandbox_unsupported.
@@ -271,7 +278,7 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
 		Network: api.SandboxNetwork{Mode: sb.NetworkMode, Allow: sb.EgressAllow, Deny: sb.EgressDeny}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
-		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID}
+		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser}
 	if name, ok := strings.CutPrefix(sb.ImageRef, api.SandboxTemplateRefPrefix); ok {
 		out.Template = name
 	} else {

@@ -100,7 +100,7 @@ func ErrReleaseFrozen(app string, active []ReleaseFreeze) *Problem {
 	}
 	p := NewProblem(http.StatusConflict, CodeReleaseFrozen, "Production releases are frozen",
 		fmt.Sprintf("Production releases of %s are frozen: %s.", app, strings.Join(reasons, "; "))).
-		WithHint("Wait for the freeze to end, lift it with `gregale freeze lift`, or release anyway with override_freeze and a reason (CLI: --override-freeze REASON); the override is audited.").
+		WithHint("Wait for the freeze to end, lift it with `gregale release freeze lift`, or release anyway with override_freeze and a reason (CLI: --override-freeze REASON); the override is audited.").
 		WithDocs(docsBase + "/deploys#deploy-freezes")
 	p.Freezes = active
 	return p
@@ -110,14 +110,14 @@ func ErrReleaseFrozen(app string, active []ReleaseFreeze) *Problem {
 func ErrReleaseFreezeNotFound(id string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeReleaseFreezeNotFound, "Freeze not found",
 		fmt.Sprintf("No unlifted freeze %q exists here.", id)).
-		WithHint("List freezes with `gregale freeze list`. A company's freezes are lifted with --org ORG, or --app APP for a freeze on one app.")
+		WithHint("List freezes with `gregale release freeze list`. A company's freezes are lifted with --org ORG, or --app APP for a freeze on one app.")
 }
 
 // ErrReleaseFreezeLimit reports the per-owner freeze limit.
 func ErrReleaseFreezeLimit(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseFreezeLimit, "Too many freezes",
 		fmt.Sprintf("An account or organization can hold %d freezes that have not ended; this one holds %d.", ReleaseFreezesMax, observed)).
-		WithHint("Lift freezes you no longer need with `gregale freeze lift`.").
+		WithHint("Lift freezes you no longer need with `gregale release freeze lift`.").
 		WithDocs(docsBase + "/deploys#deploy-freezes")
 }
 
@@ -127,7 +127,7 @@ func ErrReleaseFreezeLimit(observed int) *Problem {
 func ErrReleaseFreezeOverrideNotAllowed(freezeID, why string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeReleaseFreezeOverrideNotAllowed, "Freeze override not allowed",
 		fmt.Sprintf("%s Freeze %s belongs to the organization.", why, freezeID)).
-		WithHint("Ask an owner or admin to lift the freeze with `gregale freeze lift`, or to deploy with --override-freeze.").
+		WithHint("Ask an owner or admin to lift the freeze with `gregale release freeze lift`, or to deploy with --override-freeze.").
 		WithDocs(docsBase + "/deploys#deploy-freezes")
 }
 
