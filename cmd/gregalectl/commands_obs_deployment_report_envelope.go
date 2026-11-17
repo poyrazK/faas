@@ -14,9 +14,10 @@ func fitObsDeploymentReport(report obsDeploymentReport) obsDeploymentReport {
 }
 
 // Current sources, check transitions, summaries and stability diagnostics take
-// priority over historical detail. Exhaust advisory history, then qualification
-// events, then the oldest primary fault snapshots from a copy of the report.
+// priority over detail. Exhaust advisory build previews, advisory history, then
+// qualification events and oldest primary fault snapshots from report copies.
 func fitObsDeploymentReportWithin(report obsDeploymentReport, limit int) obsDeploymentReport {
+	report = fitObsDeploymentRuntimeBuildsWithin(report, limit)
 	report = fitObsDeploymentNotificationHistoryWithin(report, limit)
 	report = fitObsDeploymentEvidenceHistoryWithin(report, limit)
 	if report.Timeline == nil {
