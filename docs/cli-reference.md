@@ -7188,6 +7188,71 @@ Owners and admins only. Without --capabilities, an allowed policy keeps its curr
 
 Revokes, at once, the agent connections the new policy no longer allows.
 
+### org support
+
+See and revoke Gregale support access to the org&#39;s apps, and reject requests for it
+
+Support access lets Gregale support deploy the production branch, retry, cancel, roll back and restart the org&#39;s apps for a limited time. It never reaches secrets, configuration, members, keys or billing.
+
+Granting and approving need a signed-in browser: use the dashboard&#39;s Support access page.
+
+#### org support list
+
+List support grants and open requests
+
+`gregale org support list --org <SLUG> [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--json` | Print JSON |  |
+
+Examples:
+
+```sh
+gregale org support list --org acme
+```
+
+#### org support revoke
+
+End a support grant now
+
+`gregale org support revoke --org <SLUG> GRANT_ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+Examples:
+
+```sh
+gregale org support revoke --org acme 3f2a…
+```
+
+Owners and admins only. An API key may revoke: taking access away is always safe.
+
+#### org support reject
+
+Reject a support access request
+
+`gregale org support reject --org <SLUG> REQUEST_ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+Owners and admins only.
+
+#### org support approve
+
+Print the dashboard page that grants or approves support access
+
+`gregale org support approve --org <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
 ### org invitation
 
 Manage org invitations
