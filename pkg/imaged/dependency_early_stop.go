@@ -64,8 +64,13 @@ func (h *Handler) failIfDependencyFailed(ctx context.Context, depID string) erro
 	if !errors.As(err, &blocker) || blocker.Code != state.CodeDependencyFailed {
 		return nil
 	}
-	dep, err := h.store.DeploymentByID(ctx, depID)
-	if err != nil || dep.Status.IsTerminal() {
+	dep, readErr := h.store.DeploymentByID(ctx, depID)
+	if readErr != nil {
+		// Best-effort: the activation gate still fails this candidate.
+		h.log.Warn("imaged: early dependency check could not read deployment", "deployment_id", depID, "err", readErr)
+		return nil //nolint:nilerr // the activation gate remains the authority
+	}
+	if dep.Status.IsTerminal() {
 		return nil
 	}
 	if stop, failErr := h.handleProjectDependencyBlocker(ctx, dep, blocker); !stop || failErr != nil {
