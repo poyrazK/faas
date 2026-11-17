@@ -152,6 +152,14 @@ func (c *Client) StopProjectFlagExperiment(ctx context.Context, project, environ
 	return out, err
 }
 
+// ShipProjectFlagExperiment stops a running experiment and publishes its
+// rule serving variant to every customer it matches.
+func (c *Client) ShipProjectFlagExperiment(ctx context.Context, project, environment, key, variant string) (FlagExperimentShipResponse, error) {
+	var out FlagExperimentShipResponse
+	err := c.do(ctx, http.MethodPost, experimentsPath(project, environment)+"/"+url.PathEscape(key)+"/ship", FlagExperimentShipRequest{Variant: variant}, &out)
+	return out, err
+}
+
 // DeleteProjectFlagExperiment deletes an experiment that is not running.
 func (c *Client) DeleteProjectFlagExperiment(ctx context.Context, project, environment, key string) error {
 	return c.do(ctx, http.MethodDelete, experimentsPath(project, environment)+"/"+url.PathEscape(key), nil, nil)

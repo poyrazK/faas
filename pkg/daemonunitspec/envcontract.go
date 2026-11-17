@@ -497,6 +497,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_FUNCTION_RUNNER_NODE24", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_PYTHON312", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_PYTHON313", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
+	{Name: "FAAS_FUNCTION_WORKFLOW", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "stamped by imaged on a function whose deployment declares its own code workflow at /; the function adapters refuse requests that are not workflow calls (ADR-20261113120824 amendment 1)"},
 	{Name: "FAAS_GATEWAYD_CONFIG", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GATEWAYD_CONTROL_FROM_REGISTRY", Owners: []string{"apid"}, Source: EnvSourceDropin, Note: "1 on a split control plane: apid calls gatewayd-internal's private control listener on an active compute node instead of FAAS_GATEWAYD_CONTROL_URL (ADR-20261022004500)"},
 	{Name: "FAAS_GATEWAYD_CONTROL_URL", Owners: []string{"apid"}, Source: EnvSourceDefault},

@@ -2829,6 +2829,23 @@ const (
 	// FlagExperimentMaxUnitsPerPass bounds new units one reconciler pass adds
 	// to one experiment.
 	FlagExperimentMaxUnitsPerPass = 50000
+	// FlagExperimentMixingEffect is the default mixing standard deviation of
+	// mean metrics, as a standardized effect size (ADR 20261116190208 §2).
+	FlagExperimentMixingEffect = 0.1
+	// FlagExperimentGuardrailErrorTolerance and
+	// FlagExperimentGuardrailLatencyTolerance are the default guardrail
+	// tolerances: the absolute increase over control in the server error
+	// rate, and in the share of requests slower than control's p95
+	// (ADR 20261116190208 §1).
+	FlagExperimentGuardrailErrorTolerance   = 0.005
+	FlagExperimentGuardrailLatencyTolerance = 0.02
+	// FlagExperimentGuardrailAlpha is the guardrails' confidence level; it is
+	// stricter than results' because a breach acts on its own.
+	FlagExperimentGuardrailAlpha = 0.01
+	// FlagExperimentGuardrailMinRequests is the requests each arm needs
+	// before a guardrail can breach, and that control needs before its p95
+	// latency is fixed as the latency threshold.
+	FlagExperimentGuardrailMinRequests = 1000
 )
 
 // Progressive rollout controls are structural bounds, not plan allowances.
@@ -11808,6 +11825,48 @@ func LimitsFor(p Plan) (Limits, bool) {
 	return l, ok
 }
 
+// ResidentGBPerCustomerWarnFactor is how far a plan's resident GB per paying
+// customer may run above PlannedResidentGBPerCustomer before
+// FaasResidentGbPerCustomerHigh warns. Validation V7 accepts telemetry within
+// 1.5× of plan (spec Appendix D, ADR-20261117070932).
+const ResidentGBPerCustomerWarnFactor = 1.5
+
+// PlannedResidentConcurrency is the financial model's expected resident
+// concurrency for a plan: how many of one customer's instances run at once on
+// average (spec §1 "Expected resident concurrency (planning)", V7). It is a
+// telemetry comparison only, never an admission or billing input.
+func PlannedResidentConcurrency(p Plan) (float64, bool) {
+	switch p {
+	case PlanFree:
+		return 0.02, true
+	case PlanHobby:
+		return 0.15, true
+	case PlanPro:
+		return 0.60, true
+	case PlanScale:
+		return 3.00, true
+	}
+	return 0, false
+}
+
+// PlannedResidentGBPerCustomer is the resident GB per paying customer the
+// financial model expects of a plan: its planned resident concurrency times
+// the billable size of the plan's largest instance (RAMMB + PerVMOverheadMB).
+// meterd exports it beside the measured value so FaasResidentGbPerCustomerHigh
+// compares each plan with its own model; the §12 0.305 GB target is the blend
+// across the plan mix and says nothing about one plan (ADR-20261117070932).
+func PlannedResidentGBPerCustomer(p Plan) (float64, bool) {
+	concurrency, ok := PlannedResidentConcurrency(p)
+	if !ok {
+		return 0, false
+	}
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0, false
+	}
+	return concurrency * float64(BillableRAMMB(l.RAMMB)) / 1024, true
+}
+
 // OutboundRequestsPerDayMaxForPlan returns the maximum customer-selected
 // daily request limit for one managed outbound integration. It is a policy
 // configuration ceiling, not an included request allowance.
@@ -15117,6 +15176,11 @@ func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Du
 // whose setting is above one; the adapter then advertises that many slots
 // per worker.
 const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
+
+// FunctionWorkflowEnv marks a workflow function's build
+// (ADR-20261113120824 amendment 1): its adapter answers every request that is
+// not a workflow call with a 404 problem.
+const FunctionWorkflowEnv = "FAAS_FUNCTION_WORKFLOW"
 
 // PostgresPoolMaxEnv tells an app how many database connections one of its
 // instances can use (ADR-20261104141122). imaged stamps it at build time for

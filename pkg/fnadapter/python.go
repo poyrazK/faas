@@ -273,7 +273,7 @@ def _serve_lines():
                 real_stdout.write(json.dumps(_run_hook_sync(request)) + "\n")
                 real_stdout.flush()
                 continue
-            problem = _input_problem(request)
+            problem = _input_problem(request) or _workflow_plain_call_problem(request)
             if problem is not None:
                 real_stdout.write(json.dumps(problem) + "\n")
                 real_stdout.flush()
@@ -328,7 +328,7 @@ async def _serve_one(request, rid, cancelled):
     def emit(frame):
         if not cancelled.is_set():
             _emit_tagged({"__faas_id": rid, **frame})
-    problem = _input_problem(request)
+    problem = _input_problem(request) or _workflow_plain_call_problem(request)
     if problem is not None:
         emit(problem)
         return
@@ -371,7 +371,7 @@ def _serve_sync(request, rid, cancelled):
     def emit(frame):
         if not cancelled.is_set():
             _emit_tagged({"__faas_id": rid, **frame})
-    problem = _input_problem(request)
+    problem = _input_problem(request) or _workflow_plain_call_problem(request)
     if problem is not None:
         emit(problem)
         return

@@ -1611,9 +1611,9 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | Metric | Plan value | Alert |
 |---|---|---|
 | `snapshot_fleet_avg_mb` / `p95` | 130 / — | avg > 160 warn, > 200 page |
-| resident GB per paying customer | 0.305 (=312 MB) | > 0.45 warn |
+| resident GB per paying customer | 0.305 (=312 MB) blended; per plan `meterd_resident_gb_per_customer_planned` | > 1.5× the plan's planned value warn (ADR-20261117070932) |
 | `resident_ram_pct_of_target` | ≤ 100 % | > 80 % warn, > 92 % page |
-| `lv_fc_used_pct` | — | > 80 % warn, > 90 % page |
+| `lv_fc_used_pct` | ≤ 85 % (artifact cache floor) | > 87 % warn, > 90 % page (ADR-20261114182830 amendment 1) |
 | build queue wait p95 | < 60 s | > 300 s warn |
 | `gateway_wake_latency_seconds` p95 (one sample per admitted wake) | ≤ 0.8 s | > 1.5 s warn |
 | `gateway_wake_request_latency_seconds` p95 (every request that waited on a wake) | n/a (what callers see; includes the queue behind a wake) | none |

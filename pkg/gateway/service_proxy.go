@@ -294,10 +294,6 @@ type ServiceProxyConfig struct {
 	// traffic (ADR-197). nil rejects internal upgrade requests with 501
 	// rather than letting the ordinary forwarder strip the handshake.
 	RawForward func(Target) http.Handler
-	// RecordServiceReply receives the response bytes a called instance sent
-	// back on a service call (billing review R8-2 slice 3): internal egress
-	// meterd can leave out of the callee's bill. Nil records nothing.
-	RecordServiceReply func(instanceID string, n int64)
 	// APIMonetization is the API monetization release gate
 	// (ADR-20261018090210): while it reports true Gregale-Usage is consumed
 	// like on public requests. Nil leaves the header untouched.
@@ -396,7 +392,6 @@ type ServiceProxy struct {
 	devBridge                 ServiceProxyDevBridge
 	forward                   func(Target) http.Handler
 	rawForward                func(Target) http.Handler
-	recordServiceReply        func(instanceID string, n int64)
 	wake                      ServiceProxyWaker
 	wakeDeployment            ServiceProxyDeploymentWaker
 	evictEndpoint             func(appID, instanceID string)
@@ -515,7 +510,6 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		devBridge:                 cfg.DevBridge,
 		forward:                   cfg.Forward,
 		rawForward:                cfg.RawForward,
-		recordServiceReply:        cfg.RecordServiceReply,
 		wake:                      cfg.Wake,
 		wakeDeployment:            cfg.WakeDeployment,
 		evictEndpoint:             cfg.EvictEndpoint,
@@ -1837,11 +1831,6 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	ctx := r.Context()
 	request := r.Clone(ctx)
 	ctx = p.prepareGuestRequest(ctx, request, targetPath, target, caller)
-	if p.recordServiceReply != nil {
-		// The raw bridge counts what the callee streams back as service
-		// reply bytes (billing review R8-2).
-		ctx = withServiceReplyAccounting(ctx)
-	}
 	request = request.WithContext(ctx)
 	request = requestForServiceEndpoint(ctx, request, target, endpoint, caller)
 	if enrollTrafficScopes(w, request, p.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: endpoint.DeploymentID}) {
@@ -2066,10 +2055,6 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 				responded = mapped
 			}
 			observe(responded)
-		}
-		if !signal.stale.Load() && p.recordServiceReply != nil {
-			// A stale target's answer came from the bridge, not the guest.
-			p.recordServiceReply(endpoint.InstanceID, buffer.guestBytes)
 		}
 		if attempt > 0 && forwardReq.Body != nil {
 			_ = forwardReq.Body.Close()
@@ -2527,9 +2512,6 @@ type serviceProxyResponseWriter struct {
 	committed   bool
 	interimSent bool
 	buffer      bytes.Buffer
-	// guestBytes is every body byte the forwarder wrote, committed or not:
-	// all of them crossed the guest's veth (billing review R8-2 slice 3).
-	guestBytes int64
 }
 
 func newServiceProxyResponseWriter(dst http.ResponseWriter) *serviceProxyResponseWriter {
@@ -2561,7 +2543,6 @@ func (w *serviceProxyResponseWriter) WriteHeader(status int) {
 }
 
 func (w *serviceProxyResponseWriter) Write(p []byte) (int, error) {
-	w.guestBytes += int64(len(p))
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
 	}

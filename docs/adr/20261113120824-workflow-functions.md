@@ -114,3 +114,26 @@ handle; `gregale dev --local` drives workflow functions on a local driver.
   puts a reserved event name in customer journals.
 - **Events-only starts**: no run handle, so a function cannot wait for or
   signal the run it started.
+
+## Amendment 1 (2026-11-17): plain requests to a workflow function
+
+- **Context:** the adapters ran a workflow function's handler as
+  `handler(event, ctx)` for every request without `X-Faas-Workflow-Mode`.
+  The handler then called `wf.call` on the context and threw, so any plain
+  request answered 500. Production requires the post-readiness smoke, which
+  sends a plain GET, so every workflow function deploy failed with
+  "post-readiness smoke failed: health probe returned HTTP 500" (2026-11-16
+  prod journeys, TestWorkflowFunctions).
+- **Decision:** imaged stamps `FAAS_FUNCTION_WORKFLOW=1` into the build of a
+  function whose deployment declares a code workflow entered at `/` (what
+  `workflow: true` plans). The Node and Python adapters answer every request
+  that is not a workflow call with `404 workflow_function_not_invocable`,
+  naming `functions.<name>.start()` and `gregale workflow run`. Engine calls
+  are unchanged. The deploy smoke of such a deployment checks route
+  connectivity, which accepts the 404 and still fails a 5xx; readiness
+  already proved the process started. A Go workflow function serves
+  `faas.ServeWorkflows`, which refuses plain requests itself (405 to a
+  GET); the route check accepts 405 as an answer from the candidate.
+- **Rejected:** skipping the smoke for workflow functions (it still proves
+  the route reaches the candidate); answering 200 to plain requests (a
+  caller would believe it ran the function).

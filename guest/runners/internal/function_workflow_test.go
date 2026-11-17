@@ -64,6 +64,8 @@ var engineHeaders = map[string]string{"X-Faas-Workflow-Mode": "code", "X-Faas-Wo
 // ADR-20261113120824 §1: an engine call to a Node workflow function runs its
 // handler(input, wf) under the SDK's protocol; without the SDK the adapter
 // answers workflow_sdk_missing; a plain request still reaches the handler.
+// Amendment 1: built as a workflow function (FAAS_FUNCTION_WORKFLOW=1), a
+// plain request gets a 404 problem instead, and engine calls still run.
 func TestNodeAdapterServesWorkflowFunctions(t *testing.T) {
 	bin, err := exec.LookPath("node")
 	if err != nil {
@@ -83,7 +85,7 @@ func TestNodeAdapterServesWorkflowFunctions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	setup := func(withSDK bool) string {
+	setup := func(withSDK bool, extraEnv ...string) string {
 		dir := t.TempDir()
 		write(dir, "adapter.mjs", fnadapter.Node)
 		write(dir, "handler.js", handler)
@@ -93,7 +95,7 @@ func TestNodeAdapterServesWorkflowFunctions(t *testing.T) {
 				`{"name":"@gregale/sdk-node","type":"module","exports":{"./workflows":"./workflows.js"}}`)
 			write(dir, "node_modules/@gregale/sdk-node/workflows.js", nodeWorkflowSDKStub)
 		}
-		return serveAdapter(t, "node24", bin, filepath.Join(dir, "adapter.mjs"), os.Environ())
+		return serveAdapter(t, "node24", bin, filepath.Join(dir, "adapter.mjs"), append(os.Environ(), extraEnv...))
 	}
 
 	url := setup(true)
@@ -113,6 +115,14 @@ func TestNodeAdapterServesWorkflowFunctions(t *testing.T) {
 	missing := setup(false)
 	if status, body := workflowRequest(t, missing, engineHeaders); status != http.StatusInternalServerError || !strings.Contains(body, "workflow_sdk_missing") {
 		t.Fatalf("without the SDK = %d %s, want 500 workflow_sdk_missing", status, body)
+	}
+
+	stamped := setup(true, "FAAS_FUNCTION_WORKFLOW=1")
+	if status, body := workflowRequest(t, stamped, nil); status != http.StatusNotFound || !strings.Contains(body, "workflow_function_not_invocable") {
+		t.Fatalf("plain request to a workflow function = %d %s, want 404 workflow_function_not_invocable", status, body)
+	}
+	if status, body := workflowRequest(t, stamped, engineHeaders); status != http.StatusOK || !strings.Contains(body, `"doubled":42`) {
+		t.Fatalf("workflow call to a stamped workflow function = %d %s, want the handler's output", status, body)
 	}
 }
 
@@ -161,5 +171,9 @@ func TestPythonAdapterServesWorkflowFunctions(t *testing.T) {
 	}
 	if status, body := workflowRequest(t, url, map[string]string{"X-Faas-Workflow-Mode": "code"}); status != http.StatusForbidden {
 		t.Fatalf("call without the run id = %d %s, want 403", status, body)
+	}
+	stamped := serveAdapter(t, "python312", bin, filepath.Join(dir, "adapter.py"), append(env, "FAAS_FUNCTION_WORKFLOW=1"))
+	if status, body := workflowRequest(t, stamped, nil); status != http.StatusNotFound || !strings.Contains(body, "workflow_function_not_invocable") {
+		t.Fatalf("plain request to a workflow function = %d %s, want 404 workflow_function_not_invocable", status, body)
 	}
 }

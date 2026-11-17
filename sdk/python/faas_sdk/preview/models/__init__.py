@@ -2253,11 +2253,28 @@ from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
 from .flag_experiment import FlagExperiment
 from .flag_experiment_arm import FlagExperimentArm
+from .flag_experiment_breach import FlagExperimentBreach
 from .flag_experiment_create_request import FlagExperimentCreateRequest
+from .flag_experiment_create_request_metric_kind import FlagExperimentCreateRequestMetricKind
+from .flag_experiment_guardrail import FlagExperimentGuardrail
+from .flag_experiment_guardrail_name import FlagExperimentGuardrailName
+from .flag_experiment_guardrail_request import FlagExperimentGuardrailRequest
+from .flag_experiment_guardrail_setting import FlagExperimentGuardrailSetting
+from .flag_experiment_guardrail_settings import FlagExperimentGuardrailSettings
+from .flag_experiment_guardrail_status import FlagExperimentGuardrailStatus
+from .flag_experiment_guardrail_variant import FlagExperimentGuardrailVariant
+from .flag_experiment_guardrail_variant_status import FlagExperimentGuardrailVariantStatus
+from .flag_experiment_guardrails_request import FlagExperimentGuardrailsRequest
+from .flag_experiment_latency import FlagExperimentLatency
 from .flag_experiment_list import FlagExperimentList
 from .flag_experiment_metric_kind import FlagExperimentMetricKind
+from .flag_experiment_recommendation import FlagExperimentRecommendation
+from .flag_experiment_recommendation_action import FlagExperimentRecommendationAction
 from .flag_experiment_results import FlagExperimentResults
+from .flag_experiment_ship_request import FlagExperimentShipRequest
+from .flag_experiment_ship_response import FlagExperimentShipResponse
 from .flag_experiment_status import FlagExperimentStatus
+from .flag_experiment_stop_reason import FlagExperimentStopReason
 from .flag_experiment_variant_result import FlagExperimentVariantResult
 from .flag_experiment_variant_result_status import FlagExperimentVariantResultStatus
 from .flag_experiment_weights import FlagExperimentWeights
@@ -8956,11 +8973,28 @@ __all__ = (
     "FlagEvidencePage",
     "FlagExperiment",
     "FlagExperimentArm",
+    "FlagExperimentBreach",
     "FlagExperimentCreateRequest",
+    "FlagExperimentCreateRequestMetricKind",
+    "FlagExperimentGuardrail",
+    "FlagExperimentGuardrailName",
+    "FlagExperimentGuardrailRequest",
+    "FlagExperimentGuardrailSetting",
+    "FlagExperimentGuardrailSettings",
+    "FlagExperimentGuardrailsRequest",
+    "FlagExperimentGuardrailStatus",
+    "FlagExperimentGuardrailVariant",
+    "FlagExperimentGuardrailVariantStatus",
+    "FlagExperimentLatency",
     "FlagExperimentList",
     "FlagExperimentMetricKind",
+    "FlagExperimentRecommendation",
+    "FlagExperimentRecommendationAction",
     "FlagExperimentResults",
+    "FlagExperimentShipRequest",
+    "FlagExperimentShipResponse",
     "FlagExperimentStatus",
+    "FlagExperimentStopReason",
     "FlagExperimentVariantResult",
     "FlagExperimentVariantResultStatus",
     "FlagExperimentWeights",

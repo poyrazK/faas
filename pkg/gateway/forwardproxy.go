@@ -870,7 +870,6 @@ const rawStreamSessionDeadline = 24 * time.Hour
 // the raw session remains bounded by activity, the 24 h ceiling, and
 // the independent idle timer.
 func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient, log *slog.Logger, t Target, events *evts.Platform, sink *egresssink.EgressSink) {
-	serviceReply := isServiceReplyAccounting(r.Context())
 	ctx, detachBudget, touch, cancel := newStreamSession(r.Context(), rawStreamSessionDeadline, streamIdleTimeout)
 	defer cancel()
 
@@ -1271,9 +1270,6 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// guard lives at the sink boundary.
 			if sink != nil {
 				sink.RecordResponseBytes(t.InstanceID, int64(len(chunk)))
-				if serviceReply {
-					sink.RecordServiceReplyBytes(t.InstanceID, int64(len(chunk)))
-				}
 			}
 			// Flush per Write so the H2C transport emits
 			// a DATA frame on every body_chunk. The

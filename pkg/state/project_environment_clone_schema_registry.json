@@ -22102,8 +22102,13 @@
       "converted_at",
       "crossed",
       "customer_id",
+      "errors",
       "experiment_id",
       "first_exposed_at",
+      "latency_requests",
+      "requests",
+      "slow_requests",
+      "value_sum",
       "variant"
     ],
     "kind": "operational"
@@ -22112,13 +22117,16 @@
     "table": "flag_experiments",
     "columns": [
       "account_id",
+      "breach",
       "control",
       "created_at",
       "created_by",
       "environment_id",
       "flag_key",
+      "guardrails",
       "id",
       "key",
+      "latency_threshold_ms",
       "metric_event",
       "metric_kind",
       "min_p_values",
@@ -22127,9 +22135,21 @@
       "rule_id",
       "started_at",
       "status",
+      "stop_reason",
       "stopped_at",
       "telemetry_cursor",
+      "value_through_day",
       "weights"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_experiment_latency",
+    "columns": [
+      "bucket",
+      "experiment_id",
+      "requests",
+      "variant"
     ],
     "kind": "operational"
   }
