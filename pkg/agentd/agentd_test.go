@@ -56,7 +56,8 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 			image_storage_key text, image_materialization_status text NOT NULL DEFAULT 'pending', image_materialization_error text);
 		CREATE TABLE apps (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid NOT NULL, slug text NOT NULL, status text NOT NULL DEFAULT 'active');
 		CREATE TABLE deployments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), app_id uuid NOT NULL, status text NOT NULL,
-			error text, rootfs_key text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now());`); err != nil {
+			error text, rootfs_key text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now());
+		CREATE TABLE managed_realtime_endpoints (id uuid PRIMARY KEY);`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"20261029093503390_agent_runs.sql", "20261029093510563_agent_run_execution.sql",
@@ -66,7 +67,7 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 		"20261110153935557_sandbox_workspace_snapshots.sql", "20261110153935586_sandbox_ports.sql",
 		"20261110153935627_sandbox_session_images.sql", "20261110153935666_sandbox_templates.sql",
 		"20261110153935695_sandbox_session_templates.sql", "20261110153935721_sandbox_session_usage.sql",
-		"20261117075028100_sandbox_sessions_browser.sql"} {
+		"20261117075028100_sandbox_sessions_browser.sql", "20261117075028200_sandbox_tasks.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

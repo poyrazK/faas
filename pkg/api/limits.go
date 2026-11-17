@@ -11288,6 +11288,15 @@ var (
 	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
 	// 1 GB for ordinary pages.
 	SandboxBrowserRAMMBMin = 1024
+	// SandboxTaskTimeoutSec bounds a sandbox task's command
+	// (ADR-20261116182615 §3), beyond its session's boot.
+	SandboxTaskTimeoutSec = [4]int{0, 60, 120, 120}
+	// SandboxTaskOutputMaxBytes caps the output a sandbox task returns.
+	SandboxTaskOutputMaxBytes = 256 << 10
+	// SandboxBrowseMaxChars bounds the page text gregale_browse returns;
+	// SandboxBrowseDefaultChars is its default.
+	SandboxBrowseMaxChars     = 100_000
+	SandboxBrowseDefaultChars = 20_000
 	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
 	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
 	// it. A browser touches many domains per page, so it is above the per-run

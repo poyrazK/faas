@@ -45,6 +45,9 @@ type fakeStore struct {
 	ports map[string][]agentstore.SandboxPort
 	// templates are sandbox templates by name.
 	templates map[string]agentstore.SandboxTemplate
+	// taskCalls are browse tasks by call, and taskResults their results.
+	taskCalls   map[agentstore.SandboxTaskCall]string
+	taskResults map[string]agentstore.SandboxTaskResult
 }
 
 func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmission) (agentstore.Sandbox, error) {

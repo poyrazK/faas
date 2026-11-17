@@ -3543,6 +3543,34 @@ message RunSandboxStart {
   // (ADR-20261116182615 §1). vmmd owns both commands; it is refused with
   // start_cmd. An older vmmd ignores it.
   bool browser = 18;
+  // task makes the session a sandbox task (ADR-20261116182615 §3): vmmd
+  // runs the kind's fixed command once the session is booted and reports
+  // task_done; the caller then closes the session. An older vmmd ignores it
+  // and never reports task_done, so agentd ends a task past its timeout.
+  RunSandboxTask task = 19;
+}
+
+// RunSandboxTask is a sandbox task: a closed set of kinds, each a fixed
+// command vmmd builds from validated fields, never shell text.
+message RunSandboxTask {
+  // kind is "browse": gregale-browser fetch <url>.
+  string kind = 1;
+  string url = 2;
+  // max_chars bounds the page text the fetch returns.
+  int32 max_chars = 3;
+  int64 timeout_ms = 4;
+  int64 max_output_bytes = 5;
+}
+
+// RunSandboxTaskDone is a sandbox task's end: the command's exit code and
+// standard output, capped at max_output_bytes.
+message RunSandboxTaskDone {
+  int32 exit_code = 1;
+  bytes output = 2;
+  bool timed_out = 3;
+  bool truncated = 4;
+  // error is why the command could not run, when it never did.
+  string error = 5;
 }
 
 // CaptureSandboxSnapshotRequest is the session machine to capture, without
@@ -3589,6 +3617,8 @@ message RunSandboxEvent {
     // SandboxUsageReportSec and once more before the stream ends on close.
     // Each frame is cumulative and supersedes the last.
     AgentRunUsage usage = 8;
+    // task_done ends a sandbox task (ADR-20261116182615 §3).
+    RunSandboxTaskDone task_done = 9;
   }
 }
 
