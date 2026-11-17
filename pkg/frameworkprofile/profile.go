@@ -69,6 +69,14 @@ type Profile struct {
 	// build with no detected start inherits from the runtime base (python3 on
 	// the Python runner) (Hunt 12 H12-29).
 	StartFromConfig bool `json:"start_from_config,omitempty"`
+	// StartPinned reports that StartCommand also replaces the built image's
+	// command although no file named it: Railpack starts a Flask app it
+	// serves with gunicorn, and a FastAPI app it serves with uvicorn, as
+	// `main:app` whatever module defines the application, and this source
+	// has no main module, so the image's own command cannot start
+	// (ADR-1500 amendment 4). Profiles written before it lack the mark and
+	// keep the image's command.
+	StartPinned bool `json:"start_pinned,omitempty"`
 	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
 	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
 	// port (ADR-20261027090000).
@@ -169,7 +177,12 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		// showed `gunicorn handler:app --bind 0.0.0.0:$PORT` while the
 		// guest ran `gunicorn --workers 2 handler:app` (Hunt 12 H12-3).
 		if web := procfileWebCommand(fsys); web != "" {
-			profile.StartCommand = web
+			profile.StartCommand, profile.StartPinned = web, false
+		}
+		// railpack.json's deploy.startCommand outranks the Procfile and
+		// Railpack's own detection, so it is the command the guest runs.
+		if start := railpackConfigStartCommand(fsys); start != "" {
+			profile.StartCommand, profile.StartPinned = start, false
 		}
 	}
 	// An unknown tree may be a home directory, not a project: do not scan it.
@@ -198,7 +211,7 @@ func Analyze(fsys fs.FS) (Profile, error) {
 func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
 	if start := strings.TrimSpace(cfg.Start); start != "" {
 		profile.StartCommand = start
-		profile.StartFromConfig = true
+		profile.StartFromConfig, profile.StartPinned = true, false
 	}
 	if cfg.Port != 0 {
 		profile.Port = cfg.Port
@@ -277,6 +290,7 @@ func inferPython(fsys fs.FS, profile *Profile) {
 		module, symbol, ok := findPythonApplication(fsys, `FastAPI\s*\(`)
 		if ok {
 			profile.StartCommand = fmt.Sprintf("uvicorn %s:%s --host 0.0.0.0 --port $PORT", module, symbol)
+			profile.StartPinned = pythonStartPinned(fsys, all, "uvicorn")
 		} else {
 			profile.StartCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
 			profile.Warnings = append(profile.Warnings, pythonEntrypointWarning("FastAPI", "app:app"))
@@ -294,6 +308,7 @@ func inferPython(fsys fs.FS, profile *Profile) {
 		module, symbol, ok := findPythonApplication(fsys, `Flask\s*\(`)
 		if ok {
 			profile.StartCommand = fmt.Sprintf("gunicorn %s:%s --bind 0.0.0.0:$PORT", module, symbol)
+			profile.StartPinned = pythonStartPinned(fsys, all, "gunicorn")
 		} else {
 			profile.StartCommand = "gunicorn app:app --bind 0.0.0.0:$PORT"
 			profile.Warnings = append(profile.Warnings, pythonEntrypointWarning("Flask", "app:app"))
@@ -698,6 +713,34 @@ func procfileWebCommand(fsys fs.FS) string {
 		}
 	}
 	return ""
+}
+
+// railpackConfigStartCommand returns railpack.json's deploy.startCommand, or
+// "" when the file is absent, unreadable or names none.
+func railpackConfigStartCommand(fsys fs.FS) string {
+	var config struct {
+		Deploy struct {
+			StartCommand string `json:"startCommand"`
+		} `json:"deploy"`
+	}
+	if json.Unmarshal([]byte(readFile(fsys, "railpack.json")), &config) != nil {
+		return ""
+	}
+	return strings.TrimSpace(config.Deploy.StartCommand)
+}
+
+// pythonStartPinned reports whether a located Flask or FastAPI application's
+// inferred start must replace the built image's command. Railpack 0.38's
+// Python provider (GetStartCommand) starts a Flask app that declares gunicorn,
+// or a FastAPI app that declares uvicorn, as `main:app` whichever module
+// defines the application, and with none of its main files (main.py, app.py,
+// server.py, ...) it detects no start, so the image keeps its base's CMD
+// (python3, Hunt 12 H12-29). Without a root main module neither starts the
+// app. A main module may re-export the application, so its presence keeps
+// Railpack's command. server must be declared because the pinned command runs
+// it; manifests is the comment-stripped, lowercased dependency text.
+func pythonStartPinned(fsys fs.FS, manifests, server string) bool {
+	return pythonDependencyNamed(manifests, server) && !fileExists(fsys, "main.py") && !fileExists(fsys, "main/__init__.py")
 }
 
 func fileExists(fsys fs.FS, path string) bool {
