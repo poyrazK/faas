@@ -6004,15 +6004,19 @@ func (v *JailerVMM) stageReadOnlyAsForOwner(ctx context.Context, owner nativeLau
 	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stage read-only %s: %w", src, err)
 	}
+	started := time.Now()
 	if err := os.Link(src, dst); err == nil {
 		if err := ensureOtherReadable(dst); err != nil {
 			return "", err
 		}
+		slog.Default().Debug("stage read-only", "instance", instance, "name", name, "via", "link", "ms", time.Since(started).Milliseconds())
 		return name, nil
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link read-only %s: %w", src, err)
 	}
-	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o044, true)
+	staged, err := v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o044, true)
+	slog.Default().Debug("stage read-only", "instance", instance, "name", name, "via", "bind", "src", src, "ms", time.Since(started).Milliseconds(), "err", err)
+	return staged, err
 }
 
 // bindImageForOwner exposes a source image without copying it into tmpfs.
@@ -8499,14 +8503,21 @@ func (v *JailerVMM) materializeSealed(ctx context.Context, instanceID string, st
 		cache := v.sealedPlain
 		v.mu.Unlock()
 		if cache != nil {
+			started, filled := time.Now(), false
 			entry, err := cache.Ensure(ctx, backend.Identity.Recipient().String(), key, func(ctx context.Context, f *os.File) error {
+				filled = true
 				_, err := backend.MaterializeTo(ctx, key, f)
 				return err
 			})
 			if err != nil {
 				return "", fmt.Errorf("vmm: open sealed %q: %w", key, err)
 			}
-			if path, linked, err := v.retainStorageFile(instanceID, sealedPlainLinker{path: entry}); err != nil {
+			ensured := time.Since(started)
+			path, linked, err := v.retainStorageFile(instanceID, sealedPlainLinker{path: entry})
+			slog.Default().Debug("sealed plaintext cache", "instance", instanceID, "key", key,
+				"filled", filled, "ensure_ms", ensured.Milliseconds(), "linked", linked,
+				"total_ms", time.Since(started).Milliseconds(), "err", err)
+			if err != nil {
 				return "", fmt.Errorf("vmm: retain sealed %q: %w", key, err)
 			} else if linked {
 				return path, nil
