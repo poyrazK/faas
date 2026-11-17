@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,7 @@ import (
 
 // fixture writes a small module whose problems exercise each way a code
 // reaches the page.
-func fixture(t *testing.T, exclusions string) string {
+func fixture(t *testing.T, exclusions string, extra ...string) string {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
@@ -85,6 +86,15 @@ func main() { _ = api.NewProblem(503, "theta_cli", "Could not reach Gregale", ""
 		"docs/events.md":                   "# Events\n",
 		"docs/error-codes-unpublished.txt": exclusions,
 	}
+	// extra holds the bodies of more problems, one per string, built in
+	// package feature.
+	var more strings.Builder
+	more.WriteString("package feature\n\nimport \"example.com/m/pkg/api\"\n\nfunc more() {\n")
+	for _, body := range extra {
+		fmt.Fprintf(&more, "\t_ = %s\n", body)
+	}
+	more.WriteString("}\n")
+	files["pkg/feature/more.go"] = more.String()
 	for name, body := range files {
 		p := filepath.Join(root, name)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -180,6 +190,33 @@ func TestExclusionsMustMatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := run(fixture(t, tt.exclusions), &strings.Builder{})
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("run error = %v, want it to mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// A problem that links an entry on the page must name one the page lists:
+// the API linked errors#<code> anchors that errors.md never had.
+func TestEntryLinksMustBeListed(t *testing.T) {
+	const ex = "beta_*\n"
+	tests := []struct {
+		name, problem, wantErr string
+	}{
+		{"own entry", `api.NewProblem(429, "kappa_limited", "K", "").WithDocs("https://gregale.dev/docs/error-codes#kappa_limited")`, ""},
+		{"another listed entry", `api.NewProblem(429, "kappa_limited", "K", "").WithDocs("https://gregale.dev/docs/error-codes#plan_limit_apps")`, ""},
+		{"bare page", `api.NewProblem(429, "kappa_limited", "K", "").WithDocs("https://gregale.dev/docs/error-codes")`, ""},
+		{"no such code", `api.NewProblem(429, "kappa_limited", "K", "").WithDocs("https://gregale.dev/docs/error-codes#kappa_limit")`, "kappa_limited → error-codes#kappa_limit"},
+		{"excluded code", `api.NewProblem(429, "kappa_limited", "K", "").WithDocs("https://gregale.dev/docs/error-codes#beta_excluded")`, "kappa_limited → error-codes#beta_excluded"},
+		{"problem literal", `&api.Problem{Status: 409, Code: "kappa_conflict", DocsURL: "https://gregale.dev/docs/error-codes#nope"}`, "kappa_conflict → error-codes#nope"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := run(fixture(t, ex, tt.problem), &strings.Builder{})
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("run error = %v, want none", err)
+			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
 				t.Fatalf("run error = %v, want it to mention %q", err, tt.wantErr)
 			}
 		})
