@@ -43,7 +43,9 @@ func (l *Loop) reconcileSecurityScans(ctx context.Context, now time.Time, every 
 	}
 	due := deployments[:0]
 	for _, dep := range deployments {
-		if dep.Status == state.DeployLive && strings.TrimSpace(dep.ImageDigest) != "" && securityScanDue(dep, now.UTC(), every) {
+		// A deployment whose deferred deploy scan is still queued or
+		// running here has no scan yet; that scan will stamp it.
+		if dep.Status == state.DeployLive && strings.TrimSpace(dep.ImageDigest) != "" && securityScanDue(dep, now.UTC(), every) && !l.handler.deferredScans.running(dep.ID) {
 			due = append(due, dep)
 		}
 	}
