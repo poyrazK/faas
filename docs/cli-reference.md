@@ -2017,6 +2017,27 @@ Only services the latest deploy changed roll back unless --all; services added s
 
 Stops at the first service that fails; run it again to finish.
 
+### project export
+
+Write the project&#39;s services as a plain Compose file
+
+`gregale project export [--format <FORMAT>] [--out <PATH>] <project>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--format <FORMAT>` | output format (compose) |  |
+| `--out <PATH>` | write to PATH instead of stdout |  |
+
+Examples:
+
+```sh
+gregale project export shop --out compose.yaml
+```
+
+Env values stay sealed: each variable is referenced by name, as ${NAME}.
+
+Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back.
+
 ### project import
 
 Import .gregale/project.yaml into the root gregale.yaml project block

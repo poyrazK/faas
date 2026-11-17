@@ -141,7 +141,7 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 
 - cgroups v2 only; host `unprivileged_userns_clone=0`; nothing runs as root except vmmd.
 - Every VM via jailer: unique uid/gid (20000–29999), chroot, seccomp, cgroup scope
-  `memory.max = plan + 8 MB + 24 MB VMM headroom` (`api.AppVMMemoryMaxMB`, ADR-20261116170000;
+  `memory.max = plan + 8 MB + 24 MB VMM headroom` (`api.AppVMMemoryMaxMB`, ADR-20261116191801;
   admission and billing stay at plan + 8 MB).
 - Tenant egress: deny 25/465/587, deny RFC1918 + link-local + metadata ranges.
 - No shared host directories with guests — block devices only. virtio-rng always attached.

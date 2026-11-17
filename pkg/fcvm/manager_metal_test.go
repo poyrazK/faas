@@ -50,14 +50,21 @@ func newMetalManager(t *testing.T, kernel string) *Manager {
 
 func newMetalManagerWithReadyTimeout(t *testing.T, kernel string, readyTimeout time.Duration) *Manager {
 	t.Helper()
-	return NewManager(
+	return withMetalFlatTenantCgroups(NewManager(
 		wire.ExecRunner{},
 		newMetalVMM(t, readyTimeout),
 		Paths{Kernel: kernel},
 		os.Getenv("FAAS_TEST_FC_VERSION"),
 		nil,
 		nil,
-	)
+	))
+}
+
+// withMetalFlatTenantCgroups turns on flat_tenant_cgroups (ADR-20261109172421
+// step 6.5) when FAAS_TEST_FLAT_TENANT_CGROUPS=1, so the metal suite can run
+// with new VMs launched directly under faas-tenant.slice.
+func withMetalFlatTenantCgroups(m *Manager) *Manager {
+	return m.WithFlatTenantCgroups(os.Getenv("FAAS_TEST_FLAT_TENANT_CGROUPS") == "1")
 }
 
 // withCgroupRootAt points cgroupRoot at the real /sys/fs/cgroup for the
@@ -398,7 +405,11 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	if _, err := os.Stat("/sys/fs/cgroup"); err != nil {
 		t.Skipf("/sys/fs/cgroup not mounted (Lima/macOS dev): %v", err)
 	}
-	scopeBase := filepath.Join(cgroupRoot, ParentCgroupFor("hobby"), PerInstanceScope("mem"))
+	parent := ParentCgroupFor("hobby")
+	if m.flatTenantCgroups {
+		parent = CgroupMountRoot // ADR-20261109172421 step 6.5
+	}
+	scopeBase := filepath.Join(cgroupRoot, parent, PerInstanceScope("mem"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -416,7 +427,7 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), "mem") })
 
-	// The fence must equal api.AppVMMemoryMaxMB(plan_mb) << 20 (ADR-20261116170000).
+	// The fence must equal api.AppVMMemoryMaxMB(plan_mb) << 20 (ADR-20261116191801).
 	wantBytes := api.AppVMMemoryMaxMB(memMB) << 20
 	body, err := os.ReadFile(filepath.Join(scopeBase, "memory.max"))
 	if err != nil {

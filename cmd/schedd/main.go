@@ -724,7 +724,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return 0, nil
 		},
-		LvFcUsedPct: fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
+		AdmissionBytes: admissionBytesSource(cfg.MeasuredAdmission, ownerNodeID, &residencyReader),
+		LvFcUsedPct:    fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
 	})
 	engine, err := sched.NewEngine(ctx, store, ledger, vmmRouter, sched.PoolNotifier{Pool: pool}, fcVersion, log)
 	if err != nil {
@@ -3459,6 +3460,27 @@ func floorPlan(acct state.Account) api.Plan {
 // errNodeResidencyUnmeasured keeps fcvm_resident_ram_pct at its previous
 // value until this node has a fresh measurement (ADR 20261102072403).
 var errNodeResidencyUnmeasured = errors.New("schedd: this node's residency is not measured yet")
+
+// admissionBytesSource feeds fcvm_admission_ram_pct, which the RAM page reads:
+// under measured admission (ADR-909) this node's measured memory. Bookings may
+// reach MeasuredAdmissionMaxOvercommitPercent of the ceiling by design, so the
+// page on fcvm_resident_ram_pct fired on a node with a third of its memory in
+// use (prod, 2026-11-16). Reservation admission, and a single-box scheduler
+// with no node of its own, get nil: the gauge then reports the bookings, which
+// is what admission counts there.
+func admissionBytesSource(measured bool, nodeID string, reader *atomic.Pointer[instancestats.Reader]) func(context.Context) (int64, error) {
+	if !measured || nodeID == "" {
+		return nil
+	}
+	return func(context.Context) (int64, error) {
+		if r := reader.Load(); r != nil {
+			if mb, _, ok := r.MeasuredMB(nodeID, time.Now()); ok {
+				return int64(mb) << 20, nil
+			}
+		}
+		return 0, errNodeResidencyUnmeasured
+	}
+}
 
 type schedFloorLedger struct {
 	ledger *sched.NodeLedger
