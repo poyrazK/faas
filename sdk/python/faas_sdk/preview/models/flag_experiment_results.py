@@ -6,9 +6,14 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.flag_experiment import FlagExperiment
     from ..models.flag_experiment_arm import FlagExperimentArm
+    from ..models.flag_experiment_guardrail import FlagExperimentGuardrail
+    from ..models.flag_experiment_latency import FlagExperimentLatency
+    from ..models.flag_experiment_recommendation import FlagExperimentRecommendation
     from ..models.flag_experiment_variant_result import FlagExperimentVariantResult
 
 
@@ -22,12 +27,17 @@ class FlagExperimentResults:
     experiment: FlagExperiment
     """A flag experiment."""
     control: FlagExperimentArm
-    """One variant's exposed and converted customers."""
+    """One variant's exposed customers; rate is the conversion rate, or the mean value per customer for mean
+    metrics."""
     variants: list[FlagExperimentVariantResult]
     sample_ratio_p_value: float
     sample_ratio_mismatch: bool
     crossed_units: int
     """Customers that saw more than one variant and are left out."""
+    guardrails: list[FlagExperimentGuardrail] | Unset = UNSET
+    latency: list[FlagExperimentLatency] | Unset = UNSET
+    recommendation: FlagExperimentRecommendation | Unset = UNSET
+    """What to do with the results; commands carry it out. Gregale never ships a variant on its own."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +56,24 @@ class FlagExperimentResults:
 
         crossed_units = self.crossed_units
 
+        guardrails: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.guardrails, Unset):
+            guardrails = []
+            for guardrails_item_data in self.guardrails:
+                guardrails_item = guardrails_item_data.to_dict()
+                guardrails.append(guardrails_item)
+
+        latency: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.latency, Unset):
+            latency = []
+            for latency_item_data in self.latency:
+                latency_item = latency_item_data.to_dict()
+                latency.append(latency_item)
+
+        recommendation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.recommendation, Unset):
+            recommendation = self.recommendation.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,6 +86,12 @@ class FlagExperimentResults:
                 "crossed_units": crossed_units,
             }
         )
+        if guardrails is not UNSET:
+            field_dict["guardrails"] = guardrails
+        if latency is not UNSET:
+            field_dict["latency"] = latency
+        if recommendation is not UNSET:
+            field_dict["recommendation"] = recommendation
 
         return field_dict
 
@@ -65,6 +99,9 @@ class FlagExperimentResults:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.flag_experiment import FlagExperiment
         from ..models.flag_experiment_arm import FlagExperimentArm
+        from ..models.flag_experiment_guardrail import FlagExperimentGuardrail
+        from ..models.flag_experiment_latency import FlagExperimentLatency
+        from ..models.flag_experiment_recommendation import FlagExperimentRecommendation
         from ..models.flag_experiment_variant_result import FlagExperimentVariantResult
 
         d = dict(src_dict)
@@ -85,6 +122,31 @@ class FlagExperimentResults:
 
         crossed_units = d.pop("crossed_units")
 
+        _guardrails = d.pop("guardrails", UNSET)
+        guardrails: list[FlagExperimentGuardrail] | Unset = UNSET
+        if _guardrails is not UNSET:
+            guardrails = []
+            for guardrails_item_data in _guardrails:
+                guardrails_item = FlagExperimentGuardrail.from_dict(guardrails_item_data)
+
+                guardrails.append(guardrails_item)
+
+        _latency = d.pop("latency", UNSET)
+        latency: list[FlagExperimentLatency] | Unset = UNSET
+        if _latency is not UNSET:
+            latency = []
+            for latency_item_data in _latency:
+                latency_item = FlagExperimentLatency.from_dict(latency_item_data)
+
+                latency.append(latency_item)
+
+        _recommendation = d.pop("recommendation", UNSET)
+        recommendation: FlagExperimentRecommendation | Unset
+        if isinstance(_recommendation, Unset):
+            recommendation = UNSET
+        else:
+            recommendation = FlagExperimentRecommendation.from_dict(_recommendation)
+
         flag_experiment_results = cls(
             experiment=experiment,
             control=control,
@@ -92,6 +154,9 @@ class FlagExperimentResults:
             sample_ratio_p_value=sample_ratio_p_value,
             sample_ratio_mismatch=sample_ratio_mismatch,
             crossed_units=crossed_units,
+            guardrails=guardrails,
+            latency=latency,
+            recommendation=recommendation,
         )
 
         flag_experiment_results.additional_properties = d

@@ -1,9 +1,10 @@
 from typing import Literal
 
-FlagExperimentMetricKind = Literal["conversion"]
+FlagExperimentMetricKind = Literal["conversion", "mean"]
 
 FLAG_EXPERIMENT_METRIC_KIND_VALUES: set[FlagExperimentMetricKind] = {
     "conversion",
+    "mean",
 }
 
 

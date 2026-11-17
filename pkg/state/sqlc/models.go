@@ -6693,34 +6693,51 @@ type FlagEventUsage struct {
 }
 
 type FlagExperiment struct {
-	ID              pgtype.UUID
-	AccountID       pgtype.UUID
-	ProjectID       pgtype.UUID
-	EnvironmentID   pgtype.UUID
-	Key             string
-	FlagKey         string
-	RuleID          string
-	Control         string
-	MetricEvent     string
-	MetricKind      string
-	Status          string
-	MixingLift      float64
-	Weights         []byte
-	MinPValues      []byte
-	TelemetryCursor pgtype.Timestamptz
-	CreatedBy       string
-	CreatedAt       pgtype.Timestamptz
-	StartedAt       pgtype.Timestamptz
-	StoppedAt       pgtype.Timestamptz
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	Key                string
+	FlagKey            string
+	RuleID             string
+	Control            string
+	MetricEvent        string
+	MetricKind         string
+	Status             string
+	MixingLift         float64
+	Weights            []byte
+	MinPValues         []byte
+	TelemetryCursor    pgtype.Timestamptz
+	CreatedBy          string
+	CreatedAt          pgtype.Timestamptz
+	StartedAt          pgtype.Timestamptz
+	StoppedAt          pgtype.Timestamptz
+	Guardrails         []byte
+	LatencyThresholdMs pgtype.Int4
+	StopReason         string
+	Breach             []byte
+	ValueThroughDay    pgtype.Date
+}
+
+type FlagExperimentLatency struct {
+	ExperimentID pgtype.UUID
+	Variant      string
+	Bucket       int16
+	Requests     int64
 }
 
 type FlagExperimentUnit struct {
-	ExperimentID   pgtype.UUID
-	CustomerID     pgtype.UUID
-	Variant        string
-	FirstExposedAt pgtype.Timestamptz
-	ConvertedAt    pgtype.Timestamptz
-	Crossed        bool
+	ExperimentID    pgtype.UUID
+	CustomerID      pgtype.UUID
+	Variant         string
+	FirstExposedAt  pgtype.Timestamptz
+	ConvertedAt     pgtype.Timestamptz
+	Crossed         bool
+	Requests        int64
+	Errors          int64
+	LatencyRequests int64
+	SlowRequests    int64
+	ValueSum        int64
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.

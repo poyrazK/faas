@@ -266,7 +266,12 @@ func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Da
 		work.from = database.CreatedAt.UTC().Truncate(c.policy.Window)
 	}
 	if !work.from.Before(to) && progress.CollectedUntil.IsZero() {
-		work.err = ErrUsageStale
+		// Created in the window that is still open: no complete window is due
+		// yet, so the database is current, as the admission snapshot already
+		// treats it. Reporting it stale deferred every sweep until the hour
+		// closed and fired FaasManagedPostgresUsageCollectionDeferred for each
+		// new database (production 2026-11-16).
+		work.from = to
 		return work
 	}
 	collectedFrom := progress.CollectedFrom

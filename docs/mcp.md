@@ -7044,6 +7044,23 @@ are ignored; the journal remains the recovery source of truth.
 For native management deployment acceptance, see the
 [nonproduction KVM harness](ops/management-mcp-native-acceptance.md).
 
+## Read flag experiments
+
+Two read-only tools in the `release` toolset report Gregale Flags experiments
+(see [Flags](flags.md#run-an-experiment)). Both take `project` and
+`environment`, and the connection must have read consent for that
+environment.
+
+- `gregale_list_flag_experiments` lists the environment's experiments: flag,
+  rule, control, metric, status and stop reason.
+- `gregale_get_flag_experiment_results` takes `key` as well and returns the
+  results, guardrails and `recommendation` (`action`, `summary`, `commands`)
+  the CLI prints, with guidance for reporting them.
+
+Neither tool ships or stops an experiment. The recommendation's commands are
+for the owner to run; only a guardrail breach changes a flag without an
+owner's request.
+
 ## Watch one rollout
 
 `gregale_watch_rollout` accepts `app`, `deployment_id`, optional `project` and
