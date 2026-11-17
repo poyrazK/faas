@@ -30,7 +30,7 @@ Production: protected ✓ (SLOs, health check, alerts, rollback)
   rollback gate        active    availability
 ```
 
-`gregale app shop` prints the same first line as `production:`. The API
+`gregale app get shop` prints the same first line as `production:`. The API
 equivalent is `GET /v1/apps/{slug}/protection`.
 
 Each item is in one of these states:
