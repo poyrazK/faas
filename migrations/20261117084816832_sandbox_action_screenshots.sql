@@ -9,7 +9,7 @@ SET LOCAL lock_timeout = '5s';
 -- ADR-20261117065818 §5: a gregale_browser action's screenshot, kept in the
 -- artifact store at screenshot_key until agentd's sweep deletes it a day
 -- after the session ends and clears the key. Nullable, so older binaries
--- keep working.
+-- keep working. Its index is built concurrently by the next migration.
 ALTER TABLE sandbox_actions
     ADD COLUMN IF NOT EXISTS screenshot_key text,
     ADD COLUMN IF NOT EXISTS screenshot_bytes bigint;
@@ -25,12 +25,10 @@ BEGIN
   END IF;
 END
 $shots$;
-CREATE INDEX IF NOT EXISTS sandbox_actions_screenshots_idx ON sandbox_actions (session_id) WHERE screenshot_key IS NOT NULL;
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP INDEX IF EXISTS sandbox_actions_screenshots_idx;
 ALTER TABLE sandbox_actions
     DROP COLUMN IF EXISTS screenshot_bytes,
     DROP COLUMN IF EXISTS screenshot_key;
