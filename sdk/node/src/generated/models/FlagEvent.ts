@@ -23,7 +23,7 @@ export type FlagEvent = {
    */
   at?: string;
   /**
-   * Optional end-user subject of the request; only its hash is stored (ADR 20261117084505).
+   * Optional end-user subject of the request; only its hash is stored.
    */
   subject?: string;
   /**

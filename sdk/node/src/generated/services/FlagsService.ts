@@ -892,7 +892,7 @@ export class FlagsService {
   }
   /**
    * Read a product analytics event series.
-   * Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by properties and broken down by a flag's served value or a property (ADR 20261117084505). Requires the product_analytics platform flag and a plan with analytics retention. The range defaults to the last 14 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
+   * Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by properties and broken down by a flag's served value or a property. Requires the product_analytics platform flag and a plan with analytics retention. The range defaults to the last 7 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
    * @returns InsightEventSeries The event series.
    * @throws ApiError
    */
@@ -922,7 +922,7 @@ export class FlagsService {
     /**
      * Bucket size.
      */
-    interval?: 'hour' | 'day' | 'week',
+    interval?: 'hour' | 'day',
     /**
      * What Units counts.
      */
@@ -979,7 +979,7 @@ export class FlagsService {
   }
   /**
    * Compute a product analytics funnel.
-   * Read-only. Units that did the steps in order, each step after the previous one, within the window from the first step (ADR 20261117084505). A flag breakdown uses the flag value carried by the unit's first-step event.
+   * Read-only. Units that did the steps in order, each step after the previous one, within the window from the first step. A flag breakdown uses the flag value carried by the unit's first-step event.
    * @returns InsightFunnel Units and conversion per step, overall and per breakdown value.
    * @throws ApiError
    */
@@ -1027,7 +1027,7 @@ export class FlagsService {
   }
   /**
    * Compute product analytics retention.
-   * Read-only. Cohorts units by the period of their first start event and reports which sent the return event in each following period; only ended periods count (ADR 20261117084505). The range defaults to the last 28 days.
+   * Read-only. Cohorts units by the period of their first start event and reports which sent the return event in each following period; only ended periods count. The range defaults to the last 28 days.
    * @returns InsightRetention Overall, per-cohort and per-breakdown retention.
    * @throws ApiError
    */
@@ -1075,7 +1075,7 @@ export class FlagsService {
   }
   /**
    * Read request telemetry by flag value.
-   * Requests, server errors and p95 latency per served value of one flag, from request telemetry and within its retention (ADR 20261117084505). The range defaults to the last day.
+   * Requests, server errors and p95 latency per served value of one flag, from request telemetry and within its retention. The range defaults to the last day.
    * @returns InsightRequests Request telemetry per flag value.
    * @throws ApiError
    */

@@ -106,8 +106,7 @@ def sync_detailed(
     """Compute a product analytics funnel.
 
      Read-only. Units that did the steps in order, each step after the previous one, within the window
-    from the first step (ADR 20261117084505). A flag breakdown uses the flag value carried by the unit's
-    first-step event.
+    from the first step. A flag breakdown uses the flag value carried by the unit's first-step event.
 
     Args:
         slug (str):
@@ -145,8 +144,7 @@ def sync(
     """Compute a product analytics funnel.
 
      Read-only. Units that did the steps in order, each step after the previous one, within the window
-    from the first step (ADR 20261117084505). A flag breakdown uses the flag value carried by the unit's
-    first-step event.
+    from the first step. A flag breakdown uses the flag value carried by the unit's first-step event.
 
     Args:
         slug (str):
@@ -179,8 +177,7 @@ async def asyncio_detailed(
     """Compute a product analytics funnel.
 
      Read-only. Units that did the steps in order, each step after the previous one, within the window
-    from the first step (ADR 20261117084505). A flag breakdown uses the flag value carried by the unit's
-    first-step event.
+    from the first step. A flag breakdown uses the flag value carried by the unit's first-step event.
 
     Args:
         slug (str):
@@ -216,8 +213,7 @@ async def asyncio(
     """Compute a product analytics funnel.
 
      Read-only. Units that did the steps in order, each step after the previous one, within the window
-    from the first step (ADR 20261117084505). A flag breakdown uses the flag value carried by the unit's
-    first-step event.
+    from the first step. A flag breakdown uses the flag value carried by the unit's first-step event.
 
     Args:
         slug (str):

@@ -1,11 +1,10 @@
 from typing import Literal
 
-InsightEventSeriesInterval = Literal["day", "hour", "week"]
+InsightEventSeriesInterval = Literal["day", "hour"]
 
 INSIGHT_EVENT_SERIES_INTERVAL_VALUES: set[InsightEventSeriesInterval] = {
     "day",
     "hour",
-    "week",
 }
 
 

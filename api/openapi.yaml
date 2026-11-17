@@ -63230,7 +63230,7 @@ paths:
       tags: [flags]
       operationId: getProjectInsightEvents
       summary: Read a product analytics event series.
-      description: "Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by properties and broken down by a flag's served value or a property (ADR 20261117084505). Requires the product_analytics platform flag and a plan with analytics retention. The range defaults to the last 7 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays."
+      description: "Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by properties and broken down by a flag's served value or a property. Requires the product_analytics platform flag and a plan with analytics retention. The range defaults to the last 7 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays."
       parameters:
         - { $ref: '#/components/parameters/FlagsProjectSlug' }
         - { $ref: '#/components/parameters/FlagsEnvironment' }
@@ -63259,7 +63259,7 @@ paths:
       tags: [flags]
       operationId: postProjectInsightFunnel
       summary: Compute a product analytics funnel.
-      description: "Read-only. Units that did the steps in order, each step after the previous one, within the window from the first step (ADR 20261117084505). A flag breakdown uses the flag value carried by the unit's first-step event."
+      description: "Read-only. Units that did the steps in order, each step after the previous one, within the window from the first step. A flag breakdown uses the flag value carried by the unit's first-step event."
       parameters:
         - { $ref: '#/components/parameters/FlagsProjectSlug' }
         - { $ref: '#/components/parameters/FlagsEnvironment' }
@@ -63287,7 +63287,7 @@ paths:
       tags: [flags]
       operationId: postProjectInsightRetention
       summary: Compute product analytics retention.
-      description: "Read-only. Cohorts units by the period of their first start event and reports which sent the return event in each following period; only ended periods count (ADR 20261117084505). The range defaults to the last 28 days."
+      description: "Read-only. Cohorts units by the period of their first start event and reports which sent the return event in each following period; only ended periods count. The range defaults to the last 28 days."
       parameters:
         - { $ref: '#/components/parameters/FlagsProjectSlug' }
         - { $ref: '#/components/parameters/FlagsEnvironment' }
@@ -63315,7 +63315,7 @@ paths:
       tags: [flags]
       operationId: getProjectInsightRequests
       summary: Read request telemetry by flag value.
-      description: "Requests, server errors and p95 latency per served value of one flag, from request telemetry and within its retention (ADR 20261117084505). The range defaults to the last day."
+      description: "Requests, server errors and p95 latency per served value of one flag, from request telemetry and within its retention. The range defaults to the last day."
       parameters:
         - { $ref: '#/components/parameters/FlagsProjectSlug' }
         - { $ref: '#/components/parameters/FlagsEnvironment' }
@@ -89855,7 +89855,7 @@ components:
         customer_id: { type: string, format: uuid, description: Verified customer (platform tenant) of the request the event belongs to. }
         value: { type: integer, format: int64, minimum: -1000000000000, maximum: 1000000000000, description: "Optional integer value, such as cents." }
         at: { type: string, format: date-time, description: "When the event happened; within the last 24 hours. Defaults to now." }
-        subject: { type: string, maxLength: 128, description: "Optional end-user subject of the request; only its hash is stored (ADR 20261117084505)." }
+        subject: { type: string, maxLength: 128, description: "Optional end-user subject of the request; only its hash is stored." }
         properties:
           type: object
           maxProperties: 10

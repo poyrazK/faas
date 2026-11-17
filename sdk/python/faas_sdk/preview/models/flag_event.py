@@ -30,7 +30,7 @@ class FlagEvent:
     at: datetime.datetime | Unset = UNSET
     """When the event happened; within the last 24 hours. Defaults to now."""
     subject: str | Unset = UNSET
-    """Optional end-user subject of the request; only its hash is stored (ADR 20261117084505)."""
+    """Optional end-user subject of the request; only its hash is stored."""
     properties: FlagEventProperties | Unset = UNSET
     """Optional string properties; keys match ^[a-z][a-z0-9_]{0,63}$, values are at most 256 bytes."""
     flags: FlagEventFlags | Unset = UNSET

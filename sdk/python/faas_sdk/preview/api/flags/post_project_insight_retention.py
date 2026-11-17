@@ -106,8 +106,7 @@ def sync_detailed(
     """Compute product analytics retention.
 
      Read-only. Cohorts units by the period of their first start event and reports which sent the return
-    event in each following period; only ended periods count (ADR 20261117084505). The range defaults to
-    the last 28 days.
+    event in each following period; only ended periods count. The range defaults to the last 28 days.
 
     Args:
         slug (str):
@@ -145,8 +144,7 @@ def sync(
     """Compute product analytics retention.
 
      Read-only. Cohorts units by the period of their first start event and reports which sent the return
-    event in each following period; only ended periods count (ADR 20261117084505). The range defaults to
-    the last 28 days.
+    event in each following period; only ended periods count. The range defaults to the last 28 days.
 
     Args:
         slug (str):
@@ -179,8 +177,7 @@ async def asyncio_detailed(
     """Compute product analytics retention.
 
      Read-only. Cohorts units by the period of their first start event and reports which sent the return
-    event in each following period; only ended periods count (ADR 20261117084505). The range defaults to
-    the last 28 days.
+    event in each following period; only ended periods count. The range defaults to the last 28 days.
 
     Args:
         slug (str):
@@ -216,8 +213,7 @@ async def asyncio(
     """Compute product analytics retention.
 
      Read-only. Cohorts units by the period of their first start event and reports which sent the return
-    event in each following period; only ended periods count (ADR 20261117084505). The range defaults to
-    the last 28 days.
+    event in each following period; only ended periods count. The range defaults to the last 28 days.
 
     Args:
         slug (str):

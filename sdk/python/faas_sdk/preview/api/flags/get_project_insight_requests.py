@@ -116,7 +116,7 @@ def sync_detailed(
     """Read request telemetry by flag value.
 
      Requests, server errors and p95 latency per served value of one flag, from request telemetry and
-    within its retention (ADR 20261117084505). The range defaults to the last day.
+    within its retention. The range defaults to the last day.
 
     Args:
         slug (str):
@@ -160,7 +160,7 @@ def sync(
     """Read request telemetry by flag value.
 
      Requests, server errors and p95 latency per served value of one flag, from request telemetry and
-    within its retention (ADR 20261117084505). The range defaults to the last day.
+    within its retention. The range defaults to the last day.
 
     Args:
         slug (str):
@@ -199,7 +199,7 @@ async def asyncio_detailed(
     """Read request telemetry by flag value.
 
      Requests, server errors and p95 latency per served value of one flag, from request telemetry and
-    within its retention (ADR 20261117084505). The range defaults to the last day.
+    within its retention. The range defaults to the last day.
 
     Args:
         slug (str):
@@ -241,7 +241,7 @@ async def asyncio(
     """Read request telemetry by flag value.
 
      Requests, server errors and p95 latency per served value of one flag, from request telemetry and
-    within its retention (ADR 20261117084505). The range defaults to the last day.
+    within its retention. The range defaults to the last day.
 
     Args:
         slug (str):

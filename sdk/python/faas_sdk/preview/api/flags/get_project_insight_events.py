@@ -148,9 +148,9 @@ def sync_detailed(
     """Read a product analytics event series.
 
      Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by
-    properties and broken down by a flag's served value or a property (ADR 20261117084505). Requires the
-    product_analytics platform flag and a plan with analytics retention. The range defaults to the last
-    14 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
+    properties and broken down by a flag's served value or a property. Requires the product_analytics
+    platform flag and a plan with analytics retention. The range defaults to the last 7 days and is
+    bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
 
     Args:
         slug (str):
@@ -206,9 +206,9 @@ def sync(
     """Read a product analytics event series.
 
      Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by
-    properties and broken down by a flag's served value or a property (ADR 20261117084505). Requires the
-    product_analytics platform flag and a plan with analytics retention. The range defaults to the last
-    14 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
+    properties and broken down by a flag's served value or a property. Requires the product_analytics
+    platform flag and a plan with analytics retention. The range defaults to the last 7 days and is
+    bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
 
     Args:
         slug (str):
@@ -259,9 +259,9 @@ async def asyncio_detailed(
     """Read a product analytics event series.
 
      Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by
-    properties and broken down by a flag's served value or a property (ADR 20261117084505). Requires the
-    product_analytics platform flag and a plan with analytics retention. The range defaults to the last
-    14 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
+    properties and broken down by a flag's served value or a property. Requires the product_analytics
+    platform flag and a plan with analytics retention. The range defaults to the last 7 days and is
+    bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
 
     Args:
         slug (str):
@@ -315,9 +315,9 @@ async def asyncio(
     """Read a product analytics event series.
 
      Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by
-    properties and broken down by a flag's served value or a property (ADR 20261117084505). Requires the
-    product_analytics platform flag and a plan with analytics retention. The range defaults to the last
-    14 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
+    properties and broken down by a flag's served value or a property. Requires the product_analytics
+    platform flag and a plan with analytics retention. The range defaults to the last 7 days and is
+    bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
 
     Args:
         slug (str):

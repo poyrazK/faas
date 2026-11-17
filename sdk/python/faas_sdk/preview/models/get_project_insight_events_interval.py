@@ -1,11 +1,10 @@
 from typing import Literal
 
-GetProjectInsightEventsInterval = Literal["day", "hour", "week"]
+GetProjectInsightEventsInterval = Literal["day", "hour"]
 
 GET_PROJECT_INSIGHT_EVENTS_INTERVAL_VALUES: set[GetProjectInsightEventsInterval] = {
     "day",
     "hour",
-    "week",
 }
 
 

@@ -9,7 +9,7 @@ import type { InsightEventPoint } from './InsightEventPoint.js';
 export type InsightEventSeries = {
   event: string;
   unit: 'customer' | 'subject';
-  interval: 'hour' | 'day' | 'week';
+  interval: 'hour' | 'day';
   by?: string;
   from: string;
   until: string;
