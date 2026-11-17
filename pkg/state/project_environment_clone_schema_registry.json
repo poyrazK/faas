@@ -20378,6 +20378,20 @@
     "kind": "operational"
   },
   {
+    "table": "storage_grant_audit",
+    "columns": [
+      "access",
+      "app_id",
+      "granted_at",
+      "id",
+      "node_id",
+      "objects",
+      "subject_class",
+      "subject_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "storage_object_deletions",
     "columns": [
       "attempts",

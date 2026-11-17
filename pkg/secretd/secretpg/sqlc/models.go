@@ -69,6 +69,14 @@ type EdgeRuleHeaderSecret struct {
 	Ciphertext []byte
 }
 
+type Instance struct {
+	ID     pgtype.UUID
+	AppID  pgtype.UUID
+	JobID  pgtype.UUID
+	NodeID pgtype.UUID
+	State  string
+}
+
 type Job struct {
 	ID                             pgtype.UUID
 	ImageMaterializationLeaseOwner pgtype.Text
@@ -120,6 +128,13 @@ type ManagedPostgresDatabase struct {
 	PostgresMajor      int16
 }
 
+type SandboxSession struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	NodeID    pgtype.Text
+	State     string
+}
+
 type SecretGrant struct {
 	AppID           pgtype.UUID
 	NodeID          pgtype.UUID
@@ -154,6 +169,17 @@ type Snapshot struct {
 	DeletePending   bool
 	SealedKey       []byte
 	SealedCaptureID pgtype.UUID
+}
+
+type StorageGrantAudit struct {
+	ID           int64
+	NodeID       pgtype.UUID
+	SubjectClass string
+	SubjectID    pgtype.UUID
+	AppID        pgtype.UUID
+	Access       string
+	Objects      int32
+	GrantedAt    pgtype.Timestamptz
 }
 
 type Trigger struct {

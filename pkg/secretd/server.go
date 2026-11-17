@@ -188,6 +188,9 @@ type Server struct {
 	// internalSvc mints internal-service tokens (slice 3k); nil refuses
 	// MintInternalServiceToken.
 	internalSvc *internalSvcSigner
+	// storage signs shared-store object grants (ADR-20261117190000); nil
+	// refuses GrantStorageObjects.
+	storage *storageGrants
 }
 
 // WithDeliveryIdentities lets secretd open delivery seal-domain values
