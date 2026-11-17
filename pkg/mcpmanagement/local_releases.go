@@ -299,6 +299,12 @@ func (m *management) runLocalDeploy(ctx context.Context, p *releasePlan) (any, e
 	if p.Action == "deploy" {
 		args = append(args, "--no-traffic")
 	}
+	if source.Uploaded {
+		// Resumable upload approvals bind to the original commit URL. Keep
+		// the CLI checkpoint with this plan so the same CLI invocation can
+		// recover that upload on retry, including after approval.
+		ctx = context.WithValue(ctx, hostedCLIStateKey{}, uploadPlanCLIStateDir(source.Path))
+	}
 	out, err := m.runCLI(ctx, args, nil)
 	if err != nil {
 		return nil, err

@@ -279,13 +279,12 @@ export class AuthService {
   }
   /**
    * Verify a password-signup email address.
-   * A browser (Accept text/html) gets an HTML page whose button posts the
-   * token back, and nothing is consumed, so a mail scanner that prefetches
-   * the link cannot use up the token. Any other client consumes the
-   * 24-hour, single-use token here and the account email is marked
-   * verified. No session is created.
+   * A browser (Accept text/html) gets confirmation or sign-in guidance.
+   * Opening the page does not consume the token. Other GET clients consume
+   * the 24-hour, single-use token only with a live session for its account.
+   * No session is created.
    *
-   * @returns string The confirmation page, or for a non-browser client the verified-email page.
+   * @returns string Confirmation, sign-in guidance, or the verified-email page.
    * @throws ApiError
    */
   public static verifyEmail({
@@ -303,6 +302,7 @@ export class AuthService {
         'token': token,
       },
       errors: {
+        401: `code: unauthorized`,
         410: `Verification link expired, invalid, or already used.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -314,11 +314,12 @@ export class AuthService {
   }
   /**
    * Confirm an email verification from its confirmation page.
-   * The confirmation page's form posts the token here. It is consumed and
-   * the account email marked verified; the HTML answer asks the customer
-   * to sign in again rather than creating a session.
+   * The confirmation page posts the token here. A live session for the
+   * account is required to consume it and mark the address verified.
+   * Other browser sessions receive instructions for signing into the
+   * correct account. No session is created.
    *
-   * @returns string Email verified; HTML sign-in prompt.
+   * @returns string Email verified or sign-in guidance for a browser.
    * @throws ApiError
    */
   public static confirmEmailVerification({
@@ -337,6 +338,7 @@ export class AuthService {
       formData: formData,
       mediaType: 'application/x-www-form-urlencoded',
       errors: {
+        401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         410: `The posted token is expired, unknown, or was already used.`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -868,7 +870,8 @@ export class AuthService {
    * unverified, at most once a minute and five times an hour. Returns
    * `already_verified` when there is nothing to send. Available after the
    * 30-day verification period ends, when other routes answer
-   * `email_verification_required`.
+   * `email_verification_required`. The browser forms also accept a
+   * form-encoded CSRF token from the signed-in account and render HTML.
    *
    * @returns EmailVerificationResendResponse The address is already verified.
    * @throws ApiError
@@ -879,6 +882,7 @@ export class AuthService {
       url: '/v1/auth/verify-email/resend',
       errors: {
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

@@ -59578,6 +59578,27 @@ COMMENT ON TABLE public.sandbox_actions IS 'ADR-20261117065818 gregale_browser a
 
 
 --
+-- Name: sandbox_egress_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_egress_policies (
+    account_id uuid NOT NULL,
+    allow_rules text[] DEFAULT '{}'::text[] NOT NULL,
+    deny_rules text[] DEFAULT '{}'::text[] NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sandbox_egress_policies_allow_rules_check CHECK ((cardinality(allow_rules) <= 100)),
+    CONSTRAINT sandbox_egress_policies_deny_rules_check CHECK ((cardinality(deny_rules) <= 100))
+);
+
+
+--
+-- Name: TABLE sandbox_egress_policies; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_egress_policies IS 'ADR-20261117091026 account default web-mode domain policy, written by apid.';
+
+
+--
 -- Name: sandbox_ports; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59597,6 +59618,27 @@ CREATE TABLE public.sandbox_ports (
 --
 
 COMMENT ON TABLE public.sandbox_ports IS 'ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.';
+
+
+--
+-- Name: sandbox_session_domains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_session_domains (
+    sandbox_id uuid NOT NULL,
+    domain text NOT NULL,
+    refused text DEFAULT ''::text NOT NULL,
+    first_seen timestamp with time zone NOT NULL,
+    CONSTRAINT sandbox_session_domains_domain_check CHECK (((char_length(domain) >= 1) AND (char_length(domain) <= 253))),
+    CONSTRAINT sandbox_session_domains_refused_check CHECK ((refused = ANY (ARRAY[''::text, 'policy'::text, 'budget'::text, 'platform'::text])))
+);
+
+
+--
+-- Name: TABLE sandbox_session_domains; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_session_domains IS 'ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd''s domain log.';
 
 
 --
@@ -59678,6 +59720,8 @@ CREATE TABLE public.sandbox_sessions (
     task_max_chars integer,
     task_exit_code integer,
     task_output bytea,
+    egress_allow text[],
+    egress_deny text[],
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_image_ref_check CHECK (((image_ref IS NULL) OR ((char_length(image_ref) >= 1) AND (char_length(image_ref) <= 512)))),
@@ -75625,6 +75669,14 @@ ALTER TABLE ONLY public.sandbox_actions
 
 
 --
+-- Name: sandbox_egress_policies sandbox_egress_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_egress_policies
+    ADD CONSTRAINT sandbox_egress_policies_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: sandbox_ports sandbox_ports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75633,11 +75685,35 @@ ALTER TABLE ONLY public.sandbox_ports
 
 
 --
+-- Name: sandbox_session_domains sandbox_session_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_domains
+    ADD CONSTRAINT sandbox_session_domains_pkey PRIMARY KEY (sandbox_id, refused, domain);
+
+
+--
 -- Name: sandbox_session_usage sandbox_session_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sandbox_session_usage
     ADD CONSTRAINT sandbox_session_usage_pkey PRIMARY KEY (sandbox_id);
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_egress_allow_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_egress_allow_check CHECK (((egress_allow IS NULL) OR (cardinality(egress_allow) <= 100))) NOT VALID;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_egress_deny_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_egress_deny_check CHECK (((egress_deny IS NULL) OR (cardinality(egress_deny) <= 200))) NOT VALID;
 
 
 --
@@ -111917,6 +111993,14 @@ ALTER TABLE ONLY public.sandbox_actions
 
 
 --
+-- Name: sandbox_egress_policies sandbox_egress_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_egress_policies
+    ADD CONSTRAINT sandbox_egress_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: sandbox_ports sandbox_ports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -111930,6 +112014,14 @@ ALTER TABLE ONLY public.sandbox_ports
 
 ALTER TABLE ONLY public.sandbox_ports
     ADD CONSTRAINT sandbox_ports_sandbox_id_fkey FOREIGN KEY (sandbox_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_session_domains sandbox_session_domains_sandbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_domains
+    ADD CONSTRAINT sandbox_session_domains_sandbox_id_fkey FOREIGN KEY (sandbox_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
 
 
 --

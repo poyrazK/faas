@@ -283,7 +283,7 @@ func ValidatePerInstanceConcurrency(plan Plan, requested int) *Problem {
 		"Invalid scaling policy",
 		fmt.Sprintf("per_instance_concurrency must be between 0 and %d (the %s plan's concurrency_per_vm); got %d. 0 uses the plan bound.", limit, plan, requested)).
 		WithLimit(int64(limit), int64(requested)).
-		WithDocs(docsBase + "/scaling-policy#requests-per-instance")
+		WithDocs(docsBase + "/scaling-policy#scaling-signals")
 }
 
 // validCustomMetricName mirrors the app_custom_metrics_name_shape CHECK in
