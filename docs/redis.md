@@ -39,8 +39,22 @@ gregale redis bind sessions --app web
 ```
 
 This sets `REDIS_URL` on `web` (use `--env` for another name) to
-`redis://default:<password>@sessions.svc.gregale:6379`. The app picks it up at
-its next deploy or wake. Only apps in the same account can reach the cache.
+`redis://sessions.svc.gregale:6379`. The app picks it up at its next deploy or
+wake.
+
+Caches have no password. A cache has no public address, and only apps in the
+same account that are allowed to call it can connect, so clients configured
+with a bare `host:port` work too.
+
+## Docker Compose
+
+When you deploy a Compose project, a `redis` or `valkey` service becomes a
+managed cache named `<project>-<service>`. Every service that pointed at it
+gets the cache's address in the same form it used: `REDIS_URL=redis://redis:6379/0`
+becomes `redis://<project>-redis.svc.gregale:6379/0`, and
+`REDIS_ADDR=redis:6379` becomes `<project>-redis.svc.gregale:6379`. A key you
+have already set keeps its value. The deploy plan shows each cache it will
+create, or why it will not.
 
 ## Scale to zero
 

@@ -99,14 +99,18 @@ snapshot is lost or the cache restarts.
   connect to `redis://<name>.svc.gregale:6379`. The ADR-576 authorizer
   (account, declared bindings, allowed callers, previews) decides who may
   connect.
-- The service TCP proxy, which already terminates each session, **sends
-  `AUTH` to Valkey on the caller's behalf**. Apps need no password; a
-  client's own `AUTH`/`HELLO … AUTH` is accepted and replaced. So
-  `REDIS_URL=redis://<name>.svc.gregale:6379` is the whole binding, and the
-  internal secret is never in app env.
-- Compose: `REDIS_ADDR=redis:6379` resolves through the existing project
-  sibling-name import (`host:port` of a sibling service) once the `redis`
-  service exists as a cache. No forwarder inside the app VM is needed.
+- **No Valkey password** (owner, 2026-11-16, replacing proxy-side `AUTH`).
+  The cache has no public address and is reachable only through the service
+  TCP proxy, whose authorizer is the gate. A password would add a secret to
+  app env without moving that boundary. Delivering one to compute nodes for
+  proxy-side `AUTH` would put more secret material on compute, against the
+  compute-keys work. So `REDIS_URL=redis://<name>.svc.gregale:6379` is the
+  whole binding, and `host:port` clients work unchanged.
+- Compose: each consumer key of a provided `redis` service is rewritten to
+  the cache in the shape it had. A URL stays a URL (database index and query
+  kept, credentials dropped), `host:port` becomes
+  `<cache>.svc.gregale:6379`, and a bare host becomes the cache host. No
+  forwarder inside the app VM is needed.
 - Public access from outside Gregale (`redis-cli` on a laptop) is a later
   slice through raw TCP ingress (ADR-183) with TLS and a per-cache token.
   `gregale redis connect` goes through the authenticated CLI tunnel instead.
@@ -309,13 +313,9 @@ closed by a later slice:
 - **The cache app is visible.** It is an ordinary internal app named after
   the cache, and it counts towards the plan's app limit. It is not yet
   hidden. imaged refuses any image on it other than `api.ManagedValkeyImage`.
-- **Apps still hold the password.** The proxy does not send `AUTH` yet
-  (slice 2), so a binding writes
-  `redis://default:<password>@<name>.svc.gregale:6379`. apid cannot open
-  sealed app secrets, so the password is not stored. It is derived:
-  HMAC-SHA256 of the cache's app id under apid's host HMAC key, with its own
-  label. The cache VM receives it as the sealed `VALKEY_PASSWORD` app secret,
-  and `valkey-server --requirepass "$VALKEY_PASSWORD"` reads it at boot.
+- **No password** (see "Addressing and auth"). A binding writes
+  `redis://<name>.svc.gregale:6379`. An earlier build derived a per-cache
+  password from apid's host HMAC key; it was removed with this decision.
 - **Hobby's largest cache is 448 MB, not 512.** Hobby's largest instance is
   512 MB, and the VM needs 64 MB on top of `maxmemory`. Pro and Scale get
   512 MB. `api.ManagedValkeyMaxMemoryFor` derives this from plan RAM.
@@ -327,9 +327,12 @@ closed by a later slice:
   upstream leg, and vmmd's idle timeout then parks the cache. It keeps the
   client connection open and answers `PING`, `QUIT` and `RESET` itself. It
   re-attaches on the next command, replaying `HELLO`, `AUTH`, `SELECT` and
-  `CLIENT SETNAME`. The client sends `AUTH` itself, so the proxy never needs
-  the password. Proxy-side `AUTH`, which would keep the password out of app
-  env, is still open.
+  `CLIENT SETNAME` (`AUTH` only if the client sent one).
+- **Compose (slice 3, built).** `redis`/`valkey` services in a project deploy
+  become caches named `<project>-<service>` (other environments add the
+  environment and a hash), when the `managed-redis` capability is on for the
+  account and the plan has room. A key that is already set keeps its value.
+  The deploy plan lists each provision or the reason there is none.
 - **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
   and adding it would break customers who deploy Valkey themselves. That is
   left for an owner decision.

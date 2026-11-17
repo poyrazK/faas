@@ -49,9 +49,6 @@ func TestRedisCacheCreateBindDelete(t *testing.T) {
 	if dep.ImageDigest != api.ManagedValkeyImage {
 		t.Fatalf("image = %s", dep.ImageDigest)
 	}
-	if secret, err := e.store.GetAppSecretInScope(ctx, e.acct.ID, app.ID, api.DefaultEnvScope, api.ManagedValkeyPasswordEnv); err != nil || secret == nil {
-		t.Fatalf("password secret: %v", err)
-	}
 
 	list := e.do(t, "GET", "/v1/redis", nil, nil)
 	var listed api.ListRedisCachesResponse
@@ -108,25 +105,6 @@ func TestRedisCachePlanGates(t *testing.T) {
 	if rec := hobby.do(t, "POST", "/v1/redis", api.CreateRedisCacheRequest{Name: "second"}, nil); rec.Code != http.StatusForbidden ||
 		!strings.Contains(rec.Body.String(), api.CodeManagedRedisLimit) {
 		t.Fatalf("second hobby cache: %d %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestDeriveRedisPasswordIsStableAndPerCache(t *testing.T) {
-	previous := hostHMACKey
-	hostHMACKey = func() []byte { return []byte("0123456789abcdef0123456789abcdef") }
-	t.Cleanup(func() { hostHMACKey = previous })
-	a1, err := deriveRedisPassword("app-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a2, _ := deriveRedisPassword("app-a")
-	b, _ := deriveRedisPassword("app-b")
-	if a1 != a2 || a1 == b || len(a1) != 64 {
-		t.Fatalf("a1=%s a2=%s b=%s", a1, a2, b)
-	}
-	hostHMACKey = func() []byte { return nil }
-	if _, err := deriveRedisPassword("app-a"); err == nil {
-		t.Fatal("want an error without a host HMAC key")
 	}
 }
 

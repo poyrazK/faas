@@ -2138,6 +2138,12 @@ func (s *server) scanService(
 	if composePostgresErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not plan the project's managed databases")
 	}
+	// Compose redis services become managed caches (ADR-20261116192126).
+	composeRedis, composeRedisReasons, composeRedisErr := s.composeRedisPlan(r.Context(), acct, req.ProjectSlug, planScope,
+		filteredMc, filteredW, composeEnv, projectApps)
+	if composeRedisErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not plan the project's managed caches")
+	}
 	// A non-production deploy is served at the environment's own hosts, not
 	// at the production hostname (Hunt 33 H33-33).
 	nonProductionEnvironment := !reconcileProductionEnvironment(req.Environment)
@@ -2196,7 +2202,7 @@ func (s *server) scanService(
 		}
 		envImport := projectsetup.PlanEnvImport(composeEnv, w.Name, callableServices, limits, s.privateServiceHTTPS(acct))
 		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
-			withoutProvidedKeys(w.Name, unset, composePostgres), envImport)
+			withoutRedisProvidedKeys(w.Name, withoutProvidedKeys(w.Name, unset, composePostgres), composeRedis), envImport)
 		warnings = append(warnings, projectsetup.RewrittenEnvNotes(w.Name, pw.ImportedEnvKeys, envImport)...)
 		slug := w.AppSlug
 		if slug == "" {
@@ -2220,7 +2226,14 @@ func (s *server) scanService(
 			respManaged[i].Provision = planManagedProvision(provision)
 			continue
 		}
+		if provision, ok := composeRedis[m.Name]; ok {
+			respManaged[i].Provision = planRedisProvision(provision)
+			continue
+		}
 		respManaged[i].NotProvisionedReason = composePostgresReasons[m.Name]
+		if reason, ok := composeRedisReasons[m.Name]; ok {
+			respManaged[i].NotProvisionedReason = reason
+		}
 		respManaged[i].Unbound = unboundDatastoreKeys(composeEnv, filteredW, respWorkloads, m)
 		if m.Kind != "postgres" && len(respManaged[i].Unbound) > 0 {
 			warnings = append(warnings, fmt.Sprintf(
@@ -2848,6 +2861,15 @@ func (s *server) scanService(
 			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project database targets")
 		}
 		if problem := s.applyComposePostgres(r.Context(), acct, importScope, composePostgres, apps); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	if len(composeRedis) > 0 {
+		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if err != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project cache targets")
+		}
+		if problem := s.applyComposeRedis(r, acct, importScope, composeRedis, apps); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}

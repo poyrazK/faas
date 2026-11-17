@@ -47,9 +47,6 @@ const (
 	ManagedValkeyMinIdleTimeoutS = 5 * 60
 	ManagedValkeyMaxIdleTimeoutS = 24 * 60 * 60
 
-	// ManagedValkeyPasswordEnv is the app secret that holds the cache's
-	// Valkey password inside its own VM.
-	ManagedValkeyPasswordEnv = "VALKEY_PASSWORD"
 	// ManagedValkeyDefaultBindingEnv is the env key a binding writes.
 	ManagedValkeyDefaultBindingEnv = "REDIS_URL"
 	// ManagedValkeyServiceDomain is the private service-address suffix.
@@ -114,9 +111,16 @@ func ManagedValkeyHost(name string) string {
 	return name + "." + ManagedValkeyServiceDomain
 }
 
-// ManagedValkeyURL is the connection URL a binding writes.
-func ManagedValkeyURL(name, password string) string {
-	return fmt.Sprintf("redis://default:%s@%s:%d", password, ManagedValkeyHost(name), ManagedValkeyPort)
+// ManagedValkeyURL is the connection URL a binding writes. It carries no
+// password: the private service proxy authorizes every caller (owner,
+// 2026-11-16: no Valkey password).
+func ManagedValkeyURL(name string) string {
+	return fmt.Sprintf("redis://%s:%d", ManagedValkeyHost(name), ManagedValkeyPort)
+}
+
+// ManagedValkeyAddr is the host:port form for clients configured that way.
+func ManagedValkeyAddr(name string) string {
+	return fmt.Sprintf("%s:%d", ManagedValkeyHost(name), ManagedValkeyPort)
 }
 
 // ValidateManagedValkeyMemory checks a requested size against the plan.
@@ -153,9 +157,9 @@ func ValidateManagedValkeyIdleTimeout(seconds int) *Problem {
 	return nil
 }
 
-// ManagedValkeyServerCommand is the argv a cache runs. The password comes
-// from the VALKEY_PASSWORD app secret at boot, so it never appears in the
-// deployment row; the shell only expands that one variable.
+// ManagedValkeyServerCommand is the argv a cache runs. There is no password:
+// the cache has no public address, and the private service proxy admits only
+// authorized callers in the cache's account.
 func ManagedValkeyServerCommand(memoryMB int, policy string) []string {
 	args := []string{
 		"valkey-server",
@@ -166,7 +170,6 @@ func ManagedValkeyServerCommand(memoryMB int, policy string) []string {
 		"--appendonly", "no",
 		"--maxmemory", strconv.Itoa(memoryMB) + "mb",
 		"--maxmemory-policy", policy,
-		"--requirepass", `"$` + ManagedValkeyPasswordEnv + `"`,
 	}
 	for _, command := range ManagedValkeyBlockedCommands {
 		args = append(args, "--rename-command", command, "''")

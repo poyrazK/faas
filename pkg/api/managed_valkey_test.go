@@ -52,7 +52,7 @@ func TestManagedValkeyServerCommand(t *testing.T) {
 	script := argv[2]
 	for _, want := range []string{
 		"exec valkey-server", "--port 6379", "--maxmemory 128mb", "--maxmemory-policy allkeys-lfu",
-		"--save ''", "--appendonly no", `--requirepass "$VALKEY_PASSWORD"`, "--rename-command CONFIG ''",
+		"--save ''", "--appendonly no", "--rename-command CONFIG ''",
 		"--rename-command REPLICAOF ''",
 	} {
 		if !strings.Contains(script, want) {
@@ -65,8 +65,14 @@ func TestManagedValkeyServerCommand(t *testing.T) {
 }
 
 func TestManagedValkeyURL(t *testing.T) {
-	if got := ManagedValkeyURL("sessions", "pw"); got != "redis://default:pw@sessions.svc.gregale:6379" {
+	if got := ManagedValkeyURL("sessions"); got != "redis://sessions.svc.gregale:6379" {
 		t.Fatalf("url = %s", got)
+	}
+	if got := ManagedValkeyAddr("sessions"); got != "sessions.svc.gregale:6379" {
+		t.Fatalf("addr = %s", got)
+	}
+	if strings.Contains(ManagedValkeyServerCommand(64, "noeviction")[2], "requirepass") {
+		t.Fatal("cache must run without a password")
 	}
 }
 

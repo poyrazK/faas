@@ -1,9 +1,7 @@
 package apidserver
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -90,17 +88,23 @@ func (s *server) loadRedisCache(w http.ResponseWriter, r *http.Request, acct sta
 }
 
 func (s *server) createRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	store, ok := s.redisStore(w)
-	if !ok {
-		return
-	}
 	var req api.CreateRedisCacheRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	app, cache, problem := s.provisionRedisCache(r, acct, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	writeJSON(w, http.StatusCreated, redisCacheResponse(app, cache))
+}
+
+// redisCacheDefaults fills a create request's omitted settings.
+func redisCacheDefaults(plan api.Plan, req api.CreateRedisCacheRequest) api.CreateRedisCacheRequest {
 	if req.MemoryMB == 0 {
-		req.MemoryMB = min(api.ManagedValkeyDefaultMemoryMB, max(api.ManagedValkeyMaxMemoryFor(acct.Plan), api.ManagedValkeyMinMemoryMB))
+		req.MemoryMB = min(api.ManagedValkeyDefaultMemoryMB, max(api.ManagedValkeyMaxMemoryFor(plan), api.ManagedValkeyMinMemoryMB))
 	}
 	if req.EvictionPolicy == "" {
 		req.EvictionPolicy = api.ManagedValkeyDefaultEvictionPolicy
@@ -108,10 +112,14 @@ func (s *server) createRedisCache(w http.ResponseWriter, r *http.Request, acct s
 	if req.IdleTimeoutS == 0 {
 		req.IdleTimeoutS = api.ManagedValkeyDefaultIdleTimeoutS
 	}
+	return req
+}
+
+// redisCacheAdmission checks a create request against the plan.
+func (s *server) redisCacheAdmission(r *http.Request, store state.ManagedValkeyStore, acct state.Account, req api.CreateRedisCacheRequest) *api.Problem {
 	limit := api.ManagedValkeyCachesFor(acct.Plan)
 	if limit == 0 {
-		api.WriteProblem(w, api.ErrManagedValkeyNotInPlan(acct.Plan))
-		return
+		return api.ErrManagedValkeyNotInPlan(acct.Plan)
 	}
 	for _, problem := range []*api.Problem{
 		api.ValidateManagedValkeyMemory(acct.Plan, req.MemoryMB),
@@ -119,20 +127,53 @@ func (s *server) createRedisCache(w http.ResponseWriter, r *http.Request, acct s
 		api.ValidateManagedValkeyIdleTimeout(req.IdleTimeoutS),
 	} {
 		if problem != nil {
-			api.WriteProblem(w, problem)
-			return
+			return problem
 		}
 	}
 	existing, err := store.ListManagedValkeyCaches(r.Context(), acct.ID)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not count Redis caches"))
-		return
+		return api.ErrCapacity("could not count Redis caches")
 	}
 	if len(existing) >= limit {
-		api.WriteProblem(w, api.ErrManagedValkeyLimit(acct.Plan, limit))
-		return
+		return api.ErrManagedValkeyLimit(acct.Plan, limit)
 	}
+	return nil
+}
 
+// provisionRedisCache creates a cache: its internal app, the marker row and
+// the Valkey deployment. The HTTP handler and Compose provisioning share it.
+func (s *server) provisionRedisCache(r *http.Request, acct state.Account, req api.CreateRedisCacheRequest) (state.App, state.ManagedValkeyCache, *api.Problem) {
+	store, ok := s.store.(state.ManagedValkeyStore)
+	if !ok {
+		return state.App{}, state.ManagedValkeyCache{}, api.ErrCapacity("managed Redis is unavailable on this installation")
+	}
+	req = redisCacheDefaults(acct.Plan, req)
+	if problem := s.redisCacheAdmission(r, store, acct, req); problem != nil {
+		return state.App{}, state.ManagedValkeyCache{}, problem
+	}
+	created, problem := s.createRedisCacheApp(r, acct, req)
+	if problem != nil {
+		return state.App{}, state.ManagedValkeyCache{}, problem
+	}
+	cache, err := store.CreateManagedValkeyCache(r.Context(), state.ManagedValkeyCache{
+		AppID: created.ID, AccountID: acct.ID, MemoryMB: req.MemoryMB, EvictionPolicy: req.EvictionPolicy,
+	})
+	if err != nil {
+		return state.App{}, state.ManagedValkeyCache{}, api.ErrCapacity("could not record Redis cache")
+	}
+	s.emitAppCreated(r.Context(), created)
+	if problem := s.deployRedisCache(r, acct, created, req); problem != nil {
+		return state.App{}, state.ManagedValkeyCache{}, problem
+	}
+	s.audit.Emit(r.Context(), "redis.created", &acct.ID, map[string]any{
+		"app_id": created.ID, "name": created.Slug, "memory_mb": cache.MemoryMB, "eviction_policy": cache.EvictionPolicy,
+	})
+	return created, cache, nil
+}
+
+// createRedisCacheApp creates the cache's internal app: port 6379, at most
+// one instance (two would be two different caches), scale to zero.
+func (s *server) createRedisCacheApp(r *http.Request, acct state.Account, req api.CreateRedisCacheRequest) (state.App, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	app, problem := s.buildApp(acct, api.CreateAppRequest{
 		Slug:       req.Name,
@@ -140,8 +181,7 @@ func (s *server) createRedisCache(w http.ResponseWriter, r *http.Request, acct s
 		RAMMB:      api.ManagedValkeyVMRAMMB(req.MemoryMB),
 	}, limits)
 	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
+		return state.App{}, problem
 	}
 	floor, ceiling := limits.IdleTimeoutBounds()
 	app.IdleTimeoutS = min(max(req.IdleTimeoutS, floor), ceiling)
@@ -150,71 +190,48 @@ func (s *server) createRedisCache(w http.ResponseWriter, r *http.Request, acct s
 	app.Manifest.Port = api.ManagedValkeyPort
 	app.Manifest.Ports = []api.WorkloadPort{{Name: "redis", Port: api.ManagedValkeyPort, Protocol: api.WorkloadPortTCP, Internal: true}}
 	app.NodeID = ""
-
 	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
-	if err != nil {
-		var qe *state.QuotaError
-		switch {
-		case errors.As(err, &qe):
-			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeValidation, "App limit reached",
-				"a Redis cache counts as an app; delete an app or upgrade"))
-		case errors.Is(err, state.ErrConflict):
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Name taken",
-				"the name "+req.Name+" is already in use by an app or cache"))
-		default:
-			api.WriteProblem(w, api.ErrCapacity("could not create Redis cache"))
-		}
-		return
+	var qe *state.QuotaError
+	switch {
+	case errors.As(err, &qe):
+		return state.App{}, api.NewProblem(http.StatusForbidden, api.CodeValidation, "App limit reached",
+			"a Redis cache counts as an app; delete an app or upgrade")
+	case errors.Is(err, state.ErrConflict):
+		return state.App{}, api.NewProblem(http.StatusConflict, api.CodeValidation, "Name taken",
+			"the name "+req.Name+" is already in use by an app or cache")
+	case err != nil:
+		return state.App{}, api.ErrCapacity("could not create Redis cache")
 	}
-	// One instance only: two would be two different caches.
 	if _, err := s.store.UpdateApp(r.Context(), created.ID, state.UpdateAppParams{
 		ScalingPolicy: &state.ScalingPolicy{MinInstances: 0, MaxInstances: 1}, SetScalingPolicy: true,
 	}); err != nil {
 		s.log.Warn("apid: redis cache scaling policy", "app_id", created.ID, "err", err)
-		api.WriteProblem(w, api.ErrCapacity("could not configure Redis cache"))
-		return
+		return state.App{}, api.ErrCapacity("could not configure Redis cache")
 	}
-	cache, err := store.CreateManagedValkeyCache(r.Context(), state.ManagedValkeyCache{
-		AppID: created.ID, AccountID: acct.ID, MemoryMB: req.MemoryMB, EvictionPolicy: req.EvictionPolicy,
-	})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not record Redis cache"))
-		return
-	}
-	s.emitAppCreated(r.Context(), created)
+	return created, nil
+}
 
-	password, err := deriveRedisPassword(created.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not generate Redis password"))
-		return
-	}
-	if problem := s.sealAndPersist(r.Context(), acct, created, api.DefaultEnvScope, api.ManagedValkeyPasswordEnv, password, api.SecretClassPersistent, limits); problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-
-	// Deploy through the ordinary image path so every deploy gate applies.
+// deployRedisCache deploys the pinned Valkey image through the ordinary image
+// path, so every deploy gate applies.
+func (s *server) deployRedisCache(r *http.Request, acct state.Account, app state.App, req api.CreateRedisCacheRequest) *api.Problem {
 	rec := httptest.NewRecorder()
-	s.createImageDeployment(rec, r, acct, created, limits, api.CreateDeploymentRequest{
+	s.createImageDeployment(rec, r, acct, app, api.MustLimitsFor(acct.Plan), api.CreateDeploymentRequest{
 		Image: api.ManagedValkeyImage,
 		Overrides: &api.CreateDeploymentOverrides{
 			Entrypoint: api.ManagedValkeyServerCommand(req.MemoryMB, req.EvictionPolicy),
 			Port:       api.ManagedValkeyPort,
 		},
 	}, false)
-	if rec.Code != http.StatusAccepted {
-		s.log.Warn("apid: redis cache deploy refused", "app_id", created.ID, "status", rec.Code)
-		for key, values := range rec.Header() {
-			w.Header()[key] = values
-		}
-		w.WriteHeader(rec.Code)
-		_, _ = w.Write(rec.Body.Bytes())
-		return
+	if rec.Code == http.StatusAccepted {
+		return nil
 	}
-	s.audit.Emit(r.Context(), "redis.created", &acct.ID, map[string]any{
-		"app_id": created.ID, "name": created.Slug, "memory_mb": cache.MemoryMB, "eviction_policy": cache.EvictionPolicy,
-	})
-	writeJSON(w, http.StatusCreated, redisCacheResponse(created, cache))
+	s.log.Warn("apid: redis cache deploy refused", "app_id", app.ID, "status", rec.Code)
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || problem.Code == "" {
+		return api.ErrCapacity("could not deploy Redis cache")
+	}
+	problem.Status = rec.Code
+	return &problem
 }
 
 func (s *server) deleteRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -257,15 +274,9 @@ func (s *server) bindRedisCache(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrValidation("a cache cannot be bound to itself"))
 		return
 	}
-	password, err := deriveRedisPassword(cacheApp.ID)
-	if err != nil {
-		s.log.Warn("apid: redis cache password", "app_id", cacheApp.ID, "err", err)
-		api.WriteProblem(w, api.ErrCapacity("could not read the Redis cache credential"))
-		return
-	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if problem := s.sealAndPersist(r.Context(), acct, target, api.DefaultEnvScope, req.EnvKey,
-		api.ManagedValkeyURL(cacheApp.Slug, password), api.SecretClassPersistent, limits); problem != nil {
+		api.ManagedValkeyURL(cacheApp.Slug), api.SecretClassPersistent, limits); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -288,23 +299,4 @@ func redisCacheResponse(app state.App, cache state.ManagedValkeyCache) api.Redis
 		Status:         string(app.Status),
 		CreatedAt:      cache.CreatedAt,
 	}
-}
-
-// redisPasswordLabel separates cache passwords from every other use of the
-// host HMAC key.
-const redisPasswordLabel = "gregale managed valkey password v1\x00"
-
-// deriveRedisPassword is a cache's Valkey password: HMAC-SHA256 of its app id
-// under apid's host HMAC key. apid cannot open sealed app secrets, so it
-// derives the password again when a binding needs it instead of storing it.
-// Slice 2 of ADR-20261116192126 moves AUTH into the service TCP proxy, after
-// which apps never hold it.
-func deriveRedisPassword(appID string) (string, error) {
-	key := hostHMACKeyBytes()
-	if len(key) == 0 {
-		return "", errors.New("apid: host HMAC key unavailable")
-	}
-	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte(redisPasswordLabel + appID))
-	return hex.EncodeToString(mac.Sum(nil)), nil
 }
