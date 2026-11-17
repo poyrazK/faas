@@ -15082,6 +15082,11 @@ func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Du
 // per worker.
 const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
 
+// FunctionWorkflowEnv marks a workflow function's build
+// (ADR-20261113120824 amendment 1): its adapter answers every request that is
+// not a workflow call with a 404 problem.
+const FunctionWorkflowEnv = "FAAS_FUNCTION_WORKFLOW"
+
 // PostgresPoolMaxEnv tells an app how many database connections one of its
 // instances can use (ADR-20261104141122). imaged stamps it at build time for
 // accounts the postgres_pool_sizing flag releases; the SDKs'

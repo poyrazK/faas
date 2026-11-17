@@ -418,6 +418,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FUNCTION_RUNNER_NODE24` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_PYTHON312` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_PYTHON313` | imaged | `unit` | yes |  | `path-exists` |  |
+| `FAAS_FUNCTION_WORKFLOW` | guest, shared | `guest` |  |  | `` | stamped by imaged on a function whose deployment declares its own code workflow at /; the function adapters refuse requests that are not workflow calls (ADR-20261113120824 amendment 1) |
 | `FAAS_GATEWAYD_CONFIG` | gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAYD_CONTROL_FROM_REGISTRY` | apid | `dropin` |  |  | `` | 1 on a split control plane: apid calls gatewayd-internal's private control listener on an active compute node instead of FAAS_GATEWAYD_CONTROL_URL (ADR-20261022004500) |
 | `FAAS_GATEWAYD_CONTROL_URL` | apid | `default` |  |  | `` |  |
