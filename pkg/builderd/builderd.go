@@ -1453,9 +1453,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	} else if cacheOwed {
 		b.emitBuildLog(ctx, build.ID, "dependency cache will be saved after the image is handed off\n")
 	}
-	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
-		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
-	}
+	b.emitGuestBuildLog(ctx, build.ID, "[guest build output]", out.LogTail)
 	if line := sharedRuntimeBuildLog(out.SharedRuntime); line != "" && out.ExitCode == 0 {
 		b.emitBuildLog(ctx, build.ID, line)
 	}
@@ -1626,9 +1624,7 @@ func (b *Builderd) exportDeferredCache(ctx context.Context, vm DeferredCacheVM, 
 		// goes to the deployment's build log, as a failed build's does, and
 		// never to the operator log.
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
-		if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
-			b.emitBuildLog(ctx, build.ID, "[dependency cache export output]\n"+tail+"\n")
-		}
+		b.emitGuestBuildLog(ctx, build.ID, "[dependency cache export output]", out.LogTail)
 		return
 	}
 	b.log.Info("builderd: deferred dependency cache saved", "build", build.ID,
@@ -2175,9 +2171,15 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 // failing step (production-us hunt #9: a RUN exiting 3 showed "ot complete
 // successfully: exit code: 3" and Go frames). The customer's build output gets
 // the budget first; the daemon log keeps only a short tail for operators.
+//
+// The tail used to be cut to one NOTIFY payload (3 KiB), which lost output a
+// customer printed on purpose (Kroki feedback 2026-11-17: `du` sizes printed
+// mid-build were pushed out by the export lines that followed). It is now
+// guestBuildLogTailMaxBytes and emitGuestBuildLog sends it in NOTIFY-sized
+// chunks.
 func boundedGuestBuildLogTail(raw string) string {
 	const (
-		maxBytes       = 3 * 1024
+		maxBytes       = guestBuildLogTailMaxBytes
 		daemonTail     = 512
 		daemonSection  = "\n[buildkitd]\n"
 		customerHeader = "[build]\n"

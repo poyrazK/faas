@@ -1348,7 +1348,7 @@
           [Service]
           Environment=FAAS_IMAGED_LAYER_REUSE={{ '1' if (imaged_app_layer_reuse | default(false) | bool) else '0' }}
 
-    - name: Install builderd's shared platform blobs and BuildKit seed switches
+    - name: Install builderd's shared platform blobs, BuildKit seed and deferred cache export switches
       ansible.builtin.copy:
         dest: /etc/systemd/system/faas-builderd.service.d/zz-faas-perf-switches.conf
         owner: root
@@ -1358,6 +1358,7 @@
           [Service]
           Environment=FAAS_BUILD_SHARED_PLATFORM_BLOBS={{ '1' if (builderd_shared_platform_blobs | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_BUILDKIT_SEED={{ '1' if (builderd_buildkit_seed | default(false) | bool) else '0' }}
+          Environment=FAAS_BUILD_DEFER_CACHE_EXPORT={{ '1' if (builderd_defer_cache_export | default(false) | bool) else '0' }}
 
     # ADR-20261109170000: refuse v1 layer signatures, which do not name their
     # storage key and can be replayed onto another app's layer. Only true once
