@@ -548,9 +548,32 @@ func buildHelloLayer(body string) []byte {
 // DebugToolsBaseLayerImage is BaseLayerImage plus the debug tools every
 // runtime base ships (ADR-20261117070620): busybox, a static binary the
 // caller supplies, at /usr/lib/gregale/debug/busybox (0555) with bin/<applet>
-// symlinks for applets.
+// symlinks for applets. It also carries what imaged requires of a minimal
+// base (/bin/busybox, /bin/sh, /etc/passwd; guest-init supplies /sbin/init),
+// so a host with real bases can stage it in their place.
 func DebugToolsBaseLayerImage(repo, body string, busybox []byte, applets ...string) (fakeImage, string) {
 	layer := buildHelloLayerWith(body, func(tw *tar.Writer) error {
+		for _, dir := range []string{"bin/", "etc/"} {
+			if err := tw.WriteHeader(&tar.Header{Name: dir, Mode: 0o755, Typeflag: tar.TypeDir}); err != nil {
+				return err
+			}
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: "bin/busybox", Mode: 0o755, Size: int64(len(busybox)), Typeflag: tar.TypeReg}); err != nil {
+			return err
+		}
+		if _, err := tw.Write(busybox); err != nil {
+			return err
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: "bin/sh", Mode: 0o777, Linkname: "busybox", Typeflag: tar.TypeSymlink}); err != nil {
+			return err
+		}
+		passwd := []byte("root:x:0:0:root:/root:/bin/sh\napp:x:1000:1000::/home/app:/bin/sh\n")
+		if err := tw.WriteHeader(&tar.Header{Name: "etc/passwd", Mode: 0o644, Size: int64(len(passwd)), Typeflag: tar.TypeReg}); err != nil {
+			return err
+		}
+		if _, err := tw.Write(passwd); err != nil {
+			return err
+		}
 		for _, dir := range []string{"usr/", "usr/lib/", "usr/lib/gregale/", "usr/lib/gregale/debug/", "usr/lib/gregale/debug/bin/"} {
 			if err := tw.WriteHeader(&tar.Header{Name: dir, Mode: 0o755, Typeflag: tar.TypeDir}); err != nil {
 				return err
