@@ -102536,6 +102536,7 @@ components:
       properties:
         enabled: { type: boolean, description: 'false pauses the check; true resumes it.' }
     SetAppProtectionRequest:
+      description: 'Turns production protection on or off. on creates the baseline; off deletes the baseline objects you have not changed.'
       type: object
       required: [state]
       properties:

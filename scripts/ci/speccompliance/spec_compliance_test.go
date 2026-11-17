@@ -843,6 +843,8 @@ var dtoExclude = map[string]bool{
 	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
 	// ADR 20261114180740: the body of an app's call to outboundd's /p/{name}, not an apid route.
 	"OutboundAIPromptCallRequest": true,
+	// ADR-20261116120000: the reconciler's internal baseline item list, never a wire DTO.
+	"ProtectionBaselineItem": true,
 
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
@@ -1937,6 +1939,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "notification_channels.go"), // ADR-749 channel DTOs
 		filepath.Join(root, "pkg", "api", "slos.go"),                  // ADR-747 customer SLO DTOs
 		filepath.Join(root, "pkg", "api", "synthetic_checks.go"),      // ADR-748 synthetic check DTOs
+		filepath.Join(root, "pkg", "api", "app_protection.go"),        // ADR-20261116120000 protection DTOs
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
 		filepath.Join(root, "pkg", "api", "profile_investigations.go"),
