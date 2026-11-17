@@ -438,18 +438,18 @@ func (s *server) protectionAlertRule(ctx context.Context, acct state.Account, ap
 	}
 	if !s.protectionCapabilityOn(protectionCapabilityAlerts, acct, app) ||
 		s.alertMetricCapabilityProblem(appFlagSubject(acct, app), req.Metric) != nil {
-		return protectionSkipped(api.AppProtectionSkipNotReleased), nil
+		return protectionSkipped(api.AppProtectionSkipNotReleased), nil //nolint:nilerr // an unreleased metric is a recorded skip, not a sweep error
 	}
 	if prob := validateAlertRuleBody(req); prob != nil {
 		return protectionOutcome{}, fmt.Errorf("baseline alert %s is invalid: %s", name, prob.Detail)
 	}
 	if s.validateSLOAlert(ctx, app.ID, req) != nil || s.validateSyntheticCheckAlert(ctx, app.ID, req) != nil {
-		return protectionSkipped(targetGone), nil
+		return protectionSkipped(targetGone), nil //nolint:nilerr // a deleted SLO or check is a recorded skip, not a sweep error
 	}
 	channelIDs, prob := s.validateRuleChannels(ctx, acct.ID, req.ChannelIDs)
 	if prob != nil {
 		// The customer deleted the channel.
-		return protectionSkipped(api.AppProtectionSkipNeedsChannel), nil
+		return protectionSkipped(api.AppProtectionSkipNeedsChannel), nil //nolint:nilerr // a recorded skip, not a sweep error
 	}
 	row, err := s.store.CreateAlertRuleIfUnderQuota(ctx, state.AlertRule{
 		AccountID:                       acct.ID,

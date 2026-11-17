@@ -16,7 +16,10 @@ T = TypeVar("T", bound="SetAppProtectionRequest")
 
 @_attrs_define
 class SetAppProtectionRequest:
-    """Turns production protection on or off. on creates the baseline; off deletes the baseline objects you have not changed."""
+    """Turns production protection on or off. on creates the baseline; off deletes the baseline objects you have not
+    changed.
+
+    """
 
     state: SetAppProtectionRequestState
     """on enrolls the app; off removes the unchanged protection objects."""

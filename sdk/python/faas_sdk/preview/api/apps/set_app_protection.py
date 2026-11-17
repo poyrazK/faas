@@ -84,7 +84,8 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (SetAppProtectionRequest):
+        body (SetAppProtectionRequest): Turns production protection on or off. on creates the
+            baseline; off deletes the baseline objects you have not changed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -121,7 +122,8 @@ def sync(
 
     Args:
         slug (str):
-        body (SetAppProtectionRequest):
+        body (SetAppProtectionRequest): Turns production protection on or off. on creates the
+            baseline; off deletes the baseline objects you have not changed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -153,7 +155,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (SetAppProtectionRequest):
+        body (SetAppProtectionRequest): Turns production protection on or off. on creates the
+            baseline; off deletes the baseline objects you have not changed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -188,7 +191,8 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (SetAppProtectionRequest):
+        body (SetAppProtectionRequest): Turns production protection on or off. on creates the
+            baseline; off deletes the baseline objects you have not changed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

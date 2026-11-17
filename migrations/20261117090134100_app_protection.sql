@@ -1,5 +1,7 @@
 -- filename: 20261117090134100_app_protection.sql
 -- migration-compat: expand
+
+-- +goose Up
 -- Production protection by default (ADR-20261116120000).
 --
 -- app_protection records an app's enrollment in the protection baseline:
@@ -18,8 +20,6 @@
 -- name the customer already uses, a full quota). A created item is never
 -- made again, so an object the customer deletes stays deleted. One row per
 -- (app, item). Both tables are new; nothing reads them on older apid.
-
--- +goose Up
 SET lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS app_protection (
