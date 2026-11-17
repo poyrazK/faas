@@ -6954,6 +6954,14 @@ type Honeytoken struct {
 	RetiredAt   pgtype.Timestamptz
 }
 
+type HostedTaskSourceIntent struct {
+	AccountID  pgtype.UUID
+	ID         string
+	Payload    []byte
+	Ciphertext []byte
+	ExpiresAt  pgtype.Timestamptz
+}
+
 type HostingAutomationCredential struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -8816,6 +8824,22 @@ type ManagedPostgresCreationReceipt struct {
 	ProviderCreatedAt  pgtype.Timestamptz
 	RecordedAt         pgtype.Timestamptz
 	CleanupStartedAt   pgtype.Timestamptz
+}
+
+type ManagedPostgresCustomRole struct {
+	DatabaseID   pgtype.UUID
+	AccountID    pgtype.UUID
+	Name         string
+	BypassRls    bool
+	GrantedTo    []string
+	MemberOf     []string
+	State        string
+	Revision     int64
+	LastError    string
+	AttemptCount int32
+	RetryAt      pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type ManagedPostgresCutover struct {
@@ -16574,6 +16598,31 @@ type SupportEvent struct {
 	Kind      string
 	Data      []byte
 	CreatedAt pgtype.Timestamptz
+}
+
+type SupportGrant struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	AppIds             []pgtype.UUID
+	CreatedByAccountID pgtype.UUID
+	RequestID          pgtype.UUID
+	Reason             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RevokedByAccountID pgtype.UUID
+}
+
+type SupportGrantRequest struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	OperatorAccountID  pgtype.UUID
+	Reason             string
+	Status             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	DecidedAt          pgtype.Timestamptz
+	DecidedByAccountID pgtype.UUID
 }
 
 type SupportMessage struct {

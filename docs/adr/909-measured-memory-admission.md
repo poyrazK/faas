@@ -351,3 +351,34 @@ to 200 if eviction fires outside rollouts.
 
 **Financial model.** The model's node capacity still assumes reservations;
 it understates tenants per node further (see "Decision").
+
+## Amendment 4 — The RAM page reads the memory admission counts (2026-11-16)
+
+**Problem.** Spec §12 pages when `resident_ram_pct` passes 92% and warns past
+80%. `FaasHighResidentRamPct` read `fcvm_resident_ram_pct`, the bookings
+Σ(ram_mb + 8) over the node's ceiling (ADR 20261102072403). Under measured
+admission bookings may reach 250% of the ceiling (amendment 3), so the page
+fired at ordinary load: on 2026-11-16 fsn-3 was booked at 136% of its
+8,381 MB ceiling, and 159% at the 6-hour peak, while its measured memory was
+2,825 MB (34%). Its text said new wakes would fail admission, which was not
+true.
+
+**Decision.** schedd exports `fcvm_admission_ram_pct`: the memory RAM
+admission counts on its node over the node's ceiling. Under measured
+admission that is the node's measured memory. Under reservation admission,
+and on a single-box scheduler without a node of its own, it is the bookings,
+the same value as `fcvm_resident_ram_pct`. `FaasHighResidentRamPct` (> 92%,
+page) and `FaasHighResidentRamPctWarn` (> 80%) read it. Spec §12's
+`resident_ram_pct` row therefore means the memory admission counts.
+
+`fcvm_resident_ram_pct` keeps its meaning (bookings over the ceiling) for
+dashboards and builderd's second-slot check.
+
+**No bookings alert.** An alert on bookings near the 250% cap would be wrong
+too: `fcvm_resident_ram_pct` counts frozen instances at their plan RAM, and
+frozen bookings sit outside the cap (ADR-1151), so it can pass the cap
+without a refusal.
+
+**Compatibility.** Until schedd runs this release, `fcvm_admission_ram_pct`
+does not exist and the RAM page cannot fire. The deploy order (control plane
+before nodes) keeps that window to one rollout.

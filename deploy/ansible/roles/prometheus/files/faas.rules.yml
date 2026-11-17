@@ -3332,28 +3332,34 @@ groups:
       # family=resident_ram so the alertmanager inhibit rule can suppress
       # the warn-tier email when the page-tier fires (alertnames differ).
       # ─────────────────────────────────────────────────────────────────
+      #
+      # Both tiers read fcvm_admission_ram_pct, the memory admission counts:
+      # measured memory under measured admission (ADR-909 amendment 4), where
+      # bookings (fcvm_resident_ram_pct) may reach 250% of the ceiling by
+      # design. On fcvm_resident_ram_pct the page fired on a node at 136%
+      # booked and 34% measured (prod, 2026-11-16).
       - alert: FaasHighResidentRamPct
-        expr: max(fcvm_resident_ram_pct) > 92
+        expr: max(fcvm_admission_ram_pct) > 92
         for: 5m
         labels:
           severity: page
           component: vmmd
           family: resident_ram
         annotations:
-          summary: "Resident RAM > 92% of tenant budget"
-          description: "Σ(ram_mb + 8) over live instances has exceeded 92% of the 47,600 MB ceiling for 5m. New wakes will start failing admission."
+          summary: "Admitted RAM > 92% of a node's admission ceiling"
+          description: "The memory admission counts on a node (measured memory under measured admission, Σ(ram_mb + 8) under reservation admission) has been above 92% of the node's ceiling for 5m. At the ceiling new wakes on that node fail admission, and under measured admission schedd evicts."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
 
       - alert: FaasHighResidentRamPctWarn
-        expr: max(fcvm_resident_ram_pct) > 80 and max(fcvm_resident_ram_pct) <= 92
+        expr: max(fcvm_admission_ram_pct) > 80 and max(fcvm_admission_ram_pct) <= 92
         for: 10m
         labels:
           severity: warn
           component: vmmd
           family: resident_ram
         annotations:
-          summary: "Resident RAM > 80% of tenant budget"
-          description: "Resident RAM has remained between 80% and 92% of the host budget for 10m. Start or provision another SSD compute node through the reviewed node-join path before this host reaches the admission ceiling."
+          summary: "Admitted RAM > 80% of a node's admission ceiling"
+          description: "The memory admission counts on a node has remained between 80% and 92% of its ceiling for 10m. Start or provision another SSD compute node through the reviewed node-join path before this node reaches the admission ceiling."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
 
       - alert: FaasJobInstanceCleanupFailed
@@ -3448,7 +3454,8 @@ groups:
 
       # ─────────────────────────────────────────────────────────────────
       # LV-fc usage (vmmd — schedd /metrics/fcvm)
-      # Spec §12 row: "lv_fc_used_pct > 80 warn, > 90 page".
+      # Spec §12 row: "lv_fc_used_pct > 80 warn, > 90 page"; the warn moved
+      # to 87 with ADR-20261114182830 amendment 1 (below).
       # Note: §8 (line 365) says imaged refuses > 90% and pages at 80%;
       # §12 says warn at 80, page at 90. This rule uses §12 verbatim.
       # The §8 / §12 contradiction is an ADR-worthy spec drift surfaced
@@ -3466,16 +3473,20 @@ groups:
           description: "The fc logical volume is past 90% used for 5m. imaged will start refusing new deploys; tenant snapshots can no longer be parked."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
 
+      # The warn sits above the artifact cache's free-space floor
+      # (ADR-20261114182830 amendment 1): the cache fills /srv/fc to its
+      # disk less api.ArtifactCacheReservePercent (15%) by design, so a
+      # healthy full node reads ~85% and an 80% warn fired on every one.
       - alert: FaasLvFcUsageHighWarn
-        expr: max(fcvm_lv_fc_used_pct) > 80 and max(fcvm_lv_fc_used_pct) <= 90
+        expr: max(fcvm_lv_fc_used_pct) > 87 and max(fcvm_lv_fc_used_pct) <= 90
         for: 10m
         labels:
           severity: warn
           component: vmmd
           family: lv_fc
         annotations:
-          summary: "lv-fc usage > 80%"
-          description: "lv-fc usage between 80% and 90% for 10m. Schedule the next LV-resize runbook before the page-tier crossing."
+          summary: "lv-fc usage > 87%"
+          description: "lv-fc usage between 87% and 90% for 10m: above the 85% the artifact cache fills to and defends by eviction, so eviction is not keeping up or something outside the cache is filling /srv/fc. Find it before the page-tier crossing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
 
       # ADR-20261103163954 §4: public connections share the conntrack table

@@ -22,6 +22,23 @@ import (
 	"time"
 )
 
+// Short-lived authored-source retention preview; these are storage/admission
+// ceilings, not build limits. Expired identities remain immutable tombstones.
+const (
+	MCPInlineSourceMaxBytes                   = 96 << 10
+	HostedTaskSourceCleanupTimeout            = 5 * time.Second
+	HostedTaskSourceRoleMaxBytes              = 2 << 20
+	HostedTaskSourceRoleMaxEntries            = 1024
+	HostedTaskSourceRequestMaxBytes           = 8 << 20
+	HostedTaskSourceCiphertextMaxBytes        = 8 << 20
+	HostedTaskSourceAccountCiphertextMaxBytes = 16 << 20
+	HostedTaskSourceActivePerAccount          = 2
+	HostedTaskSourceRecordsPerAccount         = 256
+	HostedTaskSourceRetention                 = 15 * time.Minute
+	HostedTaskSourceSweepInterval             = time.Minute
+	HostedTaskSourceSweepBatch                = 128
+)
+
 // OpenAPI tool generation is offline and bounded independently of deployment
 // quotas. Generated adapters use the normal application egress and MCP limits.
 const (
@@ -296,6 +313,29 @@ const DashboardSessionIdleTimeout = 48 * time.Hour
 const (
 	UnverifiedAccountDeleteAfter = 60 * 24 * time.Hour
 	UnverifiedAccountExpiryBatch = 100
+)
+
+// Customer-granted support access (ADR-20261116163508). A grant lasts
+// SupportGrantDefaultTTL unless its owner or admin picks another duration,
+// at most SupportGrantMaxTTL, and names at most SupportGrantMaxApps apps. A
+// support request waits SupportGrantRequestTTL for a decision, and one
+// organization has at most SupportGrantMaxOpenRequests open at once. Owners
+// and admins get at most one "support changed something" mail per
+// SupportActionMailInterval; the activity log records every action.
+const (
+	SupportGrantDefaultTTL      = 24 * time.Hour
+	SupportGrantMaxTTL          = 7 * 24 * time.Hour
+	SupportGrantMaxApps         = 100
+	SupportGrantRequestTTL      = 24 * time.Hour
+	SupportGrantMaxOpenRequests = 3
+	SupportActionMailInterval   = 10 * time.Minute
+	// SupportGrantHistoryLimit is how many ended grants an organization's
+	// support-access view lists after every live one.
+	SupportGrantHistoryLimit = 50
+	// SupportReasonMinChars and SupportReasonMaxChars bound a grant's or a
+	// request's reason, in characters.
+	SupportReasonMinChars = 3
+	SupportReasonMaxChars = 400
 )
 
 // EmailChangeRevertWindow is how long after a confirmed sign-in email
@@ -1125,6 +1165,11 @@ const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonSc
 // arrive (ADR-20261031110037).
 const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 
+// ManagedPostgresRotationRefreshWakeDelay is how long a credential rotation's
+// restart row stays closed to outbox replay, so the app's owning scheduler
+// claims the live notification before a peer's replay worker can.
+const ManagedPostgresRotationRefreshWakeDelay = 5 * time.Second
+
 // ManagedPostgresNeonMillicentsPerEgressGB is what Neon charges Gregale per GB
 // (10^9 bytes, Neon's unit) of data transfer past its plan's organization
 // allowance ($0.10, neon.com/pricing on 2026-11-02, ADR-20261102072425).
@@ -1204,6 +1249,19 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 		return 0
 	}
 	return limits.PreviewApps * databases.DatabasesMax
+}
+
+// ManagedPostgresCustomRolesMax is how many custom group roles one managed
+// database may declare (ADR-20261116213000): none on Free, 16 on Hobby and
+// above. Unknown plans fail closed.
+func ManagedPostgresCustomRolesMax(p Plan) int {
+	if _, ok := LimitsFor(p); !ok || p == PlanFree {
+		return 0
+	}
+	if _, managed := ManagedPostgresLimitsFor(p); !managed {
+		return 0
+	}
+	return 16
 }
 
 // ManagedPostgresAllowanceBranchTTLMax is the longest TTL a branch may carry
@@ -8413,7 +8471,7 @@ const (
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
 	// AppVMHeadroomMB is how far an app or job VM's cgroup memory.max sits
-	// above BillableRAMMB (ADR-20261116170000). A cold-booting guest touches
+	// above BillableRAMMB (ADR-20261116191801). A cold-booting guest touches
 	// all of its RAM, and Firecracker's own mapped pages (~16 MB) did not fit
 	// in PerVMOverheadMB: every 128 MB app OOM-killed on cold boot on prod
 	// (2026-11-15/16). Admission, billing and invariant 2 stay at
@@ -14076,7 +14134,7 @@ func BillableRAMMB(ramMB int) int {
 
 // AppVMMemoryMaxMB is the per-instance cgroup memory.max of an app or job VM:
 // its billable RAM plus AppVMHeadroomMB for Firecracker's own pages
-// (ADR-20261116170000). Never use it for admission or billing.
+// (ADR-20261116191801). Never use it for admission or billing.
 func AppVMMemoryMaxMB(ramMB int) int {
 	return BillableRAMMB(ramMB) + AppVMHeadroomMB
 }

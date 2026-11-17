@@ -43295,6 +43295,24 @@ COMMENT ON TABLE public.honeytokens IS 'Decoy credentials that belong to no acco
 
 
 --
+-- Name: hosted_task_source_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosted_task_source_intents (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    payload jsonb NOT NULL,
+    ciphertext bytea,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT hosted_task_source_intents_check CHECK (((((payload ->> 'id'::text) = id) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND ((payload ->> 'source_state'::text) = 'retained'::text)) IS TRUE)),
+    CONSTRAINT hosted_task_source_intents_ciphertext_check CHECK (((ciphertext IS NULL) OR ((octet_length(ciphertext) >= 1) AND (octet_length(ciphertext) <= 8388608)))),
+    CONSTRAINT hosted_task_source_intents_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosted_task_source_intents_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 131072))),
+    CONSTRAINT hosted_task_source_intents_payload_check1 CHECK ((payload @> '{"ready_to_apply": false, "bindings_verified": false, "owner_authorization_required": true}'::jsonb))
+);
+
+
+--
 -- Name: hosting_automation_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -46697,6 +46715,34 @@ CREATE TABLE public.managed_postgres_creation_receipts (
     CONSTRAINT managed_postgres_creation_receipts_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
     CONSTRAINT managed_postgres_creation_receipts_resource_id_check CHECK (((resource_id <> ''::text) AND (length(resource_id) <= 255))),
     CONSTRAINT managed_postgres_creation_receipts_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255)))
+);
+
+
+--
+-- Name: managed_postgres_custom_roles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_custom_roles (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    bypass_rls boolean DEFAULT false NOT NULL,
+    granted_to text[] DEFAULT '{}'::text[] NOT NULL,
+    member_of text[] DEFAULT '{}'::text[] NOT NULL,
+    state text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_custom_roles_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT managed_postgres_custom_roles_granted_to_check CHECK ((granted_to <@ ARRAY['migration'::text, 'read_only'::text, 'read_write'::text])),
+    CONSTRAINT managed_postgres_custom_roles_last_error_check CHECK ((char_length(last_error) <= 128)),
+    CONSTRAINT managed_postgres_custom_roles_member_of_check CHECK ((cardinality(member_of) <= 16)),
+    CONSTRAINT managed_postgres_custom_roles_name_check CHECK ((name ~ '^[a-z_][a-z0-9_]{0,62}$'::text)),
+    CONSTRAINT managed_postgres_custom_roles_revision_check CHECK ((revision > 0)),
+    CONSTRAINT managed_postgres_custom_roles_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'ready'::text, 'deleting'::text])))
 );
 
 
@@ -60926,6 +60972,49 @@ ALTER TABLE public.support_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS 
 
 
 --
+-- Name: support_grant_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_grant_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    operator_account_id uuid NOT NULL,
+    reason text NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    decided_at timestamp with time zone,
+    decided_by_account_id uuid,
+    CONSTRAINT support_grant_requests_decision_check CHECK (((status = 'open'::text) = (decided_at IS NULL))),
+    CONSTRAINT support_grant_requests_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '24:00:00'::interval)))),
+    CONSTRAINT support_grant_requests_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 400))),
+    CONSTRAINT support_grant_requests_status_check CHECK ((status = ANY (ARRAY['open'::text, 'approved'::text, 'declined'::text])))
+);
+
+
+--
+-- Name: support_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    app_ids uuid[],
+    created_by_account_id uuid NOT NULL,
+    request_id uuid,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    revoked_by_account_id uuid,
+    CONSTRAINT support_grants_apps_check CHECK (((app_ids IS NULL) OR ((cardinality(app_ids) >= 1) AND (cardinality(app_ids) <= 100)))),
+    CONSTRAINT support_grants_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '7 days'::interval)))),
+    CONSTRAINT support_grants_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 400))),
+    CONSTRAINT support_grants_revoked_check CHECK (((revoked_by_account_id IS NULL) OR (revoked_at IS NOT NULL)))
+);
+
+
+--
 -- Name: support_messages; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -68343,6 +68432,14 @@ ALTER TABLE ONLY public.honeytokens
 
 
 --
+-- Name: hosted_task_source_intents hosted_task_source_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_source_intents
+    ADD CONSTRAINT hosted_task_source_intents_pkey PRIMARY KEY (account_id, id);
+
+
+--
 -- Name: hosting_automation_credentials hosting_automation_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69916,6 +70013,14 @@ ALTER TABLE ONLY public.managed_postgres_creation_receipts
 
 ALTER TABLE ONLY public.managed_postgres_creation_receipts
     ADD CONSTRAINT managed_postgres_creation_receipts_pkey PRIMARY KEY (kind, backend_id, resource_id);
+
+
+--
+-- Name: managed_postgres_custom_roles managed_postgres_custom_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_custom_roles
+    ADD CONSTRAINT managed_postgres_custom_roles_pkey PRIMARY KEY (database_id, name);
 
 
 --
@@ -76071,6 +76176,22 @@ ALTER TABLE ONLY public.support_events
 
 
 --
+-- Name: support_grant_requests support_grant_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_grants support_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: support_messages support_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81650,6 +81771,13 @@ CREATE INDEX github_webhook_deliveries_due_idx ON public.github_webhook_deliveri
 
 
 --
+-- Name: hosted_task_source_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosted_task_source_expiry_idx ON public.hosted_task_source_intents USING btree (expires_at) WHERE (ciphertext IS NOT NULL);
+
+
+--
 -- Name: hosting_automation_credentials_site; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -83096,6 +83224,13 @@ CREATE INDEX managed_postgres_clone_owner_idx ON public.managed_postgres_databas
 --
 
 CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'target'::text));
+
+
+--
+-- Name: managed_postgres_custom_roles_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_custom_roles_due_idx ON public.managed_postgres_custom_roles USING btree (retry_at) WHERE (state <> 'ready'::text);
 
 
 --
@@ -87461,6 +87596,20 @@ CREATE INDEX support_episodes_started_idx ON public.support_episodes USING btree
 --
 
 CREATE INDEX support_events_ticket_idx ON public.support_events USING btree (ticket_id, sequence);
+
+
+--
+-- Name: support_grant_requests_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_grant_requests_open_idx ON public.support_grant_requests USING btree (org_id, created_at DESC) WHERE (status = 'open'::text);
+
+
+--
+-- Name: support_grants_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_grants_org_idx ON public.support_grants USING btree (org_id, created_at DESC);
 
 
 --
@@ -103015,6 +103164,14 @@ ALTER TABLE ONLY public.gitlab_oauth_connections
 
 
 --
+-- Name: hosted_task_source_intents hosted_task_source_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_source_intents
+    ADD CONSTRAINT hosted_task_source_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: hosting_automation_credentials hosting_automation_credentials_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -104804,6 +104961,14 @@ ALTER TABLE ONLY public.managed_postgres_creation_receipts
 
 ALTER TABLE ONLY public.managed_postgres_creation_receipts
     ADD CONSTRAINT managed_postgres_creation_receipts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_custom_roles managed_postgres_custom_roles_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_custom_roles
+    ADD CONSTRAINT managed_postgres_custom_roles_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
@@ -112172,6 +112337,62 @@ ALTER TABLE ONLY public.support_events
 
 ALTER TABLE ONLY public.support_events
     ADD CONSTRAINT support_events_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_decided_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_decided_by_account_id_fkey FOREIGN KEY (decided_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_operator_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_operator_account_id_fkey FOREIGN KEY (operator_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grants support_grants_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grants support_grants_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_grants support_grants_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.support_grant_requests(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_grants support_grants_revoked_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grants
+    ADD CONSTRAINT support_grants_revoked_by_account_id_fkey FOREIGN KEY (revoked_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

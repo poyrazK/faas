@@ -31,8 +31,8 @@ func applicationAuthCLI() bool {
 func visibleCliCommands() []cliCommand {
 	auth, monetization := applicationAuthCLI(), monetizationCLI()
 	realtimePreview, fullClone := realtimePreviewCLI(), fullEnvironmentCloneCLI()
-	branches := environmentBranchCLI()
-	if auth && monetization && realtimePreview && fullClone && branches {
+	branches, customRoles := environmentBranchCLI(), postgresCustomRolesCLI()
+	if auth && monetization && realtimePreview && fullClone && branches && customRoles {
 		return cliCommands
 	}
 	visible := make([]cliCommand, 0, len(cliCommands))
@@ -55,6 +55,9 @@ func visibleCliCommands() []cliCommand {
 		}
 		if !branches {
 			command = withoutEnvironmentBranches(command)
+		}
+		if !customRoles {
+			command = withoutPostgresCustomRoles(command)
 		}
 		visible = append(visible, command)
 	}

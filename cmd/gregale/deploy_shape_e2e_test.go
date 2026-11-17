@@ -284,6 +284,37 @@ func TestResolveDeployShape_BinaryRuntimeNeedsDockerfile(t *testing.T) {
 	}
 }
 
+// A package.json that starts nothing next to handler.js only carries the
+// function's dependencies or "type": "module". Detected as an app, the
+// journeys' function-hooks fixture booted a guest with nothing to run and
+// the deploy failed with a guest kernel panic (journeys 2026-11-15/16).
+func TestResolveDeployShape_HandlerWithDependencyOnlyPackageJSON(t *testing.T) {
+	var buf bytes.Buffer
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = oldOut }()
+	for name, tc := range map[string]struct {
+		files map[string]string
+		want  int
+	}{
+		"module type only":   {map[string]string{"package.json": `{"type":"module","dependencies":{"zod":"3"}}`}, int(main.ShapeFunction)},
+		"start script":       {map[string]string{"package.json": `{"scripts":{"start":"node server.js"}}`}, int(main.ShapeApp)},
+		"main entry":         {map[string]string{"package.json": `{"main":"lib/app.js"}`}, int(main.ShapeApp)},
+		"conventional entry": {map[string]string{"package.json": `{}`, "index.js": "require('http')"}, int(main.ShapeApp)},
+		"invalid json":       {map[string]string{"package.json": `{`}, int(main.ShapeApp)},
+	} {
+		dir := t.TempDir()
+		main.WriteFile(t, dir, "handler.js", "export async function handler() { return {statusCode: 200} }")
+		for file, content := range tc.files {
+			main.WriteFile(t, dir, file, content)
+		}
+		sh, _, _, _ := main.ResolveDeployShape(dir, false, false, false)
+		if int(sh) != tc.want {
+			t.Errorf("%s: shape = %d, want %d", name, sh, tc.want)
+		}
+	}
+}
+
 func TestResolveDeployShape_ExplicitFunctionForcesFunction(t *testing.T) {
 	dir := t.TempDir()
 	main.WriteFile(t, dir, "package.json", "{}")

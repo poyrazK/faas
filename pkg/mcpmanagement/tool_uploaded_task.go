@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/tasktoolrelease"
+	"github.com/onebox-faas/faas/pkg/tasktoolsource"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
@@ -28,15 +29,13 @@ type planUploadedTaskArgs struct {
 	TimeoutSeconds     int                `json:"release_timeout_seconds,omitempty" jsonschema:"Native release deadline, default 300; review executes no release"`
 }
 
-type uploadedTaskReview struct {
-	mcphosting.TaskReleaseReview
-	Kind      string                   `json:"kind"`
-	AccountID string                   `json:"account_id"`
-	Sources   map[string]string        `json:"source_sha256"`
-	Apps      []api.TaskToolReleaseApp `json:"apps"`
-}
+type uploadedTaskReview = tasktoolsource.Review
 
 func (m *management) planUploadedTaskToolDeploy(ctx context.Context, a planUploadedTaskArgs) (any, error) {
+	return m.withUploadedTaskReview(ctx, a, func(out uploadedTaskReview, _, _ string) (any, error) { return out, nil })
+}
+
+func (m *management) withUploadedTaskReview(ctx context.Context, a planUploadedTaskArgs, done func(uploadedTaskReview, string, string) (any, error)) (any, error) {
 	if err := m.toolBuildingAccess(); err != nil {
 		return nil, err
 	}
@@ -64,7 +63,11 @@ func (m *management) planUploadedTaskToolDeploy(ctx context.Context, a planUploa
 	if err != nil {
 		return nil, err
 	}
-	return m.finishUploadedTaskReview(ctx, a, out, accountID, webDir, workerDir)
+	value, err := m.finishUploadedTaskReview(ctx, a, out, accountID, webDir, workerDir)
+	if err != nil {
+		return nil, err
+	}
+	return done(value.(uploadedTaskReview), webDir, workerDir)
 }
 
 func (m *management) uploadedTaskAccount(ctx context.Context) (string, error) {

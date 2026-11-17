@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #666; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #aaa; } }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1100px; margin: auto; padding: 0 1.5rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid #8886; } nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+    table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .65rem; border-bottom: 1px solid #8884; vertical-align: top; }
+    .scroll { overflow-x: auto; } .muted { color: var(--muted); } .card { border: 1px solid #8886; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    button { font: inherit; cursor: pointer; } .flash { padding: .75rem; background: #15803d22; } .error { padding: .75rem; background: #b91c1c22; }
+    form.inline { display: inline; } label { display: block; margin: .5rem 0; } input[type=text] { width: 100%; max-width: 32rem; }
+  </style>
+</head>
+<body>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/support-access">Support access</a></nav></header>
+<main>
+{{template "email-verification-banner" .}}
+<h1>Support access</h1>
+<p>Let Gregale support deploy, roll back and restart your apps for a limited time. Support can never read your secrets or configuration,
+upload its own code, change members, keys or billing, or delete anything. Every action support takes appears in your activity log, and
+owners and admins get an email. You can revoke access at any time.</p>
+{{with .Data}}
+{{if .Flash}}<p class="flash" role="status">{{.Flash}}</p>{{end}}
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+{{if not .Orgs}}<p class="muted">You are not an owner or admin of any organization.</p>{{end}}
+{{range $org := .Orgs}}
+<section class="card">
+  <h2>{{if $org.Personal}}Your personal account{{else}}{{$org.Name}}{{end}} <span class="muted">({{$org.Slug}})</span></h2>
+  {{if not $org.Enabled}}<p class="muted">Support access is not available for this organization yet.</p>{{end}}
+  {{range $org.Access.Requests}}{{if eq .Status "open"}}
+  <div class="card">
+    <p><strong>{{.Operator}}</strong> asks for access: {{.Reason}}</p>
+    <p class="muted">Requested {{.CreatedAt}} · expires {{.ExpiresAt}}</p>
+    {{if $org.Enabled}}
+    <form method="POST" action="/dashboard/support-access/{{$org.Slug}}/requests/{{.ID}}/approve">
+      <input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}">
+      <label>Apps (comma-separated slugs, empty for all apps) <input type="text" name="apps"></label>
+      <label>Duration <select name="ttl_hours"><option value="4">4 hours</option><option value="24" selected>24 hours</option><option value="72">3 days</option><option value="168">7 days</option></select></label>
+      <button type="submit">Approve</button>
+    </form>
+    {{end}}
+    <form class="inline" method="POST" action="/dashboard/support-access/{{$org.Slug}}/requests/{{.ID}}/decline"><input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}"><button type="submit">Decline</button></form>
+  </div>
+  {{end}}{{end}}
+  {{if $org.Access.Grants}}
+  <div class="scroll"><table><thead><tr><th>Apps</th><th>Status</th><th>Until</th><th>Granted by</th><th>Reason</th><th></th></tr></thead><tbody>
+  {{range $org.Access.Grants}}<tr>
+    <td>{{if .AllApps}}All apps{{else}}{{range $i, $a := .Apps}}{{if $i}}, {{end}}{{$a}}{{end}}{{end}}</td>
+    <td>{{.Status}}</td><td>{{.ExpiresAt}}</td><td>{{.CreatedBy}}</td><td>{{.Reason}}</td>
+    <td>{{if eq .Status "active"}}<form class="inline" method="POST" action="/dashboard/support-access/{{$org.Slug}}/grants/{{.ID}}/revoke"><input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}"><button type="submit">Revoke</button></form>{{end}}</td>
+  </tr>{{end}}
+  </tbody></table></div>
+  {{else}}<p class="muted">Gregale support has no access.</p>{{end}}
+  {{if $org.Enabled}}
+  <details><summary>Grant access</summary>
+    <form method="POST" action="/dashboard/support-access/{{$org.Slug}}/grants">
+      <input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}">
+      <label>Apps (comma-separated slugs, empty for all apps) <input type="text" name="apps" placeholder="{{range $i, $a := $org.Apps}}{{if $i}}, {{end}}{{$a}}{{end}}"></label>
+      <label>Duration <select name="ttl_hours"><option value="4">4 hours</option><option value="24" selected>24 hours</option><option value="72">3 days</option><option value="168">7 days</option></select></label>
+      <label>Reason <input type="text" name="reason" placeholder="What support should help with"></label>
+      <button type="submit">Grant access</button>
+    </form>
+  </details>
+  {{end}}
+</section>
+{{end}}
+{{end}}
+</main>
+</body>
+</html>

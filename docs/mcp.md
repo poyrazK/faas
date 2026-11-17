@@ -347,7 +347,7 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery, approval waits, the agent's own activity and undo |
+| `core` (default) | Context, docs search, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery, approval waits, the agent's own activity and undo |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
 | `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
@@ -386,6 +386,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 |---|---|
 | `gregale_preflight` | Read-only consent, native operation authorization, release-review/health/operations compatibility and durable-state checks. `operation` is `deploy` (default), `restart`, `scale` or `env_change`; admission is checked separately. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
+| `gregale_search_docs` | Search the published docs at gregale.dev: up to 10 ranked sections (`limit`, default 5), at most two per page, each with its page, heading anchor, URL and a snippet. |
+| `gregale_get_docs_page` | One published docs page as Markdown with its heading anchors, or one `section` of it; `page` takes a slug or a gregale.dev/docs URL. Output stops at 48 KiB and says so. |
 | `gregale_list_actions` | Bounded connection-local deploy, rollback, service/worker rollout, service abort, configuration, scaling, cron, route-budget and regression-triage history for one exact app/environment, with keyset continuation. |
 | `gregale_get_action` | One recorded plan's attempts, redacted native receipts and recovery guidance; historical acceptance does not prove deployment completion. |
 | `gregale_list_environment_actions` | Connection-local promotion/rollback history for an exact project and target environment; requires consent for both environments and every project workload. |
@@ -1032,6 +1034,40 @@ approval or invocation grant. Custom readiness-role release policies, database
 bindings, initialized schemas, retained keys and all live readiness checks still
 use their existing owner workflows. Hosted execution remains separate. See
 [ADR 20261116172002](adr/20261116172002-hosted-task-source-review.md).
+
+### Durable hosted Task source intents
+
+After `gregale_plan_uploaded_task_tool_deploy`, use
+`gregale_prepare_uploaded_task_tool_deploy` with its exact review fingerprint as
+`expected_review_sha256`, a caller-chosen lowercase SHA256 `intent_id`, and the
+same role/app/source arguments. This separate write saves the reviewed source
+privately for fifteen minutes. It requires the existing hosted publishing/write
+consent and operator publishing gate, plus native
+`FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION=1` and Account-domain sealing.
+
+Retention accepts up to **2 MiB and 1024 entries per role**, including explicit
+directories; larger projects may be reviewed but cannot be retained by this
+preview. An account can retain two active intents, 16 MiB total ciphertext and
+256 immutable identities. Get/prepare responses contain source hashes,
+permissions, configured limits, native app baselines and a fixed expiry; they
+never return source bytes or credentials.
+
+Use `gregale_get_uploaded_task_tool_deploy` with `intent_id` after reconnect or
+bridge restart. After an uncertain prepare reply, repeat the same identity and
+expected review. This retrieves the original snapshot without consuming a
+previous archive upload again. Supplied stack/digest arguments and inline bytes
+must still match. Archive retries refer to the original stored snapshot; a new
+upload ID does not replace its bytes. Prepare a new reviewed identity for new
+source. Retries never renew retention. After expiry, metadata remains and
+`source_state` is `expired`; the identity cannot be reused. Native indexed
+cleanup removes expired live ciphertext in bounded sweeps; database outages,
+backlogs and backup retention can delay physical removal.
+
+These intents always say `ready_to_apply=false`, `bindings_verified=false`, and
+`owner_authorization_required=true`. No owner decision, credential binding,
+build, deployment, Task migration, fixture or traffic change is authorized.
+The existing uploaded planner continues to remove staged source without saving
+an intent. See [ADR 20261116183545](adr/20261116183545-hosted-task-source-intents.md).
 
 ### Durable Task release intents
 

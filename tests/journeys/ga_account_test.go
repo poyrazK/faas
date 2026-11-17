@@ -137,7 +137,9 @@ func TestCLITools(t *testing.T) {
 		}
 	})
 	t.Run("help_all", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "help", "--all")
+		// The harness sets FAAS_JSON=1, and help then prints its JSON
+		// manifest; this step reads the text listing (journeys 2026-11-16).
+		res := tg.runWithEnvOK(t, []string{"FAAS_JSON=0"}, time.Minute, "help", "--all")
 		// The command tree (ADR-20261026145832) lists nouns: secrets live
 		// under env and domains under domain. Match whole entries, so a
 		// command's name in another entry's description does not count.

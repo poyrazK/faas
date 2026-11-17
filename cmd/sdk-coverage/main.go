@@ -266,6 +266,11 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases, behind the preview-databases
 	// capability until launch.
 	"PUT /v1/postgres/databases/{id}/previews": true,
+	// ADR-20261116213000 custom Postgres roles, behind the
+	// postgres_custom_roles flag until launch.
+	"GET /v1/postgres/databases/{id}/roles":           true,
+	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
+	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -317,40 +322,51 @@ var routeExclude = map[string]bool{
 	// unregistered routes to every account it is not released to, so it stays
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
-	"POST /v1/agents":                                 true,
-	"POST /v1/agent-callbacks":                        true,
-	"POST /v1/agent-callbacks/{token}":                true,
-	"POST /v1/agent-callbacks/revocations":            true,
-	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
-	"POST /v1/agent-tools/invoke":                     true,
-	"POST /v1/agent-tools/close_thread":               true,
-	"POST /v1/sandboxes":                              true,
-	"GET /v1/sandboxes":                               true,
-	"GET /v1/sandboxes/{id}":                          true,
-	"PATCH /v1/sandboxes/{id}":                        true,
-	"DELETE /v1/sandboxes/{id}":                       true,
-	"GET /v1/sandbox-snapshots":                       true,
-	"GET /v1/sandbox-snapshots/{id}":                  true,
-	"DELETE /v1/sandbox-snapshots/{id}":               true,
-	"GET /v1/sandbox-templates":                       true,
-	"GET /v1/sandbox-templates/{name}":                true,
-	"PUT /v1/sandbox-templates/{name}":                true,
-	"DELETE /v1/sandbox-templates/{name}":             true,
-	"POST /v1/sandboxes/{id}/ports":                   true,
-	"GET /v1/sandboxes/{id}/ports":                    true,
-	"GET /v1/sandboxes/{id}/ports/{port}":             true,
-	"DELETE /v1/sandboxes/{id}/ports/{port}":          true,
-	"GET /v1/agents":                                  true,
-	"GET /v1/agents/{agent}":                          true,
-	"DELETE /v1/agents/{agent}":                       true,
-	"POST /v1/agents/{agent}/versions":                true,
-	"GET /v1/agents/{agent}/versions/{version}":       true,
-	"POST /v1/agents/{agent}/runs":                    true,
-	"GET /v1/agent-runs":                              true,
-	"GET /v1/agent-runs/{id}":                         true,
-	"DELETE /v1/agent-runs/{id}":                      true,
-	"GET /v1/agent-runs/{id}/outputs":                 true,
-	"GET /v1/agent-runs/{id}/outputs/files/{name...}": true,
+	"POST /v1/agents": true,
+	// ADR-20261116163508 customer-granted support access: dark behind the
+	// support_grants platform flag, so it stays out of the public OpenAPI spec
+	// and generated SDKs until launch. Mirror across this list AND
+	// scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"GET /v1/orgs/{slug}/support-access":                        true,
+	"POST /v1/orgs/{slug}/support-access/grants":                true,
+	"POST /v1/orgs/{slug}/support-access/grants/{id}/revoke":    true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/approve": true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/decline": true,
+	"POST /v1/admin/support-access/requests":                    true, // operator-only
+	"GET /v1/admin/support-access/grants":                       true, // operator-only
+	"POST /v1/agent-callbacks":                                  true,
+	"POST /v1/agent-callbacks/{token}":                          true,
+	"POST /v1/agent-callbacks/revocations":                      true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":               true,
+	"POST /v1/agent-tools/invoke":                               true,
+	"POST /v1/agent-tools/close_thread":                         true,
+	"POST /v1/sandboxes":                                        true,
+	"GET /v1/sandboxes":                                         true,
+	"GET /v1/sandboxes/{id}":                                    true,
+	"PATCH /v1/sandboxes/{id}":                                  true,
+	"DELETE /v1/sandboxes/{id}":                                 true,
+	"GET /v1/sandbox-snapshots":                                 true,
+	"GET /v1/sandbox-snapshots/{id}":                            true,
+	"DELETE /v1/sandbox-snapshots/{id}":                         true,
+	"GET /v1/sandbox-templates":                                 true,
+	"GET /v1/sandbox-templates/{name}":                          true,
+	"PUT /v1/sandbox-templates/{name}":                          true,
+	"DELETE /v1/sandbox-templates/{name}":                       true,
+	"POST /v1/sandboxes/{id}/ports":                             true,
+	"GET /v1/sandboxes/{id}/ports":                              true,
+	"GET /v1/sandboxes/{id}/ports/{port}":                       true,
+	"DELETE /v1/sandboxes/{id}/ports/{port}":                    true,
+	"GET /v1/agents":                                            true,
+	"GET /v1/agents/{agent}":                                    true,
+	"DELETE /v1/agents/{agent}":                                 true,
+	"POST /v1/agents/{agent}/versions":                          true,
+	"GET /v1/agents/{agent}/versions/{version}":                 true,
+	"POST /v1/agents/{agent}/runs":                              true,
+	"GET /v1/agent-runs":                                        true,
+	"GET /v1/agent-runs/{id}":                                   true,
+	"DELETE /v1/agent-runs/{id}":                                true,
+	"GET /v1/agent-runs/{id}/outputs":                           true,
+	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
 
 	// Issue #777 / ADR-091: operator observability backend. Same
 	// operator-only posture as /v1/compute-nodes — admin scope
@@ -628,6 +644,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/tool-publications/{id}":                           "GetToolPublication",
 	"POST /v1/task-tool-release-intents/{id}/recovery/retire":  "ParkTaskToolRetirement",
 	"POST /v1/task-tool-release-intents/{id}/recovery/restore": "RestoreTaskToolRecovery",
+	"GET /v1/task-tool-source-intents/{id}":                    "GetHostedTaskSourceIntent",
+	"PUT /v1/task-tool-source-intents/{id}":                    "PrepareHostedTaskSourceIntent",
 	"GET /v1/task-tool-release-intents/{id}":                   "GetTaskToolReleaseIntent",
 	"PUT /v1/task-tool-release-intents/{id}":                   "PrepareTaskToolReleaseIntent",
 	"POST /v1/task-tool-release-intents/{id}/check":            "CheckTaskToolReleaseIntent",

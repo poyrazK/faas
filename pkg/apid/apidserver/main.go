@@ -1625,6 +1625,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithListenersEnabled(strings.TrimSpace(deps.getenv("FAAS_TCP_LISTENERS_ENABLED")) == "1", strings.TrimSpace(deps.getenv("FAAS_UDP_LISTENERS_ENABLED")) == "1").
 		WithReleasePhaseEnabled(releasePhaseEnabledFromEnv(deps.getenv)).
 		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
 		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
@@ -2910,6 +2911,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	if srv.privateTools != nil {
+		srv.privateTools.StartSourceRetentionCleanup(ctx)
+	}
 	privateStop := context.AfterFunc(ctx, srv.stopPrivateTools)
 	defer func() { privateStop(); srv.stopPrivateTools() }()
 	defer srv.startInternalCIWorker(ctx, log)()

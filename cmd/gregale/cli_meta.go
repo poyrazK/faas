@@ -1904,7 +1904,7 @@ var cliCommands = []cliCommand{
 				{Name: "poll-interval", Short: "status polling interval (default 2s)", Value: "DURATION"},
 				{Name: "json", Short: "print the last observed restart receipt"},
 			}}}},
-			{Name: subExec, Common: true, Short: "Run a command against the live deployment", Flags: []cliFlag{
+			{Name: subExec, Common: true, Short: "Run a command in a fresh VM of the live deployment", Flags: []cliFlag{
 				{Name: "interactive", Short: "attach stdin and stream output live (-i; default command /bin/sh)"},
 				{Name: "tty", Short: "allocate a remote terminal (-t; use -it)"},
 				{Name: "shell", Short: "interpret one command string through the app shell"},
@@ -2979,6 +2979,7 @@ var cliCommands = []cliCommand{
 			"gregale deployment latest --app my-api",
 		},
 		Subcommands: []cliSub{
+			{Name: "verify", Short: "Verify an application response from an exact live deployment", Positionals: []string{"<deployment-uuid>"}, Notes: []string{"Available on every plan with deployment-write access. Sends an owner-authorized GET; public access is not verified."}, Examples: []string{"gregale release verify DEPLOYMENT_UUID --app my-api --path /", "gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "path", Value: "PATH", Short: "app-relative GET path (default /)"}, {Name: "project-id", Value: "UUID", Short: "project identity for a named environment (looked up when omitted)"}, {Name: "environment-id", Value: "UUID", Short: "environment identity for a named environment (looked up when omitted)"}}},
 			{Name: "retry-hold", Positionals: []string{"<ID|vN>"}, Short: "Schedule an MCP promotion hold retry with all activation checks", Examples: []string{"gregale deployment retry-hold v42 --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "runtime", Positionals: []string{"<ID|vN>"}, Short: "Inspect runtime identity or preview a published runtime change", Examples: []string{"gregale release runtime v42 --app my-function", "gregale release runtime v42 --app my-function --target RELEASE_ID --json"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug for a vN revision"}, {Name: "target", Value: "RELEASE_ID", Short: "published runtime release to preview without applying"}}},
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
@@ -6214,6 +6215,25 @@ var cliCommands = []cliCommand{
 					"copy: each PR preview environment gets a copy of the database as of its setup, kept across pushes. Code under review can read it; it needs the database's restore window.",
 					"off: previews get no database; existing preview databases go with their pull requests."},
 				Examples: []string{"gregale postgres previews set orders empty", "gregale postgres previews set orders copy"}},
+			{Name: "roles", Short: "Manage custom roles your logins can SET ROLE to (preview)", Subcommands: []cliSub{
+				{Name: "list", Short: "List a database's custom roles", Positionals: []string{"<database>"}},
+				{Name: "create", Short: "Create or replace a NOLOGIN custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
+					{Name: "bypass-rls", Short: "the role bypasses row-level security (refused with Data API or Auth)"},
+					{Name: "grant-to", Short: "access modes whose logins may SET ROLE to it (default migration,read_write)", Value: "MODES"},
+					{Name: "member-of", Short: "custom roles of the database it is a member of", Value: "ROLES"},
+				}, Notes: []string{"Gregale creates the role; no login gets admin rights. Logins switch to it with SET ROLE, which is how tools such as Windmill use their roles.",
+					"Names are lowercase letters, digits and underscores; names starting with gregale, pg_, neon and other provider prefixes are reserved. A database holds at most 16 custom roles; Hobby and above."},
+					Examples: []string{"gregale postgres roles create windmill-db windmill_user", "gregale postgres roles create windmill-db windmill_admin --bypass-rls --member-of windmill_user"}},
+				{Name: "grant", Short: "Let more logins SET ROLE to a custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
+					{Name: "to", Short: "access modes: migration, read_write, read_only", Req: true, Value: "MODES"},
+				}, Examples: []string{"gregale postgres roles grant windmill-db windmill_user --to read_only"}},
+				{Name: "revoke", Short: "Stop logins of access modes from using a custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
+					{Name: "from", Short: "access modes: migration, read_write, read_only", Req: true, Value: "MODES"},
+				}},
+				{Name: "delete", Short: "Drop a custom role; what it owns goes to the schema owner", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
+					{Name: "yes", Short: "skip the typed confirmation"},
+				}},
+			}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},

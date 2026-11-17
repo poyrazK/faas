@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "7b5c2f9a7eabdbaa25855d558e27680738d1205dae85a640bfbe6998dd5631b5",
+      "revision": "2f39068d4f86ce760ffdd2568f92ae33b759d48b8057c1ac5221af1b98df2784",
       "files": [
         "faas.rules.yml"
       ],
@@ -1185,11 +1185,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasLvFcUsageHighWarn",
           "definition": {
-            "expression_hash": "ed739e0bb5bf54dbbd7315ca15167202eb05ff59e594aa6aeb8cb681f50456f4",
+            "expression_hash": "9435028d8ebfaa94640bec6d92b3cb9cd868e94b55dc7710f720af239fac8776",
             "labels_hash": "c9f2e3ac8226dd1f591c551a024754c67432ab7770536acf047ef03c6c52c835",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "31f21d8ca2755f9142894319a26960dd63e206d59ed972cd6a5e6f31c864d89b"
+            "fingerprint": "2ea07138958369cd3c24ae9f66889f233b9fa730bbb5939ad9aae390eda7aa22"
           }
         },
         {
@@ -6255,11 +6255,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasHighResidentRamPct",
           "definition": {
-            "expression_hash": "6513762bb00428fa179757f96b6c81585ba9bce2fce15a1c50283f529963120f",
+            "expression_hash": "645046332c8974ec8b8cd2224b105b23fe8b5d63d185213634e71afd39bb8b92",
             "labels_hash": "dfbea17786bf87eaa506ac5856b7bdebfb569e6bc1f2b6c6fc3fc2b06789177f",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "9018c0290ac56e683180f2dc698ddaca4203ff125b5d7ae35c1eb1f6d91a7b64"
+            "fingerprint": "1c396646d0d88b99338521906ae8dd8d2e7a1f4329616195746b514235ab3199"
           }
         },
         {
@@ -6333,11 +6333,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasHighResidentRamPctWarn",
           "definition": {
-            "expression_hash": "362cfb743e7934ee00ae70a1a60f65020039742a73378539c1e28d2fe84cf635",
+            "expression_hash": "16d9507ec1de509ee2897bb776c508679fd39254eac0895813c77c3bb2cbf39a",
             "labels_hash": "04cb5b3e698fdef281acbdb2a2c68ce5a37d274f29ed91d51c9d4c819426f173",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f6e102df9976d67252898c613a9523e9642b157234e1024c41470b631e7cf866"
+            "fingerprint": "e8e49ae684d4dc913d29777d3e4bb6cd48b17722a5b409bbbe785012d15ca809"
           }
         },
         {
@@ -7410,7 +7410,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "652f3bb1302950df58687e66a1593e65e99791523b49da7d47a32977360ac60a",
+      "revision": "aba7bf8ca2be1c6a32962b0dcb40f25f7bc25db37f68429a3ea48a1034583cbe",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8673,11 +8673,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasLvFcUsageHighWarn",
           "definition": {
-            "expression_hash": "ed739e0bb5bf54dbbd7315ca15167202eb05ff59e594aa6aeb8cb681f50456f4",
+            "expression_hash": "9435028d8ebfaa94640bec6d92b3cb9cd868e94b55dc7710f720af239fac8776",
             "labels_hash": "c9f2e3ac8226dd1f591c551a024754c67432ab7770536acf047ef03c6c52c835",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "31f21d8ca2755f9142894319a26960dd63e206d59ed972cd6a5e6f31c864d89b"
+            "fingerprint": "2ea07138958369cd3c24ae9f66889f233b9fa730bbb5939ad9aae390eda7aa22"
           }
         },
         {
@@ -13938,11 +13938,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasHighResidentRamPct",
           "definition": {
-            "expression_hash": "6513762bb00428fa179757f96b6c81585ba9bce2fce15a1c50283f529963120f",
+            "expression_hash": "645046332c8974ec8b8cd2224b105b23fe8b5d63d185213634e71afd39bb8b92",
             "labels_hash": "dfbea17786bf87eaa506ac5856b7bdebfb569e6bc1f2b6c6fc3fc2b06789177f",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "9018c0290ac56e683180f2dc698ddaca4203ff125b5d7ae35c1eb1f6d91a7b64"
+            "fingerprint": "1c396646d0d88b99338521906ae8dd8d2e7a1f4329616195746b514235ab3199"
           }
         },
         {
@@ -14016,11 +14016,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasHighResidentRamPctWarn",
           "definition": {
-            "expression_hash": "362cfb743e7934ee00ae70a1a60f65020039742a73378539c1e28d2fe84cf635",
+            "expression_hash": "16d9507ec1de509ee2897bb776c508679fd39254eac0895813c77c3bb2cbf39a",
             "labels_hash": "04cb5b3e698fdef281acbdb2a2c68ce5a37d274f29ed91d51c9d4c819426f173",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f6e102df9976d67252898c613a9523e9642b157234e1024c41470b631e7cf866"
+            "fingerprint": "e8e49ae684d4dc913d29777d3e4bb6cd48b17722a5b409bbbe785012d15ca809"
           }
         },
         {

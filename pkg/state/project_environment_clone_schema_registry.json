@@ -7678,7 +7678,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": ["capture", "materialize"],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app",
       "live": [
@@ -10631,6 +10634,30 @@
           "source_scope": true
         }
       ]
+    }
+  },
+  {
+    "table": "managed_postgres_custom_roles",
+    "columns": [
+      "account_id",
+      "attempt_count",
+      "bypass_rls",
+      "created_at",
+      "database_id",
+      "granted_to",
+      "last_error",
+      "member_of",
+      "name",
+      "retry_at",
+      "revision",
+      "state",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
     }
   },
   {
@@ -14133,6 +14160,37 @@
       "org_id",
       "updated_at",
       "updated_by"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "support_grant_requests",
+    "columns": [
+      "created_at",
+      "decided_at",
+      "decided_by_account_id",
+      "expires_at",
+      "id",
+      "operator_account_id",
+      "org_id",
+      "reason",
+      "status"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "support_grants",
+    "columns": [
+      "app_ids",
+      "created_at",
+      "created_by_account_id",
+      "expires_at",
+      "id",
+      "org_id",
+      "reason",
+      "request_id",
+      "revoked_at",
+      "revoked_by_account_id"
     ],
     "kind": "account_identity"
   },
@@ -21940,6 +21998,17 @@
       "id",
       "payload",
       "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_source_intents",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "expires_at",
+      "id",
+      "payload"
     ],
     "kind": "operational"
   },

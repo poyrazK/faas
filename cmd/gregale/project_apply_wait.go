@@ -53,6 +53,9 @@ func waitForProjectApplyTimeouts(ctx context.Context, c *Client, apply api.Apply
 	waitCtx, cancelWait := context.WithTimeout(ctx, deadline)
 	defer cancelWait()
 	result := make([]projectApplyWaitResult, len(apply.Builds))
+	stopHeartbeat := make(chan struct{})
+	defer close(stopHeartbeat)
+	go projectWaitProgressFrom(ctx).runHeartbeat(stopHeartbeat)
 	var wg sync.WaitGroup
 	for i, build := range apply.Builds {
 		if build.Error != "" || build.DeploymentID == "" {

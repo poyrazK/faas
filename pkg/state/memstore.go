@@ -157,6 +157,7 @@ type jobRegistryCredentialKey struct {
 type MemStore struct {
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
+	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -1171,6 +1172,8 @@ type MemStore struct {
 	oauthLinks map[string]OAuthLink
 	// accountFlow holds email changes and display names (account_flow.go).
 	accountFlow memAccountFlow
+	// supportGrants holds customer-granted support access (support_grants.go).
+	supportGrants memSupportGrants
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -25308,6 +25311,11 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, record := range m.toolPublications {
 		if record.AccountID == id {
 			delete(m.toolPublications, key)
+		}
+	}
+	for key, row := range m.hostedTaskSourceIntents {
+		if row.Record.AccountID == id {
+			delete(m.hostedTaskSourceIntents, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

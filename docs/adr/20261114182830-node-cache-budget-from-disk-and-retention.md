@@ -118,3 +118,26 @@ form one eviction unit, aged by the newest of them, evicted whole and only
 whole; a pinned or protected member keeps the whole capture. The app and
 sidecar layers of deployments with a non-stale snapshot (keyed as fan-out
 claims them) join the live captures in the last tier and are never swept.
+
+## Amendment 1 — The lv-fc warn sits above the cache's floor (2026-11-16)
+
+**Problem.** Spec §12 warns when `lv_fc_used_pct` passes 80%. With decision 1
+a node's artifact cache fills `/srv/fc` to the disk less the 15% reserve and
+evicts to defend it, so a healthy node with a full cache reads about 85% and
+`FaasLvFcUsageHighWarn` fires on it permanently. On 2026-11-16 both
+production nodes read 80–82%, still filling toward that point (fsn-3 rose
+from 55% in a week), with eviction working.
+
+**Decision.** `FaasLvFcUsageHighWarn` fires above 87% (for 10 minutes): past
+the floor, where eviction is not keeping up or something outside the cache
+fills the disk. The page stays at 90%, which is also where imaged's
+budget-pressure GC starts (`api.SnapshotBudgetAlarmPct`). Spec §12's 80% warn
+reads 87% for a disk the artifact cache shares. The constant is tied to
+`api.ArtifactCacheReservePercent`; a change to the reserve moves it.
+
+**Operator step done.** `FAAS_STORAGE_CACHE_MAX_BYTES` was removed from
+`/etc/faas/storage.env` on both production compute nodes on 2026-11-16
+(backup `storage.env.bak-20261116-cachecap`); it takes effect as each daemon
+restarts. Before that, with 21 GB free, vmmd evicted 114 snapshot replicas from
+compute-2's cache in 24 hours.
+
