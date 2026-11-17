@@ -266,6 +266,7 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		SandboxId: claim.ID, AccountId: claim.AccountID, Plan: claim.Plan, RamMb: int32(claim.RAMMB), Vcpu: int32(vcpu),
 		CpuMillicores: int32(vcpu * 1000), NetworkMode: claim.Network, WorkspaceKey: claim.WorkspaceKey,
 		ImageKey: claim.ImageKey, StartCmd: claim.StartCmd, ReadyCmd: claim.ReadyCmd, ReadyTimeoutMs: claim.ReadyTimeout.Milliseconds(),
+		Browser: claim.Browser,
 	}}}); err != nil {
 		s.requeue(ctx, claim, err)
 		return

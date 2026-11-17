@@ -47,6 +47,9 @@ type SandboxAdmission struct {
 	StartCmd     string
 	ReadyCmd     string
 	ReadyTimeout time.Duration
+	// Browser boots a preset session with the sandbox browser running
+	// (ADR-20261116182615 §1).
+	Browser bool
 }
 
 // network is the mode the session boots with.
@@ -75,6 +78,9 @@ type SandboxSpec struct {
 	StartCmd        string
 	ReadyCmd        string
 	ReadyTimeout    time.Duration
+	// Browser has vmmd start the sandbox browser as the session's commands,
+	// and makes the warm snapshot the browser shape's (ADR-20261116182615).
+	Browser bool
 	// Snapshot restores the session from a warm snapshot of the same drives,
 	// machine and network mode (ADR-20261027090013 §12).
 	Snapshot *AgentRunSnapshot
@@ -201,7 +207,8 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	spec := SandboxSpec{Instance: placement.Instance, SandboxID: a.SandboxID, AccountID: a.AccountID, Plan: a.Plan,
 		BaseKey: r.cfg.BaseKey, LayerKey: r.cfg.SandboxLayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB,
 		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network(),
-		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout}
+		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout,
+		Browser: a.Browser}
 	shape := r.sandboxShape(placement.NodeID, spec)
 	spec.Snapshot = r.sandboxSnapshotFor(shape, spec)
 	var method string
@@ -240,6 +247,8 @@ func (a SandboxAdmission) validate() error {
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox vCPU %d is outside the %s plan", a.VCPU, a.Plan)}
 	case a.network() != api.SandboxNetworkNone && a.network() != api.SandboxNetworkRegistries && a.network() != api.SandboxNetworkWeb:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox network mode %q is not supported", a.Network)}
+	case a.Browser && (a.ImageKey != "" || a.StartCmd != "" || a.ReadyCmd != ""):
+		return &AgentRunInvalidError{Reason: "the sandbox browser goes with a preset session, without commands of its own"}
 	}
 	return nil
 }
@@ -275,7 +284,7 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB),
 		CpuMillicores: int32(spec.CPUMillicores), QuietPauseAfterMs: spec.QuietPauseAfter.Milliseconds(), NetworkMode: spec.Network,
 		WorkspaceKey: spec.WorkspaceKey, ImageKey: spec.ImageKey, StartCmd: spec.StartCmd, ReadyCmd: spec.ReadyCmd,
-		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot),
+		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot), Browser: spec.Browser,
 	}}}); err != nil {
 		return liftErr(err)
 	}

@@ -58,6 +58,9 @@ type Handler struct {
 	EnsureImage func(ctx context.Context, acct state.Account, src api.SandboxImageSource) (jobID, ref string, prob *api.Problem)
 	// TemplateApps creates and deletes sandbox templates' build apps.
 	TemplateApps TemplateApps
+	// Browser is FAAS_SANDBOX_BROWSER: it admits browser: true
+	// (ADR-20261116182615 §1). Off, browser is sandbox_unsupported.
+	Browser bool
 	// WebNetwork is FAAS_SANDBOX_WEB_NETWORK: it admits network.mode web
 	// (ADR-20261112121456 §6). Off, web is sandbox_unsupported.
 	WebNetwork bool
@@ -267,7 +270,7 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
 		Network: api.SandboxNetwork{Mode: sb.NetworkMode}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
-		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID}
+		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser}
 	if name, ok := strings.CutPrefix(sb.ImageRef, api.SandboxTemplateRefPrefix); ok {
 		out.Template = name
 	} else {
