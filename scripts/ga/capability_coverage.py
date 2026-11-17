@@ -47,7 +47,7 @@ RULES = [
     (r"image-run|interactive-run", "Image runs"),
     (r"wake-page", "Browser wake page"),
     (r"session-affinity", "Session affinity"),
-    (r"^/v1/apps/protection$|protection[-_]baseline|app[-_]protection", "Production protection by default"),
+    (r"^/v1/apps/protection$|protection[-_]baseline|app[-_]protection|^production-protection$", "Production protection by default"),
     (r"synthetic", "Synthetic checks"),
     (r"app-cost|cost-trend|costs-overview", "Per-app costs"),
     (r"async-route|execution-mode", "Async routes at the edge"),

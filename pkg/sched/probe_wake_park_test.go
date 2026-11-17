@@ -31,7 +31,10 @@ func TestReapIdleParksProbeOnlyInstances(t *testing.T) {
 		probe("probe-only", nil),
 		probe("customer-after", func(in *InstanceInfo) { in.LastRequest = done.Add(5 * time.Second) }),
 		probe("in-flight", func(in *InstanceInfo) { in.InflightRequests = 1 }),
-		probe("in-grace", func(in *InstanceInfo) { in.ProbeWakeDoneAt = now.Add(-time.Second); in.LastRequest = now.Add(-2 * time.Second) }),
+		probe("in-grace", func(in *InstanceInfo) {
+			in.ProbeWakeDoneAt = now.Add(-time.Second)
+			in.LastRequest = now.Add(-2 * time.Second)
+		}),
 		probe("floor", func(in *InstanceInfo) { in.MinInstances = 1 }),
 		probe("no-probe", func(in *InstanceInfo) { in.ProbeWakeDoneAt = time.Time{}; in.OpenConns = 0 }),
 	}
