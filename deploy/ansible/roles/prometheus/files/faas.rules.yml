@@ -3332,28 +3332,34 @@ groups:
       # family=resident_ram so the alertmanager inhibit rule can suppress
       # the warn-tier email when the page-tier fires (alertnames differ).
       # ─────────────────────────────────────────────────────────────────
+      #
+      # Both tiers read fcvm_admission_ram_pct, the memory admission counts:
+      # measured memory under measured admission (ADR-909 amendment 4), where
+      # bookings (fcvm_resident_ram_pct) may reach 250% of the ceiling by
+      # design. On fcvm_resident_ram_pct the page fired on a node at 136%
+      # booked and 34% measured (prod, 2026-11-16).
       - alert: FaasHighResidentRamPct
-        expr: max(fcvm_resident_ram_pct) > 92
+        expr: max(fcvm_admission_ram_pct) > 92
         for: 5m
         labels:
           severity: page
           component: vmmd
           family: resident_ram
         annotations:
-          summary: "Resident RAM > 92% of tenant budget"
-          description: "Σ(ram_mb + 8) over live instances has exceeded 92% of the 47,600 MB ceiling for 5m. New wakes will start failing admission."
+          summary: "Admitted RAM > 92% of a node's admission ceiling"
+          description: "The memory admission counts on a node (measured memory under measured admission, Σ(ram_mb + 8) under reservation admission) has been above 92% of the node's ceiling for 5m. At the ceiling new wakes on that node fail admission, and under measured admission schedd evicts."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
 
       - alert: FaasHighResidentRamPctWarn
-        expr: max(fcvm_resident_ram_pct) > 80 and max(fcvm_resident_ram_pct) <= 92
+        expr: max(fcvm_admission_ram_pct) > 80 and max(fcvm_admission_ram_pct) <= 92
         for: 10m
         labels:
           severity: warn
           component: vmmd
           family: resident_ram
         annotations:
-          summary: "Resident RAM > 80% of tenant budget"
-          description: "Resident RAM has remained between 80% and 92% of the host budget for 10m. Start or provision another SSD compute node through the reviewed node-join path before this host reaches the admission ceiling."
+          summary: "Admitted RAM > 80% of a node's admission ceiling"
+          description: "The memory admission counts on a node has remained between 80% and 92% of its ceiling for 10m. Start or provision another SSD compute node through the reviewed node-join path before this node reaches the admission ceiling."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
 
       - alert: FaasJobInstanceCleanupFailed

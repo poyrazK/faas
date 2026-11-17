@@ -666,6 +666,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS` | apid | `default` |  |  | `` | ADR-1027 major-upgrade preview: comma-separated account UUIDs that see in-place PostgreSQL major upgrades, or * for every account; unset hides the upgrade API routes from every account |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_MCP_BRIDGE_LOOPBACK` | gatewayd-public | `dropin` |  |  | `` | ADR-20261026195952; absolute URL of the hosted management MCP bridge on the control-plane host. Unset leaves /mcp on the api. host to the compute data plane |
+| `FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION` | apid | `default` |  |  | `` | ADR-20261116183545; opt-in encrypted authored Task source retention; only 1 enables writes, using independent Account-domain sealing; no approval or execution authority |
 | `FAAS_MCP_PRIVATE_TOOL_INVOCATION` | apid | `default` |  |  | `` | ADR-20261113200000; operator opt-in for private delegated tool execution. Unset or any value other than 1 disables execution. Enable on apid only after the tool migrations and a separate Account seal-domain identity are staged; bridge flags and independent connection consent remain required |
 | `FAAS_MCP_PRIVATE_TOOL_PUBLICATION` | apid | `default` |  |  | `` | ADR-20261114173309; operator opt-in for API-held private candidate verification. Unset or any value other than 1 disables it. Enable only with matching API, CLI and bridge versions; separate owner approval remains required and approved behavioral fixtures may have external effects |
 | `FAAS_MEASURED_CPU_ADMISSION` | schedd | `default` |  |  | `` | optional boolean switch for ADR 20261029151111 measured CPU admission; default on since its 2026-10-31 amendment; overrides measured_cpu_admission in schedd.toml either way, so an environment drop-in turns it off on a node across manifest renders |
@@ -1101,6 +1102,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TCPD_VMMD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_VMMD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_VMMD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCP_LISTENERS_ENABLED` | apid | `dropin` |  |  | `` | 1 when the edge runs tcpd (faas_tcpd_enabled); apid lists TCP listeners as available only then. Written by control_plane_service's zz-faas-listeners.conf |
 | `FAAS_TENANT_EGRESS_IFACE` | vmmd | `dropin` |  |  | `` | ADR-372 vmmd egress drop-in; set only when the manifest declares egress.tenant_gateway, same value the Ansible nftables policy renders |
 | `FAAS_TENANT_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_TENANT_SURFACES_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
@@ -1140,6 +1142,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_UDPD_VMMD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
 | `FAAS_UDPD_VMMD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
 | `FAAS_UDPD_VMMD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDP_LISTENERS_ENABLED` | apid | `dropin` |  |  | `` | 1 when the edge runs udpd (faas_udpd_enabled); apid lists UDP listeners as available only then. Written by control_plane_service's zz-faas-listeners.conf |
 | `FAAS_UPSTREAM_AFFINITY` | schedd | `default` |  |  | `` | off by design until the §9.A rollout gate (spec) |
 | `FAAS_UPSTREAM_AFFINITY_TTL` | schedd | `default` |  |  | `` |  |
 | `FAAS_UPSTREAM_PROBE` | meterd, schedd | `default` |  |  | `` | off by design until the §9.A rollout gate (spec) |

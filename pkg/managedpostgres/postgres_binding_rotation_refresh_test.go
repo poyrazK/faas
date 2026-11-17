@@ -102,6 +102,21 @@ func (f *postgresRotationFixture) refreshCount(t *testing.T) int {
 	return n
 }
 
+// assertReplayWaitsForOwner checks the restart row is closed to outbox replay
+// for the wake delay. A row open at once was claimed by a peer schedd's replay
+// worker before the app's owner claimed the live notification (production
+// 2026-11-16), and the owner never got it.
+func (f *postgresRotationFixture) assertReplayWaitsForOwner(t *testing.T) {
+	t.Helper()
+	var closed bool
+	if err := f.store.pool.QueryRow(t.Context(), `SELECT available_at > clock_timestamp() + interval '3 seconds' FROM notification_outbox WHERE channel='runtime_config_restart' AND payload::jsonb->>'app_id'=$1`, f.binding.AppID).Scan(&closed); err != nil {
+		t.Fatal(err)
+	}
+	if !closed {
+		t.Fatal("rotation restart row is open to peer replay before the owner's live claim")
+	}
+}
+
 func TestPostgresBindingRotationRefreshRecoversProviderFailure(t *testing.T) {
 	for _, live := range []bool{true, false} {
 		t.Run(map[bool]string{true: "serving", false: "no live deployment"}[live], func(t *testing.T) {
@@ -206,6 +221,7 @@ func TestPostgresBindingRotationRefreshRepairsLegacyReadyAndTerminalDelivery(t *
 	if f.refreshCount(t) != 1 || f.provider.issueCalls != 1 || f.provider.revokeCalls != 0 {
 		t.Fatal("legacy recovery issued new credentials or lost its event")
 	}
+	f.assertReplayWaitsForOwner(t)
 	for _, terminal := range []string{"dead_letter", "delivered"} {
 		if _, err := f.store.pool.Exec(ctx, `UPDATE notification_outbox SET state=$2,attempts=12 WHERE channel='runtime_config_restart' AND payload::jsonb->>'app_id'=$1`, claim.AppID, terminal); err != nil {
 			t.Fatal(err)
@@ -219,6 +235,7 @@ func TestPostgresBindingRotationRefreshRepairsLegacyReadyAndTerminalDelivery(t *
 		if status != "pending" || attempts != 0 || f.refreshCount(t) != 1 {
 			t.Fatalf("terminal handoff not replayed once: %s %d", status, attempts)
 		}
+		f.assertReplayWaitsForOwner(t)
 	}
 	// Multiple apid replicas and client retries share one durable wake.
 	var wg sync.WaitGroup

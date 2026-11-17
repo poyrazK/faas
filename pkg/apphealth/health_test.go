@@ -24,6 +24,42 @@ func healthEvidence() Evidence {
 	}
 }
 
+// Prod findings 2026-11-15 #43: every fresh boot of a crash-looping release
+// failed while the old replica kept serving, and app health said "healthy".
+func TestAppHealth_ReportsRecentBootFailures(t *testing.T) {
+	check := func(e Evidence) (string, bool) {
+		for _, c := range Evaluate(e).Checks {
+			if c.Code == "readiness" && strings.Contains(c.Detail, "failed in the last") {
+				return c.Status, true
+			}
+		}
+		return "", false
+	}
+	e := healthEvidence()
+	if _, found := check(e); found {
+		t.Fatal("boot failures reported without failed instances")
+	}
+	failed := func(id, deployment string, ago time.Duration) state.Instance {
+		return state.Instance{ID: id, DeploymentID: deployment, State: string(state.StateFailed), StartedAt: e.Now.Add(-ago)}
+	}
+	e.RecentInstances = []state.Instance{
+		failed("old", "serving", BootFailureWindow+time.Minute),
+		failed("other-release", "retired", time.Minute),
+		{ID: "stopped", DeploymentID: "serving", State: string(state.StateStopped), StartedAt: e.Now.Add(-time.Minute)},
+	}
+	if _, found := check(e); found {
+		t.Fatal("boot failures counted an old failure, a retired release or a stopped instance")
+	}
+	e.RecentInstances = append(e.RecentInstances, failed("crash-1", "serving", 2*time.Minute), failed("crash-2", "serving", time.Minute))
+	status, found := check(e)
+	if !found || (status != Warning && status != Fail) {
+		t.Fatalf("readiness with boot failures = %q (found %t), want warning or fail", status, found)
+	}
+	if got := Evaluate(e).Status; got == Healthy {
+		t.Fatalf("status = %q while new boots fail", got)
+	}
+}
+
 func TestAppHealth_EvidenceMatrix(t *testing.T) {
 	tests := []struct {
 		name          string

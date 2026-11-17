@@ -12,7 +12,10 @@ package main
 //	                             generation changes and the serving bases
 //	                             are intact; 3: the candidate changes a
 //	                             generation and the serving bases are still
-//	                             intact (drain before pre-staging); 4: the
+//	                             intact (the candidate pre-stages the new
+//	                             generation beside the serving one and vmmd
+//	                             restarts without a drain,
+//	                             ADR-20261116190000); 4: the
 //	                             cache already holds another generation of a
 //	                             base the serving vmmd boots, which refuses
 //	                             every guest on it (never return the node to
@@ -37,6 +40,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 const (
@@ -200,14 +204,37 @@ func runBaseGenerationCheck(pid int, environPath, candidateEnvFile string, timeo
 	if err != nil {
 		return baseGenerationReport{}, fmt.Errorf("open the serving storage backend: %w", err)
 	}
-	return judgeBaseGenerations(serving, candidate, func(key string) (string, bool, bool, error) {
+	return judgeBaseGenerations(serving, candidate, servingCachedGeneration(be, serving))
+}
+
+// servingCachedGeneration reads the cache marker of the file the serving
+// vmmd boots for a base. A vmmd with ADR-20261116190000 boots its
+// generation's own file; one before it boots the file under the logical name.
+// The generation's file, when committed, can only name the serving
+// generation, so it answers first. Otherwise the logical file answers: a
+// vmmd with side-by-side files removes the markers of its logical files at
+// startup (imaged.UnpinOtherBaseGenerations), so a marker left there is one
+// an older serving vmmd still reads.
+func servingCachedGeneration(be storage.StorageBackend, serving map[string]string) cachedGeneration {
+	return func(key string) (string, bool, bool, error) {
 		cache, cacheKey, err := storage.CacheBackendForKey(be, key)
 		if err != nil || cache == nil {
 			return "", false, false, err
 		}
+		if generation := serving[key]; generation != "" {
+			genCache, genKey, err := storage.CacheBackendForKey(be, storagekey.BaseGeneration(key, generation))
+			if err != nil {
+				return "", false, true, err
+			}
+			if genCache != nil {
+				if cached, ok, err := genCache.CachedGeneration(genKey); err != nil || (ok && cached == generation) {
+					return cached, ok, true, err
+				}
+			}
+		}
 		generation, ok, err := cache.CachedGeneration(cacheKey)
 		return generation, ok, true, err
-	})
+	}
 }
 
 // readServingEnviron reads a vmmd process's environment: environPath when

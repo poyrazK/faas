@@ -2357,6 +2357,15 @@ func CapabilitiesWithInstallationGates(crashSnapshots, forks, profiling bool) *h
 	return recorder
 }
 
+// CapabilitiesWithRuntimeGates runs GET /v1/capabilities for a Pro account
+// with the app-task API and the TCP/UDP listener gates set; no managed
+// PostgreSQL bindings are configured.
+func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAppTaskAPIEnabled(appTasks).WithListenersEnabled(tcp, udp).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
 func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})

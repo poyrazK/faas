@@ -745,6 +745,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "", Note: "ADR-1027 major-upgrade preview: comma-separated account UUIDs that see in-place PostgreSQL major upgrades, or * for every account; unset hides the upgrade API routes from every account"},
 	{Name: "FAAS_MANIFEST_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_MCP_BRIDGE_LOOPBACK", Owners: []string{"gatewayd-public"}, Source: EnvSourceDropin, Note: "ADR-20261026195952; absolute URL of the hosted management MCP bridge on the control-plane host. Unset leaves /mcp on the api. host to the compute data plane"},
+	{Name: "FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261116183545; opt-in encrypted authored Task source retention; only 1 enables writes, using independent Account-domain sealing; no approval or execution authority"},
 	{Name: "FAAS_MCP_PRIVATE_TOOL_INVOCATION", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261113200000; operator opt-in for private delegated tool execution. Unset or any value other than 1 disables execution. Enable on apid only after the tool migrations and a separate Account seal-domain identity are staged; bridge flags and independent connection consent remain required"},
 	{Name: "FAAS_MCP_PRIVATE_TOOL_PUBLICATION", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261114173309; operator opt-in for API-held private candidate verification. Unset or any value other than 1 disables it. Enable only with matching API, CLI and bridge versions; separate owner approval remains required and approved behavioral fixtures may have external effects"},
 	{Name: "FAAS_MEASURED_CPU_ADMISSION", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch for ADR 20261029151111 measured CPU admission; default on since its 2026-10-31 amendment; overrides measured_cpu_admission in schedd.toml either way, so an environment drop-in turns it off on a node across manifest renders"},
@@ -1182,6 +1183,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TCPD_VMMD_TLS_CA_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_VMMD_TLS_CERT_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_VMMD_TLS_KEY_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
+	{Name: "FAAS_TCP_LISTENERS_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDropin, Note: "1 when the edge runs tcpd (faas_tcpd_enabled); apid lists TCP listeners as available only then. Written by control_plane_service's zz-faas-listeners.conf"},
 	{Name: "FAAS_TENANT_EGRESS_IFACE", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "ADR-372 vmmd egress drop-in; set only when the manifest declares egress.tenant_gateway, same value the Ansible nftables policy renders"},
 	{Name: "FAAS_TENANT_ID", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_TENANT_SURFACES_ENABLED", Owners: []string{"apid", "shared"}, Source: EnvSourceRuntimeConfig},
@@ -1221,6 +1223,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_UDPD_VMMD_TLS_CA_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in UDP ingress; delivered by udpd.env"},
 	{Name: "FAAS_UDPD_VMMD_TLS_CERT_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in UDP ingress; delivered by udpd.env"},
 	{Name: "FAAS_UDPD_VMMD_TLS_KEY_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in UDP ingress; delivered by udpd.env"},
+	{Name: "FAAS_UDP_LISTENERS_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDropin, Note: "1 when the edge runs udpd (faas_udpd_enabled); apid lists UDP listeners as available only then. Written by control_plane_service's zz-faas-listeners.conf"},
 	{Name: "FAAS_UPSTREAM_AFFINITY", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "off by design until the §9.A rollout gate (spec)"},
 	{Name: "FAAS_UPSTREAM_AFFINITY_TTL", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	// schedd joined the owners in ADR-201 §3: the egress circuit breaker
