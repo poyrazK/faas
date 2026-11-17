@@ -188,6 +188,27 @@ func (q *Queries) FinishToolPublication(ctx context.Context, db DBTX, arg Finish
 	return err
 }
 
+const getHostedTaskSourceIntent = `-- name: GetHostedTaskSourceIntent :one
+SELECT payload,ciphertext FROM hosted_task_source_intents WHERE account_id=$1 AND id=$2
+`
+
+type GetHostedTaskSourceIntentParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type GetHostedTaskSourceIntentRow struct {
+	Payload    []byte
+	Ciphertext []byte
+}
+
+func (q *Queries) GetHostedTaskSourceIntent(ctx context.Context, db DBTX, arg GetHostedTaskSourceIntentParams) (GetHostedTaskSourceIntentRow, error) {
+	row := db.QueryRow(ctx, getHostedTaskSourceIntent, arg.AccountID, arg.ID)
+	var i GetHostedTaskSourceIntentRow
+	err := row.Scan(&i.Payload, &i.Ciphertext)
+	return i, err
+}
+
 const getTaskToolReleaseIntent = `-- name: GetTaskToolReleaseIntent :one
 SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2
 `
@@ -301,6 +322,47 @@ func (q *Queries) GetToolPublication(ctx context.Context, db DBTX, arg GetToolPu
 	var payload []byte
 	err := row.Scan(&payload)
 	return payload, err
+}
+
+const hostedTaskSourceCounts = `-- name: HostedTaskSourceCounts :one
+SELECT count(*) AS records,count(*) FILTER(WHERE ciphertext IS NOT NULL) AS active,coalesce(sum(octet_length(ciphertext)),0)::bigint AS cipher_bytes
+FROM hosted_task_source_intents WHERE account_id=$1
+`
+
+type HostedTaskSourceCountsRow struct {
+	Records     int64
+	Active      int64
+	CipherBytes int64
+}
+
+func (q *Queries) HostedTaskSourceCounts(ctx context.Context, db DBTX, accountID pgtype.UUID) (HostedTaskSourceCountsRow, error) {
+	row := db.QueryRow(ctx, hostedTaskSourceCounts, accountID)
+	var i HostedTaskSourceCountsRow
+	err := row.Scan(&i.Records, &i.Active, &i.CipherBytes)
+	return i, err
+}
+
+const insertHostedTaskSourceIntent = `-- name: InsertHostedTaskSourceIntent :exec
+INSERT INTO hosted_task_source_intents(account_id,id,payload,ciphertext,expires_at) VALUES($1,$2,$3,$4,$5)
+`
+
+type InsertHostedTaskSourceIntentParams struct {
+	AccountID  pgtype.UUID
+	ID         string
+	Payload    []byte
+	Ciphertext []byte
+	ExpiresAt  pgtype.Timestamptz
+}
+
+func (q *Queries) InsertHostedTaskSourceIntent(ctx context.Context, db DBTX, arg InsertHostedTaskSourceIntentParams) error {
+	_, err := db.Exec(ctx, insertHostedTaskSourceIntent,
+		arg.AccountID,
+		arg.ID,
+		arg.Payload,
+		arg.Ciphertext,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const insertTaskToolReleaseIntent = `-- name: InsertTaskToolReleaseIntent :execrows
@@ -873,6 +935,19 @@ func (q *Queries) LockToolPublicationCandidate(ctx context.Context, db DBTX, arg
 	return id, err
 }
 
+const purgeExpiredHostedTaskSources = `-- name: PurgeExpiredHostedTaskSources :execrows
+WITH expired AS(SELECT account_id,id FROM hosted_task_source_intents WHERE expires_at<=now() AND ciphertext IS NOT NULL ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED)
+UPDATE hosted_task_source_intents t SET ciphertext=NULL FROM expired e WHERE t.account_id=e.account_id AND t.id=e.id
+`
+
+func (q *Queries) PurgeExpiredHostedTaskSources(ctx context.Context, db DBTX, limit int32) (int64, error) {
+	result, err := db.Exec(ctx, purgeExpiredHostedTaskSources, limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const readTaskRetirementApp = `-- name: ReadTaskRetirementApp :one
 SELECT status,manifest,COALESCE(workload_class,'')::text AS workload_class,COALESCE(park_transition_id::text,'')::text AS park_transition_id FROM apps WHERE account_id=$1 AND id=$2 FOR SHARE
 `
@@ -910,6 +985,15 @@ func (q *Queries) ReadTaskRetirementLatestDeployment(ctx context.Context, db DBT
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const retireHostedTaskSourceAccount = `-- name: RetireHostedTaskSourceAccount :exec
+UPDATE hosted_task_source_intents SET ciphertext=NULL WHERE account_id=$1 AND expires_at<=now() AND ciphertext IS NOT NULL
+`
+
+func (q *Queries) RetireHostedTaskSourceAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, retireHostedTaskSourceAccount, accountID)
+	return err
 }
 
 const revokeToolGrant = `-- name: RevokeToolGrant :one

@@ -1,4 +1,4 @@
-# ADR-20261116170000: Releases restart compute nodes in place, without draining them
+# ADR-20261116191802: Releases restart compute nodes in place, without draining them
 
 - **Status:** proposed (owner direction 2026-11-16: "no drain happens on nodes")
 - **Date:** 2026-11-16

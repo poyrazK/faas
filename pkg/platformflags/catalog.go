@@ -72,6 +72,9 @@ const (
 	// instance can use, on the deployments imaged builds for the accounts it
 	// releases (ADR-20261104141122).
 	PostgresPoolSizing = "postgres_pool_sizing"
+	// PostgresCustomRoles releases custom group roles on managed databases
+	// (ADR-20261116213000): the roles API and CLI.
+	PostgresCustomRoles = "postgres_custom_roles"
 
 	// QuietPauseUnbilled releases unbilled quiet pause (ADR-20261023171905)
 	// to accounts where meterd's quiet_pause_unbilled mode is on.
@@ -361,6 +364,16 @@ var catalog = []Spec{
 		Label:       "Postgres change workers",
 		Description: "Capture Postgres row changes into a worker's queue: the postgres-changes API, CLI and gregale.yaml block, with Gregale installing capture on managed databases. Off, the API refuses and deploys skip the block, as before. schedd also needs FAAS_COMMIT_RELAY_ENABLED.",
 		ADR:         "ADR-20261112140000",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-06-30",
+	},
+	{
+		Key:         PostgresCustomRoles,
+		Capability:  "postgres-custom-roles",
+		Label:       "Postgres custom roles",
+		Description: "Declare NOLOGIN group roles on a managed database and grant them to its own logins, BYPASSRLS allowed except with Data API or Auth, so tools such as Windmill run with Gregale credentials. Off, the roles API refuses, as before.",
+		ADR:         "ADR-20261116213000",
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		RetireBy:    "2027-06-30",

@@ -684,6 +684,15 @@ func (m *streamBridgeManager) invalidate(ctx context.Context, lease *streamBridg
 	}
 	entry := lease.entry
 	m.mu.Lock()
+	if entry.closed {
+		// Whoever closed it (a request that found it dead, the instance's
+		// stop, shutdown) also cleaned it up. A second cleanup closed the
+		// unit's pidfd twice, and the second close took whatever file had
+		// reused that number: on fsn-2 the resource journal's pending record
+		// ("close …/.pending-…: bad file descriptor").
+		m.mu.Unlock()
+		return
+	}
 	if current := m.entries[entry.mapKey()]; current == entry {
 		delete(m.entries, entry.mapKey())
 	}

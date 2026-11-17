@@ -74,6 +74,14 @@ type DeploymentMcpReadinessEvidence struct {
 	Evidence     []byte
 }
 
+type HostedTaskSourceIntent struct {
+	AccountID  pgtype.UUID
+	ID         string
+	Payload    []byte
+	Ciphertext []byte
+	ExpiresAt  pgtype.Timestamptz
+}
+
 type Instance struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID

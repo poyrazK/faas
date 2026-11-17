@@ -81,7 +81,7 @@ func TestMetalParkDeadlineReleasesPausedVM(t *testing.T) {
 		for _, path := range []string{
 			filepath.Join("/run/netns", inst.Lease.Netns),
 			vmm.chrootRoot(name),
-			filepath.Join("/sys/fs/cgroup", ParentCgroupFor(inst.Lease.Plan), PerInstanceScope(name)),
+			filepath.Join("/sys/fs/cgroup", vmCgroupParent(inst.Lease), PerInstanceScope(name)),
 		} {
 			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("resource remains after failed park: %s (%v)", path, err)

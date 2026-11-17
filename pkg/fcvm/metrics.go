@@ -86,6 +86,14 @@ type DashboardMetrics struct {
 	// 20261102072403). Unset, zero or an error keeps the box-wide
 	// api.RAMAdmissionCeilingMB.
 	CeilingMB func(ctx context.Context) (int, error)
+	// AdmissionBytes, when set, is the memory RAM admission counts against
+	// the ceiling: under measured admission (ADR-909) the node's measured
+	// memory, which may sit far below ResidentBytes because bookings may
+	// reach MeasuredAdmissionMaxOvercommitPercent of the ceiling.
+	// fcvm_admission_ram_pct divides it by the same ceiling as
+	// fcvm_resident_ram_pct. Unset, the gauge reports ResidentBytes: under
+	// reservation admission the bookings are what admission counts.
+	AdmissionBytes func(ctx context.Context) (int64, error)
 	// LvFcUsedPct returns the percentage of the spec §8 lv-fc volume
 	// (the filesystem mounted at /srv/fc) currently in use (0..100).
 	// DefaultFcVolumeUsedPct reads it with statfs. An error leaves the
@@ -679,6 +687,8 @@ type DashboardGauges struct {
 	cachedP95 float64
 	cachedRAM float64
 	cachedLV  float64
+	// cachedAdmission is fcvm_admission_ram_pct; NaN until the first read.
+	cachedAdmission float64
 	// refreshing is set while a scrape-triggered refresh is in flight
 	// (PG / statfs callbacks running outside the lock). A second scrape
 	// arriving during the same window sees refreshing==1 and skips,
@@ -699,7 +709,8 @@ func NewDashboardGauges(src DashboardMetrics) *DashboardGauges {
 		// No data until the first successful volume read. A zero here
 		// exported "0% used" forever on hosts where the probe could not
 		// run, which kept the lv-fc alerts from ever firing.
-		cachedLV: math.NaN(),
+		cachedLV:        math.NaN(),
+		cachedAdmission: math.NaN(),
 	}
 	g.reg.MustRegister(
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
@@ -714,6 +725,10 @@ func NewDashboardGauges(src DashboardMetrics) *DashboardGauges {
 			Name: "fcvm_resident_ram_pct",
 			Help: "Σ(ram_mb + 8 MB) over live instances / 47,600 MB (the admission ceiling, spec §1/§4.3).",
 		}, g.residentPct),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "fcvm_admission_ram_pct",
+			Help: "The memory RAM admission counts on the node over its admission ceiling, in percent: measured memory under measured admission (ADR-909), Σ(ram_mb + 8 MB) under reservation admission (spec §12; > 80 warn, > 92 page).",
+		}, g.admissionPct),
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Name: "fcvm_lv_fc_used_pct",
 			Help: "Percentage of the lv-fc volume (the filesystem mounted at /srv/fc) currently in use (spec §8; > 80 warn, > 90 page).",
@@ -793,20 +808,36 @@ func (g *DashboardGauges) refresh(ctx context.Context) {
 		}
 	}
 
-	if src.ResidentBytes != nil {
-		bytes, err := src.ResidentBytes(ctx)
-		if err == nil {
-			ceilingMB := api.RAMAdmissionCeilingMB
-			if src.CeilingMB != nil {
-				if mb, cerr := src.CeilingMB(ctx); cerr == nil && mb > 0 {
-					ceilingMB = mb
-				}
+	if src.ResidentBytes != nil || src.AdmissionBytes != nil {
+		ceilingMB := api.RAMAdmissionCeilingMB
+		if src.CeilingMB != nil {
+			if mb, cerr := src.CeilingMB(ctx); cerr == nil && mb > 0 {
+				ceilingMB = mb
 			}
-			pct := 100.0 * float64(bytes) / float64(int64(ceilingMB)*1024*1024)
-			g.mu.Lock()
-			g.cachedRAM = pct
-			g.mu.Unlock()
 		}
+		ceilingBytes := float64(int64(ceilingMB) * 1024 * 1024)
+		var residentPct float64
+		residentOK := false
+		if src.ResidentBytes != nil {
+			if bytes, err := src.ResidentBytes(ctx); err == nil {
+				residentPct, residentOK = 100.0*float64(bytes)/ceilingBytes, true
+			}
+		}
+		admissionPct, admissionOK := residentPct, residentOK
+		if src.AdmissionBytes != nil {
+			admissionOK = false
+			if bytes, err := src.AdmissionBytes(ctx); err == nil {
+				admissionPct, admissionOK = 100.0*float64(bytes)/ceilingBytes, true
+			}
+		}
+		g.mu.Lock()
+		if residentOK {
+			g.cachedRAM = residentPct
+		}
+		if admissionOK {
+			g.cachedAdmission = admissionPct
+		}
+		g.mu.Unlock()
 	}
 
 	if src.LvFcUsedPct != nil {
@@ -844,6 +875,13 @@ func (g *DashboardGauges) residentPct() float64 {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.cachedRAM
+}
+
+func (g *DashboardGauges) admissionPct() float64 {
+	g.refresh(context.Background())
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.cachedAdmission
 }
 
 func (g *DashboardGauges) lvPct() float64 {

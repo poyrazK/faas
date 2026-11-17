@@ -222,3 +222,21 @@ SELECT status,manifest,COALESCE(workload_class,'')::text AS workload_class,COALE
 
 -- name: ReadTaskRetirementLatestDeployment :one
 SELECT id::text FROM deployments WHERE app_id=$1 ORDER BY created_at DESC LIMIT 1;
+
+
+-- name: GetHostedTaskSourceIntent :one
+SELECT payload,ciphertext FROM hosted_task_source_intents WHERE account_id=$1 AND id=$2;
+
+-- name: InsertHostedTaskSourceIntent :exec
+INSERT INTO hosted_task_source_intents(account_id,id,payload,ciphertext,expires_at) VALUES($1,$2,$3,$4,$5);
+
+-- name: RetireHostedTaskSourceAccount :exec
+UPDATE hosted_task_source_intents SET ciphertext=NULL WHERE account_id=$1 AND expires_at<=now() AND ciphertext IS NOT NULL;
+
+-- name: HostedTaskSourceCounts :one
+SELECT count(*) AS records,count(*) FILTER(WHERE ciphertext IS NOT NULL) AS active,coalesce(sum(octet_length(ciphertext)),0)::bigint AS cipher_bytes
+FROM hosted_task_source_intents WHERE account_id=$1;
+
+-- name: PurgeExpiredHostedTaskSources :execrows
+WITH expired AS(SELECT account_id,id FROM hosted_task_source_intents WHERE expires_at<=now() AND ciphertext IS NOT NULL ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED)
+UPDATE hosted_task_source_intents t SET ciphertext=NULL FROM expired e WHERE t.account_id=e.account_id AND t.id=e.id;

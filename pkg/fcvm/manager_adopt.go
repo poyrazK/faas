@@ -152,6 +152,9 @@ func (m *Manager) adoptClassified(ctx context.Context, adopter guestAdopter, c a
 			recorded := v
 			v = m.adoptOne(ctx, adopter, c, v)
 			v.AppID, v.DevPatched = recorded.AppID, recorded.DevPatched
+			if !v.Adoptable && v.Reason != "" {
+				v = m.killRefusedSurvivor(v)
+			}
 		}
 		rep.Verdicts = append(rep.Verdicts, v)
 		if AdoptionEnds(v.Resolved) && !v.Adoptable && v.Reason == "" {
@@ -177,6 +180,38 @@ func (m *Manager) adoptClassified(ctx context.Context, adopter guestAdopter, c a
 		_ = m.renderHostSMTPAllowlistRules(ctx, false)
 	}
 	return rep, ctx.Err()
+}
+
+// killRefusedSurvivor ends a guest that passed the adoption proof but that
+// adoption then refused before registering it. Nothing can reach such a
+// guest: schedd fails its row (vmmd_adoption_refused) and the app wakes a
+// new instance, while the old one kept its memory, its slot and its own
+// background work, and failed every later rollout's adoption check until
+// someone killed it by PID (production fsn-2, 2026-11-12). The proof holds
+// its identity, so it is killed through a pidfd that still names it. The
+// refusal stays in the report: a candidate that refuses guests must still
+// fail the rollout. The record stays quarantined; with its process gone,
+// the next restart counts it gone. A guest adoption registered
+// (adopt_incomplete, teardown_failed) is the Manager's to destroy instead.
+func (m *Manager) killRefusedSurvivor(v AdoptionVerdict) AdoptionVerdict {
+	switch v.Reason {
+	case adoptionRefusedAdoptIncomplete, adoptionRefusedTeardownFailed:
+		return v
+	}
+	r, ok, err := m.resourceJournal.lookup(v.Instance)
+	if err != nil || !ok || r.Process == nil {
+		return v
+	}
+	kill := m.killRefused
+	if kill == nil {
+		kill = killProvenGuest
+	}
+	if err := kill(*r.Process); err != nil {
+		slog.Warn("vmmd: refused guest left running", "instance", v.Instance, "reason", v.Reason, "err", err)
+		return v
+	}
+	v.Detail += "; the guest was killed through its pidfd"
+	return v
 }
 
 // adoptionScope names why a proven record is outside what adoption rebuilds,

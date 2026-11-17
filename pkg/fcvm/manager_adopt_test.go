@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,9 @@ func adoptionManager(t *testing.T, f *adoptionFixture, block resourceAdoption) (
 		return &resourceMountIdentity{BootID: idOther, Namespace: 4026531840}, nil
 	}
 	m.linkProbe = func(string, int) (*resourceLinkIdentity, error) { return nil, nil }
+	// The fixture's guest is not a real process: a refused one is never
+	// signalled (TestAdoptRestartSurvivorsKillsARefusedProvenGuest records it).
+	m.killRefused = func(resourceProcessIdentity) error { return errors.New("test fixture: no process to kill") }
 	m.anchorNetns = func(name string, _ int, want resourceFileIdentity) (*resourceAsset, error) {
 		ctx := successor
 		mount := successor
@@ -160,6 +164,63 @@ func TestAdoptRestartSurvivorsRebuildsAProvenGuest(t *testing.T) {
 		if a.Kind == "netns" && (a.Mount == nil || a.Mount.Namespace != 4026532999) {
 			t.Fatalf("namespace checkpoint not re-anchored: %+v", a)
 		}
+	}
+}
+
+// A guest that passed the proof but that adoption refused before
+// registering it is killed through its pidfd (production fsn-2, 2026-11-12:
+// an unowned guest kept running and failed every later rollout's check).
+// The refusal stays in the report; a guest the proof did not cover, or one
+// adoption registered, is never killed here.
+func TestAdoptRestartSurvivorsKillsARefusedProvenGuest(t *testing.T) {
+	tests := []struct {
+		name     string
+		block    func(*resourceAdoption)
+		fixture  func(*adoptionFixture)
+		adoptErr error
+		killErr  error
+		reason   string
+		killed   bool
+	}{
+		{name: "adoption failed", adoptErr: errors.New("bind source gone"), reason: adoptionRefusedAdoptFailed, killed: true},
+		{name: "outside what adoption rebuilds", block: func(b *resourceAdoption) { b.Network.StaticEgressIP = "203.0.113.7" },
+			reason: adoptionRefusedStaticEgress, killed: true},
+		{name: "kill fails", adoptErr: errors.New("bind source gone"), killErr: errors.New("pid reused"), reason: adoptionRefusedAdoptFailed},
+		{name: "not proven", fixture: func(f *adoptionFixture) { f.api.State = "NotStarted" }, reason: adoptionRefusedAPIIdentity},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAdoptionFixture(t)
+			if tc.fixture != nil {
+				tc.fixture(f)
+			}
+			block := f.block()
+			if tc.block != nil {
+				tc.block(&block)
+			}
+			m, vmm := adoptionManager(t, f, block)
+			vmm.adoptErr = tc.adoptErr
+			var kills []resourceProcessIdentity
+			m.killRefused = func(p resourceProcessIdentity) error {
+				kills = append(kills, p)
+				return tc.killErr
+			}
+			rep, err := m.adoptClassified(t.Context(), vmm, f.classifier())
+			if err != nil || rep.Adopted != 0 || rep.Refused[tc.reason] != 1 || len(rep.Verdicts) != 1 {
+				t.Fatalf("adoption = %+v, %v; want refused %s", rep, err, tc.reason)
+			}
+			proven := tc.reason != adoptionRefusedAPIIdentity
+			if wantKills := map[bool]int{true: 1, false: 0}[proven]; len(kills) != wantKills || (proven && kills[0] != f.process) {
+				t.Fatalf("killed %v, want %d kill of %+v", kills, wantKills, f.process)
+			}
+			killedDetail := strings.Contains(rep.Verdicts[0].Detail, "killed through its pidfd")
+			if killedDetail != tc.killed {
+				t.Fatalf("verdict detail %q, killed = %v", rep.Verdicts[0].Detail, tc.killed)
+			}
+			if !m.isRestartQuarantined(idLive) || m.HasInstanceOwnership(idLive) {
+				t.Fatal("a refused guest must stay quarantined and unowned")
+			}
+		})
 	}
 }
 

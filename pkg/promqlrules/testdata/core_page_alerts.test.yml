@@ -160,9 +160,9 @@ tests:
         exp_alerts: []
 
   - interval: 30s
-    name: "resident RAM above 92% of the ceiling pages"
+    name: "admitted RAM above 92% of the ceiling pages"
     input_series:
-      - series: 'fcvm_resident_ram_pct{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+      - series: 'fcvm_admission_ram_pct{job="schedd-compute",instance="fsn-2.gregale.dev:9103"}'
         values: '95x30'
     alert_rule_test:
       - eval_time: 10m
@@ -173,18 +173,35 @@ tests:
               component: "vmmd"
               family: "resident_ram"
             exp_annotations:
-              summary: "Resident RAM > 92% of tenant budget"
-              description: "Σ(ram_mb + 8) over live instances has exceeded 92% of the 47,600 MB ceiling for 5m. New wakes will start failing admission."
+              summary: "Admitted RAM > 92% of a node's admission ceiling"
+              description: "The memory admission counts on a node (measured memory under measured admission, Σ(ram_mb + 8) under reservation admission) has been above 92% of the node's ceiling for 5m. At the ceiling new wakes on that node fail admission, and under measured admission schedd evicts."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
 
   - interval: 30s
-    name: "resident RAM at 85% stays quiet"
+    name: "admitted RAM at 85% stays quiet"
     input_series:
-      - series: 'fcvm_resident_ram_pct{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+      - series: 'fcvm_admission_ram_pct{job="schedd-compute",instance="fsn-2.gregale.dev:9103"}'
         values: '85x30'
     alert_rule_test:
       - eval_time: 10m
         alertname: FaasHighResidentRamPct
+        exp_alerts: []
+
+  # Prod 2026-11-16: bookings 136% of fsn-3's ceiling under measured
+  # admission (cap 250%) while 34% of its memory was in use.
+  - interval: 30s
+    name: "bookings past the ceiling under measured admission do not page"
+    input_series:
+      - series: 'fcvm_resident_ram_pct{job="schedd-compute",instance="fsn-3.gregale.dev:9103"}'
+        values: '136x30'
+      - series: 'fcvm_admission_ram_pct{job="schedd-compute",instance="fsn-3.gregale.dev:9103"}'
+        values: '34x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasHighResidentRamPct
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: FaasHighResidentRamPctWarn
         exp_alerts: []
 
   - interval: 30s

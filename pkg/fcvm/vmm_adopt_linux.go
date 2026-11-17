@@ -5,9 +5,37 @@ package fcvm
 import (
 	"errors"
 	"os"
+	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+// refusedGuestKillWait bounds how long startup waits for a refused guest
+// to exit after SIGKILL.
+const refusedGuestKillWait = 5 * time.Second
+
+// killProvenGuest sends SIGKILL to the recorded guest through a pidfd that
+// openAdoptedProcess proved still names it, and waits for it to exit.
+func killProvenGuest(process resourceProcessIdentity) error {
+	p, wait, err := openAdoptedProcess(process)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = p.Release() }()
+	if err := p.Signal(syscall.SIGKILL); err != nil {
+		go wait()
+		return err
+	}
+	exited := make(chan struct{})
+	go func() { wait(); close(exited) }()
+	select {
+	case <-exited:
+		return nil
+	case <-time.After(refusedGuestKillWait):
+		return errors.New("guest did not exit after SIGKILL")
+	}
+}
 
 // openAdoptedProcess returns a pidfd-backed handle for process and a wait
 // function that returns once it exits. vmmd is not its parent, so it cannot

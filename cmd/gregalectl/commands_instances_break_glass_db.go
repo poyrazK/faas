@@ -13,7 +13,7 @@ import (
 
 // nodeRolloutActorID is the operator-recovery actor a compute rollout submits
 // under when it parks the guests a candidate vmmd refused to adopt
-// (ADR-20261116170000). operator_recovery_submissions.actor_id references no
+// (ADR-20261116191802). operator_recovery_submissions.actor_id references no
 // account; a fixed id keeps every rollout's parks under one auditable actor
 // and its request keys in one idempotency namespace.
 const nodeRolloutActorID = "5f0d6a3e-8c1b-4b7a-9e2d-7a41c0de0001"
