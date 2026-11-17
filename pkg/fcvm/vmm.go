@@ -133,6 +133,11 @@ type JailerVMM struct {
 	fenceMu sync.Mutex
 	fences  map[string]*cgroupFence
 
+	// coldByGen is whether idle ladder compression can use the multi-gen
+	// LRU's debugfs interface, probed once (lru_gen.go).
+	coldByGenOnce sync.Once
+	coldByGen     bool
+
 	mu              sync.Mutex
 	resourceJournal *ResourceJournal
 	ownedJails      map[string][]resourceAsset // live owner only; never reconstructed from storage

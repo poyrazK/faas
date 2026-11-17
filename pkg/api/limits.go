@@ -8583,6 +8583,22 @@ const (
 	IdleLadderFaultMicrosPerPage      = 21
 	IdleLadderMaxExtraKeepGenerations = 2
 	IdleLadderCeilingRelaxWakes       = 5
+	// Kernel lockdown (ADR-20261107220000) closes the multi-gen LRU's
+	// debugfs interface, so on a locked-down host vmmd compresses through
+	// the VM cgroup's memory.reclaim and the kernel picks the coldest pages
+	// (ADR-20261107122928 amendment 1): L3 keeps IdleLadderCold1KeepPercent
+	// of the VM's memory resident, L4 IdleLadderCold2KeepPercent, and each
+	// step of an app's ceiling keeps IdleLadderExtraKeepPercent more. A
+	// level that would keep 100% compresses nothing.
+	IdleLadderCold1KeepPercent = 50
+	IdleLadderCold2KeepPercent = 25
+	IdleLadderExtraKeepPercent = 25
+	// IdleLadderColdLevel is the idle_ladder_level vmmd reports for L3 (L4
+	// reports one more). Measured admission charges an instance at L3 or L4
+	// its latest resident sample, as it does a frozen one, so the memory a
+	// compression frees reaches admission with the next sample
+	// (ADR-20261107122928 amendment 1).
+	IdleLadderColdLevel = 3
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
