@@ -74,9 +74,26 @@ the same account and successfully verified an exact private test release with
 HTTP 200. This setup check is not a completed GitHub-hosted journey; those runs
 will retain their own reports after the workflow lands.
 
-Published installer/channel selection, fresh login, interactive Start and
-other platform archives remain unmeasured. The two completed scripted
+Fresh login, interactive Start and other platform archives remain unmeasured.
+The installer-only observation below measures default channel selection and
+installation separately. The two completed scripted
 observations do not establish a latency trend or reliability estimate.
+
+## Fresh-onboarding installer preflight — 2026-11-17
+
+The new Free Node onboarding lane has an installation-only observation on
+**darwin/arm64**. The published installer selected `v0.1.18-rc.349` by default
+and installed it into an isolated directory. The installed binary matched the
+independently checked release archive, version and tagged source. Installation
+and provenance checks took **27.886 s**; removing the isolated connection took
+**0.438 s**. The connection was confirmed signed out. The original CLI and
+login were preserved, and no account or app was created by this preflight.
+
+Its overall result is **blocked**, with reason
+`installer_only_browser_login_not_attempted`. No Free plan, browser login,
+Start or edit result has been qualified. The report records the harness's base
+revision and dirty-worktree marker. The complete lane requires normal browser
+authorization to the selected separate Free account before it can run.
 
 ## Scope and remaining evidence
 
@@ -86,10 +103,11 @@ percentiles, a reliability estimate, a Free-plan qualification, or measurements
 of human onboarding time. Cleanup is required and timed separately from the
 customer milestone clock.
 
-Fresh installation/login, interactive `gregale start`, Python/Go projects and
-real coding-agent runs remain **not measured**. The pack supplies the human
-checklist and private-deploy/edit agent tasks; no synthetic or unit-test result
-is presented as their live baseline. Agent results can be imported only when
+The published install has the separate preflight above. Fresh browser login,
+interactive `gregale start`, Python/Go projects and real coding-agent runs
+remain **not measured**. The pack supplies the browser-assisted Free Node lane
+and private-deploy/edit agent tasks; no synthetic or unit-test result is
+presented as their live baseline. Agent results can be imported only when
 their target and CLI checksum match the journey.
 
 ## Evidence and reproduction
@@ -103,6 +121,8 @@ their target and CLI checksum match the journey.
 - [Released-CLI scorecard](ops/evidence/20261117-first-hour/released-rc349-darwin-arm64-baseline.md)
   and [machine-readable scorecard](ops/evidence/20261117-first-hour/released-rc349-darwin-arm64-baseline.json).
 - [Earlier failed harness preflight](ops/evidence/20261117-first-hour/released-rc349-preflight-failure.json).
+- [Fresh-onboarding installer-only preflight](ops/evidence/20261117-first-hour/free-node-installer-preflight.md)
+  and [machine-readable preflight](ops/evidence/20261117-first-hour/free-node-installer-preflight.json).
 - [Acceptance guide and run commands](first-hour-acceptance.md).
 
 Only sanitized aggregates and provenance are checked in. Raw command output,

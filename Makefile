@@ -490,10 +490,12 @@ migrations-land: ## Merge origin/main into a migration-carrying branch: take mai
 	python3 scripts/migrations_land.py
 
 .PHONY: agent-eval-test
-agent-eval-test: ## Unit tests of agent-eval and first-hour reports; no live runs (ADR-20261026152009)
+agent-eval-test: ## Unit tests of agent-eval and first-hour acceptance; no live runs (ADR-20261026152009)
 	python3 scripts/agent-eval/agent_eval_test.py
 	python3 -I scripts/first-hour/baseline_test.py
 	python3 -I scripts/first-hour/qualify_release_test.py
+	python3 -I scripts/first-hour/onboarding_test.py
+	python3 scripts/ci/start-native_test.py
 
 AGENT_EVAL_AGENTS ?= claude
 AGENT_EVAL_TOOLSETS ?= core,all

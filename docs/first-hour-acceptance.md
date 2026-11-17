@@ -144,22 +144,72 @@ application response. Its check establishes the final outcome; it does not
 claim when the agent first verified that outcome. The feature score separately
 records whether the agent used `release verify`.
 
-## Human install/login and Start lane
+## Fresh install, browser login and Free Node Start
 
-Record these separately; scripted CLI success does not qualify them:
+Run this separate, browser-assisted lane locally on Unix:
 
-1. In a clean environment, install the released CLI through the published
-   installer. Record the version and verify `release verify --help` is available.
-2. Sign in through the normal browser handoff. Confirm the expected account and
-   API, without a pre-existing token or copied credential file.
-3. Run `gregale start` with an existing small project. Verify a response, make a
-   source edit, and verify that edit. Repeat with the Node, Python and Go starters.
-4. Interrupt after acceptance, repeat Start, and continue the saved release.
-   Confirm no duplicate app or deployment was created by continuation.
+```sh
+python3 scripts/first-hour/onboarding.py --api https://api.gregale.dev \
+  --expected-email user@example.com --out /tmp/gregale-free-onboarding
+```
 
-Until a real observer records those runs, the report labels installation/login
-and interactive Start **not measured**. Automated prompt/unit tests are useful
-regressions, but cannot replace this deployed human evidence.
+Select an existing Free account with no deployed apps. Its normal browser
+sign-in must be available to the observer. A Scale account or an occupied Free
+account blocks before Start creates anything. The runner does not change plans,
+reuse an existing app, copy a credential, or accept a token argument.
+
+For an installation-only preflight, pass `--install-only` and omit the email.
+That mode performs no browser login or deployment, keeps the overall outcome
+`blocked`, and exits nonzero because full onboarding has not been qualified.
+
+The output directory must be new. The runner installs from
+`https://get.gregale.dev` using the installer's default version selection and
+an isolated destination. It checks the installed binary against that published
+archive's checksum/version/source evidence. Its child processes use a new home,
+configuration/cache/state directories and a random named connection. Named
+connections have separate OS-keychain accounts and do not fall back to the
+default connection's credentials. The runner confirms it is signed out before
+starting normal browser login; it preserves the machine's original CLI,
+selected connection and login.
+
+The terminal driver is shared with the existing Start acceptance harness. It
+uses a real PTY for login and Start and scripts these product prompts:
+
+| Phase | Required evidence |
+|---|---|
+| Fresh installation | Published installer/default version resolution; installed bytes match the host archive and stamped source. |
+| Browser login | Initially signed out; normal browser authorization completes; expected account identity matches. |
+| Free preflight | API reports `free`; no app occupies the test slot; generated name is absent. |
+| Start Node | Create the built-in Node HTTP starter, review and approve normal defaults, then require Start's verified session and an exact app/release/replica HTTP 200 with the initial greeting. |
+| Edit | Enter a new greeting in Start's walkthrough, review its local change, and verify the new greeting from a distinct release of the same app. Exactly one app and two releases may exist. |
+| App cleanup | Delete only the registered test name, require absence, and verify the initially empty Free account is empty again. |
+| Login cleanup | Log out of the isolated connection, verify it is signed out, and remove that connection. Browser-managed CLI-key revocation must succeed. |
+
+Browser sign-in/authorization remains a real product interaction. Do not use
+`login --token`, a copied keychain entry, or a stub callback to qualify it.
+`private/browser-handoff.json` holds the current approval URL for an observer;
+it is removed after successful login. Account signup, password entry and browser
+session preparation are separate from the measured CLI flow. An already
+authenticated browser may authorize the new CLI connection.
+
+Only `onboarding.json` and `onboarding.md` are shareable reports. They contain
+phase results, timings, installer/CLI provenance, observed plan and hashed
+response/source bindings. Supplied email, login URL/code, credentials, local
+paths, response bodies and failure transcripts stay out of them. Keep the
+entire `private/` directory local; it contains the isolated installation,
+recovery data and bounded failure logs.
+
+The one-hour clock starts before installation and ends at the verified edit;
+cleanup is separately timed and required. Timings include qualification checks
+and scripted terminal input. This is controlled acceptance, not a measurement
+of an unassisted new user's onboarding time. Missing/skipped/fixture evidence,
+incorrect identity or plan, extra deployments, or failed cleanup cannot pass.
+
+This lane measures the Free Node starter on its recorded platform with Start's
+normal rollout defaults. Python/Go, shell startup-file integration, npm, real
+coding agents, and interruption/restart of the interactive session remain
+separate follow-up lanes. The older scripted CLI scorecard does not inherit
+this lane's evidence or label its own installation/login fields as measured.
 
 ## Reports and local checks
 
@@ -195,6 +245,7 @@ fixture; without a binary only that fixture is skipped.
 ```sh
 python3 -I scripts/first-hour/baseline_test.py
 python3 -I scripts/first-hour/qualify_release_test.py
+python3 -I scripts/first-hour/onboarding_test.py
 python3 -I scripts/agent-eval/agent_eval_test.py
 go test ./tests/journeys -run '^TestHarnessFirstHour' -count=1
 ```
