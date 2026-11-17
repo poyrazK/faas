@@ -1,4 +1,4 @@
--- filename: 20261117070049100_sandbox_actions.sql
+-- filename: 20261117075028300_sandbox_actions.sql
 -- migration-compat: expand
 
 -- +goose Up

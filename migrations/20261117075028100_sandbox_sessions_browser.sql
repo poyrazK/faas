@@ -1,4 +1,4 @@
--- filename: 20261117063856100_sandbox_sessions_browser.sql
+-- filename: 20261117075028100_sandbox_sessions_browser.sql
 -- migration-compat: expand
 
 -- +goose Up

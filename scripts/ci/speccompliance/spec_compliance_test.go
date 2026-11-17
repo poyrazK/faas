@@ -475,41 +475,52 @@ var routeExclude = map[string]bool{
 	// unregistered routes to every account it is not released to, so it stays
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND cmd/sdk-coverage/main.go::routeExclude.
-	"POST /v1/agents":                                 true,
-	"POST /v1/agent-callbacks":                        true,
-	"POST /v1/agent-callbacks/{token}":                true,
-	"POST /v1/agent-callbacks/revocations":            true,
-	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
-	"POST /v1/agent-tools/invoke":                     true,
-	"POST /v1/agent-tools/close_thread":               true,
-	"POST /v1/sandboxes":                              true,
-	"GET /v1/sandboxes":                               true,
-	"GET /v1/sandboxes/{id}":                          true,
-	"PATCH /v1/sandboxes/{id}":                        true,
-	"DELETE /v1/sandboxes/{id}":                       true,
-	"GET /v1/sandbox-snapshots":                       true,
-	"GET /v1/sandbox-snapshots/{id}":                  true,
-	"DELETE /v1/sandbox-snapshots/{id}":               true,
-	"GET /v1/sandbox-templates":                       true,
-	"GET /v1/sandbox-templates/{name}":                true,
-	"PUT /v1/sandbox-templates/{name}":                true,
-	"DELETE /v1/sandbox-templates/{name}":             true,
-	"POST /v1/sandboxes/{id}/ports":                   true,
-	"GET /v1/sandboxes/{id}/ports":                    true,
-	"GET /v1/sandboxes/{id}/ports/{port}":             true,
-	"DELETE /v1/sandboxes/{id}/ports/{port}":          true,
-	"GET /v1/sandboxes/{id}/task":                     true,
-	"GET /v1/agents":                                  true,
-	"GET /v1/agents/{agent}":                          true,
-	"DELETE /v1/agents/{agent}":                       true,
-	"POST /v1/agents/{agent}/versions":                true,
-	"GET /v1/agents/{agent}/versions/{version}":       true,
-	"POST /v1/agents/{agent}/runs":                    true,
-	"GET /v1/agent-runs":                              true,
-	"GET /v1/agent-runs/{id}":                         true,
-	"DELETE /v1/agent-runs/{id}":                      true,
-	"GET /v1/agent-runs/{id}/outputs":                 true,
-	"GET /v1/agent-runs/{id}/outputs/files/{name...}": true,
+	"POST /v1/agents": true,
+	// ADR-20261116163508 customer-granted support access: dark behind the
+	// support_grants platform flag, so it stays out of the public OpenAPI spec
+	// and generated SDKs until launch. Mirror across this list AND
+	// cmd/sdk-coverage/main.go::routeExclude (scripts/ci/speccompliance).
+	"GET /v1/orgs/{slug}/support-access":                        true,
+	"POST /v1/orgs/{slug}/support-access/grants":                true,
+	"POST /v1/orgs/{slug}/support-access/grants/{id}/revoke":    true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/approve": true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/decline": true,
+	"POST /v1/admin/support-access/requests":                    true, // operator-only
+	"GET /v1/admin/support-access/grants":                       true, // operator-only
+	"POST /v1/agent-callbacks":                                  true,
+	"POST /v1/agent-callbacks/{token}":                          true,
+	"POST /v1/agent-callbacks/revocations":                      true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":               true,
+	"POST /v1/agent-tools/invoke":                               true,
+	"POST /v1/agent-tools/close_thread":                         true,
+	"POST /v1/sandboxes":                                        true,
+	"GET /v1/sandboxes":                                         true,
+	"GET /v1/sandboxes/{id}":                                    true,
+	"PATCH /v1/sandboxes/{id}":                                  true,
+	"DELETE /v1/sandboxes/{id}":                                 true,
+	"GET /v1/sandbox-snapshots":                                 true,
+	"GET /v1/sandbox-snapshots/{id}":                            true,
+	"DELETE /v1/sandbox-snapshots/{id}":                         true,
+	"GET /v1/sandbox-templates":                                 true,
+	"GET /v1/sandbox-templates/{name}":                          true,
+	"PUT /v1/sandbox-templates/{name}":                          true,
+	"DELETE /v1/sandbox-templates/{name}":                       true,
+	"POST /v1/sandboxes/{id}/ports":                             true,
+	"GET /v1/sandboxes/{id}/ports":                              true,
+	"GET /v1/sandboxes/{id}/ports/{port}":                       true,
+	"DELETE /v1/sandboxes/{id}/ports/{port}":                    true,
+	"GET /v1/sandboxes/{id}/task":                               true,
+	"GET /v1/agents":                                            true,
+	"GET /v1/agents/{agent}":                                    true,
+	"DELETE /v1/agents/{agent}":                                 true,
+	"POST /v1/agents/{agent}/versions":                          true,
+	"GET /v1/agents/{agent}/versions/{version}":                 true,
+	"POST /v1/agents/{agent}/runs":                              true,
+	"GET /v1/agent-runs":                                        true,
+	"GET /v1/agent-runs/{id}":                                   true,
+	"DELETE /v1/agent-runs/{id}":                                true,
+	"GET /v1/agent-runs/{id}/outputs":                           true,
+	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
 
 	"POST /v1/apps/{slug}/operation-schedules/{id}/cancel":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules":             true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
@@ -619,6 +630,11 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/service-map":                                    true, // ADR-1131 HTML view of GET /v1/service-map
 	"GET /dashboard/dev-bridges/{id}":                               true, // ADR-379 HTML activity projection
 	"POST /dashboard/dev-bridges/{id}/revoke":                       true, // ADR-379 cookie + CSRF form
+	"GET /dashboard/support-access":                                 true, // ADR-20261116163508 HTML page
+	"POST /dashboard/support-access/{org}/grants":                   true, // ADR-20261116163508 cookie + CSRF form
+	"POST /dashboard/support-access/{org}/grants/{id}/revoke":       true, // ADR-20261116163508 cookie + CSRF form
+	"POST /dashboard/support-access/{org}/requests/{id}/approve":    true, // ADR-20261116163508 cookie + CSRF form
+	"POST /dashboard/support-access/{org}/requests/{id}/decline":    true, // ADR-20261116163508 cookie + CSRF form
 	"POST /dashboard/apps/new":                                      true, // dashboard-only create + GitHub bind form adapter
 	"POST /dashboard/apps/{slug}/github/sync":                       true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only

@@ -87,6 +87,10 @@ func deploymentApp(ctx context.Context, c *Client, appSlug string) (api.AppRespo
 // verifier authenticates, so "verified, 200" followed by a 401 from curl
 // looked like a broken deploy (issue #3362).
 func renderDeploymentAccess(w io.Writer, app api.AppResponse, appSlug string) {
+	if api.NormalizeAppVisibility(api.AppVisibility(app.Visibility)) == api.AppVisibilityInternal {
+		PrintProgress(w, "Access: internal app; there is no public endpoint. Use an owner-authorized response check.")
+		return
+	}
 	if !app.RequireAuthn {
 		return
 	}
@@ -95,6 +99,7 @@ func renderDeploymentAccess(w io.Writer, app api.AppResponse, appSlug string) {
 	} else {
 		PrintProgress(w, "Access: requests need Authorization: Bearer <api-key> (%s).", formatAppAuth(app))
 	}
+	PrintProgress(w, "A browser without the required credentials may return 401. This does not mean the deployment failed.")
 	PrintProgress(w, "  make the URL public: gregale app %s --no-require-authn", appSlug)
 }
 
@@ -279,6 +284,10 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		PrintProgress(osStdout, "Artifact cache: %s", cache)
 	}
 	renderDeploymentHostingReceiptFor(osStdout, final.APIHostingReceipt, appOK && app.Type == "function")
+	if !noHTTP {
+		PrintProgress(osStdout, "Deployment readiness and platform health checks do not establish public access.")
+		PrintProgress(osStdout, "Verify application response: %s", deploymentResponseCheckCommand(appSlug, final.ID, "/", "", ""))
+	}
 	if !darkDeploy {
 		if summary, ok := deploymentWithReleaseSummary(ctx, c, appSlug, final.ID); ok {
 			renderDeploymentReleaseSummary(osStdout, summary, appSlug)

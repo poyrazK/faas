@@ -26,6 +26,10 @@ func TestPostgresOrgOwnerAndPolicy(t *testing.T) {
 	orgOwnerAndPolicy(t, state.NewPgStore(pgtest.OpenMigrated(t)))
 }
 
+func TestPostgresSupportGrantLifecycle(t *testing.T) {
+	supportGrantLifecycle(t, state.NewPgStore(pgtest.OpenMigrated(t)))
+}
+
 func TestPostgresLoginFailureBudget(t *testing.T) {
 	loginFailureBudget(t, state.NewPgStore(pgtest.OpenMigrated(t)))
 }
