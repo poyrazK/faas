@@ -305,6 +305,11 @@ WHERE l.kind IN ('app.deployed', 'deploy.local_tarball', 'deploy.source_ref', 'u
 GROUP BY 1;
 ```
 
+The operator overview (`GET /v1/admin/obs/overview`, `gregalectl obs
+overview`) reports the same per agent as `coding_agents`: deploys in the last
+24 hours, and accounts created in the beta funnel's 14-day window that
+deployed through the agent, with how many served a request and how many pay.
+
 ### Rejected alternatives
 
 - **A `deployments.deployed_by_agent` column or a new table.** Needs a
