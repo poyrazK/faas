@@ -4421,7 +4421,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ObserveTCPAttempt:     chaosMatchRecorder.ObserveTCPAttempt,
 			Forward:               deps.nodeCache.Forwarding(),
 			RawForward:            deps.nodeCache.RawForwarding(),
-			RecordServiceReply:    serviceReplyRecorder(egressSink),
 			ObserveRequest:        handler.RecordServiceRequest,
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
