@@ -21,7 +21,7 @@ const (
 	// guest-init child.
 	appTaskDebugHelperArg0 = "guest-init-debug"
 	// appTaskDebugBaseToolsDir is where every runtime base ships the tools:
-	// a static busybox (root:root 0111) and bin/<applet> symlinks to it.
+	// a static busybox (root:root 0555) and bin/<applet> symlinks to it.
 	appTaskDebugBaseToolsDir = "/usr/lib/gregale/debug"
 	// appTaskDebugToolsFD is the helper's fd for the detached tools mount
 	// (exec.Cmd.ExtraFiles[0]).

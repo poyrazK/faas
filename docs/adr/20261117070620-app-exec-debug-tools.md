@@ -48,7 +48,7 @@ fetch path into tenant VMs.
 2. **Tools ship in every runtime base.** Every runtime base an app boots on
    (base-minimal and the go, node and python runner bases; not agent-base or
    the staging-only Debian parent) carries the same pinned static busybox at
-   `/usr/lib/gregale/debug/busybox`, `root:root` mode `0111`, with
+   `/usr/lib/gregale/debug/busybox`, `root:root` mode `0555`, with
    `/usr/lib/gregale/debug/bin/<applet>` symlinks for its applets. It comes
    from the busybox stage `base-minimal` already pins, so all bases carry one
    digest. A base is shared per node, so this costs about 1 MB per base
@@ -96,11 +96,12 @@ fetch path into tenant VMs.
   private mount namespace. They never enter the image artifact, the deployed
   instances, or the namespace of any other process.
 - **Not a boundary.** Hiding the tools is defense in depth, not isolation:
-  code running as the deployment user could carry its own binaries. The
-  `0111` mode makes processes exec'd from busybox non-dumpable, so other
-  processes of the same user cannot read the session's mounts through
-  `/proc/<pid>/root`. A non-busybox program started from the debug shell is
-  dumpable as usual.
+  code running as the deployment user could carry its own binaries. A task VM
+  runs only the session's own processes, so no other process of the
+  deployment user exists to reach the session's mounts through
+  `/proc/<pid>/root`. (An execute-only `0111` busybox would also make those
+  processes non-dumpable, but the base build converts the image to ext4 with
+  an unprivileged `mkfs.ext4 -d`, which cannot read such a file.)
 - **Network.** busybox includes `wget` and `nc`. They run inside the app's
   network namespace, so the app's egress policy (§11: no 25/465/587, no
   RFC1918, link-local or metadata ranges) applies unchanged.

@@ -16,13 +16,13 @@
 # The two-drive scheme still amortizes this base across every python313 app on
 # the box — per-app cost is just the customer's site-packages + handler.
 # Debug tools for `gregale app exec --debug` (ADR-20261117070620): the pinned
-# static BusyBox (root:root 0111) with applet links, at /usr/lib/gregale/debug.
+# static BusyBox (root:root 0555) with applet links, at /usr/lib/gregale/debug.
 # guest-init mounts it only into a debug session's private mount namespace; it
 # is not on any PATH. Every runtime base carries the same BusyBox.
 FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools
 RUN set -eu; mkdir -p /out/bin; cp /bin/busybox /out/busybox; \
     for applet in $(/bin/busybox --list); do ln -s ../busybox "/out/bin/$applet"; done; \
-    chmod 0111 /out/busybox
+    chmod 0555 /out/busybox
 
 FROM cgr.dev/chainguard/wolfi-base:latest@sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4
 # Issue #197 B3.6 (extension): mutable tag pinned via images/Dockerfile.lock.

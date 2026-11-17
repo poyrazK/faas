@@ -12,13 +12,13 @@
 # node_modules + handler. The 130 MB/sandbox accounting is preserved
 # (CLAUDE.md "load-bearing — DO NOT fix").
 # Debug tools for `gregale app exec --debug` (ADR-20261117070620): the pinned
-# static BusyBox (root:root 0111) with applet links, at /usr/lib/gregale/debug.
+# static BusyBox (root:root 0555) with applet links, at /usr/lib/gregale/debug.
 # guest-init mounts it only into a debug session's private mount namespace; it
 # is not on any PATH. Every runtime base carries the same BusyBox.
 FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools
 RUN set -eu; mkdir -p /out/bin; cp /bin/busybox /out/busybox; \
     for applet in $(/bin/busybox --list); do ln -s ../busybox "/out/bin/$applet"; done; \
-    chmod 0111 /out/busybox
+    chmod 0555 /out/busybox
 
 FROM mirror.gcr.io/library/node:24-trixie-slim@sha256:60587baa7c895cf438d44f691e4ac8248b36c13b26be77332f874bebb3a64201
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
