@@ -56,7 +56,6 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`webhook`](#webhook) | Register webhooks and deliver events to them |
 | [`metric`](#metric) | Show app metrics, request breakdowns and the service map |
 | [`debug`](#debug) | Inspect requests, traces, issues, profiles and regressions |
-| [`insight`](#insight) | Count product events, funnels and retention, by flag variant |
 | [`audit`](#audit) | Search your account&#39;s audit log |
 | [`alert`](#alert) | Manage alert rules, channels, incidents, SLOs and checks |
 | [`account`](#account) | Manage your account, MFA and data exports |
@@ -6634,120 +6633,6 @@ Roll back an app from the regressions view
 |---|---|---|
 | `--to <ID>` | target superseded deployment ID |  |
 | `--yes` | confirm the rollback | required |
-
-
-## insight
-
-Count product events, funnels and retention, by flag variant
-
-`gregale insight [<subcommand>]`
-
-Events come from the Flags SDK&#39;s track(). Breakdowns take flag:KEY or property:KEY; a unit&#39;s flag value is the one on its anchor event, else its earliest event that carries the flag.
-
-### insight event
-
-list
-
-#### insight event list
-
-Count an event per day or hour
-
-`gregale insight event list --project <slug> [--env <slug>] [--from <TIME>] [--until <TIME>] [--unit <UNIT>] [--by <BREAKDOWN>] [--interval <INTERVAL>] [--where <KEY:VALUE>]... <event>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--project <slug>` | project slug | required |
-| `--env <slug>` | named environment (default production) (also --environment) |  |
-| `--from <TIME>` | RFC 3339 time or duration ago such as 14d (default 7 days, 28 for retention) |  |
-| `--until <TIME>` | RFC 3339 time or duration ago (default now) |  |
-| `--unit <UNIT>` | customer (default) or subject |  |
-| `--by <BREAKDOWN>` | breakdown: flag:KEY or property:KEY |  |
-| `--interval <INTERVAL>` | day (default) or hour |  |
-| `--where <KEY:VALUE>` | property filter KEY:VALUE (repeatable) |  |
-
-### insight funnel
-
-Count units that complete steps in order within a window
-
-`gregale insight funnel [get] --project <slug> [--env <slug>] [--from <TIME>] [--until <TIME>] [--unit <UNIT>] [--by <BREAKDOWN>] [--window <DURATION>] <step> <step> [<step>...]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--project <slug>` | project slug | required |
-| `--env <slug>` | named environment (default production) (also --environment) |  |
-| `--from <TIME>` | RFC 3339 time or duration ago such as 14d (default 7 days, 28 for retention) |  |
-| `--until <TIME>` | RFC 3339 time or duration ago (default now) |  |
-| `--unit <UNIT>` | customer (default) or subject |  |
-| `--by <BREAKDOWN>` | breakdown: flag:KEY or property:KEY |  |
-| `--window <DURATION>` | conversion window, 1h to 720h (default 168h) |  |
-
-#### insight funnel get
-
-Count units that complete steps in order within a window
-
-`gregale insight funnel get --project <slug> [--env <slug>] [--from <TIME>] [--until <TIME>] [--unit <UNIT>] [--by <BREAKDOWN>] [--window <DURATION>] <step> <step> [<step>...]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--project <slug>` | project slug | required |
-| `--env <slug>` | named environment (default production) (also --environment) |  |
-| `--from <TIME>` | RFC 3339 time or duration ago such as 14d (default 7 days, 28 for retention) |  |
-| `--until <TIME>` | RFC 3339 time or duration ago (default now) |  |
-| `--unit <UNIT>` | customer (default) or subject |  |
-| `--by <BREAKDOWN>` | breakdown: flag:KEY or property:KEY |  |
-| `--window <DURATION>` | conversion window, 1h to 720h (default 168h) |  |
-
-### insight retention
-
-Show how many units come back after their first start event
-
-`gregale insight retention [get] --project <slug> [--env <slug>] [--from <TIME>] [--until <TIME>] [--unit <UNIT>] [--by <BREAKDOWN>] [--period <PERIOD>] [--periods <N>] <start-event> <return-event>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--project <slug>` | project slug | required |
-| `--env <slug>` | named environment (default production) (also --environment) |  |
-| `--from <TIME>` | RFC 3339 time or duration ago such as 14d (default 7 days, 28 for retention) |  |
-| `--until <TIME>` | RFC 3339 time or duration ago (default now) |  |
-| `--unit <UNIT>` | customer (default) or subject |  |
-| `--by <BREAKDOWN>` | breakdown: flag:KEY or property:KEY |  |
-| `--period <PERIOD>` | day (default) or week |  |
-| `--periods <N>` | periods after the cohort, 1 to 12 (default 7) |  |
-
-#### insight retention get
-
-Show how many units come back after their first start event
-
-`gregale insight retention get --project <slug> [--env <slug>] [--from <TIME>] [--until <TIME>] [--unit <UNIT>] [--by <BREAKDOWN>] [--period <PERIOD>] [--periods <N>] <start-event> <return-event>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--project <slug>` | project slug | required |
-| `--env <slug>` | named environment (default production) (also --environment) |  |
-| `--from <TIME>` | RFC 3339 time or duration ago such as 14d (default 7 days, 28 for retention) |  |
-| `--until <TIME>` | RFC 3339 time or duration ago (default now) |  |
-| `--unit <UNIT>` | customer (default) or subject |  |
-| `--by <BREAKDOWN>` | breakdown: flag:KEY or property:KEY |  |
-| `--period <PERIOD>` | day (default) or week |  |
-| `--periods <N>` | periods after the cohort, 1 to 12 (default 7) |  |
-
-### insight request
-
-list
-
-#### insight request list
-
-Show requests, server errors and p95 latency per value of a flag
-
-`gregale insight request list --project <slug> [--env <slug>] --flag <KEY> [--from <TIME>] [--until <TIME>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--project <slug>` | project slug | required |
-| `--env <slug>` | named environment (default production) (also --environment) |  |
-| `--flag <KEY>` | the flag to split by | required |
-| `--from <TIME>` | RFC 3339 time or duration ago such as 36h (default 1 day) |  |
-| `--until <TIME>` | RFC 3339 time or duration ago (default now) |  |
 
 
 ## audit
