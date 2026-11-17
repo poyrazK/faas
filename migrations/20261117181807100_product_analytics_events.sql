@@ -1,4 +1,4 @@
--- filename: 20261117084831215_product_analytics_events.sql
+-- filename: 20261117181807100_product_analytics_events.sql
 -- ADR 20261117084505: product analytics. analytics_events keeps one row per
 -- accepted track() event for the plan's analytics retention
 -- (AnalyticsRetentionDays), with the customer, an optional end-user subject
