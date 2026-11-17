@@ -2781,6 +2781,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}
 	}()
+	go newNotificationOutboxMetrics(ops.Registry()).run(ctx, pool, log)
 	if privateNetworkSubscriber != nil || privateNetworkPolicySubscriber != nil || privateNetworkPeeringSubscriber != nil || privateNetworkFabricDeletionSubscriber != nil {
 		// Private-network mutations have their own durable channel because an
 		// attachment policy update must converge immediately, while a peering

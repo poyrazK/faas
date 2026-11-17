@@ -68477,6 +68477,44 @@ func (q *Queries) NotificationClaimAttempts(ctx context.Context, db DBTX, arg No
 	return attempts, err
 }
 
+const notificationOutboxBacklog = `-- name: NotificationOutboxBacklog :many
+SELECT channel, count(*)::bigint AS undelivered,
+       COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(created_at))), 0)::double precision AS oldest_seconds
+FROM notification_outbox
+WHERE state IN ('pending', 'processing')
+GROUP BY channel
+ORDER BY channel
+`
+
+type NotificationOutboxBacklogRow struct {
+	Channel       string
+	Undelivered   int64
+	OldestSeconds float64
+}
+
+// Undelivered durable handoffs per channel: how many, and the age of the
+// oldest. The claim indexes cover exactly these states, so this reads only the
+// live backlog, never the retained history.
+func (q *Queries) NotificationOutboxBacklog(ctx context.Context, db DBTX) ([]NotificationOutboxBacklogRow, error) {
+	rows, err := db.Query(ctx, notificationOutboxBacklog)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationOutboxBacklogRow{}
+	for rows.Next() {
+		var i NotificationOutboxBacklogRow
+		if err := rows.Scan(&i.Channel, &i.Undelivered, &i.OldestSeconds); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const notifyAlertRollbackTraffic = `-- name: NotifyAlertRollbackTraffic :exec
 SELECT pg_notify('deployment_changed',jsonb_build_object('kind','traffic','app_id',$1::text,'deployment_id',$2::text,'traffic_percent',0)::text)
 `

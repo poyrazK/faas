@@ -695,6 +695,17 @@ SET state = 'pending', attempts = o.attempts - 1,
 FROM owned
 WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
 
+-- Undelivered durable handoffs per channel: how many, and the age of the
+-- oldest. The claim indexes cover exactly these states, so this reads only the
+-- live backlog, never the retained history.
+-- name: NotificationOutboxBacklog :many
+SELECT channel, count(*)::bigint AS undelivered,
+       COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(created_at))), 0)::double precision AS oldest_seconds
+FROM notification_outbox
+WHERE state IN ('pending', 'processing')
+GROUP BY channel
+ORDER BY channel;
+
 -- name: DeferNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox

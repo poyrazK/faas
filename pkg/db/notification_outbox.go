@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,13 +70,15 @@ type NotificationOutboxItem struct {
 // the replay queue. Keep this list deliberately narrow: most pg_notify users
 // are advisory cache invalidations and do not need durable delivery.
 func IsDurableNotificationChannel(channel string) bool {
-	switch channel {
-	case NotifyAppWake, NotifyRuntimeConfigRestart, NotifyPrivateNetworkAttachmentChanged, NotifyPrivateNetworkChanged, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady, NotifyAppTaskChanged, NotifyEnvironmentWorkloadImage, NotifyEnvironmentWorkloadQualify:
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(durableNotificationChannels, channel)
 }
+
+var durableNotificationChannels = []string{NotifyAppWake, NotifyRuntimeConfigRestart, NotifyPrivateNetworkAttachmentChanged,
+	NotifyPrivateNetworkChanged, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady,
+	NotifyAppTaskChanged, NotifyEnvironmentWorkloadImage, NotifyEnvironmentWorkloadQualify}
+
+// DurableNotificationChannels lists the channels backed by the replay queue.
+func DurableNotificationChannels() []string { return slices.Clone(durableNotificationChannels) }
 
 func notificationOutboxLeaseDuration(lease time.Duration) time.Duration {
 	if lease <= 0 {
@@ -326,4 +329,29 @@ func RunNotificationOutboxForNode(ctx context.Context, pool *pgxpool.Pool, consu
 			}
 		}
 	}
+}
+
+// NotificationOutboxBacklog is one channel's undelivered durable handoffs.
+type NotificationOutboxBacklog struct {
+	Channel     string
+	Undelivered int64
+	Oldest      time.Duration
+}
+
+// NotificationOutboxBacklogs reports every channel with a pending or
+// processing row. A channel with none is absent.
+func NotificationOutboxBacklogs(ctx context.Context, pool *pgxpool.Pool) ([]NotificationOutboxBacklog, error) {
+	if pool == nil {
+		return nil, errors.New("db: notification outbox backlog: nil pool")
+	}
+	rows, err := sqlc.New().NotificationOutboxBacklog(ctx, pool)
+	if err != nil {
+		return nil, fmt.Errorf("db: notification outbox backlog: %w", err)
+	}
+	out := make([]NotificationOutboxBacklog, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, NotificationOutboxBacklog{Channel: row.Channel, Undelivered: row.Undelivered,
+			Oldest: time.Duration(row.OldestSeconds * float64(time.Second))})
+	}
+	return out, nil
 }
