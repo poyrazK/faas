@@ -1247,6 +1247,9 @@ type Manager struct {
 	// captureRecipient, when set, is what crash-capture keys are sealed to
 	// in place of the first host identity's recipient (slice 3e).
 	captureRecipient *age.X25519Recipient
+	// sealChunked makes sealed captures use crashcrypt's v2 format (slice
+	// 3d-5).
+	sealChunked bool
 	// captureKeys caches sealed snapshot keys opened through secretd
 	// (ADR-20261110210000 slice 3d-3) so a sealed wake pays the round trip
 	// once per capture, not on every restore.
