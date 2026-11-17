@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
@@ -25,6 +26,48 @@ func (f *fakeStore) PutSandboxEgressPolicy(_ context.Context, _ string, allow, d
 	defer f.mu.Unlock()
 	f.egress = agentstore.SandboxEgressPolicy{Allow: allow, Deny: deny}
 	return f.egress, nil
+}
+
+func (f *fakeStore) SandboxDomains(_ context.Context, accountID, id string) ([]agentstore.SandboxDomain, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, err := f.find(accountID, id); err != nil {
+		return nil, err
+	}
+	return f.domains[id], nil
+}
+
+// adr: 20261117091026 §4 — a session's egress record shows the policy it
+// was admitted under and its domain log, only to its account.
+func TestSessionEgress(t *testing.T) {
+	f := newFixture(t)
+	f.h.WebNetwork, f.h.EgressPolicy = true, true
+	var sb api.Sandbox
+	if code := f.call(t, f.h.Create, pro(), http.MethodPost, "/v1/sandboxes",
+		`{"preset":"codex","network":{"mode":"web","allow":["example.com"]}}`, "", &sb); code >= 300 {
+		t.Fatalf("create = %d", code)
+	}
+	at := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	f.store.domains = map[string][]agentstore.SandboxDomain{sb.ID: {{Domain: "example.com", FirstSeen: at},
+		{Domain: "evil.example", Refused: "policy", FirstSeen: at.Add(time.Second)}}}
+	var got api.SandboxEgress
+	if code := f.call(t, f.h.GetEgress, pro(), http.MethodGet, "/v1/sandboxes/"+sb.ID+"/egress", "", sb.ID, &got); code != http.StatusOK ||
+		got.SandboxID != sb.ID || got.Mode != api.SandboxNetworkWeb || !slices.Equal(got.Allow, []string{"example.com"}) ||
+		got.Deny == nil || len(got.Domains) != 2 || got.Domains[0] != (api.SandboxEgressDomain{Domain: "example.com", FirstSeen: at}) ||
+		got.Domains[1].Refused != "policy" {
+		t.Fatalf("egress = %d %+v", code, got)
+	}
+	plain, _ := f.create(t, pro(), `{"preset":"codex"}`)
+	got = api.SandboxEgress{}
+	if code := f.call(t, f.h.GetEgress, pro(), http.MethodGet, "", "", plain.ID, &got); code != http.StatusOK ||
+		got.Allow == nil || got.Domains == nil || len(got.Domains) != 0 {
+		t.Fatalf("a session without a log = %d %+v", code, got)
+	}
+	other := pro()
+	other.ID = "33333333-3333-3333-3333-333333333333"
+	if code := f.call(t, f.h.GetEgress, other, http.MethodGet, "", "", sb.ID, nil); code != http.StatusNotFound {
+		t.Fatalf("another account's read = %d", code)
+	}
 }
 
 func TestEgressPolicyRoutes(t *testing.T) {

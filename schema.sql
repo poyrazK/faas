@@ -59554,6 +59554,27 @@ COMMENT ON TABLE public.sandbox_ports IS 'ADR-20261027090013 §11 exposed sandbo
 
 
 --
+-- Name: sandbox_session_domains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_session_domains (
+    sandbox_id uuid NOT NULL,
+    domain text NOT NULL,
+    refused text DEFAULT ''::text NOT NULL,
+    first_seen timestamp with time zone NOT NULL,
+    CONSTRAINT sandbox_session_domains_domain_check CHECK (((char_length(domain) >= 1) AND (char_length(domain) <= 253))),
+    CONSTRAINT sandbox_session_domains_refused_check CHECK ((refused = ANY (ARRAY[''::text, 'policy'::text, 'budget'::text, 'platform'::text])))
+);
+
+
+--
+-- Name: TABLE sandbox_session_domains; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_session_domains IS 'ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd''s domain log.';
+
+
+--
 -- Name: sandbox_session_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -75476,6 +75497,14 @@ ALTER TABLE ONLY public.sandbox_egress_policies
 
 ALTER TABLE ONLY public.sandbox_ports
     ADD CONSTRAINT sandbox_ports_pkey PRIMARY KEY (sandbox_id, port);
+
+
+--
+-- Name: sandbox_session_domains sandbox_session_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_domains
+    ADD CONSTRAINT sandbox_session_domains_pkey PRIMARY KEY (sandbox_id, refused, domain);
 
 
 --
@@ -111648,6 +111677,14 @@ ALTER TABLE ONLY public.sandbox_ports
 
 ALTER TABLE ONLY public.sandbox_ports
     ADD CONSTRAINT sandbox_ports_sandbox_id_fkey FOREIGN KEY (sandbox_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_session_domains sandbox_session_domains_sandbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_domains
+    ADD CONSTRAINT sandbox_session_domains_sandbox_id_fkey FOREIGN KEY (sandbox_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
 
 
 --

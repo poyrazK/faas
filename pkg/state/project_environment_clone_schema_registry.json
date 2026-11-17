@@ -18165,6 +18165,16 @@
     "kind": "operational"
   },
   {
+    "table": "sandbox_session_domains",
+    "columns": [
+      "domain",
+      "first_seen",
+      "refused",
+      "sandbox_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "sandbox_session_usage",
     "columns": [
       "account_id",

@@ -440,6 +440,26 @@ func (q *Queries) CountSandboxPorts(ctx context.Context, db DBTX, arg CountSandb
 	return column_1, err
 }
 
+const countSandboxSessionDomains = `-- name: CountSandboxSessionDomains :one
+SELECT count(*) FILTER (WHERE refused = '')::integer AS granted,
+       count(*) FILTER (WHERE refused <> '')::integer AS refused
+  FROM sandbox_session_domains WHERE sandbox_id=$1::text::uuid
+`
+
+type CountSandboxSessionDomainsRow struct {
+	Granted int32
+	Refused int32
+}
+
+// How many grants and refusals a session's domain log holds
+// (ADR-20261117091026 §4).
+func (q *Queries) CountSandboxSessionDomains(ctx context.Context, db DBTX, sessionID string) (CountSandboxSessionDomainsRow, error) {
+	row := db.QueryRow(ctx, countSandboxSessionDomains, sessionID)
+	var i CountSandboxSessionDomainsRow
+	err := row.Scan(&i.Granted, &i.Refused)
+	return i, err
+}
+
 const deleteExpiredAgentGitHubSubscriptions = `-- name: DeleteExpiredAgentGitHubSubscriptions :execrows
 DELETE FROM agent_github_subscriptions WHERE id IN (
   SELECT id FROM agent_github_subscriptions WHERE expires_at < $1::timestamptz
@@ -2334,6 +2354,45 @@ func (q *Queries) ListSandboxPorts(ctx context.Context, db DBTX, arg ListSandbox
 	return items, nil
 }
 
+const listSandboxSessionDomains = `-- name: ListSandboxSessionDomains :many
+SELECT d.domain, d.refused, d.first_seen
+  FROM sandbox_session_domains d JOIN sandbox_sessions s ON s.id = d.sandbox_id
+ WHERE d.sandbox_id=$1::text::uuid AND s.account_id=$2::text::uuid
+ ORDER BY d.first_seen, d.refused, d.domain
+`
+
+type ListSandboxSessionDomainsParams struct {
+	SessionID string
+	AccountID string
+}
+
+type ListSandboxSessionDomainsRow struct {
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
+}
+
+// A session's domain log, for its account (ADR-20261117091026 §4).
+func (q *Queries) ListSandboxSessionDomains(ctx context.Context, db DBTX, arg ListSandboxSessionDomainsParams) ([]ListSandboxSessionDomainsRow, error) {
+	rows, err := db.Query(ctx, listSandboxSessionDomains, arg.SessionID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSandboxSessionDomainsRow{}
+	for rows.Next() {
+		var i ListSandboxSessionDomainsRow
+		if err := rows.Scan(&i.Domain, &i.Refused, &i.FirstSeen); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSandboxSessions = `-- name: ListSandboxSessions :many
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
@@ -2993,6 +3052,40 @@ func (q *Queries) RecordAgentRunUsage(ctx context.Context, db DBTX, arg RecordAg
 		arg.PeakPrivateMb,
 		arg.ColdBoot,
 		arg.RunID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordSandboxSessionDomains = `-- name: RecordSandboxSessionDomains :execrows
+INSERT INTO sandbox_session_domains (sandbox_id, domain, refused, first_seen)
+SELECT s.id, x.domain, x.refused, x.first_seen
+  FROM sandbox_sessions s,
+       (SELECT unnest($1::text[]) AS domain, unnest($2::text[]) AS refused,
+               unnest($3::timestamptz[]) AS first_seen) x
+ WHERE s.id=$4::text::uuid AND s.lease_token=$5::text AND s.state IN ('ready','frozen')
+ON CONFLICT DO NOTHING
+`
+
+type RecordSandboxSessionDomainsParams struct {
+	Domains    []string
+	Refused    []string
+	FirstSeen  []pgtype.Timestamptz
+	SessionID  string
+	LeaseToken string
+}
+
+// Adds entries to a session's domain log while the lease is held and the
+// session has a VM; an entry already there keeps its first sighting.
+func (q *Queries) RecordSandboxSessionDomains(ctx context.Context, db DBTX, arg RecordSandboxSessionDomainsParams) (int64, error) {
+	result, err := db.Exec(ctx, recordSandboxSessionDomains,
+		arg.Domains,
+		arg.Refused,
+		arg.FirstSeen,
+		arg.SessionID,
 		arg.LeaseToken,
 	)
 	if err != nil {

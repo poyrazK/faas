@@ -765,6 +765,11 @@ type Instance struct {
 	// webAllow and webDeny are the session's domain policy
 	// (ADR-20261117091026 §3); both empty is none.
 	webAllow, webDeny []string
+	// webLog holds the domains granted or refused since vmmd last drained
+	// them (ADR-20261117091026 §4); webRefusedLogged bounds the refused
+	// ones a session reports.
+	webLog           []SandboxWebDomain
+	webRefusedLogged map[string]bool
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a

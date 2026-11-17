@@ -34,6 +34,12 @@ type SandboxVMMAPI interface {
 
 // sandboxMeter measures a session VM's usage (ADR-20261027090013 step 11).
 // *fcvm.Manager implements it; a VMM without it reports no usage.
+// sandboxWebLog drains a web-mode session's domain log
+// (ADR-20261117091026 §4). *fcvm.Manager implements it.
+type sandboxWebLog interface {
+	DrainSandboxWebDomains(instance string) []fcvm.SandboxWebDomain
+}
+
 type sandboxMeter interface {
 	MeterSandbox(instance string) fcvm.SandboxUsageMeter
 }
@@ -60,7 +66,10 @@ type sandboxActivity struct {
 	thawMu    sync.Mutex
 	thawed    chan struct{}
 
-	outbox   chan *vmmdpb.RunSandboxEvent
+	outbox chan *vmmdpb.RunSandboxEvent
+	// webLog is set when the caller asked for the domain log
+	// (ADR-20261117091026 §4).
+	webLog   bool
 	done     chan struct{}
 	persists sandboxPersists
 	// usage measures the VM, or is nil when the VMM cannot.
@@ -165,6 +174,7 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		opErr = err
 		return err
 	}
+	act.webLog = first.GetStart().GetWebDomainLog()
 	opErr = s.serveSandbox(ctx, stream, wake.Instance, act)
 	return opErr
 }
@@ -215,8 +225,11 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 		case msg := <-frames:
 			switch {
 			case msg.GetClose() != nil:
-				// The last record goes out before the stream ends, so a
-				// closed session's usage is complete.
+				// The last records go out before the stream ends, so a
+				// closed session's domains and usage are complete.
+				if err := s.sendSandboxWebDomains(stream, instance, act); err != nil {
+					return err
+				}
 				if act.usage != nil {
 					stopped = true
 					u := act.usage.Stop()
@@ -236,6 +249,9 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 		case <-act.thawed:
 			ev = &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Thawed{Thawed: &vmmdpb.RunSandboxThawed{}}}
 		case <-ticker.C:
+			if err := s.sendSandboxWebDomains(stream, instance, act); err != nil {
+				return err
+			}
 			if report, changed := act.report(); changed {
 				ev = &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Activity{Activity: report}}
 			}
@@ -252,6 +268,26 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 			return err
 		}
 	}
+}
+
+// sendSandboxWebDomains sends the session's domain log since the last
+// frame, if the caller asked for it and there is any. A caller that did not
+// ask leaves the log to its bounds (fcvm keeps at most the plan's distinct
+// domains and SandboxEgressRefusedLogMax refusals).
+func (s *Server) sendSandboxWebDomains(stream vmmdpb.Vmmd_RunSandboxServer, instance string, act *sandboxActivity) error {
+	log, ok := s.vmm.(sandboxWebLog)
+	if !ok || !act.webLog {
+		return nil
+	}
+	domains := log.DrainSandboxWebDomains(instance)
+	if len(domains) == 0 {
+		return nil
+	}
+	frame := &vmmdpb.RunSandboxWebDomains{Domains: make([]*vmmdpb.RunSandboxWebDomain, 0, len(domains))}
+	for _, d := range domains {
+		frame.Domains = append(frame.Domains, &vmmdpb.RunSandboxWebDomain{Domain: d.Domain, Refused: d.Refused, AtUnixMs: d.At.UnixMilli()})
+	}
+	return stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_WebDomains{WebDomains: frame}})
 }
 
 func sandboxUsageEvent(u *fcvm.AgentRunUsage) *vmmdpb.RunSandboxEvent {

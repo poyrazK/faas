@@ -268,6 +268,13 @@ CREATE TABLE sandbox_session_usage (
  recorded_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE sandbox_session_domains (
+ sandbox_id uuid NOT NULL,
+ domain text NOT NULL,
+ refused text NOT NULL DEFAULT '',
+ first_seen timestamptz NOT NULL,
+ PRIMARY KEY (sandbox_id, refused, domain)
+);
 CREATE TABLE sandbox_workspace_snapshots (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL,
