@@ -1,0 +1,50 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# ADR-20261117185346 agent egress gateway policy, in its own table beside the
+# tenant gateway's faas_tenant_gw. Agent traffic leaves only from the agent
+# addresses, and nothing else ever leaves from them.
+table inet faas_agent_gw
+delete table inet faas_agent_gw
+
+table inet faas_agent_gw {
+  counter faas_agent_gw_input_drop {}
+  counter faas_agent_gw_deny_private {}
+  counter faas_agent_gw_deny_smtp {}
+  counter faas_agent_gw_forwarded {}
+
+  chain input {
+    type filter hook input priority -10; policy accept;
+    # Agents reach the internet through the gateway, never the gateway.
+    iifname "{{ faas_agent_egress_iface }}" ct state established,related accept
+    iifname "{{ faas_agent_egress_iface }}" icmp type echo-request accept
+    iifname "{{ faas_agent_egress_iface }}" counter name "faas_agent_gw_input_drop" drop
+  }
+
+  chain clamp {
+    type filter hook forward priority mangle; policy accept;
+    oifname "{{ faas_agent_egress_iface }}" tcp flags syn tcp option maxseg size set rt mtu
+  }
+
+  chain forward {
+    type filter hook forward priority -10; policy accept;
+    ct state established,related accept
+    iifname "{{ faas_agent_egress_iface }}" oifname "{{ faas_agent_egress_iface }}" drop
+    iifname "{{ faas_agent_egress_iface }}" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/3 } counter name "faas_agent_gw_deny_private" drop
+    iifname "{{ faas_agent_egress_iface }}" tcp dport { 25, 465, 587 } counter name "faas_agent_gw_deny_smtp" drop
+    iifname "{{ faas_agent_egress_iface }}" meta l4proto != { tcp, udp, icmp } drop
+    iifname "{{ faas_agent_egress_iface }}" oifname "{{ faas_agent_egress_gateway_public_iface }}" counter name "faas_agent_gw_forwarded" accept
+    iifname "{{ faas_agent_egress_iface }}" drop
+    oifname "{{ faas_agent_egress_iface }}" drop
+  }
+
+  # Ahead of the tenant table's masquerade, so agent traffic takes an agent
+  # address; each agent VM's tunnel address keeps one address for its life.
+  chain postrouting {
+    type nat hook postrouting priority srcnat - 1; policy accept;
+{% if faas_agent_egress_addresses | length == 1 %}
+    ip saddr {{ faas_agent_egress_tunnel_cidr }} oifname "{{ faas_agent_egress_gateway_public_iface }}" snat ip to {{ faas_agent_egress_addresses[0] }}
+{% else %}
+    ip saddr {{ faas_agent_egress_tunnel_cidr }} oifname "{{ faas_agent_egress_gateway_public_iface }}" snat ip to jhash ip saddr mod {{ faas_agent_egress_addresses | length }} map { {% for a in faas_agent_egress_addresses %}{{ loop.index0 }} : {{ a }}{{ ", " if not loop.last }}{% endfor %} }
+{% endif %}
+  }
+}

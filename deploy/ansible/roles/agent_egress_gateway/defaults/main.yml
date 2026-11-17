@@ -1,0 +1,14 @@
+---
+# ADR-20261117185346: the agent egress gateway half. The manifest generator
+# sets these on the agent_egress_gateway inventory host when
+# egress.agent_gateway is declared. It may be the tenant gateway's host: the
+# interface, key, firewall table and public addresses are all its own.
+faas_agent_egress_iface: wg-agent
+faas_agent_egress_gateway_public_key: ''
+faas_agent_egress_tunnel_cidr: ''
+faas_agent_egress_listen_port: 51821
+# The public addresses agent traffic leaves from. The operator assigns them
+# to the public NIC; the role checks they are there and never adds them.
+faas_agent_egress_addresses: []
+faas_agent_egress_gateway_public_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
+faas_agent_egress_mtu: 1420

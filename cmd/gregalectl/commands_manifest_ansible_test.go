@@ -503,6 +503,69 @@ func TestRenderManifestAnsibleFiles_TenantEgressGateway(t *testing.T) {
 	}
 }
 
+// adr: 20261117185346 §1–§2 — a declared agent egress gateway gives every
+// compute host its tunnel slice and address, derived from its name, and the
+// gateway host its own listener and public addresses; the control plane
+// gets none.
+func TestRenderManifestAnsibleFiles_AgentEgressGateway(t *testing.T) {
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: fsn-1.gregale.dev:7100\n    - name: fsn-2\n      role: compute-only\n      address: fsn-2.gregale.dev:50051\n", 1)
+	yaml += "egress:\n  agent_gateway:\n    endpoint: egress-gw.gregale.dev:51821\n    public_key: " +
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n    tunnel_cidr: 10.78.0.0/16\n    addresses: [198.51.100.7, 198.51.100.8]\n"
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var cpVars, computeVars, gatewayVars, inventory string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "hosts.ini"):
+			inventory = string(file.Body)
+		case strings.HasSuffix(file.Path, "agent-egress-gateway.yml"):
+			gatewayVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			cpVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	for _, want := range []string{
+		`faas_agent_egress_iface: "wg-agent"`,
+		`faas_agent_egress_gateway_endpoint: "egress-gw.gregale.dev:51821"`,
+		`faas_agent_egress_tunnel_cidr: "10.78.0.0/16"`,
+		`faas_agent_egress_node_slice: "10.78.8.0/22"`,
+		`faas_agent_egress_node_address: "10.78.8.1/32"`,
+	} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute host vars missing %s:\n%s", want, computeVars)
+		}
+	}
+	if strings.Contains(cpVars, "faas_agent_egress_") || strings.Contains(computeVars, "faas_tenant_egress_") {
+		t.Errorf("unexpected egress vars:\ncontrol plane:\n%s\ncompute:\n%s", cpVars, computeVars)
+	}
+	if !strings.Contains(inventory, "[agent_egress_gateway]\nagent-egress-gateway\n") {
+		t.Errorf("inventory has no agent gateway group:\n%s", inventory)
+	}
+	for _, want := range []string{
+		`ansible_host: "egress-gw.gregale.dev"`,
+		`faas_agent_egress_gateway_address: "10.78.0.1/16"`,
+		`faas_agent_egress_listen_port: 51821`,
+		"faas_agent_egress_addresses:\n  - \"198.51.100.7\"\n  - \"198.51.100.8\"\n",
+	} {
+		if !strings.Contains(gatewayVars, want) {
+			t.Errorf("gateway host vars missing %s:\n%s", want, gatewayVars)
+		}
+	}
+}
+
 // ADR-520: public_edge.custom_domains turns on the control plane's
 // on-demand customer certificates. Only the control plane runs the public
 // edge, so compute hosts must not receive the switches.

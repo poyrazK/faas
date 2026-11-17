@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+# ADR-20261117185346 agent egress tunnel. Table = off keeps wg-quick from
+# touching the main table; the default route lives only in the agent table.
+# vmmd owns the policy rules: it marks each agent VM's traffic, routes the
+# mark to this table, and drops marked traffic that finds no route here.
+[Interface]
+Address = {{ faas_agent_egress_node_address }}
+PrivateKey = {{ faas_agent_egress_private_key }}
+MTU = {{ faas_agent_egress_mtu }}
+Table = off
+# Replies arrive on the tunnel from public sources whose main-table route
+# is the public NIC; loose reverse-path filtering accepts them.
+PostUp = sysctl -qw net.ipv4.conf.%i.rp_filter=2
+PostUp = ip route replace default dev %i table {{ faas_agent_egress_route_table }}
+PreDown = ip route flush table {{ faas_agent_egress_route_table }}
+
+[Peer]
+# agent egress gateway
+PublicKey = {{ faas_agent_egress_gateway_public_key }}
+Endpoint = {{ faas_agent_egress_gateway_endpoint }}
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
