@@ -35,8 +35,10 @@ func TestMetalPatchedManifestLayerBoots(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// The fixture's embedded manifest is the "old" manifest of the record.
+	// The fixture's embedded manifest, rewritten in the form a build writes,
+	// is the "old" manifest of the record.
 	old, path := fixtureLayerManifest(t, layer)
+	layer = normalizedFixtureLayer(t, layer, path, old)
 	var oldBytes bytes.Buffer
 	if err := api.WriteManifest(&oldBytes, old); err != nil {
 		t.Fatal(err)
@@ -111,12 +113,40 @@ func fixtureLayerManifest(t *testing.T, layer string) (api.AppManifest, string) 
 		if err := json.Unmarshal(raw, &m); err != nil {
 			t.Skipf("fixture %s at %s is not an app manifest: %v", layer, p, err)
 		}
-		var again bytes.Buffer
-		if err := api.WriteManifest(&again, m); err != nil || !bytes.Equal(again.Bytes(), raw) {
-			t.Skipf("fixture %s manifest at %s was not written by api.WriteManifest", layer, p)
-		}
 		return m, p
 	}
 	t.Skipf("fixture %s has no embedded app manifest", layer)
 	return api.AppManifest{}, ""
+}
+
+// normalizedFixtureLayer copies layer and rewrites its manifest at p as
+// api.WriteManifest writes m, which is what a build embeds and what a reuse
+// record describes. Older fixtures were written by other tooling.
+func normalizedFixtureLayer(t *testing.T, layer, p string, m api.AppManifest) string {
+	t.Helper()
+	dir := t.TempDir()
+	copyPath := filepath.Join(dir, "layer.ext4")
+	src, err := os.ReadFile(layer) //nolint:forbidigo // the metal fixture layer path from FAAS_TEST_LAYER_ROOTFS.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(copyPath, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	if err := api.WriteManifest(&body, m); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(dir, "app.json")
+	if err := os.WriteFile(manifest, body.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "normalize.debugfs")
+	if err := os.WriteFile(script, []byte("cd "+filepath.Dir(p)+"\nrm app.json\nwrite "+manifest+" app.json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("debugfs", "-w", "-f", script, copyPath).CombinedOutput(); err != nil {
+		t.Fatalf("normalize fixture manifest: %v: %s", err, out)
+	}
+	return copyPath
 }
