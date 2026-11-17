@@ -16,6 +16,8 @@ T = TypeVar("T", bound="HostedTaskBindingResult")
 
 @_attrs_define
 class HostedTaskBindingResult:
+    """One fixed-name bounded qualification outcome containing no native database facts or secret material."""
+
     name: HostedTaskBindingResultName
     status: HostedTaskBindingResultStatus
 

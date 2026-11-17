@@ -108,10 +108,8 @@ func (e *PrivateExecutor) checkHostedTaskBindings(ctx context.Context, account, 
 	if err != nil || row.Claim != claim || row.Public.Status != "verifying" {
 		return row, err
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, api.HostedTaskBindingProbeTimeout)
+	probeCtx, cancel := taskBindingProbeContext(ctx, e.ctx.Done())
 	defer cancel()
-	stop := context.AfterFunc(e.ctx, cancel)
-	defer stop()
 	change.Checks = e.probeHostedTaskBindings(probeCtx, account, row)
 	// A cancellation must not leave a claim eligible for retry. The native
 	// journal rechecks all pins/authority and makes changed facts terminal.

@@ -84,16 +84,11 @@ def sync_detailed(
 ) -> Response[Any | HostedTaskBindingVerification]:
     """Inspect hosted Task binding qualification
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     Fresh original requester or personal owner reads qualification metadata only. Native source, app,
+    credential and authority drift permanently invalidates previously observed evidence. This read can
+    persist terminal invalidation but never opens credentials or repeats probes. Passing evidence
+    expires within one minute, ends at the original source deadline and grants no readiness or execution
+    authority.
 
     Args:
         id (str):
@@ -124,16 +119,11 @@ def sync(
 ) -> Any | HostedTaskBindingVerification | None:
     """Inspect hosted Task binding qualification
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     Fresh original requester or personal owner reads qualification metadata only. Native source, app,
+    credential and authority drift permanently invalidates previously observed evidence. This read can
+    persist terminal invalidation but never opens credentials or repeats probes. Passing evidence
+    expires within one minute, ends at the original source deadline and grants no readiness or execution
+    authority.
 
     Args:
         id (str):
@@ -159,16 +149,11 @@ async def asyncio_detailed(
 ) -> Response[Any | HostedTaskBindingVerification]:
     """Inspect hosted Task binding qualification
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     Fresh original requester or personal owner reads qualification metadata only. Native source, app,
+    credential and authority drift permanently invalidates previously observed evidence. This read can
+    persist terminal invalidation but never opens credentials or repeats probes. Passing evidence
+    expires within one minute, ends at the original source deadline and grants no readiness or execution
+    authority.
 
     Args:
         id (str):
@@ -197,16 +182,11 @@ async def asyncio(
 ) -> Any | HostedTaskBindingVerification | None:
     """Inspect hosted Task binding qualification
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     Fresh original requester or personal owner reads qualification metadata only. Native source, app,
+    credential and authority drift permanently invalidates previously observed evidence. This read can
+    persist terminal invalidation but never opens credentials or repeats probes. Passing evidence
+    expires within one minute, ends at the original source deadline and grants no readiness or execution
+    authority.
 
     Args:
         id (str):

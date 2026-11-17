@@ -10,17 +10,25 @@ T = TypeVar("T", bound="HostedTaskBindingSelection")
 
 @_attrs_define
 class HostedTaskBindingSelection:
+    """Personal-owner selection of native Task binding references for one approved retained source intent, never plaintext
+    credentials.
+
+    """
+
     intent_sha256: str
     review_sha256: str
     namespace: str
     web_database_ref: str
-    """Owner-only native managed PostgreSQL reference; no credential value."""
+    """Existing read_write native managed PostgreSQL secret reference on the reviewed web app; never a credential
+    value."""
     worker_database_ref: str
-    """Owner-only native managed PostgreSQL reference; no credential value."""
+    """Existing read_write native managed PostgreSQL secret reference on the reviewed worker app sharing the
+    selected queue."""
     migration_database_ref: str
-    """Owner-only native managed PostgreSQL reference; no credential value."""
+    """Worker app reference for its separate migration-only PostgreSQL role; qualification never runs a migration."""
     observer_database_ref: str
-    """Owner-only native managed PostgreSQL reference; no credential value."""
+    """Native read_only PostgreSQL secret reference on the reviewed observer app, isolated from runtime and
+    migration roles."""
 
     def to_dict(self) -> dict[str, Any]:
         intent_sha256 = self.intent_sha256

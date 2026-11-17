@@ -94,20 +94,15 @@ def sync_detailed(
 ) -> Response[Any | HostedTaskBindingVerification]:
     """Revoke hosted Task binding qualification
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     A fresh personal owner permanently revokes the exact selected qualification under the account MFA
+    policy. Revocation remains available while new admission is disabled and does not require the old
+    requester or native app baseline to remain live. Revoked evidence cannot be revived and previously
+    observed passing checks never supply execution authority.
 
     Args:
         id (str):
-        body (HostedTaskBindingCheck):
+        body (HostedTaskBindingCheck): Exact immutable qualification fingerprint supplied by a
+            personal owner for a check or revocation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,20 +132,15 @@ def sync(
 ) -> Any | HostedTaskBindingVerification | None:
     """Revoke hosted Task binding qualification
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     A fresh personal owner permanently revokes the exact selected qualification under the account MFA
+    policy. Revocation remains available while new admission is disabled and does not require the old
+    requester or native app baseline to remain live. Revoked evidence cannot be revived and previously
+    observed passing checks never supply execution authority.
 
     Args:
         id (str):
-        body (HostedTaskBindingCheck):
+        body (HostedTaskBindingCheck): Exact immutable qualification fingerprint supplied by a
+            personal owner for a check or revocation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,20 +165,15 @@ async def asyncio_detailed(
 ) -> Response[Any | HostedTaskBindingVerification]:
     """Revoke hosted Task binding qualification
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     A fresh personal owner permanently revokes the exact selected qualification under the account MFA
+    policy. Revocation remains available while new admission is disabled and does not require the old
+    requester or native app baseline to remain live. Revoked evidence cannot be revived and previously
+    observed passing checks never supply execution authority.
 
     Args:
         id (str):
-        body (HostedTaskBindingCheck):
+        body (HostedTaskBindingCheck): Exact immutable qualification fingerprint supplied by a
+            personal owner for a check or revocation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,20 +201,15 @@ async def asyncio(
 ) -> Any | HostedTaskBindingVerification | None:
     """Revoke hosted Task binding qualification
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     A fresh personal owner permanently revokes the exact selected qualification under the account MFA
+    policy. Revocation remains available while new admission is disabled and does not require the old
+    requester or native app baseline to remain live. Revoked evidence cannot be revived and previously
+    observed passing checks never supply execution authority.
 
     Args:
         id (str):
-        body (HostedTaskBindingCheck):
+        body (HostedTaskBindingCheck): Exact immutable qualification fingerprint supplied by a
+            personal owner for a check or revocation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

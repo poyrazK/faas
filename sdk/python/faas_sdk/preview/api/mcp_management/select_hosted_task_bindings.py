@@ -94,20 +94,17 @@ def sync_detailed(
 ) -> Response[Any | HostedTaskBindingVerification]:
     """Select owner-reviewed native Task bindings
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     An authenticated account owner or fresh unscoped non-agent, non-MCP-login personal administrator
+    selects existing native managed PostgreSQL references under the account MFA policy. Both
+    verification and source-retention opt-ins and independent sealing identities are required. Selection
+    immutably pins the approved source digests, queue namespace, app baselines and secret versions for
+    one ready account-owned database with distinct runtime, migration and observer roles. Retries
+    preserve the original non-renewable source deadline; selection starts neither probes nor execution.
 
     Args:
         id (str):
-        body (HostedTaskBindingSelection):
+        body (HostedTaskBindingSelection): Personal-owner selection of native Task binding
+            references for one approved retained source intent, never plaintext credentials.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,20 +134,17 @@ def sync(
 ) -> Any | HostedTaskBindingVerification | None:
     """Select owner-reviewed native Task bindings
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     An authenticated account owner or fresh unscoped non-agent, non-MCP-login personal administrator
+    selects existing native managed PostgreSQL references under the account MFA policy. Both
+    verification and source-retention opt-ins and independent sealing identities are required. Selection
+    immutably pins the approved source digests, queue namespace, app baselines and secret versions for
+    one ready account-owned database with distinct runtime, migration and observer roles. Retries
+    preserve the original non-renewable source deadline; selection starts neither probes nor execution.
 
     Args:
         id (str):
-        body (HostedTaskBindingSelection):
+        body (HostedTaskBindingSelection): Personal-owner selection of native Task binding
+            references for one approved retained source intent, never plaintext credentials.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,20 +169,17 @@ async def asyncio_detailed(
 ) -> Response[Any | HostedTaskBindingVerification]:
     """Select owner-reviewed native Task bindings
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     An authenticated account owner or fresh unscoped non-agent, non-MCP-login personal administrator
+    selects existing native managed PostgreSQL references under the account MFA policy. Both
+    verification and source-retention opt-ins and independent sealing identities are required. Selection
+    immutably pins the approved source digests, queue namespace, app baselines and secret versions for
+    one ready account-owned database with distinct runtime, migration and observer roles. Retries
+    preserve the original non-renewable source deadline; selection starts neither probes nor execution.
 
     Args:
         id (str):
-        body (HostedTaskBindingSelection):
+        body (HostedTaskBindingSelection): Personal-owner selection of native Task binding
+            references for one approved retained source intent, never plaintext credentials.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,20 +207,17 @@ async def asyncio(
 ) -> Any | HostedTaskBindingVerification | None:
     """Select owner-reviewed native Task bindings
 
-     Owner writes require fresh unscoped non-agent personal administrator or authenticated owner
-    authority and the account MFA policy. The original requester may only read metadata. Native managed
-    PostgreSQL references must belong to the account, identify one ready database and preserve runtime,
-    migration and observer role separation. Selection pins the approved source, app configuration,
-    namespace and exact secret versions. Probes are bounded read-only catalog observations and run at
-    most once per immutable source identity. Evidence expires within one minute, clamped to the original
-    non-renewable source deadline; observed drift is terminal. Passing does not establish payload
-    readability, migration compatibility, network readiness from a VM, or execution authorization. GET
-    may persist terminal invalidation but never probes or exposes private references. Revocation remains
-    available with admission disabled.
+     An authenticated account owner or fresh unscoped non-agent, non-MCP-login personal administrator
+    selects existing native managed PostgreSQL references under the account MFA policy. Both
+    verification and source-retention opt-ins and independent sealing identities are required. Selection
+    immutably pins the approved source digests, queue namespace, app baselines and secret versions for
+    one ready account-owned database with distinct runtime, migration and observer roles. Retries
+    preserve the original non-renewable source deadline; selection starts neither probes nor execution.
 
     Args:
         id (str):
-        body (HostedTaskBindingSelection):
+        body (HostedTaskBindingSelection): Personal-owner selection of native Task binding
+            references for one approved retained source intent, never plaintext credentials.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

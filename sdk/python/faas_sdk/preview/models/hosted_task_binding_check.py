@@ -10,6 +10,8 @@ T = TypeVar("T", bound="HostedTaskBindingCheck")
 
 @_attrs_define
 class HostedTaskBindingCheck:
+    """Exact immutable qualification fingerprint supplied by a personal owner for a check or revocation."""
+
     binding_sha256: str
 
     def to_dict(self) -> dict[str, Any]:
