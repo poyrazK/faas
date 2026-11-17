@@ -7208,6 +7208,21 @@ WITH candidate AS (
             AND notification_outbox_target_node(channel, payload) IN ('', $4::text)))
       AND ((state = 'pending' AND available_at <= now()) OR
            (state = 'processing' AND lease_until <= clock_timestamp()))
+      -- With app_owner set, an app_wake or runtime_config_restart row is
+      -- claimable only by the schedd that owns its app (an app with no node
+      -- is anyone's; a row whose app id is unreadable or gone is left to the
+      -- handler). Without it a peer claimed the row and deferred it, and the
+      -- owner could lose every replay (production 2026-11-16).
+      AND ($5::text = '' OR channel NOT IN ('app_wake', 'runtime_config_restart') OR
+           NOT EXISTS (
+             SELECT 1 FROM apps a
+             -- Nested CASE fixes the evaluation order: a poison payload must
+             -- not fail every claim.
+             WHERE a.id = CASE WHEN pg_input_is_valid(payload, 'jsonb') THEN
+                            CASE WHEN pg_input_is_valid(payload::jsonb ->> 'app_id', 'uuid')
+                                 THEN (payload::jsonb ->> 'app_id')::uuid END END
+               AND a.node_id IS NOT NULL
+               AND a.node_id::text <> $5::text))
     ORDER BY id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -7227,6 +7242,7 @@ type ClaimNotificationForNodeParams struct {
 	LeaseMilliseconds int64
 	Channels          []string
 	NodeID            string
+	AppOwner          string
 }
 
 type ClaimNotificationForNodeRow struct {
@@ -7243,6 +7259,7 @@ func (q *Queries) ClaimNotificationForNode(ctx context.Context, db DBTX, arg Cla
 		arg.LeaseMilliseconds,
 		arg.Channels,
 		arg.NodeID,
+		arg.AppOwner,
 	)
 	var i ClaimNotificationForNodeRow
 	err := row.Scan(

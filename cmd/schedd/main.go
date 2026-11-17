@@ -2775,7 +2775,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// subscriber acknowledges rows after dispatching the same handler; this
 	// worker only sees rows that remain pending after the wakeup grace period.
 	go func() {
-		err := db.RunNotificationOutbox(ctx, pool, "schedd",
+		// Only the app's owner claims its wake or restart; peers skip the
+		// row instead of claiming and deferring it.
+		err := db.RunNotificationOutboxForAppOwner(ctx, pool, "schedd", engine.ClaimNodeID(),
 			[]string{db.NotifyAppWake, db.NotifyRuntimeConfigRestart, db.NotifySnapshotPrime}, durableReplayHandler(ctx, loop.HandleDurableNotification), log)
 		if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 			log.Warn("schedd: durable notification replay exited", "err", err)
