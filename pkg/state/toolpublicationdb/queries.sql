@@ -227,6 +227,27 @@ SELECT id::text FROM deployments WHERE app_id=$1 ORDER BY created_at DESC LIMIT 
 -- name: GetHostedTaskSourceIntent :one
 SELECT payload,ciphertext FROM hosted_task_source_intents WHERE account_id=$1 AND id=$2;
 
+-- name: LockHostedTaskSourceIntent :one
+SELECT payload,ciphertext FROM hosted_task_source_intents WHERE account_id=$1 AND id=$2 FOR UPDATE;
+
+-- name: UpdateHostedTaskSourceIntentReview :exec
+UPDATE hosted_task_source_intents SET payload=$3 WHERE account_id=$1 AND id=$2;
+
+-- Account API keys are distinct from app, tenant and hosting-site credentials.
+-- name: LockHostedTaskSourceRequesterKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
+AND (k.scopes @> ARRAY['admin']::text[] OR k.scopes @> ARRAY['apps:read','deploy:write']::text[])
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k;
+
+-- name: LockHostedTaskSourceOwnerKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
+AND k.scopes @> ARRAY['admin']::text[] AND NOT k.scopes @> ARRAY['agent']::text[] AND k.label IS DISTINCT FROM 'mcp-login'
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k;
+
 -- name: InsertHostedTaskSourceIntent :exec
 INSERT INTO hosted_task_source_intents(account_id,id,payload,ciphertext,expires_at) VALUES($1,$2,$3,$4,$5);
 

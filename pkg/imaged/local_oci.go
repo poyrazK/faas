@@ -850,6 +850,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		}
 		runtime = unsigned
 	}
+	ctx = withImageProgress(ctx, h.store, dep.ID, "app image")
 	result, err := h.localOCIAppLayer(ctx, app, *dep, acct, source, runtime, manifest, rootfs.BuildInput{
 		GuestInitPath:  h.guestInitPath,
 		Plan:           acct.Plan,

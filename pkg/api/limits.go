@@ -1062,6 +1062,11 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// ImagedVerifiedBaseFiles bounds how many base artifacts one imaged remembers
+// verifying from its node cache (ADR-595 amendment 2026-11-17). One entry per
+// base key: the runtime matrix has about ten bases per architecture.
+const ImagedVerifiedBaseFiles = 64
+
 // BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
 // builderd remembers the digest of, so a cache hit skips re-reading the
 // artifact to check it. A node's cache holds a few hundred entries.
@@ -1073,7 +1078,10 @@ const BuilderdVerifiedCacheArtifacts = 1024
 const ImagedLayerReuseMaxRecords = 4096
 
 // ImagedLayerReuseRecordMaxBytes bounds one reuse index record imaged reads.
-const ImagedLayerReuseRecordMaxBytes = 4096
+// A record carries the layer's input and final app manifests so a runtime
+// settings change can patch the manifest instead of rebuilding; a record
+// over the bound reads as a miss.
+const ImagedLayerReuseRecordMaxBytes = 256 << 10
 
 // ImagedLayerReuseSBOMMaxBytes bounds the SBOM imaged copies for a reused app
 // layer; syft's CycloneDX JSON for a large image is a few MB.
@@ -11324,6 +11332,10 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxBrowserRAMMBMin is the least RAM a session created with
+	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
+	// 1 GB for ordinary pages.
+	SandboxBrowserRAMMBMin = 1024
 	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
 	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
 	// it. A browser touches many domains per page, so it is above the per-run

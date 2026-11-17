@@ -30,6 +30,9 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) stri
 		// ADR-20261112121456 §6: web egress is on only where the operator
 		// says the fleet routes tenant egress through its gateway.
 		WebNetwork: strings.TrimSpace(getenv("FAAS_SANDBOX_WEB_NETWORK")) == "1",
+		// ADR-20261116182615 rollout: browser sessions are on once vmmd,
+		// schedd and agentd carry them.
+		Browser: strings.TrimSpace(getenv("FAAS_SANDBOX_BROWSER")) == "1",
 		Audit: func(ctx context.Context, action, accountID string, fields map[string]any) {
 			s.audit.Emit(ctx, action, &accountID, fields)
 		},

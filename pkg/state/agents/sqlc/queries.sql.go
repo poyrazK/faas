@@ -1191,7 +1191,7 @@ const getSandboxSession = `-- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser
  FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
 
@@ -1223,6 +1223,7 @@ type GetSandboxSessionRow struct {
 	InstanceID          string
 	WorkspaceSnapshotID string
 	ImageRef            string
+	Browser             bool
 }
 
 func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandboxSessionParams) (GetSandboxSessionRow, error) {
@@ -1251,6 +1252,7 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 		&i.InstanceID,
 		&i.WorkspaceSnapshotID,
 		&i.ImageRef,
+		&i.Browser,
 	)
 	return i, err
 }
@@ -1264,7 +1266,7 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
     tpl.rootfs_key, '')::text AS image_key,
   (sb.image_ref IS NOT NULL)::boolean AS from_image,
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
-  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s
+  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
@@ -1291,6 +1293,7 @@ type GetSandboxSessionClaimRow struct {
 	StartCmd         string
 	ReadyCmd         string
 	ReadyTimeoutS    int32
+	Browser          bool
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1314,6 +1317,7 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.StartCmd,
 		&i.ReadyCmd,
 		&i.ReadyTimeoutS,
+		&i.Browser,
 	)
 	return i, err
 }
@@ -1780,11 +1784,11 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 
 const insertSandboxSession = `-- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id)
+  image_ref,image_job_id,template_id,browser)
 VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
   $5::integer,$6::text,$7::integer,$8::timestamptz,
   $9::jsonb,$10::text::uuid,$11::text,$12::text::uuid,
-  $13::text::uuid)
+  $13::text::uuid,$14::boolean)
 RETURNING id::text AS id
 `
 
@@ -1802,6 +1806,7 @@ type InsertSandboxSessionParams struct {
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.Text
 	TemplateID          pgtype.Text
+	Browser             bool
 }
 
 func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
@@ -1819,6 +1824,7 @@ func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertS
 		arg.ImageRef,
 		arg.ImageJobID,
 		arg.TemplateID,
+		arg.Browser,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -2306,7 +2312,7 @@ const listSandboxSessions = `-- name: ListSandboxSessions :many
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser
  FROM sandbox_sessions
  WHERE account_id=$1::text::uuid
  AND ($2::text IS NULL OR state=$2::text)
@@ -2345,6 +2351,7 @@ type ListSandboxSessionsRow struct {
 	InstanceID          string
 	WorkspaceSnapshotID string
 	ImageRef            string
+	Browser             bool
 }
 
 // Newest first; a page continues before the (created_at, id) of the last row.
@@ -2386,6 +2393,7 @@ func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSand
 			&i.InstanceID,
 			&i.WorkspaceSnapshotID,
 			&i.ImageRef,
+			&i.Browser,
 		); err != nil {
 			return nil, err
 		}

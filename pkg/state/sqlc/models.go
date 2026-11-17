@@ -15895,6 +15895,8 @@ type SandboxSession struct {
 	ImageJobID pgtype.UUID
 	// ADR-20261027090013: the sandbox template the session boots; NULL for a preset or image session, or once the template is deleted.
 	TemplateID pgtype.UUID
+	// ADR-20261116182615: the session boots with the sandbox browser running (gregale-browser) and CDP on port 9222.
+	Browser bool
 }
 
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.

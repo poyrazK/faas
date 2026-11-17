@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,7 @@ type AppPublishEventRequest struct {
 	Data          json.RawMessage `json:"data"`
 	Time          *time.Time      `json:"time,omitempty"`
 	SchemaVersion string          `json:"schemaversion,omitempty"`
+	Environment   string          `json:"environment,omitempty"`
 }
 
 func ValidateAppEventProducerKey(key string) error {
@@ -33,6 +35,9 @@ func ValidateAppEventProducerKey(key string) error {
 }
 
 func (r AppPublishEventRequest) Validate() error {
+	if len(r.Environment) > 40 || strings.TrimSpace(r.Environment) != r.Environment || strings.ContainsAny(r.Environment, "\r\n\x00") {
+		return fmt.Errorf("invalid event environment")
+	}
 	if err := ValidateAppEventProducerKey(r.Key); err != nil {
 		return err
 	}

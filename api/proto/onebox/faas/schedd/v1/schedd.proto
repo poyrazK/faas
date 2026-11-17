@@ -1314,6 +1314,10 @@ message SandboxRunStart {
   string start_cmd = 10;
   string ready_cmd = 11;
   int64 ready_timeout_ms = 12;
+  // browser boots a preset session with the sandbox browser running
+  // (ADR-20261116182615 §1): vmmd starts it with its own commands, and the
+  // warm snapshot is the browser shape's. Never set with start_cmd.
+  bool browser = 13;
 }
 
 message SandboxRunFreeze {}

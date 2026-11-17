@@ -1,0 +1,313 @@
+{
+  "scope": {
+    "base_url": "https://api.example.test",
+    "account_id": "11111111-1111-4111-8111-111111111111",
+    "app_id": "22222222-2222-4222-8222-222222222222",
+    "app_slug": "imports"
+  },
+  "owner_id": "alice",
+  "deployment_id": "11111111-1111-4111-8111-111111111111",
+  "run_id": "22222222-2222-4222-8222-222222222222",
+  "replay_run_id": "33333333-3333-4333-8333-333333333333",
+  "contract": {
+    "version": 1,
+    "name": "nightly-import",
+    "input": {
+      "type": "object",
+      "properties": {
+        "import_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "import_id"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "integer"
+    }
+  },
+  "input": {
+    "import_id": "batch-17"
+  },
+  "options": {
+    "cron": "30 2 * * *",
+    "timezone": "America/New_York",
+    "catch_up": "latest",
+    "catch_up_window_minutes": 60
+  },
+  "identity": "6c7f03300d3c07ffd638bce8104f1d728ca19340e7b498b3249917106c66e89c",
+  "trigger": {
+    "type": "schedule",
+    "schedule": "30 2 * * *",
+    "timezone": "America/New_York",
+    "overlap": "skip",
+    "catch_up": "latest",
+    "enabled": true,
+    "catch_up_window": "60m",
+    "input": {
+      "version": 1,
+      "scope": {
+        "base_url": "https://api.example.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "owner_id": "alice",
+      "contract_sha256": "144e428d3a2ff3263849c87d3365d2f9855130ecf3b77013fc469e2f7a812210",
+      "input": {
+        "import_id": "batch-17"
+      },
+      "trigger": {
+        "version": 1,
+        "kind": "schedule",
+        "identity": "6c7f03300d3c07ffd638bce8104f1d728ca19340e7b498b3249917106c66e89c"
+      }
+    }
+  },
+  "previews": [
+    {
+      "name": "spring gap",
+      "options": {},
+      "response": {
+        "workflow_name": "nightly-import",
+        "deployment_id": "11111111-1111-4111-8111-111111111111",
+        "schedule": "30 2 * * *",
+        "timezone": "America/New_York",
+        "overlap": "skip",
+        "enabled": true,
+        "observed_at": "2026-03-08T06:00:00.123456789Z",
+        "evaluation_at": "2026-03-08T06:00:00.123456789Z",
+        "dst_behavior": {
+          "mode": "fixed_wall_time",
+          "spring_gap": "shift_to_first_valid_minute",
+          "fall_fold": "run_once_at_first_occurrence"
+        },
+        "upcoming": [
+          {
+            "scheduled_for": "2026-03-08T07:00:00Z",
+            "local_time": "2026-03-08T03:00:00-04:00",
+            "dst_adjustment": "shifted_forward"
+          }
+        ],
+        "catch_up": {
+          "policy": "latest",
+          "window": "1h0m0s",
+          "outcome": "no_due_occurrence",
+          "eligible_occurrences": 0,
+          "coalesced_occurrences": 0,
+          "missed_occurrences_not_recovered": false,
+          "missed_outside_window": false
+        }
+      }
+    },
+    {
+      "name": "fall fold once",
+      "options": {
+        "cron": "30 1 * * *"
+      },
+      "response": {
+        "workflow_name": "nightly-import",
+        "deployment_id": "11111111-1111-4111-8111-111111111111",
+        "schedule": "30 1 * * *",
+        "timezone": "America/New_York",
+        "overlap": "skip",
+        "enabled": true,
+        "observed_at": "2026-11-01T04:00:00Z",
+        "evaluation_at": "2026-11-01T04:00:00Z",
+        "dst_behavior": {
+          "mode": "fixed_wall_time",
+          "spring_gap": "shift_to_first_valid_minute",
+          "fall_fold": "run_once_at_first_occurrence"
+        },
+        "upcoming": [
+          {
+            "scheduled_for": "2026-11-01T05:30:00Z",
+            "local_time": "2026-11-01T01:30:00-04:00"
+          },
+          {
+            "scheduled_for": "2026-11-02T06:30:00Z",
+            "local_time": "2026-11-02T01:30:00-05:00"
+          }
+        ],
+        "catch_up": {
+          "policy": "latest",
+          "window": "1h0m0s",
+          "outcome": "no_due_occurrence",
+          "eligible_occurrences": 0,
+          "coalesced_occurrences": 0,
+          "missed_occurrences_not_recovered": false,
+          "missed_outside_window": false
+        }
+      }
+    },
+    {
+      "name": "interval fall fold",
+      "options": {
+        "cron": "*/30 * * * *"
+      },
+      "response": {
+        "workflow_name": "nightly-import",
+        "deployment_id": "11111111-1111-4111-8111-111111111111",
+        "schedule": "*/30 * * * *",
+        "timezone": "America/New_York",
+        "overlap": "skip",
+        "enabled": true,
+        "observed_at": "2026-11-01T05:00:00Z",
+        "evaluation_at": "2026-11-01T05:00:00Z",
+        "dst_behavior": {
+          "mode": "interval",
+          "spring_gap": "follow_cron_interval",
+          "fall_fold": "repeat_as_clock_falls_back"
+        },
+        "upcoming": [
+          {
+            "scheduled_for": "2026-11-01T05:30:00Z",
+            "local_time": "2026-11-01T01:30:00-04:00"
+          },
+          {
+            "scheduled_for": "2026-11-01T06:00:00Z",
+            "local_time": "2026-11-01T01:00:00-05:00"
+          }
+        ],
+        "catch_up": {
+          "policy": "latest",
+          "window": "1h0m0s",
+          "outcome": "no_due_occurrence",
+          "eligible_occurrences": 0,
+          "coalesced_occurrences": 0,
+          "missed_occurrences_not_recovered": false,
+          "missed_outside_window": false
+        }
+      }
+    },
+    {
+      "name": "outside catch-up window",
+      "options": {},
+      "response": {
+        "workflow_name": "nightly-import",
+        "deployment_id": "11111111-1111-4111-8111-111111111111",
+        "schedule": "30 2 * * *",
+        "timezone": "America/New_York",
+        "overlap": "skip",
+        "enabled": true,
+        "observed_at": "2026-11-16T09:00:00Z",
+        "evaluation_at": "2026-11-16T09:00:00Z",
+        "dst_behavior": {
+          "mode": "fixed_wall_time",
+          "spring_gap": "shift_to_first_valid_minute",
+          "fall_fold": "run_once_at_first_occurrence"
+        },
+        "upcoming": [
+          {
+            "scheduled_for": "2026-11-17T07:30:00Z",
+            "local_time": "2026-11-17T02:30:00-05:00"
+          }
+        ],
+        "catch_up": {
+          "policy": "latest",
+          "window": "1h0m0s",
+          "outcome": "outside_catch_up_window",
+          "eligible_occurrences": 0,
+          "coalesced_occurrences": 0,
+          "missed_occurrences_not_recovered": true,
+          "missed_outside_window": true,
+          "since": "2026-11-15T09:00:00.123456789Z"
+        }
+      }
+    },
+    {
+      "name": "coalesce latest",
+      "options": {},
+      "response": {
+        "workflow_name": "nightly-import",
+        "deployment_id": "11111111-1111-4111-8111-111111111111",
+        "schedule": "30 2 * * *",
+        "timezone": "America/New_York",
+        "overlap": "skip",
+        "enabled": true,
+        "observed_at": "2026-11-16T07:45:00Z",
+        "evaluation_at": "2026-11-16T07:45:00Z",
+        "dst_behavior": {
+          "mode": "fixed_wall_time",
+          "spring_gap": "shift_to_first_valid_minute",
+          "fall_fold": "run_once_at_first_occurrence"
+        },
+        "upcoming": [
+          {
+            "scheduled_for": "2026-11-17T07:30:00Z",
+            "local_time": "2026-11-17T02:30:00-05:00"
+          }
+        ],
+        "catch_up": {
+          "policy": "latest",
+          "window": "1h0m0s",
+          "outcome": "coalesce_latest",
+          "eligible_occurrences": 1,
+          "coalesced_occurrences": 0,
+          "missed_occurrences_not_recovered": true,
+          "missed_outside_window": true,
+          "since": "2026-11-15T09:00:00.123456789Z",
+          "selected": {
+            "scheduled_for": "2026-11-16T07:30:00Z",
+            "local_time": "2026-11-16T02:30:00-05:00"
+          }
+        }
+      }
+    }
+  ],
+  "occurrences": [
+    {
+      "id": "44444444-4444-4444-8444-000000000001",
+      "app_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_name": "nightly-import",
+      "deployment_id": "11111111-1111-4111-8111-111111111111",
+      "scheduled_for": "2026-11-16T07:30:00.123456789Z",
+      "evaluated_at": "2026-11-16T07:31:00Z",
+      "status": "started",
+      "run_id": "22222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "44444444-4444-4444-8444-000000000002",
+      "app_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_name": "nightly-import",
+      "deployment_id": "11111111-1111-4111-8111-111111111111",
+      "scheduled_for": "2026-11-16T07:30:00.123456788Z",
+      "evaluated_at": "2026-11-16T07:31:00Z",
+      "status": "skipped_overlap"
+    },
+    {
+      "id": "44444444-4444-4444-8444-000000000003",
+      "app_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_name": "nightly-import",
+      "deployment_id": "11111111-1111-4111-8111-111111111111",
+      "scheduled_for": "2026-11-16T07:30:00.123456787Z",
+      "evaluated_at": "2026-11-16T07:31:00Z",
+      "status": "skipped_quota"
+    }
+  ],
+  "invalid_options": [
+    {
+      "cron": "* * *"
+    },
+    {
+      "timezone": "No/Such_Zone"
+    },
+    {
+      "environment": "staging"
+    },
+    {
+      "catch_up_window_minutes": 0
+    },
+    {
+      "catch_up": "skip"
+    },
+    {
+      "overlap": "repeat"
+    },
+    {
+      "enabled": 0
+    }
+  ]
+}

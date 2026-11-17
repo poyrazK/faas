@@ -244,6 +244,10 @@ type CreateSandboxRequest struct {
 	// Template boots the session from a sandbox template's newest finished
 	// build in place of a preset or image.
 	Template string `json:"template,omitempty"`
+	// Browser boots a preset session with the sandbox browser running and
+	// its DevTools protocol exposed privately on SandboxBrowserCDPPort
+	// (ADR-20261116182615 §1). It needs SandboxBrowserRAMMBMin.
+	Browser bool `json:"browser,omitempty"`
 	// Pull and RegistryAuth go with Image, as on image runs: "always"
 	// re-pulls a cached image so a moved tag resolves again, and
 	// RegistryAuth is stored sealed on the image's runner job for its
@@ -271,6 +275,10 @@ const SandboxTemplateRefPrefix = "template:"
 // SandboxPresetImage is the preset recorded for a session booted from a
 // seller image.
 const SandboxPresetImage = "image"
+
+// SandboxBrowserCDPPort is the guest port gregale-browser serves the
+// browser's DevTools protocol on (ADR-20261112133503).
+const SandboxBrowserCDPPort = 9222
 
 // SandboxImageDefaultRAMMB is a seller-image session's RAM when ram_mb is
 // omitted, within the plan's AgentRunRAMMBMax.
@@ -315,6 +323,8 @@ type Sandbox struct {
 	Image string `json:"image,omitempty"`
 	// Template is the sandbox template the session boots, if any.
 	Template string `json:"template,omitempty"`
+	// Browser is a session created with the sandbox browser running.
+	Browser bool `json:"browser,omitempty"`
 }
 
 // SandboxSnapshot is a persisted workspace (ADR-20261027090013 step 7): a

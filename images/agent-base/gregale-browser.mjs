@@ -13,10 +13,14 @@
 // Usage:
 //   gregale-browser [-- chromium flags...]   start; runs until Chromium exits
 //   gregale-browser --wait [seconds]         exit 0 once CDP answers
+//   gregale-browser --prewarm                start Chromium, wait for it,
+//                                            stop it and delete its profile
+//                                            (a warm snapshot's capture,
+//                                            ADR-20261116182615 §2)
 //
 // Only Node built-ins: it runs from the read-only agent-base drive0.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 
@@ -135,15 +139,45 @@ async function waitFor(port, seconds) {
   return false;
 }
 
-async function start(extra) {
-  const profile = process.env.GREGALE_BROWSER_PROFILE || '/tmp/gregale-browser';
+function profileDir() {
+  return process.env.GREGALE_BROWSER_PROFILE || '/tmp/gregale-browser';
+}
+
+// launch starts Chromium with CDP on CDP_PORT.
+function launch(profile, extra) {
   mkdirSync(profile, { recursive: true });
   // --no-sandbox: the microVM is the sandbox, and the guest has no user
-  // namespaces for Chromium's own.
+  // namespaces for Chromium's own. The background flags keep Chromium from
+  // calling home (updates, sync, metrics) through the session's egress.
   const args = ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run',
-    '--no-default-browser-check', '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${CDP_PORT}`,
+    '--no-default-browser-check', '--disable-background-networking', '--disable-component-update', '--disable-sync',
+    '--disable-domain-reliability', '--metrics-recording-only', '--no-pings', '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${CDP_PORT}`,
     '--remote-allow-origins=*', `--user-data-dir=${profile}`, ...extra, 'about:blank'];
-  const chromium = spawn(chromiumPath(), args, { stdio: ['ignore', 'inherit', 'inherit'] });
+  return spawn(chromiumPath(), args, { stdio: ['ignore', 'inherit', 'inherit'] });
+}
+
+// prewarm runs Chromium once and stops it, leaving its files in the page
+// cache and nothing running or written: a snapshot captured afterwards has
+// no Chromium state two restores could share (CLAUDE.md invariant 5).
+async function prewarm() {
+  const profile = profileDir();
+  const chromium = launch(profile, []);
+  const exited = new Promise((r) => chromium.on('exit', r));
+  const ok = await waitFor(CDP_PORT, 60);
+  chromium.kill('SIGTERM');
+  const killer = setTimeout(() => chromium.kill('SIGKILL'), 10_000);
+  await exited;
+  clearTimeout(killer);
+  rmSync(profile, { recursive: true, force: true });
+  if (!ok) {
+    console.error('gregale-browser: Chromium did not answer on its DevTools port within 60 s');
+    process.exit(1);
+  }
+  console.log('gregale-browser: prewarmed');
+}
+
+async function start(extra) {
+  const chromium = launch(profileDir(), extra);
   chromium.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
   for (const sig of ['SIGINT', 'SIGTERM']) {
     process.on(sig, () => chromium.kill(sig));
@@ -161,6 +195,10 @@ async function main(argv) {
   if (argv[0] === '--wait') {
     const seconds = Number(argv[1] || 30);
     process.exit((await waitFor(RELAY_PORT, seconds)) ? 0 : 1);
+  }
+  if (argv[0] === '--prewarm') {
+    await prewarm();
+    return;
   }
   const dash = argv.indexOf('--');
   await start(dash >= 0 ? argv.slice(dash + 1) : []);

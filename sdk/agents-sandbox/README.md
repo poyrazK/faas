@@ -35,7 +35,7 @@ const result = await run(agent, 'Triage owner/name#42.', { sandbox: { client, ma
 
 ## Options
 
-`preset` (`codex`, `opencode`, `claude-code`), `ramMb`, `network` (`none`, `registries`, `web`), `idleTimeoutS`, `lifetimeS`, `labels`, `tenant`, `snapshotId`, `portVisibility`, `readyTimeoutMs`, plus `apiKey` (default `GREGALE_API_KEY`) and `apiBase` (default `GREGALE_API_BASE`, then `https://api.gregale.dev`).
+`preset` (`codex`, `opencode`, `claude-code`), `browser` (boot with the sandbox browser running; `ramMb` ≥ 1024), `ramMb`, `network` (`none`, `registries`, `web`), `idleTimeoutS`, `lifetimeS`, `labels`, `tenant`, `snapshotId`, `portVisibility`, `readyTimeoutMs`, plus `apiKey` (default `GREGALE_API_KEY`) and `apiBase` (default `GREGALE_API_BASE`, then `https://api.gregale.dev`).
 
 ## Not supported yet
 

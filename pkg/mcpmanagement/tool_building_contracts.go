@@ -13,7 +13,7 @@ func toolBuildingOutputSchema(name string) map[string]any {
 		return taskRecoveryOutputSchema()
 	case "gregale_prepare_task_tool_deploy", "gregale_check_task_tool_deploy", "gregale_get_task_tool_deploy", "gregale_get_task_tool_operation", "gregale_apply_task_tool_deploy", "gregale_apply_task_tool_restore", "gregale_apply_task_tool_quarantine", "gregale_apply_task_tool_retire":
 		return taskIntentOutputSchema()
-	case "gregale_prepare_uploaded_task_tool_deploy", "gregale_get_uploaded_task_tool_deploy":
+	case "gregale_prepare_uploaded_task_tool_deploy", "gregale_get_uploaded_task_tool_deploy", "gregale_check_uploaded_task_tool_deploy":
 		return uploadedTaskIntentOutputSchema()
 	case "gregale_plan_uploaded_task_tool_deploy":
 		return uploadedTaskReviewOutputSchema()

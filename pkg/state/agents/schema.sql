@@ -240,7 +240,8 @@ CREATE TABLE sandbox_sessions (
  workspace_snapshot_id uuid,
  template_id uuid,
  image_ref text,
- image_job_id uuid
+ image_job_id uuid,
+ browser boolean NOT NULL DEFAULT false
 );
 CREATE TABLE sandbox_session_usage (
  sandbox_id uuid PRIMARY KEY,

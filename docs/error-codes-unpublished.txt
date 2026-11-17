@@ -1,0 +1,185 @@
+# Codes left out of docs/error-codes.md, the generated error code reference
+# (cmd/errorcodes-md, `make error-codes-md`).
+#
+# The page lists every code the API builds. A code stays off it when its area
+# has no published docs: a preview capability until it reaches beta, an
+# internal or dark one, or operator tooling. One code per line, or a prefix
+# ending in *. A code that a published page already names in backticks is
+# listed anyway, since the page reveals nothing new.
+#
+# Remove a line when the area's docs are published. An entry that matches no
+# code fails the generator, so the list cannot go stale.
+#
+# A code whose call sites link only to unpublished docs pages is left out
+# without an entry here.
+
+# Agent runs, sandboxes and their browser sessions (internal).
+agent_*
+sandbox_*
+browser_*
+
+# API monetization, API consumers, tenant surfaces and platform tenants
+# (internal, or preview with unpublished docs).
+consumer_*
+product_*
+plan_consumer_key_quota_reached
+tenant_*
+platform_tenant_*
+plan_platform_tenant_required_not_allowed
+wildcard_domain_tenant_surface_overlap
+
+# Frontend hosting and its CI (not released).
+frontend_*
+hosting_*
+ci_*
+
+# Management MCP, MCP tool hosting and hosted Tasks (preview; docs unpublished).
+mcp_*
+tool_*
+task_*
+publication_*
+
+# Events, event subscriptions and keyed replays (preview; docs unpublished).
+event_*
+app_event_*
+plan_event_subscription_quota
+keyed_*
+
+# Realtime, live queries, durable entities and the Data API (preview; docs
+# unpublished).
+realtime_*
+history_unavailable
+plan_realtime_not_allowed
+plan_realtime_quota
+live_*
+durable_*
+data_api_*
+
+# Object storage and its lifecycle rules (preview; docs unpublished).
+object_*
+lifecycle_*
+older_*
+invalid_older_than
+plan_limit_object_storage
+
+# Operations, issues, customer support, labels and SLOs (preview; docs
+# unpublished).
+operation_*
+issue_*
+support_*
+labels_changed
+slo_*
+
+# Outbound integrations and the AI gateway (preview; docs unpublished).
+outbound_*
+
+# Postgres change workers, preview databases and production forks (preview;
+# docs unpublished).
+postgres_changes_*
+app_fork*
+plan_app_forks_not_allowed
+
+# Executions and image runs (preview or internal; docs unpublished).
+execution_*
+executions_*
+image_run_*
+
+# Environment branches and environment GitOps (dark or preview; docs
+# unpublished).
+environment_branch_*
+environment_has_branches
+environment_gitops_*
+environment_git_*
+environment_field_git_managed
+environment_qualification_unconfirmed
+
+# Internal capabilities: stored workflows, data upstreams, egress circuit
+# breaking, frozen tier, dev bridge, domain doctor, feature flags, custom
+# dashboards, anomaly alerts, Datadog, custom metric history, profiling, log
+# search, route lifecycle review and route requirements, release review,
+# deployment staging, application standards, Gregale Commit, data repair,
+# rehearsals, sales referrals, change timeline, incidents, service map.
+stored_workflow_*
+upstream_*
+plan_data_upstreams_not_allowed
+plan_limit_data_upstreams
+egress_circuit_*
+circuit_*
+frozen_*
+instance_frozen
+instance_not_freezable
+dev_bridge_*
+doctor_*
+flag_*
+flags_*
+dashboard_*
+dashboards_unavailable
+anomaly_*
+change_timeline_unavailable
+incidents_unavailable
+service_map_unavailable
+datadog_*
+custom_metric_history_unavailable
+profile_*
+log_saved_search_*
+log_search_*
+route_insight_*
+route_lifecycle_*
+route_removal_*
+route_gate_blocked
+declared_route_policy_unavailable
+undeclared_route
+deployment_route_policy_snapshot_not_found
+invalid_deployment_route_policy_snapshot
+release_review_changed
+deployment_staging_conflict
+application_standard*
+commit_*
+repair_*
+rehearsal_*
+referral_*
+sales_*
+
+# Operator tooling: compute nodes, key rotation, operator submissions, the
+# billing provider's administrative operations, and checks that only fire on
+# a misconfigured installation.
+node_*
+invalid_overflow_node
+default_local_protected
+rekey_*
+operator_*
+conflicting_filters
+billing_cancel_no_api_key
+billing_not_implemented
+billing_op_unsupported
+billing_preflight_failed
+billing_reconcile_failed
+billing_reconcile_unsupported
+billing_refund_failed
+billing_reset_failed
+billing_retry_failed
+billing_retry_no_api_key
+billing_retry_unsupported
+billing_sync_failed
+githubd_not_ready
+ensure_wake_nil_instance
+sig_invalid
+
+# The node's own lookups between Gregale services (routes, quotas, service
+# endpoints, MCP instance probes); no customer request receives these.
+app_not_found
+instance_not_found
+invalid_endpoint
+invalid_host
+invalid_request_shape
+invalid_rpc_request
+invalid_slug
+invalid_token
+lookup_unavailable
+missing_param
+missing_slug
+probe_unavailable
+quota_unavailable
+registry_unavailable
+target_lookup_failed
+unknown_plan
