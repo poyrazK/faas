@@ -476,6 +476,7 @@ touch them. The tables below map each earlier name.
 | `gregale orgs invitations` | `gregale org invitation` |
 | `gregale orgs members change-role` | `gregale org members update` |
 | `gregale orgs seat-usage` | `gregale org usage` |
+| `gregale orgs support-access` | `gregale org support` |
 | `gregale orgs standards application` | `gregale org standards adoption get` |
 | `gregale orgs standards local-intent` | `gregale org standards local set` |
 | `gregale orgs standards operation abort` | `gregale org standards operation cancel` |

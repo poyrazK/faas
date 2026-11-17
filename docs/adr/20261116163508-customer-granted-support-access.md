@@ -39,5 +39,5 @@
   - Two more tables and a fence column. Every new customer route stays outside the support path until it is added to `supportRoutes`; a test keeps every entry a reviewed app route whose action is a read or a deploy.
 - **Slices:**
   1. Done: schema, stores, flag, grants and requests (API and dashboard), the gate and `appaccess` support path, the fence, audit, activity and mail, and `gregalectl support-access`.
-  2. Customer CLI (`gregale support-access list|revoke`), the runbook, and the Terms of Service / privacy text, before the flag is turned on for anyone.
+  2. Done: customer CLI (`gregale org support list|revoke|decline|approve`), the runbook ([support-access.md](../runbooks/support-access.md)). Drafted for sign-off: Terms of Service, privacy and DPA text ([support-access-legal-text.md](../ops/support-access-legal-text.md)), to publish before the flag is turned on for anyone.
   3. Project routes (`/v1/projects/{slug}/deploy`, release-set rollback), as a separate reviewed list.
