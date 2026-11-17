@@ -19807,3 +19807,21 @@ const (
 	DataPipelineWorkQueryMinMillis       = int64(50)
 	DataPipelineMinutesPerDay            = 24 * 60
 )
+
+// Hosted Task binding verification inherits source-intent admission bounds.
+const (
+	HostedTaskBindingRequestMaxBytes   = 16 << 10
+	HostedTaskBindingRecordMaxBytes    = 32 << 10
+	HostedTaskBindingNamespaceMaxBytes = 128
+	HostedTaskBindingSecretMaxBytes    = 32 << 10
+	HostedTaskBindingMaxPins           = 40
+	HostedTaskBindingCatalogMaxTables  = 128
+	HostedTaskBindingPreviousKeysMax   = 16
+	HostedTaskBindingOwnerKeyMinBytes  = 32
+	HostedTaskBindingProbeTimeout      = 15 * time.Second
+	HostedTaskBindingSQLTimeout        = 5 * time.Second
+	HostedTaskBindingCleanupTimeout    = time.Second
+	HostedTaskBindingEvidenceTTL       = time.Minute
+)
+
+const HostedTaskBindingKeyIDMaxBytes = 64
