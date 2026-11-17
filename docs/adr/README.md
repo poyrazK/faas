@@ -2485,3 +2485,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261117020000 · Observed delayed-task dispatch outcomes](20261117020000-observed-delayed-task-dispatch-outcomes.md)
 - [ADR-20261117070839: Owner review of retained hosted Task source](20261117070839-hosted-task-source-owner-review.md) — fixed-expiry source review decisions, separate from credential and execution authority.
+- [ADR-20261117215858: Agents run commands, query PostgreSQL and change feature flags](20261117215858-mcp-commands-postgres-queries-flag-changes.md) — MCP run-command plan/apply, read-only `postgres:query`, flag plan/apply with an unapproved kill.
