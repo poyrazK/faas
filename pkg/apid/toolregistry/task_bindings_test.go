@@ -199,6 +199,9 @@ func exerciseHostedTaskBindings(t *testing.T, store state.Store, pool *pgxpool.P
 	decode(call("GET", "", nil, &f.key), "revoked")
 	// A second source exercises the final transaction barrier independently of
 	// driver behavior: rotation between claim and record must discard success.
+	f.executor.Close()
+	f.executor = toolregistry.NewPrivateExecutor(store, opts)
+	t.Cleanup(f.executor.Close)
 	id = toolpublication.Digest([]byte(f.account.ID + ":rotation"))
 	prepared := f.call(t, "PUT", id, f.request, &f.key)
 	if prepared.Code != 200 || json.Unmarshal(prepared.Body.Bytes(), &source) != nil {
@@ -208,9 +211,6 @@ func exerciseHostedTaskBindings(t *testing.T, store state.Store, pool *pgxpool.P
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.executor.Close()
-	f.executor = toolregistry.NewPrivateExecutor(store, opts)
-	t.Cleanup(f.executor.Close)
 	selection.IntentSHA256, selection.ReviewSHA256 = source.IntentSHA256, source.ReviewSHA256
 	selected = decode(call("PUT", "", selection, nil), "selected")
 	journal := store.(state.HostedTaskBindingStore)
