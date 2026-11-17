@@ -995,7 +995,7 @@ func (s *server) releaseGateWatchProblem(ctx context.Context, app state.App, req
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Release gates need a judged release",
 		fmt.Sprintf("%s has %d release gate(s). A production release without a canary and with rollback_on_5xx off would never be judged by them.", app.Slug, len(rows))).
-		WithHint("Deploy with a canary (--rollout safe), or leave --rollback-on-5xx on so the post-release watch judges the gates. An admin can remove a gate with `gregale release-gates rm`.")
+		WithHint("Deploy with a canary (--rollout safe), or leave --rollback-on-5xx on so the post-release watch judges the gates. An admin can remove a gate with `gregale release gate rm`.")
 }
 
 // releaseApprovalCanaryProblem refuses a production release that would take

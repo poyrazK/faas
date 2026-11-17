@@ -577,8 +577,12 @@ type server struct {
 	// preflight handler (GET /v1/preflight). It is built on first use so the
 	// egress-guarded HTTP client and verdict cache are not allocated on
 	// deployments that never receive a check.
-	preflightOnce      sync.Once
-	preflightHandler   *preflight.Handler
+	preflightOnce    sync.Once
+	preflightHandler *preflight.Handler
+	// supportAccessOnce guards lazy construction of the support-access
+	// service (ADR-20261116163508), shared by every request.
+	supportAccessOnce  sync.Once
+	supportAccessSvc   *supportaccess.Service
 	statusMetrics      *statusMetrics
 	idempotencyMetrics *idempotencyMetrics
 	signupMetrics      *signupMetrics
