@@ -376,6 +376,9 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
 		}
+		if warning := composeStartupDeadlineWarning(fsys, healthcheck); warning != "" {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+		}
 		process, err = composeProcess(s, len(command) > 0)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)

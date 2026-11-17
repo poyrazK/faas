@@ -73,6 +73,9 @@ func (m *MemStore) checkOrgAccessLocked(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
+	if f.SupportGrantID != "" {
+		return m.checkSupportGrantFenceLocked(ctx, f)
+	}
 	mem, exists := m.memberships[orgAccountKey{OrgID: f.OrgID, AccountID: f.AccountID}]
 	if !exists || mem.RemovedAt != nil || m.orgAccessRevisions[orgAccountKey{OrgID: f.OrgID, AccountID: f.AccountID}] != f.Revision ||
 		m.orgMFABlocksLocked(f.OrgID, f.AccountID) {

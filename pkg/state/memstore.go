@@ -1172,6 +1172,8 @@ type MemStore struct {
 	oauthLinks map[string]OAuthLink
 	// accountFlow holds email changes and display names (account_flow.go).
 	accountFlow memAccountFlow
+	// supportGrants holds customer-granted support access (support_grants.go).
+	supportGrants memSupportGrants
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic

@@ -129,6 +129,11 @@ const (
 	// such as requiring two-factor authentication (ADR 20261114170352).
 	// Owner only: it decides who may keep working in the organization.
 	OrgActionManageSecurity OrgAction = "org.manage_security"
+
+	// OrgActionManageSupportAccess grants, revokes and decides requests for
+	// Gregale support access to the organization's apps
+	// (ADR-20261116163508). Owner and admin.
+	OrgActionManageSupportAccess OrgAction = "org.manage_support_access"
 )
 
 // AllOrgActions is the closed vocabulary in iteration order. Used by
@@ -178,6 +183,7 @@ var AllOrgActions = []OrgAction{
 	OrgActionSetApplicationStandardLocalIntent,
 	OrgActionManagePreviews,
 	OrgActionManageSecurity,
+	OrgActionManageSupportAccess,
 }
 
 // AllOrgRoles is the closed role vocabulary in priority order. The
