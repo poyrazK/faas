@@ -26,7 +26,7 @@ T = TypeVar("T", bound="ObsRuntimeBuilderHealth")
 
 @_attrs_define
 class ObsRuntimeBuilderHealth:
-    """Advisory builderd progress and process-local queue/slot pressure for explicit v2 profiles. Counts cover every
+    """Advisory build worker progress and process-local queue/slot pressure for explicit v2 profiles. Counts cover every
     inspected target before previewing. A fresh overdue worker remains visible with incomplete queue/slot evidence;
     saturation does not establish a build failure.
 

@@ -24,8 +24,8 @@ T = TypeVar("T", bound="ObsRuntimePreparationItem")
 
 @_attrs_define
 class ObsRuntimePreparationItem:
-    """One sanitized imaged recovery scope. Collection status, observation expectation and three ordered phase observations
-    are validated independently; no build, app, or deployment identity is exposed.
+    """One sanitized image worker recovery scope. Collection status, observation expectation and three ordered phase
+    observations are validated independently; no build, app, or deployment identity is exposed.
 
     """
 

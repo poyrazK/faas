@@ -21,7 +21,7 @@ T = TypeVar("T", bound="ObsRuntimeHandoffItem")
 
 @_attrs_define
 class ObsRuntimeHandoffItem:
-    """One sanitized imaged target's collection, pending-work snapshot and recovery activity. Each component is
+    """One sanitized image worker's collection, pending-work snapshot and recovery activity. Each component is
     independently validated against the same original scrape target.
 
     """

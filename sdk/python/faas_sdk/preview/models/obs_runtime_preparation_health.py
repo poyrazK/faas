@@ -27,7 +27,7 @@ T = TypeVar("T", bound="ObsRuntimePreparationHealth")
 
 @_attrs_define
 class ObsRuntimePreparationHealth:
-    """Advisory durable image-preparation evidence for imaged targets in v2 profiles. Counts describe observation scopes,
+    """Advisory durable image-preparation evidence for image workers in v2 profiles. Counts describe observation scopes,
     which may overlap across replicas. Positive phase evidence survives gaps in other components. No execution deadline
     or deployment success is inferred.
 

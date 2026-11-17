@@ -60512,8 +60512,8 @@ paths:
         advisory identity evidence; this does not qualify or attest a deployment.
         Select a versioned build profile explicitly. V1 profiles single-box-v1
         and control-plane-v1 preserve the original critical jobs. V2 profiles
-        single-box-v2 and control-plane-v2 additionally inspect builderd and
-        imaged. Single-box expects their static scrape targets; control-plane
+        single-box-v2 and control-plane-v2 additionally inspect build and
+        image workers. Single-box expects their static scrape targets; control-plane
         expects them on every active configured compute-registry member, using
         the existing discovery scope. Telemetry input-health roles stay v1.
         Without a role, no sources are read and the state is unknown. Selected
@@ -95984,7 +95984,7 @@ components:
         age_observed_at: { type: string, format: date-time }
     ObsRuntimeBuilderHealth:
       type: object
-      description: Advisory builderd progress and process-local queue/slot pressure for explicit v2 profiles. Counts cover every inspected target before previewing. A fresh overdue worker remains visible with incomplete queue/slot evidence; saturation does not establish a build failure.
+      description: Advisory build worker progress and process-local queue/slot pressure for explicit v2 profiles. Counts cover every inspected target before previewing. A fresh overdue worker remains visible with incomplete queue/slot evidence; saturation does not establish a build failure.
       required: [state, counts, incomplete, items, omitted_items]
       properties:
         state: { type: string, enum: [observed, overdue, incomplete, unknown] }
@@ -96100,7 +96100,7 @@ components:
         oldest_wait_seconds: { type: number, minimum: 0, maximum: 315360000 }
     ObsRuntimeBuildRecoveryHealth:
       type: object
-      description: Advisory running build claims and durable VM cleanup obligations as independently collected apid replica views of the shared fleet. Compare views without summing build or cleanup counts. Cleanup age begins at obligation creation and survives retries; evidence is not a VM liveness or deployment-readiness verdict.
+      description: Advisory running build claims and durable VM cleanup obligations as independently collected API replica views of the shared fleet. Compare views without summing build or cleanup counts. Cleanup age begins at obligation creation and survives retries; evidence is not a VM liveness or deployment-readiness verdict.
       required: [scope, state, counts, incomplete, items, omitted_items]
       properties:
         scope: { type: string, enum: [replica_observations_of_shared_fleet] }
@@ -96134,7 +96134,7 @@ components:
         unsuccessful_collections: { type: integer, minimum: 0 }
     ObsRuntimeBuildRecoveryItem:
       type: object
-      description: One sanitized apid replica view. Collection status, running claims and cleanup obligations are independently checked against source and original clocks. Successful fresh collection is a prerequisite for both work components; valid partial positives survive another component gap.
+      description: One sanitized API replica view. Collection status, running claims and cleanup obligations are independently checked against source and original clocks. Successful fresh collection is a prerequisite for both work components; valid partial positives survive another component gap.
       required: [job, state, collection, running, cleanup]
       properties:
         job: { type: string, enum: [apid] }
@@ -96964,7 +96964,7 @@ components:
         last_success_at: { type: string, format: date-time }
     ObsRuntimePostCaptureHealth:
       type: object
-      description: Advisory post-capture activation evidence for imaged targets in v2 profiles. Each replica reads the shared fleet independently; compare its view without summing deployment counts or inferring consensus. Gate classifications and ages are retained evidence, not a new eligibility or health verdict.
+      description: Advisory post-capture activation evidence for image workers in v2 profiles. Each replica reads the shared fleet independently; compare its view without summing deployment counts or inferring consensus. Gate classifications and ages are retained evidence, not a new eligibility or health verdict.
       required: [scope, state, counts, classes, incomplete, items, omitted_items]
       properties:
         scope: { type: string, enum: [replica_observations_of_shared_fleet] }
@@ -97016,7 +97016,7 @@ components:
         unknown_age_views: { type: integer, minimum: 0 }
     ObsRuntimePostCaptureItem:
       type: object
-      description: One sanitized imaged replica view of the shared fleet, retaining job and target identity. Collection status, observer expectation and eight class observations are independently validated. No customer, app or deployment identity is exposed.
+      description: One sanitized image worker replica view of the shared fleet, retaining job and target identity. Collection status, observer expectation and eight class observations are independently validated. No customer, app or deployment identity is exposed.
       required: [job, state, collection, observation, classes]
       properties:
         job: { type: string, enum: [imaged] }
@@ -97171,7 +97171,7 @@ components:
         oldest_known_age_seconds: { type: number, minimum: 0 }
     ObsRuntimePreparationHealth:
       type: object
-      description: Advisory durable image-preparation evidence for imaged targets in v2 profiles. Counts describe observation scopes, which may overlap across replicas. Positive phase evidence survives gaps in other components. No execution deadline or deployment success is inferred.
+      description: Advisory durable image-preparation evidence for image workers in v2 profiles. Counts describe observation scopes, which may overlap across replicas. Positive phase evidence survives gaps in other components. No execution deadline or deployment success is inferred.
       required: [state, counts, phases, incomplete, items, omitted_items]
       properties:
         state: { type: string, enum: [waiting, empty, incomplete, unknown] }
@@ -97222,7 +97222,7 @@ components:
         unknown_age_scopes: { type: integer, minimum: 0 }
     ObsRuntimePreparationItem:
       type: object
-      description: One sanitized imaged recovery scope. Collection status, observation expectation and three ordered phase observations are validated independently; no build, app, or deployment identity is exposed.
+      description: One sanitized image worker recovery scope. Collection status, observation expectation and three ordered phase observations are validated independently; no build, app, or deployment identity is exposed.
       required: [state, collection, observation, phases]
       properties:
         node: { type: string, maxLength: 128 }
@@ -97273,7 +97273,7 @@ components:
         oldest_known_age_seconds: { type: number, minimum: 0 }
     ObsRuntimeHandoffHealth:
       type: object
-      description: Advisory build-to-image handoff evidence for selected imaged targets in v2 profiles. Replica recovery scopes can overlap; pending values are never summed into a fleet total. Positive waiting evidence survives incomplete recovery metadata.
+      description: Advisory build-to-image handoff evidence for selected image workers in v2 profiles. Replica recovery scopes can overlap; pending values are never summed into a fleet total. Positive waiting evidence survives incomplete recovery metadata.
       required: [state, counts, incomplete, items, omitted_items]
       properties:
         state: { type: string, enum: [waiting, empty, incomplete, unknown] }
@@ -97307,7 +97307,7 @@ components:
         not_started_recovery_scopes: { type: integer, minimum: 0 }
     ObsRuntimeHandoffItem:
       type: object
-      description: One sanitized imaged target's collection, pending-work snapshot and recovery activity. Each component is independently validated against the same original scrape target.
+      description: One sanitized image worker's collection, pending-work snapshot and recovery activity. Each component is independently validated against the same original scrape target.
       required: [state, collection, backlog, recovery]
       properties:
         node: { type: string, maxLength: 128 }

@@ -5,7 +5,7 @@
 import type { ObsRuntimeHandoffCounts } from './ObsRuntimeHandoffCounts.js';
 import type { ObsRuntimeHandoffItem } from './ObsRuntimeHandoffItem.js';
 /**
- * Advisory build-to-image handoff evidence for selected imaged targets in v2 profiles. Replica recovery scopes can overlap; pending values are never summed into a fleet total. Positive waiting evidence survives incomplete recovery metadata.
+ * Advisory build-to-image handoff evidence for selected image workers in v2 profiles. Replica recovery scopes can overlap; pending values are never summed into a fleet total. Positive waiting evidence survives incomplete recovery metadata.
  */
 export type ObsRuntimeHandoffHealth = {
   state: 'waiting' | 'empty' | 'incomplete' | 'unknown';

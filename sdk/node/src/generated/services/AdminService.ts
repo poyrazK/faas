@@ -1476,8 +1476,8 @@ export class AdminService {
    * advisory identity evidence; this does not qualify or attest a deployment.
    * Select a versioned build profile explicitly. V1 profiles single-box-v1
    * and control-plane-v1 preserve the original critical jobs. V2 profiles
-   * single-box-v2 and control-plane-v2 additionally inspect builderd and
-   * imaged. Single-box expects their static scrape targets; control-plane
+   * single-box-v2 and control-plane-v2 additionally inspect build and
+   * image workers. Single-box expects their static scrape targets; control-plane
    * expects them on every active configured compute-registry member, using
    * the existing discovery scope. Telemetry input-health roles stay v1.
    * Without a role, no sources are read and the state is unknown. Selected

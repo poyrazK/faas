@@ -6,7 +6,7 @@ import type { ObsRuntimeHandoffCollection } from './ObsRuntimeHandoffCollection.
 import type { ObsRuntimePreparationObservation } from './ObsRuntimePreparationObservation.js';
 import type { ObsRuntimePreparationPhase } from './ObsRuntimePreparationPhase.js';
 /**
- * One sanitized imaged recovery scope. Collection status, observation expectation and three ordered phase observations are validated independently; no build, app, or deployment identity is exposed.
+ * One sanitized image worker recovery scope. Collection status, observation expectation and three ordered phase observations are validated independently; no build, app, or deployment identity is exposed.
  */
 export type ObsRuntimePreparationItem = {
   node?: string;

@@ -75,15 +75,15 @@ class ObsRuntimeBuilds:
     """Advisory reports from expected runtime and work loops; fresh reported stalls remain visible when age
     evidence is incomplete. Counts cover all inspected target-loop pairs before the bounded preview."""
     builder_health: ObsRuntimeBuilderHealth | Unset = UNSET
-    """Advisory builderd progress and process-local queue/slot pressure for explicit v2 profiles. Counts cover
+    """Advisory build worker progress and process-local queue/slot pressure for explicit v2 profiles. Counts cover
     every inspected target before previewing. A fresh overdue worker remains visible with incomplete queue/slot
     evidence; saturation does not establish a build failure."""
     handoff_health: ObsRuntimeHandoffHealth | Unset = UNSET
-    """Advisory build-to-image handoff evidence for selected imaged targets in v2 profiles. Replica recovery scopes
+    """Advisory build-to-image handoff evidence for selected image workers in v2 profiles. Replica recovery scopes
     can overlap; pending values are never summed into a fleet total. Positive waiting evidence survives incomplete
     recovery metadata."""
     preparation_health: ObsRuntimePreparationHealth | Unset = UNSET
-    """Advisory durable image-preparation evidence for imaged targets in v2 profiles. Counts describe observation
+    """Advisory durable image-preparation evidence for image workers in v2 profiles. Counts describe observation
     scopes, which may overlap across replicas. Positive phase evidence survives gaps in other components. No
     execution deadline or deployment success is inferred."""
     snapshot_prime_health: ObsRuntimeSnapshotPrimeHealth | Unset = UNSET
@@ -154,11 +154,11 @@ class ObsRuntimeBuilds:
     compare scopes without summing schedules. Nonempty includes intentional inactive schedules. Due evidence
     describes an unconsumed nominal boundary, not a health, eligibility, admission or execution verdict."""
     post_capture_health: ObsRuntimePostCaptureHealth | Unset = UNSET
-    """Advisory post-capture activation evidence for imaged targets in v2 profiles. Each replica reads the shared
+    """Advisory post-capture activation evidence for image workers in v2 profiles. Each replica reads the shared
     fleet independently; compare its view without summing deployment counts or inferring consensus. Gate
     classifications and ages are retained evidence, not a new eligibility or health verdict."""
     build_recovery_health: ObsRuntimeBuildRecoveryHealth | Unset = UNSET
-    """Advisory running build claims and durable VM cleanup obligations as independently collected apid replica
+    """Advisory running build claims and durable VM cleanup obligations as independently collected API replica
     views of the shared fleet. Compare views without summing build or cleanup counts. Cleanup age begins at
     obligation creation and survives retries; evidence is not a VM liveness or deployment-readiness verdict."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

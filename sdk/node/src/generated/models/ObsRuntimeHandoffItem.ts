@@ -6,7 +6,7 @@ import type { ObsRuntimeHandoffBacklog } from './ObsRuntimeHandoffBacklog.js';
 import type { ObsRuntimeHandoffCollection } from './ObsRuntimeHandoffCollection.js';
 import type { ObsRuntimeHandoffRecovery } from './ObsRuntimeHandoffRecovery.js';
 /**
- * One sanitized imaged target's collection, pending-work snapshot and recovery activity. Each component is independently validated against the same original scrape target.
+ * One sanitized image worker's collection, pending-work snapshot and recovery activity. Each component is independently validated against the same original scrape target.
  */
 export type ObsRuntimeHandoffItem = {
   node?: string;

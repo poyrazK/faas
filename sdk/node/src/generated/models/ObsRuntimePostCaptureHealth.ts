@@ -6,7 +6,7 @@ import type { ObsRuntimePostCaptureClassCounts } from './ObsRuntimePostCaptureCl
 import type { ObsRuntimePostCaptureCounts } from './ObsRuntimePostCaptureCounts.js';
 import type { ObsRuntimePostCaptureItem } from './ObsRuntimePostCaptureItem.js';
 /**
- * Advisory post-capture activation evidence for imaged targets in v2 profiles. Each replica reads the shared fleet independently; compare its view without summing deployment counts or inferring consensus. Gate classifications and ages are retained evidence, not a new eligibility or health verdict.
+ * Advisory post-capture activation evidence for image workers in v2 profiles. Each replica reads the shared fleet independently; compare its view without summing deployment counts or inferring consensus. Gate classifications and ages are retained evidence, not a new eligibility or health verdict.
  */
 export type ObsRuntimePostCaptureHealth = {
   scope: 'replica_observations_of_shared_fleet';

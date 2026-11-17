@@ -28,7 +28,7 @@ T = TypeVar("T", bound="ObsRuntimePostCaptureItem")
 
 @_attrs_define
 class ObsRuntimePostCaptureItem:
-    """One sanitized imaged replica view of the shared fleet, retaining job and target identity. Collection status,
+    """One sanitized image worker replica view of the shared fleet, retaining job and target identity. Collection status,
     observer expectation and eight class observations are independently validated. No customer, app or deployment
     identity is exposed.
 

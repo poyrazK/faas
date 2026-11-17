@@ -6,7 +6,7 @@ import type { ObsRuntimePreparationCounts } from './ObsRuntimePreparationCounts.
 import type { ObsRuntimePreparationItem } from './ObsRuntimePreparationItem.js';
 import type { ObsRuntimePreparationPhaseCounts } from './ObsRuntimePreparationPhaseCounts.js';
 /**
- * Advisory durable image-preparation evidence for imaged targets in v2 profiles. Counts describe observation scopes, which may overlap across replicas. Positive phase evidence survives gaps in other components. No execution deadline or deployment success is inferred.
+ * Advisory durable image-preparation evidence for image workers in v2 profiles. Counts describe observation scopes, which may overlap across replicas. Positive phase evidence survives gaps in other components. No execution deadline or deployment success is inferred.
  */
 export type ObsRuntimePreparationHealth = {
   state: 'waiting' | 'empty' | 'incomplete' | 'unknown';

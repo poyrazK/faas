@@ -6,7 +6,7 @@ import type { ObsRuntimeHandoffCollection } from './ObsRuntimeHandoffCollection.
 import type { ObsRuntimePostCaptureClass } from './ObsRuntimePostCaptureClass.js';
 import type { ObsRuntimePostCaptureObservation } from './ObsRuntimePostCaptureObservation.js';
 /**
- * One sanitized imaged replica view of the shared fleet, retaining job and target identity. Collection status, observer expectation and eight class observations are independently validated. No customer, app or deployment identity is exposed.
+ * One sanitized image worker replica view of the shared fleet, retaining job and target identity. Collection status, observer expectation and eight class observations are independently validated. No customer, app or deployment identity is exposed.
  */
 export type ObsRuntimePostCaptureItem = {
   job: 'imaged';

@@ -6,7 +6,7 @@ import type { ObsRuntimeBuildRecoveryCleanup } from './ObsRuntimeBuildRecoveryCl
 import type { ObsRuntimeBuildRecoveryRunning } from './ObsRuntimeBuildRecoveryRunning.js';
 import type { ObsRuntimeHandoffCollection } from './ObsRuntimeHandoffCollection.js';
 /**
- * One sanitized apid replica view. Collection status, running claims and cleanup obligations are independently checked against source and original clocks. Successful fresh collection is a prerequisite for both work components; valid partial positives survive another component gap.
+ * One sanitized API replica view. Collection status, running claims and cleanup obligations are independently checked against source and original clocks. Successful fresh collection is a prerequisite for both work components; valid partial positives survive another component gap.
  */
 export type ObsRuntimeBuildRecoveryItem = {
   job: 'apid';

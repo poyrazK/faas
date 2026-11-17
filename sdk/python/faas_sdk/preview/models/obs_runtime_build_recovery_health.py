@@ -30,9 +30,9 @@ T = TypeVar("T", bound="ObsRuntimeBuildRecoveryHealth")
 
 @_attrs_define
 class ObsRuntimeBuildRecoveryHealth:
-    """Advisory running build claims and durable VM cleanup obligations as independently collected apid replica views of
-    the shared fleet. Compare views without summing build or cleanup counts. Cleanup age begins at obligation creation
-    and survives retries; evidence is not a VM liveness or deployment-readiness verdict.
+    """Advisory running build claims and durable VM cleanup obligations as independently collected API replica views of the
+    shared fleet. Compare views without summing build or cleanup counts. Cleanup age begins at obligation creation and
+    survives retries; evidence is not a VM liveness or deployment-readiness verdict.
 
     """
 

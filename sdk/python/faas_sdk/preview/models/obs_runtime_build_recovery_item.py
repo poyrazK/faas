@@ -28,7 +28,7 @@ T = TypeVar("T", bound="ObsRuntimeBuildRecoveryItem")
 
 @_attrs_define
 class ObsRuntimeBuildRecoveryItem:
-    """One sanitized apid replica view. Collection status, running claims and cleanup obligations are independently checked
+    """One sanitized API replica view. Collection status, running claims and cleanup obligations are independently checked
     against source and original clocks. Successful fresh collection is a prerequisite for both work components; valid
     partial positives survive another component gap.
 

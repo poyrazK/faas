@@ -26,7 +26,7 @@ T = TypeVar("T", bound="ObsRuntimeHandoffHealth")
 
 @_attrs_define
 class ObsRuntimeHandoffHealth:
-    """Advisory build-to-image handoff evidence for selected imaged targets in v2 profiles. Replica recovery scopes can
+    """Advisory build-to-image handoff evidence for selected image workers in v2 profiles. Replica recovery scopes can
     overlap; pending values are never summed into a fleet total. Positive waiting evidence survives incomplete recovery
     metadata.
 
