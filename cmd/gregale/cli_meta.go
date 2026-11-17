@@ -6858,6 +6858,9 @@ var cliCommands = []cliCommand{
 				{Name: "acknowledge-releases", Short: "accept rolling back across release commands", Bool: true},
 				{Name: "timeout", Short: "wait per service (default 10m)", Value: "DURATION"},
 			}},
+			{Name: "health", Short: "Check serving health of every app in a project", Positionals: []string{"<project>"}, Notes: []string{"Same as `app health --project <project>`; takes the same flags."}},
+			{Name: "wake", Short: "Wake every app in a project before traffic arrives", Positionals: []string{"<project>"}, Notes: []string{"Same as `app wake --project <project>`; takes the same flags, such as --wait."}},
+			{Name: "restart", Short: "Restart every app in a project", Positionals: []string{"<project>"}, Notes: []string{"Same as `app restart --project <project>`; takes the same flags."}},
 			{Name: "export", Short: "Write the project's services as a plain Compose file", Positionals: []string{"<project>"}, Notes: []string{"Env values stay sealed: each variable is referenced by name, as ${NAME}.", "Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back."}, Flags: []cliFlag{
 				{Name: "format", Short: "output format (compose)", Value: "FORMAT"},
 				{Name: "out", Short: "write to PATH instead of stdout", Value: "PATH"},

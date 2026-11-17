@@ -17,7 +17,7 @@ func renderInspectAttention(w io.Writer, summary inspectSummary) {
 }
 
 func inspectAttention(summary inspectSummary) (state, reason, command string) {
-	command = recoveryCLI() + " inspect " + recoveryArgument(summary.App.Slug)
+	command = recoveryCLI() + " app health " + recoveryArgument(summary.App.Slug) + " --explain"
 	for _, recommendation := range summary.Recommendations {
 		if recommendation.Severity == "error" {
 			return "Needs attention", recommendation.Message, inspectAttentionCommand(summary, recommendation.Code)
@@ -69,7 +69,7 @@ func inspectAttentionCommand(summary inspectSummary, code string) string {
 		if summary.Failure != nil {
 			return cli + " deployment get " + recoveryArgument(summary.Failure.DeploymentID)
 		}
-		return cli + " inspect " + slug + " --errors"
+		return cli + " app health " + slug + " --errors"
 	case "health_gate_firing":
 		return cli + " alerts list --app " + slug
 	case "app_parked":

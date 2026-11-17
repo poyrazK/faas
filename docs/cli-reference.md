@@ -2041,6 +2041,30 @@ Only services the latest deploy changed roll back unless --all; services added s
 
 Stops at the first service that fails; run it again to finish.
 
+### project health
+
+Check serving health of every app in a project
+
+`gregale project health <project>`
+
+Same as `app health --project &lt;project&gt;`; takes the same flags.
+
+### project wake
+
+Wake every app in a project before traffic arrives
+
+`gregale project wake <project>`
+
+Same as `app wake --project &lt;project&gt;`; takes the same flags, such as --wait.
+
+### project restart
+
+Restart every app in a project
+
+`gregale project restart <project>`
+
+Same as `app restart --project &lt;project&gt;`; takes the same flags.
+
 ### project export
 
 Write the project&#39;s services as a plain Compose file

@@ -261,15 +261,17 @@ func cmdStatus(args []string) int {
 		// in pkg/api/dto.go are the single source of truth.
 		return jsonOut(writeJSON(page))
 	}
-	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
+	// Each indicator names its target, so "degraded" says how far off it is
+	// (retail-store feedback B8, 2026-11-17).
+	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%% (target ≥ %g%%)\n", page.APIAvailabilityPct, api.StatusTargetAPIAvailabilityPct)
 	if page.WakeP95MS == nil {
 		// The status query reports a p95 only from 20 platform wakes in 30
 		// minutes, and omits it when Prometheus is unreachable (H10-46).
 		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (fewer than 20 wakes in the last 30 min, or wake metrics unavailable)")
 	} else {
-		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
+		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms (target ≤ %d ms, platform wakes, last 30 min)\n", *page.WakeP95MS, api.StatusTargetWakeP95MS)
 	}
-	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%%\n", page.BuildSuccessPct)
+	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%% (target ≥ %d%%, last 24 h; failures caused by customer code are not counted)\n", page.BuildSuccessPct, api.StatusTargetDeploymentSuccessPct)
 	_, _ = fmt.Fprintf(osStdout, "as of:        %s\n", page.AsOf.Format("2006-01-02 15:04:05 UTC"))
 	// A healthy page's source names the telemetry backend, which is noise for
 	// customers; a degraded one carries the reason the numbers are partial.

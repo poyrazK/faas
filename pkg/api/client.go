@@ -2034,6 +2034,9 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
 		return PlanResponse{}, fmt.Errorf("build tenant policy field: %w", err)
 	}
+	if err := writeProjectAppSlugPrefix(ctx, w); err != nil {
+		return PlanResponse{}, fmt.Errorf("build app name prefix field: %w", err)
+	}
 	if err := w.Close(); err != nil {
 		return PlanResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}

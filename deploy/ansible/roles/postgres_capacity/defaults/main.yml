@@ -37,8 +37,8 @@ faas_postgres_per_compute_object_gateway_direct_budget: 2
 # = 5). schedd adds five: four background prime locks and one inline overflow
 # lock, in addition to its hub and short-session-operation headroom
 # (db.directSchedulerHubOnMaxConns = 7). A compute node with
-# FAAS_IMAGED_PARALLEL_PREP on adds api.ImagedImagePrepWorkers (2) more.
-faas_postgres_per_compute_direct_budget: 18
+# FAAS_IMAGED_PARALLEL_PREP (on unless set to false) adds api.ImagedImagePrepWorkers (2) more.
+faas_postgres_per_compute_direct_budget: 20
 
 # pgbouncer's own backends against the postmaster: default_pool_size +
 # reserve_pool_size from the pgbouncer role. This is the whole compute fleet's

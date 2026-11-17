@@ -18,7 +18,7 @@ func TestImagedDirectPoolCoversConcurrentActivations(t *testing.T) {
 		parallel string
 		want     int32
 	}{
-		{"", serial},
+		{"", serial + api.ImagedImagePrepWorkers},
 		{"false", serial},
 		{"not-a-bool", serial},
 		{"1", serial + api.ImagedImagePrepWorkers},

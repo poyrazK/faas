@@ -2924,6 +2924,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// prov cleanly (commit_sha and dirty zero-valued).
 	var prov *zeroConfigProvenance
 	var dirtyFileCount int
+	var dirtyBuildFiles []string
 
 	// --github emits a copy-paste GitHub Actions workflow snippet to
 	// stdout and exits 0 (issue #270). This path does not authenticate or
@@ -3404,6 +3405,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 							dirtyFileCount++
 						}
 					}
+					dirtyBuildFiles = uncommittedBuildFiles(dirtyOut, provVal.Root, selectedSourceDir)
 					if file, untracked := uncommittedProjectFile(dirtyOut, provVal.Root, selectedSourceDir); file != "" && !*worktree {
 						switch {
 						case untracked && path.Base(file) != "gregale.yaml":
@@ -3418,7 +3420,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			if dirtyFileCount > 0 && !*worktree {
-				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD. Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount))
+				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD.%s Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount), dirtyBuildFilesSuffix(dirtyBuildFiles))
 			}
 			if *deployedBy == "" && provVal.DeployedBy != "" {
 				*deployedBy = provVal.DeployedBy
@@ -4131,12 +4133,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return waitForSafeProjectRelease(ctx, client, projectSession, time.Duration(*waitTimeoutSeconds)*time.Second)
 			}
 		}
+		if !explicit["tarball"] && *templateName == "" && *environment == "" {
+			linkCheckoutAfterProjectDeploy(osStderr, contextDir, *projectSlug, jsonOutput)
+		}
 		var projectWaitTimeouts []projectWaitTimeout
 		if waitForDeploy && !*safeProjectDeploy && len(apply.Builds) > 0 {
 			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(withProjectWaitProgress(ctx, osStderr, jsonOutput), client, apply,
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
-		return renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+		code := renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+		if !jsonOutput {
+			renderProjectEndpoints(ctx, osStdout, client, apply)
+		}
+		return code
 	}
 
 	// A template or gregale.yaml that turns on a capability the account does
@@ -7658,7 +7667,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		return runParkedAppLogs(ctx, client, slug, deployment, filter, explain)
 	}
 	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
-		next := recoveryCLI() + " inspect " + recoveryArgument(slug)
+		next := recoveryCLI() + " app health " + recoveryArgument(slug) + " --explain"
 		if deployment != "" {
 			next = recoveryCLI() + " deployment get " + recoveryArgument(deployment)
 		}
