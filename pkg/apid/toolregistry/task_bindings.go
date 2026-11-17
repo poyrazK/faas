@@ -28,33 +28,37 @@ func (e *PrivateExecutor) HostedTaskBindings() httpkit.AccountHandler {
 		if owner && !connectionOwnerAccess(w, r, acct, e.store) || !owner && !personalAccess(w, r, acct, e.store, true) {
 			return
 		}
-		journal, ok := e.store.(state.HostedTaskBindingStore)
-		source, sourceOK := e.store.(state.HostedTaskSourceIntentStore)
-		if !ok || !sourceOK || !toolpublication.ValidID(r.PathValue("id")) {
-			respond(w, nil, state.ErrInvalidArgument)
-			return
-		}
-		p, _ = httpkit.PrincipalFrom(r)
-		row, err := source.GetHostedTaskSourceIntent(r.Context(), acct.ID, r.PathValue("id"))
-		if err != nil {
-			respond(w, nil, err)
-			return
-		}
-		if !owner && p.Key != nil && p.Key.ID != row.Record.RequesterKeyID && (agentRegistryRequest(r) || !httpkit.APIKeyCarriesScope(*p.Key, api.ScopeAdmin)) {
-			respond(w, nil, state.ErrNotFound)
-			return
-		}
-		actor := state.HostedTaskSourceOwner{Session: p.Key == nil}
-		if p.Key != nil {
-			actor.KeyID = p.Key.ID
-		}
-		if !owner {
-			out, err := journal.ChangeHostedTaskBindings(r.Context(), acct.ID, r.PathValue("id"), "get", state.HostedTaskBindingChange{})
-			respond(w, out.Public, err)
-			return
-		}
-		e.changeHostedTaskBindings(w, r, acct, actor, journal)
+		e.serveHostedTaskBindings(w, r, acct, owner)
 	}
+}
+
+func (e *PrivateExecutor) serveHostedTaskBindings(w http.ResponseWriter, r *http.Request, acct state.Account, owner bool) {
+	journal, ok := e.store.(state.HostedTaskBindingStore)
+	source, sourceOK := e.store.(state.HostedTaskSourceIntentStore)
+	if !ok || !sourceOK || !toolpublication.ValidID(r.PathValue("id")) {
+		respond(w, nil, state.ErrInvalidArgument)
+		return
+	}
+	p, _ := httpkit.PrincipalFrom(r)
+	row, err := source.GetHostedTaskSourceIntent(r.Context(), acct.ID, r.PathValue("id"))
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	if !owner && p.Key != nil && p.Key.ID != row.Record.RequesterKeyID && (agentRegistryRequest(r) || !httpkit.APIKeyCarriesScope(*p.Key, api.ScopeAdmin)) {
+		respond(w, nil, state.ErrNotFound)
+		return
+	}
+	actor := state.HostedTaskSourceOwner{Session: p.Key == nil}
+	if p.Key != nil {
+		actor.KeyID = p.Key.ID
+	}
+	if !owner {
+		out, err := journal.ChangeHostedTaskBindings(r.Context(), acct.ID, r.PathValue("id"), "get", state.HostedTaskBindingChange{})
+		respond(w, out.Public, err)
+		return
+	}
+	e.changeHostedTaskBindings(w, r, acct, actor, journal)
 }
 
 func (e *PrivateExecutor) changeHostedTaskBindings(w http.ResponseWriter, r *http.Request, acct state.Account, owner state.HostedTaskSourceOwner, journal state.HostedTaskBindingStore) {
