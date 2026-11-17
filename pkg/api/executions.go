@@ -519,7 +519,7 @@ func ErrExecutionsNotAllowed(plan Plan) *Problem {
 		CodeExecutionsNotAllowed,
 		"Executions are not available",
 		fmt.Sprintf("plan %q does not include disposable one-shot executions", plan),
-	).WithDocs(docsBase + "/plans#executions")
+	).WithDocs(docsBase + "/plans")
 }
 
 // ExecutionStatus is the durable state machine exposed to callers.

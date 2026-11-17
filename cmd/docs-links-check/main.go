@@ -18,6 +18,10 @@
 // registered route exactly: the live site serves only registered routes, and
 // production-us answered 404 for /docs/errors/app-startup-timeout and 40 more
 // such links that the prefix rule accepted (Hunt 14 H14-90).
+//
+// A link's #anchor must name a heading on the published page, as the site
+// renders heading ids: 189 production links pointed at sections no page had
+// (plans#apps, orgs#members), so they opened at the top of the page.
 package main
 
 import (
@@ -36,10 +40,10 @@ import (
 
 const catalogPath = "docs/customer-pages.json"
 
-var docsURLRE = regexp.MustCompile(`https://gregale\.dev/docs(/[A-Za-z0-9._~/%-]*)?`)
+var docsURLRE = regexp.MustCompile(`https://gregale\.dev/docs(/[A-Za-z0-9._~/%-]*)?(?:#([A-Za-z0-9._~%-]+))?`)
 
 // docsBaseRE finds Go links built from pkg/api's docsBase constant.
-var docsBaseRE = regexp.MustCompile(`docsBase\s*\+\s*"(/[A-Za-z0-9._~/%-]*)`)
+var docsBaseRE = regexp.MustCompile(`docsBase\s*\+\s*"(/[A-Za-z0-9._~/%-]*)(?:#([A-Za-z0-9._~%-]+))?`)
 
 // Keep the obsolete origin split in source so the checker does not match its
 // own guard. pkg/wire retains the bare host solely to normalize responses from
@@ -65,6 +69,8 @@ type link struct {
 	// Exact links must name a registered route; the prefix rule does not
 	// apply to them.
 	Exact bool
+	// Anchor is the #fragment, without the #.
+	Anchor string
 }
 
 func main() {
@@ -101,6 +107,9 @@ func run() error {
 		return err
 	}
 	if err := checkExactLinks(cat, links); err != nil {
+		return err
+	}
+	if err := checkAnchors(cat, links, os.ReadFile); err != nil {
 		return err
 	}
 	seen := map[string]link{}
@@ -242,11 +251,11 @@ func collectLinks() ([]link, error) {
 			for _, match := range docsURLRE.FindAllStringSubmatch(string(b), -1) {
 				route := strings.Trim(match[1], "/")
 				route = strings.TrimRight(route, ".,;:!?)]}'\"")
-				links = append(links, link{Path: route, File: path})
+				links = append(links, link{Path: route, File: path, Anchor: strings.TrimRight(match[2], ".,;:!?)]}'\"")})
 			}
 			if ext == ".go" && isProductionSurface(path) {
 				for _, match := range docsBaseRE.FindAllStringSubmatch(string(b), -1) {
-					links = append(links, link{Path: strings.Trim(match[1], "/"), File: path, Exact: true})
+					links = append(links, link{Path: strings.Trim(match[1], "/"), File: path, Exact: true, Anchor: match[2]})
 				}
 			}
 			return nil
@@ -287,6 +296,85 @@ func checkCapabilityRoutes(cat catalog, capabilities []productcap.Capability) er
 		}
 	}
 	return nil
+}
+
+// checkAnchors requires the #anchor of every production link to a published
+// page to name one of the page's headings. Links to unpublished, external or
+// prefix-matched routes are not judged.
+func checkAnchors(cat catalog, links []link, read func(string) ([]byte, error)) error {
+	sources := map[string]string{}
+	for _, r := range cat.Routes {
+		if r.Source != "" && !r.External && r.Unpublished == "" {
+			sources[r.Path] = r.Source
+		}
+	}
+	anchors := map[string]map[string]bool{}
+	var findings []string
+	seen := map[string]bool{}
+	for _, l := range links {
+		source, ok := sources[l.Path]
+		if l.Anchor == "" || !ok || !isProductionSurface(l.File) {
+			continue
+		}
+		if anchors[source] == nil {
+			b, err := read(source)
+			if err != nil {
+				return fmt.Errorf("route %q source %q: %w", l.Path, source, err)
+			}
+			anchors[source] = headingAnchors(string(b))
+		}
+		if anchors[source][l.Anchor] {
+			continue
+		}
+		if f := fmt.Sprintf("%s links %s#%s, but %s has no such heading", l.File, l.Path, l.Anchor, source); !seen[f] {
+			seen[f] = true
+			findings = append(findings, f)
+		}
+	}
+	if len(findings) > 0 {
+		sort.Strings(findings)
+		return fmt.Errorf("links open at the top of the page instead of their section; link an existing heading or the page itself:\n  %s",
+			strings.Join(findings, "\n  "))
+	}
+	return nil
+}
+
+var (
+	fenceRE       = regexp.MustCompile("^\\s*(`{3,}|~{3,})")
+	headingRE     = regexp.MustCompile(`^#{2,4}\s+(.+?)\s*#*\s*$`)
+	mdLinkRE      = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
+	anchorDropRE  = regexp.MustCompile(`[^A-Za-z0-9_\s-]`)
+	anchorSpaceRE = regexp.MustCompile(`\s+`)
+)
+
+// headingAnchors returns the ids the docs site gives a page's level 2 to 4
+// headings outside fenced code: the heading's text, lowercased, without
+// punctuation, with spaces as hyphens (slugifyHeading in the site).
+func headingAnchors(markdown string) map[string]bool {
+	out := map[string]bool{}
+	fence := ""
+	for _, line := range strings.Split(markdown, "\n") {
+		if m := fenceRE.FindStringSubmatch(line); m != nil {
+			if fence == "" {
+				fence = m[1]
+			} else if m[1][0] == fence[0] && len(m[1]) >= len(fence) {
+				fence = ""
+			}
+			continue
+		}
+		if fence != "" {
+			continue
+		}
+		m := headingRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		text := mdLinkRE.ReplaceAllString(m[1], "$1")
+		text = strings.NewReplacer("`", "", "*", "").Replace(text)
+		text = anchorDropRE.ReplaceAllString(strings.ToLower(strings.TrimSpace(text)), "")
+		out[anchorSpaceRE.ReplaceAllString(text, "-")] = true
+	}
+	return out
 }
 
 // checkPublishedContent refuses internal material on every page the docs

@@ -47,7 +47,7 @@ func (s *server) simulateStoredWorkflow(w http.ResponseWriter, r *http.Request, 
 func writeStoredWorkflowSimulationError(w http.ResponseWriter, err error) {
 	var limit *state.StoredWorkflowSimulationLimitError
 	if errors.As(err, &limit) {
-		api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeRequestTooLarge, "Simulation limit exceeded", limit.Error()).WithLimit(limit.Limit, limit.Observed).WithDocs("https://gregale.dev/docs/plans#workflows"))
+		api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeRequestTooLarge, "Simulation limit exceeded", limit.Error()).WithLimit(limit.Limit, limit.Observed).WithDocs("https://gregale.dev/docs/plans"))
 	} else if errors.Is(err, state.ErrStoredWorkflowSimulationInvalid) {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 	} else {
