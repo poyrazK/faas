@@ -43,6 +43,7 @@ type SandboxStore interface {
 	SweepableSandboxSnapshots(ctx context.Context, pendingTTL time.Duration, limit int) ([]agentstore.SweepableSandboxSnapshot, error)
 	RecordSandboxUsage(ctx context.Context, id, token string, u agentstore.SandboxUsage) (bool, error)
 	RecordSandboxTaskResult(ctx context.Context, id, token string, exitCode int, output []byte) error
+	RecordSandboxDomains(ctx context.Context, id, token string, plan api.Plan, entries []agentstore.SandboxDomain) (int, error)
 }
 
 // SandboxSchedd opens RunSandbox streams; scheddpb.ScheddClient implements
@@ -102,6 +103,9 @@ const (
 	// sandboxTaskBootSlack is the time a task may take to boot and start
 	// its browser beyond the task's own timeout.
 	sandboxTaskBootSlack = 90 * time.Second
+	// sandboxOutcomeEgressPolicy: the session has a domain policy and the
+	// node's vmmd cannot enforce one (ADR-20261117091026 §3).
+	sandboxOutcomeEgressPolicy = "egress_policy_unsupported"
 )
 
 // Sandboxes drives one replica's sandbox sessions.
@@ -280,6 +284,7 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		CpuMillicores: int32(vcpu * 1000), NetworkMode: claim.Network, WorkspaceKey: claim.WorkspaceKey,
 		ImageKey: claim.ImageKey, StartCmd: claim.StartCmd, ReadyCmd: claim.ReadyCmd, ReadyTimeoutMs: claim.ReadyTimeout.Milliseconds(),
 		Browser: claim.Browser, Task: sandboxTaskToProto(claim),
+		EgressAllow: claim.EgressAllow, EgressDeny: claim.EgressDeny, WebDomainLog: claim.Network == api.SandboxNetworkWeb,
 	}}}); err != nil {
 		s.requeue(ctx, claim, err)
 		return
@@ -352,6 +357,13 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			if placed == nil {
 				return status.Error(codes.Internal, "schedd booted a session it never placed")
 			}
+			// A policy the node cannot enforce must not run (fails closed).
+			if len(ss.claim.EgressAllow)+len(ss.claim.EgressDeny) > 0 && !ev.GetBooted().GetEgressPolicy() {
+				if ss.decide(agentstore.SandboxFailed, sandboxOutcomeEgressPolicy, "the node cannot enforce the session's egress policy") {
+					_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Close{Close: &scheddpb.SandboxRunClose{}}})
+				}
+				continue
+			}
 			if err := s.store.MarkSandboxReady(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId(), placed.GetInstance()); err != nil {
 				return err
 			}
@@ -406,6 +418,8 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			}
 		case ev.GetActionDone() != nil:
 			s.actionDone(ctx, ss, ev.GetActionDone())
+		case ev.GetWebDomains() != nil:
+			s.recordDomains(ctx, ss, ev.GetWebDomains())
 		}
 	}
 }
@@ -523,6 +537,19 @@ func (s *Sandboxes) recordUsage(ctx context.Context, ss *session, u *scheddpb.Ag
 	}
 	if _, err := s.store.RecordSandboxUsage(ctx, ss.claim.ID, ss.claim.LeaseToken, usage); err != nil {
 		s.log.Warn("agentd: record sandbox usage", "sandbox_id", ss.claim.ID, "err", err)
+	}
+}
+
+// recordDomains keeps vmmd's domain log for the session
+// (ADR-20261117091026 §4). The log is best-effort: a failed write is
+// logged, never fatal to the session.
+func (s *Sandboxes) recordDomains(ctx context.Context, ss *session, f *scheddpb.SandboxRunWebDomains) {
+	entries := make([]agentstore.SandboxDomain, 0, len(f.GetDomains()))
+	for _, d := range f.GetDomains() {
+		entries = append(entries, agentstore.SandboxDomain{Domain: d.GetDomain(), Refused: d.GetRefused(), FirstSeen: time.UnixMilli(d.GetAtUnixMs())})
+	}
+	if _, err := s.store.RecordSandboxDomains(ctx, ss.claim.ID, ss.claim.LeaseToken, api.Plan(ss.claim.Plan), entries); err != nil {
+		s.log.Warn("agentd: record sandbox domains", "sandbox_id", ss.claim.ID, "err", err)
 	}
 }
 

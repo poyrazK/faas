@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +39,12 @@ type SandboxVMMAPI interface {
 
 // sandboxMeter measures a session VM's usage (ADR-20261027090013 step 11).
 // *fcvm.Manager implements it; a VMM without it reports no usage.
+// sandboxWebLog drains a web-mode session's domain log
+// (ADR-20261117091026 §4). *fcvm.Manager implements it.
+type sandboxWebLog interface {
+	DrainSandboxWebDomains(instance string) []fcvm.SandboxWebDomain
+}
+
 type sandboxMeter interface {
 	MeterSandbox(instance string) fcvm.SandboxUsageMeter
 }
@@ -64,7 +71,10 @@ type sandboxActivity struct {
 	thawMu    sync.Mutex
 	thawed    chan struct{}
 
-	outbox   chan *vmmdpb.RunSandboxEvent
+	outbox chan *vmmdpb.RunSandboxEvent
+	// webLog is set when the caller asked for the domain log
+	// (ADR-20261117091026 §4).
+	webLog   bool
 	done     chan struct{}
 	persists sandboxPersists
 	// usage measures the VM, or is nil when the VMM cannot.
@@ -182,11 +192,12 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		act.runAction = func(ctx context.Context, a *vmmdpb.RunSandboxAction) { s.runSandboxAction(ctx, runner, wake, act, a) }
 	}
 	if err := stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Booted{Booted: &vmmdpb.RunSandboxBooted{
-		Method: wakeMethodFrom(inst.Method), BootMs: time.Since(started).Milliseconds(), Actions: act.runAction != nil,
+		Method: wakeMethodFrom(inst.Method), BootMs: time.Since(started).Milliseconds(), Actions: act.runAction != nil, EgressPolicy: true,
 	}}}); err != nil {
 		opErr = err
 		return err
 	}
+	act.webLog = first.GetStart().GetWebDomainLog()
 	if task != nil {
 		go runSandboxTask(ctx, runner, wake, *task, act)
 	}
@@ -240,8 +251,11 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 		case msg := <-frames:
 			switch {
 			case msg.GetClose() != nil:
-				// The last record goes out before the stream ends, so a
-				// closed session's usage is complete.
+				// The last records go out before the stream ends, so a
+				// closed session's domains and usage are complete.
+				if err := s.sendSandboxWebDomains(stream, instance, act); err != nil {
+					return err
+				}
 				if act.usage != nil {
 					stopped = true
 					u := act.usage.Stop()
@@ -267,6 +281,9 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 		case <-act.thawed:
 			ev = &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Thawed{Thawed: &vmmdpb.RunSandboxThawed{}}}
 		case <-ticker.C:
+			if err := s.sendSandboxWebDomains(stream, instance, act); err != nil {
+				return err
+			}
 			if report, changed := act.report(); changed {
 				ev = &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Activity{Activity: report}}
 			}
@@ -283,6 +300,26 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 			return err
 		}
 	}
+}
+
+// sendSandboxWebDomains sends the session's domain log since the last
+// frame, if the caller asked for it and there is any. A caller that did not
+// ask leaves the log to its bounds (fcvm keeps at most the plan's distinct
+// domains and SandboxEgressRefusedLogMax refusals).
+func (s *Server) sendSandboxWebDomains(stream vmmdpb.Vmmd_RunSandboxServer, instance string, act *sandboxActivity) error {
+	log, ok := s.vmm.(sandboxWebLog)
+	if !ok || !act.webLog {
+		return nil
+	}
+	domains := log.DrainSandboxWebDomains(instance)
+	if len(domains) == 0 {
+		return nil
+	}
+	frame := &vmmdpb.RunSandboxWebDomains{Domains: make([]*vmmdpb.RunSandboxWebDomain, 0, len(domains))}
+	for _, d := range domains {
+		frame.Domains = append(frame.Domains, &vmmdpb.RunSandboxWebDomain{Domain: d.Domain, Refused: d.Refused, AtUnixMs: d.At.UnixMilli()})
+	}
+	return stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_WebDomains{WebDomains: frame}})
 }
 
 func sandboxUsageEvent(u *fcvm.AgentRunUsage) *vmmdpb.RunSandboxEvent {
@@ -376,6 +413,9 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 	if wake.Browser && wake.ImageKey != "" {
 		return fcvm.SandboxWakeRequest{}, invalid("browser goes with a preset session, not image_key")
 	}
+	if problem := sandboxEgressPolicy(start, &wake, invalid); problem != nil {
+		return fcvm.SandboxWakeRequest{}, problem
+	}
 	if wake.ReadyTimeout < 0 || wake.ReadyTimeout > time.Duration(api.SandboxTemplateReadyTimeoutSecMax)*time.Second ||
 		wake.ReadyCmd != "" && wake.ReadyTimeout == 0 {
 		return fcvm.SandboxWakeRequest{}, invalid("ready_timeout_ms is out of range")
@@ -434,6 +474,30 @@ func (s *Server) CaptureSandboxSnapshot(ctx context.Context, req *vmmdpb.Capture
 	return &vmmdpb.CaptureAgentSnapshotResponse{VmstateBytes: info.VMStateBytes, Snapshot: &vmmdpb.AgentRunSnapshot{
 		StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey, FcVersion: snap.FCVersion, MemBytes: snap.MemBytes,
 	}}, nil
+}
+
+// sandboxEgressPolicy validates a start frame's domain policy
+// (ADR-20261117091026 §3) and puts it on the wake: rules only for a web-mode
+// session, each a domain rule, within SandboxEgressRulesMax (deny may hold
+// the account's and the session's).
+func sandboxEgressPolicy(start *vmmdpb.RunSandboxStart, wake *fcvm.SandboxWakeRequest, invalid func(string) *api.Problem) *api.Problem {
+	allow, deny := start.GetEgressAllow(), start.GetEgressDeny()
+	if len(allow)+len(deny) == 0 {
+		return nil
+	}
+	if wake.Network != api.SandboxNetworkWeb {
+		return invalid("egress_allow and egress_deny need network_mode web")
+	}
+	if len(allow) > api.SandboxEgressRulesMax || len(deny) > 2*api.SandboxEgressRulesMax {
+		return invalid("the egress policy holds too many rules")
+	}
+	for _, rule := range append(slices.Clone(allow), deny...) {
+		if !api.ValidSandboxEgressRule(rule) {
+			return invalid("egress policy rule " + strconv.Quote(rule) + " is not a domain rule")
+		}
+	}
+	wake.EgressAllow, wake.EgressDeny = slices.Clone(allow), slices.Clone(deny)
+	return nil
 }
 
 // sandboxTaskRunner runs a sandbox task's command in its session VM
