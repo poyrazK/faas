@@ -1,0 +1,68 @@
+{
+  "scope": {
+    "base_url": "https://api.example.test",
+    "account_id": "11111111-1111-4111-8111-111111111111",
+    "app_id": "22222222-2222-4222-8222-222222222222",
+    "app_slug": "imports"
+  },
+  "endpoint_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "contract": {
+    "version": 1,
+    "type": "import.requested",
+    "data": {
+      "type": "object",
+      "properties": {
+        "import_id": {
+          "type": "string",
+          "minLength": 36,
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "import_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "import_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "api_version": "2024-06-20",
+  "path": "/webhooks/stripe",
+  "event": {
+    "id": "evt_paid_17",
+    "object": "event",
+    "api_version": "2024-06-20",
+    "livemode": false,
+    "created": 1794844800,
+    "type": "payment_intent.succeeded",
+    "data": {
+      "object": {
+        "id": "pi_import17",
+        "object": "payment_intent",
+        "customer": "cus_alice",
+        "amount_received": 1000,
+        "currency": "usd",
+        "status": "succeeded",
+        "metadata": {
+          "owner_id": "bob",
+          "label": "<&> café"
+        }
+      }
+    }
+  },
+  "body": "{\"id\":\"evt_paid_17\",\"object\":\"event\",\"api_version\":\"2024-06-20\",\"livemode\":false,\"created\":1794844800,\"type\":\"payment_intent.succeeded\",\"data\":{\"object\":{\"id\":\"pi_import17\",\"object\":\"payment_intent\",\"customer\":\"cus_alice\",\"amount_received\":1000,\"currency\":\"usd\",\"status\":\"succeeded\",\"metadata\":{\"owner_id\":\"bob\",\"label\":\"<&> café\"}}}}",
+  "body_sha256": "7fc112196a5b09c6309c9480d2ade961bccfd10f367ac8ff66a9ef694c3a20cb",
+  "receipt_id": "84d990d9-7f27-51e3-ac3b-00f95eac0e54",
+  "identity": "9c2fc271f6730e05a808f4b07acb7711315ef23948b4721a17428f79d33d5e15",
+  "contract_sha256": "4635f30880808d8ba8a080ea6e80485faf43721962ea449e45a981cd1c1b4aea",
+  "binding_digest": "6de26a020f3b9998c54edb6d70c350f69040d85e575794f4cac361420d41b7c5",
+  "headers": {
+    "x-faas-invocation-source": "inbound_webhook",
+    "x-faas-invocation-id": "84d990d9-7f27-51e3-ac3b-00f95eac0e54",
+    "x-gregale-webhook-endpoint-id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "x-gregale-webhook-event-id": "evt_paid_17",
+    "x-gregale-webhook-event-type": "payment_intent.succeeded",
+    "x-gregale-webhook-provider": "stripe",
+    "x-gregale-webhook-body-sha256": "7fc112196a5b09c6309c9480d2ade961bccfd10f367ac8ff66a9ef694c3a20cb"
+  },
+  "schema_sha256": "8e65a17ec82e178247ba028ad38895cd36caa5c7386e0f6ac9593da6e61cc0f7"
+}

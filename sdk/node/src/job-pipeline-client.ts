@@ -1,6 +1,6 @@
 import { createClient } from './isolated-client-preview.js';
 import { JobContract, jobScope, jobSnapshot, jobValueHash } from './job-runtime.js';
-import { PipelineError, pipelineScope, pipelineName, pipelineFailure, parsePipelineLineage, type PipelineLineage, type PipelineScope, type PipelineEnvelope } from './pipeline-state.js';
+import { PipelineError, pipelineScope, pipelineName, pipelineFailure, parsePipelineLineage, parsePipelineTrigger, type PipelineTrigger, type PipelineLineage, type PipelineScope, type PipelineEnvelope } from './pipeline-state.js';
 import { fileEventUUID } from './file-events.js';
 
 export interface PipelineRunOptions { timeoutMs: number; signal?: AbortSignal; }
@@ -24,7 +24,7 @@ export interface TypedPipelineRun<O> {
   cancel(options: PipelineRunOptions): Promise<PipelineInspection>;
 }
 export interface TypedJobPipeline<I, O> {
-  start(input: I, options: PipelineRunOptions & { idempotencyKey: string; lineage?: PipelineLineage }): Promise<TypedPipelineRun<O>>;
+  start(input: I, options: PipelineRunOptions & { idempotencyKey: string; lineage?: PipelineLineage; trigger?: PipelineTrigger }): Promise<TypedPipelineRun<O>>;
   /** Attach to an existing run. Does not resume a failed native code workflow. */
   resumeById(runId: string, options: PipelineRunOptions): Promise<TypedPipelineRun<O>>;
   resume(checkpoint: PipelineCheckpoint): TypedPipelineRun<O>;
@@ -56,7 +56,7 @@ export function createJobPipelineClient<I, O>(options: {
   function envelope(value: unknown): PipelineEnvelope<I> {
     const v = value as PipelineEnvelope<I>;
     if (!v || v.version !== 1 || v.owner_id !== owner || v.contract_sha256 !== contract.sha256 || jobValueHash(v.scope) !== jobValueHash(scope)) throw new PipelineError('scope_mismatch');
-    return jobSnapshot({ ...(v.lineage !== undefined ? { lineage: parsePipelineLineage(v.lineage) } : {}), version: 1, scope, owner_id: owner, contract_sha256: contract.sha256, input: contract.input(v.input) });
+    return jobSnapshot({ ...(v.lineage !== undefined ? { lineage: parsePipelineLineage(v.lineage) } : {}), ...(v.trigger !== undefined ? { trigger: parsePipelineTrigger(v.trigger) } : {}), version: 1, scope, owner_id: owner, contract_sha256: contract.sha256, input: contract.input(v.input) });
   }
   function checkpoint(runId: string, input: unknown): PipelineCheckpoint {
     if (!fileEventUUID(runId)) throw new PipelineError('receipt_conflict');
@@ -99,11 +99,11 @@ export function createJobPipelineClient<I, O>(options: {
   }
   return Object.freeze({
     start(input, settings) {
-      const captured = contract.input(input), key = settings.idempotencyKey, lineage = settings.lineage === undefined ? undefined : parsePipelineLineage(settings.lineage);
+      const captured = contract.input(input), key = settings.idempotencyKey, lineage = settings.lineage === undefined ? undefined : parsePipelineLineage(settings.lineage), trigger = settings.trigger === undefined ? undefined : parsePipelineTrigger(settings.trigger);
       if (typeof key !== 'string' || !/^[!-~]{1,128}$/.test(key)) throw new PipelineError('invalid_input');
       return execute(settings, async (signal, check) => {
         await verify(signal, check); check();
-        const value: PipelineEnvelope<I> = { ...(lineage !== undefined ? { lineage } : {}), version: 1, contract_sha256: contract.sha256, scope, owner_id: owner, input: captured };
+        const value: PipelineEnvelope<I> = { ...(lineage !== undefined ? { lineage } : {}), ...(trigger !== undefined ? { trigger } : {}), version: 1, contract_sha256: contract.sha256, scope, owner_id: owner, input: captured };
         let accepted;
         try { accepted = await client.workflows.createWorkflowRun({ slug: scope.app_slug, name: contract.spec.name, idempotencyKey: key, requestBody: value }, { timeoutMs: 0, signal, retry: false }); }
         catch { signal.throwIfAborted(); throw new PipelineError('acceptance_unknown'); }

@@ -139,7 +139,7 @@ func validReleaseGateResults(results []ReleaseGateResult) error {
 func ErrReleaseGateLimit(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseGateLimit, "Too many release gates",
 		fmt.Sprintf("An app can have %d release gates; this one has %d.", ReleaseGatesPerAppMax, observed)).
-		WithHint("Delete a gate you no longer need with `gregale release-gates rm`.").
+		WithHint("Delete a gate you no longer need with `gregale release gate rm`.").
 		WithDocs(docsBase + "/deploys#release-gates")
 }
 
@@ -147,7 +147,7 @@ func ErrReleaseGateLimit(observed int) *Problem {
 func ErrReleaseGateNotFound(name string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeReleaseGateNotFound, "Release gate not found",
 		fmt.Sprintf("The app has no release gate named %q.", name)).
-		WithHint("List gates with `gregale release-gates list`.")
+		WithHint("List gates with `gregale release gate list`.")
 }
 
 // ListReleaseGates lists an app's release gates.

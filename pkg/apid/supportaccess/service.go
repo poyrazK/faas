@@ -146,15 +146,16 @@ func (s *Service) Overview(ctx context.Context, org state.Org, viewer state.Acco
 	if err != nil {
 		return out, err
 	}
+	names := s.newNames()
 	for _, g := range grants {
-		out.Grants = append(out.Grants, s.View(ctx, g))
+		out.Grants = append(out.Grants, names.view(ctx, g))
 	}
 	requests, err := s.d.Store.ListSupportGrantRequests(ctx, org.ID)
 	if err != nil {
 		return out, err
 	}
 	for _, req := range requests {
-		operator, _ := s.d.Store.AccountByID(ctx, req.OperatorID)
+		operator, _ := names.account(ctx, req.OperatorID)
 		out.Requests = append(out.Requests, requestView(org.Slug, operator, req))
 	}
 	return out, nil
@@ -167,9 +168,10 @@ func (s *Service) LiveGrants(ctx context.Context) ([]api.SupportGrant, error) {
 		return nil, err
 	}
 	out := make([]api.SupportGrant, 0, len(grants))
+	names := s.newNames()
 	for _, g := range grants {
 		if s.enabled(g.OrgID, g.CreatedBy) {
-			out = append(out, s.View(ctx, g))
+			out = append(out, names.view(ctx, g))
 		}
 	}
 	return out, nil
@@ -238,22 +240,64 @@ func (s *Service) recordGrant(ctx context.Context, actor state.Account, g state.
 
 // View renders a grant for the API.
 func (s *Service) View(ctx context.Context, g state.SupportGrant) api.SupportGrant {
+	return s.newNames().view(ctx, g)
+}
+
+// names memoizes the app and account lookups behind grant views, so a list
+// reads each app and account once rather than once per grant.
+type names struct {
+	store    Store
+	apps     map[string]string
+	accounts map[string]lookup
+}
+
+type lookup struct {
+	acct state.Account
+	err  error
+}
+
+func (s *Service) newNames() *names {
+	return &names{store: s.d.Store, apps: map[string]string{}, accounts: map[string]lookup{}}
+}
+
+func (n *names) app(ctx context.Context, id string) (string, bool) {
+	if slug, ok := n.apps[id]; ok {
+		return slug, slug != ""
+	}
+	slug := ""
+	if app, err := n.store.AppByID(ctx, id); err == nil {
+		slug = app.Slug
+	}
+	n.apps[id] = slug
+	return slug, slug != ""
+}
+
+func (n *names) account(ctx context.Context, id string) (state.Account, error) {
+	if l, ok := n.accounts[id]; ok {
+		return l.acct, l.err
+	}
+	acct, err := n.store.AccountByID(ctx, id)
+	n.accounts[id] = lookup{acct: acct, err: err}
+	return acct, err
+}
+
+func (n *names) view(ctx context.Context, g state.SupportGrant) api.SupportGrant {
 	out := api.SupportGrant{
 		ID: g.ID, Org: g.OrgSlug, Apps: []string{}, AllApps: len(g.AppIDs) == 0, Reason: g.Reason, RequestID: g.RequestID,
 		CreatedAt: g.CreatedAt.UTC().Format(time.RFC3339), ExpiresAt: g.ExpiresAt.UTC().Format(time.RFC3339),
 	}
 	for _, id := range g.AppIDs {
-		if app, err := s.d.Store.AppByID(ctx, id); err == nil {
-			out.Apps = append(out.Apps, app.Slug)
+		if slug, ok := n.app(ctx, id); ok {
+			out.Apps = append(out.Apps, slug)
 		}
 	}
-	if acct, err := s.d.Store.AccountByID(ctx, g.CreatedBy); err == nil {
+	if acct, err := n.account(ctx, g.CreatedBy); err == nil {
 		out.CreatedBy = acct.Email
 	}
 	switch {
 	case g.RevokedAt != nil:
 		out.Status, out.RevokedAt = api.SupportGrantRevoked, g.RevokedAt.UTC().Format(time.RFC3339)
-		if acct, err := s.d.Store.AccountByID(ctx, g.RevokedBy); err == nil {
+		if acct, err := n.account(ctx, g.RevokedBy); err == nil {
 			out.RevokedBy = acct.Email
 		}
 	case !g.ExpiresAt.After(time.Now()):

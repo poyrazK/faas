@@ -752,3 +752,17 @@ export type * from './pipeline-gate-types.js';
 export { PipelineChildren, nativePipelineChildrenTransport, pipelineChildrenLiveSnapshot, type PipelineChild, type PipelineChildrenTransport } from './pipeline-children.js';
 export * from './pipeline-children-state.js';
 export type * from './pipeline-children-types.js';
+
+export { createEventPipeline, EventContract, EventPipelineError, eventPipelineIdentity, eventPipelineSchema, parseEventPipelineReceipt, postgresEventPipelineStore, type EventContractSpec, type EventPipeline, type EventPipelineDefinition, type EventPipelineDelivery, type PipelineEvent, type EventPipelineAction, type EventPipelineOutcome, type EventPipelineIntent, type EventPipelineReceipt, type EventPipelineStore } from './event-pipelines.js';
+
+export { createEventPublisher, createEventOutbox, eventOutboxSchema, withEventOutboxTransaction, EventOutboxError, type EventOutboxCode, type EventOutboxOptions, type EventPublicationOptions, type EventPublicationOutcome, type EventPublicationReceipt, type EventOutboxStatus, type EventOutboxOutcome, type EventOutboxRetryPolicy, type EventPublisherDefinition, type EventStageOptions, type TypedEventPublisher, type EventOutbox, type EventOutboxRecoveryOptions, type EventOutboxBatchOptions, type EventOutboxPool, type EventOutboxTransaction } from './event-outbox.js';
+
+export {definePipelineSchedule,createPipelineScheduleClient,PipelineScheduleError,type PipelineSchedule,type PipelineScheduleOptions,type PipelineScheduleCode,type PipelineScheduleClient,type PipelineScheduleAction,type PipelineScheduleHistory,type PipelineScheduleInspection,type PipelineSchedulePreview,type PipelineScheduleOccurrence,type PipelineScheduleReplayOutcome} from './pipeline-schedules.js';
+
+export {createStripeWebhookAdapter,stripeDeliveryContextFromHeaders,stripeReceiptId,stripeWebhookSchema,StripeWebhookError,type StripeWebhookCode,type StripeWebhookDefinition,type StripeWebhookAdapter,type StripeWebhookDelivery,type StripeDeliveryContext,type StripeWebhookEvent,type StripeWebhookAction,type StripeWebhookOptions,type StripeWebhookDecision,type StripeWebhookIgnoreReason,type StripeWebhookReceipt,type StripeWebhookOutcome} from './stripe-webhooks.js';
+
+export {definePipelineTool,PipelineToolError,postgresPipelineToolStore,pipelineToolSchema,pipelineToolIdentity,type PipelineTool,type PipelineToolDefinition,type PipelineToolRequest,type PipelineToolActor,type PipelineToolAction,type PipelineToolReceipt,type PipelineToolIntent,type PipelineToolStore,type PipelineToolStart,type PipelineToolStatus,type PipelineToolApproval,type PipelineToolCode} from './pipeline-tools.js';
+export {createPipelineToolMCP,PipelineToolMCPError,type PipelineToolMCP,type PipelineToolMCPDescriptor,type PipelineToolMCPResult} from './pipeline-tool-mcp.js';
+
+export {definePipelineCompensation,CompensationError,compensationContracts,postgresCompensationStore,pipelineCompensationSchema,type PipelineCompensation,type PipelineCompensationDefinition,type CompensationCommand,type CompensationOutcome,type CompensationTask,type CompensationInput,type CompensationResult,type CompensationPlan,type CompensationStore,type CompensationActor,type CompensationAction,type CompensationCode,type CompensationSource,type CompensationSourceStage} from './pipeline-compensations.js';
+export {createCompensationMCP} from './pipeline-compensation-mcp.js';

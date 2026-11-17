@@ -649,6 +649,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/task-tool-release-intents/{id}/recovery/restore": "RestoreTaskToolRecovery",
 	"GET /v1/task-tool-source-intents/{id}":                    "GetHostedTaskSourceIntent",
 	"PUT /v1/task-tool-source-intents/{id}":                    "PrepareHostedTaskSourceIntent",
+	"POST /v1/task-tool-source-intents/{id}/check":             "CheckHostedTaskSourceIntent",
+	"PUT /v1/task-tool-source-intents/{id}/decision":           "DecideHostedTaskSourceIntent",
 	"GET /v1/task-tool-release-intents/{id}":                   "GetTaskToolReleaseIntent",
 	"PUT /v1/task-tool-release-intents/{id}":                   "PrepareTaskToolReleaseIntent",
 	"POST /v1/task-tool-release-intents/{id}/check":            "CheckTaskToolReleaseIntent",
