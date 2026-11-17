@@ -148,7 +148,7 @@ func runDedupeKey(grant CallbackToken, callID string) string {
 // tasks into their threads until ctx ends. Every apid runs it: the publish
 // is idempotent, so two passes over one run publish it once.
 func (h *Handler) RunRunCallbacks(ctx context.Context) {
-	if h.RunCallbacks == nil && h.SandboxTasks == nil || !h.callbacksConfigured() {
+	if h.RunCallbacks == nil && h.SandboxTasks == nil && h.BrowserSessions == nil || !h.callbacksConfigured() {
 		return
 	}
 	ticker := time.NewTicker(runCallbackInterval)
@@ -164,6 +164,9 @@ func (h *Handler) RunRunCallbacks(ctx context.Context) {
 		}
 		if _, err := h.DeliverSandboxTasks(ctx); err != nil && ctx.Err() == nil && h.Log != nil {
 			h.Log.Warn("agent browse results", "err", err)
+		}
+		if _, err := h.DeliverSandboxActions(ctx); err != nil && ctx.Err() == nil && h.Log != nil {
+			h.Log.Warn("agent browser actions", "err", err)
 		}
 		h.sweepGitHubSubscriptions(ctx)
 	}

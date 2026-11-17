@@ -103,8 +103,12 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			f.mu.Lock()
 			f.actions = append(f.actions, a)
 			f.mu.Unlock()
+			var shot int64
+			if a.GetScreenshot() {
+				shot = 2048
+			}
 			_ = stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_ActionDone{ActionDone: &scheddpb.SandboxRunActionDone{
-				ActionId: a.GetActionId(), Output: []byte(`{"title":"` + a.GetKind() + `"}`)}}})
+				ActionId: a.GetActionId(), Output: []byte(`{"title":"` + a.GetKind() + `"}`), ScreenshotBytes: shot}}})
 		case frame.GetFreeze() != nil:
 			f.mu.Lock()
 			f.freezes++
@@ -337,7 +341,7 @@ func TestSandboxActionsRunInOrderAndEndWithTheSession(t *testing.T) {
 		return a
 	}
 	nav := act("call_1", "navigate", agentstore.SandboxActionArgs{URL: "https://example.com/"})
-	click := act("call_2", "click", agentstore.SandboxActionArgs{Ref: 4, MaxChars: 900})
+	click := act("call_2", "click", agentstore.SandboxActionArgs{Ref: 4, MaxChars: 900, Screenshot: true})
 	fake := &fakeSandboxSchedd{scripts: map[string]string{sb.ID: "actions"}}
 	sbx := newSandboxes(t, store, fake, agentd.SandboxConfig{})
 	done := holdSandbox(t, sbx)
@@ -367,8 +371,21 @@ func TestSandboxActionsRunInOrderAndEndWithTheSession(t *testing.T) {
 	fake.mu.Unlock()
 	if len(sent) != 2 || sent[0].GetKind() != "navigate" || sent[0].GetUrl() != "https://example.com/" ||
 		sent[0].GetMaxChars() != 4000 || sent[0].GetTimeoutMs() != 30_000 || sent[1].GetKind() != "click" ||
-		sent[1].GetRef() != 4 || sent[1].GetMaxChars() != 900 || sent[1].GetMaxOutputBytes() != 256<<10 {
+		sent[1].GetRef() != 4 || sent[1].GetMaxChars() != 900 || sent[1].GetMaxOutputBytes() != 256<<10 || sent[0].GetScreenshot() ||
+		!sent[1].GetScreenshot() {
 		t.Fatalf("sent %v", sent)
+	}
+	// adr: 20261117065818 §5 — a kept screenshot is recorded at the key vmmd
+	// derives from the session and the action.
+	var navKey, clickKey *string
+	var clickBytes *int64
+	if err := pool.QueryRow(ctx, `SELECT (SELECT screenshot_key FROM sandbox_actions WHERE id=$1), screenshot_key, screenshot_bytes
+		FROM sandbox_actions WHERE id=$2`, nav.ID, click.ID).Scan(&navKey, &clickKey, &clickBytes); err != nil {
+		t.Fatal(err)
+	}
+	if want := "sandbox-screenshots/" + account + "/" + sb.ID + "/" + click.ID + ".jpg"; navKey != nil || clickKey == nil || *clickKey != want ||
+		clickBytes == nil || *clickBytes != 2048 {
+		t.Fatalf("screenshots: navigate %v, click %v (%v)", navKey, clickKey, clickBytes)
 	}
 	pending := act("call_3", "snapshot", agentstore.SandboxActionArgs{})
 	if _, err := store.CloseSandbox(ctx, account, sb.ID); err != nil {

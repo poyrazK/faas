@@ -47,7 +47,7 @@ A sandbox SDK user can already do this: `startBrowser()` and the CDP preview URL
 ### 3. The session's life
 
 - `open` admits a session exactly as a browse task does (`browser: true`, network `web`, the plan's sandbox limits and concurrency), without a task. It is linked to the thread, so only that thread's calls can act on it.
-- The session closes on `close`, after `SandboxBrowserIdleCloseSec` with no action (the session's existing idle timeout, which agentd already enforces: an action counts as a call), at its lifetime cap (`SandboxBrowserLifetimeSec`), or when the thread closes.
+- The session closes on `close`, after `SandboxBrowserIdleCloseSec` with no action (the session's existing idle timeout, which agentd already enforces: an action counts as a call), at its lifetime cap (`SandboxBrowserLifetimeSec`), or when an action's result finds the thread can no longer receive it (its callback URLs revoked). A thread closed with no action pending is left to the idle close.
 - A running action whose session is claimed again (its agentd or VM was lost) ends without an exit code. So does every open action once the session ends. apid reports either as "the session ended".
 - Between actions the session freezes after `SandboxIdleFreezeSec`, like any session. It is billed as sandbox compute (ADR-20261027090013 §5). The next action thaws it.
 - `SandboxBrowserActionsMax` bounds the actions per session. Each action runs within `SandboxBrowserActionTimeoutSec`.
@@ -67,17 +67,31 @@ A sandbox SDK user can already do this: `startBrowser()` and the CDP preview URL
 | `SandboxBrowserLifetimeSec` | 0 | 1800 | 3600 | 3600 |
 | `SandboxBrowserActionsMax` | 0 | 200 | 500 | 500 |
 | `SandboxBrowserActionTimeoutSec` | 0 | 30 | 30 | 30 |
+| `SandboxScreenshotMaxBytes` | — | 1 MiB | 1 MiB | 1 MiB |
+| `SandboxScreenshotRetentionSec` | — | 86400 | 86400 | 86400 |
 
 ## Rollout
 
 - **PR A:** `sandbox_actions` (expand migration), `gregale-browser act`, the `RunSandboxAction` frames through schedd and vmmd, and agentd's action pump.
-- **PR B:** the `gregale_browser` tool, action delivery into threads, `GET /v1/sandboxes/{id}/actions/{seq}`, and docs.
+- **PR B:** the `gregale_browser` tool, action delivery into threads, and `GET /v1/sandboxes/{id}/actions/{seq}`. `open` admits the session and its first action (a `navigate`) in one transaction, so a retried open finds its session.
+- **PR C:** screenshots (§5).
 - An older schedd or vmmd ignores an action frame it does not know. agentd sends actions only to a session whose vmmd announced action support (`RunSandboxBooted.actions`). apid admits `open` only behind `FAAS_SANDBOX_BROWSER` and `FAAS_SANDBOX_WEB_NETWORK`.
 - A metal check of a click and type round trip, including one across a freeze and thaw, comes before the switches are turned on.
 
+## 5. Screenshots (amendment, 2026-11-17: owner "Go with 2, screenshots")
+
+- Any action except `close` takes `screenshot: true`. The action then also captures the page's viewport as a JPEG (quality 70).
+- `gregale-browser act --screenshot <path>` writes the image into the guest at a path vmmd fixes (`/workspace/.gregale-screenshot-<action_id>.jpg`, the action ID a UUID). vmmd reads it with the ordinary file read operation and streams it to the artifact store, then deletes it from the guest.
+  - The key is `sandbox-screenshots/<account>/<session>/<action>.jpg`. vmmd derives it from the session it runs and the action's ID; no key travels on the wire.
+  - An image over `SandboxScreenshotMaxBytes` (1 MiB) is not kept, and the action's result says so.
+- vmmd reports `screenshot_bytes` with the action's end, and agentd records the key and size on the action row under the session's lease.
+- The tool result carries `screenshot_url`, `GET /v1/sandboxes/{id}/actions/{seq}/screenshot`. It serves the JPEG to the app's credential, like a run's output files (`nosniff`, a fixed `image/jpeg` content type).
+- The inbox message carries no image: 4 KiB cannot hold one. A runtime that shows images to its model fetches the URL.
+- **Retention:** agentd's sweep deletes a session's screenshots `SandboxScreenshotRetentionSec` (24 h) after the session ends, and clears their keys.
+- **Storage:** at most `SandboxBrowserActionsMax` × 1 MiB per session for a day. This is not billed separately, like workspace snapshots in their grace period.
+
 ## Not yet
 
-- **Screenshots.** A PNG does not fit an inbox message, and agents would need to fetch it. A follow-up stores it in the artifact store behind the action's `result_url`.
 - **Several tabs per session.** One page per session keeps refs and state simple.
 
 ## Rejected alternatives

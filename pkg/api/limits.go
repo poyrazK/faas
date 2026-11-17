@@ -11302,6 +11302,11 @@ var (
 	SandboxBrowserActionTimeoutSec     = [4]int{0, 30, 30, 30}
 	SandboxBrowserSnapshotDefaultChars = 4000
 	SandboxBrowserTypeMaxChars         = 2048
+	// SandboxScreenshotMaxBytes caps one gregale_browser screenshot; a larger
+	// one is not kept. SandboxScreenshotRetentionSec is how long a session's
+	// screenshots outlive it (ADR-20261117065818 §5).
+	SandboxScreenshotMaxBytes     = 1 << 20
+	SandboxScreenshotRetentionSec = 86_400
 	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
 	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
 	// it. A browser touches many domains per page, so it is above the per-run

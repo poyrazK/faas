@@ -107,3 +107,11 @@ test('page scripts embed only the numbers act validated', () => {
   assert.doesNotThrow(() => new Function(snapshotScript(10)));
   assert.doesNotThrow(() => new Function(refScript(1)));
 });
+
+test('act takes a screenshot path only where vmmd puts it', () => {
+  const path = '/workspace/.gregale-screenshot-0b6f8c1e-4d2a-4c3b-9f00-1234567890ab.jpg';
+  assert.equal(actArgs(['snapshot', '--screenshot', path]).screenshot, path);
+  for (const bad of ['/etc/passwd', '/workspace/.gregale-screenshot-x.jpg', '/tmp/../etc/gregale-screenshot-0b6f8c1e-4d2a-4c3b-9f00-1234567890ab.jpg', '']) {
+    assert.throws(() => actArgs(['snapshot', '--screenshot', bad]), /--screenshot must be/, bad);
+  }
+});

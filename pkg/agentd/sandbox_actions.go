@@ -8,12 +8,15 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
+	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // SandboxActionStore is the sandbox_actions surface agentd writes;
@@ -21,8 +24,10 @@ import (
 type SandboxActionStore interface {
 	NextSandboxActions(ctx context.Context, sessionIDs []string) ([]agentstore.SandboxAction, error)
 	StartSandboxAction(ctx context.Context, id, token string) (bool, error)
-	FinishSandboxAction(ctx context.Context, id, token string, exitCode *int, output []byte) error
+	FinishSandboxAction(ctx context.Context, id, token string, exitCode *int, output []byte, shot agentstore.SandboxScreenshot) error
 	EndOpenSandboxActions(ctx context.Context, sessionID, token string, states ...string) error
+	ExpiredSandboxScreenshots(ctx context.Context, retention time.Duration, limit int) ([]agentstore.ExpiredSandboxScreenshot, error)
+	ClearSandboxScreenshot(ctx context.Context, actionID string) error
 }
 
 // sandboxActionSlack is the time past an action's own timeout agentd waits
@@ -103,7 +108,7 @@ func (s *Sandboxes) PumpActionsOnce(ctx context.Context) error {
 	}
 	s.actions.mu.Unlock()
 	for _, as := range overdue {
-		s.endAction(ctx, as, as.running, nil, []byte("the browser action did not finish within its timeout"))
+		s.endAction(ctx, as, as.running, nil, []byte("the browser action did not finish within its timeout"), agentstore.SandboxScreenshot{})
 	}
 	if len(idle) == 0 {
 		return nil
@@ -148,9 +153,9 @@ func (s *Sandboxes) startAction(ctx context.Context, store SandboxActionStore, a
 	frame := &scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Action{Action: &scheddpb.SandboxRunAction{
 		ActionId: a.ID, Kind: a.Kind, Url: a.Args.URL, Ref: int32(a.Args.Ref), Text: a.Args.Text, Submit: a.Args.Submit,
 		Key: a.Args.Key, Direction: a.Args.Direction, MaxChars: int32(maxChars), TimeoutMs: timeout.Milliseconds(),
-		MaxOutputBytes: int64(api.SandboxTaskOutputMaxBytes)}}}
+		MaxOutputBytes: int64(api.SandboxTaskOutputMaxBytes), Screenshot: a.Args.Screenshot}}}
 	if err := as.send(frame); err != nil {
-		s.endAction(ctx, as, a.ID, nil, []byte("the session's VM is gone"))
+		s.endAction(ctx, as, a.ID, nil, []byte("the session's VM is gone"), agentstore.SandboxScreenshot{})
 	}
 }
 
@@ -169,13 +174,18 @@ func (s *Sandboxes) actionDone(ctx context.Context, ss *session, d *scheddpb.San
 	} else if d.GetTimedOut() {
 		code, output = -1, []byte("the browser action timed out")
 	}
-	s.endAction(ctx, as, d.GetActionId(), &code, output)
+	var shot agentstore.SandboxScreenshot
+	if n := d.GetScreenshotBytes(); n > 0 && n <= int64(api.SandboxScreenshotMaxBytes) {
+		// vmmd stored it at the key it derives from the session and action.
+		shot = agentstore.SandboxScreenshot{Key: storagekey.SandboxScreenshot(ss.claim.AccountID, ss.claim.ID, d.GetActionId()), Bytes: n}
+	}
+	s.endAction(ctx, as, d.GetActionId(), &code, output, shot)
 }
 
 // endAction records an action's end once and frees its session for the
 // next. Only the action the session runs ends; a late end of an action
 // already ended is dropped.
-func (s *Sandboxes) endAction(ctx context.Context, as *actionSession, id string, code *int, output []byte) {
+func (s *Sandboxes) endAction(ctx context.Context, as *actionSession, id string, code *int, output []byte, shot agentstore.SandboxScreenshot) {
 	s.actions.mu.Lock()
 	if as.running != id {
 		s.actions.mu.Unlock()
@@ -184,7 +194,7 @@ func (s *Sandboxes) endAction(ctx context.Context, as *actionSession, id string,
 	as.running = ""
 	s.actions.mu.Unlock()
 	if store := s.actionStore(); store != nil {
-		if err := store.FinishSandboxAction(context.WithoutCancel(ctx), id, as.ss.claim.LeaseToken, code, output); err != nil {
+		if err := store.FinishSandboxAction(context.WithoutCancel(ctx), id, as.ss.claim.LeaseToken, code, output, shot); err != nil {
 			s.log.Warn("agentd: finish sandbox action", "sandbox_id", as.ss.claim.ID, "action_id", id, "err", err)
 		}
 	}
@@ -201,4 +211,35 @@ func (s *Sandboxes) endOpenActions(ctx context.Context, claim agentstore.Sandbox
 	if err := store.EndOpenSandboxActions(context.WithoutCancel(ctx), claim.ID, claim.LeaseToken, states...); err != nil {
 		s.log.Warn("agentd: end sandbox actions", "sandbox_id", claim.ID, "err", err)
 	}
+}
+
+// screenshotSweepBatch bounds the screenshots one sweep deletes.
+const screenshotSweepBatch = 200
+
+// sweepScreenshots deletes screenshots of sessions that ended
+// SandboxScreenshotRetentionSec ago and forgets their keys
+// (ADR-20261117065818 §5). They live in the store workspaces do.
+func (s *Sandboxes) sweepScreenshots(ctx context.Context) error {
+	store := s.actionStore()
+	if store == nil || s.scfg.Workspaces == nil {
+		return nil
+	}
+	due, err := store.ExpiredSandboxScreenshots(ctx, time.Duration(api.SandboxScreenshotRetentionSec)*time.Second, screenshotSweepBatch)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, shot := range due {
+		if err := s.scfg.Workspaces.Delete(ctx, shot.Key); err != nil && !errors.Is(err, storage.ErrNotFound) {
+			errs = append(errs, err)
+			continue
+		}
+		if err := store.ClearSandboxScreenshot(ctx, shot.ActionID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if n := len(due) - len(errs); n > 0 {
+		s.log.Info("agentd: deleted sandbox screenshots", "count", n)
+	}
+	return errors.Join(errs...)
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sandboxtoken"
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // Store is the state the handlers need; *agentstore.Store implements it.
@@ -64,6 +65,9 @@ type Handler struct {
 	// WebNetwork is FAAS_SANDBOX_WEB_NETWORK: it admits network.mode web
 	// (ADR-20261112121456 §6). Off, web is sandbox_unsupported.
 	WebNetwork bool
+	// Files is the artifact store gregale_browser's screenshots are kept in
+	// (ADR-20261117065818 §5); nil: they cannot be read from this host.
+	Files storage.StorageBackend
 }
 
 // requestMaxBytes bounds a create or change request.

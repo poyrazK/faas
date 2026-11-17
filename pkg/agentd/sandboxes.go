@@ -186,7 +186,7 @@ func (s *Sandboxes) SweepOnce(ctx context.Context) error {
 	if requeued+failed+expired > 0 {
 		s.log.Info("agentd: expired sandbox leases", "requeued", requeued, "failed", failed, "expired", expired)
 	}
-	return errors.Join(err, s.sweepSnapshots(ctx))
+	return errors.Join(err, s.sweepSnapshots(ctx), s.sweepScreenshots(ctx))
 }
 
 func (s *Sandboxes) sweep(ctx context.Context) {
