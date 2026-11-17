@@ -37,6 +37,8 @@ RULES = [
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck|^mutate$", "TOOLING"),
+    # First-hour acceptance and baseline docs describe qualification tooling.
+    (r"^first-hour-(acceptance|baseline)$", "TOOLING"),
     # --- attribution fixes: specific names that broader keywords would misfile
     (r"hosted-task-source|tasktoolsource|task-tool-source-intents|mcp-hosted-task-source-retention", "Gregale management MCP server"),
     # Agent-authored tools and exact delegated execution remain management MCP preview.
