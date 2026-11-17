@@ -2486,3 +2486,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261117020000 · Observed delayed-task dispatch outcomes](20261117020000-observed-delayed-task-dispatch-outcomes.md)
 - [ADR-20261117070839: Owner review of retained hosted Task source](20261117070839-hosted-task-source-owner-review.md) — fixed-expiry source review decisions, separate from credential and execution authority.
 - [ADR-20261117173000: One bounded hour for MCP browser authorization](20261117173000-mcp-browser-authorization-window.md) — shared native-code and browser setup window for MFA and consent; final OAuth codes remain single-use and expire after one minute.
+- [ADR-20261117190000: Compute reaches the shared store only through per-object signed grants](20261117190000-compute-store-access-by-signed-grant.md) — secretd signs 5-minute GET/create/replace URLs only for objects of tenants placed on the node; compute ends with no store credentials.
