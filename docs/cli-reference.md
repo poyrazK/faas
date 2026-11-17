@@ -2354,6 +2354,26 @@ Restore an app during its deletion grace window
 
 `gregale app restore <slug>`
 
+### app purge
+
+Permanently remove a deleted app now and free its name
+
+`gregale app purge [--yes] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | purge without prompting; required in non-interactive and JSON mode |  |
+
+Examples:
+
+```sh
+gregale app delete api --yes && gregale app purge api --yes
+```
+
+A deleted app keeps its name for seven days so it can be restored; purge ends that window at once, so a redeploy (for example the same Compose file under a new project) can reuse the name.
+
+Purging cannot be undone. Delete the app&#39;s object storage buckets first.
+
 ### app instances
 
 Show an app&#39;s live instances and their state
