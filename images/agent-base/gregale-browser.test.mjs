@@ -6,7 +6,7 @@ import net from 'node:net';
 import { test } from 'node:test';
 
 process.env.GREGALE_BROWSER_PORT = '19222';
-const { isLocal, relay, rewriteBody, upgradeHead } = await import('./gregale-browser.mjs');
+const { fetchArgs, isLocal, pageResult, relay, rewriteBody, upgradeHead } = await import('./gregale-browser.mjs');
 
 test('answers point WebSocket URLs at the caller', () => {
   const body = '{"webSocketDebuggerUrl":"ws://127.0.0.1:19221/devtools/browser/b","devtoolsFrontendUrl":"/x?ws=127.0.0.1:19221/devtools/page/p"}';
@@ -63,4 +63,22 @@ test('the relay forwards /json and WebSocket upgrades', async (t) => {
   assert.match(reply, /^HTTP\/1\.1 101/);
   assert.ok(reply.endsWith('hello'));
   assert.deepEqual(seen, ['127.0.0.1:19221', '127.0.0.1:19221']);
+});
+
+test('fetch reads its flags and takes the URL only after --', () => {
+  assert.deepEqual(fetchArgs(['--max-chars', '500', '--timeout', '30', '--', 'https://example.com/a']),
+    { maxChars: 500, timeout: 30, url: 'https://example.com/a' });
+  assert.deepEqual(fetchArgs(['--', 'http://example.com']), { maxChars: 20000, timeout: 60, url: 'http://example.com' });
+  for (const argv of [['https://example.com'], ['--', 'file:///etc/passwd'], ['--max-chars', '0', '--', 'https://e.com'],
+    ['--bogus', '1', '--', 'https://e.com'], ['--', '--max-chars']]) {
+    assert.throws(() => fetchArgs(argv), /gregale-browser fetch/, argv.join(' '));
+  }
+});
+
+test('a page result keeps at most max_chars characters, whole', () => {
+  const page = pageResult('https://e.com', 'https://e.com/', 200, 'Title', 'héllo 😀 world', 7);
+  assert.equal(page.text, 'héllo 😀');
+  assert.ok(page.truncated);
+  const whole = pageResult('https://e.com', '', 0, undefined, 'short', 100);
+  assert.deepEqual(whole, { url: 'https://e.com', final_url: 'https://e.com', status: 0, title: '', text: 'short', truncated: false });
 });

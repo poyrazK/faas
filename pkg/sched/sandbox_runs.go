@@ -47,6 +47,29 @@ type SandboxAdmission struct {
 	StartCmd     string
 	ReadyCmd     string
 	ReadyTimeout time.Duration
+	// Browser boots a preset session with the sandbox browser running
+	// (ADR-20261116182615 §1).
+	Browser bool
+	// Task makes the session a sandbox task (ADR-20261116182615 §3).
+	Task *SandboxTask
+}
+
+// SandboxTask is a sandbox task as vmmd runs it.
+type SandboxTask struct {
+	Kind           string
+	URL            string
+	MaxChars       int
+	Timeout        time.Duration
+	MaxOutputBytes int64
+}
+
+// SandboxTaskDone is a sandbox task's end as vmmd reports it.
+type SandboxTaskDone struct {
+	ExitCode  int
+	Output    []byte
+	TimedOut  bool
+	Truncated bool
+	Error     string
 }
 
 // network is the mode the session boots with.
@@ -75,6 +98,11 @@ type SandboxSpec struct {
 	StartCmd        string
 	ReadyCmd        string
 	ReadyTimeout    time.Duration
+	// Browser has vmmd start the sandbox browser as the session's commands,
+	// and makes the warm snapshot the browser shape's (ADR-20261116182615).
+	Browser bool
+	// Task is the session's sandbox task, if it is one.
+	Task *SandboxTask
 	// Snapshot restores the session from a warm snapshot of the same drives,
 	// machine and network mode (ADR-20261027090013 §12).
 	Snapshot *AgentRunSnapshot
@@ -150,6 +178,8 @@ type SandboxHooks struct {
 	// Usage relays vmmd's cumulative usage of the session VM
 	// (ADR-20261027090013 step 11).
 	Usage func(ctx context.Context, u AgentRunUsage) error
+	// TaskDone relays a sandbox task's end (ADR-20261116182615 §3).
+	TaskDone func(ctx context.Context, d SandboxTaskDone) error
 }
 
 type sandboxVMMClient interface {
@@ -201,7 +231,8 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	spec := SandboxSpec{Instance: placement.Instance, SandboxID: a.SandboxID, AccountID: a.AccountID, Plan: a.Plan,
 		BaseKey: r.cfg.BaseKey, LayerKey: r.cfg.SandboxLayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB,
 		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network(),
-		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout}
+		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout,
+		Browser: a.Browser, Task: a.Task}
 	shape := r.sandboxShape(placement.NodeID, spec)
 	spec.Snapshot = r.sandboxSnapshotFor(shape, spec)
 	var method string
@@ -240,6 +271,8 @@ func (a SandboxAdmission) validate() error {
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox vCPU %d is outside the %s plan", a.VCPU, a.Plan)}
 	case a.network() != api.SandboxNetworkNone && a.network() != api.SandboxNetworkRegistries && a.network() != api.SandboxNetworkWeb:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox network mode %q is not supported", a.Network)}
+	case a.Browser && (a.ImageKey != "" || a.StartCmd != "" || a.ReadyCmd != ""):
+		return &AgentRunInvalidError{Reason: "the sandbox browser goes with a preset session, without commands of its own"}
 	}
 	return nil
 }
@@ -275,7 +308,8 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB),
 		CpuMillicores: int32(spec.CPUMillicores), QuietPauseAfterMs: spec.QuietPauseAfter.Milliseconds(), NetworkMode: spec.Network,
 		WorkspaceKey: spec.WorkspaceKey, ImageKey: spec.ImageKey, StartCmd: spec.StartCmd, ReadyCmd: spec.ReadyCmd,
-		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot),
+		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot), Browser: spec.Browser,
+		Task: sandboxTaskToProto(spec.Task),
 	}}}); err != nil {
 		return liftErr(err)
 	}
@@ -367,6 +401,12 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 			if hooks.Usage != nil {
 				err = hooks.Usage(ctx, agentRunUsageFromProto(event.GetUsage()))
 			}
+		case event.GetTaskDone() != nil:
+			if hooks.TaskDone != nil {
+				d := event.GetTaskDone()
+				err = hooks.TaskDone(ctx, SandboxTaskDone{ExitCode: int(d.GetExitCode()), Output: d.GetOutput(), TimedOut: d.GetTimedOut(),
+					Truncated: d.GetTruncated(), Error: d.GetError()})
+			}
 		default:
 			return errors.New("sched: sandbox stream returned an empty event")
 		}
@@ -397,4 +437,12 @@ func sandboxControlFrame(req SandboxControl) *vmmdpb.RunSandboxRequest {
 		}
 	}
 	return nil
+}
+
+func sandboxTaskToProto(t *SandboxTask) *vmmdpb.RunSandboxTask {
+	if t == nil {
+		return nil
+	}
+	return &vmmdpb.RunSandboxTask{Kind: t.Kind, Url: t.URL, MaxChars: int32(t.MaxChars), TimeoutMs: t.Timeout.Milliseconds(),
+		MaxOutputBytes: t.MaxOutputBytes}
 }

@@ -1191,7 +1191,7 @@ const getSandboxSession = `-- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser
  FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
 
@@ -1223,6 +1223,7 @@ type GetSandboxSessionRow struct {
 	InstanceID          string
 	WorkspaceSnapshotID string
 	ImageRef            string
+	Browser             bool
 }
 
 func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandboxSessionParams) (GetSandboxSessionRow, error) {
@@ -1251,6 +1252,7 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 		&i.InstanceID,
 		&i.WorkspaceSnapshotID,
 		&i.ImageRef,
+		&i.Browser,
 	)
 	return i, err
 }
@@ -1264,7 +1266,9 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
     tpl.rootfs_key, '')::text AS image_key,
   (sb.image_ref IS NOT NULL)::boolean AS from_image,
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
-  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s
+  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
+  coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
+  coalesce(sb.task_max_chars, 0)::integer AS task_max_chars
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
@@ -1291,6 +1295,10 @@ type GetSandboxSessionClaimRow struct {
 	StartCmd         string
 	ReadyCmd         string
 	ReadyTimeoutS    int32
+	Browser          bool
+	TaskKind         string
+	TaskUrl          string
+	TaskMaxChars     int32
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1314,6 +1322,10 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.StartCmd,
 		&i.ReadyCmd,
 		&i.ReadyTimeoutS,
+		&i.Browser,
+		&i.TaskKind,
+		&i.TaskUrl,
+		&i.TaskMaxChars,
 	)
 	return i, err
 }
@@ -1406,6 +1418,44 @@ func (q *Queries) GetSandboxSnapshot(ctx context.Context, db DBTX, arg GetSandbo
 		&i.DeleteRequestedAt,
 		&i.CreatedAt,
 		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const getSandboxTaskResult = `-- name: GetSandboxTaskResult :one
+SELECT state, coalesce(task_kind, '')::text AS task_kind, coalesce(task_url, '')::text AS task_url, task_exit_code, task_output,
+  coalesce(outcome_code, '')::text AS outcome_code, coalesce(outcome_message, '')::text AS outcome_message
+ FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type GetSandboxTaskResultParams struct {
+	SessionID string
+	AccountID string
+}
+
+type GetSandboxTaskResultRow struct {
+	State          string
+	TaskKind       string
+	TaskUrl        string
+	TaskExitCode   pgtype.Int4
+	TaskOutput     []byte
+	OutcomeCode    string
+	OutcomeMessage string
+}
+
+// GET /v1/sandboxes/{id}/task: a task session's arguments and, once it
+// ended, its exit code and output.
+func (q *Queries) GetSandboxTaskResult(ctx context.Context, db DBTX, arg GetSandboxTaskResultParams) (GetSandboxTaskResultRow, error) {
+	row := db.QueryRow(ctx, getSandboxTaskResult, arg.SessionID, arg.AccountID)
+	var i GetSandboxTaskResultRow
+	err := row.Scan(
+		&i.State,
+		&i.TaskKind,
+		&i.TaskUrl,
+		&i.TaskExitCode,
+		&i.TaskOutput,
+		&i.OutcomeCode,
+		&i.OutcomeMessage,
 	)
 	return i, err
 }
@@ -1780,11 +1830,12 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 
 const insertSandboxSession = `-- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars)
 VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
   $5::integer,$6::text,$7::integer,$8::timestamptz,
   $9::jsonb,$10::text::uuid,$11::text,$12::text::uuid,
-  $13::text::uuid)
+  $13::text::uuid,$14::boolean,$15::text,$16::text,
+  $17::integer)
 RETURNING id::text AS id
 `
 
@@ -1802,6 +1853,10 @@ type InsertSandboxSessionParams struct {
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.Text
 	TemplateID          pgtype.Text
+	Browser             bool
+	TaskKind            pgtype.Text
+	TaskUrl             pgtype.Text
+	TaskMaxChars        pgtype.Int4
 }
 
 func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
@@ -1819,6 +1874,10 @@ func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertS
 		arg.ImageRef,
 		arg.ImageJobID,
 		arg.TemplateID,
+		arg.Browser,
+		arg.TaskKind,
+		arg.TaskUrl,
+		arg.TaskMaxChars,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -1848,6 +1907,33 @@ func (q *Queries) InsertSandboxSnapshot(ctx context.Context, db DBTX, arg Insert
 		arg.StorageKey,
 		arg.ReservedBytes,
 		arg.ExpiresAt,
+	)
+	return err
+}
+
+const insertSandboxTaskCall = `-- name: InsertSandboxTaskCall :exec
+INSERT INTO agent_sandbox_task_calls (sandbox_id, account_id, endpoint_id, thread_id, tool_call_id, issued_at)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid,
+  $4::text, $5::text, $6::timestamptz)
+`
+
+type InsertSandboxTaskCallParams struct {
+	SandboxID  string
+	AccountID  string
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+	IssuedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertSandboxTaskCall(ctx context.Context, db DBTX, arg InsertSandboxTaskCallParams) error {
+	_, err := db.Exec(ctx, insertSandboxTaskCall,
+		arg.SandboxID,
+		arg.AccountID,
+		arg.EndpointID,
+		arg.ThreadID,
+		arg.ToolCallID,
+		arg.IssuedAt,
 	)
 	return err
 }
@@ -2306,7 +2392,7 @@ const listSandboxSessions = `-- name: ListSandboxSessions :many
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser
  FROM sandbox_sessions
  WHERE account_id=$1::text::uuid
  AND ($2::text IS NULL OR state=$2::text)
@@ -2345,6 +2431,7 @@ type ListSandboxSessionsRow struct {
 	InstanceID          string
 	WorkspaceSnapshotID string
 	ImageRef            string
+	Browser             bool
 }
 
 // Newest first; a page continues before the (created_at, id) of the last row.
@@ -2386,6 +2473,7 @@ func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSand
 			&i.InstanceID,
 			&i.WorkspaceSnapshotID,
 			&i.ImageRef,
+			&i.Browser,
 		); err != nil {
 			return nil, err
 		}
@@ -2672,6 +2760,69 @@ func (q *Queries) ListUndeliveredAgentRunCallbacks(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const listUndeliveredSandboxTaskCalls = `-- name: ListUndeliveredSandboxTaskCalls :many
+SELECT c.sandbox_id::text AS sandbox_id, c.account_id::text AS account_id, c.endpoint_id::text AS endpoint_id, c.thread_id,
+  c.tool_call_id, c.issued_at, sb.state, coalesce(sb.outcome_code, '')::text AS outcome_code,
+  coalesce(sb.outcome_message, '')::text AS outcome_message, coalesce(sb.task_kind, '')::text AS task_kind,
+  coalesce(sb.task_url, '')::text AS task_url, sb.task_exit_code, sb.task_output
+ FROM agent_sandbox_task_calls c JOIN sandbox_sessions sb ON sb.id=c.sandbox_id
+ WHERE c.delivered_at IS NULL AND sb.state IN ('closed', 'expired', 'failed')
+ ORDER BY sb.closed_at, c.sandbox_id LIMIT $1::integer
+`
+
+type ListUndeliveredSandboxTaskCallsRow struct {
+	SandboxID      string
+	AccountID      string
+	EndpointID     string
+	ThreadID       string
+	ToolCallID     string
+	IssuedAt       pgtype.Timestamptz
+	State          string
+	OutcomeCode    string
+	OutcomeMessage string
+	TaskKind       string
+	TaskUrl        string
+	TaskExitCode   pgtype.Int4
+	TaskOutput     []byte
+}
+
+// Ended gregale_browse tasks whose result apid has not yet published into
+// their thread. The mark is written after the publish, which is
+// idempotent, so an interrupted delivery is retried and lands once.
+func (q *Queries) ListUndeliveredSandboxTaskCalls(ctx context.Context, db DBTX, maxRows int32) ([]ListUndeliveredSandboxTaskCallsRow, error) {
+	rows, err := db.Query(ctx, listUndeliveredSandboxTaskCalls, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUndeliveredSandboxTaskCallsRow{}
+	for rows.Next() {
+		var i ListUndeliveredSandboxTaskCallsRow
+		if err := rows.Scan(
+			&i.SandboxID,
+			&i.AccountID,
+			&i.EndpointID,
+			&i.ThreadID,
+			&i.ToolCallID,
+			&i.IssuedAt,
+			&i.State,
+			&i.OutcomeCode,
+			&i.OutcomeMessage,
+			&i.TaskKind,
+			&i.TaskUrl,
+			&i.TaskExitCode,
+			&i.TaskOutput,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUndeliveredWorkflowAgentRuns = `-- name: ListUndeliveredWorkflowAgentRuns :many
 SELECT r.id::text AS id,r.account_id::text AS account_id,r.workflow_run_id::text AS workflow_run_id,
   r.workflow_step::text AS workflow_step,r.workflow_event::text AS workflow_event,r.state,r.outcome_code,r.outcome_message,o.result
@@ -2869,6 +3020,15 @@ func (q *Queries) MarkSandboxSessionReady(ctx context.Context, db DBTX, arg Mark
 	return result.RowsAffected(), nil
 }
 
+const markSandboxTaskCallDelivered = `-- name: MarkSandboxTaskCallDelivered :exec
+UPDATE agent_sandbox_task_calls SET delivered_at = now() WHERE sandbox_id = $1::text::uuid AND delivered_at IS NULL
+`
+
+func (q *Queries) MarkSandboxTaskCallDelivered(ctx context.Context, db DBTX, sandboxID string) error {
+	_, err := db.Exec(ctx, markSandboxTaskCallDelivered, sandboxID)
+	return err
+}
+
 const recordAgentRunBoot = `-- name: RecordAgentRunBoot :execrows
 UPDATE agent_runs SET boot_ms=$1::integer, updated_at=now()
  WHERE id=$2::text::uuid AND lease_token=$3::text AND state='running'
@@ -2989,6 +3149,34 @@ func (q *Queries) RecordSandboxSessionUsage(ctx context.Context, db DBTX, arg Re
 		arg.PeakPrivateMb,
 		arg.ColdBoot,
 		arg.Final,
+		arg.SessionID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordSandboxTaskResult = `-- name: RecordSandboxTaskResult :execrows
+UPDATE sandbox_sessions SET task_exit_code=$1::integer, task_output=$2::bytea, updated_at=now()
+ WHERE id=$3::text::uuid AND lease_token=$4::text
+ AND task_kind IS NOT NULL AND task_exit_code IS NULL
+`
+
+type RecordSandboxTaskResultParams struct {
+	ExitCode   int32
+	Output     []byte
+	SessionID  string
+	LeaseToken string
+}
+
+// ADR-20261116182615 §3: agentd records a sandbox task's end under its lease,
+// once.
+func (q *Queries) RecordSandboxTaskResult(ctx context.Context, db DBTX, arg RecordSandboxTaskResultParams) (int64, error) {
+	result, err := db.Exec(ctx, recordSandboxTaskResult,
+		arg.ExitCode,
+		arg.Output,
 		arg.SessionID,
 		arg.LeaseToken,
 	)
@@ -3248,6 +3436,26 @@ func (q *Queries) SandboxSnapshotBytesUsed(ctx context.Context, db DBTX, account
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const sandboxTaskCallByCall = `-- name: SandboxTaskCallByCall :one
+SELECT sandbox_id::text AS sandbox_id FROM agent_sandbox_task_calls
+ WHERE endpoint_id=$1::text::uuid AND thread_id=$2::text
+ AND tool_call_id=$3::text
+`
+
+type SandboxTaskCallByCallParams struct {
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+}
+
+// The task a gregale_browse call admitted, if it admitted one.
+func (q *Queries) SandboxTaskCallByCall(ctx context.Context, db DBTX, arg SandboxTaskCallByCallParams) (string, error) {
+	row := db.QueryRow(ctx, sandboxTaskCallByCall, arg.EndpointID, arg.ThreadID, arg.ToolCallID)
+	var sandbox_id string
+	err := row.Scan(&sandbox_id)
+	return sandbox_id, err
 }
 
 const setSandboxSessionFrozen = `-- name: SetSandboxSessionFrozen :execrows

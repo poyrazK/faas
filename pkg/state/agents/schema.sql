@@ -240,7 +240,23 @@ CREATE TABLE sandbox_sessions (
  workspace_snapshot_id uuid,
  template_id uuid,
  image_ref text,
- image_job_id uuid
+ image_job_id uuid,
+ browser boolean NOT NULL DEFAULT false,
+ task_kind text,
+ task_url text,
+ task_max_chars integer,
+ task_exit_code integer,
+ task_output bytea
+);
+CREATE TABLE agent_sandbox_task_calls (
+ sandbox_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ tool_call_id text NOT NULL,
+ issued_at timestamptz NOT NULL,
+ delivered_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE sandbox_session_usage (
  sandbox_id uuid PRIMARY KEY,

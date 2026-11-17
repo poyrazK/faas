@@ -51,7 +51,8 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 	admission := sched.SandboxAdmission{SandboxID: start.GetSandboxId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
 		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
 		Network: start.GetNetworkMode(), WorkspaceKey: start.GetWorkspaceKey(), ImageKey: start.GetImageKey(),
-		StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(), ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond}
+		StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(), ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond,
+		Browser: start.GetBrowser(), Task: sandboxTaskFromProto(start.GetTask())}
 	ctx := stream.Context()
 	var sendMu sync.Mutex
 	send := func(ev *scheddpb.SandboxRunEvent) error {
@@ -104,6 +105,10 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		},
 		Usage: func(_ context.Context, u sched.AgentRunUsage) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Usage{Usage: agentRunUsageToProto(u)}})
+		},
+		TaskDone: func(_ context.Context, d sched.SandboxTaskDone) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_TaskDone{TaskDone: &scheddpb.SandboxRunTaskDone{
+				ExitCode: int32(d.ExitCode), Output: d.Output, TimedOut: d.TimedOut, Truncated: d.Truncated, Error: d.Error}}})
 		},
 	}
 	opErr = s.sandboxRuns.RunSandbox(ctx, admission, placed, hooks, frames.control)
@@ -169,4 +174,14 @@ func watchSandboxFrames(ctx context.Context, stream scheddpb.Schedd_RunSandboxSe
 		}
 	}()
 	return sandboxFrames{proceed: proceed, ended: ended, control: control}
+}
+
+// sandboxTaskFromProto is agentd's task as schedd passes it to vmmd
+// (ADR-20261116182615 §3); vmmd validates it.
+func sandboxTaskFromProto(t *scheddpb.SandboxRunTask) *sched.SandboxTask {
+	if t == nil {
+		return nil
+	}
+	return &sched.SandboxTask{Kind: t.GetKind(), URL: t.GetUrl(), MaxChars: int(t.GetMaxChars()),
+		Timeout: time.Duration(t.GetTimeoutMs()) * time.Millisecond, MaxOutputBytes: t.GetMaxOutputBytes()}
 }

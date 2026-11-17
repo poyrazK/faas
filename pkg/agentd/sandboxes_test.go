@@ -71,6 +71,18 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 		time.Sleep(50 * time.Millisecond)
 		return status.Error(codes.Unavailable, "vmmd went away")
 	}
+	switch script {
+	case "task":
+		if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_TaskDone{TaskDone: &scheddpb.SandboxRunTaskDone{
+			ExitCode: 0, Output: []byte(`{"title":"Example"}`)}}}); err != nil {
+			return err
+		}
+	case "task-timeout":
+		if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_TaskDone{TaskDone: &scheddpb.SandboxRunTaskDone{
+			ExitCode: -1, TimedOut: true, Output: []byte("partial")}}}); err != nil {
+			return err
+		}
+	}
 	if script == "persist" {
 		if err := f.persist(stream); err != nil {
 			return err
@@ -241,6 +253,51 @@ func TestSandboxOutcomesBeforeAndAfterBoot(t *testing.T) {
 			}
 			if sb := sandboxState(t, store, id); sb.State != tc.state || sb.OutcomeCode != tc.outcome {
 				t.Fatalf("session = %s %q, want %s %q", sb.State, sb.OutcomeCode, tc.state, tc.outcome)
+			}
+		})
+	}
+}
+
+// adr: 20261116182615 §3 — a task's start carries its kind and arguments,
+// and its end records the result and closes the session, final usage
+// included.
+func TestSandboxTaskRecordsItsResultAndCloses(t *testing.T) {
+	for _, tc := range []struct {
+		script, state, outcome, output string
+		exit                           int
+	}{
+		{"task", agentstore.SandboxClosed, "task_done", `{"title":"Example"}`, 0},
+		{"task-timeout", agentstore.SandboxFailed, "task_failed", "partial", -1},
+	} {
+		t.Run(tc.script, func(t *testing.T) {
+			_, store := openStore(t)
+			sb, err := store.CreateSandbox(context.Background(), agentstore.SandboxAdmission{AccountID: account, Kind: "ephemeral",
+				Preset: "codex", RAMMB: 1024, NetworkMode: "web", Browser: true, IdleTimeoutSec: 600, ExpiresAt: time.Now().Add(time.Hour),
+				QueuedMax: 100, Task: &agentstore.SandboxTask{Kind: agentstore.SandboxTaskBrowse, URL: "https://example.com/", MaxChars: 300}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fake := &fakeSandboxSchedd{scripts: map[string]string{sb.ID: tc.script}}
+			if found := <-holdSandbox(t, newSandboxes(t, store, fake, agentd.SandboxConfig{})); !found {
+				t.Fatal("nothing was claimed")
+			}
+			if got := sandboxState(t, store, sb.ID); got.State != tc.state || got.OutcomeCode != tc.outcome {
+				t.Fatalf("session = %s %q, want %s %q", got.State, got.OutcomeCode, tc.state, tc.outcome)
+			}
+			res, err := store.SandboxTaskResult(context.Background(), account, sb.ID)
+			if err != nil || res.ExitCode == nil || *res.ExitCode != tc.exit || string(res.Output) != tc.output {
+				t.Fatalf("result = %+v, %v", res, err)
+			}
+			task := fake.starts[0].GetTask()
+			if task.GetKind() != "browse" || task.GetUrl() != "https://example.com/" || task.GetMaxChars() != 300 ||
+				task.GetTimeoutMs() != 120_000 || task.GetMaxOutputBytes() != 256<<10 || !fake.starts[0].GetBrowser() {
+				t.Fatalf("start task = %v", task)
+			}
+			if _, _, closes := fake.counts(); closes != 1 {
+				t.Fatalf("%d closes; the final usage comes with the close", closes)
+			}
+			if _, found, err := store.SandboxSessionUsage(context.Background(), account, sb.ID); err != nil || !found {
+				t.Fatalf("no final usage: %v %v", found, err)
 			}
 		})
 	}

@@ -1062,6 +1062,11 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// ImagedVerifiedBaseFiles bounds how many base artifacts one imaged remembers
+// verifying from its node cache (ADR-595 amendment 2026-11-17). One entry per
+// base key: the runtime matrix has about ten bases per architecture.
+const ImagedVerifiedBaseFiles = 64
+
 // BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
 // builderd remembers the digest of, so a cache hit skips re-reading the
 // artifact to check it. A node's cache holds a few hundred entries.
@@ -11279,6 +11284,19 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxBrowserRAMMBMin is the least RAM a session created with
+	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
+	// 1 GB for ordinary pages.
+	SandboxBrowserRAMMBMin = 1024
+	// SandboxTaskTimeoutSec bounds a sandbox task's command
+	// (ADR-20261116182615 §3), beyond its session's boot.
+	SandboxTaskTimeoutSec = [4]int{0, 60, 120, 120}
+	// SandboxTaskOutputMaxBytes caps the output a sandbox task returns.
+	SandboxTaskOutputMaxBytes = 256 << 10
+	// SandboxBrowseMaxChars bounds the page text gregale_browse returns;
+	// SandboxBrowseDefaultChars is its default.
+	SandboxBrowseMaxChars     = 100_000
+	SandboxBrowseDefaultChars = 20_000
 	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
 	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
 	// it. A browser touches many domains per page, so it is above the per-run

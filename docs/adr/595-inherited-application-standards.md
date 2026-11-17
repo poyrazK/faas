@@ -2955,3 +2955,41 @@ lifetimes, sealed-body exclusion, corrupted settings, both directions of writer
 contention, empty-set insertion and fresh worker retries. PostgreSQL ledger
 recovery/refusal tests and complete replay of all 82 added PR migrations also
 pass. This evidence does not substitute for dedicated native acceptance.
+
+## Cached base reuse remembers its hash (2026-11-17)
+
+"Cached reuse freshly hashes canonical bytes" made every deploy hash its
+runtime base again, and a runtime with a parent base hashed both. imaged's
+runtime-base step took 6.0–6.4 s at p50 and 11–13 s at p90 on both production
+compute nodes (249 deploys, 24 h to 2026-11-17). On those nodes one SHA-256
+of a 541 MB base takes 2.1 s (no SHA extensions), while the required-path
+`debugfs` checks take under 0.1 s.
+
+imaged now remembers, in memory, each base artifact it verified from its node
+cache: the storage key, the producer's artifact digest and size, and the
+device, inode and size of the cache file it hashed. It takes that identity from
+the descriptor it reads, so the bytes it hashed and the file it records are the
+same. A later check of the same artifact against the same file skips the hash.
+This is the rule ADR-038's verification records (amendment 2026-10-24) already
+apply to tenant layers.
+
+- **The same file holds the same bytes.** The node cache writes a file once and
+  replaces it only by renaming another over it. A replaced, refreshed, evicted
+  or re-fetched base is another file and is hashed again. A new producer of the
+  key is another artifact and is hashed again.
+- **The cache's eviction touch changes a file's times on every read**, so the
+  identity leaves times out, as ADR-038's records do.
+- **Memory only.** A restarted imaged hashes each base once more, so a stale
+  record cannot outlive the process that made it.
+- **A failed check drops the record.**
+- **Unchanged:**
+  - a stream with no local file, such as a remote backend without a node
+    cache, is hashed every time;
+  - a fresh build still hashes the bytes it published;
+  - the required-path validation, producer selection, scan freshness checks and
+    the sidecar writes run on every reuse.
+- **Not covered:** a write into the cached file in place that keeps its size.
+  That needs write access to imaged's node cache, the residual ADR-038's records
+  already accept.
+- **Measurement:** imaged logs `imaged: reused verified base` with `check_ms`
+  and `finish_ms` per reused base, to show what a reuse still costs.
