@@ -3,7 +3,6 @@ package operatorobs
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
@@ -224,95 +223,4 @@ func runtimeLoopPriority(item RuntimeLoopItem) int {
 		return 1
 	}
 	return 2
-}
-
-func fitRuntimeLoopResponse(out RuntimeBuildsLoopResponse) RuntimeBuildsLoopResponse {
-	for {
-		body, err := json.MarshalIndent(out, "", "  ")
-		if err != nil || len(body) < api.ObsRuntimeBuildResponseMaxBytes {
-			return out
-		}
-		if out.DelayedTaskDispatch != nil && len(out.DelayedTaskDispatch.Items) > 0 {
-			out.DelayedTaskDispatch.Items = out.DelayedTaskDispatch.Items[:len(out.DelayedTaskDispatch.Items)-1]
-			out.DelayedTaskDispatch.OmittedItems++
-			continue
-		}
-		if out.HTTPCronDelivery != nil && len(out.HTTPCronDelivery.Items) > 0 {
-			out.HTTPCronDelivery.Items = out.HTTPCronDelivery.Items[:len(out.HTTPCronDelivery.Items)-1]
-			out.HTTPCronDelivery.OmittedItems++
-			continue
-		}
-		if out.CommandCronTiming != nil && len(out.CommandCronTiming.Items) > 0 {
-			out.CommandCronTiming.Items = out.CommandCronTiming.Items[:len(out.CommandCronTiming.Items)-1]
-			out.CommandCronTiming.OmittedItems++
-			continue
-		}
-		if out.CommandCronOutcomes != nil && len(out.CommandCronOutcomes.Items) > 0 {
-			out.CommandCronOutcomes.Items = out.CommandCronOutcomes.Items[:len(out.CommandCronOutcomes.Items)-1]
-			out.CommandCronOutcomes.OmittedItems++
-			continue
-		}
-		if out.AppTaskResults != nil && len(out.AppTaskResults.Items) > 0 {
-			out.AppTaskResults.Items = out.AppTaskResults.Items[:len(out.AppTaskResults.Items)-1]
-			out.AppTaskResults.OmittedItems++
-			continue
-		}
-		if out.AppTaskOperations != nil && len(out.AppTaskOperations.Items) > 0 {
-			out.AppTaskOperations.Items = out.AppTaskOperations.Items[:len(out.AppTaskOperations.Items)-1]
-			out.AppTaskOperations.OmittedItems++
-			continue
-		}
-		if out.CommandCronHealth != nil && len(out.CommandCronHealth.Items) > 0 {
-			out.CommandCronHealth.Items = out.CommandCronHealth.Items[:len(out.CommandCronHealth.Items)-1]
-			out.CommandCronHealth.OmittedItems++
-			continue
-		}
-		if out.AppTaskHealth != nil && len(out.AppTaskHealth.Items) > 0 {
-			out.AppTaskHealth.Items = out.AppTaskHealth.Items[:len(out.AppTaskHealth.Items)-1]
-			out.AppTaskHealth.OmittedItems++
-			continue
-		}
-		if out.BuildRecoveryHealth != nil && len(out.BuildRecoveryHealth.Items) > 0 {
-			out.BuildRecoveryHealth.Items = out.BuildRecoveryHealth.Items[:len(out.BuildRecoveryHealth.Items)-1]
-			out.BuildRecoveryHealth.OmittedItems++
-			continue
-		}
-
-		if out.PostCaptureHealth != nil && len(out.PostCaptureHealth.Items) > 0 {
-			out.PostCaptureHealth.Items = out.PostCaptureHealth.Items[:len(out.PostCaptureHealth.Items)-1]
-			out.PostCaptureHealth.OmittedItems++
-			continue
-		}
-		if out.SnapshotPrimeHealth != nil && len(out.SnapshotPrimeHealth.Items) > 0 {
-			out.SnapshotPrimeHealth.Items = out.SnapshotPrimeHealth.Items[:len(out.SnapshotPrimeHealth.Items)-1]
-			out.SnapshotPrimeHealth.OmittedItems++
-			continue
-		}
-		if out.PreparationHealth != nil && len(out.PreparationHealth.Items) > 0 {
-			out.PreparationHealth.Items = out.PreparationHealth.Items[:len(out.PreparationHealth.Items)-1]
-			out.PreparationHealth.OmittedItems++
-			continue
-		}
-		if out.HandoffHealth != nil && len(out.HandoffHealth.Items) > 0 {
-			out.HandoffHealth.Items = out.HandoffHealth.Items[:len(out.HandoffHealth.Items)-1]
-			out.HandoffHealth.OmittedItems++
-			continue
-		}
-		if out.BuilderHealth != nil && len(out.BuilderHealth.Items) > 0 {
-			out.BuilderHealth.Items = out.BuilderHealth.Items[:len(out.BuilderHealth.Items)-1]
-			out.BuilderHealth.OmittedItems++
-			continue
-		}
-		if out.LoopHealth != nil && len(out.LoopHealth.Items) > 0 {
-			out.LoopHealth.Items = out.LoopHealth.Items[:len(out.LoopHealth.Items)-1]
-			out.LoopHealth.OmittedItems++
-			continue
-		}
-		if len(out.Items) > 0 {
-			out.Items = out.Items[:len(out.Items)-1]
-			out.OmittedItems++
-			continue
-		}
-		return out
-	}
 }
