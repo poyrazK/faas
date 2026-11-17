@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const redisUsage = "usage: gregale redis <list|create|get|bind|resize|upgrade|restart|delete>"
+const redisUsage = "usage: gregale redis <list|create|get|bind|resize|update|restart|delete>"
 
 func cmdRedis(args []string) int {
 	if len(args) == 0 {
@@ -31,7 +31,7 @@ func cmdRedis(args []string) int {
 		return cmdRedisBind(args[1:])
 	case "resize":
 		return cmdRedisResize(args[1:])
-	case "upgrade":
+	case "update":
 		return cmdRedisUpgrade(args[1:])
 	case "restart":
 		return cmdRedisRestart(args[1:])
@@ -180,9 +180,9 @@ func cmdRedisResize(args []string) int {
 }
 
 func cmdRedisUpgrade(args []string) int {
-	fs := newFlagSet("redis upgrade", flag.ContinueOnError)
+	fs := newFlagSet("redis update", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale redis upgrade NAME", "redis")
+		PrintUsage(os.Stderr, "usage: gregale redis update NAME", "redis")
 		return 1
 	}
 	client, err := authedClient()

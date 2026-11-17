@@ -72,15 +72,15 @@ The cache is a cache: it has no disk persistence or replica.
 Keep data you cannot lose in [managed PostgreSQL](postgres.md) or object
 storage.
 
-## Resize, upgrade and restart
+## Resize, update and restart
 
 ```bash
 gregale redis resize sessions --memory 256
-gregale redis upgrade sessions
+gregale redis update sessions
 gregale redis restart sessions
 ```
 
-All three keep your data. A resize or upgrade starts a new VM that copies the
+All three keep your data. A resize or update starts a new VM that copies the
 cache before it takes over; writes pause for a moment at the switch. Shrinking
 below the data the cache holds needs `--evict`, which lets the cache evict keys
 by its policy. A restart saves the cache's memory and restores it.

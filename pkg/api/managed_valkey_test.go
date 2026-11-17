@@ -53,8 +53,8 @@ func TestManagedValkeyServerCommand(t *testing.T) {
 	script := argv[2]
 	for _, want := range []string{
 		"exec valkey-server", "--port 6379", "--maxmemory 128mb", "--maxmemory-policy allkeys-lfu",
-		"--save ''", "--appendonly no", "--rename-command CONFIG ''",
-		"--rename-command REPLICAOF ''",
+		"--save ''", "--appendonly no", "--rename-command DEBUG ''",
+		"--rename-command MONITOR ''",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script lacks %q: %s", want, script)

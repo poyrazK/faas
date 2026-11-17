@@ -6193,7 +6193,7 @@ var cliCommands = []cliCommand{
 				{Name: "eviction-policy", Short: "new eviction policy", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
 				{Name: "evict", Short: "allow shrinking below the data the cache holds"},
 			}, Examples: []string{"gregale redis resize sessions --memory 256"}},
-			{Name: "upgrade", Short: "Move a cache to the current Valkey release; its data is kept", Positionals: []string{"<name>"}},
+			{Name: "update", Short: "Move a cache to the current Valkey release; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "restart", Short: "Restart a managed Redis cache; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "delete", Short: "Delete a managed Redis cache and its data", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "yes", Short: "skip the typed confirmation"},
