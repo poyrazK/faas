@@ -4,6 +4,27 @@ package api
 // owners and admins let Gregale support deploy, roll back and restart its
 // apps for a limited time.
 
+import (
+	"context"
+	"net/url"
+)
+
+// GetOrgSupportAccess lists an organization's support grants and requests.
+func (c *Client) GetOrgSupportAccess(ctx context.Context, org string) (SupportAccess, error) {
+	var out SupportAccess
+	return out, c.do(ctx, "GET", "/v1/orgs/"+url.PathEscape(org)+"/support-access", nil, &out)
+}
+
+// RevokeSupportGrant ends a support grant now.
+func (c *Client) RevokeSupportGrant(ctx context.Context, org, id string) error {
+	return c.do(ctx, "POST", "/v1/orgs/"+url.PathEscape(org)+"/support-access/grants/"+url.PathEscape(id)+"/revoke", nil, nil)
+}
+
+// DeclineSupportAccessRequest refuses an open support access request.
+func (c *Client) DeclineSupportAccessRequest(ctx context.Context, org, id string) error {
+	return c.do(ctx, "POST", "/v1/orgs/"+url.PathEscape(org)+"/support-access/requests/"+url.PathEscape(id)+"/decline", nil, nil)
+}
+
 // SupportGrantHeader names the grant a support request acts under. Without
 // it an operator is an ordinary account with no access to customer apps.
 const SupportGrantHeader = "Support-Grant"

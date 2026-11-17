@@ -577,8 +577,12 @@ type server struct {
 	// preflight handler (GET /v1/preflight). It is built on first use so the
 	// egress-guarded HTTP client and verdict cache are not allocated on
 	// deployments that never receive a check.
-	preflightOnce      sync.Once
-	preflightHandler   *preflight.Handler
+	preflightOnce    sync.Once
+	preflightHandler *preflight.Handler
+	// supportAccessOnce guards lazy construction of the support-access
+	// service (ADR-20261116163508), shared by every request.
+	supportAccessOnce  sync.Once
+	supportAccessSvc   *supportaccess.Service
 	statusMetrics      *statusMetrics
 	idempotencyMetrics *idempotencyMetrics
 	signupMetrics      *signupMetrics
@@ -3153,6 +3157,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/tool-publications/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Handler(s.store, os.Getenv("FAAS_MCP_PRIVATE_TOOL_PUBLICATION") == "1"))))
 	mux.HandleFunc("GET /v1/task-tool-source-intents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.privateTools.HostedTaskSourceIntent())))
 	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.HostedTaskSourceIntent()))))
+	// Review changes recheck authority and pins in their own journal transaction;
+	// a generic Idempotency-Key response replay must never bypass those checks.
+	mux.HandleFunc("POST /v1/task-tool-source-intents/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.HostedTaskSourceIntent()))))
+	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/decision", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskSourceIntent()))))
 	mux.HandleFunc("GET /v1/task-tool-release-intents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.privateTools.TaskReleaseIntent())))
 	mux.HandleFunc("PUT /v1/task-tool-release-intents/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.TaskReleaseIntent()))))
 	mux.HandleFunc("POST /v1/task-tool-release-intents/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.TaskReleaseIntent()))))

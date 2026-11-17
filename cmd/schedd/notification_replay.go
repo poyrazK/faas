@@ -26,9 +26,10 @@ func peerDeferralDelay() time.Duration {
 	return db.NotificationRetryDelay(1) + rand.N(db.NotificationOutboxPollInterval())
 }
 
-// Every schedd's replay worker claims any app_wake or runtime_config_restart
-// row: the rows name no node. A schedd that does not own the app defers the
-// row instead of failing it (ADR-191 amendment 2026-10-26, follow-up). A
+// Each schedd's replay worker claims only the app_wake and
+// runtime_config_restart rows of apps it owns (RunNotificationOutboxForAppOwner).
+// An app that moves between the claim and the handler still reaches a peer, so
+// a schedd that does not own the app defers the row instead of failing it (ADR-191 amendment 2026-10-26, follow-up). A
 // failure spent one of the row's bounded attempts and pushed the owner's next
 // try out on the retry backoff, so peers could dead-letter a wake the owner
 // never saw. A deferral gives the attempt back and keeps the peer's drain

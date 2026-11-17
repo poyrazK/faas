@@ -1221,6 +1221,8 @@ export type { GregaleRevision } from './GregaleRevision.js';
 export type { GuardedDebugRegressionActionRequest } from './GuardedDebugRegressionActionRequest.js';
 export type { HeldLinkReview } from './HeldLinkReview.js';
 export type { HeldLinksResponse } from './HeldLinksResponse.js';
+export type { HostedTaskSourceCheck } from './HostedTaskSourceCheck.js';
+export type { HostedTaskSourceDecision } from './HostedTaskSourceDecision.js';
 export type { HostedTaskSourceEntry } from './HostedTaskSourceEntry.js';
 export type { HostedTaskSourceIntent } from './HostedTaskSourceIntent.js';
 export type { HostedTaskSourcePrepare } from './HostedTaskSourcePrepare.js';

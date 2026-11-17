@@ -119,3 +119,11 @@ agent ran (`commands`), which the graders read.
 
 `make agent-eval-test` runs the harness's unit tests. It uses recorded
 transcript shapes and starts no agent.
+
+## First-hour tasks
+
+`first-hour-private` grades a private app through `release verify`, retaining the
+exact app/release/instance identity and actual application status.
+`first-hour-edit` starts with a private deployment and grades the changed source
+on a new release of the same app. Select these with `fix-failed-deploy` for the
+first-hour agent lane. See [the acceptance and baseline guide](../../docs/first-hour-acceptance.md).

@@ -43,6 +43,14 @@ type HostedTaskSourceIntentStore interface {
 	PrepareHostedTaskSourceIntent(context.Context, string, string, string, tasktoolsource.Review, []byte) (HostedTaskSourceIntent, error)
 	GetHostedTaskSourceIntent(context.Context, string, string) (HostedTaskSourceIntent, error)
 	PurgeExpiredHostedTaskSources(context.Context) (int64, error)
+	ChangeHostedTaskSourceIntent(context.Context, string, string, string, api.HostedTaskSourceDecision, HostedTaskSourceOwner) (HostedTaskSourceIntent, error)
+}
+
+// HostedTaskSourceOwner is populated only by the authenticated native handler,
+// never decoded from a request. Session marks an authenticated personal owner.
+type HostedTaskSourceOwner struct {
+	KeyID   string
+	Session bool
 }
 
 func cloneHostedSource(in HostedTaskSourceIntent) HostedTaskSourceIntent {
@@ -87,7 +95,7 @@ func (m *MemStore) PrepareHostedTaskSourceIntent(_ context.Context, account, key
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.taskToolReleaseKeyFreshLocked(account, key) {
+	if !m.hostedTaskSourceRequesterFreshLocked(account, key) {
 		return HostedTaskSourceIntent{}, ErrNotFound
 	}
 	m.retireHostedSourceLocked(account)

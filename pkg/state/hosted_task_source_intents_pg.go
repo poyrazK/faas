@@ -27,7 +27,7 @@ func (s *PgStore) PrepareHostedTaskSourceIntent(ctx context.Context, account, ke
 	if _, err = q.LockToolPublicationAccount(ctx, tx, acct); err != nil {
 		return HostedTaskSourceIntent{}, mapErr(err)
 	}
-	if _, err = q.LockTaskToolReleaseKey(ctx, tx, toolpublicationdb.LockTaskToolReleaseKeyParams{AccountID: acct, ID: mustPgUUID(key)}); err != nil {
+	if _, err = q.LockHostedTaskSourceRequesterKey(ctx, tx, toolpublicationdb.LockHostedTaskSourceRequesterKeyParams{AccountID: acct, ID: mustPgUUID(key)}); err != nil {
 		return HostedTaskSourceIntent{}, mapErr(err)
 	}
 	if err = q.RetireHostedTaskSourceAccount(ctx, tx, acct); err != nil {

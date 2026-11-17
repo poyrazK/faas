@@ -747,6 +747,20 @@
   register: faas_app_errors_dropin_removed
   when: faas_apid_app_errors_listen | default('') | length == 0
 
+- name: control_plane_service — install the v2-only artifact signature switch
+  notify:
+    - restart faas-schedd
+    - restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-artifact-signatures.conf.j2
+    dest: "/etc/systemd/system/{{ item }}.service.d/zz-faas-artifact-signatures.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-schedd
+    - faas-apid
+
 - name: control_plane_service — install split-box schedd routing drop-in
   notify: restart faas-schedd
   ansible.builtin.template:

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	linkUsage    = "usage: gregale link [<project-slug>] [--interactive] [--app <slug>] [--env <environment>] [--no-gitignore]"
+	linkUsage    = "usage: gregale link [<project-slug>] [--interactive] [--app <slug>] [--environment|--env <environment>] [--no-gitignore]"
 	contextUsage = "usage: gregale config context get [--check] [--verify [--timeout 10s]] | gregale config context get --local-config [--problems-only]"
 )
 
@@ -22,6 +22,8 @@ func cmdLink(args []string) int {
 	interactive := fs.Bool("interactive", false, "choose project, app, and environment before saving")
 	app := fs.String("app", "", "workload/app slug to use for app-scoped commands")
 	environment := fs.String("environment", "", "project environment to use as the default scope")
+	// linkUsage has always advertised --env; it was never defined.
+	fs.StringVar(environment, "env", "", "alias for --environment")
 	noGitignore := fs.Bool("no-gitignore", false, "do not add .gregale/ to the repository .gitignore")
 	flags, positional := splitArgsForFlags(args, "no-gitignore", "interactive")
 	if err := fs.Parse(flags); err != nil {
@@ -48,12 +50,25 @@ func cmdLink(args []string) int {
 		}
 		return cmdLinkInteractive(project, *noGitignore)
 	}
+	if *app != "" && !api.ValidAppSlug(*app) {
+		return printErr("Invalid --app", fmt.Errorf("%q is not a valid app slug", *app))
+	}
+	if len(positional) == 0 && *app != "" {
+		// `gregale link --app <slug>` is what deploy and the app-resolution
+		// errors suggest; it used to print usage because a project slug was
+		// required. Resolve the app's project, or link the app on its own.
+		project, standalone, code := resolveLinkApp(*app, *environment)
+		if code != 0 {
+			return code
+		}
+		if standalone {
+			return linkStandaloneApp(*app, *noGitignore)
+		}
+		positional = []string{project}
+	}
 	if len(positional) != 1 || !api.ValidProjectSlug(positional[0]) {
 		PrintUsage(os.Stderr, linkUsage, "link")
 		return 1
-	}
-	if *app != "" && !api.ValidAppSlug(*app) {
-		return printErr("Invalid --app", fmt.Errorf("%q is not a valid app slug", *app))
 	}
 	if *environment != "" && !api.ValidProjectEnvironmentSlug(*environment) {
 		return printErr("Invalid --environment", fmt.Errorf("%q is not a valid project environment slug", *environment))

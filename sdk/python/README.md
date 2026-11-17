@@ -3860,3 +3860,44 @@ an application-owned PostgreSQL ledger and never automatically repeats unknown
 starts. Existing pipelines opt in through a coordinator; their APIs stay intact.
 See [usage and recovery](../../docs/sdk-pipeline-composition.md) and the
 [reviewed batch CSV example](../../examples/sdk-csv-jobs/README.md#batch-imports-preview).
+
+Typed application CloudEvents can start durable Job pipelines through the preview SDK,
+with generated payload types, current owner authorization and shared Node/Python
+start receipts. See [event-triggered pipelines](../../docs/sdk-event-pipelines.md)
+and the [CSV example](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
+Typed transactional publication is available through `EventPublisher`,
+`with_event_outbox_transaction`, `PsycopgEventOutboxPool` and bounded `EventOutbox`
+workers in `faas_sdk.preview`. Business writes and validated event intent commit
+together; workers share the upgraded Go/Node PostgreSQL protocol and controls.
+See [migration, authorization and recovery](../../docs/sdk-event-outbox.md) and
+the [complete CSV flow](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
+`PipelineSchedule` and `PipelineScheduleClient` in `faas_sdk.preview` bind typed
+inputs to native scheduled pipelines. Preview calendars, read precise bounded
+history, explicitly replay skipped occurrences and attach typed runs with current
+application authorization. See [usage and recovery](../../docs/sdk-pipeline-schedules.md)
+and the [nightly reviewed CSV example](../../examples/sdk-csv-jobs/README.md#scheduled-reviewed-imports).
+
+`StripeWebhookAdapter[Input, Access]` in `faas_sdk.preview` projects native verified
+Stripe snapshot deliveries into generated business events. Current-owner checks,
+business writes and typed outbox intent commit together with a cross-language
+handoff receipt. See [setup and recovery](../../docs/sdk-stripe-webhooks.md) and
+the [paid CSV flow](../../examples/sdk-csv-jobs/README.md#stripe-paid-reviewed-imports).
+
+`PipelineTool[Input, Output, Access]`, `PipelineToolMCP` and
+`PostgresPipelineToolStore` in `faas_sdk.preview` expose typed business pipelines
+with durable invocation receipts, current authorization, human-review status and
+verified results. The MCP adapter registers with an existing authenticated host;
+Node and Python share receipt/reconciliation semantics. See
+[setup and recovery](../../docs/sdk-pipeline-tools.md) and the
+[CSV agent flow](../../examples/sdk-csv-jobs/README.md#agent-tools-for-reviewed-imports).
+
+`PipelineCompensation[UndoInput, UndoOutput, Access]`, `CompensationMCP` and
+`PostgresCompensationStore` in `faas_sdk.preview` prepare immutable typed undo
+commands from verified failed-pipeline evidence. `compensation_contracts` derives
+worker/root/review contracts for a separate, human-approved recovery workflow.
+SQL handlers atomically commit business changes and typed effect receipts, with
+current authorization and application row-version guards. See
+[setup, limits and recovery](../../docs/sdk-pipeline-compensations.md) and the
+[CSV cleanup journey](../../examples/sdk-csv-jobs/README.md#reviewed-cleanup-after-report-failure).
