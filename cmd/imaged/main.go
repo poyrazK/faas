@@ -561,6 +561,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
+		WithDeferredDeployScans().
 		WithReleasePrestage(prestageOnlyFromEnv(getenv)).
 		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
 		WithArtifactReplicator(artifactReplicator).

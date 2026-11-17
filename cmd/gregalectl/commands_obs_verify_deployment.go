@@ -21,10 +21,12 @@ import (
 )
 
 type obsDeploymentOptions struct {
-	release, report       string
-	after                 time.Time
-	wait, poll, stableFor time.Duration
-	json                  bool
+	runtimeDiagnostics            *operatorobs.RuntimeDiagnostics
+	runtimeDiagnosticsUnsupported bool
+	release, report, expectedRole string
+	after, processCompareAt       time.Time
+	wait, poll, stableFor         time.Duration
+	json                          bool
 }
 
 func cmdObsVerifyDeployment(args []string) int {
@@ -35,7 +37,8 @@ func cmdObsVerifyDeployment(args []string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	client := &http.Client{Timeout: api.ObsPostDeployHTTPTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	fetch := func(ctx context.Context) obsDeploymentSnapshot { return fetchObsDeploymentSnapshot(ctx, client, cred) }
+	fetch := newObsDeploymentProcessFetcher(client, cred, options)
+
 	save := func(report obsDeploymentReport) error {
 		if options.report == "" {
 			return nil
@@ -58,6 +61,8 @@ func parseObsDeploymentOptions(args []string) (obsDeploymentOptions, obsCredenti
 	fs.SetOutput(osStderr)
 	opts := obsDeploymentOptions{}
 	fs.StringVar(&opts.release, "release", "", "requested release SHA")
+	fs.StringVar(&opts.expectedRole, "expected-role", "", "advisory build profile: "+strings.Join(operatorobs.RuntimeBuildRoles(), ", "))
+	diagnostics := fs.String("runtime-diagnostics", "", "advisory groups: all, none, or comma-separated names; core evidence is always collected")
 	after := fs.String("after", "", "rollout evidence boundary")
 	fs.DurationVar(&opts.wait, "wait-timeout", 0, "wait budget; zero derives from probe policy")
 	fs.DurationVar(&opts.poll, "poll-interval", api.ObsPostDeployPollDefault, "poll interval")
@@ -75,6 +80,23 @@ func parseObsDeploymentOptions(args []string) (obsDeploymentOptions, obsCredenti
 		return opts, obsCredential{}, false
 	}
 	opts.after = at.UTC()
+	if opts.expectedRole != "" && !operatorobs.RuntimeBuildRoleValid(opts.expectedRole) {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: unknown expected role")
+		return opts, obsCredential{}, false
+	}
+	diagnosticsSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "runtime-diagnostics" {
+			diagnosticsSet = true
+		}
+	})
+	if diagnosticsSet {
+		opts.runtimeDiagnostics, err = operatorobs.ParseRuntimeDiagnostics(opts.expectedRole, *diagnostics)
+		if err != nil {
+			_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: runtime diagnostics require an expected role and distinct supported groups, all, or none")
+			return opts, obsCredential{}, false
+		}
+	}
 	if *stdin {
 		reader := bufio.NewReader(io.LimitReader(os.Stdin, int64(api.ObsPostDeployTokenMaxBytes)+2))
 		value, err := reader.ReadString('\n')
