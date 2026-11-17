@@ -39,8 +39,8 @@ type fakeStore struct {
 	admitted agentstore.SandboxAdmission
 	// egress is the account's default egress policy.
 	egress agentstore.SandboxEgressPolicy
-	queued   int // queued agent runs, which share the cap
-	err      error
+	queued int // queued agent runs, which share the cap
+	err    error
 	// snapshots are persisted workspaces, newest first.
 	snapshots []agentstore.SandboxSnapshot
 	// ports are exposed ports by session.
