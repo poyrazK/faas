@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -88,7 +89,8 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 
 // failure is the acceptTOTP reason of a refused code, or "" for none.
 func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct state.Account, status int, failure, next string) {
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardMFAAction, acct.ID, dashboardMFACSRFCookie)
+	csrfTTL := s.dashboardMFACSRFTTL(r, next)
+	token, err := middleware.IssueForAuthenticatedNamedWithTTL(s.sessions, dashboardMFAAction, acct.ID, dashboardMFACSRFCookie, csrfTTL)
 	if err != nil {
 		s.log.Error("dashboard.mfa.csrf_issue", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not render the MFA challenge"))
@@ -101,7 +103,7 @@ func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct
 		HttpOnly: true,
 		Secure:   s.domain != "",
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+		MaxAge:   int(csrfTTL.Seconds()),
 	})
 	page := dashboard.Page{
 		Title:   "Two-factor authentication",
@@ -118,4 +120,21 @@ func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		s.log.Error("dashboard: mfa render failed", "err", err)
 	}
+}
+
+// Only a live, purpose-bound MCP approval gets the longer setup form window.
+// Ordinary MFA challenges and arbitrary next links keep the default lifetime.
+func (s *server) dashboardMFACSRFTTL(r *http.Request, next string) time.Duration {
+	target, err := url.Parse(dashboardMFANext(next))
+	if err != nil || target.Path != cliAuthPath || !isMCPAuthCode(target.Query().Get("code")) {
+		return middleware.DefaultCSRFTTL
+	}
+	hash, valid := normalizeCliAuthCode(target.Query().Get("code"))
+	if valid {
+		status, _, err := s.store.PeekCliAuthCode(r.Context(), hash)
+		if err == nil && status == api.CliAuthStatusPending {
+			return api.MCPBrowserAuthorizationTTL
+		}
+	}
+	return middleware.DefaultCSRFTTL
 }
