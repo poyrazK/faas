@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,6 +27,11 @@ import (
 
 func TestMetalSealedWakeSpeed(t *testing.T) {
 	const wakes = 5
+	// The restore's phase breakdown is a Debug line on the default logger;
+	// it shows where a sealed wake spends the time an unsealed one does not.
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 	results := map[string][]time.Duration{}
 	for _, mode := range []string{"unsealed", "sealed-v1-nocache", "sealed-v2-cache"} {
 		t.Run(mode, func(t *testing.T) {
