@@ -5,7 +5,11 @@
 package sandboxes_test
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -13,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/sandboxes"
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 func (f *fakeStore) CreateBrowserSession(ctx context.Context, a agentstore.SandboxAdmission, args agentstore.SandboxActionArgs,
@@ -32,8 +37,14 @@ func (f *fakeStore) CreateSandboxAction(context.Context, string, string, string,
 	return agentstore.SandboxAction{}, false, nil
 }
 
-func (f *fakeStore) SandboxActionResult(context.Context, string, string, int) (agentstore.SandboxActionResult, error) {
-	return agentstore.SandboxActionResult{}, agentstore.ErrNotFound
+func (f *fakeStore) SandboxActionResult(_ context.Context, _, id string, seq int) (agentstore.SandboxActionResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	res, ok := f.actionResults[fmt.Sprintf("%s/%d", id, seq)]
+	if !ok {
+		return res, agentstore.ErrNotFound
+	}
+	return res, nil
 }
 
 func TestAdmitBrowserSession(t *testing.T) {
@@ -87,5 +98,42 @@ func TestActionResultView(t *testing.T) {
 	pending := sandboxes.ActionResultView("sbx", 4, agentstore.SandboxActionResult{Kind: "back", State: "pending"})
 	if pending.State != "pending" || pending.Result != nil || pending.Output != "" || pending.ExitCode != nil {
 		t.Fatalf("a pending action = %+v", pending)
+	}
+}
+
+// adr: 20261117065818 §5 — a kept screenshot is served as a JPEG to the
+// account; an action without one, or past its retention, is 404.
+func TestActionScreenshot(t *testing.T) {
+	f := newFixture(t)
+	files, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.h.Files = files
+	image := []byte("\xff\xd8\xff\xe0 jpeg")
+	key := "sandbox-screenshots/a/s/x.jpg"
+	if err := files.Put(context.Background(), key, bytes.NewReader(image)); err != nil {
+		t.Fatal(err)
+	}
+	f.store.actionResults = map[string]agentstore.SandboxActionResult{
+		"sbx/2": {Kind: "snapshot", State: "done", Screenshot: agentstore.SandboxScreenshot{Key: key, Bytes: int64(len(image))}},
+		"sbx/3": {Kind: "click", State: "done"},
+	}
+	get := func(seq string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/v1/sandboxes/sbx/actions/"+seq+"/screenshot", nil)
+		r.SetPathValue("id", "sbx")
+		r.SetPathValue("seq", seq)
+		w := httptest.NewRecorder()
+		f.h.ActionScreenshot(w, r, pro())
+		return w
+	}
+	if w := get("2"); w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), image) || w.Header().Get("Content-Type") != "image/jpeg" ||
+		w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("a kept screenshot = %d %q %v", w.Code, w.Body.Bytes(), w.Header())
+	}
+	for _, seq := range []string{"3", "4", "0", "x"} {
+		if w := get(seq); w.Code != http.StatusNotFound && w.Code != http.StatusBadRequest && w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("seq %s = %d", seq, w.Code)
+		}
 	}
 }

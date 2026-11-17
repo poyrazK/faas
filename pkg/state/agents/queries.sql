@@ -839,7 +839,8 @@ UPDATE sandbox_actions a SET state='running', started_at=now()
 -- name: FinishSandboxAction :execrows
 -- agentd records a running action's end under its session's lease. A nil
 -- exit code is an action that never ran to its end.
-UPDATE sandbox_actions a SET state='done', exit_code=sqlc.narg(exit_code)::integer, output=sqlc.narg(output)::bytea, finished_at=now()
+UPDATE sandbox_actions a SET state='done', exit_code=sqlc.narg(exit_code)::integer, output=sqlc.narg(output)::bytea, finished_at=now(),
+  screenshot_key=sqlc.narg(screenshot_key)::text, screenshot_bytes=sqlc.narg(screenshot_bytes)::bigint
  FROM sandbox_sessions sb
  WHERE a.id=sqlc.arg(id)::text::uuid AND a.state='running' AND sb.id=a.session_id
  AND sb.lease_token=sqlc.arg(lease_token)::text;
@@ -866,7 +867,8 @@ SELECT sb.state, a.endpoint_id::text AS endpoint_id, a.thread_id,
 -- idempotent, so an interrupted delivery is retried and lands once.
 SELECT a.id::text AS id, a.session_id::text AS session_id, a.account_id::text AS account_id, a.seq, a.kind, a.args,
   a.endpoint_id::text AS endpoint_id, a.thread_id, a.tool_call_id, a.issued_at, a.exit_code, a.output,
-  sb.state AS session_state, coalesce(sb.outcome_code, '')::text AS outcome_code
+  sb.state AS session_state, coalesce(sb.outcome_code, '')::text AS outcome_code,
+  coalesce(a.screenshot_bytes, 0)::bigint AS screenshot_bytes
  FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
  WHERE a.state = 'done' AND a.delivered_at IS NULL
  ORDER BY a.finished_at, a.id LIMIT sqlc.arg(max_rows)::integer;
@@ -876,7 +878,20 @@ UPDATE sandbox_actions SET delivered_at = now() WHERE id = sqlc.arg(id)::text::u
 
 -- name: GetSandboxAction :one
 -- One action of the account's session, for GET /v1/sandboxes/{id}/actions/{seq}.
-SELECT a.kind, a.args, a.state, a.exit_code, a.output
+SELECT a.kind, a.args, a.state, a.exit_code, a.output, coalesce(a.screenshot_key, '')::text AS screenshot_key,
+  coalesce(a.screenshot_bytes, 0)::bigint AS screenshot_bytes
  FROM sandbox_actions a
  WHERE a.session_id = sqlc.arg(session_id)::text::uuid AND a.account_id = sqlc.arg(account_id)::text::uuid
  AND a.seq = sqlc.arg(seq)::integer;
+
+-- name: ExpiredSandboxScreenshots :many
+-- ADR-20261117065818 §5: screenshots of sessions that ended at least
+-- retention_s ago, for agentd's sweep to delete.
+SELECT a.id::text AS id, a.screenshot_key::text AS screenshot_key
+ FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
+ WHERE a.screenshot_key IS NOT NULL AND sb.closed_at IS NOT NULL
+ AND sb.closed_at < now() - make_interval(secs => sqlc.arg(retention_s)::integer)
+ ORDER BY sb.closed_at LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: ClearSandboxScreenshot :exec
+UPDATE sandbox_actions SET screenshot_key = NULL WHERE id = sqlc.arg(id)::text::uuid;

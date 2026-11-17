@@ -110,7 +110,7 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		ActionDone: func(_ context.Context, d sched.SandboxActionDone) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_ActionDone{ActionDone: &scheddpb.SandboxRunActionDone{
 				ActionId: d.ActionID, ExitCode: int32(d.ExitCode), Output: d.Output, TimedOut: d.TimedOut, Truncated: d.Truncated,
-				Error: d.Error}}})
+				Error: d.Error, ScreenshotBytes: d.ScreenshotBytes}}})
 		},
 		TaskDone: func(_ context.Context, d sched.SandboxTaskDone) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_TaskDone{TaskDone: &scheddpb.SandboxRunTaskDone{
@@ -199,5 +199,5 @@ func sandboxTaskFromProto(t *scheddpb.SandboxRunTask) *sched.SandboxTask {
 func sandboxActionFromProto(a *scheddpb.SandboxRunAction) *sched.SandboxAction {
 	return &sched.SandboxAction{ID: a.GetActionId(), Kind: a.GetKind(), URL: a.GetUrl(), Ref: int(a.GetRef()), Text: a.GetText(),
 		Submit: a.GetSubmit(), Key: a.GetKey(), Direction: a.GetDirection(), MaxChars: int(a.GetMaxChars()),
-		Timeout: time.Duration(a.GetTimeoutMs()) * time.Millisecond, MaxOutputBytes: a.GetMaxOutputBytes()}
+		Timeout: time.Duration(a.GetTimeoutMs()) * time.Millisecond, MaxOutputBytes: a.GetMaxOutputBytes(), Screenshot: a.GetScreenshot()}
 }

@@ -175,18 +175,22 @@ func TestBrowserActionEndsReachTheirThreadOnceAndFit(t *testing.T) {
 	page, _ := json.Marshal(map[string]any{"url": "https://e.com/", "title": "E", "status": 200, "elements": elements[:2], "text": "hello"})
 	big, _ := json.Marshal(map[string]any{"url": "https://e.com/", "title": "Big", "status": 200, "elements": elements,
 		"text": strings.Repeat("ü", 4000), "truncated": false})
+	shot := actionEnd("a-6", "sbx-1", "call_6", "snapshot", 6, &zero, string(page))
+	shot.Args.Screenshot, shot.ScreenshotBytes = true, 50_000
+	unkept := actionEnd("a-7", "sbx-1", "call_7", "snapshot", 7, &zero, string(page))
+	unkept.Args.Screenshot = true
 	ended := actionEnd("a-4", "sbx-1", "call_4", "click", 4, nil, "")
 	ended.SessionState, ended.OutcomeCode = "expired", "idle"
 	sessions.ends = []agentstore.SandboxActionEnd{actionEnd("a-1", "sbx-1", "call_1", "navigate", 1, &zero, string(page)),
 		actionEnd("a-2", "sbx-1", "call_2", "scroll", 2, &zero, string(big)),
-		actionEnd("a-3", "sbx-1", "call_3", "click", 3, &one, "ref 9 is not on the page; take a snapshot\n"), ended}
+		actionEnd("a-3", "sbx-1", "call_3", "click", 3, &one, "ref 9 is not on the page; take a snapshot\n"), ended, shot, unkept}
 	for i := range sessions.ends {
 		sessions.ends[i].Call.IssuedAt = issued
 	}
-	if settled, err := f.h.DeliverSandboxActions(context.Background()); err != nil || settled != 4 || len(f.inbox.messages) != 4 {
+	if settled, err := f.h.DeliverSandboxActions(context.Background()); err != nil || settled != 6 || len(f.inbox.messages) != 6 {
 		t.Fatalf("deliver = %d, %v, inbox %d", settled, err, len(f.inbox.messages))
 	}
-	results := make([]map[string]any, 4)
+	results := make([]map[string]any, 6)
 	for i, m := range f.inbox.messages {
 		if len(m.Data) > api.AgentCallbackPayloadMaxBytes {
 			t.Fatalf("message %d is %d bytes", i, len(m.Data))
@@ -208,7 +212,16 @@ func TestBrowserActionEndsReachTheirThreadOnceAndFit(t *testing.T) {
 	if r := results[3]; r["error"] != "the session ended before the action finished (idle)" {
 		t.Fatalf("an action the session's end cut short %v", r)
 	}
-	if settled, _ := f.h.DeliverSandboxActions(context.Background()); settled != 0 || len(f.inbox.messages) != 4 {
+	if r := results[4]; r["screenshot_url"] != "https://api.example.test/v1/sandboxes/sbx-1/actions/6/screenshot" || r["screenshot_error"] != nil {
+		t.Fatalf("a kept screenshot %v", r)
+	}
+	if r := results[5]; r["screenshot_url"] != nil || !strings.HasPrefix(r["screenshot_error"].(string), "the screenshot was not kept") {
+		t.Fatalf("a screenshot that was not kept %v", r)
+	}
+	if r := results[0]; r["screenshot_url"] != nil || r["screenshot_error"] != nil {
+		t.Fatalf("an action that asked no screenshot %v", r)
+	}
+	if settled, _ := f.h.DeliverSandboxActions(context.Background()); settled != 0 || len(f.inbox.messages) != 6 {
 		t.Fatal("a delivered action was published again")
 	}
 	f.h.Inbox = failingInbox{f.inbox}

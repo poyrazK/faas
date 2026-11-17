@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -198,4 +199,51 @@ func ActionResultView(id string, seq int, res agentstore.SandboxActionResult) ap
 		out.Output = strings.ToValidUTF8(string(res.Output), "�")
 	}
 	return out
+}
+
+// ActionScreenshot handles GET /v1/sandboxes/{id}/actions/{seq}/screenshot:
+// the JPEG an action kept (ADR-20261117065818 §5), until its retention ends.
+func (h *Handler) ActionScreenshot(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !h.configured(w) {
+		return
+	}
+	store, ok := h.Store.(BrowserStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("browser sessions are unavailable on this control-plane host"))
+		return
+	}
+	seq, err := strconv.Atoi(r.PathValue("seq"))
+	if err != nil || seq < 1 {
+		api.WriteProblem(w, api.ErrValidation("seq must be an action's sequence number, from 1"))
+		return
+	}
+	res, err := store.SandboxActionResult(r.Context(), acct.ID, r.PathValue("id"), seq)
+	if err != nil {
+		api.WriteProblem(w, h.problem(acct, "sandbox.action.screenshot", err))
+		return
+	}
+	shot := res.Screenshot
+	if shot.Key == "" || shot.Bytes <= 0 || shot.Bytes > int64(api.SandboxScreenshotMaxBytes) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Screenshot not found",
+			"the action kept no screenshot, or it is past its retention"))
+		return
+	}
+	if h.Files == nil {
+		api.WriteProblem(w, api.ErrCapacity("screenshots are unavailable on this control-plane host"))
+		return
+	}
+	body, err := h.Files.Get(r.Context(), shot.Key)
+	if err != nil {
+		if h.Log != nil {
+			h.Log.Warn("sandboxes: read screenshot", "sandbox_id", r.PathValue("id"), "err", err)
+		}
+		api.WriteProblem(w, api.ErrCapacity("the screenshot could not be read"))
+		return
+	}
+	defer func() { _ = body.Close() }()
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Length", strconv.FormatInt(shot.Bytes, 10))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	_, _ = io.Copy(w, io.LimitReader(body, shot.Bytes))
 }

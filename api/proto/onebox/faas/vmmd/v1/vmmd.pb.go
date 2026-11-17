@@ -15300,8 +15300,11 @@ type RunSandboxAction struct {
 	MaxChars       int32 `protobuf:"varint,9,opt,name=max_chars,json=maxChars,proto3" json:"max_chars,omitempty"`
 	TimeoutMs      int64 `protobuf:"varint,10,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
 	MaxOutputBytes int64 `protobuf:"varint,11,opt,name=max_output_bytes,json=maxOutputBytes,proto3" json:"max_output_bytes,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// screenshot has the action also capture the viewport as a JPEG, which
+	// vmmd stores at storagekey.SandboxScreenshot (ADR-20261117065818 §5).
+	Screenshot    bool `protobuf:"varint,12,opt,name=screenshot,proto3" json:"screenshot,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RunSandboxAction) Reset() {
@@ -15411,6 +15414,13 @@ func (x *RunSandboxAction) GetMaxOutputBytes() int64 {
 	return 0
 }
 
+func (x *RunSandboxAction) GetScreenshot() bool {
+	if x != nil {
+		return x.Screenshot
+	}
+	return false
+}
+
 // RunSandboxActionDone is an action's end: the command's exit code and
 // standard output, the page snapshot as JSON when it exited 0.
 type RunSandboxActionDone struct {
@@ -15421,9 +15431,12 @@ type RunSandboxActionDone struct {
 	TimedOut  bool                   `protobuf:"varint,4,opt,name=timed_out,json=timedOut,proto3" json:"timed_out,omitempty"`
 	Truncated bool                   `protobuf:"varint,5,opt,name=truncated,proto3" json:"truncated,omitempty"`
 	// error is why the command could not run, when it never did.
-	Error         string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Error string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	// screenshot_bytes is the size of the screenshot vmmd stored, or 0 when
+	// none was asked or kept.
+	ScreenshotBytes int64 `protobuf:"varint,7,opt,name=screenshot_bytes,json=screenshotBytes,proto3" json:"screenshot_bytes,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *RunSandboxActionDone) Reset() {
@@ -15496,6 +15509,13 @@ func (x *RunSandboxActionDone) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *RunSandboxActionDone) GetScreenshotBytes() int64 {
+	if x != nil {
+		return x.ScreenshotBytes
+	}
+	return 0
 }
 
 // RunSandboxTask is a sandbox task: a closed set of kinds, each a fixed
@@ -23614,7 +23634,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x10ready_timeout_ms\x18\x10 \x01(\x03R\x0ereadyTimeoutMs\x12A\n" +
 	"\bsnapshot\x18\x11 \x01(\v2%.onebox.faas.vmmd.v1.AgentRunSnapshotR\bsnapshot\x12\x18\n" +
 	"\abrowser\x18\x12 \x01(\bR\abrowser\x127\n" +
-	"\x04task\x18\x13 \x01(\v2#.onebox.faas.vmmd.v1.RunSandboxTaskR\x04task\"\xa9\x02\n" +
+	"\x04task\x18\x13 \x01(\v2#.onebox.faas.vmmd.v1.RunSandboxTaskR\x04task\"\xc9\x02\n" +
 	"\x10RunSandboxAction\x12\x1b\n" +
 	"\taction_id\x18\x01 \x01(\tR\bactionId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x10\n" +
@@ -23628,14 +23648,18 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"timeout_ms\x18\n" +
 	" \x01(\x03R\ttimeoutMs\x12(\n" +
-	"\x10max_output_bytes\x18\v \x01(\x03R\x0emaxOutputBytes\"\xb9\x01\n" +
+	"\x10max_output_bytes\x18\v \x01(\x03R\x0emaxOutputBytes\x12\x1e\n" +
+	"\n" +
+	"screenshot\x18\f \x01(\bR\n" +
+	"screenshot\"\xe4\x01\n" +
 	"\x14RunSandboxActionDone\x12\x1b\n" +
 	"\taction_id\x18\x01 \x01(\tR\bactionId\x12\x1b\n" +
 	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x12\x16\n" +
 	"\x06output\x18\x03 \x01(\fR\x06output\x12\x1b\n" +
 	"\ttimed_out\x18\x04 \x01(\bR\btimedOut\x12\x1c\n" +
 	"\ttruncated\x18\x05 \x01(\bR\ttruncated\x12\x14\n" +
-	"\x05error\x18\x06 \x01(\tR\x05error\"\x9c\x01\n" +
+	"\x05error\x18\x06 \x01(\tR\x05error\x12)\n" +
+	"\x10screenshot_bytes\x18\a \x01(\x03R\x0fscreenshotBytes\"\x9c\x01\n" +
 	"\x0eRunSandboxTask\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12\x1b\n" +
