@@ -427,3 +427,224 @@ parent progress. It confirms two child workflows, six Jobs and two verified
 reports. The native control plane and realtime transport are local protocol
 fixtures. Set `GREGALE_LOCAL_PYTHON`, `GREGALE_LOCAL_PG_BIN` and
 `GREGALE_LOCAL_CHROME` as for the other local examples when paths differ.
+
+## Event-triggered reviewed imports
+
+`import.requested` can now start the same reviewed pipeline. The event's generated
+payload contains only `import_id`. Application-owned immutable records supply its
+authorized owner and verified source file; a producer cannot claim another owner
+or make the consumer read an arbitrary file by changing an event payload.
+
+The full flow is atomic business record + publication outbox -> authenticated CloudEvent -> shared durable
+start receipt -> validation Job -> private browser approval -> import Job ->
+verified report. [pipeline-events.mjs](pipeline-events.mjs) and
+[event_pipeline.py](event_pipeline.py) implement the same adapter using
+[event-contract.json](event-contract.json). They require application-supplied
+delivery verification, current owner authorization and immutable-record lookup.
+Reuse the reviewed pipeline's schema, workers and private realtime setup.
+
+Generate payload types after changing the event contract:
+
+```sh
+node sdk/node/dist/event-types.js examples/sdk-csv-jobs/event-contract.json typescript examples/sdk-csv-jobs/event-generated.ts
+python -m faas_sdk.preview.event_types examples/sdk-csv-jobs/event-contract.json python examples/sdk-csv-jobs/event_generated.py
+```
+
+Install [the start-receipt schema](../../sdk/request-contracts/event-pipelines.sql)
+as the application owner. Both adapters use the same primary database and
+acknowledged autocommit statements. The local example stores immutable business
+inputs in `sdk_csv_event_inputs(import_id uuid PRIMARY KEY, owner_id text,
+input jsonb)`; `input` is the reviewed pipeline input with its verified source.
+Keep those records private and insert-only. [pipeline-producer.mjs](pipeline-producer.mjs)
+and [event_producer.py](event_producer.py) atomically insert the authorized import
+and stage its generated event. Apply `eventOutboxSchema` / `EVENT_OUTBOX_SCHEMA`
+explicitly in the application migration transaction too, including the upgrade
+for existing Go outboxes. A separately scheduled bounded outbox worker publishes
+after acknowledged claim commit. See [typed publication and migration](../../docs/sdk-event-outbox.md).
+The pipeline adapter coordinates consumption and workflow starts.
+
+
+Configure the selected environment's native event subscription to invoke your
+authenticated backend. Its verifier must check the delivery boundary before
+using `eventConsumerRequestFromHeaders` / `event_consumer_request_from_headers`.
+Context headers alone are not authentication. The local fixture uses a separate
+private ingress credential; `event_driver.py` and the workflow journal drivers
+are fixture programs and must never be exposed as HTTP handlers. Integrate the
+factories into an existing backend using its current principals and role checks.
+
+```sh
+npm --prefix sdk/node run build
+GREGALE_CSV_EVENT_PIPELINE=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+This first commits the import and typed publication intent atomically against
+real isolated UTF-8 PostgreSQL and proves a failed transaction leaves neither.
+Node publishes, the native fixture accepts the event but drops the response,
+and Python reconciles the retained receipt without republishing. Confirmed
+settlement erases the saved payload. The accepted event supplies the authenticated
+consumer delivery, with an acceptance ID above JavaScript's safe integer limit.
+
+Competing Node/Python consumers then handle that delivery. The native fixture
+accepts the workflow but drops the start response.
+Both consumers report `start_unknown`; Python reconciles the externally inspected
+run ID and Node observes the same receipt. Repeated deliveries never start another
+run. The recovered run then completes the existing mixed-language workers,
+two-user access checks, Chrome review, live progress and verified CSV report.
+Native event delivery, control-plane and realtime transports are local protocol
+fixtures; this is not deployed scheduler/broker acceptance.
+
+Retain start receipts for the entire event replay window. Unknown acceptance
+requires authorized inspection/reconciliation, including after native key
+retention; changing the key, adapter name or subscription is not recovery. See
+[SDK event pipelines](../../docs/sdk-event-pipelines.md) for deadlines,
+cancellation, retention and compatibility details.
+
+## Scheduled reviewed imports
+
+The reviewed CSV pipeline can run nightly from a native workflow schedule.
+[pipeline-schedule.mjs](pipeline-schedule.mjs) and
+[scheduled_pipeline.py](scheduled_pipeline.py) bind its generated input contract,
+authenticated owner, verified file snapshot and scope to a 02:00 UTC calendar.
+Set the returned `trigger` on the deployed `csv-reviewed-pipeline` workflow,
+using the existing handler, `steps: []` and
+`code: {path: /csv-reviewed-pipeline, timeout: 30s}`. Deploy through the normal
+reviewed path, then pin the schedule client to the resulting deployment ID.
+
+This uses fixed input: the same immutable import ID/source is reviewed on each
+occurrence and business writes retain their idempotency. For newly arriving
+files each day, define a scheduled coordinator that resolves current authorized
+imports and starts typed children. It must not mutate the captured snapshot.
+Only the live default deployment fires; Node/Python handlers need support for
+`trigger.kind: schedule` before enabling the trigger.
+
+```sh
+npm --prefix sdk/node run build
+GREGALE_CSV_SCHEDULED_PIPELINE=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The test uses real isolated UTF-8 PostgreSQL. Two competing native-admission
+fixture transactions create exactly one occurrence and one workflow run. Neither
+SDK submits a manual workflow start. Node and Python produce the same schedule
+identity, preview and checkpoint, and reject the other application user. The run
+then completes mixed-language Jobs, private Chrome approval, live progress and
+verified report download. [schedule_driver.py](schedule_driver.py) is a private
+fixture program, not an HTTP handler. Calendar/admission, control-plane and
+realtime fixtures do not establish deployed scheduler acceptance.
+
+See [the SDK guide](../../docs/sdk-pipeline-schedules.md) for DST/catch-up preview,
+scoped history, explicit replay, unknown replies, deadlines and cancellation.
+
+## Stripe-paid reviewed imports
+
+A verified `payment_intent.succeeded` can stage the existing `import.requested`
+event, then run validation, private review, import and verified reporting.
+[paid-producer.mjs](paid-producer.mjs) and [paid_producer.py](paid_producer.py)
+lock an application payment row, derive its current owner/customer and verify
+integer-cent price/currency. Provider `metadata.owner_id` grants no access.
+The immutable uploaded source comes from trusted business data.
+
+Apply [paid-schema.sql](paid-schema.sql), the exported Stripe handoff schema,
+and the event pipeline/outbox migrations as the application migration role.
+Use the same primary database for business and SDK tables. Configure a native
+Stripe app-delivery endpoint at `/webhooks/stripe`, pin its API version and mode,
+and authenticate the platform boundary before reading its protected headers.
+The example's private test pipe and fixture gateway credential demonstrate that
+boundary; they are not public HTTP handlers or production authentication.
+See [adapter setup and recovery](../../docs/sdk-stripe-webhooks.md).
+
+From the repository root, after building the Node SDK and installing the Python
+SDK with `psycopg[binary]`, run:
+
+```sh
+GREGALE_CSV_STRIPE_PIPELINE=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+This adds real PostgreSQL receipt and payment tables to the existing acceptance
+flow. Native ingress fixtures validate Stripe-style raw-byte HMAC signatures
+and overlapping rotation keys. A dropped ingress reply is retried against the
+same native UUIDv5 receipt. Concurrent Node/Python adapters commit one business
+update and one outbox intent; different provider IDs and an older failure cannot
+repeat the payment effect. Forged delivery, another user and revoked access fail.
+The test then recovers lost publication/start replies and completes the full
+mixed-worker reviewed report flow with Chrome. Native APIs, ingress and event
+transport are fixtures; a deployed Stripe/broker integration is not exercised.
+
+## Agent tools for reviewed imports
+
+[pipeline-tool.mjs](pipeline-tool.mjs) and [pipeline_tool.py](pipeline_tool.py)
+expose the existing reviewed pipeline as five generated MCP tools: start,
+status, result, cancel and reconcile. The Python definition preserves the
+[generated input/output types](reviewed_pipeline_generated.py). Each stable
+request ID names an immutable authorized import record; supplied input must
+match that record. Credentials and model-supplied owner fields cannot grant
+access. Configure both the receipt store and existing human gate store.
+
+Install the exported `pipelineToolSchema` / `PIPELINE_TOOL_SCHEMA` with the
+application migration role on the same primary used by both SDKs. The local
+fixture adds `sdk_csv_tool_imports(request_id,owner_id,enabled,input)` for current
+access and immutable input lookup. In production, authenticate the principal in
+your MCP host and register `adapter.tools` / `adapter.call` with its existing
+transport; the private Python pipe is only a local test driver.
+
+After building Node and installing Python with `psycopg[binary]`, run from the
+repository root:
+
+```sh
+GREGALE_CSV_TOOL_PIPELINE=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+An authenticated JSON-RPC fixture exercises initialization, tool discovery and
+calls. Concurrent Node/Python starts share one PostgreSQL receipt despite a lost
+native acceptance reply. Python reconciles the exact retained run; a new Node
+call reuses it. Another user and revoked access are rejected. Both SDKs then
+report `awaiting_approval` and the private human-review link without deciding
+the gate. Chrome approves the exact source and rows; mixed workers complete the
+import and both tools retrieve the same validated report output.
+
+This uses real PostgreSQL and Chrome with native API and MCP transport fixtures.
+It is not a deployed MCP publication or model-provider integration. See
+[the complete tool contract](../../docs/sdk-pipeline-tools.md), especially receipt
+retention, total deadlines, explicit cancellation and unresolved-start recovery.
+
+## Reviewed cleanup after report failure
+
+[compensation.mjs](compensation.mjs) and [compensation.py](compensation.py) define
+the same `csv_cleanup` recovery. The original pipeline validates and imports
+rows, then its report stage fails. Recovery verifies those source receipts and
+builds immutable cleanup commands in reverse import order. Expected fingerprints
+come from the original validated rows, so a later user edit cannot become an
+approved deletion merely because planning observes it.
+
+Install [pipeline-compensations.sql](../../sdk/request-contracts/pipeline-compensations.sql)
+alongside the existing Job, pipeline, gate and tool schemas. The local fixture
+adds `sdk_csv_recovery_owners` for current ownership/access and
+`sdk_csv_recovery_audit` for committed deletes. Register the derived worker
+contract from [compensation-contract.json](compensation-contract.json), then run
+[compensation-worker.mjs](compensation-worker.mjs) or
+[compensation-worker.py](compensation-worker.py) as its task entry. Publish the
+returned definition as the native `recover-csv-cleanup` code workflow. Its drivers
+retain native workflow gateway checks; backend tokens stay in the application.
+
+After building Node and installing Python with `psycopg[binary]`, run from the
+repository root using the same PostgreSQL/Chrome dependencies as the earlier
+journeys:
+
+```sh
+GREGALE_CSV_COMPENSATION=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The fixture injects report failure after successful imports. Concurrent Node and
+Python planning returns one shared plan; another user and revoked access fail.
+A lost recovery start reply is reconciled to the exact run in Python. Chrome
+approves the plan through the authenticated human gate. The fixture then edits
+the first row before cleanup. The unchanged second row is deleted once, including
+a dropped task acknowledgement and a retry in the other language. The edited row
+survives, recovery returns `needs_review`, and both SDKs read identical effect
+receipts. `python-fixture.mjs` is a private persistent local test driver, not an
+MCP or production worker transport.
+
+This journey uses real PostgreSQL and Chrome with native control-plane and MCP
+fixtures. It does not qualify deployed publication or external-service rollback.
+See [the compensation guide](../../docs/sdk-pipeline-compensations.md) for source
+stage declarations, SQL-only callback rules, retained review stops, revisions
+and explicit new-attempt recovery.

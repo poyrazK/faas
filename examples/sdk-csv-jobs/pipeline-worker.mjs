@@ -20,6 +20,7 @@ async function handle(input,context){
     const bytes=await sdk.readPipelineArtifact(files,input.source,input.source.owner_id,{timeoutMs:10000,signal:context.signal,maxBytes:1024*1024});
     return {rows:csvInputs(new TextDecoder('utf-8',{fatal:true}).decode(bytes),input.import_id)};
   }
+  if(process.env.GREGALE_CSV_REPORT_FAIL==='1')throw Error('Injected report failure after import');
   const key='pipelines/'+input.import_id+'/rejections.csv',bytes=new TextEncoder().encode('input_id,reason\n'+input.rejections.map(id=>id+',invalid_email').join('\n')+'\n');
   let actual;
   try{actual=await files.download(key,{timeoutMs:10000,signal:context.signal,maxBytes:1024*1024});}

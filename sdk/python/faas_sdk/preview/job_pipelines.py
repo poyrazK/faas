@@ -46,6 +46,7 @@ from .pipeline_state import (
     PipelineJobStore,
     PipelineScope,
     _parse_pipeline_lineage,
+    _parse_pipeline_trigger,
     match_pipeline_job,
     pipeline_job_identity,
     pipeline_name,
@@ -474,6 +475,8 @@ class JobPipeline(Generic[PI, PO]):
                 raise PipelineError("scope_mismatch")
             if "lineage" in envelope:
                 _parse_pipeline_lineage(envelope["lineage"])
+            if "trigger" in envelope:
+                _parse_pipeline_trigger(envelope["trigger"])
             value = contract.input(envelope["input"])
             context = JobPipelineContext(self, wf, envelope["owner_id"], job_value_hash(envelope | {"input": value}))
             context._envelope = envelope | {"input": value}

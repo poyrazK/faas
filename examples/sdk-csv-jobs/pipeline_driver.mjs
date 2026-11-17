@@ -37,5 +37,6 @@ try{
     }
     return pool.query(sql,values);
   }),gateStore:sdk.postgresPipelineGateStore(query),requestTimeoutMs:30000}));
+  if(request.workflow.startsWith('recover-')){const{csvCompensation}=await import('./compensation.mjs');const result=await csvCompensation({sdk,runtime:await import(runtime.href),client,scope,pool,jobStore,reviewBaseURL:process.env.GREGALE_COMP_REVIEW_URL??'http://127.0.0.1/'});pipeline=result.recovery;}
   console.log(JSON.stringify(await runWorkflowInvocation(pipeline.definition,request)));
 }finally{await pool.end();}

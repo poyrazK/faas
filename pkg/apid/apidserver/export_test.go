@@ -2379,6 +2379,13 @@ var MintMCPAuthCodeForTest = mintMCPAuthCode
 var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
 var MCPCodeScopesForTest = mcpCodeScopes
 
+var NewCLIAuthTestServerForTest = newCliAuthTestServer
+var RenderCLIAuthForTestAs = renderCliAuthForTestAs
+
+func (h *cliAuthTestServer) SessionCookieForTest(csrf string) *http.Cookie {
+	return &http.Cookie{Name: sessionCookie, Value: h.sessionCookies[csrf]}
+}
+
 var ALookupFunc = &aLookupFunc
 var AAAALookupFunc = &aaaaLookupFunc
 var CAALookupFunc = &caaLookupFunc

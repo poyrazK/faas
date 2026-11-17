@@ -8141,6 +8141,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	// `current` field maps straight through without a string copy.
 	announced := make(map[state.StageName]string)
 	var lastStageStateRaw []byte
+	lastLogSeq := initialDeploymentLogSeq(ctx, s.store, id, page, beforeSeq)
 
 	// A deployment that already finished has nothing to tail. End now
 	// rather than at the first status poll: the dashboard's release
@@ -8221,8 +8222,12 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// superseded rows used to keep it open until the 10-min
 			// backstop, so a waiting `gregale deploy` sat on a
 			// cancelled build for minutes (H10-48).
+			lastLogSeq = tailDeploymentLogs(ctx, w, flusher, s.store, id, lastLogSeq)
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
 				if deploymentLogTailDone(d2.Status) {
+					// Rows written between the tail above and the
+					// terminal flip.
+					_ = tailDeploymentLogs(ctx, w, flusher, s.store, id, lastLogSeq)
 					endDeploymentLogStream(w, flusher, d2, announced, &lastStageStateRaw)
 					return
 				}

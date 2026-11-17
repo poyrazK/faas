@@ -1712,3 +1712,10 @@ remain unchanged. Install `EventAcknowledgmentIntentBudgetAdoptionSchema` beside
 the budget-upgraded table and durably save each command before execution. Exact
 retries resolve uncertain commits through historical receipts without another
 COMMIT. See the [budget-adoption contract](../../docs/event-acknowledgment-budget-adoption.md).
+
+Node/Python typed outbox producers and workers share the Go preview PostgreSQL
+protocol. Upgrade every Go worker before staging environment-specific events:
+current recovery forwards `Environment` and rejects unknown retained fields.
+Existing outbox installations must explicitly apply `EventOutboxPayloadSchema`
+in an application migration transaction to permit payload erasure on confirmed
+publication. See [cross-language outbox usage](../../docs/sdk-event-outbox.md).
