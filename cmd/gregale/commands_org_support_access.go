@@ -11,11 +11,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// cmdOrgsSupportAccess lists, revokes and declines Gregale support access to
+// cmdOrgsSupportAccess lists and revokes Gregale support access, and rejects requests for it, Gregale support access to
 // an organization's apps (ADR-20261116163508). Granting and approving need a
 // signed-in browser, so `approve` prints the dashboard page instead.
 func cmdOrgsSupportAccess(args []string) int {
-	const usage = "usage: gregale org support <list|revoke|decline|approve> --org <slug> [ID]"
+	const usage = "usage: gregale org support <list|revoke|reject|approve> --org <slug> [ID]"
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, usage, "orgs")
 		return 1
@@ -29,7 +29,7 @@ func cmdOrgsSupportAccess(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
-	wantID := verb == "revoke" || verb == "decline"
+	wantID := verb == "revoke" || verb == "reject"
 	if *slug == "" || (wantID && fs.NArg() != 1) || (!wantID && fs.NArg() != 0) {
 		PrintUsage(os.Stderr, usage, "orgs")
 		return 1
@@ -56,11 +56,11 @@ func cmdOrgsSupportAccess(args []string) int {
 		}
 		_, _ = fmt.Fprintln(osStdout, "Revoked. Gregale support no longer has access under that grant.")
 		return 0
-	case "decline":
+	case "reject":
 		if err := client.DeclineSupportAccessRequest(ctx, *slug, fs.Arg(0)); err != nil {
-			return printErr("Could not decline the request", err)
+			return printErr("Could not reject the request", err)
 		}
-		_, _ = fmt.Fprintln(osStdout, "Declined.")
+		_, _ = fmt.Fprintln(osStdout, "Rejected.")
 		return 0
 	case "approve":
 		_, _ = fmt.Fprintf(osStdout, "Granting or approving support access needs a signed-in browser. Open:\n  %s/dashboard/support-access\n", dashboardBaseURL(client.BaseURL()))
@@ -83,7 +83,7 @@ func printSupportAccess(access api.SupportAccess) {
 		}
 	}
 	if open > 0 {
-		_, _ = fmt.Fprintln(osStdout, "Approve on the dashboard (gregale org support approve), or decline with gregale org support decline.")
+		_, _ = fmt.Fprintln(osStdout, "Approve on the dashboard (gregale org support approve), or reject with gregale org support reject.")
 		_, _ = fmt.Fprintln(osStdout)
 	}
 	if len(access.Grants) == 0 {

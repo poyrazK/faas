@@ -5536,10 +5536,10 @@ var cliCommands = []cliCommand{
 					{Name: "label", Short: "new label (empty keeps the current one)", Value: "TEXT"},
 				}},
 			}},
-			{Name: "support-access", Short: "See, revoke and decline Gregale support access to the org's apps", Notes: []string{"Support access lets Gregale support deploy the production branch, retry, cancel, roll back and restart the org's apps for a limited time. It never reaches secrets, configuration, members, keys or billing.", "Granting and approving need a signed-in browser: use the dashboard's Support access page."}, Subcommands: []cliSub{
+			{Name: "support-access", Short: "See and revoke Gregale support access to the org's apps, and reject requests for it", Notes: []string{"Support access lets Gregale support deploy the production branch, retry, cancel, roll back and restart the org's apps for a limited time. It never reaches secrets, configuration, members, keys or billing.", "Granting and approving need a signed-in browser: use the dashboard's Support access page."}, Subcommands: []cliSub{
 				{Name: "list", Short: "List support grants and open requests", Flags: []cliFlag{orgSlugFlag, {Name: "json", Short: "Print JSON", Bool: true}}, Examples: []string{"gregale org support list --org acme"}},
 				{Name: "revoke", Short: "End a support grant now", Positionals: []string{"GRANT_ID"}, Notes: []string{"Owners and admins only. An API key may revoke: taking access away is always safe."}, Flags: []cliFlag{orgSlugFlag}, Examples: []string{"gregale org support revoke --org acme 3f2a…"}},
-				{Name: "decline", Short: "Decline a support access request", Positionals: []string{"REQUEST_ID"}, Notes: []string{"Owners and admins only."}, Flags: []cliFlag{orgSlugFlag}},
+				{Name: "reject", Short: "Reject a support access request", Positionals: []string{"REQUEST_ID"}, Notes: []string{"Owners and admins only."}, Flags: []cliFlag{orgSlugFlag}},
 				{Name: "approve", Short: "Print the dashboard page that grants or approves support access", Flags: []cliFlag{orgSlugFlag}},
 			}},
 			{Name: "agent-policy", Short: "Show or set whether agents may act in the org", Notes: []string{"The policy also caps the capabilities agents may hold beyond inspection."}, Subcommands: []cliSub{

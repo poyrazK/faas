@@ -66,9 +66,9 @@ func TestCmdOrgSupportAccess(t *testing.T) {
 			wantOut: []string{"Revoked."},
 		},
 		{
-			name: "decline", args: []string{"decline", "--org", "acme", "sr_1"},
+			name: "reject", args: []string{"reject", "--org", "acme", "sr_1"},
 			wantMethod: http.MethodPost, wantPath: "/v1/orgs/acme/support-access/requests/sr_1/decline",
-			wantOut: []string{"Declined."},
+			wantOut: []string{"Rejected."},
 		},
 		{
 			name: "approve points at the dashboard", args: []string{"approve", "--org", "acme"},
