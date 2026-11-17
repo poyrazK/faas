@@ -7,6 +7,10 @@ command when one is known. `type` defaults to `about:blank` when no specific
 problem URI is supplied. `instance` identifies the specific occurrence when
 the caller supplies an occurrence URI.
 
+The [error code reference](error-codes.md) lists every code with the HTTP
+status it is sent with, its title and hint, and the page that explains it.
+This page covers the codes you are most likely to meet and what to do next.
+
 On app and API requests, Gregale sends its own timeouts and failed
 connections to your app as 503 rather than 502 or 504. The response carries
 its `code` and the `X-Faas-Error-Code` header, so the problem body and request

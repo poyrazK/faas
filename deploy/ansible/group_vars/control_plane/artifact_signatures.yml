@@ -1,0 +1,5 @@
+# ADR-20261109170000: schedd and apid refuse v1 layer signatures (raw
+# digest-only signatures that can be replayed onto another app's storage key).
+# Turned on for production-us on 2026-11-16 after `gregalectl artifact resign`
+# converted every stored layer; imaged writes v2 since v0.1.18-rc.347.
+artifact_signature_require_v2: true

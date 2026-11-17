@@ -392,6 +392,7 @@ touch them. The tables below map each earlier name.
 | `gregale flags experiments get` | `gregale flag experiment get` |
 | `gregale flags experiments list` | `gregale flag experiment list` |
 | `gregale flags experiments results` | `gregale flag experiment result get` |
+| `gregale flags experiments ship` | `gregale flag experiment promote` |
 | `gregale flags experiments start` | `gregale flag experiment start` |
 | `gregale flags experiments stop` | `gregale flag experiment stop` |
 | `gregale flags kill` | `gregale flag kill set` |

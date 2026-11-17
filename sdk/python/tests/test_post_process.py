@@ -168,6 +168,28 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/_project_verification.py": b"# uncommitted exact-deployment verification\n",
         "faas_sdk/preview/_binding_runner.py": b"# uncommitted verification runner\n",
         "faas_sdk/preview/files.py": b"# uncommitted preview file workflows\n",
+        "faas_sdk/preview/event_contract.py": b"# uncommitted event schemas\n",
+        "faas_sdk/preview/event_types.py": b"# uncommitted event generation\n",
+        "faas_sdk/preview/event_pipeline_state.py": b"# uncommitted event start receipts\n",
+        "faas_sdk/preview/_event_outbox_protocol.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_outbox.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_outbox_state.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_outbox_transaction.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_publication.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/pipeline_schedules.py": b"# uncommitted schedules\n",
+        "faas_sdk/preview/pipeline_schedule_state.py": b"# uncommitted schedule metadata\n",
+        "faas_sdk/preview/_stripe_webhook_protocol.py": b"# uncommitted Stripe adapter\n",
+        "faas_sdk/preview/stripe_webhook_state.py": b"# uncommitted Stripe adapter\n",
+        "faas_sdk/preview/_pipeline_tool_protocol.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/pipeline_tool_state.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/_pipeline_compensation_protocol.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_compensation_state.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_compensations.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_compensation_mcp.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_tools.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/pipeline_tool_mcp.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/stripe_webhooks.py": b"# uncommitted Stripe adapter\n",
+        "faas_sdk/preview/event_pipelines.py": b"# uncommitted event adapters\n",
         "faas_sdk/preview/pipeline_children.py": b"# uncommitted child runtime\n",
         "faas_sdk/preview/pipeline_children_state.py": b"# uncommitted child receipts\n",
         "faas_sdk/preview/pipeline_gates.py": b"# uncommitted approval/input gates\n",
@@ -383,6 +405,71 @@ def test_regenerated_preview_barrel_preserves_job_pipelines(tmp_path, monkeypatc
     for module in ("pipeline_state.py", "job_pipelines.py", "job_pipeline_client.py", "pipeline_gates.py", "pipeline_children.py", "pipeline_children_state.py"):
         assert module in generator.PREVIEW_WRAPPER_MODULES
     for name in ("JobPipelineClient", "JobPipeline", "PipelineScope", "PipelineJobReceipt", "job_pipeline_live_snapshot", "PipelineGateService", "PipelineGateOptions", "PipelineChildren", "PipelineChildOptions"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_barrel_preserves_event_pipelines(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("event_contract.py", "event_types.py", "event_pipeline_state.py", "event_pipelines.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("EventContract", "EventPipeline", "EventPipelineReceipt", "EventPipelineDelivery", "PostgresEventPipelineStore"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_event_outbox(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_event_outbox_protocol.py", "event_outbox.py", "event_outbox_state.py", "event_outbox_transaction.py", "event_publication.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_typed_schedules(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("pipeline_schedules.py", "pipeline_schedule_state.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("PipelineSchedule", "PipelineScheduleClient", "ScheduledPipelineRun", "PipelineSchedulePreview"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_stripe_webhooks(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_stripe_webhook_protocol.py", "stripe_webhook_state.py", "stripe_webhooks.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("StripeWebhookAdapter", "StripeWebhookStage", "StripeWebhookReceipt", "STRIPE_WEBHOOK_SCHEMA"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_pipeline_tools(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_pipeline_tool_protocol.py", "pipeline_tool_state.py", "pipeline_tools.py", "pipeline_tool_mcp.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PIPELINE_TOOL_SCHEMA"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_compensation(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in (
+        "_pipeline_compensation_protocol.py",
+        "pipeline_compensation_state.py",
+        "pipeline_compensations.py",
+        "pipeline_compensation_mcp.py",
+    ):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("PipelineCompensation", "CompensationMCP", "CompensationCommand", "PIPELINE_COMPENSATION_SCHEMA"):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")

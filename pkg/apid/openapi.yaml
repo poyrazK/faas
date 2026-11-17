@@ -63176,6 +63176,34 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship:
+    post:
+      tags: [flags]
+      operationId: shipProjectFlagExperiment
+      summary: Serve one variant to every customer of an experiment's rule.
+      description: "Publishes the flag configuration with the experiment's rule serving the variant, and stops the experiment if it is still running. The previous configuration version can be restored."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { $ref: '#/components/parameters/FlagExperimentKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagExperimentShipRequest' }
+      responses:
+        '200':
+          description: The experiment and the published configuration version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentShipResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/experiments/{key}/results:
     get:
       tags: [flags]
@@ -89555,9 +89583,53 @@ components:
         flag: { type: string, description: The variant flag. }
         rule_id: { type: string, description: "The flag's weighted rule." }
         control: { type: string, description: The baseline variant. }
-        metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: The conversion event. }
-        mixing_lift: { type: number, exclusiveMinimum: 0, maximum: 1, description: "mSPRT mixing standard deviation as an absolute conversion-rate lift; default 0.02." }
+        metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: The metric event. }
+        metric_kind: { type: string, enum: [conversion, mean], description: "conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer." }
+        mixing_lift: { type: number, exclusiveMinimum: 0, maximum: 1, description: "mSPRT mixing standard deviation: an absolute conversion-rate lift (default 0.02), or a standardized effect size for mean metrics (default 0.1)." }
+        guardrails: { $ref: '#/components/schemas/FlagExperimentGuardrailsRequest' }
         start: { type: boolean, description: Start the experiment at once. }
+    FlagExperimentGuardrailRequest:
+      description: Turns one guardrail off or sets its tolerance.
+      type: object
+      additionalProperties: false
+      properties:
+        disabled: { type: boolean, description: Turn the guardrail off. }
+        max_increase: { type: number, exclusiveMinimum: 0, maximum: 1, description: Absolute increase over control that breaches the guardrail. }
+    FlagExperimentGuardrailsRequest:
+      description: "Changes the default guardrails; both are on unless turned off."
+      type: object
+      additionalProperties: false
+      properties:
+        server_error_rate: { $ref: '#/components/schemas/FlagExperimentGuardrailRequest' }
+        p95_latency: { $ref: '#/components/schemas/FlagExperimentGuardrailRequest' }
+    FlagExperimentGuardrailSetting:
+      description: One guardrail as configured.
+      type: object
+      required: [enabled, max_increase]
+      properties:
+        enabled: { type: boolean }
+        max_increase: { type: number, description: Tolerance as an absolute rate increase over control. }
+    FlagExperimentGuardrailSettings:
+      description: An experiment's guardrails.
+      type: object
+      required: [server_error_rate, p95_latency]
+      properties:
+        server_error_rate: { $ref: '#/components/schemas/FlagExperimentGuardrailSetting' }
+        p95_latency: { $ref: '#/components/schemas/FlagExperimentGuardrailSetting' }
+    FlagExperimentShipRequest:
+      description: The variant to ship.
+      type: object
+      additionalProperties: false
+      required: [variant]
+      properties:
+        variant: { type: string, description: A variant of the experiment's flag. }
+    FlagExperimentShipResponse:
+      description: A shipped experiment.
+      type: object
+      required: [experiment, config_version]
+      properties:
+        experiment: { $ref: '#/components/schemas/FlagExperiment' }
+        config_version: { type: integer, format: int64, description: The flag configuration version that serves the variant. }
     FlagExperiment:
       description: A flag experiment.
       type: object
@@ -89568,7 +89640,7 @@ components:
         rule_id: { type: string }
         control: { type: string }
         metric_event: { type: string }
-        metric_kind: { type: string, enum: [conversion] }
+        metric_kind: { type: string, enum: [conversion, mean] }
         status: { type: string, enum: [draft, running, stopped] }
         mixing_lift: { type: number }
         weights: { type: object, additionalProperties: { type: integer } }
@@ -89577,6 +89649,10 @@ components:
         started_at: { type: string, format: date-time }
         stopped_at: { type: string, format: date-time }
         analyzed_until: { type: string, format: date-time, description: End of the request telemetry the results cover. }
+        guardrails: { $ref: '#/components/schemas/FlagExperimentGuardrailSettings' }
+        latency_threshold_ms: { type: integer, description: "Control's p95 latency, fixed once control has enough requests." }
+        stop_reason: { type: string, enum: [manual, guardrail_breach, shipped] }
+        breach: { type: object, additionalProperties: true, description: The guardrail breach that stopped the experiment. }
     FlagExperimentList:
       description: An environment's flag experiments.
       type: object
@@ -89584,7 +89660,7 @@ components:
       properties:
         experiments: { type: array, items: { $ref: '#/components/schemas/FlagExperiment' } }
     FlagExperimentArm:
-      description: One variant's exposed and converted customers.
+      description: "One variant's exposed customers; rate is the conversion rate, or the mean value per customer for mean metrics."
       type: object
       required: [variant, exposed, converted, rate]
       properties:
@@ -89616,6 +89692,49 @@ components:
         sample_ratio_p_value: { type: number }
         sample_ratio_mismatch: { type: boolean }
         crossed_units: { type: integer, format: int64, description: Customers that saw more than one variant and are left out. }
+        guardrails: { type: array, items: { $ref: '#/components/schemas/FlagExperimentGuardrail' } }
+        latency: { type: array, items: { $ref: '#/components/schemas/FlagExperimentLatency' } }
+        recommendation: { $ref: '#/components/schemas/FlagExperimentRecommendation' }
+    FlagExperimentGuardrail:
+      description: One guardrail across the variants.
+      type: object
+      required: [name, tolerance, status, variants]
+      properties:
+        name: { type: string, enum: [server_error_rate, p95_latency] }
+        tolerance: { type: number }
+        status: { type: string, enum: [ok, breached, insufficient_data] }
+        variants: { type: array, items: { $ref: '#/components/schemas/FlagExperimentGuardrailVariant' } }
+    FlagExperimentGuardrailVariant:
+      description: "One variant's guardrail rate against control's; difference is variant minus control, bounded by a 99% confidence sequence."
+      type: object
+      required: [variant, control_rate, variant_rate, control_units, variant_units, status]
+      properties:
+        variant: { type: string }
+        control_rate: { type: number }
+        variant_rate: { type: number }
+        control_units: { type: integer, format: int64 }
+        variant_units: { type: integer, format: int64 }
+        difference: { type: number }
+        low: { type: number }
+        high: { type: number }
+        status: { type: string, enum: [ok, breached, insufficient_data] }
+    FlagExperimentLatency:
+      description: "One variant's p95 latency, from a histogram with 5% buckets."
+      type: object
+      required: [variant, requests, p95_ms]
+      properties:
+        variant: { type: string }
+        requests: { type: integer, format: int64 }
+        p95_ms: { type: integer, format: int64 }
+    FlagExperimentRecommendation:
+      description: "What to do with the results; commands carry it out. Gregale never ships a variant on its own."
+      type: object
+      required: [action, summary]
+      properties:
+        action: { type: string, enum: [rolled_back, fix_allocation, ship_variant, keep_control, keep_running, decide] }
+        variant: { type: string, description: The variant to ship for ship_variant. }
+        summary: { type: string }
+        commands: { type: array, items: { type: string } }
     FlagEvent:
       description: One conversion event a runtime SDK reports for experiments.
       type: object

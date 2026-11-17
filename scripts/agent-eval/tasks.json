@@ -102,5 +102,65 @@
     "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 10.0,
     "timeout_s": 3600
+  },
+  {
+    "id": "first-hour-private",
+    "title": "Deploy and verify a private first app without changing access",
+    "template": "hello-node",
+    "setup": [],
+    "prompt": "Deploy this project to Gregale as a private app named {app}, with required authentication. Verify the exact accepted deployment and its application response without making the app public. Report its deployment UUID, HTTP status and how you tested it.",
+    "checks": [
+      {
+        "kind": "owner_response",
+        "path": "/",
+        "status": 200,
+        "contains": "hello from gregale"
+      }
+    ],
+    "features": [
+      {
+        "id": "exact-release-verification",
+        "kind": "command",
+        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b"
+      }
+    ],
+    "budget_usd": 3.0,
+    "timeout_s": 1200
+  },
+  {
+    "id": "first-hour-edit",
+    "retain_app_identity": true,
+    "title": "Edit and redeploy an existing private app",
+    "template": "hello-node",
+    "setup": [
+      {
+        "kind": "deploy",
+        "private": true
+      }
+    ],
+    "prompt": "The private app {app} is already deployed from this directory. Change its greeting to first-hour-v2, deploy the update to the same app, and verify that exact release serves the new greeting. Keep required authentication enabled. Report the accepted deployment UUID and HTTP status.",
+    "checks": [
+      {
+        "kind": "owner_response",
+        "path": "/",
+        "status": 200,
+        "contains": "first-hour-v2",
+        "min_deployments": 2
+      },
+      {
+        "kind": "file_contains",
+        "file": "handler.js",
+        "text": "first-hour-v2"
+      }
+    ],
+    "features": [
+      {
+        "id": "exact-release-verification",
+        "kind": "command",
+        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b"
+      }
+    ],
+    "budget_usd": 4.0,
+    "timeout_s": 1500
   }
 ]
