@@ -35,7 +35,7 @@ type operationPlan struct {
 	ResourceHash      string                  `json:"resource_hash,omitempty"`
 }
 
-var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
+var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true, "run_command": true}
 
 type operationArgs struct {
 	App         string `json:"app" jsonschema:"Existing app slug"`
@@ -385,6 +385,8 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 			return nil, redactApprovalError(err, p.Operation.EnvReceiptProof)
 		}
 		return result, nil
+	case "run_command":
+		return m.runCommand(ctx, p)
 	case "cron_update", "cron_delete", "domain_delete":
 		return m.applyResourceOperation(ctx, p)
 	}

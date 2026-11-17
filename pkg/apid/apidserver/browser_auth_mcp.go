@@ -163,6 +163,7 @@ func mcpCapabilities(raw string) []string {
 		api.ScopeManagedPostgresManage: "create managed PostgreSQL databases and bind them to apps (billed)",
 		api.ScopeEnvWrite:              "change non-secret environment variables and restore configuration revisions",
 		api.ScopeUsageRead:             "read usage and billing cost summaries",
+		api.ScopeManagedPostgresQuery:  "run read-only SQL on your managed PostgreSQL databases and see the rows",
 	}
 	var out []string
 	for _, scope := range mcpCodeScopes(raw) {

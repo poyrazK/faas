@@ -27,6 +27,14 @@ flags with the kill switch as an unapproved emergency action.
 
 ## Decision
 
+### 0. Approval errors leave a plan retryable
+
+`gregale_apply_operation` recorded every 4xx as a final refusal, including
+apid's `428 approval_required`, so after a person approved, retrying the
+same plan returned the stored refusal (restart had this bug). The gate
+answers before the route runs, so nothing was written: an approval error is
+now returned without recording a failure, and the approved retry runs.
+
 ### 1. Run a command
 
 Tools (toolset `operate`, write connections with `deploy:write`):
@@ -40,8 +48,9 @@ Tools (toolset `operate`, write connections with `deploy:write`):
   `POST /v1/apps/{slug}/tasks` with the plan ID as idempotency key, so a
   retried apply never starts a second command.
 - `gregale_get_command_run(app, task_id, wait_seconds)` returns status, exit
-  code and the stdout/stderr tails, waiting up to 60 s for a terminal state.
-- `gregale_cancel_command_run(app, task_id)`.
+  code and the stdout/stderr tails, waiting up to 45 s for a terminal state.
+- `gregale_cancel_command_run(app, task_id)`. Cancelling is a `DELETE`, so
+  on a production app it asks a person like every agent delete.
 
 The command runs in a fresh single-use task VM from the live deployment
 (ADR-1037), never in a serving instance. No TTY, no stdin. Only the default
@@ -74,9 +83,10 @@ Execution, all enforced in apid and the provider, not the MCP bridge:
   The Neon provider issues the database's **agent query login**: a
   `read_only` credential with the fixed identity `gregale-agent-query`,
   so it carries exactly the privilege contract read-only bindings already
-  verify (`verifyReadOnlyRole`: SELECT on customer tables, no CREATE, no
-  write grants, no security-definer functions). Each query gives it a new
-  password; only apid ever holds it, and only for the query.
+  verify (`verifyReadOnlyRole`: SELECT on the public schema, no CREATE, no
+  write grants, no security-definer functions). Issuing it again for each
+  query recovers the same login and reruns that verification; only apid
+  holds its password, and only for the query.
 - One statement, sent with the extended protocol (which refuses multiple
   statements), inside `BEGIN READ ONLY` with `statement_timeout` 5 s,
   `lock_timeout` 1 s and `idle_in_transaction_session_timeout` 10 s, then
@@ -98,19 +108,26 @@ different kind of access. Added to the key scope vocabulary (migration
 connect page as "Query my databases (read-only)". App-bound deploy tokens
 cannot carry it.
 
-Tools (toolset `diagnose`, connections with `postgres:query`):
+Tools (toolset `diagnose`, listed only for connections with
+`postgres:query`). Like `gregale_list_databases`, they name an app, and the
+database (ID or name) must be bound to it in the selected scope, so app
+consent bounds which databases an agent reads:
 
-- `gregale_get_postgres_schema(database, schema)` lists tables, views,
+- `gregale_get_postgres_schema(app, database, schema)` lists tables, views,
   columns, primary keys and indexes of one schema (default `public`), by
-  running a fixed catalog query through the same endpoint.
-- `gregale_query_postgres(database, sql, max_rows)`.
+  running fixed catalog queries through the same endpoint.
+- `gregale_query_postgres(app, database, sql, max_rows)`.
+
+In an organization the route needs the members who may bind an app to the
+database (`org.bind_postgres`): they could read its rows through that app.
 
 Queries are reads, so they are not approval-gated. Schema-changing work
 stays with migrations run as commands (§1), which are.
 
 ### 3. Change feature flags
 
-Tools (toolset `operate`, write connections with `deploy:write`):
+Tools (toolset `release`, beside the flag experiment tools; writes need
+`deploy:write`):
 
 - `gregale_list_flags(project, environment)`: configuration, version and the
   lifecycle report.
@@ -121,8 +138,12 @@ Tools (toolset `operate`, write connections with `deploy:write`):
   to the current configuration, pins its version, and shows each edit's
   summary plus the changed flags before and after.
 - `gregale_plan_flag_rollback(project, environment, version, reason)`.
-- Both apply with `gregale_apply_operation`. A configuration that changed
-  since the plan answers `plan_stale`; the agent plans again.
+- Both apply with `gregale_apply_flag_change`. A configuration that
+  changed since the plan answers `plan_stale`; the agent plans again. Flag
+  plans live in the connection's memory: after a bridge restart the agent
+  plans again. A retried apply whose first publish landed recognizes its own
+  version (the next version holding exactly the planned configuration)
+  instead of reporting it stale.
 - `gregale_kill_flag(project, environment, key, reason)`: no plan. It calls
   the new `POST …/flags/{key}/kill`, which sets `killed` on the latest
   configuration (re-reading on a version race) and is idempotent.

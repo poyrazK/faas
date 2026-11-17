@@ -166,7 +166,7 @@ func (r *remoteServer) keyOptions(c *keyConnection) Options {
 	if r.opts.AgentKeyToolsetSelection && toolsets == nil {
 		toolsets = []string{ToolsetAll}
 	}
-	for _, scope := range []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage, api.ScopeEnvWrite, api.ScopeUsageRead} {
+	for _, scope := range []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage, api.ScopeEnvWrite, api.ScopeUsageRead, api.ScopeManagedPostgresQuery} {
 		if slices.Contains(c.scopes, scope) {
 			capabilities = append(capabilities, scope)
 		}

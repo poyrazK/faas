@@ -146,6 +146,17 @@ var production = map[string]Target{
 	"PUT /v1/orgs/{}/projects/{}/environments/{}/config":                TargetNone,
 	"PUT /v1/projects/{}/environments/{}/workloads/{}/policies":         TargetNone,
 	"PUT /v1/orgs/{}/projects/{}/environments/{}/workloads/{}/policies": TargetNone,
+
+	// A command runs with the live deployment's credentials and can change
+	// production data like a migration (ADR-20261117215858 §1).
+	"POST /v1/apps/{}/tasks": TargetApp,
+
+	// Flag publishes change what an environment's code does at its next
+	// request (ADR-20261117215858 §3). The kill route stays ungated: it
+	// only makes the app serve the fallback its own code chose.
+	"PUT /v1/projects/{}/environments/{}/flags":                     TargetNone,
+	"POST /v1/projects/{}/environments/{}/flags/rollback":           TargetNone,
+	"POST /v1/projects/{}/environments/{}/flags/{}/rollout/promote": TargetNone,
 }
 
 // productionRouteOnly are production routes whose ServeMux pattern differs

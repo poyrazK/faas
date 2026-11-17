@@ -54,6 +54,14 @@ still follows connection consent, including separate per-app diagnostic access:
 | Ask me for secrets | `gregale_request_secret`, `gregale_get_secret_request` |
 | Buckets | `gregale_plan_bucket` |
 | PostgreSQL | `gregale_plan_postgres` |
+| Query my databases (read-only) | `gregale_get_postgres_schema`, `gregale_query_postgres` (`postgres:query`), including on a read-only connection |
+
+Write access also covers running a command in the app
+(`gregale_plan_run_command`) and changing feature flags
+(`gregale_plan_flag_change`, `gregale_kill_flag`); see
+[Run a command in the app](#run-a-command-in-the-app),
+[Change feature flags](#change-feature-flags) and
+[Query PostgreSQL](#query-postgresql).
 
 A cloud agent deploys code it wrote in one of three ways:
 - **Upload:** `gregale_create_source_upload` returns a one-time URL and a
@@ -196,8 +204,9 @@ gregale org agent policy set --org acme --agents allow --capabilities deploy:wri
 gregale org agent policy set --org acme --agents deny
 ```
 
-The capabilities are `deploy:write`, `secrets:request`, `storage:manage` and
-`postgres:manage`; `--capabilities ""` makes agents read-only. An organization
+The capabilities are `deploy:write`, `secrets:request`, `storage:manage`,
+`postgres:manage`, `env:write`, `usage:read` and `postgres:query`;
+`--capabilities ""` makes agents read-only. An organization
 that never set a policy allows agents with every capability. The policy
 applies to hosted MCP connections and to organization keys with the `agent`
 scope. Setting a stricter policy revokes, at once, every agent connection it
@@ -250,7 +259,7 @@ of the agent's key: the hosted MCP server, the CLI and direct API calls.
 | Kind | What needs approval |
 |---|---|
 | `delete` | Deleting anything: apps, databases, buckets, domains, secrets, keys |
-| `production` | Deploying, rolling back, restarting or moving traffic of a production app (previews and `gregale dev` environments are free) |
+| `production` | Deploying, rolling back, restarting or moving traffic of a production app, and running a command in it (previews and `gregale dev` environments are free); publishing, rolling back or promoting feature flags in any project environment (killing a flag never asks) |
 | `credentials` | Minting or rotating API keys, deploy tokens, secrets and signing secrets |
 | `billing` | Plan, subscription, payment and budget changes |
 
@@ -7101,6 +7110,73 @@ environment.
 Neither tool ships or stops an experiment. The recommendation's commands are
 for the owner to run; only a guardrail breach changes a flag without an
 owner's request.
+
+## Change feature flags
+
+Five tools in the `release` toolset change Gregale Flags (ADR-20261117215858).
+All take `project` and `environment`; writes need write consent for that
+environment.
+
+- `gregale_list_flags` returns the configuration, its version and the
+  lifecycle report.
+- `gregale_plan_flag_change` takes `changes`, an ordered list of 1–20 edits:
+  `create` (`variants`, `default`, `description`, `owner`, `expires`), `set`,
+  `enable`, `disable`, `kill`, `revive`, `set_percent` (`percent`, 0–100),
+  `add_rule` (`rule_id`, `customers`, `group`, `attributes`, `percent`,
+  `value`), `remove_rule` and `delete`. The edits follow the same rules as the
+  `gregale flag` commands. The plan shows each edit's summary and every changed
+  flag before and after, and pins the configuration version for 15 minutes.
+- `gregale_plan_flag_rollback` reviews restoring an earlier `version`.
+- `gregale_apply_flag_change` publishes a plan. A configuration that changed
+  since the plan is refused as `plan_stale`; review a new plan. Retry the same
+  `plan_id` after an uncertain response.
+- `gregale_kill_flag` kills one flag on the latest configuration at once:
+  every evaluation serves the fallback in the application's code. It needs no
+  plan and no approval, and is idempotent. Revive the flag with a reviewed
+  `revive` change.
+
+Flag publishes, rollbacks and rollout promotions by an agent connection ask a
+person first ([approvals](#approve-an-agents-risky-actions)); the kill switch
+does not.
+
+## Run a command in the app
+
+`gregale_plan_run_command` (toolset `operate`) reviews one non-interactive
+command for `app`: `command` as an argv array, or `shell` as one line run by
+`/bin/sh -c`, with `timeout_seconds` (1–900, default 120) and
+`max_output_bytes` (1024–262144, default 65536). The command runs once in a
+fresh task VM from the app's live default deployment, with its variables and
+secrets, never in a serving instance. Apply the plan with
+`gregale_apply_operation`; a retried apply never starts a second command. On a
+production app an agent connection asks a person first.
+
+`gregale_get_command_run` returns the status, exit code and the stdout and
+stderr tails, waiting up to `wait_seconds` (0–45) for the command to finish.
+Lines that look like credentials, such as an `env` dump, are replaced with
+`[redacted: <kind>]`. `gregale_cancel_command_run` asks a running command to
+stop; work it already did stays done.
+
+## Query PostgreSQL
+
+With the "Query my databases (read-only)" consent, or an agent key with the
+`postgres:query` scope, two tools in the `diagnose` toolset read a managed
+database bound to an app (ADR-20261117215858):
+
+- `gregale_get_postgres_schema` lists the tables and views of one schema
+  (default `public`) with their columns, types, NOT NULL, primary keys and
+  indexes.
+- `gregale_query_postgres` runs one statement and returns up to `max_rows`
+  rows (default 100, at most 1000, and 1 MiB) as text, with `truncated` when a
+  cap stopped reading.
+
+Both take `app`, `database` (an ID or name from `gregale_list_databases`) and
+optional `project` and `environment`; the database must be bound to the app in
+that scope. The statement runs as the database's read-only agent login, which
+reads the public schema, in a READ ONLY transaction with a 5-second timeout.
+Writes, DDL and several statements are refused with PostgreSQL's error. One
+query per database runs at a time. A query wakes a suspended database and its
+compute is billed as usage. The audit log records a hash of each statement,
+never the SQL or rows. The same API is `POST /v1/postgres/databases/{id}/query`.
 
 ## Watch one rollout
 
