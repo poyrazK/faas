@@ -1035,6 +1035,40 @@ bindings, initialized schemas, retained keys and all live readiness checks still
 use their existing owner workflows. Hosted execution remains separate. See
 [ADR 20261116172002](adr/20261116172002-hosted-task-source-review.md).
 
+### Durable hosted Task source intents
+
+After `gregale_plan_uploaded_task_tool_deploy`, use
+`gregale_prepare_uploaded_task_tool_deploy` with its exact review fingerprint as
+`expected_review_sha256`, a caller-chosen lowercase SHA256 `intent_id`, and the
+same role/app/source arguments. This separate write saves the reviewed source
+privately for fifteen minutes. It requires the existing hosted publishing/write
+consent and operator publishing gate, plus native
+`FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION=1` and Account-domain sealing.
+
+Retention accepts up to **2 MiB and 1024 entries per role**, including explicit
+directories; larger projects may be reviewed but cannot be retained by this
+preview. An account can retain two active intents, 16 MiB total ciphertext and
+256 immutable identities. Get/prepare responses contain source hashes,
+permissions, configured limits, native app baselines and a fixed expiry; they
+never return source bytes or credentials.
+
+Use `gregale_get_uploaded_task_tool_deploy` with `intent_id` after reconnect or
+bridge restart. After an uncertain prepare reply, repeat the same identity and
+expected review. This retrieves the original snapshot without consuming a
+previous archive upload again. Supplied stack/digest arguments and inline bytes
+must still match. Archive retries refer to the original stored snapshot; a new
+upload ID does not replace its bytes. Prepare a new reviewed identity for new
+source. Retries never renew retention. After expiry, metadata remains and
+`source_state` is `expired`; the identity cannot be reused. Native indexed
+cleanup removes expired live ciphertext in bounded sweeps; database outages,
+backlogs and backup retention can delay physical removal.
+
+These intents always say `ready_to_apply=false`, `bindings_verified=false`, and
+`owner_authorization_required=true`. No owner decision, credential binding,
+build, deployment, Task migration, fixture or traffic change is authorized.
+The existing uploaded planner continues to remove staged source without saving
+an intent. See [ADR 20261116183545](adr/20261116183545-hosted-task-source-intents.md).
+
 ### Durable Task release intents
 
 Local `build-tools` connections can save the reviewed Task stack before an owner

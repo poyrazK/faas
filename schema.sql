@@ -43295,6 +43295,24 @@ COMMENT ON TABLE public.honeytokens IS 'Decoy credentials that belong to no acco
 
 
 --
+-- Name: hosted_task_source_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosted_task_source_intents (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    payload jsonb NOT NULL,
+    ciphertext bytea,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT hosted_task_source_intents_check CHECK (((((payload ->> 'id'::text) = id) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND ((payload ->> 'source_state'::text) = 'retained'::text)) IS TRUE)),
+    CONSTRAINT hosted_task_source_intents_ciphertext_check CHECK (((ciphertext IS NULL) OR ((octet_length(ciphertext) >= 1) AND (octet_length(ciphertext) <= 8388608)))),
+    CONSTRAINT hosted_task_source_intents_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosted_task_source_intents_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 131072))),
+    CONSTRAINT hosted_task_source_intents_payload_check1 CHECK ((payload @> '{"ready_to_apply": false, "bindings_verified": false, "owner_authorization_required": true}'::jsonb))
+);
+
+
+--
 -- Name: hosting_automation_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -68371,6 +68389,14 @@ ALTER TABLE ONLY public.honeytokens
 
 
 --
+-- Name: hosted_task_source_intents hosted_task_source_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_source_intents
+    ADD CONSTRAINT hosted_task_source_intents_pkey PRIMARY KEY (account_id, id);
+
+
+--
 -- Name: hosting_automation_credentials hosting_automation_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81683,6 +81709,13 @@ CREATE INDEX github_webhook_deliveries_dead_idx ON public.github_webhook_deliver
 --
 
 CREATE INDEX github_webhook_deliveries_due_idx ON public.github_webhook_deliveries USING btree (next_attempt_at, received_at) WHERE (status = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
+-- Name: hosted_task_source_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosted_task_source_expiry_idx ON public.hosted_task_source_intents USING btree (expires_at) WHERE (ciphertext IS NOT NULL);
 
 
 --
@@ -103055,6 +103088,14 @@ ALTER TABLE ONLY public.github_installations
 
 ALTER TABLE ONLY public.gitlab_oauth_connections
     ADD CONSTRAINT gitlab_oauth_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosted_task_source_intents hosted_task_source_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_source_intents
+    ADD CONSTRAINT hosted_task_source_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
