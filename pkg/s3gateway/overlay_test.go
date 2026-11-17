@@ -117,6 +117,9 @@ func (s *overlayGatewayStore) AddObjectBucketOverlayTombstones(ctx context.Conte
 func (s *overlayGatewayStore) ObjectBucketOverlayTombstones(ctx context.Context, bucketID string, keys []string) (map[string]bool, error) {
 	return s.mem.ObjectBucketOverlayTombstones(ctx, bucketID, keys)
 }
+func (s *overlayGatewayStore) ObjectBucketOverlayTombstonesUnder(ctx context.Context, bucketID, prefix string) (bool, error) {
+	return s.mem.ObjectBucketOverlayTombstonesUnder(ctx, bucketID, prefix)
+}
 func (s *overlayGatewayStore) DeleteObjectBucketOverlay(ctx context.Context, bucketID string) error {
 	return s.mem.DeleteObjectBucketOverlay(ctx, bucketID)
 }
@@ -337,6 +340,21 @@ func TestGatewayOverlayListsTheMergedBuckets(t *testing.T) {
 	}
 	if keys, _ := listOverlayKeys(t, handler, url.Values{"prefix": {"dir/"}, "start-after": {"dir/c.txt"}}); !slices.Equal(keys, []string{"dir/d.txt", "dir/x.txt"}) {
 		t.Fatalf("prefix listing = %v", keys)
+	}
+	// A parent prefix whose keys the branch all deleted no longer lists.
+	for _, key := range []string{"dir/c.txt", "dir/d.txt"} {
+		if got := serveOverlay(t, handler, http.MethodDelete, "https://s3.gregale.dev/br-preview/"+key); got.Code != http.StatusNoContent {
+			t.Fatalf("delete %s = %d", key, got.Code)
+		}
+	}
+	if keys, _ := listOverlayKeys(t, handler, url.Values{"delimiter": {"/"}}); !slices.Contains(keys, "dir/") {
+		t.Fatalf("dir/ still holds the branch's own dir/x.txt: %v", keys)
+	}
+	if got := serveOverlay(t, handler, http.MethodDelete, "https://s3.gregale.dev/br-preview/dir/x.txt"); got.Code != http.StatusNoContent {
+		t.Fatalf("delete dir/x.txt = %d", got.Code)
+	}
+	if keys, _ := listOverlayKeys(t, handler, url.Values{"delimiter": {"/"}}); slices.Contains(keys, "dir/") {
+		t.Fatalf("a prefix the branch emptied still lists: %v", keys)
 	}
 	q := url.Values{"list-type": {"2"}, "continuation-token": {overlayListCursorPrefix + "!!"}}
 	if got := serveOverlay(t, handler, http.MethodGet, "https://s3.gregale.dev/br-preview?"+q.Encode()); got.Code != http.StatusBadRequest {
