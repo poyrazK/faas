@@ -67,7 +67,7 @@ type adoptionExperimentGuest struct {
 func adoptionExperimentEnv(t *testing.T) []string {
 	t.Helper()
 	var env []string
-	for _, key := range []string{"FAAS_TEST_KERNEL", "FAAS_TEST_BASE_ROOTFS", "FAAS_TEST_LAYER_ROOTFS", "FAAS_TEST_FC_VERSION", "FAAS_TEST_VMMD_BINARY", "FAAS_METAL_ACCEPTANCE_ROOT", "PATH"} {
+	for _, key := range []string{"FAAS_TEST_KERNEL", "FAAS_TEST_BASE_ROOTFS", "FAAS_TEST_LAYER_ROOTFS", "FAAS_TEST_FC_VERSION", "FAAS_TEST_VMMD_BINARY", "FAAS_METAL_ACCEPTANCE_ROOT", "FAAS_TEST_FLAT_TENANT_CGROUPS", "PATH"} {
 		if v := os.Getenv(key); v != "" {
 			env = append(env, "--setenv="+key+"="+v)
 		}
@@ -214,7 +214,16 @@ func TestMetalAdoptionExperiments(t *testing.T) {
 // channels re-bound), then destroys it through the ordinary teardown.
 // Leakcheck must be clean afterwards with no manual cleanup.
 func TestMetalAdoptionRestartKeepsTheGuest(t *testing.T) {
-	adoptionRestartKeepsTheGuest(t, false)
+	adoptionRestartKeepsTheGuest(t, false, nil, nil)
+}
+
+// TestMetalAdoptionRestartFlatSuccessorKeepsASubSliceGuest is the release
+// that turns flat_tenant_cgroups on (ADR-20261109172421 step 6.5): the guest
+// was launched in its plan's sub-slice, and a successor with the switch on
+// must still adopt it there and tear it down cleanly.
+func TestMetalAdoptionRestartFlatSuccessorKeepsASubSliceGuest(t *testing.T) {
+	adoptionRestartKeepsTheGuest(t, false,
+		[]string{"FAAS_TEST_FLAT_TENANT_CGROUPS=0"}, []string{"FAAS_TEST_FLAT_TENANT_CGROUPS=1"})
 }
 
 // TestMetalAdoptionRestartKeepsAGuestWhoseSourceWasEvicted is production
@@ -224,7 +233,7 @@ func TestMetalAdoptionRestartKeepsTheGuest(t *testing.T) {
 // the next rollout's clean-adoption check. The successor must take the
 // recorded inode through the guest's own bind and adopt it.
 func TestMetalAdoptionRestartKeepsAGuestWhoseSourceWasEvicted(t *testing.T) {
-	adoptionRestartKeepsTheGuest(t, true)
+	adoptionRestartKeepsTheGuest(t, true, nil, nil)
 }
 
 // TestMetalAdoptionRestartKillsARefusedGuest: a guest that passes the
@@ -319,7 +328,7 @@ func markAdoptionExperimentEgressCircuits(t *testing.T, dir, instance string) {
 	}
 }
 
-func adoptionRestartKeepsTheGuest(t *testing.T, evictBase bool) {
+func adoptionRestartKeepsTheGuest(t *testing.T, evictBase bool, bootEnv, successorEnv []string) {
 	if os.Getenv("FAAS_ADOPTION_EXPERIMENTS") != "1" {
 		t.Skip("set FAAS_ADOPTION_EXPERIMENTS=1 on a dedicated acceptance host")
 	}
@@ -335,7 +344,6 @@ func adoptionRestartKeepsTheGuest(t *testing.T, evictBase bool) {
 		t.Fatal(err)
 	}
 	instance := uuid.NewString()
-	var bootEnv []string
 	privateBase := ""
 	if evictBase {
 		// A private copy stands in for the cache file the cache evicts.
@@ -383,7 +391,7 @@ func adoptionRestartKeepsTheGuest(t *testing.T, evictBase bool) {
 			t.Fatalf("evict the base drive: %v", err)
 		}
 	}
-	_, out := runAdoptionExperimentUnit(t, dir, "adopt", instance, true)
+	_, out := runAdoptionExperimentUnit(t, dir, "adopt", instance, true, successorEnv...)
 	t.Logf("successor output:\n%s", out)
 	var result map[string]any
 	if err := json.Unmarshal(waitAdoptionExperimentFile(t, filepath.Join(dir, "adopt.json"), 10*time.Second), &result); err != nil {
@@ -392,6 +400,10 @@ func adoptionRestartKeepsTheGuest(t *testing.T, evictBase bool) {
 	t.Logf("successor result: %v", result)
 	if result["successor_mnt_ns_differs"] != true {
 		t.Fatalf("the successor ran in the old vmmd's mount namespace, so teardown's namespace check is not exercised: %v", result)
+	}
+	if slices.Contains(successorEnv, "FAAS_TEST_FLAT_TENANT_CGROUPS=1") &&
+		(result["flat_tenant_cgroups"] != true || strings.HasSuffix(filepath.Dir(guest.Scope), "/faas-tenant.slice")) {
+		t.Fatalf("want a sub-slice guest (%s) adopted by a flat successor: %v", guest.Scope, result)
 	}
 	if result["adopted"] != true || result["same_pid"] != true || result["api_after_adoption"] != "Running" || result["destroyed"] != true {
 		t.Fatalf("restart did not keep and then cleanly tear down the guest: %v", result)
@@ -431,6 +443,7 @@ func adoptionExperimentAdoptRole(t *testing.T, dir string) {
 		return
 	}
 	vmm := m.vmm.(*JailerVMM).WithFileConsole()
+	res["flat_tenant_cgroups"] = m.flatTenantCgroups
 	started := time.Now()
 	if _, err := m.RecoverRestartQuarantine(ctx, vmm.JailRoot()); err != nil {
 		res["error"] = "inventory: " + err.Error()
