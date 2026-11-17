@@ -25,7 +25,7 @@ installation and fetch source through Gregale.
 ```bash
 FAAS_API=https://api.gregale.dev \
 FAAS_TOKEN=$FAAS_TOKEN \
-gregale deploy --repo onebox-faas/hello --ref $(git rev-parse HEAD)
+gregale deploy --repo acme/hello --ref $(git rev-parse HEAD)
 ```
 
 This is the canonical CI shape: a runner reads `HEAD` from the
@@ -40,13 +40,13 @@ from that immutable archive, and returns the build/deployment ids.
 Output:
 
 ```
-Deployed hello from onebox-faas/hello@<sha> (build <build_id>, deployment <deployment_id>)
+Deployed hello from acme/hello@<sha> (build <build_id>, deployment <deployment_id>)
 ```
 
 ## Worked example: pin to a branch in dev
 
 ```bash
-gregale deploy --repo onebox-faas/hello --ref main
+gregale deploy --repo acme/hello --ref main
 ```
 
 Branches and tags are resolved server-side to a 40-char SHA
@@ -92,7 +92,7 @@ control plane accepts the request; omit it (the default) when the
 command should stream build progress until the app is live.
 
 ```bash
-gregale deploy --repo onebox-faas/hello --ref main --no-wait
+gregale deploy --repo acme/hello --ref main --no-wait
 ```
 
 Before Gregale creates or fetches the app, human-readable deploys print the
@@ -117,7 +117,7 @@ CI may provide an explicit logical key when several jobs can retry the same
 release:
 
 ```bash
-gregale deploy --repo onebox-faas/hello --ref "$GITHUB_SHA" \
+gregale deploy --repo acme/hello --ref "$GITHUB_SHA" \
   --idempotency-key "release-$GITHUB_SHA"
 ```
 

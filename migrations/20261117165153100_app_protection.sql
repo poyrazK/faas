@@ -1,4 +1,4 @@
--- filename: 20261117090134100_app_protection.sql
+-- filename: 20261117165153100_app_protection.sql
 -- migration-compat: expand
 
 -- +goose Up

@@ -3539,6 +3539,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Update)))))
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Close)))))
 	mux.HandleFunc("GET /v1/sandboxes/{id}/task", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).Task)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/actions/{seq}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ActionResult)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/actions/{seq}/screenshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ActionScreenshot)))))
 	// ADR-20261027090013 §11: exposed ports. Exposing or reading one port
 	// mints its preview token, so both need the write scope.
 	mux.HandleFunc("POST /v1/sandboxes/{id}/ports", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).ExposePort)))))
@@ -4846,6 +4848,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireOperatorRead(s.obsRuleCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireOperatorRead(s.obsRecordingCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireOperatorRead(s.obsInputHealth)))
+	mux.HandleFunc("GET /v1/admin/obs/runtime-builds", s.authLimited(s.requireOperatorRead(s.obsRuntimeBuilds)))
 	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
 		s.authLimited(s.requireOperatorSessionRead(s.getOperatorDataRepairHealth)))
 	// Unified incident inbox. This is a read-only correlation projection over

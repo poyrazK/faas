@@ -1375,7 +1375,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/releases#rollbacks-that-restore-the-database",
       "acceptance_test": "pkg/apid/databaseswitch/worker_test.go::TestDatabaseSwitchRestoresFencesDrainsSwitchesAndResumes",
       "parent": "postgres-restore",
       "routes": [
@@ -1550,7 +1550,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/releases#safe-changes",
       "acceptance_test": "pkg/deploydiff/render_text_test.go::TestKindOrder",
       "routes": [
         "/dashboard/apps/{}/diff",
@@ -1612,7 +1612,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/deploy-from-github#cancel",
       "acceptance_test": "pkg/state/deployment_queue_controls_pg_test.go::TestPg_CancelDeploymentTx_Pending_Happy",
       "routes": [
         "/v1/deployments/{}/reorder"
@@ -1652,7 +1652,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/deploy-from-github#deploy-tokens",
       "acceptance_test": "pkg/apid/apidserver/handlers_deploy_tokens_test.go::TestDeployTokenBearer_BoundToItsApp",
       "routes": [
         "/dashboard/apps/{}/deploy-tokens",
@@ -1674,7 +1674,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deployments",
+      "docs_url": "/docs/deploy-from-github#deployment-aliases",
       "acceptance_test": "pkg/apid/apidserver/handlers_deployment_aliases_test.go::TestDeploymentAliasesCRUD",
       "routes": [
         "/dashboard/apps/{}/deployment-aliases",
@@ -2698,7 +2698,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/gdpr",
+      "docs_url": "/docs/account#export-and-deletion",
       "acceptance_test": "pkg/apid/apidserver/handlers_account_test.go::TestDashboardAccountExport_ReturnsAttachment",
       "core": true,
       "routes": [
@@ -4033,7 +4033,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/orgs",
+      "docs_url": "/docs/account",
       "acceptance_test": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin",
       "routes": [
         "/dashboard/invitations/{}",
@@ -4570,7 +4570,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/rollouts",
       "acceptance_test": "cmd/e2e/safe_release_drill_metal_test.go::TestSafeReleaseDrillMetal",
       "settings": [
         "app.release_policy=safe",
@@ -4978,7 +4978,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/releases#releases-that-change-the-database",
       "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand",
       "routes": [
         "/v1/deployments/{}/release-outcome"
@@ -5181,7 +5181,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/deploy-from-github#revisions",
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestRollbackApp_HappyPath",
       "routes": [
         "/dashboard/apps/{}/rollback",
@@ -5791,7 +5791,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/build/source-ref",
+      "docs_url": "/docs/deploy-from-source",
       "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_IDOR",
       "routes": [
         "/v1/apps/{}/deployments/source-ref",

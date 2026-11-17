@@ -803,3 +803,95 @@ UPDATE agent_sandbox_task_calls SET delivered_at = now() WHERE sandbox_id = sqlc
 SELECT state, coalesce(task_kind, '')::text AS task_kind, coalesce(task_url, '')::text AS task_url, task_exit_code, task_output,
   coalesce(outcome_code, '')::text AS outcome_code, coalesce(outcome_message, '')::text AS outcome_message
  FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: InsertSandboxAction :one
+-- ADR-20261117065818 §2: apid records a gregale_browser action on a live
+-- session as the session's next, once per tool call.
+INSERT INTO sandbox_actions (session_id, account_id, seq, kind, args, endpoint_id, thread_id, tool_call_id, issued_at)
+SELECT sqlc.arg(session_id)::text::uuid, sqlc.arg(account_id)::text::uuid,
+  coalesce((SELECT max(a.seq) FROM sandbox_actions a WHERE a.session_id = sqlc.arg(session_id)::text::uuid), 0) + 1,
+  sqlc.arg(kind)::text, sqlc.arg(args)::jsonb, sqlc.arg(endpoint_id)::text::uuid, sqlc.arg(thread_id)::text,
+  sqlc.arg(tool_call_id)::text, sqlc.arg(issued_at)::timestamptz
+ON CONFLICT (endpoint_id, thread_id, tool_call_id) DO NOTHING
+RETURNING id::text AS id, seq;
+
+-- name: SandboxActionByCall :one
+SELECT id::text AS id, session_id::text AS session_id, seq FROM sandbox_actions
+ WHERE endpoint_id=sqlc.arg(endpoint_id)::text::uuid AND thread_id=sqlc.arg(thread_id)::text
+ AND tool_call_id=sqlc.arg(tool_call_id)::text;
+
+-- name: NextSandboxActions :many
+-- Each listed session's next pending action, for the sessions that run none:
+-- agentd sends a session one action at a time.
+SELECT DISTINCT ON (a.session_id) a.id::text AS id, a.session_id::text AS session_id, a.seq, a.kind, a.args
+ FROM sandbox_actions a
+ WHERE a.session_id = ANY(sqlc.arg(session_ids)::text[]::uuid[]) AND a.state = 'pending'
+ AND NOT EXISTS (SELECT 1 FROM sandbox_actions r WHERE r.session_id = a.session_id AND r.state = 'running')
+ ORDER BY a.session_id, a.seq;
+
+-- name: StartSandboxAction :execrows
+-- agentd starts a pending action under its session's lease.
+UPDATE sandbox_actions a SET state='running', started_at=now()
+ FROM sandbox_sessions sb
+ WHERE a.id=sqlc.arg(id)::text::uuid AND a.state='pending' AND sb.id=a.session_id
+ AND sb.lease_token=sqlc.arg(lease_token)::text;
+
+-- name: FinishSandboxAction :execrows
+-- agentd records a running action's end under its session's lease. A nil
+-- exit code is an action that never ran to its end.
+UPDATE sandbox_actions a SET state='done', exit_code=sqlc.narg(exit_code)::integer, output=sqlc.narg(output)::bytea, finished_at=now(),
+  screenshot_key=sqlc.narg(screenshot_key)::text, screenshot_bytes=sqlc.narg(screenshot_bytes)::bigint
+ FROM sandbox_sessions sb
+ WHERE a.id=sqlc.arg(id)::text::uuid AND a.state='running' AND sb.id=a.session_id
+ AND sb.lease_token=sqlc.arg(lease_token)::text;
+
+-- name: EndOpenSandboxActions :execrows
+-- Ends a session's actions that will not run to their end: on a fresh
+-- claim (a running action's VM is gone) and as the session ends.
+UPDATE sandbox_actions a SET state='done', finished_at=now()
+ FROM sandbox_sessions sb
+ WHERE a.session_id=sqlc.arg(session_id)::text::uuid AND a.state = ANY(sqlc.arg(states)::text[]) AND sb.id=a.session_id
+ AND sb.lease_token=sqlc.arg(lease_token)::text;
+
+-- name: SandboxActionThread :one
+-- ADR-20261117065818 §3: the thread a gregale_browser session answers (its
+-- first action's), its state, and how many actions it has had.
+SELECT sb.state, a.endpoint_id::text AS endpoint_id, a.thread_id,
+  (SELECT count(*) FROM sandbox_actions c WHERE c.session_id = sb.id)::integer AS actions
+ FROM sandbox_sessions sb JOIN sandbox_actions a ON a.session_id = sb.id AND a.seq = 1
+ WHERE sb.id = sqlc.arg(session_id)::text::uuid AND sb.account_id = sqlc.arg(account_id)::text::uuid;
+
+-- name: ListUndeliveredSandboxActions :many
+-- Ended gregale_browser actions whose result apid has not yet published
+-- into their thread. The mark is written after the publish, which is
+-- idempotent, so an interrupted delivery is retried and lands once.
+SELECT a.id::text AS id, a.session_id::text AS session_id, a.account_id::text AS account_id, a.seq, a.kind, a.args,
+  a.endpoint_id::text AS endpoint_id, a.thread_id, a.tool_call_id, a.issued_at, a.exit_code, a.output,
+  sb.state AS session_state, coalesce(sb.outcome_code, '')::text AS outcome_code,
+  coalesce(a.screenshot_bytes, 0)::bigint AS screenshot_bytes
+ FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
+ WHERE a.state = 'done' AND a.delivered_at IS NULL
+ ORDER BY a.finished_at, a.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: MarkSandboxActionDelivered :exec
+UPDATE sandbox_actions SET delivered_at = now() WHERE id = sqlc.arg(id)::text::uuid AND delivered_at IS NULL;
+
+-- name: GetSandboxAction :one
+-- One action of the account's session, for GET /v1/sandboxes/{id}/actions/{seq}.
+SELECT a.kind, a.args, a.state, a.exit_code, a.output, coalesce(a.screenshot_key, '')::text AS screenshot_key,
+  coalesce(a.screenshot_bytes, 0)::bigint AS screenshot_bytes
+ FROM sandbox_actions a
+ WHERE a.session_id = sqlc.arg(session_id)::text::uuid AND a.account_id = sqlc.arg(account_id)::text::uuid
+ AND a.seq = sqlc.arg(seq)::integer;
+
+-- name: ExpiredSandboxScreenshots :many
+-- ADR-20261117065818 §5: screenshots of sessions that ended at least
+-- retention_s ago, for agentd's sweep to delete.
+SELECT a.id::text AS id, a.screenshot_key::text AS screenshot_key
+ FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
+ WHERE a.screenshot_key IS NOT NULL AND sb.closed_at IS NOT NULL
+ AND sb.closed_at < now() - make_interval(secs => sqlc.arg(retention_s)::integer)
+ ORDER BY sb.closed_at LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: ClearSandboxScreenshot :exec
+UPDATE sandbox_actions SET screenshot_key = NULL WHERE id = sqlc.arg(id)::text::uuid;
