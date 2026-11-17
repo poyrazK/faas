@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func fixture(t *testing.T) (Handler, state.Account, state.App, *[]string) {
@@ -152,7 +153,7 @@ func TestPurgeBlockedAfterTheWindowClosedIsPending(t *testing.T) {
 	}
 }
 
-type bucketHeldStore struct{ *state.MemStore }
+type bucketHeldStore struct{ MemStore *state.MemStore }
 
 func (bucketHeldStore) EndAppDeleteGrace(context.Context, string) (state.App, error) {
 	return state.App{}, state.ErrConflict
@@ -162,7 +163,7 @@ func (bucketHeldStore) EndAppDeleteGrace(context.Context, string) (state.App, er
 // restorable and the owner can delete the bucket first.
 func TestPurgeRefusedByABucketLeavesTheAppRestorable(t *testing.T) {
 	handler, account, app, calls := fixture(t)
-	handler.Store = bucketHeldStore{handler.Store.(*state.MemStore)}
+	handler.Store = statetest.NewMem(bucketHeldStore{MemStore: handler.Store.(*state.MemStore)})
 	handler.PurgeNow = func(context.Context, string, string) error {
 		*calls = append(*calls, "purge")
 		return nil
