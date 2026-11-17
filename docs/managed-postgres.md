@@ -895,6 +895,11 @@ database owes only the window it was deleted in, which closed less than
 `usage.stale_after_seconds` ago. Admission waits for it only while the account's
 recorded month is at or above 90% of any monthly ceiling
 ([ADR-20261115190000](adr/20261115190000-managed-postgres-final-window-headroom-grace.md)).
+`latest_window_pending` is advisory in the same way: a live database's only
+uncollected window is the one that just closed (the provider publishes an hour's
+usage some minutes after it ends), or it was created in that window. A second
+uncollected window is `coverage_incomplete` (or `coverage_missing`) and blocks
+(amendment 1).
 Shared restores use their root's evidence. Unknown
 legacy tombstones have no confirmed terminal deadline. A disabled policy reports
 no blockers, while retaining identity and coverage metadata. Empty reasons do not

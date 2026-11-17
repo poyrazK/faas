@@ -16526,6 +16526,7 @@ type StorageObjectDeletion struct {
 	Attempts      int32
 	LastError     string
 	DecidedAt     pgtype.Timestamptz
+	Generation    pgtype.Int8
 }
 
 type StoredWorkflow struct {

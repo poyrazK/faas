@@ -3749,6 +3749,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// can flush state that belongs in the snapshot. Hook delivery is strictly
 	// best-effort: snapshot correctness and error semantics do not depend on
 	// an extension being installed or reachable.
+	timer := newCaptureTimer(nil)
 	if err := v.TriggerExtensionHook(ctx, l, string(extension.PhasePreSnapshot), nil); err != nil {
 		slog.Default().Debug("vmm: pre-snapshot extension hook unavailable", "instance", l.Instance, "err", err)
 	}
@@ -3762,14 +3763,17 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	}
 	// Read after the app's before_checkpoint hook, which may free memory.
 	guestMem, guestMemErr := v.guestMemoryStats(ctx, l)
+	timer.mark("hooks")
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
 	}
+	timer.mark("pause")
 	restoreSnapshotLimit, snapshotErr := v.widenSnapshotFence(l)
 	if snapshotErr != nil {
 		return SnapshotInfo{}, snapshotErr
 	}
+	timer.mark("fence")
 	defer func() {
 		if restoreErr := restoreSnapshotLimit(); restoreErr != nil {
 			restoreErr = fmt.Errorf("vmm: snapshot memory fence cleanup: %w", restoreErr)
@@ -3803,6 +3807,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		slog.Default().Error("vmm: create snapshot failed", "instance", l.Instance, "err", err)
 		return SnapshotInfo{}, fmt.Errorf("vmm: create snapshot: %w", err)
 	}
+	timer.mark("create")
 	// Firecracker memory and vmstate reference the exact block contents of
 	// drive1 at this pause boundary. Freeze that private writable ext4 before
 	// the guest resumes; restoring against the deployment's pristine layer can
@@ -3842,6 +3847,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	if capture != nil {
 		return v.publishNativeSnapshot(l, spec, root, frozenDrivePath, capture)
 	}
+	timer.mark("freeze_drive")
 	if spec.ResumeBeforePublish {
 		// The snapshot files are complete once Firecracker returns from
 		// /snapshot/create. Shared OCI publication may take seconds and
@@ -3849,6 +3855,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if err := v.ResumeVM(ctx, l); err != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: resume before snapshot publish: %w", err)
 		}
+		timer.mark("resume")
 	}
 
 	// #96 / ADR-025 axis 2 — after slice 3 the mem destination is
@@ -3914,6 +3921,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			return SnapshotInfo{}, fmt.Errorf("vmm: export mem: %w", err)
 		}
 	}
+	timer.mark("export_mem")
 	// Vmstate publication branches on VMStateStorageKey exactly like mem
 	// does on StorageKey. Same predicate shape (key + non-nil storage);
 	// the value selector is the new field's emptiness, not storage nil,
@@ -3949,6 +3957,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			return SnapshotInfo{}, fmt.Errorf("vmm: export vmstate: %w", err)
 		}
 	}
+	timer.mark("publish_vmstate")
 
 	if spec.StorageKey != "" && store != nil && !memPublishedLocally {
 		// nolint:forbidigo // memTmpPath is a vmmd-allocated tmp under
@@ -3965,6 +3974,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			_ = f.Close()
 		}
 	}
+	timer.mark("publish_mem")
 
 	if driveKey != "" {
 		// nolint:forbidigo // frozenDrivePath is a vmmd-created immutable clone.
@@ -3980,6 +3990,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			return SnapshotInfo{}, fmt.Errorf("vmm: close snapshot private drive: %w", cerr)
 		}
 	}
+	timer.mark("publish_drive")
 
 	// Logical snapshot lengths are required for Firecracker compatibility,
 	// but they are not the disk footprint of a sparse memory image. Resolve
@@ -3998,7 +4009,9 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	if driveKey != "" {
 		storedBytes += snapshotDriveStoredBytes(driveWritten, publishedPath(driveKey, frozenDrivePath), driveBytes)
 	}
+	timer.mark("measure")
 	logSnapshotMemory(l.Instance, memBytes, memContent, storedBytes, guestMem, guestMemErr)
+	logSnapshotCaptureTiming(l.Instance, spec.StorageKey, spec.ResumeBeforePublish, memBytes, driveWritten, timer)
 
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
 	// warm-tier capture keeps the VM paused until the engine's

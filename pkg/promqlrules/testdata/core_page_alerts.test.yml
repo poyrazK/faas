@@ -340,6 +340,52 @@ tests:
               description: "schedd has callers giving up while waiting for a pool connection. Compare <daemon>_db_pool_conns against <daemon>_db_pool_max_conns: at the cap, the daemon's DaemonMaxConnections entry is too small for its concurrency; below the cap, connections are being held too long by a slow query or a leaked transaction."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
 
+  # ADR-20261023104734 step 3: a refused statement pages at once, per pool;
+  # apid's two pools stay apart (the rc.319 label collision).
+  - interval: 30s
+    name: "statements refused for missing privileges page per pool"
+    input_series:
+      - series: 'apid_db_permission_denied_total{job="apid",instance="127.0.0.1:9101"}'
+        values: '0x10 1x30'
+      - series: 'apid_background_db_permission_denied_total{job="apid",instance="127.0.0.1:9101"}'
+        values: '0x10 3x30'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: FaasDBPermissionDenied
+        exp_alerts:
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              pool: "apid"
+              severity: "page"
+              component: "platform"
+              family: "db_pool"
+            exp_annotations:
+              summary: "Postgres refused apid's statements for missing privileges (apid pool)"
+              description: "apid ran statements its database role is not granted (SQLSTATE 42501) in the last 10 minutes. If this daemon's grants were just narrowed, roll back by restoring the role's faas_runtime membership; otherwise grant the missing table and verb. The Postgres log names the statement and role."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPermissionDenied.md"
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              pool: "apid_background"
+              severity: "page"
+              component: "platform"
+              family: "db_pool"
+            exp_annotations:
+              summary: "Postgres refused apid's statements for missing privileges (apid_background pool)"
+              description: "apid ran statements its database role is not granted (SQLSTATE 42501) in the last 10 minutes. If this daemon's grants were just narrowed, roll back by restoring the role's faas_runtime membership; otherwise grant the missing table and verb. The Postgres log names the statement and role."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPermissionDenied.md"
+
+  - interval: 30s
+    name: "a flat permission-denied counter stays quiet"
+    input_series:
+      - series: 'schedd_db_permission_denied_total{job="schedd",instance="127.0.0.1:9103"}'
+        values: '2x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasDBPermissionDenied
+        exp_alerts: []
+
   - interval: 30s
     name: "a flat canceled-acquire counter stays quiet"
     input_series:

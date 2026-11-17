@@ -273,9 +273,9 @@ func TestGatewayAsOfOverlayListsTheBranchPoint(t *testing.T) {
 				t.Fatalf("page size %d max-keys=%s listing = %v, want %v", pageSize, limit, keys, want)
 			}
 		}
-		// later/ holds only a key written after the branch point; the
-		// provider still reports the prefix (a documented limit).
-		delimited := []string{"a.txt", "d.txt", "dir/", "later/", "own.txt"}
+		// later/ holds only a key written after the branch point, so the
+		// branch does not list it although the provider reports it.
+		delimited := []string{"a.txt", "d.txt", "dir/", "own.txt"}
 		for _, limit := range []string{"1", "1000"} {
 			keys, _ := listOverlayKeys(t, f.handler, url.Values{"delimiter": {"/"}, "max-keys": {limit}})
 			sort.Strings(keys)

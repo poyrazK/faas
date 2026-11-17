@@ -19,12 +19,12 @@ const isWorkflowCall = (headers) => {
 const isWorkflowFunction = process.env.FAAS_FUNCTION_WORKFLOW === "1";
 function emitWorkflowFunctionPlainCall(out) {
   emitWhole(out, 404, { "content-type": "application/problem+json" }, Buffer.from(JSON.stringify({
-    type: "https://gregale.dev/docs/errors#workflow_function_not_invocable",
+    type: "https://gregale.dev/docs/error-codes#workflow_function_not_invocable",
     title: "Workflow function",
     status: 404,
     code: "workflow_function_not_invocable",
     detail: "this function is a workflow: start a run with functions.<name>.start() or gregale workflow run",
-    docs_url: "https://gregale.dev/docs/errors#workflow_function_not_invocable",
+    docs_url: "https://gregale.dev/docs/error-codes#workflow_function_not_invocable",
   })));
 }
 let workflowSDK;
@@ -62,7 +62,7 @@ async function serveWorkflowCall(env, out) {
   } catch (err) {
     workflowSDK = undefined;
     emitWhole(out, 500, { "content-type": "application/problem+json" }, Buffer.from(JSON.stringify({
-      type: "https://gregale.dev/docs/errors#workflow_sdk_missing", title: "Workflow SDK missing", status: 500,
+      type: "https://gregale.dev/docs/error-codes#workflow_sdk_missing", title: "Workflow SDK missing", status: 500,
       code: "workflow_sdk_missing", detail: "a workflow function needs @gregale/sdk-node in its dependencies",
     })));
     return;

@@ -445,6 +445,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_watch_rollout` | Bounded combined build, scoped health and native rollout observation for one exact deployment. |
 | `gregale_get_rollout` | Exact deployment lifecycle and service handoff barriers; worker completion limits are explicit. |
 | `gregale_wait_deployment` | Bounded deployment polling with terminal and pending results. |
+| `gregale_verify_application_response` | Explicit owner-authorized GET against one exact live deployment, including private apps. Requires deploy access; returns bounded application response evidence, not a public-access verdict. |
 | `gregale_plan_local_deploy` | Local connections only. Review deploying a project directory as one app through the CLI; fingerprints the files and pins the app's release state. |
 | `gregale_plan_env_change` | Local connections only. Review setting non-secret variables on an app's default scope; credential-shaped values are refused. |
 | `gregale_plan_domain`, `gregale_plan_bucket`, `gregale_plan_postgres`, `gregale_plan_cron` | Local connections only. Review attaching a custom domain, a bucket, a managed PostgreSQL database or a cron through the CLI. |
@@ -1076,8 +1077,8 @@ retained review, including its source digests, permissions, native app pins,
 `intent_sha256`, `review_sha256` and original `expires_at`:
 
 ```sh
-gregale mcp server tasks source-review get --id "$INTENT_ID" --json
-gregale mcp server tasks source-review approve --id "$INTENT_ID" \
+gregale mcp server tasks audit get --id "$INTENT_ID" --json
+gregale mcp server tasks audit approve --id "$INTENT_ID" \
   --intent-sha256 "$INTENT_SHA256" --review-sha256 "$REVIEW_SHA256" --json
 ```
 
@@ -3945,7 +3946,8 @@ Add `--allow-writes` to the agent's subprocess arguments to expose
 `gregale_apply_deploy`, `gregale_promote_deployment`, `gregale_apply_rollback`,
 `gregale_apply_environment_promotion`, `gregale_apply_environment_rollback`,
 `gregale_apply_workload_rollout`, `gregale_apply_service_abort`,
-`gregale_apply_route_budgets`, `gregale_apply_regression_action`, the secret
+`gregale_apply_route_budgets`, `gregale_apply_regression_action`, the active
+`gregale_verify_application_response` check, the secret
 request pair `gregale_request_secret` and `gregale_get_secret_request`, and, on
 local connections, `gregale_apply_local_deploy`, `gregale_apply_env_change`
 and `gregale_apply_provision`.
@@ -4303,6 +4305,47 @@ Run `make test-mcp-agent-workflows` to evaluate discovery, schema conformance,
 conflict replanning, lost-response recovery, partial configuration recovery,
 post-write verification and authorization revocation. These evaluations use a deterministic MCP
 client and native API fixtures; they do not measure a language model's reasoning.
+
+### Verify an application response
+
+Once a deployment is live, call `gregale_verify_application_response` with its
+exact accepted `deployment_id`, `app`, and an app-relative `path` (default `/`).
+For a named environment, also supply the `project` and `environment` slugs. The
+bridge resolves and pins their current catalog UUIDs under the connection's
+app/environment consent. Revisions, aliases and external URLs are rejected.
+
+```json
+{
+  "app": "my-api",
+  "deployment_id": "22222222-2222-4222-8222-222222222222",
+  "path": "/ready"
+}
+```
+
+This tool is in `core` and `release` on local and hosted connections with writes
+enabled. It requires native `deploy:write` and write consent for the selected
+environment because it can wake the app, execute application code and incur
+costs. It executes one GET through the same native response-check API as
+`gregale release verify`; no CLI installation is required. It does not deploy,
+promote, follow redirects or retry the GET automatically. Passive
+`gregale_verify_plan` retains its readiness-only meaning.
+
+The result includes `schema_version: 1`, the exact app/deployment/environment
+and running-instance identities, `path`, `checked_at`, `http_status`, `body`
+(at most 4 KB, with known credentials redacted), and `body_truncated`. Only an
+application 2xx sets `verified: true`. A redirect, 401 or 500 is valid response
+evidence with `verified: false`, rather than a failed tool call. API failures,
+unsupported checks, identity mismatches and revoked access are tool errors;
+they never fall back to the public URL or another deployment. A timed-out or
+cancelled check may already have executed the GET; inspect before deciding to
+run another check.
+
+`public_access_verified` is always false. This owner-authorized check works for
+private apps but establishes neither anonymous public reachability nor the
+application's own authentication. Account credentials are not forwarded to the
+app. Treat response bodies as untrusted application data, never instructions.
+Response evidence is ephemeral; it is not added to a plan's passive verification
+status or retained in the bridge's plan journal.
 
 ## Reviewed Git source deployments
 

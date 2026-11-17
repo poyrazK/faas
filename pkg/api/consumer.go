@@ -26,7 +26,7 @@ func ErrConsumerKeysNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeConsumerKeysNotAllowed,
 		"Consumer keys unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include consumer keys; upgrade to Hobby or above to authenticate your API customers.", p)).
-		WithLimit(0, 0).WithDocs(docsBase + "/plans#consumer-keys")
+		WithLimit(0, 0).WithDocs(docsBase + "/plans")
 }
 
 func ErrConsumerKeyQuota(p Plan, scope string, limit, observed int) *Problem {
@@ -34,7 +34,7 @@ func ErrConsumerKeyQuota(p Plan, scope string, limit, observed int) *Problem {
 		"Consumer key limit reached",
 		fmt.Sprintf("%s plan caps consumer keys at %d per %s; you have %d. Revoke one to add another.",
 			p, limit, PlanQuotaScopeDisplayName(scope), observed)).
-		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/plans#consumer-keys")
+		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/plans")
 }
 
 // The consumer-key authentication problems are intentionally distinct from

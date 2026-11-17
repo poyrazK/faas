@@ -43,6 +43,31 @@ func (s *appSecretCredentialSink) VerifyCutoverCredential(ctx context.Context, c
 	return s.VerifyCredential(ctx, binding, member.Sealed, target)
 }
 
+// CanVerifyCutoverCredentials reports whether a credential sealed now can be
+// verified during a database switch: secretd's verifier is configured, or
+// apid holds the identity for the key new credentials are sealed to. On
+// production 2026-11-17 runtime credentials were sealed to secretd's runtime
+// domain while neither held, and every switch retried verification for
+// 30 minutes before failing.
+func (s *appSecretCredentialSink) CanVerifyCutoverCredentials() bool {
+	if s.cutoverProbe != nil {
+		return true
+	}
+	if s.recipient == nil || s.identities == nil {
+		return false
+	}
+	recipient := s.recipient()
+	if recipient == nil {
+		return false
+	}
+	for _, id := range s.identities() {
+		if id != nil && id.Recipient().String() == recipient.String() {
+			return true
+		}
+	}
+	return false
+}
+
 func newAppSecretCredentialSink(store managedPostgresSecretStore, recipient func() *age.X25519Recipient, hmacKey func() []byte) (*appSecretCredentialSink, error) {
 	delivery, err := credentialdelivery.New(store, recipient, hmacKey)
 	if err != nil {

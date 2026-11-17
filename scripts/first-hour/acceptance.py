@@ -40,10 +40,10 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     if any((out / name).exists() for name in ("go-test.json", "metadata.json", "baseline.json")):
         parser.error("--out already contains evidence; choose a fresh run directory")
-    # Per-command development flags match the journey package's stdlib-only
-    # dependency graph; do not change the machine's persistent Go environment.
+    # Defaults precede existing per-package compile/memory guards so those
+    # keep their precedence. Never change the persistent Go environment.
     goflags = subprocess.run(["go", "env", "GOFLAGS"], capture_output=True, text=True, check=True).stdout.strip()
-    env["GOFLAGS"] = goflags + " -trimpath -gcflags=all=-dwarf=false"
+    env["GOFLAGS"] = "-trimpath -gcflags=all=-dwarf=false " + goflags
     version = subprocess.run([str(cli), "version"], capture_output=True, text=True, check=True).stdout.strip()
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip())

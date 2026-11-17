@@ -25200,7 +25200,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25329,7 +25329,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25422,7 +25422,7 @@ paths:
                 status: 402
                 code: "plan_app_usage_summary_not_allowed"
                 detail: "the free plan does not include the per-app usage summary; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#usage-summary"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -27397,7 +27397,7 @@ paths:
                 status: 402
                 code: "plan_app_errors_not_allowed"
                 detail: "the free plan does not include per-app errors; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#app-errors"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -92573,7 +92573,7 @@ components:
         blocking: { type: boolean, description: This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled. }
         reasons:
           type: array
-          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending] }
+          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending, latest_window_pending] }
         collected_window_seconds: { type: integer, format: int64, minimum: 0 }
         required_from: { type: [string, "null"], format: date-time }
         required_until: { type: [string, "null"], format: date-time }

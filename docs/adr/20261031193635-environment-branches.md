@@ -327,10 +327,21 @@ it finds nothing.
   parent version that was current at T. The gateway serves no other consistency, so a
   row it does not know reads as an empty branch.
 
-**Known limits.** A parent common prefix whose keys the branch deleted still lists, and
-under `as_of` so does one that holds only keys written after T. apid's object API
-(console and CLI object commands) shows the branch bucket's own objects only. Overlay
-data with the parent's objects is served by the gateway alone.
+**Known limits.** apid's object API (console and CLI object commands) shows the branch
+bucket's own objects only. Overlay data with the parent's objects is served by the
+gateway alone.
+
+**Amendment 2026-11-17: emptied prefixes.** A delimited listing showed a parent common
+prefix whose keys the branch had all deleted and, under `as_of`, one holding only keys
+written after T. The gateway now checks each parent prefix the branch does not list
+itself before listing it: under `live_parent` a prefix with no tombstone under it lists
+at once (the parent listed it, so it holds a current object); otherwise one parent
+listing of the prefix (at T for `as_of`) must hold a key the branch has not deleted. A
+prefix that listing cannot decide (more than one provider listing of tombstoned or
+later keys) still lists. One page checks at most 16 prefixes and then ends with a
+continuation token, as a page cut at a provider horizon does. Tombstone lookups are
+batched, so a source listing longer than one lookup (an `as_of` listing reads whole
+provider pages) no longer answers 503.
 
 **Amendment 2026-11-14: `as_of` and copy-through.**
 - *Which consistency.* apid picks it when it records the overlay: `as_of` when the

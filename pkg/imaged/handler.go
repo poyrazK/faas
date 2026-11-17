@@ -1709,6 +1709,10 @@ func isDeploymentIDSafe(id string) bool {
 // Advisory listeners may log and ignore the error, while the durable replay
 // worker passes it through to its retry path.
 func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) error {
+	return settleEarlyDependencyStop(h.handleNotification(ctx, n))
+}
+
+func (h *Handler) handleNotification(ctx context.Context, n db.Notification) error {
 	switch n.Channel {
 	case db.NotifyDeploymentChanged, db.NotifyEnvironmentWorkloadImage:
 		var p deploymentChangedPayload
@@ -4771,6 +4775,11 @@ func hostingPhaseForStage(stage state.StageName) string {
 }
 
 func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, to state.StageName, status state.DeploymentStatus, errMsg string, hostingFlow ...string) error {
+	if dependencyCheckedStage(to) {
+		if err := h.failIfDependencyFailed(ctx, depID); err != nil {
+			return err
+		}
+	}
 	if err := h.transition(ctx, depID, status, errMsg); err != nil {
 		return err
 	}

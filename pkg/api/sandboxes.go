@@ -409,7 +409,7 @@ type SandboxList struct {
 // ErrSandboxUnsupported refuses a request field sessions do not offer yet.
 func ErrSandboxUnsupported(field, detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeSandboxUnsupported, "Not supported for sandbox sessions",
-		fmt.Sprintf("%s: %s", field, detail)).WithDocs(docsBase + "/plans#agents")
+		fmt.Sprintf("%s: %s", field, detail)).WithDocs(docsBase + "/plans")
 }
 
 // IsSandboxDataPath reports a sandbox session's data-plane path
@@ -538,7 +538,7 @@ func NormalizeSandboxPreviewDomain(raw string) (string, error) {
 func ErrSandboxPublicPreviewGated(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated, "Plan doesn't include public previews",
 		fmt.Sprintf("the %s plan exposes sandbox ports privately only, behind a preview token; upgrade to Pro or higher for public previews.", p)).
-		WithDocs(docsBase + "/plans#agents")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrSandboxPreviewsOff answers port routes on an installation without a
