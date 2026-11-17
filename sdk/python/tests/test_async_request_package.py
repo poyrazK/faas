@@ -41,7 +41,7 @@ import faas_sdk.preview as preview
 from faas_sdk.preview.event_contract import EventContract
 assert preview.EventContract is EventContract
 assert EventContract({"version":1,"type":"example.event","data":{"type":"string"}}).input("hello") == "hello"
-for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore", "EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction", "PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PostgresPipelineToolStore", "PIPELINE_TOOL_SCHEMA", "StripeWebhookAdapter", "StripeWebhookDelivery", "StripeWebhookStage", "StripeWebhookIgnore", "STRIPE_WEBHOOK_SCHEMA", "stripe_delivery_context_from_headers", "PipelineSchedule", "PipelineScheduleClient", "PipelineSchedulePreview", "ScheduledPipelineRun"):
+for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore", "EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction", "PipelineCompensation", "CompensationMCP", "CompensationPlan", "CompensationCommand", "PIPELINE_COMPENSATION_SCHEMA", "PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PostgresPipelineToolStore", "PIPELINE_TOOL_SCHEMA", "StripeWebhookAdapter", "StripeWebhookDelivery", "StripeWebhookStage", "StripeWebhookIgnore", "STRIPE_WEBHOOK_SCHEMA", "stripe_delivery_context_from_headers", "PipelineSchedule", "PipelineScheduleClient", "PipelineSchedulePreview", "ScheduledPipelineRun"):
     assert hasattr(preview,name) and not hasattr(faas_sdk,name)
 for name in ("BuildWaitOptions", "DeploymentWaitOptions", "WaiterError", "WaiterFailureCode", "WaiterOptions", "WaiterProgress", "WaiterTimeoutError", "SourceUploadCheckpoint", "SourceUploadOptions", "SourceUploadError", "save_source_upload_checkpoint", "load_source_upload_checkpoint"):
     assert getattr(preview, name) is getattr(faas_sdk, name)
@@ -213,6 +213,20 @@ async def typed_pipeline_tool(tool:PipelineTool[str,int,str],request:PipelineToo
     if request.input is not None:
         assert_type(request.input,str)
     await PipelineToolMCP(tool).call("tool",{},"alice",timeout=1)
+from faas_sdk import JobContext
+from faas_sdk.preview import PipelineCompensation,CompensationPlan,CompensationResult,CompensationOutcome,CompensationCommand,CompensationMCP,CompensationTask,CompensationContext
+async def typed_compensation(service:PipelineCompensation[str,int,str],task:CompensationTask,context:JobContext,pool:EventOutboxPool)->None:
+    plan=await service.plan("source","alice",timeout=1)
+    assert_type(plan,CompensationPlan[str])
+    assert_type(plan.commands[0].input,str)
+    assert_type(await service.tool.result("attempt","alice",timeout=1),CompensationResult[int])
+    async def authorize(tx:EventOutboxTransaction,plan:CompensationPlan[str],command:CompensationCommand[str])->bool:
+        return True
+    async def apply(tx:EventOutboxTransaction,value:str,ctx:CompensationContext)->CompensationOutcome[int]:
+        return {"state":"compensated","result":1}
+    handler=service.handler(pool=pool,authorize=authorize,apply=apply)
+    assert_type(await handler(task,context),CompensationOutcome[int])
+    await CompensationMCP(service).call("tool",{},"alice",timeout=1)
 async def typed_event_pipeline(client:EventPipeline[str,str,int,str],delivery:EventPipelineDelivery)->None:
     assert_type(await client.handle(delivery,"alice",timeout=1),EventPipelineOutcome)
     assert_type(await client.inspect(delivery,"alice",timeout=1),EventPipelineOutcome | None)
@@ -378,6 +392,11 @@ from faas_sdk.preview import PipelineTool
 async def invalid_pipeline_tool(tool:PipelineTool[str,int,str])->None:
     await tool.start(7,"request","alice",timeout=1)
     await tool.cancel("request",7,timeout=1)
+from faas_sdk.preview import PipelineCompensation,CompensationCommand,CompensationOutcome
+async def invalid_compensation(service:PipelineCompensation[str,int,str])->None:
+    await service.plan("source",7,timeout=1)
+    command:CompensationCommand[str]=CompensationCommand(id="one",effect_id="one",description="undo",input=7)
+    outcome:CompensationOutcome[int]={"state":"compensated","result":"bad"}
 def check(options: RequestOptions, info: ResponseInfo) -> None:
     options.timeout = 2
     info.status = 200

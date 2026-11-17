@@ -2443,3 +2443,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261116192409: Typed scheduled pipelines](20261116192409-sdk-typed-scheduled-pipelines.md) — generated native triggers, pinned owner-authorized calendar/history/replay clients and precise cross-language run attachment.
 - [ADR-20261116203545: Typed Stripe webhook pipelines](20261116203545-sdk-typed-stripe-webhook-pipelines.md) — native verified delivery, shared atomic business/event handoff receipts and mixed SDK paid CSV recovery.
 - [ADR-20261117065811: Typed pipeline tools](20261117065811-sdk-typed-pipeline-tools.md) — portable durable starts, current authorization, human review views and a shared MCP adapter.
+- [ADR-20261117085348: Reviewed SQL pipeline compensation](20261117085348-sdk-pipeline-compensations.md) — immutable source-bound plans, separate approved recovery attempts and atomic typed effect receipts across Node/Python.

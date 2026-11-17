@@ -61,6 +61,7 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(sourceSdk.createEventOutbox,undefined);assert.equal(publicBrowser.createEventPublisher,undefined);
     assert.ok(previewSdk.eventOutboxSchema.includes('gregale_event_outbox'));
     assert.equal(typeof previewSdk.createStripeWebhookAdapter,'function');assert.equal(typeof previewSdk.stripeDeliveryContextFromHeaders,'function');
+    assert.equal(typeof previewSdk.definePipelineCompensation,'function');assert.equal(typeof previewSdk.createCompensationMCP,'function');assert.ok(previewSdk.pipelineCompensationSchema.includes('gregale_compensation_effects'));assert.equal(sourceSdk.definePipelineCompensation,undefined);assert.equal(fileBrowser.createCompensationMCP,undefined);
     assert.equal(typeof previewSdk.definePipelineTool,'function');assert.equal(typeof previewSdk.createPipelineToolMCP,'function');assert.ok(previewSdk.pipelineToolSchema.includes('gregale_pipeline_tool_starts'));assert.equal(sourceSdk.definePipelineTool,undefined);assert.equal(fileBrowser.createPipelineToolMCP,undefined);
     assert.ok(previewSdk.stripeWebhookSchema.includes('gregale_stripe_webhook_receipts'));assert.equal(sourceSdk.createStripeWebhookAdapter,undefined);assert.equal(fileBrowser.createStripeWebhookAdapter,undefined);
     assert.equal(typeof previewSdk.definePipelineSchedule,'function');assert.equal(typeof previewSdk.createPipelineScheduleClient,'function');assert.equal(sourceSdk.definePipelineSchedule,undefined);assert.equal(publicBrowser.createPipelineScheduleClient,undefined);
@@ -255,6 +256,19 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
       // @ts-expect-error application access context is preserved
       pipelineTool.cancel('request',7,{timeoutMs:1000});
       const adapter=createPipelineToolMCP(pipelineTool);await adapter.call('tool',{}, {id:'alice'},{timeoutMs:1000});
+    }
+    import {definePipelineCompensation,createCompensationMCP,type PipelineCompensationDefinition,type CompensationResult,type CompensationPlan} from '@gregale/sdk-node/preview';
+    declare const recoveryDefinition:PipelineCompensationDefinition<string,number,{id:string}>;
+    const recovery=definePipelineCompensation(jobContract,recoveryDefinition);
+    async function useRecovery():Promise<void>{
+      const plan:CompensationPlan<string>=await recovery.plan('source',{id:'alice'},{timeoutMs:1000});
+      const input:string=plan.commands[0]!.input;void input;
+      const output:CompensationResult<number>=await recovery.tool.result('attempt',{id:'alice'},{timeoutMs:1000});const result:number=output.results[0]!.outcome.result;void result;
+      const adapter=createCompensationMCP(recovery);await adapter.call('tool',{}, {id:'alice'},{timeoutMs:1000});
+      // @ts-expect-error recovery principals retain application types
+      recovery.plan('source',7,{timeoutMs:1000});
+      // @ts-expect-error declared compensation commands retain their business input type
+      const wrong:import('@gregale/sdk-node/preview').CompensationCommand<string>={id:'one',effect_id:'one',description:'undo',input:7};void wrong;
     }
     const client: GregaleClient = createClient('https://api.test');
     const typedJob=client.jobs.defineJob(jobContract);

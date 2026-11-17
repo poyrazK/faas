@@ -3892,3 +3892,12 @@ verified results. The MCP adapter registers with an existing authenticated host;
 Node and Python share receipt/reconciliation semantics. See
 [setup and recovery](../../docs/sdk-pipeline-tools.md) and the
 [CSV agent flow](../../examples/sdk-csv-jobs/README.md#agent-tools-for-reviewed-imports).
+
+`PipelineCompensation[UndoInput, UndoOutput, Access]`, `CompensationMCP` and
+`PostgresCompensationStore` in `faas_sdk.preview` prepare immutable typed undo
+commands from verified failed-pipeline evidence. `compensation_contracts` derives
+worker/root/review contracts for a separate, human-approved recovery workflow.
+SQL handlers atomically commit business changes and typed effect receipts, with
+current authorization and application row-version guards. See
+[setup, limits and recovery](../../docs/sdk-pipeline-compensations.md) and the
+[CSV cleanup journey](../../examples/sdk-csv-jobs/README.md#reviewed-cleanup-after-report-failure).

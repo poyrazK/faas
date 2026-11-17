@@ -4968,3 +4968,13 @@ start receipts, current authorization, typed results and human-review status.
 handling for an existing MCP host. Node/Python share PostgreSQL receipts and
 verified run reconciliation. See [setup and recovery](../../docs/sdk-pipeline-tools.md)
 and the [CSV agent flow](../../examples/sdk-csv-jobs/README.md#agent-tools-for-reviewed-imports).
+
+## Reviewed pipeline compensation (preview)
+
+`definePipelineCompensation` prepares immutable typed undo commands from verified
+failed-pipeline evidence and runs them in a separate, human-approved workflow.
+`compensationContracts` derives the worker/root/review contracts; SQL handlers
+atomically commit business changes and typed effect receipts. `createCompensationMCP`
+adds planning to the durable tool lifecycle. Current authorization and application
+row-version guards preserve later edits. See [setup, limits and recovery](../../docs/sdk-pipeline-compensations.md)
+and the [CSV cleanup journey](../../examples/sdk-csv-jobs/README.md#reviewed-cleanup-after-report-failure).

@@ -210,6 +210,10 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "_pipeline_compensation_protocol.py",
+    "pipeline_compensation_state.py",
+    "pipeline_compensations.py",
+    "pipeline_compensation_mcp.py",
     "_pipeline_tool_protocol.py",
     "pipeline_tool_state.py",
     "pipeline_tools.py",
@@ -1312,6 +1316,10 @@ from ._pipeline_tool_protocol import PIPELINE_TOOL_SCHEMA
 from .pipeline_tool_state import PipelineToolAction, PipelineToolActor, PipelineToolError, PipelineToolReceipt, PipelineToolStore, PostgresPipelineToolStore
 from .pipeline_tools import PipelineTool, PipelineToolRequest, PipelineToolStart, PipelineToolStatus, PipelineToolApproval
 from .pipeline_tool_mcp import PipelineToolMCP, PipelineToolMCPError
+from ._pipeline_compensation_protocol import PIPELINE_COMPENSATION_SCHEMA
+from .pipeline_compensation_state import CompensationActor, CompensationAction, CompensationCommand, CompensationError, CompensationEffect, CompensationInput, CompensationOutcome, CompensationTask, CompensationResult, CompensationPlan, CompensationStore, PostgresCompensationStore, compensation_contracts
+from .pipeline_compensations import PipelineCompensation, CompensationSource, CompensationSourceStage, CompensationContext
+from .pipeline_compensation_mcp import CompensationMCP
 from .pipeline_schedules import PipelineScheduleClient, PipelineScheduleAction, ScheduledPipelineRun
 from .pipeline_schedule_state import PipelineSchedule, PipelineScheduleError, PipelineScheduleInfo, PipelineScheduleHistory, PipelineScheduleInspection, PipelineSchedulePreview, PipelineScheduleOccurrence, PipelineScheduleReplayOutcome, PipelineScheduleFire, PipelineScheduleDST, PipelineScheduleCatchUp
 from .stripe_webhooks import StripeWebhookAdapter, StripeWebhookAction
@@ -1859,6 +1867,26 @@ from .event_acknowledgment_intent_recovery_pass import (
 )
 
 __all__ = (
+    "PIPELINE_COMPENSATION_SCHEMA",
+    "CompensationActor",
+    "CompensationAction",
+    "CompensationCommand",
+    "CompensationError",
+    "CompensationEffect",
+    "CompensationInput",
+    "CompensationOutcome",
+    "CompensationTask",
+    "CompensationResult",
+    "CompensationPlan",
+    "CompensationStore",
+    "PostgresCompensationStore",
+    "compensation_contracts",
+    "PipelineCompensation",
+    "CompensationSource",
+    "CompensationSourceStage",
+    "CompensationContext",
+    "CompensationMCP",
+
     'PIPELINE_TOOL_SCHEMA',
     'PipelineToolAction',
     'PipelineToolActor',

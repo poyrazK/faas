@@ -605,3 +605,46 @@ This uses real PostgreSQL and Chrome with native API and MCP transport fixtures.
 It is not a deployed MCP publication or model-provider integration. See
 [the complete tool contract](../../docs/sdk-pipeline-tools.md), especially receipt
 retention, total deadlines, explicit cancellation and unresolved-start recovery.
+
+## Reviewed cleanup after report failure
+
+[compensation.mjs](compensation.mjs) and [compensation.py](compensation.py) define
+the same `csv_cleanup` recovery. The original pipeline validates and imports
+rows, then its report stage fails. Recovery verifies those source receipts and
+builds immutable cleanup commands in reverse import order. Expected fingerprints
+come from the original validated rows, so a later user edit cannot become an
+approved deletion merely because planning observes it.
+
+Install [pipeline-compensations.sql](../../sdk/request-contracts/pipeline-compensations.sql)
+alongside the existing Job, pipeline, gate and tool schemas. The local fixture
+adds `sdk_csv_recovery_owners` for current ownership/access and
+`sdk_csv_recovery_audit` for committed deletes. Register the derived worker
+contract from [compensation-contract.json](compensation-contract.json), then run
+[compensation-worker.mjs](compensation-worker.mjs) or
+[compensation-worker.py](compensation-worker.py) as its task entry. Publish the
+returned definition as the native `recover-csv-cleanup` code workflow. Its drivers
+retain native workflow gateway checks; backend tokens stay in the application.
+
+After building Node and installing Python with `psycopg[binary]`, run from the
+repository root using the same PostgreSQL/Chrome dependencies as the earlier
+journeys:
+
+```sh
+GREGALE_CSV_COMPENSATION=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The fixture injects report failure after successful imports. Concurrent Node and
+Python planning returns one shared plan; another user and revoked access fail.
+A lost recovery start reply is reconciled to the exact run in Python. Chrome
+approves the plan through the authenticated human gate. The fixture then edits
+the first row before cleanup. The unchanged second row is deleted once, including
+a dropped task acknowledgement and a retry in the other language. The edited row
+survives, recovery returns `needs_review`, and both SDKs read identical effect
+receipts. `python-fixture.mjs` is a private persistent local test driver, not an
+MCP or production worker transport.
+
+This journey uses real PostgreSQL and Chrome with native control-plane and MCP
+fixtures. It does not qualify deployed publication or external-service rollback.
+See [the compensation guide](../../docs/sdk-pipeline-compensations.md) for source
+stage declarations, SQL-only callback rules, retained review stops, revisions
+and explicit new-attempt recovery.

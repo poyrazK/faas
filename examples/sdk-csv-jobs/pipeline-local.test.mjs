@@ -17,6 +17,8 @@ import {csvEventPipeline} from './pipeline-events.mjs';
 import {stageCsvImport} from './pipeline-producer.mjs';
 import {csvPipelineTool} from './pipeline-tool.mjs';
 import {paidCsvAdapter} from './paid-producer.mjs';
+import {compensationAcceptance} from './compensation-acceptance.mjs';
+import {pythonFixture} from './python-fixture.mjs';
 import {csvPipelineSchedule} from './pipeline-schedule.mjs';
 
 const exec=promisify(execFile),here=fileURLToPath(new URL('.',import.meta.url)),root=resolve(here,'../..');
@@ -25,10 +27,11 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<1000;i++){try{if(await fn())return;}catch{}await pause(20);}throw new Error('Fixture did not become ready');}
 async function stop(child){if(child.exitCode!==null)return;const done=new Promise(r=>child.once('exit',r));child.kill('SIGTERM');await done;}
 
+const compensationMode=process.env.GREGALE_CSV_COMPENSATION==='1';
 const toolMode=process.env.GREGALE_CSV_TOOL_PIPELINE==='1';
 const paid=process.env.GREGALE_CSV_STRIPE_PIPELINE==='1';
 const eventTriggered=paid||process.env.GREGALE_CSV_EVENT_PIPELINE==='1',scheduled=process.env.GREGALE_CSV_SCHEDULED_PIPELINE==='1';
-for(const reviewed of eventTriggered||scheduled||toolMode?[true]:[false,true])test(`CSV ${toolMode?'agent-tool ':paid?'Stripe-paid ':eventTriggered?'event-triggered ':scheduled?'scheduled ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered||scheduled||toolMode?600000:240000},async t=>{
+for(const reviewed of compensationMode?[false]:eventTriggered||scheduled||toolMode?[true]:[false,true])test(`CSV ${compensationMode?'compensation ':toolMode?'agent-tool ':paid?'Stripe-paid ':eventTriggered?'event-triggered ':scheduled?'scheduled ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered||scheduled||toolMode||compensationMode?600000:240000},async t=>{
   try{await access(python);await access(join(pgBin,'initdb'));}catch{t.skip('Set GREGALE_LOCAL_PYTHON and GREGALE_LOCAL_PG_BIN');return;}
   const home=await mkdtemp(join(tmpdir(),'gregale-csv-pipeline-')),cleanup=[];t.after(async()=>{try{for(const close of cleanup.reverse())await close();}finally{await rm(home,{recursive:true,force:true});}});
   await cp(here,join(home,'app'),{recursive:true,filter:p=>!p.includes('node_modules')});await symlink(join(root,'sdk/node/node_modules'),join(home,'app/node_modules'));
@@ -50,13 +53,19 @@ for(const reviewed of eventTriggered||scheduled||toolMode?[true]:[false,true])te
   if(paid){await pool.query(sdk.stripeWebhookSchema);await pool.query(await readFile(new URL('paid-schema.sql',import.meta.url),'utf8'));}
   const publications=new Map();let publishPosts=0,scheduleDefinition;const scheduledDeployment=randomUUID();
   if(scheduled)await pool.query('CREATE TABLE sdk_csv_schedule_occurrences (id uuid PRIMARY KEY, scheduled_for timestamptz UNIQUE, record jsonb NOT NULL)');
-  let workerCount=0,jobPosts=0,scope,eventPosts=0,dropWakeReplies=true;
-  const env={...process.env,GREGALE_REVIEWED_PIPELINE:reviewed?'1':'0',DATABASE_URL:database,PYTHONPATH:join(root,'sdk/python'),FAAS_TOKEN:'fixture-owner',GREGALE_NODE_JOB_RUNTIME:join(root,'sdk/node/dist/job-runtime.js'),GREGALE_FILE_BUCKET:storage.bucket};
+  let workerCount=0,jobPosts=0,scope,eventPosts=0,dropWakeReplies=true,droppedCompensationAck=false;
+  const env={...process.env,GREGALE_REVIEWED_PIPELINE:reviewed?'1':'0',GREGALE_CSV_REPORT_FAIL:compensationMode?'1':'0',DATABASE_URL:database,PYTHONPATH:join(root,'sdk/python'),FAAS_TOKEN:'fixture-owner',GREGALE_NODE_JOB_RUNTIME:join(root,'sdk/node/dist/job-runtime.js'),GREGALE_FILE_BUCKET:storage.bucket};
   const execute=async run=>{
-    for(const task of run.tasks){task.status='claimed';task.attempt++;
-      const manifest=join(home,run.id+'-'+task.task_index+'.json'),usePython=workerCount++%2===1;
-      const child=spawn(usePython?python:process.execPath,[join(home,'app','pipeline-worker.'+(usePython?'py':'mjs'))],{env:{...env,GREGALE_CSV_PIPELINE_STAGE:run.template.stage,GREGALE_RUN_ID:run.id,GREGALE_TASK_INDEX:String(task.task_index),GREGALE_TASK_COUNT:String(run.tasks.length),GREGALE_TASK_ATTEMPT:String(task.attempt),GREGALE_INPUT_ID:task.input_id,GREGALE_INPUT_REF:task.input_ref,GREGALE_OUTPUT_MANIFEST_PATH:manifest},stdio:['ignore','pipe','pipe']});children.add(child);let stderr='';child.stderr.on('data',b=>stderr+=b);const code=await new Promise(r=>child.once('exit',r));children.delete(child);
-      if(code===0){task.output_manifest=JSON.parse(await readFile(manifest,'utf8'));task.status='succeeded';}else{task.status='failed';task.outcome_code='handler_failed';t.diagnostic('Worker failure: '+stderr.slice(0,2000));}
+    for(const task of run.tasks){
+      for(;;){task.status='claimed';task.attempt++;
+        const manifest=join(home,run.id+'-'+task.task_index+'.json'),usePython=workerCount++%2===1,entry=run.template.stage==='compensate'?'compensation-worker':'pipeline-worker';
+        const child=spawn(usePython?python:process.execPath,[join(home,'app',entry+'.'+(usePython?'py':'mjs'))],{env:{...env,GREGALE_CSV_PIPELINE_STAGE:run.template.stage,GREGALE_RUN_ID:run.id,GREGALE_TASK_INDEX:String(task.task_index),GREGALE_TASK_COUNT:String(run.tasks.length),GREGALE_TASK_ATTEMPT:String(task.attempt),GREGALE_INPUT_ID:task.input_id,GREGALE_INPUT_REF:task.input_ref,GREGALE_OUTPUT_MANIFEST_PATH:manifest},stdio:['ignore','pipe','pipe']});children.add(child);let stderr='';child.stderr.on('data',b=>stderr+=b);const code=await new Promise(r=>child.once('exit',r));children.delete(child);
+        if(code===0){
+          if(compensationMode&&run.template.stage==='compensate'&&!droppedCompensationAck){droppedCompensationAck=true;continue;}
+          task.output_manifest=JSON.parse(await readFile(manifest,'utf8'));task.status='succeeded';
+        }else{task.status='failed';task.outcome_code='handler_failed';t.diagnostic('Worker failure: '+stderr.slice(0,2000));}
+        break;
+      }
     }
   };
   const control=createServer(async(req,res)=>{
@@ -101,9 +110,9 @@ for(const reviewed of eventTriggered||scheduled||toolMode?[true]:[false,true])te
         if(req.method==='POST'&&u.pathname.endsWith('/runs')){
           const chunks=[];for await(const chunk of req)chunks.push(chunk);const input=JSON.parse(Buffer.concat(chunks).toString()),key=req.headers['idempotency-key'];
           if(workflowKeys.has(key)){send(200,workflowKeys.get(key));return;}
-          const record={id:randomUUID(),app_id:storage.app,workflow_name:reviewed?'csv-reviewed-pipeline':'csv-pipeline',status:'running',input};
+          const record={id:randomUUID(),app_id:storage.app,workflow_name:parts[5],status:'running',input};
           await pool.query('INSERT INTO sdk_pipeline_runs VALUES ($1,$2,$3)',[record.id,record,'[]']);workflowKeys.set(key,record);
-          if(eventTriggered&&key?.startsWith('event-pipeline:')||toolMode&&key?.startsWith('pipeline-tool:')){res.destroy();return;}
+          if(eventTriggered&&key?.startsWith('event-pipeline:')||(toolMode||compensationMode)&&key?.startsWith('pipeline-tool:')){res.destroy();return;}
           send(201,record);return;
         }
         const id=parts[4],row=(await pool.query('SELECT record,journal FROM sdk_pipeline_runs WHERE id=$1',[id])).rows[0];if(!row){send(404,{});return;}
@@ -137,6 +146,7 @@ for(const reviewed of eventTriggered||scheduled||toolMode?[true]:[false,true])te
   const realtime=liveFixture(control);cleanup.push(()=>realtime.close());
   await new Promise(r=>control.listen(0,'127.0.0.1',r));env.FAAS_API=`http://127.0.0.1:${control.address().port}`;scope={base_url:env.FAAS_API,account_id:accountId,app_id:storage.app,app_slug:'imports'};env.GREGALE_PIPELINE_SCOPE=JSON.stringify(scope);
   cleanup.push(async()=>{for(const child of children)await stop(child);await Promise.allSettled(work);await new Promise(r=>control.close(r));});
+  const compensationPython=compensationMode?await pythonFixture({python,home,env,children,cleanup}):null;
   const client=sdk.createClient(env.FAAS_API,{token:'fixture-owner'}),files=client.storage.files({appSlug:'imports',bucket:storage.bucket});
   const csv=Buffer.from('row,email\n1,one@example.test\n2,two@example.test\n3,invalid email\n'),importId=randomUUID(),key='pipelines/'+importId+'/source.csv';
   await files.put(key,csv,{timeoutMs:10000,ifNoneMatch:'*',contentType:'text/csv'});
@@ -309,11 +319,19 @@ for(const reviewed of eventTriggered||scheduled||toolMode?[true]:[false,true])te
     const request={protocol:'gregale.workflow.code/v1',run_id:run.checkpoint.run_id,workflow:contract.spec.name,input:row.record.input,invocation:invocation+1,journal:row.journal};
     const path=join(home,'request.json');await writeFile(path,JSON.stringify(request));
     const usePython=invocation%2===1;
-    const drive=async usePython=>{if(toolMode&&usePython)return pythonTool('drive',{path,barrier:invocation===0});const result=await exec(usePython?python:process.execPath,[join(home,'app','pipeline_driver.'+(usePython?'py':'mjs')),path],{env:{...env,...(invocation===0?{GREGALE_PIPELINE_BARRIER:'1'}:{})},timeout:30000});const reply=JSON.parse(result.stdout);if(result.stderr)reply.fixture_stderr=result.stderr;return reply;};
+    const drive=async usePython=>{if(compensationMode&&usePython)return compensationPython({action:'compensation-drive',path,barrier:invocation===0});if(toolMode&&usePython)return pythonTool('drive',{path,barrier:invocation===0});const result=await exec(usePython?python:process.execPath,[join(home,'app','pipeline_driver.'+(usePython?'py':'mjs')),path],{env:{...env,...(invocation===0?{GREGALE_PIPELINE_BARRIER:'1'}:{})},timeout:30000});const reply=JSON.parse(result.stdout);if(result.stderr)reply.fixture_stderr=result.stderr;return reply;};
     let reply;
     if(invocation===0){const replies=await Promise.all([drive(false),drive(true)]);assert.ok(replies.every(r=>r.ops[0]?.status==='succeeded'),JSON.stringify({replies,barrier:(await pool.query('SELECT * FROM sdk_pipeline_barrier')).rows}));reply=replies[0];}
     else reply=await drive(usePython);
-    assert.equal(reply.result.status==='failed',false,JSON.stringify(reply));assert.equal(reply.ops.some(o=>o.status==='failed'),false,JSON.stringify(reply));
+    if(compensationMode&&reply.result.status==='failed'){
+      for(const op of reply.ops)row.journal[op.seq]={...op,attempt:3};row.record.status='failed';row.record.last_error=reply.result.error;
+      await pool.query('UPDATE sdk_pipeline_runs SET record=$2,journal=$3 WHERE id=$1',[run.checkpoint.run_id,row.record,JSON.stringify(row.journal)]);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM sdk_csv_rows')).rows[0].n,2);
+      const driveNode=async requestPath=>JSON.parse((await exec(process.execPath,[join(home,'app/pipeline_driver.mjs'),requestPath],{env,timeout:30000})).stdout);
+      await compensationAcceptance({sdk,runtime,pool,client,files,scope,sourceRunId:run.checkpoint.run_id,importId,home,env,cleanup,pythonCall:compensationPython,templates,driveNode,pause});
+      assert.equal(droppedCompensationAck,true);return;
+    }
+    if(!compensationMode){assert.equal(reply.result.status==='failed',false,JSON.stringify(reply));assert.equal(reply.ops.some(o=>o.status==='failed'),false,JSON.stringify(reply));}
     // Drop each submission/completion journal once: the next process has only
     // native Jobs and the PostgreSQL receipt, with no in-memory recovery state.
     const crash=reply.ops.find(o=>o.name.endsWith('/submit')||o.output?.state==='succeeded'||o.name.endsWith('/open')||o.name.endsWith('/resolve'));
@@ -337,7 +355,7 @@ for(const reviewed of eventTriggered||scheduled||toolMode?[true]:[false,true])te
       dropWakeReplies=false;const recovery=sdk.createPipelineGateService({scope,pipelineSha256:contract.sha256,contract:reviewContract,store:gateStore,transport:sdk.nativePipelineGateTransport({scope,token:'fixture-owner',contract,timeoutMs:10000}),authorize:async()=>{throw new Error('backend-only recovery');}});await recovery.drain(100,{timeoutMs:10000});
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM sdk_pipeline_events')).rows[0].n,1);assert.ok(eventPosts>=2);approved=true;
     }
-    for(const op of reply.ops){assert.ok(op.seq<=row.journal.length);if(op.kind==='event'){const event=(await pool.query('SELECT body FROM sdk_pipeline_events WHERE run_id=$1',[run.checkpoint.run_id])).rows[0];assert.ok(event);row.journal[op.seq]={...op,status:'succeeded',output:event.body.payload,attempt:1};}else row.journal[op.seq]={...op,status:op.kind==='sleep'?'succeeded':op.status,attempt:1};}
+    for(const op of reply.ops){assert.ok(op.seq<=row.journal.length);if(op.kind==='event'){const event=(await pool.query('SELECT body FROM sdk_pipeline_events WHERE run_id=$1',[run.checkpoint.run_id])).rows[0];assert.ok(event);row.journal[op.seq]={...op,status:'succeeded',output:event.body.payload,attempt:1};}else row.journal[op.seq]={...op,status:op.kind==='sleep'?'succeeded':op.status,attempt:compensationMode&&op.status==='failed'?3:1};}
     if(reply.result.status==='succeeded'){row.record.status='succeeded';row.record.output=reply.result.output;finished=true;}
     await pool.query('UPDATE sdk_pipeline_runs SET record=$2,journal=$3 WHERE id=$1',[run.checkpoint.run_id,row.record,JSON.stringify(row.journal)]);
     const snapshot=await sdk.jobPipelineLiveSnapshot(run,{resourceId:importId,steps:['validate','import','report'],timeoutMs:10000,inspectJob:(step,signal)=>pipeline.inspectJob(run.checkpoint.run_id,step,'alice',{timeoutMs:10000,signal}),reportReady:async output=>{await sdk.readPipelineArtifact(files,output.report,'alice',{timeoutMs:10000,maxBytes:1024*1024});return true;}});live.push(snapshot);

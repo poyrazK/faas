@@ -425,6 +425,7 @@ from ._event_deadline_policy import (
     EventDeadlineTarget,
 )
 from ._event_outbox_protocol import EVENT_OUTBOX_SCHEMA
+from ._pipeline_compensation_protocol import PIPELINE_COMPENSATION_SCHEMA
 from ._pipeline_tool_protocol import PIPELINE_TOOL_SCHEMA
 from ._stripe_webhook_protocol import STRIPE_WEBHOOK_SCHEMA
 from ._wrapper import FaaSClient as FaaSClient
@@ -784,6 +785,28 @@ from .pipeline_children_state import (
     pipeline_children_identity,
     pipeline_children_intent,
 )
+from .pipeline_compensation_mcp import CompensationMCP
+from .pipeline_compensation_state import (
+    CompensationAction,
+    CompensationActor,
+    CompensationCommand,
+    CompensationEffect,
+    CompensationError,
+    CompensationInput,
+    CompensationOutcome,
+    CompensationPlan,
+    CompensationResult,
+    CompensationStore,
+    CompensationTask,
+    PostgresCompensationStore,
+    compensation_contracts,
+)
+from .pipeline_compensations import (
+    CompensationContext,
+    CompensationSource,
+    CompensationSourceStage,
+    PipelineCompensation,
+)
 from .pipeline_gates import (
     PIPELINE_GATE_SCHEMA,
     NativePipelineGateTransport,
@@ -944,6 +967,26 @@ from .stripe_webhook_state import (
 from .stripe_webhooks import StripeWebhookAction, StripeWebhookAdapter
 
 __all__ = (
+    "PIPELINE_COMPENSATION_SCHEMA",
+    "CompensationActor",
+    "CompensationAction",
+    "CompensationCommand",
+    "CompensationError",
+    "CompensationEffect",
+    "CompensationInput",
+    "CompensationOutcome",
+    "CompensationTask",
+    "CompensationResult",
+    "CompensationPlan",
+    "CompensationStore",
+    "PostgresCompensationStore",
+    "compensation_contracts",
+    "PipelineCompensation",
+    "CompensationSource",
+    "CompensationSourceStage",
+    "CompensationContext",
+    "CompensationMCP",
+
     'PIPELINE_TOOL_SCHEMA',
     'PipelineToolAction',
     'PipelineToolActor',

@@ -14,13 +14,14 @@ from typing import Any
 import psycopg
 from event_pipeline import ImportRecord, csv_event_pipeline
 from faas_sdk.preview import (
+    CompensationError,
     EventOutboxError,
-    StripeWebhookError,
     EventPipelineDelivery,
     EventPipelineError,
     EventPipelineOutcome,
     PipelineScope,
     PostgresEventPipelineStore,
+    StripeWebhookError,
 )
 from faas_sdk.preview.event_consumer_transactions import (
     EventConsumerRequest,
@@ -30,6 +31,9 @@ from psycopg.rows import dict_row
 
 
 async def execute(request: dict[str, Any]) -> dict[str, Any] | None:
+    if request["action"].startswith("compensation-"):
+        from compensation_driver import execute as compensation_execute
+        return await compensation_execute(request)
     if request["action"].startswith("tool-"):
         from tool_driver import execute as tool_execute
         return await tool_execute(request)
@@ -129,7 +133,7 @@ async def main() -> None:
         request = json.loads(line)
         try:
             result = await execute(request)
-        except (EventPipelineError, EventOutboxError, StripeWebhookError) as error:
+        except (EventPipelineError, EventOutboxError, StripeWebhookError, CompensationError) as error:
             result = {"code": error.code}
         print(
             json.dumps({"request_id": request["request_id"], "result": result}),
@@ -140,6 +144,6 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except (EventPipelineError, EventOutboxError, StripeWebhookError) as error:
+    except (EventPipelineError, EventOutboxError, StripeWebhookError, CompensationError) as error:
         print(json.dumps({"code": error.code}))
         raise SystemExit(2) from None

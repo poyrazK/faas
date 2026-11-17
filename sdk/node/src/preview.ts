@@ -763,3 +763,6 @@ export {createStripeWebhookAdapter,stripeDeliveryContextFromHeaders,stripeReceip
 
 export {definePipelineTool,PipelineToolError,postgresPipelineToolStore,pipelineToolSchema,pipelineToolIdentity,type PipelineTool,type PipelineToolDefinition,type PipelineToolRequest,type PipelineToolActor,type PipelineToolAction,type PipelineToolReceipt,type PipelineToolIntent,type PipelineToolStore,type PipelineToolStart,type PipelineToolStatus,type PipelineToolApproval,type PipelineToolCode} from './pipeline-tools.js';
 export {createPipelineToolMCP,PipelineToolMCPError,type PipelineToolMCP,type PipelineToolMCPDescriptor,type PipelineToolMCPResult} from './pipeline-tool-mcp.js';
+
+export {definePipelineCompensation,CompensationError,compensationContracts,postgresCompensationStore,pipelineCompensationSchema,type PipelineCompensation,type PipelineCompensationDefinition,type CompensationCommand,type CompensationOutcome,type CompensationTask,type CompensationInput,type CompensationResult,type CompensationPlan,type CompensationStore,type CompensationActor,type CompensationAction,type CompensationCode,type CompensationSource,type CompensationSourceStage} from './pipeline-compensations.js';
+export {createCompensationMCP} from './pipeline-compensation-mcp.js';

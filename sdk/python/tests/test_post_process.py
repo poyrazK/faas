@@ -182,6 +182,10 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/preview/stripe_webhook_state.py": b"# uncommitted Stripe adapter\n",
         "faas_sdk/preview/_pipeline_tool_protocol.py": b"# uncommitted pipeline tools\n",
         "faas_sdk/preview/pipeline_tool_state.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/_pipeline_compensation_protocol.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_compensation_state.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_compensations.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_compensation_mcp.py": b"# uncommitted compensation\n",
         "faas_sdk/preview/pipeline_tools.py": b"# uncommitted pipeline tools\n",
         "faas_sdk/preview/pipeline_tool_mcp.py": b"# uncommitted pipeline tools\n",
         "faas_sdk/preview/stripe_webhooks.py": b"# uncommitted Stripe adapter\n",
@@ -451,6 +455,21 @@ def test_regenerated_preview_preserves_pipeline_tools(tmp_path, monkeypatch):
     for module in ("_pipeline_tool_protocol.py", "pipeline_tool_state.py", "pipeline_tools.py", "pipeline_tool_mcp.py"):
         assert module in generator.PREVIEW_WRAPPER_MODULES
     for name in ("PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PIPELINE_TOOL_SCHEMA"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_compensation(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in (
+        "_pipeline_compensation_protocol.py",
+        "pipeline_compensation_state.py",
+        "pipeline_compensations.py",
+        "pipeline_compensation_mcp.py",
+    ):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("PipelineCompensation", "CompensationMCP", "CompensationCommand", "PIPELINE_COMPENSATION_SCHEMA"):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
