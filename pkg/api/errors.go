@@ -6172,8 +6172,8 @@ func ErrDeploymentCancelLiveForbidden(id string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDeploymentCancelLiveForbidden,
 		"Cannot cancel a live deployment",
 		fmt.Sprintf("deployment %s is live; cancelling a live deploy would orphan the §6.2 INV 3 'always-live-snapshot-OR-rootfs' guarantee.", id)).
-		WithHint("Use 'gregale deploys rollback <id>' to swap to a previous deployment.").
-		WithFix("Run: gregale deploys rollback --app <slug> --to <previous-deployment-id>").
+		WithHint("Use 'gregale release rollback <id>' to swap to a previous deployment.").
+		WithFix("Run: gregale release rollback --app <slug> --to <previous-deployment-id>").
 		WithWhy("Cancelling a live deployment has no well-defined semantics: it would either scale the app to zero (kills §6.2 INV 4) or park the app (kills INV 3). The deploys-rollback path is the user-correct escape.").
 		WithDocs(docsBase + "/deploys#cancel")
 }
