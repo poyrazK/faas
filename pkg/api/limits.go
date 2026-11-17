@@ -1067,6 +1067,18 @@ const ImagedPublishedLayerDigests = 256
 // base key: the runtime matrix has about ten bases per architecture.
 const ImagedVerifiedBaseFiles = 64
 
+// Deploy scans deferred past the snapshot handoff (ADR-075 amendment
+// 2026-11-17). One runs at a time, so deferral never runs more Grype
+// processes than the serial scans it replaced. A full queue drops the
+// scan; the live-deployment rescan sweep picks it up. The timeout frees
+// the worker from a hung scanner: production's slowest scan in two days
+// was 4.5 minutes.
+const (
+	ImagedDeferredScanWorkers = 1
+	ImagedDeferredScanQueue   = 64
+	ImagedDeferredScanTimeout = 15 * time.Minute
+)
+
 // BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
 // builderd remembers the digest of, so a cache hit skips re-reading the
 // artifact to check it. A node's cache holds a few hundred entries.
