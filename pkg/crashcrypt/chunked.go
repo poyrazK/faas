@@ -44,9 +44,6 @@ import (
 // ChunkedMagic opens a v2 object.
 const ChunkedMagic = "faas-sealed-v2\n"
 
-// ageMagic opens a v1 object (an age file).
-const ageMagic = "age-encryption.org/"
-
 const (
 	// ChunkSize is the plaintext span of one record.
 	ChunkSize = 4 << 20
@@ -221,7 +218,6 @@ type chunkedReader struct {
 	chunkSize uint64
 	next      uint64 // lowest index the next record may carry
 	count     uint64
-	indexHash []byte
 	hash      interface {
 		Write([]byte) (int, error)
 		Sum([]byte) []byte
