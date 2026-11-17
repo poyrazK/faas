@@ -3,6 +3,7 @@ package apidserver
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strings"
@@ -136,15 +137,15 @@ func (a *authHandlers) finishBrowserForgotPassword(w http.ResponseWriter, r *htt
 }
 
 func (a *authHandlers) renderForgotPassword(w http.ResponseWriter, r *http.Request, status int, flash string) {
-	a.renderAuthPage(w, r, status, dashboard.Page{Title: "Reset your password", Body: "password_reset_request", Flash: flash})
+	renderAuthPage(w, r, a.log, status, dashboard.Page{Title: "Reset your password", Body: "password_reset_request", Flash: flash})
 }
 
-func (a *authHandlers) renderAuthPage(w http.ResponseWriter, r *http.Request, status int, page dashboard.Page) {
+func renderAuthPage(w http.ResponseWriter, r *http.Request, log *slog.Logger, status int, page dashboard.Page) {
 	var buf bytesResponse
 	buf.header = http.Header{}
-	if err := dashboard.Render(&buf, a.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
-		a.log.Error("dashboard render auth page", "page", page.Body, "err", err)
-		renderProblem(w, a.log, err)
+	if err := dashboard.Render(&buf, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
+		log.Error("dashboard render auth page", "page", page.Body, "err", err)
+		renderProblem(w, log, err)
 		return
 	}
 	for key, values := range buf.header {

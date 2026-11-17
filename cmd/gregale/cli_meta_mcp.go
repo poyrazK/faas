@@ -261,7 +261,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "migration-database-ref", Value: "REF", Short: "Worker migration-only reference"},
 				{Name: "observer-database-ref", Value: "REF", Short: "Observer read-only reference"},
 				{Name: "binding-sha256", Value: "DIGEST", Short: "Exact binding fingerprint for revocation"},
-			}, Examples: []string{"gregale mcp server tasks bindings get --id INTENT", "gregale mcp server tasks bindings revoke --id INTENT --binding-sha256 DIGEST"}},
+			}, Examples: []string{"gregale mcp server tasks bind get --id INTENT", "gregale mcp server tasks bind revoke --id INTENT --binding-sha256 DIGEST"}},
 			{Name: "source-review", Short: "Inspect or decide on retained hosted Task source", Positionals: []string{"<get|check|approve|reject|revoke>"}, Notes: []string{"Source is retained for the original fifteen-minute deadline. Review metadata is readable by its requester and owner; decisions require an unscoped personal owner. Approval binds the exact source review and grants no credential or execution authority. Checks permanently invalidate observed drift."}, Flags: []cliFlag{
 				{Name: "id", Short: "retained hosted source review identity", Value: "ID", Req: true},
 				{Name: "review-sha256", Short: "exact review fingerprint for checks and decisions", Value: "SHA256"},

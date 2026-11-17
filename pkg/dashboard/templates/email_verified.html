@@ -6,16 +6,45 @@
   <title>{{.Title}} — Gregale</title>
   <style nonce="{{.Nonce}}">
     :root { color-scheme: light dark; }
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0 auto; padding: 3rem 1.5rem; max-width: 560px; }
+    body { font: 1rem/1.6 ui-sans-serif, system-ui, sans-serif; margin: 0 auto; padding: 3rem 1.5rem; max-width: 35rem; }
+    h1 { line-height: 1.2; }
+    button { font: inherit; font-weight: 600; padding: 0.4rem 0.9rem; cursor: pointer; }
     a { font-weight: 600; }
+    :focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
   </style>
 </head>
 <body>
   <main>
-    {{template "email-verification-banner" .}}
-    <h1>Email verified</h1>
-    <p>Your email address is verified. Sign in again to continue.</p>
-    <p><a href="/login">Sign in</a></p>
+    <h1>{{.Title}}</h1>
+    {{if index .Data "Verified"}}
+      <p>Your Gregale email address is verified. If you started from the CLI, return to your terminal and run <code>gregale login</code> again.</p>
+      <p><a href="/dashboard">Continue to dashboard</a></p>
+    {{else if index .Data "Requested"}}
+      <p>Open the latest Gregale verification email in this browser, then click <strong>Verify email</strong>. Check spam if it doesn’t arrive. If you just requested a link, wait a minute before requesting another.</p>
+      <p><a href="/dashboard">Back to dashboard</a></p>
+    {{else if index .Data "Invalid"}}
+      <p>Use the latest verification email. If you need a fresh link, request one from the account that needs verification.</p>
+      {{with index .Data "ResendToken"}}
+      <form method="post" action="/v1/auth/verify-email/resend">
+        <input type="hidden" name="csrf_token" value="{{.}}">
+        <button type="submit">Send a new verification link</button>
+      </form>
+      {{else}}
+      <p><a href="{{index .Data "SignInURL"}}">Sign in to request a new link</a></p>
+      {{end}}
+    {{else if index .Data "WrongAccount"}}
+      <p>This browser is signed in to a different Gregale account. Open the email link in the browser where you signed up, or sign in here with the email address that received the link.</p>
+      <p><a href="{{index .Data "SignInURL"}}">Sign in with the correct account</a></p>
+    {{else if index .Data "SignInURL"}}
+      <p>Sign in to the Gregale account that received this email. You’ll return here to click <strong>Verify email</strong>.</p>
+      <p><a href="{{index .Data "SignInURL"}}">Sign in to Gregale</a></p>
+    {{else}}
+      <p>Click <strong>Verify email</strong> below to finish verifying the address for your signed-in Gregale account.</p>
+      <form method="post" action="/v1/auth/verify-email">
+        <input type="hidden" name="token" value="{{index .Data "Token"}}">
+        <button type="submit">Verify email</button>
+      </form>
+    {{end}}
   </main>
 </body>
 </html>

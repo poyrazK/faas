@@ -40,6 +40,23 @@ type DeploymentDependencyGateStore interface {
 	CheckDeploymentDependencies(context.Context, string, time.Time) (*DeploymentDependencyGate, error)
 }
 
+// DeploymentDependencyPreviewStore evaluates a candidate's gate without
+// starting its deadline or persisting progress, so the image pipeline can
+// stop a candidate whose pinned dependency already failed before it spends
+// minutes on build, scan and snapshot preparation. Only a terminal
+// CodeDependencyFailed result is a reason to stop early; a pending result
+// means nothing until the activation-time check.
+type DeploymentDependencyPreviewStore interface {
+	PreviewDeploymentDependencies(context.Context, string, time.Time) error
+}
+
+func (m *MemStore) PreviewDeploymentDependencies(_ context.Context, id string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, err := m.checkDeploymentDependenciesLocked(id, now, false)
+	return err
+}
+
 // DependencyGateError exposes only source service names and public deployment
 // IDs. Pending work is deferred by imaged; terminal blockers fail the candidate.
 type DependencyGateError struct {

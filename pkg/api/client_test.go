@@ -1561,8 +1561,8 @@ func TestClient_RejectsCookieOnlyPaths(t *testing.T) {
 			if p.DocsURL == "" {
 				t.Error("DocsURL is empty — guard must populate the docs URL")
 			}
-			if !strings.Contains(p.DocsURL, "/cli#cookie-only-routes") {
-				t.Errorf("DocsURL = %q, want it to contain /cli#cookie-only-routes", p.DocsURL)
+			if !strings.HasSuffix(p.DocsURL, "/docs/cli") {
+				t.Errorf("DocsURL = %q, want it to name /cli", p.DocsURL)
 			}
 		})
 	}
