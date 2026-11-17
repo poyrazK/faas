@@ -2,6 +2,7 @@
 - [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
 - [ADR-20261115210000: Typed file-triggered jobs](20261115210000-sdk-file-triggered-jobs.md) — accepted; SDK preview
 - [ADR-20261115223000: Typed live views of Jobs and file pipelines](20261115223000-sdk-live-job-views.md) — accepted; SDK preview
+- [ADR-20261117070932: Resident GB per customer warns against each plan's own model](20261117070932-resident-gb-per-customer-against-plan-model.md) — accepted; `FaasResidentGbPerCustomerHigh` warns above 1.5× the plan's planned residency (concurrency × RAM + 8 MB, `meterd_resident_gb_per_customer_planned`) instead of a flat 0.45 GB that fired on healthy Scale customers (amends spec §12)
 - [ADR-20261116191801: App VM memory headroom above the billable fence](20261116191801-app-vm-memory-headroom.md) — accepted; app/job VM `memory.max` = ram_mb + 8 + 24 MB so cold boots of small guests are not OOM-killed; admission and billing stay at ram_mb + 8 (amends spec §11)
 - [ADR-20261116010000: Typed durable job pipelines](20261116010000-sdk-durable-job-pipelines.md) — accepted; SDK preview
 - [ADR-20261115162700: Typed pipeline approval and input gates](20261115162700-sdk-pipeline-gates.md) — accepted; SDK preview
