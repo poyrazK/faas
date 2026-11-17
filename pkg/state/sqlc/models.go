@@ -15888,6 +15888,14 @@ type SandboxSession struct {
 	EgressDeny  []string
 }
 
+// ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
+type SandboxSessionDomain struct {
+	SandboxID pgtype.UUID
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
+}
+
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.
 type SandboxSessionUsage struct {
 	SandboxID           pgtype.UUID

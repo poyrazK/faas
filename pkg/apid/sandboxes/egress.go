@@ -164,3 +164,36 @@ func policyView(p agentstore.SandboxEgressPolicy) api.SandboxEgressPolicy {
 	}
 	return out
 }
+
+// EgressLogStore reads sessions' domain logs; *agentstore.Store implements
+// it.
+type EgressLogStore interface {
+	SandboxDomains(ctx context.Context, accountID, id string) ([]agentstore.SandboxDomain, error)
+}
+
+// GetEgress handles GET /v1/sandboxes/{id}/egress: the policy the session
+// was admitted under and its domain log (ADR-20261117091026 §4).
+func (h *Handler) GetEgress(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !h.configured(w) {
+		return
+	}
+	sb, err := h.Store.Sandbox(r.Context(), acct.ID, r.PathValue("id"))
+	if err != nil {
+		api.WriteProblem(w, h.problem(acct, "sandbox.egress", err))
+		return
+	}
+	out := api.SandboxEgress{SandboxID: sb.ID, Mode: sb.NetworkMode,
+		SandboxEgressPolicy: policyView(agentstore.SandboxEgressPolicy{Allow: sb.EgressAllow, Deny: sb.EgressDeny}),
+		Domains:             []api.SandboxEgressDomain{}}
+	if store, ok := h.Store.(EgressLogStore); ok {
+		log, err := store.SandboxDomains(r.Context(), acct.ID, sb.ID)
+		if err != nil {
+			api.WriteProblem(w, h.problem(acct, "sandbox.egress", err))
+			return
+		}
+		for _, d := range log {
+			out.Domains = append(out.Domains, api.SandboxEgressDomain{Domain: d.Domain, Refused: d.Refused, FirstSeen: d.FirstSeen.UTC()})
+		}
+	}
+	httpkit.WriteJSON(w, http.StatusOK, out)
+}

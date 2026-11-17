@@ -41,9 +41,12 @@ Gregale already refuses names at one choke point: vmmd's DNS grant (`AllowResolv
 
 ### 4. The reached-domain log (PR 2)
 
-- vmmd reports each registrable domain a session was granted, or refused and why (policy, budget, platform), at most once per domain, batched on the session's stream.
-- agentd records the reports in `sandbox_session_domains`. A session keeps at most its plan's `SandboxWebDistinctDomains` granted rows plus `SandboxEgressRefusedLogMax` (1,000) refused ones.
-- `GET /v1/sandboxes/{id}/egress` returns the session's effective policy and its domains. The rows are deleted with the session's other records.
+- vmmd reports what a session was granted or refused, batched on the session's stream (`web_domains` frames, sent each activity tick and once more at close):
+  - A grant names the registrable domain, once.
+  - A refusal says why: `policy` (the session's policy), `budget` (the plan's distinct-domain limit) or `platform` (a name sessions never reach, such as an address or an internal name). A budget refusal names the registrable domain, and a policy or platform refusal the name asked for, since those rules match names. Each is reported once per name and reason, at most `SandboxEgressRefusedLogMax` per VM.
+- **Version skew:** a reader that does not know `web_domains` ends the session on it. So agentd asks for the log on the start frame (`web_domain_log`, web mode only), schedd passes the ask to vmmd, and vmmd sends the log only when asked.
+- agentd records the reports in `sandbox_session_domains`, fenced on the session's lease. A failed write is logged and the session goes on. A session keeps at most its plan's `SandboxWebDistinctDomains` grants plus `SandboxEgressRefusedLogMax` (1,000) refusals, and an entry already logged keeps its first sighting.
+- `GET /v1/sandboxes/{id}/egress` returns the session's network mode, its effective policy and its domains, oldest first. The rows are deleted with the session (`ON DELETE CASCADE`).
 
 ### Limits (`pkg/api/limits.go`)
 

@@ -7,6 +7,7 @@ package fcvm
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
@@ -175,5 +176,31 @@ func TestWebSandboxDomainPolicy(t *testing.T) {
 	m.mu.Unlock()
 	if counted != 1 {
 		t.Fatalf("%d domains counted; refused names must not count", counted)
+	}
+	// A repeat is not logged again; the log drains once.
+	_ = grant("docs.example.com", 1)
+	_ = grant("example.org", 20)
+	_ = grant("printer.internal", 21)
+	var got []string
+	for _, d := range m.DrainSandboxWebDomains("sbx-policy") {
+		got = append(got, d.Domain+"/"+d.Refused)
+	}
+	want := []string{"example.com/", "example.org/policy", "admin.example.com/policy", "cdn.admin.example.com/policy", "printer.internal/platform"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("log = %v; want %v", got, want)
+	}
+	if again := m.DrainSandboxWebDomains("sbx-policy"); again != nil {
+		t.Fatalf("second drain = %v; want nothing", again)
+	}
+}
+
+func TestWebSandboxRefusalLogIsBounded(t *testing.T) {
+	inst := &Instance{}
+	for i := range api.SandboxEgressRefusedLogMax + 10 {
+		logSandboxWebRefusal(inst, fmt.Sprintf("d%d.example", i), SandboxWebRefusedPolicy)
+	}
+	logSandboxWebRefusal(inst, "d0.example", SandboxWebRefusedPolicy)
+	if len(inst.webLog) != api.SandboxEgressRefusedLogMax {
+		t.Fatalf("%d refusals logged; want %d", len(inst.webLog), api.SandboxEgressRefusedLogMax)
 	}
 }

@@ -297,6 +297,13 @@ type SandboxSession struct {
 	EgressDeny          []string
 }
 
+type SandboxSessionDomain struct {
+	SandboxID pgtype.UUID
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
+}
+
 type SandboxSessionUsage struct {
 	SandboxID           pgtype.UUID
 	AccountID           pgtype.UUID

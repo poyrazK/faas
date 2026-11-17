@@ -203,6 +203,8 @@ var adoptionInstanceInventory = map[string]string{
 	"webDomains":               "reset",   // a restart restarts the web session's distinct-domain count (ADR-20261112121456 §4)
 	"webAllow":                 "refused", // a sandbox session's domain policy; sessions are not adopted (ADR-20261117091026 §3)
 	"webDeny":                  "refused",
+	"webLog":                   "refused", // its domain log (ADR-20261117091026 §4)
+	"webRefusedLogged":         "refused",
 	"TailCount":                "reset", // the host only ever sees decrements
 	"tailSecondsAccum":         "reset", // informational, not billed
 	"adoptionVCPUs":            "rebuilt",

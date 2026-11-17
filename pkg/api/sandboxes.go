@@ -294,6 +294,27 @@ type SandboxEgressPolicy struct {
 	Deny  []string `json:"deny"`
 }
 
+// SandboxEgress is a session's egress record (ADR-20261117091026 §4): the
+// policy it was admitted under and the domains it was granted or refused.
+type SandboxEgress struct {
+	SandboxID string `json:"sandbox_id"`
+	Mode      string `json:"mode"`
+	SandboxEgressPolicy
+	Domains []SandboxEgressDomain `json:"domains"`
+}
+
+// SandboxEgressDomain is one entry of a session's domain log. A grant names
+// the registrable domain and has no Refused; a refusal says why: "policy"
+// (the session's policy), "budget" (the plan's distinct-domain limit) or
+// "platform" (a name Gregale never resolves for sessions, such as an
+// address or an internal name). A policy or platform refusal names the name
+// asked for.
+type SandboxEgressDomain struct {
+	Domain    string    `json:"domain"`
+	Refused   string    `json:"refused,omitempty"`
+	FirstSeen time.Time `json:"first_seen"`
+}
+
 // ValidSandboxEgressRule reports whether rule is a domain rule: a public
 // name SandboxWebHost allows, lowercase, without a trailing dot.
 func ValidSandboxEgressRule(rule string) bool {

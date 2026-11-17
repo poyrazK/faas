@@ -11284,6 +11284,10 @@ var (
 	// SandboxEgressRulesMax bounds each list of a web-mode domain policy
 	// (ADR-20261117091026 §1), an account's default and a session's own.
 	SandboxEgressRulesMax = 100
+	// SandboxEgressRefusedLogMax bounds the refused domains one session's
+	// log keeps (ADR-20261117091026 §4); its granted ones are bounded by
+	// SandboxWebDistinctDomains.
+	SandboxEgressRefusedLogMax = 1000
 	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
 	// command.
 	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}

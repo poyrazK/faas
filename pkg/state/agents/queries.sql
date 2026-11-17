@@ -773,3 +773,28 @@ INSERT INTO sandbox_egress_policies (account_id, allow_rules, deny_rules)
 VALUES (sqlc.arg(account_id)::text::uuid, sqlc.arg(allow_rules)::text[], sqlc.arg(deny_rules)::text[])
 ON CONFLICT (account_id) DO UPDATE SET allow_rules = EXCLUDED.allow_rules, deny_rules = EXCLUDED.deny_rules, updated_at = now()
 RETURNING allow_rules, deny_rules, updated_at;
+
+-- name: CountSandboxSessionDomains :one
+-- How many grants and refusals a session's domain log holds
+-- (ADR-20261117091026 §4).
+SELECT count(*) FILTER (WHERE refused = '')::integer AS granted,
+       count(*) FILTER (WHERE refused <> '')::integer AS refused
+  FROM sandbox_session_domains WHERE sandbox_id=sqlc.arg(session_id)::text::uuid;
+
+-- name: RecordSandboxSessionDomains :execrows
+-- Adds entries to a session's domain log while the lease is held and the
+-- session has a VM; an entry already there keeps its first sighting.
+INSERT INTO sandbox_session_domains (sandbox_id, domain, refused, first_seen)
+SELECT s.id, x.domain, x.refused, x.first_seen
+  FROM sandbox_sessions s,
+       (SELECT unnest(sqlc.arg(domains)::text[]) AS domain, unnest(sqlc.arg(refused)::text[]) AS refused,
+               unnest(sqlc.arg(first_seen)::timestamptz[]) AS first_seen) x
+ WHERE s.id=sqlc.arg(session_id)::text::uuid AND s.lease_token=sqlc.arg(lease_token)::text AND s.state IN ('ready','frozen')
+ON CONFLICT DO NOTHING;
+
+-- name: ListSandboxSessionDomains :many
+-- A session's domain log, for its account (ADR-20261117091026 §4).
+SELECT d.domain, d.refused, d.first_seen
+  FROM sandbox_session_domains d JOIN sandbox_sessions s ON s.id = d.sandbox_id
+ WHERE d.sandbox_id=sqlc.arg(session_id)::text::uuid AND s.account_id=sqlc.arg(account_id)::text::uuid
+ ORDER BY d.first_seen, d.refused, d.domain;

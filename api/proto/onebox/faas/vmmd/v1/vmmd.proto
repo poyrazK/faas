@@ -3545,6 +3545,10 @@ message RunSandboxStart {
   // ADR-20261116182615 changes.
   repeated string egress_allow = 20;
   repeated string egress_deny = 21;
+  // web_domain_log asks for the session's domain log (web_domains frames,
+  // ADR-20261117091026 §4). schedd sets it when its own caller asked, since
+  // an older reader ends a session on a frame it does not know.
+  bool web_domain_log = 22;
 }
 
 // CaptureSandboxSnapshotRequest is the session machine to capture, without
@@ -3587,7 +3591,24 @@ message RunSandboxEvent {
     // SandboxUsageReportSec and once more before the stream ends on close.
     // Each frame is cumulative and supersedes the last.
     AgentRunUsage usage = 8;
+    // web_domains is the domains a web-mode session was granted, or refused, since
+    // the last such frame (ADR-20261117091026 §4): each grant once per
+    // registrable domain, each refusal once per name and reason.
+    RunSandboxWebDomains web_domains = 11;
   }
+}
+
+message RunSandboxWebDomains {
+  repeated RunSandboxWebDomain domains = 1;
+}
+
+message RunSandboxWebDomain {
+  // domain is the registrable domain of a grant or a budget refusal, or the
+  // name asked for of a policy or platform refusal.
+  string domain = 1;
+  // refused is empty for a grant, else "policy", "budget" or "platform".
+  string refused = 2;
+  int64 at_unix_ms = 3;
 }
 
 message RunSandboxBooted {

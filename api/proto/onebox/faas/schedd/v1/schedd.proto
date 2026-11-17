@@ -1321,6 +1321,10 @@ message SandboxRunStart {
   // ADR-20261116182615 changes.
   repeated string egress_allow = 15;
   repeated string egress_deny = 16;
+  // web_domain_log asks for the session's domain log (web_domains frames,
+  // ADR-20261117091026 §4). A sender sets it only when it reads them, since
+  // an older reader ends a session on a frame it does not know.
+  bool web_domain_log = 17;
 }
 
 message SandboxRunFreeze {}
@@ -1339,7 +1343,22 @@ message SandboxRunEvent {
     SandboxRunPersistDone persist_done = 8;
     // usage relays vmmd's cumulative usage of the session VM.
     AgentRunUsage usage = 9;
+    // web_domains relays vmmd's domain log (ADR-20261117091026 §4).
+    SandboxRunWebDomains web_domains = 12;
   }
+}
+
+message SandboxRunWebDomains {
+  repeated SandboxRunWebDomain domains = 1;
+}
+
+message SandboxRunWebDomain {
+  // domain is the registrable domain of a grant or a budget refusal, or the
+  // name asked for of a policy or platform refusal.
+  string domain = 1;
+  // refused is empty for a grant, else "policy", "budget" or "platform".
+  string refused = 2;
+  int64 at_unix_ms = 3;
 }
 
 // SandboxRunActivity is vmmd's report of the session's calls.
