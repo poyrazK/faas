@@ -17,12 +17,12 @@ hr = phc.host_roles
 
 BASE, COMMIT = "b" * 40, "c" * 40
 RELEASE = {"kind": "gregale-unit-release", "format_version": 2, "base_sha": BASE, "git_sha": COMMIT}
-NEW = {"format_version": 1, "group": "control_plane", "globals": "sha256:g", "order": ["nftables", "postgres", "grafana"],
+NEW = {"format_version": hr.FORMAT, "group": "control_plane", "globals": "sha256:g", "order": ["nftables", "postgres", "grafana"],
        "roles": {"nftables": "sha256:n", "postgres": "sha256:p2", "grafana": "sha256:f"}}
 
 
 def record(commit="a" * 40, **changes):
-    out = {"format_version": 1, "kind": "gregale-host-config", "group": "control_plane", "commit": commit,
+    out = {"format_version": hr.FORMAT, "kind": "gregale-host-config", "group": "control_plane", "commit": commit,
            "globals": "sha256:g", "order": NEW["order"], "environment": "sha256:e",
            "roles": {"nftables": "sha256:n", "postgres": "sha256:p1", "grafana": "sha256:f"}}
     out.update(changes)
@@ -65,7 +65,7 @@ class PlanTest(unittest.TestCase):
                 else:
                     # The record names every role at the release commit;
                     # the workflow adds the environment hash after the gate.
-                    self.assertEqual(rec, {"format_version": 1, "kind": "gregale-host-config", "group": "control_plane",
+                    self.assertEqual(rec, {"format_version": hr.FORMAT, "kind": "gregale-host-config", "group": "control_plane",
                                            "commit": COMMIT, "globals": "sha256:g", "order": NEW["order"],
                                            "roles": NEW["roles"]})
 
@@ -144,7 +144,7 @@ class FullReleaseTest(unittest.TestCase):
                                  (action, roles, every, COMMIT))
                 # Every action records the release commit's hashes once the
                 # play succeeded; the workflow adds the environment hash.
-                self.assertEqual(written, {"format_version": 1, "kind": "gregale-host-config", "group": "control_plane",
+                self.assertEqual(written, {"format_version": hr.FORMAT, "kind": "gregale-host-config", "group": "control_plane",
                                            "commit": COMMIT, "globals": "sha256:g", "order": NEW["order"],
                                            "roles": NEW["roles"]})
 
