@@ -289,9 +289,13 @@ func TestRollbackRestoreDatabasesIsHiddenWithoutDatabaseRollbacks(t *testing.T) 
 	if err := f.env.InstallCapabilityGate(); err != nil {
 		t.Fatal(err)
 	}
+	// database-rollbacks is GA on Hobby and up (PG-03); Free never has it.
+	if err := (*f.env.Store()).UpdateAccountPlan(t.Context(), *f.env.AcctID(), api.PlanFree); err != nil {
+		t.Fatal(err)
+	}
 	w := f.do(t, http.MethodPost, "/v1/apps/"+f.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true})
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `unknown field \"restore_databases\"`) {
-		t.Fatalf("restore_databases with database-rollbacks off = %d %s, want the unknown-field answer", w.Code, w.Body)
+		t.Fatalf("restore_databases on a plan without database-rollbacks = %d %s, want the unknown-field answer", w.Code, w.Body)
 	}
 }
 
