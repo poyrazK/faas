@@ -281,6 +281,42 @@ func applyFunctionInputSchema(manifest api.AppManifest, app state.App) api.AppMa
 	return manifest
 }
 
+// applyFunctionWorkflow marks a workflow function's build so its adapter
+// refuses requests that are not workflow calls (ADR-20261113120824
+// amendment 1).
+func applyFunctionWorkflow(manifest api.AppManifest, app state.App, dep state.Deployment) api.AppManifest {
+	if !isWorkflowFunction(app, dep) {
+		return manifest
+	}
+	env := maps.Clone(manifest.Env)
+	if env == nil {
+		env = map[string]string{}
+	}
+	env[api.FunctionWorkflowEnv] = "1"
+	manifest.Env = env
+	return manifest
+}
+
+// isWorkflowFunction reports whether dep is a workflow function's release: a
+// function whose deployment declares a code workflow entered at "/", the
+// function's own path (ADR-20261113120824 §1). An unreadable workflow set
+// is not one; apid validated it when the deployment was created.
+func isWorkflowFunction(app state.App, dep state.Deployment) bool {
+	if app.Type != state.AppTypeFunction || len(dep.Workflows) == 0 {
+		return false
+	}
+	var workflows []api.WorkflowSpec
+	if err := json.Unmarshal(dep.Workflows, &workflows); err != nil {
+		return false
+	}
+	for _, w := range workflows {
+		if w.Code != nil && w.Code.Path == "/" {
+			return true
+		}
+	}
+	return false
+}
+
 // applyFunctionConcurrency tells a function's generated adapter how many
 // requests one worker may serve at once (ADR-1342). The default of one
 // leaves the env untouched, so existing functions build exactly as before.
