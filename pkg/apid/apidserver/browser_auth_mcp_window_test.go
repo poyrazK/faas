@@ -1,6 +1,7 @@
 package apidserver_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -103,7 +104,11 @@ func TestMCPBrowserMFAAndApprovalFormsShareTheSetupWindow(t *testing.T) {
 	if challenge == nil {
 		t.Fatal("MFA challenge did not set its CSRF cookie")
 	}
-	plaintext, err := mgr.OpenForCSRF([]byte(challenge.Value))
+	raw, err := base64.RawURLEncoding.DecodeString(challenge.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, err := mgr.OpenForCSRF(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +157,11 @@ func TestMCPBrowserMFAAndApprovalFormsShareTheSetupWindow(t *testing.T) {
 			continue
 		}
 		found = true
-		plaintext, err := mgr.OpenForCSRF([]byte(cookie.Value))
+		raw, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plaintext, err := mgr.OpenForCSRF(raw)
 		if err != nil || json.Unmarshal(plaintext, &envelope) != nil || time.Until(envelope.Expires) < 59*time.Minute || cookie.MaxAge != 3600 {
 			t.Fatal("native MCP approval retained a short CSRF lifetime")
 		}

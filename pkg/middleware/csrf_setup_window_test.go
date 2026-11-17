@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -16,7 +17,11 @@ func TestCSRFSetupWindowKeepsBindingsAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain, err := m.OpenForCSRF([]byte(token))
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := m.OpenForCSRF(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
