@@ -229,6 +229,16 @@ required by Art. 32 GDPR, including:
   with secret-read scope and MFA, and every create, access and delete
   is written to the audit log.
 - TLS 1.3 in transit; HSTS + Strict CSP on the dashboard.
+- Support personnel access: Processor's support staff have no standing
+  access to Controller's applications. Controller's owners or admins may
+  grant time-limited support access (at most 7 days, limited to the
+  applications they name) that permits only deploying the connected
+  repository's production branch, retrying, cancelling and rolling back
+  deployments, and restarting applications. It never permits reading
+  secrets or configuration or uploading code. Each use requires an
+  MFA-authenticated staff session, is recorded in Controller's activity log
+  and audit trail, and is notified to Controller's owners and admins.
+  Controller may revoke it at any time.
 
 Full security checklist lives at https://gregale.dev/docs/security.
 

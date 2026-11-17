@@ -1,18 +1,55 @@
-# Support access: proposed Terms, Privacy and DPA text (draft for sign-off)
+# Support access: Terms, Privacy and DPA text
 
-Status: **draft, not published.** Customer-granted support access
-(ADR-20261116163508) is dark behind the `support_grants` platform flag. Publish
-these changes before the flag is turned on for any customer outside Gregale.
-They change the Terms, so section 13 of the Terms applies: email account owners
-and show a dashboard notice at least 30 days before they take effect, and bump
-the effective date.
+Status: **approved by the owner 2026-11-17 and in the documents**, effective
+**2026-12-20** (`pkg/legal/legal.json`). Customer-granted support access
+(ADR-20261116163508) stays dark behind the `support_grants` platform flag until
+then.
 
-Each block below says where it goes. Wording follows the existing documents'
-style: short, plain, no defined terms beyond theirs.
+Terms section 13 promises account owners an email and a dashboard notice at
+least 30 days before a material change takes effect:
 
-## Terms of Service (`pkg/legal/templates/terms.html`, section 4 "Your content")
+- Dashboard: `change_notice` in `pkg/legal/legal.json` shows in every signed-in
+  dashboard page's banner until the effective date, once the release carrying
+  it is deployed. Clear the field after 2026-12-20.
+- Email: send the text below to every account owner **by 2026-11-20**. If it
+  goes out later, move `effective_date` (and the date in `change_notice`) so it
+  stays at least 30 days after the send.
+- Turn on `support_grants` for customers on or after 2026-12-20.
 
-Add a bullet after "You give us the permission we need to host, copy, build...":
+## Notice email
+
+Subject: Changes to Gregale's Terms, Privacy Policy and DPA on 20 December 2026
+
+> Hello,
+>
+> On 20 December 2026 we are updating our Terms of Service, Privacy Policy
+> and Data Processing Agreement to describe a new, optional feature: support
+> access.
+>
+> When you cannot deploy or need a hand, an owner or admin of your account
+> or organization can let Gregale support deploy your connected repository's
+> production branch, retry, cancel or roll back a deployment, and restart
+> your apps. You choose the apps and how long (at most 7 days). Support can
+> never read your secrets or configuration, change members, keys or billing,
+> upload code, or delete anything. Every action is recorded in your activity
+> log, your owners and admins are emailed, and you can revoke access at any
+> time. Nothing changes unless you grant access.
+>
+> Read the updated documents: https://gregale.dev/terms,
+> https://gregale.dev/privacy and https://gregale.dev/docs/dpa.
+>
+> If you do not agree, you can close your account before 20 December 2026.
+> Continuing to use Gregale after that date means you accept the changes.
+>
+> Questions: reply to this email or write to gregale@gregale.dev.
+>
+> The Gregale team
+
+## The text, as added
+
+### Terms of Service (`pkg/legal/templates/terms.html`, section 4 "Your content")
+
+A bullet after "You give us the permission we need to host, copy, build...":
 
 > If an owner or admin of your account or organization grants Gregale support
 > access, our support staff may deploy your app's connected repository at its
@@ -23,18 +60,18 @@ Add a bullet after "You give us the permission we need to host, copy, build...":
 > your activity log and your owners and admins are notified. You can revoke the
 > access at any time, and it ends on its own when it expires.
 
-## Privacy Policy (`pkg/legal/templates/privacy.html`, section 7 "Security")
+### Privacy Policy (`pkg/legal/templates/privacy.html`, section 7 "Security")
 
-Append to the paragraph:
+Appended to the paragraph:
 
 > Our support staff cannot reach your apps unless an owner or admin grants them
 > time-limited support access; that access is limited to deploying,
 > rolling back and restarting, and every use of it is logged in your activity
 > log.
 
-## DPA (`docs/DPA.md`)
+### DPA (`docs/DPA.md`)
 
-Section 8 "Security measures", add a bullet:
+Section 8 "Security measures", a new bullet:
 
 > - Support personnel access: Processor's support staff have no standing
 >   access to Controller's applications. Controller's owners or admins may
@@ -50,13 +87,12 @@ Section 8 "Security measures", add a bullet:
 Section 5 "Processor obligations" already covers confidentiality of
 authorised persons; no change there.
 
-## Checks before publishing
+## Checks
 
-- The DPA has no placeholders (pkg/legal `TestDPAHasNoPlaceholders`); the text
-  above has none.
+- The DPA has no placeholders (pkg/legal `TestDPAHasNoPlaceholders`).
 - Ansible ships `docs/DPA.md` to `/etc/faas/dpa.md` and the docs site vendors
   it; publish both in the same release (see
   [legal-documents-operator-notes.md](legal-documents-operator-notes.md)).
-- If counsel changes the wording, keep the limits (production branch only,
+- If the wording changes later, keep the limits (production branch only,
   7 days, no secrets or uploads) in line with ADR-20261116163508 and
   `pkg/api/limits.go`.
