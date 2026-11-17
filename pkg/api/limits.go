@@ -494,6 +494,12 @@ const (
 // the method, country, network owner and email domain stay with the account.
 const SignupFactsPersonalRetention = 90 * 24 * time.Hour
 
+// MCPBrowserAuthorizationTTL bounds connection setup, including sign-in, MFA
+// and consent (ADR-20261117173000). It applies to the browser transaction and
+// purpose-bound native approval code and their form tokens, not the final
+// OAuth exchange code.
+const MCPBrowserAuthorizationTTL = time.Hour
+
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
 // extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
 // it was created. A connection unused for a week ends; every one ends within
