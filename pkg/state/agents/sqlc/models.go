@@ -261,6 +261,28 @@ type PlatformTenant struct {
 	Status    string
 }
 
+type SandboxAction struct {
+	ID              pgtype.UUID
+	SessionID       pgtype.UUID
+	AccountID       pgtype.UUID
+	Seq             int32
+	Kind            string
+	Args            []byte
+	EndpointID      pgtype.UUID
+	ThreadID        string
+	ToolCallID      string
+	IssuedAt        pgtype.Timestamptz
+	State           string
+	ExitCode        pgtype.Int4
+	Output          []byte
+	CreatedAt       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	DeliveredAt     pgtype.Timestamptz
+	ScreenshotKey   pgtype.Text
+	ScreenshotBytes pgtype.Int8
+}
+
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
 	AccountID  pgtype.UUID

@@ -15855,6 +15855,29 @@ type SalesTask struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+// ADR-20261117065818 gregale_browser actions: written by apid, run and ended by agentd under the session lease.
+type SandboxAction struct {
+	ID              pgtype.UUID
+	SessionID       pgtype.UUID
+	AccountID       pgtype.UUID
+	Seq             int32
+	Kind            string
+	Args            []byte
+	EndpointID      pgtype.UUID
+	ThreadID        string
+	ToolCallID      string
+	IssuedAt        pgtype.Timestamptz
+	State           string
+	ExitCode        pgtype.Int4
+	Output          []byte
+	CreatedAt       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	DeliveredAt     pgtype.Timestamptz
+	ScreenshotKey   pgtype.Text
+	ScreenshotBytes pgtype.Int8
+}
+
 // ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.
 type SandboxPort struct {
 	SandboxID  pgtype.UUID

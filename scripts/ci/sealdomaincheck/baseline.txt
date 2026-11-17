@@ -153,6 +153,8 @@ plain runtime_upgrade_external_fence_authorities.public_key
 plain runtime_upgrade_external_fence_receipts.envelope
 plain runtime_upgrade_native_public_startups.envelope
 plain runtime_upgrade_native_public_startups.review
+# ADR-20261117065818 §2: a browser action's page snapshot or failure text, not a credential.
+plain sandbox_actions.output
 # ADR-20261116182615 §3: a sandbox task's command output (a fetched page's text), not a credential.
 plain sandbox_sessions.task_output
 plain stored_workflow_live_verifications.request_fingerprint
