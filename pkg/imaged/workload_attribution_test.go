@@ -3,6 +3,7 @@ package imaged
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -82,10 +83,10 @@ func TestMarkDeployFailedNamesTooLargeWorkload(t *testing.T) {
 // Without companions the app image is the only image: no prefix.
 func TestAttributeAppImageWithoutCompanions(t *testing.T) {
 	err := fmt.Errorf("x")
-	if got := attributeAppImage(err, state.Deployment{ImageDigest: "sha256:feed"}); got != err {
-		t.Fatalf("attributeAppImage without companions = %v, want the error unchanged", got)
-	}
-	if got := attributeAppImage(err, state.Deployment{Sidecars: json.RawMessage("[]")}); got != err {
-		t.Fatalf("attributeAppImage with empty companions = %v, want the error unchanged", got)
+	for _, dep := range []state.Deployment{{ImageDigest: "sha256:feed"}, {Sidecars: json.RawMessage("[]")}} {
+		got := attributeAppImage(err, dep)
+		if _, wrapped := workloadOf(got); wrapped || !errors.Is(got, err) {
+			t.Fatalf("attributeAppImage(%+v) = %v, want the error unchanged", dep.Sidecars, got)
+		}
 	}
 }

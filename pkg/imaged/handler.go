@@ -2763,7 +2763,19 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		var above aboveBaseStream
 		var diffs []string
 		fullRootfsDispatched := dep.FullRootfsOverride != nil && *dep.FullRootfsOverride
-		if fullRootfsDispatched {
+		reuseKey, layerReused := "", false
+		if !fullRootfsDispatched {
+			var reuseErr error
+			reuseKey, layerReused, reuseErr = h.reuseRegistryAppLayer(ctx, app, dep, acct, prepared, manifest, be, appsKey)
+			if reuseErr != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, reuseErr, "stamp reused rootfs")
+				return reuseErr
+			}
+		}
+		if layerReused {
+			// The recorded layer was republished, stamped and replicated:
+			// nothing below reads the image's layers.
+		} else if fullRootfsDispatched {
 			// An explicit full-rootfs image is self-contained. Pulling the
 			// shared runtime base first would make this path depend on an
 			// unrelated registry and turn an unreachable base into a deploy
@@ -2808,7 +2820,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		}
 		// dispatchFullRootfs already published the complete main image;
 		// otherwise build the above-base delta through the two-drive path.
-		if !fullRootfsDispatched {
+		if !fullRootfsDispatched && !layerReused {
 			// Issue #461 / ADR-062: mark credential used after a successful
 			// above-base resolution — every authenticated pull above this
 			// line was either app manifest, app config, or app blob.
@@ -2857,6 +2869,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			if err := h.replicateLayer(ctx, appsKey); err != nil {
 				_ = h.markDeployFailed(ctx, dep.ID, err, "replicate app layer")
 				return err
+			}
+			if reuseKey != "" {
+				// The two-drive build embeds the manifest as given.
+				h.recordAppLayer(reuseKey, app, dep, result, &layerManifests{input: manifest, final: manifest}, true)
 			}
 			h.log.Info("imaged: build app layer (two-drive)",
 				"app", app.Slug, "digest", digest, "key", result.ImageKey,
@@ -3066,6 +3082,24 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 		// in buildImageLayer and keeps the sidecar semantics
 		// independent of the main image's runtime selection.
 		scCtx := withImageProgress(ctx, h.store, dep.ID, companionWorkload(sc.Name))
+		// An unsigned companion image converted before for the same
+		// contract is republished without pulling its layers.
+		companionReuseKey := ""
+		if contract, contractErr := h.sidecarWorkloadManifest(sc, selected.Config); contractErr == nil {
+			companionReuseKey = h.companionLayerReuseKey(app, acct, selected, sc.Name, contract)
+			if companionReuseKey != "" {
+				if reuseBE, beErr := h.storageFor(); beErr == nil {
+					if result, ok := h.reuseAppLayer(scCtx, companionReuseKey, app, dep, rootfs.BuildInput{Manifest: api.SidecarBuildManifest(), Storage: reuseBE, StorageKey: layerKey}); ok {
+						scFindings, err := h.finishCompanionLayer(scCtx, app, dep, selected, sc, contract, layerKey, result)
+						findings = append(findings, scFindings...)
+						if err != nil {
+							return findings, err
+						}
+						continue
+					}
+				}
+			}
+		}
 		imageProgressf(scCtx, "pulling %s", selected.Reference)
 		start := time.Now()
 		pulled, err := pullLayersWithAuth(ctx, h.oci, selected.Reference, auth)
@@ -3127,36 +3161,14 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed sidecar layers")
 			return findings, err
 		}
-		if err := h.publishContainerRootfs(ctx, app, dep, selected, sc.Name, "sidecar-layer", layerKey, result); err != nil {
-			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q stamp", sc.Name))
-			return findings, fmt.Errorf("imaged: sidecar %q stamp: %w", sc.Name, err)
-		}
-		if sc.Type == api.SidecarTypeSidecar {
-			if err := h.store.SetDeploymentSidecarSecretReloadSignal(ctx, dep.ID, sc.Name, workloadManifest.SecretReloadSignal); err != nil {
-				_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q secret reload metadata", sc.Name))
-				return findings, fmt.Errorf("imaged: persist sidecar %q secret reload support: %w", sc.Name, err)
-			}
-		}
-		if err := h.replicateLayer(ctx, layerKey); err != nil {
-			_ = h.markDeployFailed(ctx, dep.ID, err, "replicate sidecar layer")
+		scFindings, err := h.finishCompanionLayer(scCtx, app, dep, selected, sc, workloadManifest, layerKey, result)
+		findings = append(findings, scFindings...)
+		if err != nil {
 			return findings, err
 		}
-		imageProgressf(scCtx, "published")
-		// Per-sidecar secret-can-on-image scan (PR-A). Mirrors the
-		// main-image scan above — same engine, same loud-fail
-		// posture. The "layer" label is "sidecar-<slug>" so the
-		// dashboard can attribute findings to the right sidecar.
-		// We ACCUMULATE findings here and let handleDeployment
-		// stamp the audit row ONCE at the end — otherwise each
-		// sidecar's clean walk would overwrite the prior sidecar's
-		// findings (UpsertDeploymentSecretFindings is an
-		// overwrite-not-append). The first failure for any sidecar
-		// short-circuits the rest of the sidecar loop (a partial
-		// sidecar set is worse than a clean failure — see the
-		// comment block above).
-		if scFindings, _ := h.runDeployLayerSecretScan(ctx, app, dep, "sidecar-"+sc.Name); len(scFindings) > 0 {
-			findings = append(findings, scFindings...)
-			return findings, errImageSecretDetected
+		if companionReuseKey != "" {
+			sidecarManifest := api.SidecarBuildManifest()
+			h.recordAppLayer(companionReuseKey, app, dep, result, &layerManifests{input: sidecarManifest, final: sidecarManifest}, true)
 		}
 		h.log.Info("imaged: build sidecar layer",
 			"app", app.Slug, "sidecar", sc.Name, "kind", sc.Type,
@@ -3164,6 +3176,40 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			"layers", len(pulled.Layers))
 	}
 	return findings, nil
+}
+
+// finishCompanionLayer stamps a built or reused companion layer, persists its
+// secret reload support, replicates it and runs its secret scan. It marks the
+// deployment failed on any error.
+func (h *Handler) finishCompanionLayer(ctx context.Context, app state.App, dep state.Deployment, selected preparedContainerWorkload, sc api.Sidecar, workloadManifest api.AppManifest, layerKey string, result rootfs.BuildResult) ([]secretscan.Finding, error) {
+	if err := h.publishContainerRootfs(ctx, app, dep, selected, sc.Name, "sidecar-layer", layerKey, result); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q stamp", sc.Name))
+		return nil, fmt.Errorf("imaged: sidecar %q stamp: %w", sc.Name, err)
+	}
+	if sc.Type == api.SidecarTypeSidecar {
+		if err := h.store.SetDeploymentSidecarSecretReloadSignal(ctx, dep.ID, sc.Name, workloadManifest.SecretReloadSignal); err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q secret reload metadata", sc.Name))
+			return nil, fmt.Errorf("imaged: persist sidecar %q secret reload support: %w", sc.Name, err)
+		}
+	}
+	if err := h.replicateLayer(ctx, layerKey); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "replicate sidecar layer")
+		return nil, err
+	}
+	imageProgressf(ctx, "published")
+	// Per-sidecar secret-can-on-image scan (PR-A). Mirrors the main-image
+	// scan — same engine, same loud-fail posture. The "layer" label is
+	// "sidecar-<slug>" so the dashboard can attribute findings to the right
+	// sidecar. Findings ACCUMULATE in the caller and handleDeployment stamps
+	// the audit row ONCE at the end — otherwise each sidecar's clean walk
+	// would overwrite the prior sidecar's findings
+	// (UpsertDeploymentSecretFindings is an overwrite-not-append). The first
+	// failure for any sidecar short-circuits the rest of the sidecar loop (a
+	// partial sidecar set is worse than a clean failure).
+	if scFindings, _ := h.runDeployLayerSecretScan(ctx, app, dep, "sidecar-"+sc.Name); len(scFindings) > 0 {
+		return scFindings, errImageSecretDetected
+	}
+	return nil, nil
 }
 
 // sidecarWorkloadManifest projects the OCI image config plus the deployment's

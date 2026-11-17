@@ -67,6 +67,11 @@ const layerReuseFormat = "app-layer-reuse/v3"
 // app layer, plus the account the layer may be reused in. They are known
 // before imaged reads the image's layers, so a reuse never reads them.
 type layerReuseInputs struct {
+	// kind separates how the layer was converted: a built source image
+	// ("" for the original source path), a registry image's above-base
+	// delta, or a companion's whole image. The same image digest makes a
+	// different layer under each.
+	kind        string
 	accountID   string
 	imageDigest string
 	// runtime and runtimeBaseDiffIDs describe the shared runner base the
@@ -94,8 +99,12 @@ func layerReuseKey(in layerReuseInputs) (string, error) {
 		return "", fmt.Errorf("layer reuse key: manifest: %w", err)
 	}
 	h := sha256.New()
-	for _, part := range []string{layerReuseFormat, in.accountID, in.imageDigest, in.runtime,
-		strings.Join(in.runtimeBaseDiffIDs, ","), in.startCommand, string(manifest), in.guestInitDigest, string(in.plan), in.imagedVersion} {
+	parts := []string{layerReuseFormat, in.accountID, in.imageDigest, in.runtime,
+		strings.Join(in.runtimeBaseDiffIDs, ","), in.startCommand, string(manifest), in.guestInitDigest, string(in.plan), in.imagedVersion}
+	if in.kind != "" {
+		parts = append(parts, "kind:"+in.kind)
+	}
+	for _, part := range parts {
 		_, _ = fmt.Fprintf(h, "%d:%s\n", len(part), part)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -363,6 +372,14 @@ func (h *Handler) observeLayerReuse(outcome string) {
 // app manifest before any shared runner split; baseDiffIDs are the runner
 // base's layers when runtime names one.
 func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDigest, runtime string, baseDiffIDs []string, manifest api.AppManifest) string {
+	return h.layerReuseKeyFor(app, layerReuseInputs{accountID: app.AccountID, imageDigest: imageDigest, runtime: runtime,
+		runtimeBaseDiffIDs: baseDiffIDs, startCommand: app.StartCommand, manifest: manifest, plan: acct.Plan})
+}
+
+// layerReuseKeyFor completes in with this imaged's guest-init digest and
+// build, and returns its key, or "" when reuse is off or the inputs cannot
+// be identified.
+func (h *Handler) layerReuseKeyFor(app state.App, in layerReuseInputs) string {
 	if h.layerReuse == nil {
 		return ""
 	}
@@ -371,9 +388,7 @@ func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDiges
 		h.log.Warn("imaged: layer reuse: guest-init digest", "err", err)
 		return ""
 	}
-	in := layerReuseInputs{accountID: app.AccountID, imageDigest: imageDigest, runtime: runtime,
-		runtimeBaseDiffIDs: baseDiffIDs, startCommand: app.StartCommand, manifest: manifest,
-		guestInitDigest: guestInit, plan: acct.Plan, imagedVersion: wire.Version}
+	in.guestInitDigest, in.imagedVersion = guestInit, wire.Version
 	key, err := layerReuseKey(in)
 	if err != nil {
 		h.log.Warn("imaged: layer reuse key", "app", app.Slug, "err", err)

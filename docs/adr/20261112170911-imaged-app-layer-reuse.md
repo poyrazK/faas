@@ -176,4 +176,17 @@ imaged's "image preparation timing" log):
 
 **Metric.** `imaged_app_layer_reuse_total{outcome="patched"}`.
 
-**Not covered.** Registry images still convert on every deployment: their publication records per-layer consumption evidence that a reuse does not produce.
+**Not covered here.** Registry images: see amendment 3.
+
+## Amendment 3 (2026-11-17): unsigned registry images and companions
+
+**Context.** Registry images, including every companion, converted on every deployment, even for a digest converted minutes before on the same node.
+
+**Decision.** Unsigned registry conversions use the same index:
+
+- **Eligible:** no publisher verification for the workload, the app does not require signed images, and the image resolved to a digest. A verified conversion publishes per-layer consumption evidence that a reuse does not produce, so it always converts.
+- **App image (two-drive path).** The key adds `kind:registry-app`, the resolved image digest, the runtime base's layer diff IDs (the above-base split depends on them) and the manifest under the amendment 2 rules. It is computed after the image is resolved and before any layer blob is pulled. A hit (or a manifest patch) is stamped, replicated and scanned like a build. Only two-drive builds are recorded; an explicit full-rootfs deployment never looks up the index.
+- **Companions.** The key adds `kind:companion:<name>`, the companion's digest and its whole workload contract (command, ports and the other settings built into its layer), so any contract change converts. A hit republishes; companions are never patched.
+- **Kind separates layers.** The same digest makes a different layer as a source build, a registry app image or a companion, so the kinds never share records.
+
+**Integrity.** As before: the republished bytes are checked against the record, published and signed like a build; the secret scan and the deploy scan run on the published layer.

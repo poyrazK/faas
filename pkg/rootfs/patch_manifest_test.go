@@ -36,7 +36,7 @@ func manifestLayerFixture(t *testing.T, root string, m api.AppManifest) (Publish
 	if err := (wire.ExecRunner{}).Run(context.Background(), MkfsCommand(staging, image, 16)); err != nil {
 		t.Fatalf("mkfs: %v", err)
 	}
-	f, err := os.Open(image)
+	f, err := os.Open(image) //nolint:forbidigo // the test's own mkfs output in t.TempDir.
 	if err != nil {
 		t.Fatal(err)
 	}
