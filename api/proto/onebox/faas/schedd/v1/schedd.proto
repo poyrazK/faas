@@ -1318,6 +1318,27 @@ message SandboxRunStart {
   // (ADR-20261116182615 §1): vmmd starts it with its own commands, and the
   // warm snapshot is the browser shape's. Never set with start_cmd.
   bool browser = 13;
+  // task makes the session a sandbox task (ADR-20261116182615 §3); see
+  // vmmd's RunSandboxTask.
+  SandboxRunTask task = 14;
+}
+
+// SandboxRunTask is a sandbox task, as vmmd's RunSandboxTask.
+message SandboxRunTask {
+  string kind = 1;
+  string url = 2;
+  int32 max_chars = 3;
+  int64 timeout_ms = 4;
+  int64 max_output_bytes = 5;
+}
+
+// SandboxRunTaskDone is a sandbox task's end, as vmmd's RunSandboxTaskDone.
+message SandboxRunTaskDone {
+  int32 exit_code = 1;
+  bytes output = 2;
+  bool timed_out = 3;
+  bool truncated = 4;
+  string error = 5;
 }
 
 message SandboxRunFreeze {}
@@ -1336,6 +1357,8 @@ message SandboxRunEvent {
     SandboxRunPersistDone persist_done = 8;
     // usage relays vmmd's cumulative usage of the session VM.
     AgentRunUsage usage = 9;
+    // task_done ends a sandbox task (ADR-20261116182615 §3).
+    SandboxRunTaskDone task_done = 10;
   }
 }
 

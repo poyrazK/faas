@@ -473,11 +473,12 @@ SELECT count(*)::integer FROM sandbox_sessions WHERE account_id=sqlc.arg(account
 
 -- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id,browser)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars)
 VALUES (sqlc.arg(account_id)::text::uuid,sqlc.narg(tenant_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(preset)::text,
   sqlc.arg(ram_mb)::integer,sqlc.arg(network_mode)::text,sqlc.arg(idle_timeout_sec)::integer,sqlc.arg(expires_at)::timestamptz,
   sqlc.arg(labels)::jsonb,sqlc.narg(workspace_snapshot_id)::text::uuid,sqlc.narg(image_ref)::text,sqlc.narg(image_job_id)::text::uuid,
-  sqlc.narg(template_id)::text::uuid,sqlc.arg(browser)::boolean)
+  sqlc.narg(template_id)::text::uuid,sqlc.arg(browser)::boolean,sqlc.narg(task_kind)::text,sqlc.narg(task_url)::text,
+  sqlc.narg(task_max_chars)::integer)
 RETURNING id::text AS id;
 
 -- name: GetSandboxSession :one
@@ -546,7 +547,9 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
     tpl.rootfs_key, '')::text AS image_key,
   (sb.image_ref IS NOT NULL)::boolean AS from_image,
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
-  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser
+  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
+  coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
+  coalesce(sb.task_max_chars, 0)::integer AS task_max_chars
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
@@ -760,3 +763,43 @@ LEFT JOIN LATERAL (SELECT d.id, d.rootfs_key, d.created_at FROM deployments d WH
 WHERE t.account_id = sqlc.arg(account_id)::text::uuid
   AND (sqlc.arg(name)::text = '' OR t.name = sqlc.arg(name)::text)
 ORDER BY t.name;
+
+-- name: RecordSandboxTaskResult :execrows
+-- ADR-20261116182615 §3: agentd records a sandbox task's end under its lease,
+-- once.
+UPDATE sandbox_sessions SET task_exit_code=sqlc.arg(exit_code)::integer, task_output=sqlc.arg(output)::bytea, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text
+ AND task_kind IS NOT NULL AND task_exit_code IS NULL;
+
+-- name: SandboxTaskCallByCall :one
+-- The task a gregale_browse call admitted, if it admitted one.
+SELECT sandbox_id::text AS sandbox_id FROM agent_sandbox_task_calls
+ WHERE endpoint_id=sqlc.arg(endpoint_id)::text::uuid AND thread_id=sqlc.arg(thread_id)::text
+ AND tool_call_id=sqlc.arg(tool_call_id)::text;
+
+-- name: InsertSandboxTaskCall :exec
+INSERT INTO agent_sandbox_task_calls (sandbox_id, account_id, endpoint_id, thread_id, tool_call_id, issued_at)
+VALUES (sqlc.arg(sandbox_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(endpoint_id)::text::uuid,
+  sqlc.arg(thread_id)::text, sqlc.arg(tool_call_id)::text, sqlc.arg(issued_at)::timestamptz);
+
+-- name: ListUndeliveredSandboxTaskCalls :many
+-- Ended gregale_browse tasks whose result apid has not yet published into
+-- their thread. The mark is written after the publish, which is
+-- idempotent, so an interrupted delivery is retried and lands once.
+SELECT c.sandbox_id::text AS sandbox_id, c.account_id::text AS account_id, c.endpoint_id::text AS endpoint_id, c.thread_id,
+  c.tool_call_id, c.issued_at, sb.state, coalesce(sb.outcome_code, '')::text AS outcome_code,
+  coalesce(sb.outcome_message, '')::text AS outcome_message, coalesce(sb.task_kind, '')::text AS task_kind,
+  coalesce(sb.task_url, '')::text AS task_url, sb.task_exit_code, sb.task_output
+ FROM agent_sandbox_task_calls c JOIN sandbox_sessions sb ON sb.id=c.sandbox_id
+ WHERE c.delivered_at IS NULL AND sb.state IN ('closed', 'expired', 'failed')
+ ORDER BY sb.closed_at, c.sandbox_id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: MarkSandboxTaskCallDelivered :exec
+UPDATE agent_sandbox_task_calls SET delivered_at = now() WHERE sandbox_id = sqlc.arg(sandbox_id)::text::uuid AND delivered_at IS NULL;
+
+-- name: GetSandboxTaskResult :one
+-- GET /v1/sandboxes/{id}/task: a task session's arguments and, once it
+-- ended, its exit code and output.
+SELECT state, coalesce(task_kind, '')::text AS task_kind, coalesce(task_url, '')::text AS task_url, task_exit_code, task_output,
+  coalesce(outcome_code, '')::text AS outcome_code, coalesce(outcome_message, '')::text AS outcome_message
+ FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;

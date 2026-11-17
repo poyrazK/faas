@@ -155,6 +155,17 @@ type AgentRunUsage struct {
 	RecordedAt          pgtype.Timestamptz
 }
 
+type AgentSandboxTaskCall struct {
+	SandboxID   pgtype.UUID
+	AccountID   pgtype.UUID
+	EndpointID  pgtype.UUID
+	ThreadID    string
+	ToolCallID  string
+	IssuedAt    pgtype.Timestamptz
+	DeliveredAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 type AgentVersion struct {
 	AgentID               pgtype.UUID
 	Version               int32
@@ -287,6 +298,11 @@ type SandboxSession struct {
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.UUID
 	Browser             bool
+	TaskKind            pgtype.Text
+	TaskUrl             pgtype.Text
+	TaskMaxChars        pgtype.Int4
+	TaskExitCode        pgtype.Int4
+	TaskOutput          []byte
 }
 
 type SandboxSessionUsage struct {

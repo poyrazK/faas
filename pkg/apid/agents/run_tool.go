@@ -144,11 +144,11 @@ func runDedupeKey(grant CallbackToken, callID string) string {
 	return "gregale-run-" + hex.EncodeToString(sum[:16])
 }
 
-// RunRunCallbacks publishes finished gregale_run runs into their threads
-// until ctx ends. Every apid runs it: the publish is idempotent, so two
-// passes over one run publish it once.
+// RunRunCallbacks publishes finished gregale_run runs and gregale_browse
+// tasks into their threads until ctx ends. Every apid runs it: the publish
+// is idempotent, so two passes over one run publish it once.
 func (h *Handler) RunRunCallbacks(ctx context.Context) {
-	if h.RunCallbacks == nil || !h.callbacksConfigured() {
+	if h.RunCallbacks == nil && h.SandboxTasks == nil || !h.callbacksConfigured() {
 		return
 	}
 	ticker := time.NewTicker(runCallbackInterval)
@@ -162,6 +162,9 @@ func (h *Handler) RunRunCallbacks(ctx context.Context) {
 		if _, err := h.DeliverRunCallbacks(ctx); err != nil && ctx.Err() == nil && h.Log != nil {
 			h.Log.Warn("agent run callbacks", "err", err)
 		}
+		if _, err := h.DeliverSandboxTasks(ctx); err != nil && ctx.Err() == nil && h.Log != nil {
+			h.Log.Warn("agent browse results", "err", err)
+		}
 		h.sweepGitHubSubscriptions(ctx)
 	}
 }
@@ -169,6 +172,9 @@ func (h *Handler) RunRunCallbacks(ctx context.Context) {
 // DeliverRunCallbacks makes one delivery pass and returns how many runs it
 // settled. A run whose delivery failed is retried on the next pass.
 func (h *Handler) DeliverRunCallbacks(ctx context.Context) (int, error) {
+	if h.RunCallbacks == nil {
+		return 0, nil
+	}
 	ends, err := h.RunCallbacks.UndeliveredRunCallbacks(ctx, runCallbackBatch)
 	if err != nil {
 		return 0, err

@@ -5,11 +5,13 @@ package fcvm
 
 import (
 	"context"
+	"io"
 	"net"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sandboxproto"
@@ -21,16 +23,20 @@ type browserGuestVMM struct {
 	mu       sync.Mutex
 	requests []sandboxproto.Request
 	exitCode int
+	// stdout and stderr are what an exec writes.
+	stdout, stderr string
 }
 
 func (v *browserGuestVMM) DialSandbox(ctx context.Context, _ string) (net.Conn, error) {
 	host, guest := net.Pipe()
 	go func() {
-		_ = sandboxproto.Serve(context.WithoutCancel(ctx), guest, func(_ context.Context, req sandboxproto.Request, _ *sandboxproto.Call) (any, error) {
+		_ = sandboxproto.Serve(context.WithoutCancel(ctx), guest, func(_ context.Context, req sandboxproto.Request, call *sandboxproto.Call) (any, error) {
 			v.mu.Lock()
 			defer v.mu.Unlock()
 			v.requests = append(v.requests, req)
 			if req.Op == sandboxproto.OpExec {
+				_, _ = io.WriteString(call.Stderr(), v.stderr)
+				_, _ = io.WriteString(call.Stdout(), v.stdout)
 				return sandboxproto.ExecResult{ExitCode: v.exitCode}, nil
 			}
 			return struct{}{}, nil
@@ -96,5 +102,34 @@ func TestBrowserPrewarmRunsAPlainExec(t *testing.T) {
 	vmm.exitCode = 1
 	if err := prewarmSandboxBrowser(t.Context(), vmm, "sbx-capture"); err == nil {
 		t.Fatal("a failed prewarm was accepted")
+	}
+}
+
+// adr: 20261116182615 §3 — a task's command is one exec in the session; its
+// result keeps stdout only, at most the task's output cap.
+func TestRunSandboxTaskKeepsStdoutWithinItsCap(t *testing.T) {
+	vmm := &browserGuestVMM{fakeVMM: &fakeVMM{}, stdout: `{"title":"Example"}`, stderr: "chromium noise"}
+	m := newTestManager(&fakeInputRunner{}, vmm)
+	if _, err := m.WakeSandbox(t.Context(), browserWake("sbx-task")); err != nil {
+		t.Fatalf("WakeSandbox: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "sbx-task") })
+	argv := []string{"gregale-browser", "fetch", "--", "https://example.com/"}
+	res, err := m.RunSandboxTask(t.Context(), "sbx-task", "sbx-sbx-task", argv, time.Minute, 1024)
+	if err != nil || res.ExitCode != 0 || string(res.Output) != `{"title":"Example"}` || res.Truncated {
+		t.Fatalf("task = %+v, %v", res, err)
+	}
+	ops := vmm.ops()
+	last := ops[len(ops)-1]
+	if last.Op != sandboxproto.OpExec || !slices.Equal(last.Argv, argv) || last.TimeoutMillis != time.Minute.Milliseconds() || last.MaxOutputBytes != 1024 {
+		t.Fatalf("ran %+v", last)
+	}
+	vmm.exitCode = 2
+	res, err = m.RunSandboxTask(t.Context(), "sbx-task", "sbx-sbx-task", argv, time.Minute, 5)
+	if err != nil || res.ExitCode != 2 || string(res.Output) != `{"tit` || !res.Truncated {
+		t.Fatalf("a capped task = %+v, %v", res, err)
+	}
+	if _, err := m.RunSandboxTask(t.Context(), "sbx-task", "sbx-sbx-task", nil, time.Minute, 5); err == nil {
+		t.Fatal("a task without a command ran")
 	}
 }

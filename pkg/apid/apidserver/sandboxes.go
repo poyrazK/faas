@@ -53,6 +53,11 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) stri
 		}
 	}
 	s.sandboxAPI = h
+	// ADR-20261116182615 §4: gregale_browse admits its tasks as browser
+	// sessions, under the same switches and plan limits.
+	if s.agentAPI != nil && h.Store != nil {
+		s.agentAPI.Browse = h.AdmitBrowse
+	}
 	return nil
 }
 

@@ -519,6 +519,18 @@ type AgentRunUsage struct {
 	RecordedAt          pgtype.Timestamptz
 }
 
+// ADR-20261116182615 gregale_browse links written by apid: the thread and tool call a finished sandbox task answers.
+type AgentSandboxTaskCall struct {
+	SandboxID   pgtype.UUID
+	AccountID   pgtype.UUID
+	EndpointID  pgtype.UUID
+	ThreadID    string
+	ToolCallID  string
+	IssuedAt    pgtype.Timestamptz
+	DeliveredAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 type AgentUndoRecord struct {
 	ID                pgtype.UUID
 	ActivityID        pgtype.UUID
@@ -15878,6 +15890,13 @@ type SandboxSession struct {
 	TemplateID pgtype.UUID
 	// ADR-20261116182615: the session boots with the sandbox browser running (gregale-browser) and CDP on port 9222.
 	Browser bool
+	// ADR-20261116182615: the sandbox task the session runs (browse), or NULL for an ordinary session.
+	TaskKind     pgtype.Text
+	TaskUrl      pgtype.Text
+	TaskMaxChars pgtype.Int4
+	TaskExitCode pgtype.Int4
+	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
+	TaskOutput []byte
 }
 
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.
