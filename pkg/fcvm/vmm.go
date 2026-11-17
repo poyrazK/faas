@@ -7364,7 +7364,31 @@ func (v *JailerVMM) guestStopped(l Lease, detail string) error {
 	if supervisedWorkloadExited(lines) {
 		return startupCrashProblem(strings.Join(lines, "\n"), detail+cleanExitHint(lines))
 	}
+	// guest-init exits with status 0 only when its supervisor returned nil:
+	// the workload exited 0 and was not restarted. A guest failure (overlay,
+	// pivot, init) exits 1, and a stop vmmd asked for never reaches here.
+	// guest-init's own clean-exit line can still be missing: until guest-init
+	// drained the console before every exit, the kernel's panic dump cut it to
+	// "guest-init: app " (coding-agent eval 2026-11-17, a FastAPI source build
+	// whose start command was `python main.py`).
+	if v.guestInitExitedCleanly(l.Instance) {
+		return startupCrashProblem(strings.Join(lines, "\n"), detail+cleanExitDetail)
+	}
 	return errors.New(detail)
+}
+
+// guestInitExitedCleanly reports whether the instance's unfiltered console
+// shows guest-init (PID 1) exiting with status 0. The customer log ring drops
+// the kernel's panic lines, so this reads the console file.
+func (v *JailerVMM) guestInitExitedCleanly(instance string) bool {
+	v.mu.Lock()
+	rec := v.recs[instance]
+	v.mu.Unlock()
+	if rec == nil || rec.consolePath == "" {
+		return false
+	}
+	status, ok := guestInitWaitStatus(consoleTail(rec.consolePath))
+	return ok && status == 0
 }
 
 // startupCrashProblem names a workload that exited during startup. A
@@ -7398,11 +7422,15 @@ var supervisedWorkloadMarkers = []string{
 // ("guest-init: app exited cleanly (status 0, policy=on-failure); …").
 const guestCleanExitMarker = " exited cleanly (status 0, policy="
 
-// cleanExitHint explains a workload that ended on its own with status 0.
+// cleanExitDetail explains a workload that ended on its own with status 0.
+const cleanExitDetail = "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+
+// cleanExitHint is cleanExitDetail when guest-init's clean-exit line is among
+// lines.
 func cleanExitHint(lines []string) string {
 	for _, line := range lines {
 		if strings.Contains(line, guestCleanExitMarker) {
-			return "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+			return cleanExitDetail
 		}
 	}
 	return ""
