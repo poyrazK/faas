@@ -95,7 +95,10 @@ func (s *PgStore) CheckDeploymentDependencies(ctx context.Context, id string, no
 // deadline start or the persisted progress; see
 // DeploymentDependencyPreviewStore.
 func (s *PgStore) PreviewDeploymentDependencies(ctx context.Context, id string, now time.Time) error {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	// Not a read-only transaction: the gate's target reads take row locks
+	// (SELECT … FOR UPDATE), which Postgres refuses there. persist=false
+	// writes nothing, and the transaction always rolls back.
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
