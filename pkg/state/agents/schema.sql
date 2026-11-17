@@ -258,6 +258,27 @@ CREATE TABLE agent_sandbox_task_calls (
  delivered_at timestamptz,
  created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE sandbox_actions (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ session_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ seq integer NOT NULL,
+ kind text NOT NULL,
+ args jsonb NOT NULL DEFAULT '{}'::jsonb,
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ tool_call_id text NOT NULL,
+ issued_at timestamptz NOT NULL,
+ state text NOT NULL DEFAULT 'pending',
+ exit_code integer,
+ output bytea,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ started_at timestamptz,
+ finished_at timestamptz,
+ delivered_at timestamptz,
+ screenshot_key text,
+ screenshot_bytes bigint
+);
 CREATE TABLE sandbox_session_usage (
  sandbox_id uuid PRIMARY KEY,
  account_id uuid NOT NULL,

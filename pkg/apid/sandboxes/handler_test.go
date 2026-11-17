@@ -48,6 +48,10 @@ type fakeStore struct {
 	// taskCalls are browse tasks by call, and taskResults their results.
 	taskCalls   map[agentstore.SandboxTaskCall]string
 	taskResults map[string]agentstore.SandboxTaskResult
+	// openArgs is the first action of the last gregale_browser session.
+	openArgs agentstore.SandboxActionArgs
+	// actionResults are gregale_browser actions by "<session>/<seq>".
+	actionResults map[string]agentstore.SandboxActionResult
 }
 
 func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmission) (agentstore.Sandbox, error) {
