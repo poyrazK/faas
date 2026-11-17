@@ -44,9 +44,15 @@ func TestRunSandboxTakesTheEgressPolicy(t *testing.T) {
 
 func TestRunSandboxRefusesAnInvalidEgressPolicy(t *testing.T) {
 	for name, mutate := range map[string]func(*vmmdpb.RunSandboxStart){
-		"registries mode": func(s *vmmdpb.RunSandboxStart) { s.NetworkMode, s.EgressAllow = api.SandboxNetworkRegistries, []string{"example.com"} },
-		"a wildcard":      func(s *vmmdpb.RunSandboxStart) { s.NetworkMode, s.EgressDeny = api.SandboxNetworkWeb, []string{"*.example.com"} },
-		"an address":      func(s *vmmdpb.RunSandboxStart) { s.NetworkMode, s.EgressAllow = api.SandboxNetworkWeb, []string{"10.0.0.1"} },
+		"registries mode": func(s *vmmdpb.RunSandboxStart) {
+			s.NetworkMode, s.EgressAllow = api.SandboxNetworkRegistries, []string{"example.com"}
+		},
+		"a wildcard": func(s *vmmdpb.RunSandboxStart) {
+			s.NetworkMode, s.EgressDeny = api.SandboxNetworkWeb, []string{"*.example.com"}
+		},
+		"an address": func(s *vmmdpb.RunSandboxStart) {
+			s.NetworkMode, s.EgressAllow = api.SandboxNetworkWeb, []string{"10.0.0.1"}
+		},
 		"too many": func(s *vmmdpb.RunSandboxStart) {
 			s.NetworkMode = api.SandboxNetworkWeb
 			for i := range api.SandboxEgressRulesMax + 1 {
