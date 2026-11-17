@@ -352,3 +352,32 @@ func TestResidency_LoopRunTicks(t *testing.T) {
 		t.Errorf("residency last tick = %v, want within 1s", last)
 	}
 }
+
+// meterd exports each plan's modelled resident GB per paying customer beside
+// the measured value, so FaasResidentGbPerCustomerHigh can compare a plan with
+// its own model (ADR-20261117070932).
+func TestResidency_PlannedGaugePerPlan(t *testing.T) {
+	_, _, ops := newResidencyTestHarness(t, time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC))
+	body := scrapeResidencyBody(t, ops)
+	for _, plan := range api.Plans {
+		want, ok := api.PlannedResidentGBPerCustomer(plan)
+		if !ok {
+			t.Fatalf("plan %s has no planned residency", plan)
+		}
+		prefix := `meter_test_residency_resident_gb_per_customer_planned{plan="` + string(plan) + `"} `
+		var got float64
+		found := false
+		for _, line := range strings.Split(body, "\n") {
+			if v, cut := strings.CutPrefix(line, prefix); cut {
+				f, err := strconv.ParseFloat(v, 64)
+				if err != nil {
+					t.Fatalf("parse %q: %v", line, err)
+				}
+				got, found = f, true
+			}
+		}
+		if !found || math.Abs(got-want) > 1e-9 {
+			t.Fatalf("planned gauge for %s = %v (found %v), want %v", plan, got, found, want)
+		}
+	}
+}

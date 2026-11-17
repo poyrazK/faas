@@ -621,6 +621,68 @@ experiments per environment, 100 event names per environment, one running
 experiment per rule. Units are verified customers; per-end-user (subject)
 experiments are not supported yet.
 
+### Measure a value instead of a conversion
+
+`--metric-kind mean` compares the mean event `value` per exposed customer,
+such as revenue per customer from `track('order_completed', { value:
+totalCents })`. A customer who sent nothing counts as 0. The 1% smallest and
+largest customer values are capped to the 1st and 99th percentile before the
+means are compared, so one very large order cannot decide the result. Values
+from the last two UTC days are read live; older days are folded into each
+customer's record, so results outlive the daily event rows.
+
+```bash
+gregale flag experiment create checkout-revenue --flag checkout --rule everyone-percent \
+  --control legacy --metric order_completed --metric-kind mean --start --project shop
+```
+
+### Guardrails
+
+Every experiment watches two guardrails from request telemetry, with no
+instrumentation:
+
+| Guardrail | Breached when the variant, compared with control, has | Default tolerance |
+|---|---|---|
+| `server_error_rate` | a higher share of 5xx responses (platform refusals excluded) | +0.5 percentage points |
+| `p95_latency` | a higher share of requests slower than control's p95 latency | +2 percentage points |
+
+Only requests that evaluated the experiment's rule count, and customers, not
+requests, are the units. A guardrail breaches when a 99% always-valid
+confidence interval on the difference lies wholly above the tolerance, after
+each arm has 100 customers and 1,000 requests. Control's p95 is fixed as the
+latency threshold once control has 1,000 requests; results also report each
+variant's p95.
+
+On a breach Gregale publishes a new flag configuration in which the rule
+serves control to every customer it matches, then stops the experiment with
+`stop_reason: guardrail_breach` and records the breach. Restore the previous
+configuration version to undo it (`gregale flag history`, then
+`gregale flag apply`). Change the tolerances, or turn guardrails off, when you
+create the experiment:
+
+```bash
+gregale flag experiment create checkout-v2 ... --max-error-increase 0.01 --max-slow-increase 0.05
+gregale flag experiment create checkout-v2 ... --no-guardrails
+```
+
+### Recommendations and shipping
+
+`gregale flag experiment result get` ends with a recommendation and the
+command that carries it out: `ship_variant` (a variant is significantly better
+and breaches no guardrail), `keep_control` (every significant variant is
+worse), `keep_running`, `fix_allocation` (sample ratio mismatch), `decide`
+(stopped with no significant difference) or `rolled_back`. Gregale never ships
+a variant on its own. To ship:
+
+```bash
+gregale flag experiment promote checkout-v2 new --project shop
+```
+
+`promote` publishes the rule serving that variant to every customer it matches
+and stops the experiment. MCP agents read the same results and recommendation
+with `gregale_list_flag_experiments` and
+`gregale_get_flag_experiment_results` (release toolset).
+
 ## Promote a guarded rollout stage
 
 Attach a progression plan to a boolean rule that selects `true`. The rule's

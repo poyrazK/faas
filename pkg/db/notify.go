@@ -815,9 +815,15 @@ const (
 	// changing schedd-owned instances.state.
 	NotifyInstanceReadinessChanged = "instance_readiness_changed"
 	NotifySnapshotPrime            = "snapshot_prime"
-	NotifySnapshotBoot             = "snapshot_boot"
-	NotifySnapshotWritten          = "snapshot_written"
-	NotifyDeploymentReady          = "deployment_ready"
+	// NotifyLayerPublished is imaged's advisory notice that a deployment's
+	// layer and signature are stored and replicated, sent before the scan
+	// (ADR-038 amendment 2026-11-17). Payload {"app_id","deployment_id"}.
+	// The owning schedd verifies the layer then, so the prime that follows
+	// does not hash it; a missed notice only leaves the hash to the prime.
+	NotifyLayerPublished  = "layer_published"
+	NotifySnapshotBoot    = "snapshot_boot"
+	NotifySnapshotWritten = "snapshot_written"
+	NotifyDeploymentReady = "deployment_ready"
 	// NotifySnapshotFanout is sent by the snapshots trigger when a snapshot
 	// gains a fan-out event. Its payload is empty: vmmd's replica worker
 	// wakes and rereads its cursor, and keeps a slow tick for retries.
