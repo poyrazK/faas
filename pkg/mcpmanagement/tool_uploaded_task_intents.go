@@ -27,6 +27,32 @@ type getUploadedTaskIntentArgs struct {
 	IntentID string `json:"intent_id"`
 }
 
+type checkUploadedTaskIntentArgs struct {
+	IntentID             string `json:"intent_id"`
+	ExpectedReviewSHA256 string `json:"expected_review_sha256"`
+}
+
+func (m *management) checkUploadedTaskIntent(ctx context.Context, a checkUploadedTaskIntentArgs) (any, error) {
+	if err := m.hostedTaskSourceAccess(); err != nil {
+		return nil, err
+	}
+	if !toolpublication.ValidID(a.IntentID) || !toolpublication.ValidID(a.ExpectedReviewSHA256) {
+		return nil, invalid("invalid_argument", "intent_id and expected_review_sha256 must be lowercase SHA256 identities")
+	}
+	account, err := m.uploadedTaskAccount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	record, err := m.client.CheckHostedTaskSourceIntent(ctx, a.IntentID, api.HostedTaskSourceCheck{ReviewSHA256: a.ExpectedReviewSHA256})
+	if err != nil {
+		return nil, err
+	}
+	if tasktoolsource.ValidateRecord(record, account, a.IntentID) != nil {
+		return nil, invalid("invalid_task_source_receipt", "native Task source check receipt is invalid")
+	}
+	return tasktoolsource.View(record, record.SourceState == "retained", time.Now()), nil
+}
+
 func (m *management) hostedTaskSourceAccess() error {
 	if err := m.toolBuildingAccess(); err != nil {
 		return err
@@ -213,9 +239,13 @@ func uploadedTaskIntentOutputSchema() map[string]any {
 	props["ready_to_apply"] = map[string]any{"type": "boolean", "const": false}
 	props["bindings_verified"] = map[string]any{"type": "boolean", "const": false}
 	props["owner_authorization_required"] = map[string]any{"type": "boolean", "const": true}
+	props["review_status"] = map[string]any{"type": "string", "enum": []string{"pending", "approved", "rejected", "revoked", "stale", "expired"}}
+	props["decided_at"] = map[string]any{"type": "string", "format": "date-time"}
 	required := []string{}
 	for name := range props {
-		required = append(required, name)
+		if name != "review_status" && name != "decided_at" {
+			required = append(required, name)
+		}
 	}
 	slices.Sort(required)
 	return map[string]any{"type": "object", "additionalProperties": false, "properties": props, "required": required}

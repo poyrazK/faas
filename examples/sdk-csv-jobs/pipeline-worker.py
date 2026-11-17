@@ -67,6 +67,8 @@ async def main():
                         for n, row in enumerate(rows)
                     ]
                 }
+            if os.environ.get("GREGALE_CSV_REPORT_FAIL") == "1":
+                raise RuntimeError("Injected report failure after import")
             key = "pipelines/" + value["import_id"] + "/rejections.csv"
             raw = (
                 "input_id,reason\n"

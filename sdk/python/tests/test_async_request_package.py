@@ -38,6 +38,11 @@ from faas_sdk.models.build_response import BuildResponse
 assert pathlib.Path(faas_sdk.__file__).is_relative_to(pathlib.Path(sys.argv[1]))
 assert PreviewOptions is RequestOptions
 import faas_sdk.preview as preview
+from faas_sdk.preview.event_contract import EventContract
+assert preview.EventContract is EventContract
+assert EventContract({"version":1,"type":"example.event","data":{"type":"string"}}).input("hello") == "hello"
+for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore", "EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction", "PipelineCompensation", "CompensationMCP", "CompensationPlan", "CompensationCommand", "PIPELINE_COMPENSATION_SCHEMA", "PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PostgresPipelineToolStore", "PIPELINE_TOOL_SCHEMA", "StripeWebhookAdapter", "StripeWebhookDelivery", "StripeWebhookStage", "StripeWebhookIgnore", "STRIPE_WEBHOOK_SCHEMA", "stripe_delivery_context_from_headers", "PipelineSchedule", "PipelineScheduleClient", "PipelineSchedulePreview", "ScheduledPipelineRun"):
+    assert hasattr(preview,name) and not hasattr(faas_sdk,name)
 for name in ("BuildWaitOptions", "DeploymentWaitOptions", "WaiterError", "WaiterFailureCode", "WaiterOptions", "WaiterProgress", "WaiterTimeoutError", "SourceUploadCheckpoint", "SourceUploadOptions", "SourceUploadError", "save_source_upload_checkpoint", "load_source_upload_checkpoint"):
     assert getattr(preview, name) is getattr(faas_sdk, name)
 def handler(request):
@@ -175,6 +180,57 @@ from typing import assert_type
 from faas_sdk import JobContract,JobInput,JobSubmitOptions,JobRunOptions,JobProgress,JobItemOutcome,TypedJobRun
 from faas_sdk.preview import LiveJob,LiveJobSnapshot,LiveJobFailure,LiveJobSource,realtime_live_job_source
 from faas_sdk.preview import PipelineChild,PipelineChildOptions,PipelineBatchResult,PipelineChildView,PipelineGateOptions,PipelineGateOutcome,PipelineGateService,JobPipeline,JobPipelineClient,PipelineCheckpoint,PipelineInspection,TypedPipelineRun,JobPipelineContext,PipelineJob,PipelineJobResult
+from faas_sdk.preview import EventContract,EventPipeline,EventPipelineDelivery,EventPipelineOutcome
+from faas_sdk.preview import EventPublisher,EventOutbox,EventOutboxStatus,EventOutboxOutcome,EventPublicationOptions,EventPublicationOutcome,EventOutboxRecoveryOptions,EventOutboxPool,EventOutboxTransaction,with_event_outbox_transaction
+async def typed_outbox(publisher:EventPublisher[str],worker:EventOutbox,pool:EventOutboxPool)->None:
+    async def stage(tx:EventOutboxTransaction)->EventOutboxStatus:
+        return await publisher.stage(tx,"hello",EventPublicationOptions(key="one"))
+    assert_type(await with_event_outbox_transaction(pool,stage,timeout=1),EventOutboxStatus)
+    assert_type(await publisher.publish("hello",EventPublicationOptions(key="two"),timeout=1),EventPublicationOutcome)
+    assert_type(await worker.recover_next(EventOutboxRecoveryOptions(timeout=1)),EventOutboxOutcome)
+    assert_type(await worker.status("one",timeout=1),EventOutboxStatus | None)
+from faas_sdk.preview import PipelineSchedule,PipelineScheduleClient,PipelineScheduleHistory,PipelineSchedulePreview,ScheduledPipelineRun
+async def typed_schedules(schedule:PipelineSchedule[str,int],client:PipelineScheduleClient[str,int,str])->None:
+    assert_type(schedule.identity,str)
+    assert_type(await client.history("alice",timeout=1),PipelineScheduleHistory)
+    assert_type(await client.preview("alice",timeout=1),PipelineSchedulePreview)
+    run=await client.attach("occurrence","alice",timeout=1)
+    assert_type(run,ScheduledPipelineRun[int,str])
+    assert_type(await run.result(timeout=1),int)
+from faas_sdk.preview import StripeWebhookAdapter,StripeWebhookDelivery,StripeWebhookOutcome,StripeWebhookReceipt,StripeWebhookDecision,StripeWebhookStage
+async def typed_stripe(client:StripeWebhookAdapter[str,str],delivery:StripeWebhookDelivery)->None:
+    assert_type(await client.handle(delivery,"alice",timeout=1),StripeWebhookOutcome)
+    assert_type(await client.inspect(delivery,"alice",timeout=1),StripeWebhookReceipt | None)
+    decision:StripeWebhookDecision[str]=StripeWebhookStage(input="hello")
+    if decision.state=="stage":
+        assert_type(decision.input,str)
+from faas_sdk.preview import PipelineTool,PipelineToolRequest,PipelineToolStatus,PipelineToolStart,PipelineToolMCP
+async def typed_pipeline_tool(tool:PipelineTool[str,int,str],request:PipelineToolRequest[str])->None:
+    assert_type(await tool.start("hello","request","alice",timeout=1),PipelineToolStart)
+    assert_type(await tool.inspect("request","alice",timeout=1),PipelineToolStatus | None)
+    assert_type(await tool.result("request","alice",timeout=1),int)
+    assert_type(await tool.cancel("request","alice",timeout=1),PipelineToolStatus)
+    if request.input is not None:
+        assert_type(request.input,str)
+    await PipelineToolMCP(tool).call("tool",{},"alice",timeout=1)
+from faas_sdk import JobContext
+from faas_sdk.preview import PipelineCompensation,CompensationPlan,CompensationResult,CompensationOutcome,CompensationCommand,CompensationMCP,CompensationTask,CompensationContext
+async def typed_compensation(service:PipelineCompensation[str,int,str],task:CompensationTask,context:JobContext,pool:EventOutboxPool)->None:
+    plan=await service.plan("source","alice",timeout=1)
+    assert_type(plan,CompensationPlan[str])
+    assert_type(plan.commands[0].input,str)
+    assert_type(await service.tool.result("attempt","alice",timeout=1),CompensationResult[int])
+    async def authorize(tx:EventOutboxTransaction,plan:CompensationPlan[str],command:CompensationCommand[str])->bool:
+        return True
+    async def apply(tx:EventOutboxTransaction,value:str,ctx:CompensationContext)->CompensationOutcome[int]:
+        return {"state":"compensated","result":1}
+    handler=service.handler(pool=pool,authorize=authorize,apply=apply)
+    assert_type(await handler(task,context),CompensationOutcome[int])
+    await CompensationMCP(service).call("tool",{},"alice",timeout=1)
+async def typed_event_pipeline(client:EventPipeline[str,str,int,str],delivery:EventPipelineDelivery)->None:
+    assert_type(await client.handle(delivery,"alice",timeout=1),EventPipelineOutcome)
+    assert_type(await client.inspect(delivery,"alice",timeout=1),EventPipelineOutcome | None)
+    assert_type(EventContract[str]({"version":1,"type":"example.created","data":{"type":"string"}}).input("hello"),str)
 async def typed_job_pipeline(client:JobPipelineClient[str,int],context:JobPipelineContext,job:PipelineJob[str,int])->None:
     run=await client.start("one",timeout=1,idempotency_key="one")
     assert_type(run,TypedPipelineRun[int])
@@ -310,6 +366,7 @@ def observe(info: ResponseInfo) -> None:
         "-m",
         "mypy",
         "--strict",
+        "--show-traceback",
         "--python-version",
         "3.11",
         "--follow-imports=silent",
@@ -319,6 +376,27 @@ def observe(info: ResponseInfo) -> None:
     negative = tmp_path / "invalid.py"
     negative.write_text("""
 from faas_sdk import RequestOptions, ResponseInfo, RetryPolicy, FaaSClient, PaginationOptions, PaginationPage, BuildWaitOptions, DeploymentWaitOptions, WaiterProgress, SourceUploadCheckpoint, SourceUploadOptions
+from faas_sdk.preview import EventPublisher,EventPublicationOptions
+async def invalid_event(publisher:EventPublisher[str])->None:
+    await publisher.publish(7,EventPublicationOptions(key="one"),timeout=1)
+from faas_sdk import JobContract
+from faas_sdk.preview import PipelineSchedule,PipelineScope
+def invalid_schedule(contract:JobContract[str,int],scope:PipelineScope)->None:
+    PipelineSchedule(contract,7,scope=scope,owner_id="alice",cron="0 2 * * *")
+from faas_sdk.preview import StripeWebhookAdapter,StripeWebhookDelivery,StripeWebhookStage
+def invalid_stripe() -> None:
+    decision:StripeWebhookStage[str]=StripeWebhookStage(input=7)
+async def invalid_stripe_access(client:StripeWebhookAdapter[str,str],delivery:StripeWebhookDelivery)->None:
+    await client.handle(delivery,7,timeout=1)
+from faas_sdk.preview import PipelineTool
+async def invalid_pipeline_tool(tool:PipelineTool[str,int,str])->None:
+    await tool.start(7,"request","alice",timeout=1)
+    await tool.cancel("request",7,timeout=1)
+from faas_sdk.preview import PipelineCompensation,CompensationCommand,CompensationOutcome
+async def invalid_compensation(service:PipelineCompensation[str,int,str])->None:
+    await service.plan("source",7,timeout=1)
+    command:CompensationCommand[str]=CompensationCommand(id="one",effect_id="one",description="undo",input=7)
+    outcome:CompensationOutcome[int]={"state":"compensated","result":"bad"}
 def check(options: RequestOptions, info: ResponseInfo) -> None:
     options.timeout = 2
     info.status = 200

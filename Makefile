@@ -490,8 +490,9 @@ migrations-land: ## Merge origin/main into a migration-carrying branch: take mai
 	python3 scripts/migrations_land.py
 
 .PHONY: agent-eval-test
-agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
+agent-eval-test: ## Unit tests of agent-eval and first-hour reports; no live runs (ADR-20261026152009)
 	python3 scripts/agent-eval/agent_eval_test.py
+	python3 -I scripts/first-hour/baseline_test.py
 
 AGENT_EVAL_AGENTS ?= claude
 AGENT_EVAL_TOOLSETS ?= core,all
@@ -1601,11 +1602,11 @@ spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
 	@vacuum lint -r $(VACUUM_RULES) $(SPEC)
 
 .PHONY: spec-check
-spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing-md docs-links-check ## CI gate: vacuum lint + AST parity + generated docs drift (runs in PR CI)
+spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing-md error-codes-md docs-links-check ## CI gate: vacuum lint + AST parity + generated docs drift (runs in PR CI)
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
 	# would double the wall time without adding signal.
 	@$(GO) test -count=1 -run TestSpecCompliance ./scripts/ci/speccompliance
-	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/egress-denylist.md docs/compliance/subprocessors.md docs/plans.md || \
+	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/egress-denylist.md docs/compliance/subprocessors.md docs/plans.md docs/error-codes.md || \
 	  (echo "spec-check: drift (spec or generated docs) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
 
@@ -1713,6 +1714,12 @@ focus-contract-check: ## Check FOCUS invoice projection, refresh, ownership, and
 pricing-md: ## Regenerate customer plan/pricing page from api limits
 	@$(GO) run ./cmd/pricing-md > docs/plans.md
 	@echo "pricing-md: docs/plans.md regenerated"
+
+.PHONY: error-codes-md
+error-codes-md: ## Regenerate docs/error-codes.md, the customer error code reference, from the problems the API builds
+	# Codes of unpublished areas are listed in docs/error-codes-unpublished.txt.
+	@$(GO) run ./cmd/errorcodes-md > docs/error-codes.md.tmp && mv docs/error-codes.md.tmp docs/error-codes.md || (rm -f docs/error-codes.md.tmp; exit 1)
+	@echo "error-codes-md: docs/error-codes.md regenerated"
 
 .PHONY: pricing-check
 pricing-check: ## Verify generated customer pricing is in sync
@@ -2094,3 +2101,7 @@ check-binding-runner-sync:
 .PHONY: test-data-pipeline
 test-data-pipeline: ## Real TLS Postgres replication and signed HTTP acceptance (Docker, Node, Go)
 	@$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) bash scripts/test-data-pipeline.sh
+
+.PHONY: first-hour-check
+first-hour-check: agent-eval-test ## Validate first-hour evidence and agent task graders without deploying
+	@$(GO_TEST) -p 1 ./tests/journeys -run '^TestHarnessFirstHour' -count=1

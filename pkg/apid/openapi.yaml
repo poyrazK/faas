@@ -420,6 +420,99 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HostedTaskSourceIntent'
+  /v1/task-tool-source-intents/{id}/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Retained hosted source identity to observe for drift
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+    post:
+      operationId: checkHostedTaskSourceIntent
+      summary: Recheck retained hosted Task source review
+      description: Revalidates the original personal requester and locked native app configuration and serving pins.
+        Observed drift permanently makes the review stale. Source expiry cannot renew. The original publisher or
+        personal owner may check; this creates no owner decision, credential binding or execution authority.
+        HTTP response idempotency caching is excluded so every call rechecks current facts.
+      tags:
+      - mcp-management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskSourceCheck'
+      responses:
+        '200':
+          description: Current hosted source review observation, including permanently stale or expired outcomes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskSourceIntent'
+        '400':
+          description: The hosted source freshness check fingerprint is invalid.
+        '401':
+          description: Authenticate before rechecking the retained hosted source review.
+        '403':
+          description: Hosted source freshness checks require personal publishing authority and the account MFA policy.
+        '404':
+          description: The retained hosted review is not visible to this checking requester.
+        '409':
+          description: The retained hosted source review cannot be checked against this request.
+        '429':
+          description: Hosted source freshness observations are currently rate-limited.
+        '503':
+          description: The native source review freshness journal is temporarily unavailable.
+  /v1/task-tool-source-intents/{id}/decision:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Exact retained hosted source identity named by its personal owner
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+    put:
+      operationId: decideHostedTaskSourceIntent
+      summary: Record an owner decision on hosted Task source
+      description: An authenticated personal owner or fresh unscoped non-agent personal administrator approves,
+        rejects or revokes the exact retained intent and review digests. Agent and MCP-login credentials cannot decide.
+        Approval requires enabled source retention and rechecks retained source availability, original requester authority
+        and native app baselines atomically. Rejection and revocation do not require live requester or app facts;
+        stale and expired reviews stay terminal. Exact retries preserve the first decision timestamp and fixed deadline.
+        Approval is only a source review; readiness, credential verification and execution authorization remain absent.
+        Native journal idempotency rechecks authority on every call instead of replaying an HTTP response cache.
+      tags:
+      - mcp-management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskSourceDecision'
+      responses:
+        '200':
+          description: Recorded hosted source owner review or a terminal stale or expired review that cannot be approved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskSourceIntent'
+        '400':
+          description: The hosted source owner decision or its digest selectors are malformed.
+        '401':
+          description: Authenticate the personal owner before deciding this retained source review.
+        '403':
+          description: A hosted source decision requires personal non-agent owner authority and the account MFA policy.
+        '404':
+          description: The source review or current deciding owner is unavailable within this account.
+        '409':
+          description: The hosted source decision targets a different digest or conflicts with its retained terminal state.
+        '429':
+          description: Owner decisions for hosted source reviews are currently rate-limited.
+        '503':
+          description: Source review approval is disabled or the owner review journal is temporarily unavailable.
   /v1/task-tool-release-intents/{id}:
     parameters:
     - name: id
@@ -74821,8 +74914,8 @@ components:
     HostedTaskSourceIntent:
       type: object
       additionalProperties: false
-      description: Immutable source intent metadata. Not an owner decision or execution plan. Expired ciphertext cannot
-        be renewed under the same identity.
+      description: Immutable hosted source identity and last observed owner review metadata. Source review approval
+        does not grant credential or execution authority. Expired ciphertext cannot be renewed under the same identity.
       required:
       - version
       - id
@@ -74870,15 +74963,64 @@ components:
           enum:
           - retained
           - expired
+        review_status:
+          type: string
+          description: Last recorded hosted source review state; absent on older receipts means pending until source expiry.
+          enum:
+          - pending
+          - approved
+          - rejected
+          - revoked
+          - stale
+          - expired
+        decided_at:
+          type: string
+          format: date-time
+          description: Original hosted source owner decision time, retained unchanged by exact repeats.
         ready_to_apply:
           type: boolean
-          description: False because retained source alone has no owner execution authorization.
+          description: False because approval of a retained hosted source review is not permission to execute it.
         bindings_verified:
           type: boolean
           description: False because storing authored Task source does not verify runtime credential bindings.
         owner_authorization_required:
           type: boolean
-          description: True because a separate owner decision is required before any retained Task source can execute.
+          description: True until separate owner-controlled execution authorization and runtime credential qualification exist.
+    HostedTaskSourceCheck:
+      type: object
+      additionalProperties: false
+      description: Freshness observation for the exact retained hosted Task source review, without an owner decision.
+      required:
+      - review_sha256
+      properties:
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: Hosted source-review fingerprint to compare with current native facts.
+    HostedTaskSourceDecision:
+      type: object
+      additionalProperties: false
+      description: Personal-owner source review decision bound to both immutable hosted source digests.
+      required:
+      - intent_sha256
+      - review_sha256
+      - decision
+      properties:
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: Complete hosted source intent digest explicitly reviewed by the personal owner.
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: Exact retained hosted source-review fingerprint included in this owner decision.
+        decision:
+          type: string
+          enum:
+          - approve
+          - reject
+          - revoke
+          description: Owner verdict on this hosted source review, independent of future execution authorization.
     TaskToolReleaseIntent:
       type: object
       additionalProperties: false

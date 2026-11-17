@@ -1,0 +1,147 @@
+{
+  "request_id_schema": {
+    "type": "string",
+    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+  },
+  "result_schema": {
+    "type": "object",
+    "properties": {
+      "state": {
+        "type": "string",
+        "enum": [
+          "started",
+          "start_unknown",
+          "not_found",
+          "running",
+          "awaiting_approval",
+          "awaiting_input",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "receipt": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "identity": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "request_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "run_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "request_id",
+              "run_id",
+              "tool"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "steps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "attempt": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "name",
+            "status",
+            "attempt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "approval": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "approval",
+                  "input"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "expires_at": {
+                "type": "string"
+              },
+              "review_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "name",
+              "expires_at",
+              "review_url"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "replayed": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "state",
+      "receipt",
+      "steps",
+      "approval"
+    ],
+    "additionalProperties": false
+  },
+  "operations": [
+    "start",
+    "status",
+    "result",
+    "cancel",
+    "reconcile"
+  ]
+}

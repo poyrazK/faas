@@ -211,3 +211,12 @@ visible deduplicated policy, ignored-only CI success, remaining exact-number
 drift and explanations, human/environment JSON, protected IDs, record additions,
 invalid excluded data, help, unchanged inputs and zero API requests. Core tests
 do not establish built-CLI journey qualification.
+
+## First-hour acceptance lane
+
+`TestFirstHourCLI` is separately opt-in: private response evidence, anonymous
+refusal, source edit, interruption and continuation of the accepted release,
+failed-startup diagnosis, repair and verified cleanup. The
+[first-hour guide](../../docs/first-hour-acceptance.md) defines the measurements
+and the separate human install/login and interactive Start checks. A deployed
+scripted run does not qualify those human lanes or all account plans.

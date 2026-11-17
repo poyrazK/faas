@@ -618,7 +618,7 @@ func (s *server) supersededRollbackTargetProblem(ctx context.Context, app state.
 	} else if len(active) > 0 {
 		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
 		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
-			WithHint("This release never served, so rolling back to it ships it as a new release. Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
+			WithHint("This release never served, so rolling back to it ships it as a new release. Wait for the freeze to end, lift it with `gregale release freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
 	}
 	if approval.Blocks(status) {
 		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "held")

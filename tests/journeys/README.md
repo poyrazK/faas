@@ -326,3 +326,10 @@ built Node SDK `dist/index.js` and an explicit `GREGALE_E2E_TOKEN`. Run
 managed PostgreSQL and cached-plan submission receipts. It creates two apps and
 a database, resumes a hard-stopped apply in another process, checks a public API
 read, and cleans up its resources. CLI-login-only runs skip this SDK journey.
+
+## First-hour acceptance
+
+The opt-in `TestFirstHourCLI` uses one new private app for response verification,
+a source edit, interruption/resume, startup-failure recovery and checked cleanup.
+Run it with `scripts/first-hour/acceptance.py`; it is not selected by ordinary
+smoke/full runs. See [the acceptance and baseline guide](../../docs/first-hour-acceptance.md).

@@ -1062,6 +1062,11 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// ImagedVerifiedBaseFiles bounds how many base artifacts one imaged remembers
+// verifying from its node cache (ADR-595 amendment 2026-11-17). One entry per
+// base key: the runtime matrix has about ten bases per architecture.
+const ImagedVerifiedBaseFiles = 64
+
 // BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
 // builderd remembers the digest of, so a cache hit skips re-reading the
 // artifact to check it. A node's cache holds a few hundred entries.
@@ -1073,7 +1078,10 @@ const BuilderdVerifiedCacheArtifacts = 1024
 const ImagedLayerReuseMaxRecords = 4096
 
 // ImagedLayerReuseRecordMaxBytes bounds one reuse index record imaged reads.
-const ImagedLayerReuseRecordMaxBytes = 4096
+// A record carries the layer's input and final app manifests so a runtime
+// settings change can patch the manifest instead of rebuilding; a record
+// over the bound reads as a miss.
+const ImagedLayerReuseRecordMaxBytes = 256 << 10
 
 // ImagedLayerReuseSBOMMaxBytes bounds the SBOM imaged copies for a reused app
 // layer; syft's CycloneDX JSON for a large image is a few MB.
