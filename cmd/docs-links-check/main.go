@@ -95,6 +95,9 @@ func run() error {
 	if err := checkPublishedContent(cat, os.ReadFile); err != nil {
 		return err
 	}
+	if err := checkRelativeLinks(cat, os.ReadFile, fileExists); err != nil {
+		return err
+	}
 	links, err := collectLinks()
 	if err != nil {
 		return err
@@ -332,6 +335,60 @@ func checkPublishedContent(cat catalog, read func(string) ([]byte, error)) error
 	}
 	if len(findings) > 0 {
 		return fmt.Errorf("move operator material to docs/ops/<page>-operator-notes.md (ADR-20261028200304):\n  %s",
+			strings.Join(findings, "\n  "))
+	}
+	return nil
+}
+
+// markdownLinkRE matches an inline Markdown link target.
+var markdownLinkRE = regexp.MustCompile(`\]\(([^)\s]+)`)
+
+// fencedCodeRE and inlineCodeRE match code, whose text is not links.
+var (
+	fencedCodeRE = regexp.MustCompile("(?s)```.*?```")
+	inlineCodeRE = regexp.MustCompile("`+[^`]*`+")
+)
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// checkRelativeLinks requires every relative link on a published page to name
+// a file that exists. The docs site maps a link to a published page's source
+// onto that page and any other file onto GitHub, so `[Jobs](jobs)` (no `.md`)
+// shipped as a GitHub 404 in llms-full.txt from crons.md, event-driven.md and
+// edge-rules.md.
+func checkRelativeLinks(cat catalog, read func(string) ([]byte, error), exists func(string) bool) error {
+	var findings []string
+	seen := map[string]bool{}
+	for _, r := range cat.Routes {
+		if r.Source == "" || r.Unpublished != "" || seen[r.Source] {
+			continue
+		}
+		seen[r.Source] = true
+		b, err := read(r.Source)
+		if err != nil {
+			return fmt.Errorf("route %q source %q: %w", r.Path, r.Source, err)
+		}
+		text := fencedCodeRE.ReplaceAllStringFunc(string(b), func(block string) string {
+			return strings.Repeat("\n", strings.Count(block, "\n"))
+		})
+		for i, line := range strings.Split(text, "\n") {
+			line = inlineCodeRE.ReplaceAllString(line, "")
+			for _, m := range markdownLinkRE.FindAllStringSubmatch(line, -1) {
+				target, _, _ := strings.Cut(m[1], "#")
+				if target == "" || strings.HasPrefix(target, "/") || strings.Contains(target, ":") {
+					continue
+				}
+				if p := filepath.Join(filepath.Dir(r.Source), target); !exists(p) {
+					findings = append(findings, fmt.Sprintf("%s:%d: link %q names no file (%s)", r.Source, i+1, m[1], p))
+				}
+			}
+		}
+	}
+	if len(findings) > 0 {
+		return fmt.Errorf("published pages link to missing files; link the source file, e.g. jobs.md:\n  %s",
 			strings.Join(findings, "\n  "))
 	}
 	return nil
