@@ -93,6 +93,7 @@ func Run(t *testing.T, open Open) {
 		{"build_claim_fairness_prefers_the_quiet_account", testBuildClaimFairnessPrefersTheQuietAccount},
 		{"alert_fire_claim_is_idempotent_by_key", testAlertFireClaimIsIdempotentByKey},
 		{"app_deletion_claim_is_concurrently_idempotent", testAppDeletionClaimIsConcurrentlyIdempotent},
+		{"end_app_delete_grace_frees_slug_for_owner", testEndAppDeleteGraceFreesSlugForOwner},
 		{"webhook_delivery_claim_fences_replays", testWebhookDeliveryClaimFencesReplays},
 		{"operator_intent_claim_is_exactly_once", testOperatorIntentClaimIsExactlyOnce},
 		{"cli_auth_code_claim_binds_one_account", testCliAuthCodeClaimBindsOneAccount},

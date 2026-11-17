@@ -7868,6 +7868,25 @@ func (m *MemStore) ClaimAppDeletion(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *MemStore) EndAppDeleteGrace(_ context.Context, id string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok || a.Status != AppDeleted || a.DeleteGraceUntil == nil {
+		return App{}, ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return App{}, ErrConflict
+		}
+	}
+	if now := time.Now(); a.DeleteGraceUntil.After(now) {
+		a.DeleteGraceUntil = &now
+		m.apps[id] = a
+	}
+	return a, nil
+}
+
 func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -1461,6 +1461,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/deleted-apps":                                               "ListDeletedApps",
 	"GET /v1/deleted-apps/{id}":                                          "GetDeletedApp",
 	"POST /v1/deleted-apps/{id}/restore":                                 "RestoreDeletedApp",
+	"POST /v1/deleted-apps/{id}/purge":                                   "PurgeDeletedApp",
 	"DELETE /v1/apps/{slug}/secrets/{key}":                               "UnsetSecret",
 	"GET /v1/apps/{slug}/secret-revocations/{revocation_id}":             "GetSecretRevocation",
 	"GET /v1/apps/{slug}/config/revisions":                               "ListConfigRevisions",

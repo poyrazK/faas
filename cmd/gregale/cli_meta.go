@@ -1804,6 +1804,9 @@ var cliCommands = []cliCommand{
 				{Name: "delete-bindings", Short: "revoke the app's managed PostgreSQL bindings first (deleting the app otherwise refuses while any is live)", Bool: true},
 			}},
 			{Name: "restore", Short: "Restore an app during its deletion grace window", Positionals: []string{"<slug>"}},
+			{Name: "purge", Short: "Permanently remove a deleted app now and free its name", Positionals: []string{"<slug>"}, Notes: []string{"A deleted app keeps its name for seven days so it can be restored; purge ends that window at once, so a redeploy (for example the same Compose file under a new project) can reuse the name.", "Purging cannot be undone. Delete the app's object storage buckets first."}, Examples: []string{"gregale app delete api --yes && gregale app purge api --yes"}, Flags: []cliFlag{
+				{Name: "yes", Short: "purge without prompting; required in non-interactive and JSON mode", Bool: true},
+			}},
 			{Name: "routes", Short: "List admitted per-route labels for one app", Positionals: []string{"<slug>"}},
 			appTCPListenerCLISubcommand(true),
 			appUDPListenerCLISubcommand(true),
