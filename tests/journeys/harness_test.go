@@ -560,6 +560,17 @@ func num(v any, path string) float64 {
 	}
 }
 
+// isZeroNum reports whether path holds the number 0. objects decodes with
+// UseNumber, so comparing field() with float64(0) never matched a CLI value
+// (journeys 2026-11-16: HostedMCP budget_key failed on monthly_cents 0).
+func isZeroNum(v any, path string) bool {
+	switch field(v, path).(type) {
+	case json.Number, float64:
+		return num(v, path) == 0
+	}
+	return false
+}
+
 func compact(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
