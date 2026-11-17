@@ -57,6 +57,9 @@ import (
 // kernel/base rootfs in (cheap) and link the per-app layer / snapshot files, then
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
+	// sealedPlain keeps decrypted sealed snapshots on this node (slice
+	// 3d-5); nil decrypts each wake into the instance's staging.
+	sealedPlain                   *SealedPlainCache
 	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
@@ -6001,15 +6004,19 @@ func (v *JailerVMM) stageReadOnlyAsForOwner(ctx context.Context, owner nativeLau
 	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stage read-only %s: %w", src, err)
 	}
+	started := time.Now()
 	if err := os.Link(src, dst); err == nil {
 		if err := ensureOtherReadable(dst); err != nil {
 			return "", err
 		}
+		slog.Default().Debug("stage read-only", "instance", instance, "name", name, "via", "link", "ms", time.Since(started).Milliseconds())
 		return name, nil
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link read-only %s: %w", src, err)
 	}
-	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o044, true)
+	staged, err := v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o044, true)
+	slog.Default().Debug("stage read-only", "instance", instance, "name", name, "via", "bind", "src", src, "ms", time.Since(started).Milliseconds(), "err", err)
+	return staged, err
 }
 
 // bindImageForOwner exposes a source image without copying it into tmpfs.
@@ -8484,10 +8491,37 @@ func (v *JailerVMM) openSealedCapture(ctx context.Context, instanceID string, sp
 }
 
 // materializeSealed copies key's plaintext from store into a staging file
-// tracked for instanceID and removed when it is killed.
+// tracked for instanceID and removed when it is killed. With a sealed
+// plaintext cache (slice 3d-5) the capture's plaintext is decrypted once per
+// node and linked into staging like an unsealed snapshot's cache file.
 func (v *JailerVMM) materializeSealed(ctx context.Context, instanceID string, store storage.StorageBackend, key string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("vmm: sealed capture is missing a storage key")
+	}
+	if backend, ok := store.(crashcrypt.Backend); ok && backend.Identity != nil {
+		v.mu.Lock()
+		cache := v.sealedPlain
+		v.mu.Unlock()
+		if cache != nil {
+			started, filled := time.Now(), false
+			entry, err := cache.Ensure(ctx, backend.Identity.Recipient().String(), key, func(ctx context.Context, f *os.File) error {
+				filled = true
+				_, err := backend.MaterializeTo(ctx, key, f)
+				return err
+			})
+			if err != nil {
+				return "", fmt.Errorf("vmm: open sealed %q: %w", key, err)
+			}
+			// The entry is the restore source itself, as an unsealed node-cache
+			// file is: staging bind-mounts it read-only into the chroot. It is
+			// not tracked as a staging file, so Kill never removes it, and it
+			// was synced when filled, so staging's chmod+fsync finds no dirty
+			// pages (a fresh 512 MiB decrypt cost ~175 ms there per wake).
+			slog.Default().Debug("sealed plaintext cache", "instance", instanceID, "key", key,
+				"filled", filled, "ensure_ms", time.Since(started).Milliseconds())
+			return entry, nil
+		}
+		return v.materializeSealedParallel(ctx, instanceID, backend, key)
 	}
 	rc, err := store.Get(ctx, key)
 	if err != nil {
@@ -8508,6 +8542,32 @@ func (v *JailerVMM) materializeSealed(ctx context.Context, instanceID string, st
 		return "", errors.Join(fmt.Errorf("vmm: close tmp for sealed %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
 	}
 	return tmpPath, nil
+}
+
+// materializeSealedParallel decrypts key into a staging file on several
+// cores (crashcrypt v2; a v1 object streams).
+func (v *JailerVMM) materializeSealedParallel(ctx context.Context, instanceID string, backend crashcrypt.Backend, key string) (string, error) {
+	tmp, err := v.newMaterialisedFile(instanceID, "", "faas-sealed-*.bin", "materialised")
+	if err != nil {
+		return "", fmt.Errorf("vmm: create tmp for sealed %q: %w", key, err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := backend.MaterializeTo(ctx, key, tmp); err != nil {
+		_ = tmp.Close()
+		return "", errors.Join(fmt.Errorf("vmm: decrypt %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
+	}
+	if err := tmp.Close(); err != nil {
+		return "", errors.Join(fmt.Errorf("vmm: close tmp for sealed %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
+	}
+	return tmpPath, nil
+}
+
+// WithSealedPlainCache keeps decrypted sealed snapshots on this node
+// (slice 3d-5); nil turns it off.
+func (v *JailerVMM) WithSealedPlainCache(c *SealedPlainCache) {
+	v.mu.Lock()
+	v.sealedPlain = c
+	v.mu.Unlock()
 }
 
 // restoreSourceFromStorage resolves a restore input without copying when the

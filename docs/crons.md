@@ -105,7 +105,7 @@ done.
 
 The handler has 30 seconds to answer, or the app's request timeout when it is
 longer and your plan allows it. A run that takes longer is recorded as a
-timeout. Work that needs more time belongs in a [job](jobs).
+timeout. Work that needs more time belongs in a [job](jobs.md).
 
 ## Delivery
 
@@ -197,7 +197,7 @@ gregale cron runs CRON_ID --cursor CURSOR # older runs
 
 Each run shows when it started, how long it took, its outcome (`success`,
 `failed`, `timeout`) and the error. Runs are kept for the
-[invocation history retention](event-driven#invocation-history-retention)
+[invocation history retention](event-driven.md#invocation-history-retention)
 period.
 
 Schedule decisions (`gregale cron occurrences CRON_ID`) and manual-run
@@ -274,7 +274,7 @@ only staging's manifest crons; production's are untouched.
 ## Command crons (preview)
 
 A command cron runs a command from the app's live deployment instead of
-sending an HTTP request. Command crons are built on [app tasks](apps), which
+sending an HTTP request. Command crons are built on [app tasks](apps.md), which
 are in preview and not enabled on every host; where they are off, creating
 one returns `501 not_implemented`.
 
