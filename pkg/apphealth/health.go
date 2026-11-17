@@ -35,10 +35,13 @@ type Evidence struct {
 	HistoryComplete  bool
 	Instances        []state.Instance
 	InstancesKnown   bool
-	Readiness        map[string]map[string]state.InstanceReadiness
-	Nodes            map[string]state.ComputeNode
-	Metrics          appmetrics.RequestHealth
-	MetricsAllowed   bool
+	// RecentInstances are the app's newest instance rows in any state, so
+	// boots that failed are visible next to the replica still serving.
+	RecentInstances []state.Instance
+	Readiness       map[string]map[string]state.InstanceReadiness
+	Nodes           map[string]state.ComputeNode
+	Metrics         appmetrics.RequestHealth
+	MetricsAllowed  bool
 	// AssessWorkers releases worker assessment (the app_health_workers
 	// platform flag); Worker is a worker-mode app's queue evidence
 	// (ADR-20261102091500).
@@ -82,6 +85,7 @@ func Evaluate(e Evidence) api.AppHealthResponse {
 			out.Phase = "serving"
 		}
 		assessCapacity(&out, e, serving)
+		assessBootFailures(&out, e, serving)
 	}
 	if e.App.MaintenanceMode {
 		out.Phase = "maintenance"
@@ -259,6 +263,64 @@ func assessCapacity(out *api.AppHealthResponse, e Evidence, live []state.Deploym
 	if c.Ready < required && c.Unready == 0 {
 		check.Reason = "capacity_below_target"
 	}
+}
+
+// BootFailureWindow is how far back app health counts failed boots of a
+// serving release.
+const BootFailureWindow = 15 * time.Minute
+
+// RecentInstanceScan bounds the newest instance rows read for failed boots.
+const RecentInstanceScan = 20
+
+// assessBootFailures reports instances of a serving release that started
+// inside BootFailureWindow and failed. Prod findings 2026-11-15 #43: every
+// fresh boot of a crash-looping release failed while the old replica kept
+// serving, and app health said "healthy".
+func assessBootFailures(out *api.AppHealthResponse, e Evidence, live []state.Deployment) {
+	serving := make(map[string]bool, len(live))
+	for _, d := range live {
+		serving[d.ID] = true
+	}
+	failed, deploymentID := 0, ""
+	for _, i := range e.RecentInstances {
+		if !serving[i.DeploymentID] || state.State(i.State) != state.StateFailed || i.Kind != "" || i.StartedAt.Before(e.Now.Add(-BootFailureWindow)) {
+			continue
+		}
+		failed++
+		deploymentID = i.DeploymentID
+	}
+	if failed == 0 {
+		return
+	}
+	// The failures belong to the readiness check (its code is part of the
+	// API enum): they raise it to at least a warning, and to a failure when
+	// no replica is ready.
+	severity := Warning
+	if out.Capacity.Ready == 0 {
+		severity = Fail
+	}
+	detail := fmt.Sprintf("%d instance(s) of a serving release failed in the last %d minutes; new boots are failing, so check the logs before the last ready replica stops.",
+		failed, int(BootFailureWindow.Minutes()))
+	for i := len(out.Checks) - 1; i >= 0; i-- {
+		check := &out.Checks[i]
+		if check.Code != "readiness" {
+			continue
+		}
+		if check.Status == NotApplicable {
+			return // a stopped service runs no replicas
+		}
+		rank := map[string]int{Pass: 0, Unknown: 1, Warning: 2, Fail: 3}
+		if rank[severity] > rank[check.Status] {
+			check.Status = severity
+		}
+		check.Detail = strings.TrimSpace(check.Detail + " " + detail)
+		check.Action = "logs"
+		if check.DeploymentID == "" {
+			check.DeploymentID = deploymentID
+		}
+		return
+	}
+	add(out, "readiness", severity, detail, "logs", deploymentID)
 }
 
 // Match the gateway's independent primary-app and primary-ingress gates.

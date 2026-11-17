@@ -41,14 +41,20 @@ type BuildDriveSpaceReclaimer func(ctx context.Context, need int64) error
 // cache-miss build was refused within a second (#5709). The capacity check
 // that follows still decides whether the build runs.
 func reclaimBuildDriveSpace(ctx context.Context, dir string, reclaim BuildDriveSpaceReclaimer, available func(string) (uint64, error)) error {
+	return reclaimDriveSpaceTo(ctx, dir, BuildDriveMinFreeBytes, reclaim, available)
+}
+
+// reclaimDriveSpaceTo asks reclaim for room when the drive filesystem has less
+// than need bytes free.
+func reclaimDriveSpaceTo(ctx context.Context, dir string, need uint64, reclaim BuildDriveSpaceReclaimer, available func(string) (uint64, error)) error {
 	if reclaim == nil {
 		return nil
 	}
 	free, err := available(dir)
-	if err != nil || free >= BuildDriveMinFreeBytes {
+	if err != nil || free >= need {
 		return err
 	}
-	if err := reclaim(ctx, int64(BuildDriveMinFreeBytes)); err != nil {
+	if err := reclaim(ctx, int64(need)); err != nil {
 		return fmt.Errorf("builderd: reclaim build drive space: %w", err)
 	}
 	return nil

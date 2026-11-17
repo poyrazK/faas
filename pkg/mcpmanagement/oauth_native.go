@@ -162,7 +162,7 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		query.Set("return", "mcp")
 		login.RawQuery = query.Encode()
 		active.NativeURL = login.String()
-		http.Redirect(w, req, active.NativeURL, http.StatusSeeOther)
+		redirectOAuthBrowser(w, req, active.NativeURL, "Continue to Gregale")
 		return
 	}
 	r.renderConsent(w, active, req.PostForm.Get("csrf"), "")

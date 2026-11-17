@@ -282,6 +282,7 @@ touch them. The tables below map each earlier name.
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
 | `gregale deployment timeline` | `gregale release timeline` |
+| `gregale deployment verify` | `gregale release verify` |
 | `gregale deployment wait` | `gregale release wait` |
 | `gregale deployments alias` | `gregale release alias` |
 | `gregale deploys cancel` | `gregale release cancel` |
@@ -386,6 +387,14 @@ touch them. The tables below map each earlier name.
 | `gregale events subscriptions` | `gregale event subscription list` |
 | `gregale events workflow-backfill` | `gregale event backfill create --workflow-name <WORKFLOW-NAME>` |
 | `gregale events workflow-replay-preview` | `gregale event backfill create --workflow-name <WORKFLOW-NAME> --dry-run` |
+| `gregale flags experiments create` | `gregale flag experiment create` |
+| `gregale flags experiments delete` | `gregale flag experiment delete` |
+| `gregale flags experiments get` | `gregale flag experiment get` |
+| `gregale flags experiments list` | `gregale flag experiment list` |
+| `gregale flags experiments results` | `gregale flag experiment result get` |
+| `gregale flags experiments ship` | `gregale flag experiment promote` |
+| `gregale flags experiments start` | `gregale flag experiment start` |
+| `gregale flags experiments stop` | `gregale flag experiment stop` |
 | `gregale flags kill` | `gregale flag kill set` |
 | `gregale flags off` | `gregale flag disable` |
 | `gregale flags on` | `gregale flag enable` |

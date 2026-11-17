@@ -112,3 +112,71 @@ func (c *Client) RuntimeFlags(ctx context.Context) (json.RawMessage, error) {
 	err := c.do(ctx, http.MethodGet, "/v1/runtime/flags", nil, &out)
 	return out, err
 }
+
+func experimentsPath(project, environment string) string {
+	return "/v1/projects/" + url.PathEscape(project) + "/environments/" + url.PathEscape(environment) + "/experiments"
+}
+
+// ListProjectFlagExperiments lists an environment's experiments (ADR 20261115163113).
+func (c *Client) ListProjectFlagExperiments(ctx context.Context, project, environment string) (FlagExperimentList, error) {
+	var out FlagExperimentList
+	err := c.do(ctx, http.MethodGet, experimentsPath(project, environment), nil, &out)
+	return out, err
+}
+
+// CreateProjectFlagExperiment creates, and with req.Start starts, an experiment.
+func (c *Client) CreateProjectFlagExperiment(ctx context.Context, project, environment string, req FlagExperimentCreateRequest) (FlagExperiment, error) {
+	var out FlagExperiment
+	err := c.do(ctx, http.MethodPost, experimentsPath(project, environment), req, &out)
+	return out, err
+}
+
+// GetProjectFlagExperiment reads one experiment.
+func (c *Client) GetProjectFlagExperiment(ctx context.Context, project, environment, key string) (FlagExperiment, error) {
+	var out FlagExperiment
+	err := c.do(ctx, http.MethodGet, experimentsPath(project, environment)+"/"+url.PathEscape(key), nil, &out)
+	return out, err
+}
+
+// StartProjectFlagExperiment starts a draft experiment.
+func (c *Client) StartProjectFlagExperiment(ctx context.Context, project, environment, key string) (FlagExperiment, error) {
+	var out FlagExperiment
+	err := c.do(ctx, http.MethodPost, experimentsPath(project, environment)+"/"+url.PathEscape(key)+"/start", nil, &out)
+	return out, err
+}
+
+// StopProjectFlagExperiment stops a running experiment; its results freeze.
+func (c *Client) StopProjectFlagExperiment(ctx context.Context, project, environment, key string) (FlagExperiment, error) {
+	var out FlagExperiment
+	err := c.do(ctx, http.MethodPost, experimentsPath(project, environment)+"/"+url.PathEscape(key)+"/stop", nil, &out)
+	return out, err
+}
+
+// ShipProjectFlagExperiment stops a running experiment and publishes its
+// rule serving variant to every customer it matches.
+func (c *Client) ShipProjectFlagExperiment(ctx context.Context, project, environment, key, variant string) (FlagExperimentShipResponse, error) {
+	var out FlagExperimentShipResponse
+	err := c.do(ctx, http.MethodPost, experimentsPath(project, environment)+"/"+url.PathEscape(key)+"/ship", FlagExperimentShipRequest{Variant: variant}, &out)
+	return out, err
+}
+
+// DeleteProjectFlagExperiment deletes an experiment that is not running.
+func (c *Client) DeleteProjectFlagExperiment(ctx context.Context, project, environment, key string) error {
+	return c.do(ctx, http.MethodDelete, experimentsPath(project, environment)+"/"+url.PathEscape(key), nil, nil)
+}
+
+// ProjectFlagExperimentResults reads an experiment's sequential results.
+func (c *Client) ProjectFlagExperimentResults(ctx context.Context, project, environment, key string) (FlagExperimentResults, error) {
+	var out FlagExperimentResults
+	err := c.do(ctx, http.MethodGet, experimentsPath(project, environment)+"/"+url.PathEscape(key)+"/results", nil, &out)
+	return out, err
+}
+
+// RuntimeFlagEvents reports conversion events for experiments
+// (ADR 20261115163113). Like RuntimeFlags it requires a Client constructed
+// with a workload JWT for gregale:flags.
+func (c *Client) RuntimeFlagEvents(ctx context.Context, req FlagEventsRequest) (FlagEventsResponse, error) {
+	var out FlagEventsResponse
+	err := c.do(ctx, http.MethodPost, "/v1/runtime/flags/events", req, &out)
+	return out, err
+}

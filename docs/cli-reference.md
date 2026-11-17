@@ -49,7 +49,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`domain`](#domain) | Manage custom domains |
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
-| [`export`](#export) | Verify saved JSON Lines exports offline |
+| [`export`](#export) | Verify and compare saved JSON Lines exports offline |
 | [`cron`](#cron) | Schedule requests and commands |
 | [`job`](#job) | Manage jobs that run to completion |
 | [`workflow`](#workflow) | Manage durable workflows |
@@ -1239,6 +1239,28 @@ gregale release wait 00000000000000000000000000000001
 gregale release wait 00000000000000000000000000000001 --rollout --progress
 ```
 
+### release verify
+
+Verify an application response from an exact live deployment
+
+`gregale release verify --app <SLUG> [--path <PATH>] [--project-id <UUID>] [--environment-id <UUID>] <deployment-uuid>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--path <PATH>` | app-relative GET path (default /) |  |
+| `--project-id <UUID>` | project identity for a named environment (looked up when omitted) |  |
+| `--environment-id <UUID>` | environment identity for a named environment (looked up when omitted) |  |
+
+Examples:
+
+```sh
+gregale release verify DEPLOYMENT_UUID --app my-api --path /
+gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api
+```
+
+Available on every plan with deployment-write access. Sends an owner-authorized GET; public access is not verified.
+
 ### release cancel
 
 Cancel one pending deployment
@@ -2016,6 +2038,27 @@ Roll the latest project deploy back, callers first
 Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.
 
 Stops at the first service that fails; run it again to finish.
+
+### project export
+
+Write the project&#39;s services as a plain Compose file
+
+`gregale project export [--format <FORMAT>] [--out <PATH>] <project>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--format <FORMAT>` | output format (compose) |  |
+| `--out <PATH>` | write to PATH instead of stdout |  |
+
+Examples:
+
+```sh
+gregale project export shop --out compose.yaml
+```
+
+Env values stay sealed: each variable is referenced by name, as ${NAME}.
+
+Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back.
 
 ### project import
 
@@ -4829,7 +4872,7 @@ gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 
 ## export
 
-Verify saved JSON Lines exports offline
+Verify and compare saved JSON Lines exports offline
 
 `gregale export [<subcommand>]`
 
@@ -4855,6 +4898,38 @@ Runs offline without login. Compares SHA-256, exact bytes and JSON Lines record 
 Exit 0 means all three checks matched; exit 1 means mismatch or invalid input. A valid comparison prints verified true or false; invalid input reports an error without a result.
 
 A receipt is an integrity reference, not a signature or a point-in-time API snapshot.
+
+### export diff
+
+Compare saved JSON Lines records by a unique key
+
+`gregale export diff [--key <FIELD>] [--explain] [--ignore-path <POINTER>]... [--fail-on-change] <BEFORE> <AFTER>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--key <FIELD>` | unique top-level string or number field (default id) |  |
+| `--explain` | show changed field paths and kinds without field values |  |
+| `--ignore-path <POINTER>` | ignore an exact JSON Pointer object field (repeatable) |  |
+| `--fail-on-change` | exit 1 when added, removed or changed records exist |  |
+
+Examples:
+
+```sh
+gregale export diff before.jsonl after.jsonl
+gregale --json export diff before.jsonl after.jsonl --key id --fail-on-change
+gregale --json export diff before.jsonl after.jsonl --explain
+gregale --json export diff before.jsonl after.jsonl --ignore-path /updated_at --explain --fail-on-change
+```
+
+Runs offline. Reports sorted added, removed and changed IDs and counts without row bodies. Duplicate record keys or object fields fail before output.
+
+Row and object-field order are ignored; array order is preserved. Numbers compare as exact decimal values without floating-point conversion.
+
+Comparisons exit 0 unless --fail-on-change is enabled and changes exist, then exit 1 with a result. Invalid input reports an error without a result.
+
+--explain adds JSON Pointer field paths and added/removed/changed kinds for changed IDs, without field values. Arrays and added/removed objects are reported at their parent field; the default report is unchanged.
+
+--ignore-path excludes exact object fields from comparison and explanations, and lists sorted unique ignored_paths in the report. The selected key cannot be ignored; array elements cannot be selected. Added and removed records remain visible.
 
 
 ## cron

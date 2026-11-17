@@ -52,7 +52,7 @@ recovery; local preparation checks do not establish deployed acceptance.
 | 66 | Service bindings, verification and probes | `TestMultiServiceProject`: `call_by_injected_url` (`GREGALE_SERVICE_<NAME>_URL` from `depends_on`), `explain_authorization` (`gregale app binding service explain`), `declared_policy_allows_the_declared_call`, `declared_policy_refuses_an_undeclared_call`, `allowlist_refuses_other_callers` | call scopes, `gregale bindings verify`, project previews (need a multi-service GitHub fixture) |
 | 77 | App access control | `TestMaintenanceAndAccess` (require-authn, basic auth, IP allowlist) | public bearer auth |
 | 92 | Crons, fire-now | `TestCronDelivery`: `manual_run` (followed to `succeeded`), `scheduled_fire`, `trigger_inventory` (refuses `--kind cron`) | command crons (preview) |
-| 109 | Managed Postgres: create, bind, rotate, resize, idle wake, point-in-time restore, delete, recover, purge | `TestManagedPostgres`: `postgres_available` (provisioning open, region, database limit), `create_database`, `deploy_app` (`testdata/postgres-probe`, a dependency-free PostgreSQL client), `attach_database` (binding ready, fresh restart), `binding_verify`, `write_and_read` (rows through the delivered URL), `credential_rotation` (rotate --wait, fresh restart, rows still read), `resize` (to burstable on Pro and Scale, rows survive), `idle_wake` (6 min idle, then the first read's app-plus-database wake time as `postgres_idle_wake_read_s`), `restore_point_in_time` (a point between two writes, read through a second binding; on a one-database plan the copy holds the restore slot), `purge_restored`, `scheduled_delete` (undo window about 7 days, name stays taken), `recover` (rows back), `purge`; `TestManagedPostgresRollbackRestore` (#6146 PG-03, skipped while the preview `database-rollbacks` or `release-commands` is hidden, or under an 8-database limit): `create_database`, `deploy_app`, `attach_database` (`DATABASE_URL` and a `migration` binding), `release_v1` (a release command creates the table, then a row), `bad_release_v2` (a release command deletes every row; a later write), `rollback_restores_database` (`rollback --restore-databases` to v1: the row is back on the copy; `postgres_rollback_restore_s` from the rollback to the first read, `postgres_rollback_unavailable_s` from the fence), `restored_copy` (restore point recorded, no restore slot), `original_keeps_later_writes`, `undone_release_refused`; `TestManagedPostgresRollbackCancelled` (same setup and skips): `cancel_switch` (`rollback --restore-databases --no-wait`, then `rollback status --cancel --wait` ends `cancelled`; skips if the switch reached `switching` first), `current_release_keeps_serving` (v2 on the original database, the later write there), `restored_copy_kept` | compute policy (beta), organization databases (beta), `gregale.yaml` databases and `add postgres`, the pooler's transaction-mode limits, compute and storage caps (would need a month's usage), read-only access, an interrupted database switch |
+| 109 | Managed Postgres: create, bind, rotate, resize, idle wake, point-in-time restore, delete, recover, purge | `TestManagedPostgres`: `postgres_available` (provisioning open, region, database limit), `create_database`, `deploy_app` (`testdata/postgres-probe`, a dependency-free PostgreSQL client), `attach_database` (binding ready, fresh restart), `binding_verify`, `write_and_read` (rows through the delivered URL), `credential_rotation` (rotate --wait, fresh restart, rows still read), `resize` (to burstable on Pro and Scale, rows survive), `idle_wake` (6 min idle, then the first read's app-plus-database wake time as `postgres_idle_wake_read_s`), `restore_point_in_time` (a point between two writes, read through a second binding; on a one-database plan the copy holds the restore slot), `purge_restored`, `scheduled_delete` (undo window about 7 days, name stays taken), `recover` (rows back), `purge`; `TestManagedPostgresRollbackRestore` (#6146 PG-03, skipped while the preview `database-rollbacks` or `release-commands` is hidden, or under a 10-database limit): `create_database`, `deploy_app`, `attach_database` (`DATABASE_URL` and a `migration` binding), `release_v1` (a release command creates the table, then a row), `bad_release_v2` (a release command deletes every row; a later write), `rollback_restores_database` (`rollback --restore-databases` to v1: the row is back on the copy; `postgres_rollback_restore_s` from the rollback to the first read, `postgres_rollback_unavailable_s` from the fence), `restored_copy` (restore point recorded, no restore slot), `original_keeps_later_writes`, `undone_release_refused`; `TestManagedPostgresRollbackCancelled` (same setup and skips): `cancel_switch` (`rollback --restore-databases --no-wait`, then `rollback status --cancel --wait` ends `cancelled`; skips if the switch reached `switching` first), `current_release_keeps_serving` (v2 on the original database, the later write there), `restored_copy_kept`; `TestManagedPostgresRestoreSwitch` (same skips): `create_database`, `deploy_app`, `writes` (two good rows, a bad one 20 s later), `restore_switch` (`postgres restore --point-in-time --switch` to 1 s after the last good commit: both good rows on the copy, not the bad one; `postgres_restore_switch_s` from the command to the first read, `postgres_restore_switch_unavailable_s` from the fence), `source_keeps_every_write`, `restored_copy` | compute policy (beta), organization databases (beta), `gregale.yaml` databases and `add postgres`, the pooler's transaction-mode limits, compute and storage caps (would need a month's usage), read-only access, an interrupted database switch |
 | 118 | Logs, tail, archive | `TestServeAndObserve` (runtime/HTTP logs and a structured deployment explanation), `TestLogExplanationSnapshot` (built CLI, isolated metadata/log API: bounded JSON and partial EOF), `TestTailAnalyticsAndMetrics/tail`, `TestLogArchive` | HTTP request logs while the production debugger (ADR-127) is not released for the account: the step skips on the CLI's explanation |
 | 121 | Metrics, request analytics | `TestServeAndObserve/metrics`, `TestTailAnalyticsAndMetrics` | service metrics |
 | 136 | Wake timeline | `TestWakeTimelineAndCosts/wake_timeline` | — |
@@ -97,8 +97,27 @@ API failures with progress/correlation, and SIGINT cancelling the active read.
 export receipts are verified offline by a built CLI; tampered files and malformed
 inputs fail without extra API requests or content leakage.
 
+`TestExportDiffIsolatedCLI` extends row 156: offline keyed inventory comparison,
+exact numeric changes, deterministic reports, opt-in CI failure and malformed
+input refusal without API access or row-body leakage.
+
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
+
+`TestJSONInputLocationsIsolatedCLI` extends row 156: malformed file input
+returns a typed source/line/column, then returned offline help is followed,
+with zero API requests and no invocation submission.
+
+`TestCLIArgumentCountsIsolatedCLI` extends row 156: missing invocation IDs and
+extra flag-only positionals expose counts and offline help without API requests.
+
+`TestCLICommandCorrectionsIsolatedCLI` extends row 156: misspelled invocation
+commands and help topics return canonical argument arrays; following help makes
+zero requests and never replays the failed invocation.
+
+`TestCLIFlagCorrectionsIsolatedCLI` extends row 156: a misspelled deploy flag
+returns structured advice, and its help argument array discovers the suggested
+flag from another directory, with zero requests and no deployment submission.
 
 `TestJSONHelpGlobalFlagsIsolatedCLI` extends row 156: it discovers global
 connection/automation options without API requests, then constructs and runs a
@@ -180,3 +199,15 @@ input diagnostics: inline/file/stdin sources, human and JSON errors, CRLF
 locations, omitted payload values and zero API calls on malformed input.
 `TestJSONInputValidPayloadIsolatedAPI` verifies that the built CLI still sends
 valid input with large numbers and Unicode text intact.
+
+`TestExportDiffExplainIsolatedCLI` extends row 156: offline JSON Pointer field
+explanations, human and environment JSON, exact integer drift, whole-field
+subtree changes, empty explanations, opt-in/false behavior, CI exits, help,
+invalid-input privacy, unchanged files and zero API requests. A core-only pass
+does not qualify the built-CLI journey.
+
+`TestExportDiffIgnoreIsolatedCLI` extends row 156: explicit exact-path exclusions,
+visible deduplicated policy, ignored-only CI success, remaining exact-number
+drift and explanations, human/environment JSON, protected IDs, record additions,
+invalid excluded data, help, unchanged inputs and zero API requests. Core tests
+do not establish built-CLI journey qualification.

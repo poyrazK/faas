@@ -3244,7 +3244,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	})
 	residentGBPerCustomer := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_resident_gb_per_customer",
-		Help: "Month-to-date GB-RAM-hours divided by elapsed UTC-month hours and paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
+		Help: "Month-to-date GB-RAM-hours divided by elapsed UTC-month hours and paying-customer count, per plan (ADR-031). Warns above 1.5x resident_gb_per_customer_planned (ADR-20261117070932). Emitted by meterd once per ResidencyInterval.",
+	}, []string{"plan"})
+	residentGBPerCustomerPlanned := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_resident_gb_per_customer_planned",
+		Help: "The financial model's resident GB per paying customer for each plan: planned resident concurrency times the plan's RAM plus 8 MB (api.PlannedResidentGBPerCustomer, ADR-20261117070932). Constant per release.",
 	}, []string{"plan"})
 	residentPayingCustomers := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_resident_paying_customers",
@@ -4096,7 +4100,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
 		buildExportCleanupTotal, buildExportCleanupErrors, buildExportBytes, builderSliceOOMKills,
-		residentGBPerCustomer, residentPayingCustomers, billingCapExceededTotal,
+		residentGBPerCustomer, residentPayingCustomers, residentGBPerCustomerPlanned, billingCapExceededTotal,
 		meterdFloorAppliedTotal, meteredMBSecondsTotal,
 		// ADR-123 alert-preset signal series — PR-A (3) + PR-B (2). Each
 		// backs one of the 8 alert_presets catalog rows. Without
@@ -5453,6 +5457,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, plan := range api.Plans {
 		residentGBPerCustomer.WithLabelValues(string(plan))
 		residentPayingCustomers.WithLabelValues(string(plan))
+		// The plan's modelled value is fixed for a release, so it is set
+		// here rather than on meterd's residency tick.
+		if planned, ok := api.PlannedResidentGBPerCustomer(plan); ok {
+			residentGBPerCustomerPlanned.WithLabelValues(string(plan)).Set(planned)
+		}
 	}
 	// Pre-instantiate the closed plan set for the billingCapExceeded
 	// counter (issue #279). Same precedent as residentGBPerCustomer
@@ -9030,9 +9039,9 @@ func (m *OpsMetrics) IncrementStaleDeploymentsReconciled() {
 
 // SetResidentGBPerCustomer writes one sample to the
 // <daemon>_resident_gb_per_customer gauge (ADR-031, PR #141).
-// Spec §12 target is 0.305 average resident GB per paying customer
-// (≈ 312 MB/customer); > 0.45 warns. Safe on a nil receiver so meterd
-// unit tests without metrics keep working.
+// FaasResidentGbPerCustomerHigh warns above 1.5x the plan's
+// _resident_gb_per_customer_planned (ADR-20261117070932). Safe on a nil
+// receiver so meterd unit tests without metrics keep working.
 func (m *OpsMetrics) SetResidentGBPerCustomer(plan string, gb float64) {
 	if m == nil {
 		return

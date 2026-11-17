@@ -3393,7 +3393,7 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		"Too many failed authentication attempts",
 		fmt.Sprintf("The failed-authentication limit was reached. Retry after %d seconds with valid credentials.", retryAfterS)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithHint("Wait for the retry window, then sign in again with valid credentials.").
+		WithHint(fmt.Sprintf("Try again in %d seconds, then sign in with valid credentials.", retryAfterS)).
 		WithDocs(docsBase + "/auth")
 }
 
@@ -6008,16 +6008,13 @@ func ErrPlanLimitTrustedSigners(l Limits, observed int) *Problem {
 		WithDocs(docsBase + "/deploys#trusted-signers")
 }
 
-// ErrEnvVarInvalidKey is returned when an env key fails the
-// ^[A-Z][A-Z0-9_]*$ pattern. Detail names the specific failure so the CLI
-// can render an actionable message. The regex intentionally reuses the
-// SecretKeyPattern constant because POSIX env-var naming and the secrets
-// naming surface share the same ASCII identifier grammar — keeping one
-// pattern avoids the drift where two regexes diverge over time.
+// ErrEnvVarInvalidKey is returned when an env key fails EnvKeyPattern or
+// spells a platform-provided key in another case. Detail names the specific
+// failure so the CLI can render an actionable message.
 func ErrEnvVarInvalidKey(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeEnvVarInvalidKey,
 		"Invalid env var key",
-		fmt.Sprintf("env var keys must match %s; %s", SecretKeyPattern, detail)).
+		fmt.Sprintf("env var keys must match %s; %s", EnvKeyPattern, detail)).
 		WithDocs(docsBase + "/env#keys")
 }
 

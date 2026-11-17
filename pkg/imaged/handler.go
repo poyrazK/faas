@@ -3366,6 +3366,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
 	manifest = applyFunctionInputSchema(applyFunctionCallables(applyFunctionConcurrency(h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct), app), app), app)
+	manifest = applyFunctionWorkflow(manifest, app, dep)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3829,8 +3830,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 					return nil
 				}
 			case api.ExecutionModeRequest, api.ExecutionModeService:
-				if ready.NoSnapshotReason != "ephemeral_secret" {
-					return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret proof is supplied", mode)
+				// Both reasons prove a healthy boot with a STOPPED instance:
+				// one retired before capture for its ephemeral secrets, one
+				// whose capture failed (deploy-path review P13, ADR-005).
+				if ready.NoSnapshotReason != "ephemeral_secret" && ready.NoSnapshotReason != state.SnapshotPrimeCaptureFailedReason {
+					return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret or failed-capture proof is supplied", mode)
 				}
 				if ready.InstanceID == "" {
 					return fmt.Errorf("imaged: %s ephemeral-secret readiness missing instance_id", mode)

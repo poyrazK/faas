@@ -26,12 +26,16 @@ type OrgAccessStore interface {
 
 // OrgAccessFence pins a request to a membership version. CredentialOrgID
 // preserves the credential's actual binding; AppID is present for deploy tokens.
+// SupportGrantID replaces the membership check for Gregale support acting
+// under a customer's grant (ADR-20261116163508): the actor is no member, and
+// the request stays authorized only while the grant is usable.
 type OrgAccessFence struct {
 	OrgID, AccountID string
 	Revision         int64
 	CredentialID     string
 	CredentialOrgID  string
 	AppID            string
+	SupportGrantID   string
 }
 
 type orgAccessContextKey struct{}

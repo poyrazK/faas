@@ -10,12 +10,14 @@ Preview first: the dry run says what Gregale will do with this source and which 
     gregale deploy --yes
 - Deploy a published image instead of source:
     gregale deploy --image <image>@sha256:<digest> --name <app>
-- Serve the public URL without a Gregale API key:
+- Verify a response from the accepted deployment (including private apps):
+    gregale release verify <deployment> --app <app> --path /
+- Optionally allow anonymous public requests:
     gregale app update <app> --no-require-authn
 - Check serving health:
-    gregale app <app> health
+    gregale app health <app>
 
 Notes:
 - A Compose file or several services: see `gregale guide compose-project`.
-- Public URLs answer 401 without a Gregale API key until --no-require-authn.
+- A private URL can return 401 without credentials after a successful deploy. release verify checks the exact deployment using owner access; it does not verify anonymous public access.
 - A source build must answer HTTP GET /healthz on its port; see `gregale guide health-checks`.

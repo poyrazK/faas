@@ -7,10 +7,10 @@ CREATE TABLE task_tool_release_intents (
     PRIMARY KEY(account_id,id)
 );
 CREATE TABLE api_keys (id uuid PRIMARY KEY, account_id uuid NOT NULL, status text NOT NULL, expires_at timestamptz, scopes text[] NOT NULL, label text NOT NULL, org_id uuid);
-CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL, project_id uuid, org_id uuid, slug text NOT NULL, status text NOT NULL);
+CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL, project_id uuid, org_id uuid, slug text NOT NULL, status text NOT NULL, manifest jsonb NOT NULL, workload_class text NOT NULL, park_transition_id uuid);
 CREATE TABLE orgs (id uuid PRIMARY KEY, personal_org boolean NOT NULL, personal_owner_account_id uuid);
 CREATE TABLE api_key_project_limits (key_id uuid PRIMARY KEY, project_ids uuid[] NOT NULL);
-CREATE TABLE deployments (id uuid PRIMARY KEY, app_id uuid NOT NULL, source_sha256 text, scope text, status text NOT NULL, traffic_percent integer NOT NULL);
+CREATE TABLE deployments (id uuid PRIMARY KEY, app_id uuid NOT NULL, source_sha256 text, scope text, status text NOT NULL, traffic_percent integer NOT NULL, created_at timestamptz NOT NULL);
 CREATE TABLE deployment_mcp_readiness_evidence (deployment_id uuid NOT NULL, role text NOT NULL, evidence jsonb NOT NULL);
 CREATE TABLE tool_publications (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -69,3 +69,5 @@ CREATE TABLE tool_oauth_authorizations (
 -- Read-only recovery subjects; schedd remains the only instance writer.
 CREATE TABLE instances (id uuid PRIMARY KEY, app_id uuid NOT NULL, deployment_id uuid, state text NOT NULL);
 CREATE TABLE app_custom_metrics (app_id uuid NOT NULL, name text NOT NULL, value double precision NOT NULL, observed_at timestamptz NOT NULL, PRIMARY KEY(app_id,name));
+
+CREATE TABLE hosted_task_source_intents(account_id uuid NOT NULL REFERENCES accounts(id),id text NOT NULL,payload jsonb NOT NULL,ciphertext bytea,expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));

@@ -992,6 +992,8 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
+	// appPlan names a service call target's plan (WithAppPlanResolver).
+	appPlan               AppPlanResolver
 	publicRoutingPolicy   PublicRoutingPinner
 	publicRoutingStride   publicRoutingStride
 	publicRoutingFreezes  publicRoutingFreezes
@@ -2377,7 +2379,7 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		// RFC 9110 §15.5.2: a 401 carries the challenge (production-us
 		// hunt #9, H9-82).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			"Unauthorized", missingBearerDetail(tok)).
 			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
@@ -5400,7 +5402,7 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 		})
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			"Unauthorized", missingBearerDetail(tok)).
 			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
@@ -6314,6 +6316,10 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Outermost: a gRPC caller gets the platform's errors as gRPC statuses;
+	// the recorders below still see the HTTP status (grpc_platform_error.go).
+	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
+	defer finishGRPC()
 	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a

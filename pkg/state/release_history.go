@@ -27,6 +27,19 @@ type ReleaseRunStore interface {
 	ReleaseRunsCrossedBy(ctx context.Context, appID, targetID string) ([]ReleaseRun, error)
 }
 
+// ReleaseRunReplacingStore finds the release task of the deployment that
+// replaced a rollback target. ADR-1448 does not count it as crossed, because
+// it ran while the target served; a rollback that restores the database
+// undoes it too (ADR-20261023181931 amendment, 2026-11-16).
+type ReleaseRunReplacingStore interface {
+	// ReleaseRunReplacing returns the newest started release task of another
+	// deployment in the target's scope that started after the target was
+	// created and no later than it last stopped serving, whose deployment
+	// still served then. ok is false when there is none, or the target never
+	// stopped serving.
+	ReleaseRunReplacing(ctx context.Context, appID, targetID string) (run ReleaseRun, ok bool, err error)
+}
+
 // ReleaseDatabase is a managed PostgreSQL database a release task can migrate.
 type ReleaseDatabase struct {
 	ID, Name string
@@ -43,6 +56,8 @@ var (
 	_ ReleaseRunStore               = (*PgStore)(nil)
 	_ ReleaseRunStore               = (*MemStore)(nil)
 	_ ReleaseMigrationDatabaseStore = (*PgStore)(nil)
+	_ ReleaseRunReplacingStore      = (*PgStore)(nil)
+	_ ReleaseRunReplacingStore      = (*MemStore)(nil)
 )
 
 func releaseScope(scope string) string {
@@ -71,6 +86,21 @@ func releaseRunsCrossedByDBTX(ctx context.Context, db sqlc.DBTX, appID, targetID
 	return out, nil
 }
 
+func (s *PgStore) ReleaseRunReplacing(ctx context.Context, appID, targetID string) (ReleaseRun, bool, error) {
+	rows, err := sqlc.New().ReleaseRunReplacing(ctx, s.pool, sqlc.ReleaseRunReplacingParams{AppID: appID, TargetID: targetID})
+	if err != nil {
+		return ReleaseRun{}, false, mapErr(err)
+	}
+	if len(rows) == 0 {
+		return ReleaseRun{}, false, nil
+	}
+	r := rows[0]
+	return ReleaseRun{
+		DeploymentID: r.DeploymentID, Revision: int(r.Revision),
+		Status: AppTaskStatus(r.Status), StartedAt: r.StartedAt.Time.UTC(),
+	}, true, nil
+}
+
 func (s *PgStore) ReleaseMigrationDatabases(ctx context.Context, appID, scope string) ([]ReleaseDatabase, error) {
 	rows, err := sqlc.New().ReleaseMigrationDatabases(ctx, s.pool, sqlc.ReleaseMigrationDatabasesParams{AppID: appID, Scope: releaseScope(scope)})
 	if err != nil {
@@ -87,6 +117,44 @@ func (m *MemStore) ReleaseRunsCrossedBy(_ context.Context, appID, targetID strin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.releaseRunsCrossedByLocked(appID, targetID), nil
+}
+
+// ReleaseRunReplacing mirrors PgStore.ReleaseRunReplacing.
+func (m *MemStore) ReleaseRunReplacing(_ context.Context, appID, targetID string) (ReleaseRun, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, ok := m.deployments[targetID]
+	if !ok || target.AppID != appID {
+		return ReleaseRun{}, false, nil
+	}
+	ended, served := m.deploymentServingEndedAt[targetID]
+	if !served {
+		return ReleaseRun{}, false, nil
+	}
+	scope := releaseScope(target.Scope)
+	var best ReleaseRun
+	found := false
+	for _, task := range m.appTasks {
+		if task.AppID != appID || task.Kind != AppTaskKindRelease || task.StartedAt == nil ||
+			task.DeploymentID == targetID || releaseScope(task.DeploymentScope) != scope ||
+			!task.StartedAt.After(target.CreatedAt) || task.StartedAt.After(ended) {
+			continue
+		}
+		d, ok := m.deployments[task.DeploymentID]
+		if !ok {
+			continue
+		}
+		dEnded, dServed := m.deploymentServingEndedAt[d.ID]
+		if d.Status != DeployLive && (!dServed || dEnded.Before(ended)) {
+			continue
+		}
+		if found && !task.StartedAt.After(best.StartedAt) {
+			continue
+		}
+		best = ReleaseRun{DeploymentID: task.DeploymentID, Revision: d.Revision, Status: task.Status, StartedAt: task.StartedAt.UTC()}
+		found = true
+	}
+	return best, found, nil
 }
 
 func (m *MemStore) releaseRunsCrossedByLocked(appID, targetID string) []ReleaseRun {

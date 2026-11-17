@@ -29,12 +29,15 @@ type ApiKeyProjectLimit struct {
 }
 
 type App struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	ProjectID pgtype.UUID
-	OrgID     pgtype.UUID
-	Slug      string
-	Status    string
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	OrgID            pgtype.UUID
+	Slug             string
+	Status           string
+	Manifest         []byte
+	WorkloadClass    string
+	ParkTransitionID pgtype.UUID
 }
 
 type AppCustomMetric struct {
@@ -62,12 +65,21 @@ type Deployment struct {
 	Scope          pgtype.Text
 	Status         string
 	TrafficPercent int32
+	CreatedAt      pgtype.Timestamptz
 }
 
 type DeploymentMcpReadinessEvidence struct {
 	DeploymentID pgtype.UUID
 	Role         string
 	Evidence     []byte
+}
+
+type HostedTaskSourceIntent struct {
+	AccountID  pgtype.UUID
+	ID         string
+	Payload    []byte
+	Ciphertext []byte
+	ExpiresAt  pgtype.Timestamptz
 }
 
 type Instance struct {

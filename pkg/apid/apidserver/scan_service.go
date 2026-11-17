@@ -859,6 +859,39 @@ type liveDeploymentForScopeStore interface {
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (state.Deployment, error)
 }
 
+type productionRedeployStore interface {
+	liveDeploymentForScopeStore
+	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
+}
+
+// productionAppsWithoutRelease returns selected production apps the reconcile
+// left unchanged that serve nothing and have nothing on the way: no live
+// release, and a latest deployment that ended (failed, cancelled) or never
+// existed. Re-running the deploy after a failed first boot otherwise reported
+// them "unchanged; its live release keeps serving" and queued nothing, and
+// without a source change nothing ever rebuilt them (2026-11-15 agent eval:
+// three retail services stayed down across retries). An app with a
+// deployment still in flight is left to it.
+func productionAppsWithoutRelease(ctx context.Context, store productionRedeployStore, selected []state.App, added, changed []state.App) ([]state.App, error) {
+	candidates, err := environmentAppsWithoutLiveDeployment(ctx, store, selected, state.DefaultEnvScope, added, changed)
+	if err != nil {
+		return nil, err
+	}
+	var out []state.App
+	for _, app := range candidates {
+		latest, err := store.LatestDeployment(ctx, app.ID)
+		switch {
+		case errors.Is(err, state.ErrNotFound) || errors.Is(err, pgx.ErrNoRows):
+		case err != nil:
+			return nil, fmt.Errorf("latest deployment for %s: %w", app.Slug, err)
+		case !latest.Status.IsTerminal():
+			continue
+		}
+		out = append(out, app)
+	}
+	return out, nil
+}
+
 // environmentAppsWithoutLiveDeployment returns selected apps that the
 // reconcile left unchanged but that have never been deployed to environment.
 // Builds were enqueued only for added or changed app rows, so a cloned
@@ -2722,6 +2755,23 @@ func (s *server) scanService(
 				buildChanged = append(buildChanged, app)
 			}
 		}
+	}
+	if reconcileProductionEnvironment(req.Environment) && len(req.RetryTargets) == 0 {
+		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if appsErr != nil {
+			prob := customerInternalProblem(s.log, "load workloads for production deployment",
+				"Gregale could not load this project's workloads to deploy.",
+				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		down, downErr := productionAppsWithoutRelease(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), rec.Added, buildChanged)
+		if downErr != nil {
+			prob := customerInternalProblem(s.log, "inspect production deployments",
+				"Gregale could not check which workloads still need a release.",
+				"Retry the deployment in a moment; if it continues, contact support.", downErr)
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		buildChanged = append(append([]state.App(nil), buildChanged...), down...)
 	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)

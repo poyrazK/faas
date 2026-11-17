@@ -551,6 +551,11 @@ var LoopbackBindRegex = &loopbackBindRegex
 var McpNativeCheckWorkers = &mcpNativeCheckWorkers
 var NonInteractive = &nonInteractive
 var OsStderr = &osStderr
+var GitMetadataTimeout = &gitMetadataTimeout
+var GitSlowNoticeAfter = &gitSlowNoticeAfter
+var GitPipeWaitDelay = &gitPipeWaitDelay
+var WithProjectWaitProgress = withProjectWaitProgress
+var WaitForProjectApplyTimeouts = waitForProjectApplyTimeouts
 var OsStdin = &osStdin
 var OsStdout = &osStdout
 var ProfileOverride = &profileOverride
@@ -1161,7 +1166,7 @@ var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
 
-// ReleaseGateRequest builds a release gate create request from its flags.
+// ReleaseGateRequest builds a release gate add request from its flags.
 var ReleaseGateRequest = releaseGateRequest
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
@@ -1758,6 +1763,9 @@ var RemoveTestFaultRules = removeTestFaultRules
 var RenderAccountSLO = renderAccountSLO
 var RenderAppBindingInventory = renderAppBindingInventory
 var RenderAppMetrics = renderAppMetrics
+
+// RenderServiceMap exposes the service-map text output.
+var RenderServiceMap = renderServiceMap
 var RenderAppSLO = renderAppSLO
 var RenderApplyRescue = renderApplyRescue
 var RenderStoredWorkflowLiveGate = renderStoredWorkflowLiveGate
@@ -2907,13 +2915,17 @@ func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, i
 // TaskQuarantineGateForTest exposes the fixed adapter to subprocess contract tests.
 func TaskQuarantineGateForTest() string { return mcpTaskQuarantineGate }
 
+// TaskRetirementGateForTest exposes the fixed read-only adapter.
+func TaskRetirementGateForTest() string { return mcpTaskRetirementGate }
+
 var RememberInitApp = rememberInitApp
 var LinkedDefaultAppName = linkedDefaultAppName
 
 // gregale dev findings (2026-11-15).
 var DevSourceFingerprint = devSourceFingerprint
 var DevLocalEnvExcludes = devLocalEnvExcludes
-var PackedCredentialFiles = packedCredentialFiles
+var DeployCredentialExcludes = deployCredentialExcludes
+var WithoutExcludedFindings = withoutExcludedFindings
 var ShouldExcludeWithRules = func(srcDir, rel string, isDir, dockerfile bool) bool {
 	return loadPackRules(srcDir, dockerfile).exclude(rel, isDir)
 }
@@ -2960,4 +2972,11 @@ func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretCl
 // RenderAppProtection exposes renderAppProtection (ADR-20261116120000 §5).
 func RenderAppProtection(w io.Writer, slug string, resp api.AppProtectionResponse) {
 	renderAppProtection(w, slug, resp)
+}
+
+var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal
+
+// UncommittedProjectFile exposes the HEAD-deploy project-file check.
+func UncommittedProjectFile(porcelain, repoRoot, sourceDir string) (string, bool) {
+	return uncommittedProjectFile(porcelain, repoRoot, sourceDir)
 }

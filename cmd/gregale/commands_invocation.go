@@ -197,17 +197,17 @@ func resolveJSONFlag(flag, s string) ([]byte, error) {
 		return nil, nil
 	}
 	var b []byte
-	source := "inline"
+	source := jsonInputSource{kind: "inline"}
 	switch {
 	case s[0] == '@':
-		source = s[1:]
+		source = jsonInputSource{kind: "file", path: s[1:]}
 		read, err := os.ReadFile(s[1:])
 		if err != nil {
 			return nil, fmt.Errorf("read payload file %q: %w", s[1:], err)
 		}
 		b = read
 	case s == "-":
-		source = "stdin"
+		source = jsonInputSource{kind: "stdin"}
 		read, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, fmt.Errorf("read stdin: %w", err)

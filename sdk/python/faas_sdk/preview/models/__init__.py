@@ -2251,8 +2251,40 @@ from .flag_decision_inherited_from import FlagDecisionInheritedFrom
 from .flag_decision_reason import FlagDecisionReason
 from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
+from .flag_event import FlagEvent
+from .flag_events_request import FlagEventsRequest
+from .flag_events_response import FlagEventsResponse
+from .flag_events_response_dropped import FlagEventsResponseDropped
+from .flag_events_response_month import FlagEventsResponseMonth
 from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
+from .flag_experiment import FlagExperiment
+from .flag_experiment_arm import FlagExperimentArm
+from .flag_experiment_breach import FlagExperimentBreach
+from .flag_experiment_create_request import FlagExperimentCreateRequest
+from .flag_experiment_create_request_metric_kind import FlagExperimentCreateRequestMetricKind
+from .flag_experiment_guardrail import FlagExperimentGuardrail
+from .flag_experiment_guardrail_name import FlagExperimentGuardrailName
+from .flag_experiment_guardrail_request import FlagExperimentGuardrailRequest
+from .flag_experiment_guardrail_setting import FlagExperimentGuardrailSetting
+from .flag_experiment_guardrail_settings import FlagExperimentGuardrailSettings
+from .flag_experiment_guardrail_status import FlagExperimentGuardrailStatus
+from .flag_experiment_guardrail_variant import FlagExperimentGuardrailVariant
+from .flag_experiment_guardrail_variant_status import FlagExperimentGuardrailVariantStatus
+from .flag_experiment_guardrails_request import FlagExperimentGuardrailsRequest
+from .flag_experiment_latency import FlagExperimentLatency
+from .flag_experiment_list import FlagExperimentList
+from .flag_experiment_metric_kind import FlagExperimentMetricKind
+from .flag_experiment_recommendation import FlagExperimentRecommendation
+from .flag_experiment_recommendation_action import FlagExperimentRecommendationAction
+from .flag_experiment_results import FlagExperimentResults
+from .flag_experiment_ship_request import FlagExperimentShipRequest
+from .flag_experiment_ship_response import FlagExperimentShipResponse
+from .flag_experiment_status import FlagExperimentStatus
+from .flag_experiment_stop_reason import FlagExperimentStopReason
+from .flag_experiment_variant_result import FlagExperimentVariantResult
+from .flag_experiment_variant_result_status import FlagExperimentVariantResultStatus
+from .flag_experiment_weights import FlagExperimentWeights
 from .flag_lifecycle import FlagLifecycle
 from .flag_lifecycle_attention_item import FlagLifecycleAttentionItem
 from .flag_lifecycle_evidence import FlagLifecycleEvidence
@@ -2372,6 +2404,16 @@ from .guarded_debug_regression_action_request import GuardedDebugRegressionActio
 from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
 from .held_link_review import HeldLinkReview
 from .held_links_response import HeldLinksResponse
+from .hosted_task_source_entry import HostedTaskSourceEntry
+from .hosted_task_source_entry_mode import HostedTaskSourceEntryMode
+from .hosted_task_source_intent import HostedTaskSourceIntent
+from .hosted_task_source_intent_source_state import HostedTaskSourceIntentSourceState
+from .hosted_task_source_intent_version import HostedTaskSourceIntentVersion
+from .hosted_task_source_prepare import HostedTaskSourcePrepare
+from .hosted_task_source_prepare_sources import HostedTaskSourcePrepareSources
+from .hosted_task_source_review import HostedTaskSourceReview
+from .hosted_task_source_review_kind import HostedTaskSourceReviewKind
+from .hosted_task_source_review_source_sha_256 import HostedTaskSourceReviewSourceSha256
 from .hosting_route_check_result import HostingRouteCheckResult
 from .hosting_route_check_result_status import HostingRouteCheckResultStatus
 from .hosting_route_check_set import HostingRouteCheckSet
@@ -6162,6 +6204,12 @@ from .synthetic_check_response_method import SyntheticCheckResponseMethod
 from .synthetic_check_results import SyntheticCheckResults
 from .synthetic_check_run import SyntheticCheckRun
 from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
+from .task_release_review import TaskReleaseReview
+from .task_release_review_status import TaskReleaseReviewStatus
+from .task_release_review_tool_scopes import TaskReleaseReviewToolScopes
+from .task_release_review_version import TaskReleaseReviewVersion
+from .task_release_review_worker_runtime import TaskReleaseReviewWorkerRuntime
+from .task_review_limits import TaskReviewLimits
 from .task_tool_quarantine import TaskToolQuarantine
 from .task_tool_quarantine_decision import TaskToolQuarantineDecision
 from .task_tool_quarantine_request import TaskToolQuarantineRequest
@@ -6206,6 +6254,13 @@ from .task_tool_release_receipt_parked import TaskToolReleaseReceiptParked
 from .task_tool_release_receipt_pending_submission import TaskToolReleaseReceiptPendingSubmission
 from .task_tool_release_receipt_previous_deployments import TaskToolReleaseReceiptPreviousDeployments
 from .task_tool_release_receipt_stage import TaskToolReleaseReceiptStage
+from .task_tool_retirement import TaskToolRetirement
+from .task_tool_retirement_decision import TaskToolRetirementDecision
+from .task_tool_retirement_request import TaskToolRetirementRequest
+from .task_tool_retirement_request_action import TaskToolRetirementRequestAction
+from .task_tool_retirement_request_expected_instance_ids import TaskToolRetirementRequestExpectedInstanceIds
+from .task_tool_retirement_result import TaskToolRetirementResult
+from .task_tool_retirement_state import TaskToolRetirementState
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
 from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
@@ -8925,8 +8980,40 @@ __all__ = (
     "FlagDecisionReason",
     "FlagDecisionSource",
     "FlagDecisionType",
+    "FlagEvent",
+    "FlagEventsRequest",
+    "FlagEventsResponse",
+    "FlagEventsResponseDropped",
+    "FlagEventsResponseMonth",
     "FlagEvidence",
     "FlagEvidencePage",
+    "FlagExperiment",
+    "FlagExperimentArm",
+    "FlagExperimentBreach",
+    "FlagExperimentCreateRequest",
+    "FlagExperimentCreateRequestMetricKind",
+    "FlagExperimentGuardrail",
+    "FlagExperimentGuardrailName",
+    "FlagExperimentGuardrailRequest",
+    "FlagExperimentGuardrailSetting",
+    "FlagExperimentGuardrailSettings",
+    "FlagExperimentGuardrailsRequest",
+    "FlagExperimentGuardrailStatus",
+    "FlagExperimentGuardrailVariant",
+    "FlagExperimentGuardrailVariantStatus",
+    "FlagExperimentLatency",
+    "FlagExperimentList",
+    "FlagExperimentMetricKind",
+    "FlagExperimentRecommendation",
+    "FlagExperimentRecommendationAction",
+    "FlagExperimentResults",
+    "FlagExperimentShipRequest",
+    "FlagExperimentShipResponse",
+    "FlagExperimentStatus",
+    "FlagExperimentStopReason",
+    "FlagExperimentVariantResult",
+    "FlagExperimentVariantResultStatus",
+    "FlagExperimentWeights",
     "FlagLifecycle",
     "FlagLifecycleAttentionItem",
     "FlagLifecycleEvidence",
@@ -9042,6 +9129,16 @@ __all__ = (
     "GuardedDebugRegressionActionRequestAction",
     "HeldLinkReview",
     "HeldLinksResponse",
+    "HostedTaskSourceEntry",
+    "HostedTaskSourceEntryMode",
+    "HostedTaskSourceIntent",
+    "HostedTaskSourceIntentSourceState",
+    "HostedTaskSourceIntentVersion",
+    "HostedTaskSourcePrepare",
+    "HostedTaskSourcePrepareSources",
+    "HostedTaskSourceReview",
+    "HostedTaskSourceReviewKind",
+    "HostedTaskSourceReviewSourceSha256",
     "HostingRouteCheckResult",
     "HostingRouteCheckResultStatus",
     "HostingRouteCheckSet",
@@ -12572,6 +12669,12 @@ __all__ = (
     "SyntheticCheckResults",
     "SyntheticCheckRun",
     "SyntheticCheckRunErrorClass",
+    "TaskReleaseReview",
+    "TaskReleaseReviewStatus",
+    "TaskReleaseReviewToolScopes",
+    "TaskReleaseReviewVersion",
+    "TaskReleaseReviewWorkerRuntime",
+    "TaskReviewLimits",
     "TaskToolQuarantine",
     "TaskToolQuarantineDecision",
     "TaskToolQuarantineRequest",
@@ -12616,6 +12719,13 @@ __all__ = (
     "TaskToolReleaseReceiptPendingSubmission",
     "TaskToolReleaseReceiptPreviousDeployments",
     "TaskToolReleaseReceiptStage",
+    "TaskToolRetirement",
+    "TaskToolRetirementDecision",
+    "TaskToolRetirementRequest",
+    "TaskToolRetirementRequestAction",
+    "TaskToolRetirementRequestExpectedInstanceIds",
+    "TaskToolRetirementResult",
+    "TaskToolRetirementState",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
     "TCPListenerTLSCertificateStatus",

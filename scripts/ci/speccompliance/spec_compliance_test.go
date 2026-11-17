@@ -271,6 +271,10 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases: behind the preview-databases
 	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
 	"PUT /v1/postgres/databases/{id}/previews": true,
+	// ADR-20261116213000 custom Postgres roles (postgres_custom_roles flag).
+	"GET /v1/postgres/databases/{id}/roles":           true,
+	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
+	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -471,40 +475,51 @@ var routeExclude = map[string]bool{
 	// unregistered routes to every account it is not released to, so it stays
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND cmd/sdk-coverage/main.go::routeExclude.
-	"POST /v1/agents":                                 true,
-	"POST /v1/agent-callbacks":                        true,
-	"POST /v1/agent-callbacks/{token}":                true,
-	"POST /v1/agent-callbacks/revocations":            true,
-	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
-	"POST /v1/agent-tools/invoke":                     true,
-	"POST /v1/agent-tools/close_thread":               true,
-	"POST /v1/sandboxes":                              true,
-	"GET /v1/sandboxes":                               true,
-	"GET /v1/sandboxes/{id}":                          true,
-	"PATCH /v1/sandboxes/{id}":                        true,
-	"DELETE /v1/sandboxes/{id}":                       true,
-	"GET /v1/sandbox-snapshots":                       true,
-	"GET /v1/sandbox-snapshots/{id}":                  true,
-	"DELETE /v1/sandbox-snapshots/{id}":               true,
-	"GET /v1/sandbox-templates":                       true,
-	"GET /v1/sandbox-templates/{name}":                true,
-	"PUT /v1/sandbox-templates/{name}":                true,
-	"DELETE /v1/sandbox-templates/{name}":             true,
-	"POST /v1/sandboxes/{id}/ports":                   true,
-	"GET /v1/sandboxes/{id}/ports":                    true,
-	"GET /v1/sandboxes/{id}/ports/{port}":             true,
-	"DELETE /v1/sandboxes/{id}/ports/{port}":          true,
-	"GET /v1/agents":                                  true,
-	"GET /v1/agents/{agent}":                          true,
-	"DELETE /v1/agents/{agent}":                       true,
-	"POST /v1/agents/{agent}/versions":                true,
-	"GET /v1/agents/{agent}/versions/{version}":       true,
-	"POST /v1/agents/{agent}/runs":                    true,
-	"GET /v1/agent-runs":                              true,
-	"GET /v1/agent-runs/{id}":                         true,
-	"DELETE /v1/agent-runs/{id}":                      true,
-	"GET /v1/agent-runs/{id}/outputs":                 true,
-	"GET /v1/agent-runs/{id}/outputs/files/{name...}": true,
+	"POST /v1/agents": true,
+	// ADR-20261116163508 customer-granted support access: dark behind the
+	// support_grants platform flag, so it stays out of the public OpenAPI spec
+	// and generated SDKs until launch. Mirror across this list AND
+	// cmd/sdk-coverage/main.go::routeExclude (scripts/ci/speccompliance).
+	"GET /v1/orgs/{slug}/support-access":                        true,
+	"POST /v1/orgs/{slug}/support-access/grants":                true,
+	"POST /v1/orgs/{slug}/support-access/grants/{id}/revoke":    true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/approve": true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/decline": true,
+	"POST /v1/admin/support-access/requests":                    true, // operator-only
+	"GET /v1/admin/support-access/grants":                       true, // operator-only
+	"POST /v1/agent-callbacks":                                  true,
+	"POST /v1/agent-callbacks/{token}":                          true,
+	"POST /v1/agent-callbacks/revocations":                      true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":               true,
+	"POST /v1/agent-tools/invoke":                               true,
+	"POST /v1/agent-tools/close_thread":                         true,
+	"POST /v1/sandboxes":                                        true,
+	"GET /v1/sandboxes":                                         true,
+	"GET /v1/sandboxes/{id}":                                    true,
+	"PATCH /v1/sandboxes/{id}":                                  true,
+	"DELETE /v1/sandboxes/{id}":                                 true,
+	"GET /v1/sandbox-snapshots":                                 true,
+	"GET /v1/sandbox-snapshots/{id}":                            true,
+	"DELETE /v1/sandbox-snapshots/{id}":                         true,
+	"GET /v1/sandbox-templates":                                 true,
+	"GET /v1/sandbox-templates/{name}":                          true,
+	"PUT /v1/sandbox-templates/{name}":                          true,
+	"DELETE /v1/sandbox-templates/{name}":                       true,
+	"POST /v1/sandboxes/{id}/ports":                             true,
+	"GET /v1/sandboxes/{id}/ports":                              true,
+	"GET /v1/sandboxes/{id}/ports/{port}":                       true,
+	"DELETE /v1/sandboxes/{id}/ports/{port}":                    true,
+	"GET /v1/agents":                                            true,
+	"GET /v1/agents/{agent}":                                    true,
+	"DELETE /v1/agents/{agent}":                                 true,
+	"POST /v1/agents/{agent}/versions":                          true,
+	"GET /v1/agents/{agent}/versions/{version}":                 true,
+	"POST /v1/agents/{agent}/runs":                              true,
+	"GET /v1/agent-runs":                                        true,
+	"GET /v1/agent-runs/{id}":                                   true,
+	"DELETE /v1/agent-runs/{id}":                                true,
+	"GET /v1/agent-runs/{id}/outputs":                           true,
+	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
 
 	"POST /v1/apps/{slug}/operation-schedules/{id}/cancel":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules":             true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
@@ -614,6 +629,11 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/service-map":                                    true, // ADR-1131 HTML view of GET /v1/service-map
 	"GET /dashboard/dev-bridges/{id}":                               true, // ADR-379 HTML activity projection
 	"POST /dashboard/dev-bridges/{id}/revoke":                       true, // ADR-379 cookie + CSRF form
+	"GET /dashboard/support-access":                                 true, // ADR-20261116163508 HTML page
+	"POST /dashboard/support-access/{org}/grants":                   true, // ADR-20261116163508 cookie + CSRF form
+	"POST /dashboard/support-access/{org}/grants/{id}/revoke":       true, // ADR-20261116163508 cookie + CSRF form
+	"POST /dashboard/support-access/{org}/requests/{id}/approve":    true, // ADR-20261116163508 cookie + CSRF form
+	"POST /dashboard/support-access/{org}/requests/{id}/decline":    true, // ADR-20261116163508 cookie + CSRF form
 	"POST /dashboard/apps/new":                                      true, // dashboard-only create + GitHub bind form adapter
 	"POST /dashboard/apps/{slug}/github/sync":                       true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only
@@ -893,18 +913,22 @@ var dtoExclude = map[string]bool{
 	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
 	"ManagedPostgresPreviewOwner":       true, // ADR-20261102123523 preview-databases capability; documented at launch
 	"SetManagedPostgresPreviewsRequest": true, // ADR-20261102123523 preview-databases capability; documented at launch
-	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
-	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
-	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
-	"MigrationDependencyReport":         true, // Private guest task protocol, not an HTTP DTO.
-	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
-	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
-	"RecordRolloutHoldRequest":          true, // ADR-1447 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
-	"RecordRolloutHoldResponse":         true, // ADR-1447 loopback-only meterd ↔ apid hold route
-	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
-	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
-	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
-	"CanaryRouteHealthRecoveryResponse": true, // loopback-only worker result
+	// ADR-20261116213000 postgres_custom_roles flag; documented at launch.
+	"ManagedPostgresCustomRole":           true,
+	"ManagedPostgresCustomRoleList":       true,
+	"PutManagedPostgresCustomRoleRequest": true,
+	"RealtimeLimits":                      true, // internal plan policy, not a wire DTO
+	"ExecutionSnapshotShape":              true, // internal snapshot compatibility key, not a wire DTO
+	"ResolvedExecutionRequest":            true, // sealed scheduler intent, not a public DTO
+	"MigrationDependencyReport":           true, // Private guest task protocol, not an HTTP DTO.
+	"ResolvedCreateAppTaskRequest":        true, // validated state admission input, not a public DTO
+	"RecoverDeploymentRolloutRequest":     true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldRequest":            true, // ADR-1447 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldResponse":           true, // ADR-1447 loopback-only meterd ↔ apid hold route
+	"AlertRuleRow":                        true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	"RouteCapturedOperation":              true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
+	"CanaryRouteHealthRecoveryRequest":    true, // loopback-only fresh check and recovery contract
+	"CanaryRouteHealthRecoveryResponse":   true, // loopback-only worker result
 	// Canary and smoke reports are emitted through app-task stdout for the CLI
 	// to decode; these structs are not standalone HTTP request/response DTOs.
 	"ServiceBindingProbeCheck":  true,
@@ -1162,7 +1186,7 @@ var schemaSpecOnly = map[string]bool{
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
 	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
-	"FlagsBundle": true, "FeatureFlagVersion": true,
+	"FlagsBundle": true, "FeatureFlagVersion": true, "FlagEvent": true, "FlagEventsRequest": true, "FlagEventsResponse": true, "FlagExperimentCreateRequest": true, "FlagExperiment": true, "FlagExperimentList": true, "FlagExperimentArm": true, "FlagExperimentVariantResult": true, "FlagExperimentResults": true, "FlagExperimentGuardrail": true, "FlagExperimentGuardrailRequest": true, "FlagExperimentGuardrailSetting": true, "FlagExperimentGuardrailSettings": true, "FlagExperimentGuardrailVariant": true, "FlagExperimentGuardrailsRequest": true, "FlagExperimentLatency": true, "FlagExperimentRecommendation": true, "FlagExperimentShipRequest": true, "FlagExperimentShipResponse": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
 	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,
@@ -1742,7 +1766,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
 		filepath.Join(root, "pkg", "api", "tool_publications.go"),
 		filepath.Join(root, "pkg", "api", "task_tool_releases.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_source_intents.go"),
 		filepath.Join(root, "pkg", "api", "task_tool_quarantine.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_retirement.go"),
 		filepath.Join(root, "pkg", "api", "tool_publication_verification.go"),
 		filepath.Join(root, "pkg", "api", "tool_publication_readiness.go"),
 		filepath.Join(root, "pkg", "api", "tool_invocations.go"),

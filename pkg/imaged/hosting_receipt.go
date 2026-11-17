@@ -186,7 +186,9 @@ func routeConnectivitySmoke(app state.App, dep state.Deployment) bool {
 		// TCP readiness: the app never promised an HTTP health route.
 		return true
 	}
-	return strings.EqualFold(app.AppProtocol, "grpc") || grpcReadiness(dep)
+	// A workflow function answers a plain request with a 404 problem: it
+	// runs only through workflow runs (ADR-20261113120824 amendment 1).
+	return strings.EqualFold(app.AppProtocol, "grpc") || grpcReadiness(dep) || isWorkflowFunction(app, dep)
 }
 
 // grpcReadiness reports whether the deployment's startup readiness is the

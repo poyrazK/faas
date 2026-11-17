@@ -89,7 +89,7 @@ func validateTaskIntentReceipt(record api.TaskToolReleaseIntentRecord, id string
 		return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "Task intent receipt differs from its reviewed identity")
 	}
 	if e := record.Execution; e != nil {
-		if !validTaskHandoverMetadata(e) || !tasktoolrelease.ValidQuarantine(record) || e.Recovery != nil && e.Recovery.Result != nil && !tasktoolrelease.ValidRecoveryResult(record) {
+		if !tasktoolrelease.ValidRecoveryMetadata(record) {
 			return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "invalid Task handover metadata")
 		}
 		if e.Receipt != nil && (tasktoolrelease.ValidateReceipt(record, *e.Receipt) != nil || !slices.Equal(e.CompletedStages, tasktoolrelease.ReceiptStages(*e.Receipt))) {

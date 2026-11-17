@@ -219,14 +219,13 @@ func (s *Server) sendRecords(records []replayRecord, edgeFrames bool, send func(
 			continue
 		}
 		if err := send(&egresspb.BytesFrame{
-			InstanceId:        rec.InstanceID,
-			AppId:             rec.AppID,
-			Minute:            timestamppb.New(rec.Minute.UTC()),
-			Bytes:             rec.Bytes,
-			Requests:          rec.Requests,
-			ColdBoots:         rec.ColdBoots,
-			EventId:           pending.eventID,
-			ServiceReplyBytes: rec.ServiceReplyBytes,
+			InstanceId: rec.InstanceID,
+			AppId:      rec.AppID,
+			Minute:     timestamppb.New(rec.Minute.UTC()),
+			Bytes:      rec.Bytes,
+			Requests:   rec.Requests,
+			ColdBoots:  rec.ColdBoots,
+			EventId:    pending.eventID,
 		}); err != nil {
 			// Every frame remains in pending until meterd confirms its
 			// Postgres idempotency row. A reconnect therefore replays both

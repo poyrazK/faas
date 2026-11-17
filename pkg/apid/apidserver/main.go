@@ -1015,7 +1015,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startFeatureFlagLifecycleReconciler(ctx, srv, log)
-		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
+		startFlagExperimentReconciler(ctx, srv, log) // ADR 20261115163113
+		startPlatformFlagRamps(ctx, srv, log)        // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
 		srv.startIssueTrackerReminders(ctx)
@@ -1627,6 +1628,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithListenersEnabled(strings.TrimSpace(deps.getenv("FAAS_TCP_LISTENERS_ENABLED")) == "1", strings.TrimSpace(deps.getenv("FAAS_UDP_LISTENERS_ENABLED")) == "1").
 		WithReleasePhaseEnabled(releasePhaseEnabledFromEnv(deps.getenv)).
 		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
 		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
@@ -1950,6 +1952,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if verifyErr != nil {
 			return fmt.Errorf("apid: load rollback artifact verifier: %w", verifyErr)
 		}
+		rollbackVerifier.RequireV2(deps.getenv("FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2") == "1")
 		srv.WithRollbackArtifactVerifier(rollbackVerifier)
 		log.Info("apid: rollback artifact verifier ready", "pub", signPubPath)
 	}
@@ -2911,6 +2914,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	if srv.privateTools != nil {
+		srv.privateTools.StartSourceRetentionCleanup(ctx)
+	}
 	privateStop := context.AfterFunc(ctx, srv.stopPrivateTools)
 	defer func() { privateStop(); srv.stopPrivateTools() }()
 	defer srv.startInternalCIWorker(ctx, log)()

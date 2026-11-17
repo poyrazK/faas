@@ -157,6 +157,7 @@ type jobRegistryCredentialKey struct {
 type MemStore struct {
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
+	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -625,6 +626,7 @@ type MemStore struct {
 	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
+	flagEvents                           *memFlagEvents // ADR 20261115163113, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -1178,6 +1180,8 @@ type MemStore struct {
 	oauthLinks map[string]OAuthLink
 	// accountFlow holds email changes and display names (account_flow.go).
 	accountFlow memAccountFlow
+	// supportGrants holds customer-granted support access (support_grants.go).
+	supportGrants memSupportGrants
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -20643,7 +20647,7 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 }
 
 // AppendNetworkUsageObservationExcludingInternal mirrors PgStore (billing
-// review R8-2). MemStore keeps no gateway service reply queue.
+// review R8-2).
 func (m *MemStore) AppendNetworkUsageObservationExcludingInternal(_ context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internalCumulative int64) (int64, int64, int64, error) {
 	if internalCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
@@ -20673,6 +20677,7 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 
 	billingAccountID := m.usage[usageIndex].AccountID
 	checkpoint := m.networkUsageCheckpoints[instanceID]
+	previousTxValid := checkpoint.netTxValid
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
 		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
@@ -20698,7 +20703,7 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 	if internal != nil {
 		var nextPending int64
 		excluded, nextPending = internalEgressStep(checkpoint.internalTx, checkpoint.internalTxValid,
-			checkpoint.internalTxPending, 0, *internal, netTxDelta)
+			previousTxValid, checkpoint.internalTxPending, *internal, netTxDelta)
 		netTxDelta -= excluded
 		checkpoint.internalTx = *internal
 		checkpoint.internalTxValid = true
@@ -25315,6 +25320,11 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, record := range m.toolPublications {
 		if record.AccountID == id {
 			delete(m.toolPublications, key)
+		}
+	}
+	for key, row := range m.hostedTaskSourceIntents {
+		if row.Record.AccountID == id {
+			delete(m.hostedTaskSourceIntents, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

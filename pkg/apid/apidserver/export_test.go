@@ -529,6 +529,7 @@ var EncodePlatformTenantActivityCursor = encodePlatformTenantActivityCursor
 var EncodeSuspectedDependency = encodeSuspectedDependency
 var EnforceCreateTriggerCaps = enforceCreateTriggerCaps
 var EnvironmentAppsWithoutLiveDeployment = environmentAppsWithoutLiveDeployment
+var ProductionAppsWithoutRelease = productionAppsWithoutRelease
 var EvaluateProjectedQuotaGate = evaluateProjectedQuotaGate
 var EvaluateQuotaGate = evaluateQuotaGate
 var ExecutionRequest = executionRequest
@@ -542,6 +543,14 @@ var RuntimeBundleForSDK = runtimeBundleForSDK
 func RunFeatureFlagLifecycleCheck(s *server, env state.FeatureFlagAutoRolloutCandidate, now time.Time) {
 	r := &featureFlagLifecycleReconciler{server: s}
 	r.checkEnvironment(context.Background(), s.store.(state.AuditEventOutboxStore), env, now)
+}
+
+// RunFlagExperimentPass runs one pass of the experiment reconciler at now
+// (ADR 20261115163113 §3).
+func RunFlagExperimentPass(s *server, now time.Time) {
+	events, _ := s.store.(state.FlagEventStore)
+	r := &flagExperimentReconciler{server: s, store: s.store.(state.FlagExperimentStore), events: events}
+	r.runPass(context.Background(), now)
 }
 
 func FeatureFlagRequiredCapabilities(config flags.Config) []string {
@@ -2348,6 +2357,15 @@ func CapabilitiesWithInstallationGates(crashSnapshots, forks, profiling bool) *h
 	return recorder
 }
 
+// CapabilitiesWithRuntimeGates runs GET /v1/capabilities for a Pro account
+// with the app-task API and the TCP/UDP listener gates set; no managed
+// PostgreSQL bindings are configured.
+func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAppTaskAPIEnabled(appTasks).WithListenersEnabled(tcp, udp).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
 func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
@@ -2360,6 +2378,13 @@ var ReleasePhaseEnabledFromEnv = releasePhaseEnabledFromEnv
 var MintMCPAuthCodeForTest = mintMCPAuthCode
 var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
 var MCPCodeScopesForTest = mcpCodeScopes
+
+var NewCLIAuthTestServerForTest = newCliAuthTestServer
+var RenderCLIAuthForTestAs = renderCliAuthForTestAs
+
+func (h *cliAuthTestServer) SessionCookieForTest(csrf string) *http.Cookie {
+	return &http.Cookie{Name: sessionCookie, Value: h.sessionCookies[csrf]}
+}
 
 var ALookupFunc = &aLookupFunc
 var AAAALookupFunc = &aaaaLookupFunc

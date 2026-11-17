@@ -253,8 +253,11 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 			case strings.HasPrefix(base, whiteoutPrefix):
 				// Delete the named sibling from lower layers.
 				victimName := strings.TrimPrefix(base, whiteoutPrefix)
-				if victimName == "" {
-					return fmt.Errorf("rootfs: invalid empty whiteout %q", hdr.Name)
+				// The traversal guard above saw the archive basename, not the
+				// name left after stripping the prefix: ".wh..." passes it but
+				// names "..", which would delete the staging directory's parent.
+				if err := validateWhiteoutVictim(victimName); err != nil {
+					return fmt.Errorf("rootfs: invalid whiteout %q: %w", hdr.Name, err)
 				}
 				if opts.preserveWhiteouts {
 					if err := applyOverlayWhiteout(filepath.Dir(target), victimName); err != nil {
@@ -396,6 +399,21 @@ const (
 	whiteoutPrefix = ".wh."
 	whiteoutOpaque = ".wh..wh..opq"
 )
+
+// validateWhiteoutVictim checks the sibling name an OCI whiteout deletes. It
+// must be one ordinary path component: a whiteout only hides an entry in its
+// own directory, so ".", "..", separators and NULs are never valid.
+func validateWhiteoutVictim(name string) error {
+	switch {
+	case name == "":
+		return errors.New("empty whiteout target")
+	case name == "." || name == "..":
+		return fmt.Errorf("whiteout target %q is not an entry name", name)
+	case strings.ContainsAny(name, "/\x00"):
+		return fmt.Errorf("whiteout target %q is not a single path component", name)
+	}
+	return nil
+}
 
 func isRuntimeMountpointPath(name string) bool {
 	for strings.HasPrefix(name, "./") {

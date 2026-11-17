@@ -6,11 +6,11 @@ import "testing"
 // shares between PgStore and MemStore.
 func TestInternalEgressStep(t *testing.T) {
 	cases := []struct {
-		name                                 string
-		prev                                 int64
-		prevValid                            bool
-		pending, fresh, cumulative, rowNetTx int64
-		wantSubtract, wantPending            int64
+		name                          string
+		prev                          int64
+		prevValid, netPrevValid       bool
+		pending, cumulative, rowNetTx int64
+		wantSubtract, wantPending     int64
 	}{
 		{name: "first reading counts in full", cumulative: 300, rowNetTx: 1000, wantSubtract: 300},
 		{name: "delta since checkpoint", prev: 300, prevValid: true, cumulative: 500, rowNetTx: 1000, wantSubtract: 200},
@@ -19,12 +19,14 @@ func TestInternalEgressStep(t *testing.T) {
 		{name: "carry is added", prev: 500, prevValid: true, pending: 300, cumulative: 600, rowNetTx: 1000, wantSubtract: 400},
 		{name: "carry beyond one reading is dropped", prev: 500, prevValid: true, pending: 300, cumulative: 600, wantPending: 100},
 		{name: "never below zero", cumulative: 50, rowNetTx: -5, wantPending: 50},
-		{name: "service replies add to the reading", prev: 100, prevValid: true, fresh: 400, cumulative: 200, rowNetTx: 1000, wantSubtract: 500},
-		{name: "service replies carry once", prev: 100, prevValid: true, fresh: 400, cumulative: 200, rowNetTx: 300, wantSubtract: 300, wantPending: 200},
+		// R12-3: the switch turned on while the instance ran; its earlier
+		// internal bytes were billed by earlier observations.
+		{name: "first reading after egress checkpoint is a baseline", netPrevValid: true, cumulative: 5000, rowNetTx: 1000},
+		{name: "later readings still subtract", prev: 5000, prevValid: true, netPrevValid: true, cumulative: 5300, rowNetTx: 1000, wantSubtract: 300},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			subtract, pending := internalEgressStep(tc.prev, tc.prevValid, tc.pending, tc.fresh, tc.cumulative, tc.rowNetTx)
+			subtract, pending := internalEgressStep(tc.prev, tc.prevValid, tc.netPrevValid, tc.pending, tc.cumulative, tc.rowNetTx)
 			if subtract != tc.wantSubtract || pending != tc.wantPending {
 				t.Fatalf("internalEgressStep = (%d, %d), want (%d, %d)", subtract, pending, tc.wantSubtract, tc.wantPending)
 			}

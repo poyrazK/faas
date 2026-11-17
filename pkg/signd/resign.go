@@ -56,6 +56,19 @@ type ResignReport struct {
 // finds converted layers current. dryRun reads and verifies but writes
 // nothing.
 func Resign(ctx context.Context, store ResignStore, objects storage.StorageBackend, key *ecdsa.PrivateKey, dryRun bool, log *slog.Logger) (ResignReport, error) {
+	return resign(ctx, store, objects, key, dryRun, true, log)
+}
+
+// ResignSignatures is Resign without the artifact_signatures rows: it only
+// rewrites v1 signature objects as v2. Only faas_signd may insert those rows,
+// and the layer verifiers read the signature objects alone, so an operator
+// can convert signatures from a compute node, with the key that node already
+// holds, before signd runs. A later Resign records the rows.
+func ResignSignatures(ctx context.Context, store ResignStore, objects storage.StorageBackend, key *ecdsa.PrivateKey, dryRun bool, log *slog.Logger) (ResignReport, error) {
+	return resign(ctx, store, objects, key, dryRun, false, log)
+}
+
+func resign(ctx context.Context, store ResignStore, objects storage.StorageBackend, key *ecdsa.PrivateKey, dryRun, record bool, log *slog.Logger) (ResignReport, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -68,7 +81,7 @@ func Resign(ctx context.Context, store ResignStore, objects storage.StorageBacke
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		problem, err := resignOne(ctx, store, objects, key, dryRun, l, &report)
+		problem, err := resignOne(ctx, store, objects, key, dryRun, record, l, &report)
 		if err != nil {
 			return report, err
 		}
@@ -83,7 +96,7 @@ func Resign(ctx context.Context, store ResignStore, objects storage.StorageBacke
 // resignOne handles one layer. It returns why it left the layer alone, or a
 // fatal error (a write or database failure) that stops the pass.
 func resignOne(ctx context.Context, store ResignStore, objects storage.StorageBackend, key *ecdsa.PrivateKey,
-	dryRun bool, l StoredLayer, report *ResignReport) (string, error) {
+	dryRun, record bool, l StoredLayer, report *ResignReport) (string, error) {
 	sigKey := cosign.SigKeyFor(l.StorageKey)
 	blob, err := readSignature(ctx, objects, sigKey)
 	if notFound(err) {
@@ -119,7 +132,7 @@ func resignOne(ctx context.Context, store ResignStore, objects storage.StorageBa
 	}
 	// artifact_signatures holds app and sidecar layers only; legacy
 	// layers/<id>.ext4 keys get the v2 signature alone.
-	if _, isApp := DeploymentOfLayerKey(l.StorageKey); !isApp || dryRun {
+	if _, isApp := DeploymentOfLayerKey(l.StorageKey); !isApp || dryRun || !record {
 		return "", nil
 	}
 	stored, inserted, err := store.RecordSignature(ctx, Record{StorageKey: l.StorageKey, Digest: digest, Bytes: n,

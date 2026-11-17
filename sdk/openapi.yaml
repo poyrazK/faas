@@ -42,6 +42,8 @@ servers:
         default: api.gregale.dev
         description: API hostname.
 tags:
+  - name: mcp-management
+    description: Preview management MCP source intents; no owner or execution authority.
   - name: support
     description: Gregale customer assistance, public conversations and resolution episodes.
   - name: operations
@@ -36066,6 +36068,15 @@ components:
         preview_service_calls_policy:
           $ref: '#/components/schemas/PreviewServiceCallsPolicy'
           description: "Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`."
+        app_protocol:
+          type: string
+          description: "Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets none."
+        streaming:
+          type: boolean
+          description: "Compose `x-gregale-streaming`. Omitted when the file sets none."
+        wake_ahead:
+          type: boolean
+          description: "Compose `x-gregale-wake-ahead`. Omitted when the file sets none."
         allowed_service_callers:
           type: array
           items: {type: string}

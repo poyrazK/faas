@@ -658,11 +658,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	// One gauge, one series per domain: registering it per domain would
-	// collide on the same registry.
-	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{
-		sealdomain.Control:  len(controlIdentities) > 0,
-		sealdomain.Delivery: len(deliveryIdentities) > 0,
-	})
+	// collide on the same registry. A domain retired on this node
+	// (ADR-20261110210000) exports no series, so FaasSealDomainIdentityMissing
+	// does not fire for an identity the node is meant not to hold; the switch
+	// itself is validated below.
+	sealdomain.RegisterLoadedDomains(ops.Registry(), loadedSealDomains(os.Getenv, len(controlIdentities) > 0, len(deliveryIdentities) > 0))
 	log.Info("control seal domain", "domain_identity", len(controlIdentities) > 0)
 	log.Info("delivery seal domain", "domain_identity", len(deliveryIdentities) > 0)
 	// ADR-190 follow-up: export this pool's live statistics so the
@@ -724,7 +724,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return 0, nil
 		},
-		LvFcUsedPct: fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
+		AdmissionBytes: admissionBytesSource(cfg.MeasuredAdmission, ownerNodeID, &residencyReader),
+		LvFcUsedPct:    fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
 	})
 	engine, err := sched.NewEngine(ctx, store, ledger, vmmRouter, sched.PoolNotifier{Pool: pool}, fcVersion, log)
 	if err != nil {
@@ -780,6 +781,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	deliveryViaSecretd, err := deliveryOpenerFromEnv(os.Getenv, grantRPC != nil, executionEnabled)
 	if err != nil {
 		return err
+	}
+	if retired, err := controlRetiredFromEnv(os.Getenv, mintViaSecretd, scheddHostAgeKeyDir()); err != nil {
+		return err
+	} else if retired {
+		log.Info("control identity retired on this node: tokens are minted by secretd")
 	}
 	if retired, err := deliveryRetiredFromEnv(os.Getenv, deliveryViaSecretd, scheddHostAgeKeyDir()); err != nil {
 		return err
@@ -1063,7 +1069,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("schedd: load sign pub %q: %w (run `faas sign-keys init` on imaged's host if missing)", signPubPath, err)
 	}
-	log.Info("schedd: build attestation verifier ready", "pub", signPubPath)
+	// ADR-20261109170000: refuse v1 signatures, which can be replayed onto
+	// another app's storage key, once `signd resign` has converted them.
+	requireV2 := os.Getenv("FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2") == "1"
+	verifier.RequireV2(requireV2)
+	log.Info("schedd: build attestation verifier ready", "pub", signPubPath, "require_v2", requireV2)
 	// ADR-038 amendment (2026-10-24): remember verified layers across
 	// restarts, so the first wakes after a restart do not wait for whole
 	// layers to be read and hashed again.
@@ -2554,10 +2564,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// logs a loud warn + internal_only requests 403.
 			var workflowOutboundMinter sched.WorkflowOutboundMinter
 			if grants, ok := grantRPC.(secretdGrants); mintViaSecretd && ok {
-				// ADR-20261110210000 slice 3k: the control plane's secretd
-				// mints each app's token; this box loads no cluster key, so
-				// workflow outbound (which signs with it) stays off here.
+				// ADR-20261110210000 slices 3k and 3k-2: the control plane's
+				// secretd mints each app's internal-service token and each
+				// workflow outbound attempt's identity; this box loads no
+				// cluster key.
 				remote := newRemoteInternalSvcMinter(grants.rpc)
+				workflowOutboundMinter = remote.MintWorkflow
 				modeLookup := sched.PublicAuthModeFromStore(store.AppByID)
 				internalSvcModeLookup = modeLookup
 				internalSvcTokenMinter = remote.AsFunc()
@@ -3448,6 +3460,27 @@ func floorPlan(acct state.Account) api.Plan {
 // errNodeResidencyUnmeasured keeps fcvm_resident_ram_pct at its previous
 // value until this node has a fresh measurement (ADR 20261102072403).
 var errNodeResidencyUnmeasured = errors.New("schedd: this node's residency is not measured yet")
+
+// admissionBytesSource feeds fcvm_admission_ram_pct, which the RAM page reads:
+// under measured admission (ADR-909) this node's measured memory. Bookings may
+// reach MeasuredAdmissionMaxOvercommitPercent of the ceiling by design, so the
+// page on fcvm_resident_ram_pct fired on a node with a third of its memory in
+// use (prod, 2026-11-16). Reservation admission, and a single-box scheduler
+// with no node of its own, get nil: the gauge then reports the bookings, which
+// is what admission counts there.
+func admissionBytesSource(measured bool, nodeID string, reader *atomic.Pointer[instancestats.Reader]) func(context.Context) (int64, error) {
+	if !measured || nodeID == "" {
+		return nil
+	}
+	return func(context.Context) (int64, error) {
+		if r := reader.Load(); r != nil {
+			if mb, _, ok := r.MeasuredMB(nodeID, time.Now()); ok {
+				return int64(mb) << 20, nil
+			}
+		}
+		return 0, errNodeResidencyUnmeasured
+	}
+}
 
 type schedFloorLedger struct {
 	ledger *sched.NodeLedger

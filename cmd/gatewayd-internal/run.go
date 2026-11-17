@@ -510,6 +510,9 @@ type synthAdapter struct {
 	// waking an instance without delivering the envelope leaves the row
 	// looking completed while the guest never sees a request.
 	forward func(gateway.Target) http.Handler
+	// requestObserver records each delivered invocation in request metrics
+	// and telemetry (invocation_telemetry.go); nil records nothing.
+	requestObserver *invocationRequestObserver
 }
 
 func (a *synthAdapter) Wake(ctx context.Context, appID string) error { return a.wake(ctx, appID) }
@@ -1073,12 +1076,17 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	req = req.WithContext(gateway.WithEdgeJWTIdentity(req.Context(), gateway.EdgeJWTIdentity{Issuer: inv.EdgeJWTIssuer, Subject: inv.EdgeJWTSubject}))
 
 	rec := httptest.NewRecorder()
+	started := time.Now()
 	if err := serveSyntheticForward(ctx, a.forward(target), rec, req); err != nil {
 		inv.Result = nil
 		return inv, 0, nil, err
 	}
 	if rec.Code == 0 {
 		rec.Code = http.StatusOK
+	}
+	if publish {
+		// A debug mirror replay (publish=false) is a copy, not a delivery.
+		a.observeInvocation(req, target, inv, started, rec.Code)
 	}
 	inv.OutcomeCode = scheduledInvocationOutcomeCode(rec.Header())
 	inv.ResponseRetryAfter = ""
@@ -1189,6 +1197,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// invocationObserver connects the synth adapter's delivered invocations
+	// to the public handler's request recorder once runWithDeps builds it
+	// (invocation_telemetry.go). Nil records nothing.
+	invocationObserver *invocationRequestObserver
 	// credentialMatcher checks consumer keys and fork tokens against their
 	// stored hashes through apid (ADR 20261029202403). Nil compares plain
 	// hashes locally (unit tests).
@@ -1986,10 +1998,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// calls resolve the owner schedd per app via the router — they no
 	// longer dial the legacy single schedd.
 	var synth *synthAdapter
+	deps.invocationObserver = &invocationRequestObserver{}
 	synth = &synthAdapter{
-		backend: backend,
-		store:   pgStore,
-		log:     log,
+		backend:         backend,
+		store:           pgStore,
+		log:             log,
+		requestObserver: deps.invocationObserver,
 		wake: func(ctx context.Context, appID string) error {
 			// wake_id is discarded on the synth path (gaps analysis
 			// 2026-07-23): synthesized requests don't return a
@@ -2712,6 +2726,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		log.Warn("gatewayd-internal: log archive config parse failed; archive read-back disabled", "err", archiveCfgErr)
 	case !archiveCfg.Enabled():
 		log.Info("gatewayd-internal: log archive disabled (FAAS_LOG_ARCHIVE_BUCKET unset); archive read-back will return 503")
+	case archiveCfg.WriteOnly:
+		// ADR-20261110210000 slice 3l: this node's archive credentials
+		// only create objects. Archive read-back belongs to the control
+		// plane's gateways (the API host); here it answers 503.
+		log.Info("gatewayd-internal: log archive credentials are write-only on this node; archive read-back is served by the control plane")
 	default:
 		s3c, s3Err := logarchive.NewS3Client(
 			archiveCfg.Endpoint, archiveCfg.Region, archiveCfg.Bucket,
@@ -2940,6 +2959,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
 		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations).
 		WithSelectorSuffixes(appsSuffix(deps.domains.Apps), hostidentity.DeploySuffix())
+	if deps.pgStore != nil {
+		// Service calls record request metrics under the target's plan.
+		handler = handler.WithAppPlanResolver(newAppPlanResolver(deps.pgStore))
+	}
+	// Scheduled and queued deliveries record like service calls.
+	deps.invocationObserver.set(handler.RecordServiceRequest)
 	if deps.financialBudgetAdmission == nil && deps.pgStore != nil {
 		deps.financialBudgetAdmission = newFinancialBudgetAdmission(deps.pgStore)
 	}
@@ -4399,7 +4424,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ObserveTCPAttempt:     chaosMatchRecorder.ObserveTCPAttempt,
 			Forward:               deps.nodeCache.Forwarding(),
 			RawForward:            deps.nodeCache.RawForwarding(),
-			RecordServiceReply:    serviceReplyRecorder(egressSink),
 			ObserveRequest:        handler.RecordServiceRequest,
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
@@ -4437,7 +4461,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		managedCircuitWired = serviceProxyConfig.Breaker != nil
 		controlServices := gateway.NewServiceProxy(serviceProxyConfig)
-		controlMux.Handle("/v1/internal/services/", controlServices)
+		// This proxy is built before the guest listener's caller resolver is
+		// configured, so it trusts X-Faas-Caller-App. Serve it only when the
+		// e2e harness asks; the debug tunnel below uses WakeTarget, not HTTP.
+		if cfg.ControlServiceProxy {
+			controlMux.Handle("/v1/internal/services/", controlServices)
+		}
 		if debugTunnel != nil {
 			debugTunnel.setTargets(controlServices)
 		}
@@ -4749,7 +4778,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if upstreams == nil {
 				upstreams = serviceDiscoveryUpstreams
 			}
-			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort} {
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort, gateway.SandboxWebDNSPort} {
 				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 				if dnsErr != nil {
 					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
@@ -4761,6 +4790,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// resolve package registries and git hosts only.
 				if dnsPort == gateway.SandboxRegistriesDNSPort {
 					dnsHandler.WithAllowedNamesOnly(api.SandboxRegistryHost)
+				}
+				// ADR-20261112121456 §2: web-mode sandbox sessions resolve
+				// public names only, never Gregale's internal ones.
+				if dnsPort == gateway.SandboxWebDNSPort {
+					dnsHandler.WithAllowedNamesOnly(api.SandboxWebHost)
 				}
 				if chaosMatchRecorder != nil {
 					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)

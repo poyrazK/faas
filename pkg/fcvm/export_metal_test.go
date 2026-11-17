@@ -29,5 +29,5 @@ func MemAvailableMBForTest(t *testing.T) int64 { return memAvailableMB(t) }
 
 // VMCgroupIntForTest reads one integer file of an instance's cgroup.
 func VMCgroupIntForTest(plan api.Plan, instance, name string) (int64, error) {
-	return readCgroupInt(cgroupRoot+"/"+ParentCgroupFor(plan)+"/"+PerInstanceScope(instance), name)
+	return readCgroupInt(cgroupRoot+"/"+tenantCgroupParent(Lease{Instance: instance, Plan: plan})+"/"+PerInstanceScope(instance), name)
 }
