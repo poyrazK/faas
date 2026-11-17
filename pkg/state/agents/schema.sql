@@ -241,7 +241,43 @@ CREATE TABLE sandbox_sessions (
  template_id uuid,
  image_ref text,
  image_job_id uuid,
- browser boolean NOT NULL DEFAULT false
+ browser boolean NOT NULL DEFAULT false,
+ task_kind text,
+ task_url text,
+ task_max_chars integer,
+ task_exit_code integer,
+ task_output bytea
+);
+CREATE TABLE agent_sandbox_task_calls (
+ sandbox_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ tool_call_id text NOT NULL,
+ issued_at timestamptz NOT NULL,
+ delivered_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE sandbox_actions (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ session_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ seq integer NOT NULL,
+ kind text NOT NULL,
+ args jsonb NOT NULL DEFAULT '{}'::jsonb,
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ tool_call_id text NOT NULL,
+ issued_at timestamptz NOT NULL,
+ state text NOT NULL DEFAULT 'pending',
+ exit_code integer,
+ output bytea,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ started_at timestamptz,
+ finished_at timestamptz,
+ delivered_at timestamptz,
+ screenshot_key text,
+ screenshot_bytes bigint
 );
 CREATE TABLE sandbox_session_usage (
  sandbox_id uuid PRIMARY KEY,

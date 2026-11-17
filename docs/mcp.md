@@ -1076,8 +1076,8 @@ retained review, including its source digests, permissions, native app pins,
 `intent_sha256`, `review_sha256` and original `expires_at`:
 
 ```sh
-gregale mcp server tasks source-review get --id "$INTENT_ID" --json
-gregale mcp server tasks source-review approve --id "$INTENT_ID" \
+gregale mcp server tasks audit get --id "$INTENT_ID" --json
+gregale mcp server tasks audit approve --id "$INTENT_ID" \
   --intent-sha256 "$INTENT_SHA256" --review-sha256 "$REVIEW_SHA256" --json
 ```
 

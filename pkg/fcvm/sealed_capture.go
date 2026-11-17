@@ -43,7 +43,15 @@ func (m *Manager) SealCaptureStorage(captureID string) (storage.StorageBackend, 
 	if err != nil {
 		return nil, nil, err
 	}
-	return crashcrypt.Backend{Inner: m.storage, Identity: identity}, sealed, nil
+	return crashcrypt.Backend{Inner: m.storage, Identity: identity, Chunked: m.sealChunked}, sealed, nil
+}
+
+// SetSealChunked makes SealCaptureStorage write crashcrypt's v2 format
+// (slice 3d-5), which a wake opens in parallel. Turn it on only once every
+// vmmd that may restore a capture reads v2. NOT safe to call concurrently
+// with captures.
+func (m *Manager) SetSealChunked(on bool) {
+	m.sealChunked = on
 }
 
 // SetCaptureRecipient makes SealCaptureStorage seal capture keys to r

@@ -427,7 +427,7 @@ func (s *server) auditLocalTarballDeploy(r *http.Request, acct state.Account, ap
 	// the deploy.local_tarball audit row. mergeAnnotationAudit
 	// is "omit when zero" so pre-feature rows stay byte-identical.
 	mergeAnnotationAudit(data, ann)
-	s.audit.EmitAs(ctx, resolvedActor, "deploy.local_tarball", &acct.ID, mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.audit.EmitAs(ctx, resolvedActor, "deploy.local_tarball", &acct.ID, mergeAgentAudit(mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin), r))
 	s.recordDeploymentActivity(ctx, r, acct, app, d,
 		map[string]any{"revision": d.Revision, "scope": d.Scope, "source": "local_tarball"})
 }

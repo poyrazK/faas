@@ -512,6 +512,8 @@ var cliTreeAliases = []cliTreeAlias{
 	// pinned review) and guarded execution take their action as an argument.
 	{"mcp server tasks review", "mcp tasks intent"},
 	{"mcp server tasks run", "mcp tasks execution"},
+	// Retained hosted Task source review takes its action as an argument too.
+	{"mcp server tasks audit", "mcp tasks source-review"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},

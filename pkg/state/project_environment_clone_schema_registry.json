@@ -18213,6 +18213,11 @@
       "preset",
       "ram_mb",
       "state",
+      "task_exit_code",
+      "task_kind",
+      "task_max_chars",
+      "task_output",
+      "task_url",
       "template_id",
       "tenant_id",
       "updated_at",
@@ -21318,6 +21323,45 @@
       "issued_at",
       "provider_call_id",
       "run_id",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_sandbox_task_calls",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "issued_at",
+      "sandbox_id",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_actions",
+    "columns": [
+      "account_id",
+      "args",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "exit_code",
+      "finished_at",
+      "id",
+      "issued_at",
+      "kind",
+      "output",
+      "screenshot_bytes",
+      "screenshot_key",
+      "seq",
+      "session_id",
+      "started_at",
+      "state",
       "thread_id",
       "tool_call_id"
     ],

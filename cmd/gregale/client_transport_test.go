@@ -28,6 +28,7 @@ func captureStderr(t *testing.T) *bytes.Buffer {
 // Requests named only Go-http-client/1.1, so nothing told the server, or
 // support reading its logs, which CLI release sent them.
 func TestCLIRequestsNameTheRelease(t *testing.T) {
+	clearCodingAgentMarkers(t)
 	agents := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agents <- r.UserAgent()
@@ -46,6 +47,52 @@ func TestCLIRequestsNameTheRelease(t *testing.T) {
 		if got := <-agents; got != want {
 			t.Fatalf("User-Agent = %q, want %q", got, want)
 		}
+	}
+}
+
+// clearCodingAgentMarkers unsets every agent marker, so a test run inside a
+// coding agent sees the same environment as one run by a person.
+func clearCodingAgentMarkers(t *testing.T) {
+	t.Helper()
+	for _, a := range api.CodingAgents {
+		t.Setenv(a.Marker, "")
+	}
+}
+
+// Nothing told Gregale which coding agent ran the CLI, so it could not see
+// how many deploys came from agents (ADR-20261112223000 Amendment 1).
+func TestCLIUserAgentNamesTheCodingAgent(t *testing.T) {
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	tests := []struct {
+		name  string
+		env   map[string]string
+		agent string
+	}{
+		{"person", nil, ""},
+		{"claude code", map[string]string{"CLAUDECODE": "1"}, "claude-code"},
+		{"codex", map[string]string{"CODEX_THREAD_ID": "t-1"}, "codex"},
+		{"do not track", map[string]string{"CURSOR_AGENT": "1", "DO_NOT_TRACK": "1"}, ""},
+		{"do not track off", map[string]string{"CURSOR_AGENT": "1", "DO_NOT_TRACK": "0"}, "cursor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearCodingAgentMarkers(t)
+			t.Setenv("DO_NOT_TRACK", "")
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			ua := main.CLIUserAgent()
+			wantComment := "(" + platform + ")"
+			if tt.agent != "" {
+				wantComment = "(" + platform + "; agent=" + tt.agent + ")"
+			}
+			if !strings.HasPrefix(ua, "gregale/") || !strings.HasSuffix(ua, " "+wantComment) {
+				t.Fatalf("User-Agent = %q, want gregale/<version> %s", ua, wantComment)
+			}
+			if got := api.CodingAgentFromUserAgent(ua); got != tt.agent {
+				t.Fatalf("CodingAgentFromUserAgent(%q) = %q, want %q", ua, got, tt.agent)
+			}
+		})
 	}
 }
 

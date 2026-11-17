@@ -113,3 +113,41 @@ func TestCapabilityPagesMustBeRoutes(t *testing.T) {
 		t.Fatalf("unregistered capability page accepted: %v", err)
 	}
 }
+
+// llms.txt audit 2026-11-17: `[Jobs](jobs)` and `[Penalty box](security#penalty-box)`
+// on published pages named no file, so the docs site linked them to GitHub
+// paths that answer 404.
+func TestPublishedPagesLinkExistingFiles(t *testing.T) {
+	cat := catalog{Version: 1, Routes: []route{
+		{Path: "crons", Source: "docs/crons.md"},
+		{Path: "hidden", Source: "docs/hidden.md", Unpublished: "preview"},
+	}}
+	pages := map[string]string{
+		"docs/crons.md": "See [jobs](jobs.md), [apps](apps.md#tasks), [site](/docs/x), [web](https://a.b/c), [here](#top).\n" +
+			"Broken: [jobs](jobs) and [box](security#penalty-box).\n" +
+			"Code: `[x](nope)`\n```md\n[y](nope)\n```\n",
+		"docs/hidden.md": "[gone](gone)\n",
+	}
+	files := map[string]bool{"docs/jobs.md": true, "docs/apps.md": true, "docs/security.md": true}
+	read := func(p string) ([]byte, error) { return []byte(pages[p]), nil }
+	err := checkRelativeLinks(cat, read, func(p string) bool { return files[p] })
+	if err == nil {
+		t.Fatal("links to missing files accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{`docs/crons.md:2: link "jobs"`, `docs/crons.md:2: link "security#penalty-box"`} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not name %s", msg, want)
+		}
+	}
+	for _, unwanted := range []string{"nope", "gone", "jobs.md", "apps.md", "/docs/x", "https://", "#top"} {
+		if strings.Contains(msg, `"`+unwanted) {
+			t.Fatalf("error %q flags %s", msg, unwanted)
+		}
+	}
+	files["docs/jobs"] = true
+	files["docs/security"] = true
+	if err := checkRelativeLinks(cat, read, func(p string) bool { return files[p] }); err != nil {
+		t.Fatalf("existing targets refused: %v", err)
+	}
+}

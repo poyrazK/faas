@@ -5,9 +5,11 @@ package api
 // its data-plane routes take the session token returned here.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -97,6 +99,25 @@ func SandboxWebHost(name string) bool {
 		return false
 	}
 	return true
+}
+
+// ValidSandboxBrowseURL reports whether a gregale_browse URL may be fetched
+// (ADR-20261116182615 §4): http or https, no credentials, a public host
+// (SandboxWebHost), on the ports web mode reaches, at most 2048 bytes.
+func ValidSandboxBrowseURL(raw string) bool {
+	if raw == "" || len(raw) > 2048 || strings.ContainsAny(raw, " \t\r\n") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Opaque != "" {
+		return false
+	}
+	switch u.Port() {
+	case "", "80", "443":
+	default:
+		return false
+	}
+	return SandboxWebHost(u.Hostname())
 }
 
 // Sandbox problem codes.
@@ -525,4 +546,36 @@ func ErrSandboxPublicPreviewGated(p Plan) *Problem {
 func ErrSandboxPreviewsOff() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeSandboxPreviewsOff, "Sandbox previews are off",
 		"this installation has no sandbox preview domain, so ports cannot be exposed")
+}
+
+// SandboxActionResult is one gregale_browser action, as GET
+// /v1/sandboxes/{id}/actions/{seq} returns it (ADR-20261117065818 §2): its
+// kind and arguments, its state and, once it ended, the page snapshot as
+// result or why it failed as output.
+type SandboxActionResult struct {
+	SandboxID string          `json:"sandbox_id"`
+	Seq       int             `json:"seq"`
+	Kind      string          `json:"kind"`
+	URL       string          `json:"url,omitempty"`
+	Ref       int             `json:"ref,omitempty"`
+	Key       string          `json:"key,omitempty"`
+	Direction string          `json:"direction,omitempty"`
+	State     string          `json:"state"`
+	ExitCode  *int            `json:"exit_code,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Output    string          `json:"output,omitempty"`
+}
+
+// SandboxTaskResult is GET /v1/sandboxes/{id}/task (ADR-20261116182615 §3):
+// a task session's arguments and, once it ended, its result. Result is the
+// command's JSON output when it exited 0; Output is its output otherwise.
+type SandboxTaskResult struct {
+	SandboxID string          `json:"sandbox_id"`
+	Kind      string          `json:"kind"`
+	URL       string          `json:"url,omitempty"`
+	State     string          `json:"state"`
+	ExitCode  *int            `json:"exit_code,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Output    string          `json:"output,omitempty"`
+	Outcome   *SandboxOutcome `json:"outcome,omitempty"`
 }

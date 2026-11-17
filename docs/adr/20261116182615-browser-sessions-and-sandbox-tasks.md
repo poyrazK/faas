@@ -43,6 +43,7 @@ A warm snapshot cannot hold a running Chromium. Two sessions restored from one s
 - Like `gregale_run`, it needs the app's credential (workload token or a `deploy:write` key), because it spends the account's compute.
 - apid admits a browse task linked to the thread and call. The task uses the call's ID as its dedupe key, so a retried invocation finds its task.
 - When the task ends, apid publishes its result into the thread as the call's tool result: the fetch JSON, or the refusal or failure.
+- An inbox message holds at most `AgentCallbackPayloadMaxBytes` (4 KiB), so the tool result is shortened to fit: the page text first, then the title, with `truncated: true`. Every result carries `result_url`, `GET /v1/sandboxes/{id}/task`, which returns the whole fetch (up to `max_chars`) to the app's credential. That route answers any task session: its kind, URL, state, exit code, and either the command's JSON `result` or its `output`.
 - It counts against the account's sandbox concurrency and is billed as sandbox compute (ADR-20261027090013 §5).
 - It is refused with `sandbox_unsupported` while sandbox web mode is off (`FAAS_SANDBOX_WEB_NETWORK`).
 - The launcher turns off Chromium's background networking (updates, sync, metrics), so a session's egress carries only the pages it loads.

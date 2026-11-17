@@ -411,7 +411,7 @@ gregale job create nightly-export --image registry.example/exporter:v1 --schedul
 
 Use a scheduled job when work should run to completion in an isolated job
 environment, and an HTTP app cron when the schedule should make a request to
-an app route; see [Crons](crons). Command crons, which run a command from
+an app route; see [Crons](crons.md). Command crons, which run a command from
 the app's deployment on a schedule, are in preview and documented there too.
 Scheduled jobs create one task per occurrence and pick up the job's current
 configuration at fire time.

@@ -7190,7 +7190,7 @@ Revokes, at once, the agent connections the new policy no longer allows.
 
 ### org support
 
-See and revoke Gregale support access to the org&#39;s apps, and reject requests for it
+See and revoke support access to the org&#39;s apps; reject requests
 
 Support access lets Gregale support deploy the production branch, retry, cancel, roll back and restart the org&#39;s apps for a limited time. It never reaches secrets, configuration, members, keys or billing.
 

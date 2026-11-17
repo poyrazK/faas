@@ -165,6 +165,7 @@ func (r *obsDeploymentTimelineRecorder) snapshot() *obsDeploymentTimeline {
 func writeObsDeploymentHuman(w io.Writer, report obsDeploymentReport) {
 	_, _ = fmt.Fprintf(w, "monitoring=%s reason=%s release=%s attempts=%d wait_seconds=%g had_confirmed_faults=%t\n", report.State, report.Reason, report.Release, report.Attempts, report.WaitSeconds, report.HadConfirmedFaults)
 	writeObsDeploymentSources(w, report.Sources)
+	writeObsDeploymentRuntimeBuilds(w, report.RuntimeBuilds)
 	writeObsDeploymentEvidence(w, report.QualificationEvidence)
 	writeObsDeploymentStability(w, report.Stability)
 	for _, check := range report.Checks {
