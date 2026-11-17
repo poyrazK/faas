@@ -84,7 +84,12 @@ func openAIToConverse(request openAIChatRequest, format openAIResponseFormat, mo
 			return nil, errTranslationUnsupported
 		}
 	}
-	inference := map[string]any{"maxTokens": openAIOutputCeiling(request)}
+	// Converse defaults to the model's maximum output; name a ceiling only
+	// when the caller did.
+	inference := map[string]any{}
+	if n, ok := openAIRequestedOutput(request); ok {
+		inference["maxTokens"] = n
+	}
 	if request.Temperature != nil {
 		inference["temperature"] = *request.Temperature
 	}

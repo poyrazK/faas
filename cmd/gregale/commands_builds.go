@@ -273,6 +273,10 @@ func printBuildStatus(w io.Writer, b api.BuildResponse) {
 		// but only one is the auditor-friendly one.
 		{"duration_seconds", durationSecondsForDisplay(b)},
 	}
+	// The build log lives with the deployment the build made (Hunt 33 H33-29).
+	if b.DeploymentID != "" {
+		rows = append(rows, struct{ label, value string }{"logs", "gregale release logs " + b.DeploymentID})
+	}
 	for _, r := range rows {
 		//nolint:errcheck // tabular printer writes to a typed writer; a failed Fprintf
 		// at the tab stop is no different from a panic mid-row for the operator — both
@@ -293,7 +297,7 @@ func formatArtifactCacheSummary(status, key string) string {
 		return ""
 	}
 	if status == "miss" {
-		status = "miss (no artifact hit; dependency cache is separate—see build logs)"
+		status = "miss (no artifact hit; dependency cache is separate—see gregale release logs)"
 	}
 	if key = strings.TrimSpace(key); key != "" {
 		return fmt.Sprintf("%s (sha256:%s)", status, key)
@@ -359,6 +363,10 @@ func cmdBuildList(args []string) int {
 	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
 	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
+	stream := fs.Bool("stream", false, "emit rows as JSON Lines as pages arrive (stdout requires --json --all)")
+	outputPath := fs.String("output", "", "publish a new JSON Lines file after all pages complete (requires --all)")
+	progress := fs.String("progress", "off", "export progress on stderr: off, plain or ndjson (requires --all --output)")
+	timeout := fs.Duration("timeout", 0, "overall list read budget including page requests and retries (positive duration)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -385,15 +393,43 @@ func cmdBuildList(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale build list --limit N (1 <= N <= 200)", "build")
 		return 1
 	}
+	if err := validateListTimeout(*timeout, flagWasSet(fs, "timeout")); err != nil {
+		return printErr("Invalid list timeout", err)
+	}
+	progressMode, err := parseListExportProgress(*progress)
+	if err != nil {
+		return printErr("Invalid list progress", err)
+	}
+	if violation := listFlagRuleViolation(listProgressRequiresExport, listFlagRuleState{Progress: progressMode != listExportProgressOff, Output: flagWasSet(fs, "output"), All: *all}, "build list"); violation != nil {
+		return printErr("Invalid list progress", violation)
+	}
+	output, err := prepareListOutput(*outputPath, flagWasSet(fs, "output"), *all, "build list")
+	if err != nil {
+		return printErr("Invalid list output", err)
+	}
+	if output != nil {
+		defer output.Close()
+	} else if !validateListStream(*stream, *all, "build list") {
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
-	items, next, err := collectListPages(ctx, *before, *all, func(ctx context.Context, cursor string) ([]api.BuildResponse, string, error) {
+	ctx, cancel := listReadContext(context.Background(), *timeout)
+	defer cancel()
+	fetch := func(ctx context.Context, cursor string) ([]api.BuildResponse, string, error) {
 		page, err := client.GetBuilds(ctx, *app, *status, cursor, *limit)
 		return page.Items, page.NextBefore, err
-	})
+	}
+	if output != nil {
+		return runListFileExport(ctx, "Could not list builds", *before, output, progressMode, fetch)
+	}
+	if *stream {
+		return runStreamList(ctx, "Could not list builds", *before, fetch)
+	}
+	items, next, err := collectListPages(ctx, *before, *all, fetch)
+	err = listReadError(ctx, err)
 	page := api.BuildListResponse{Items: items, NextBefore: next}
 	if err != nil {
 		return printErr("Could not list builds", err)

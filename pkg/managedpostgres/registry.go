@@ -123,6 +123,10 @@ type BackendConfig struct {
 	// AuthEnabled advertises the ADR-1190 auth credential mode under the same
 	// rule: a fresh qualification report must carry its evidence.
 	AuthEnabled bool `json:"auth_enabled,omitempty"`
+	// SessionEnabled advertises the direct session credential mode
+	// (ADR-20261109180000) under the same rule. It stays off until a
+	// qualification report carries session evidence (ADR-20261110120000).
+	SessionEnabled bool `json:"session_enabled,omitempty"`
 	// LiveHubURL enables ADR-20261016151947 live queries on this backend's databases:
 	// the ws:// or wss:// URL of the livequeryd hub serving a database, where
 	// {database_id} stands for the database's ID. Empty leaves live queries
@@ -380,8 +384,8 @@ func validateLiveHubURL(config BackendConfig) error {
 
 func fingerprint(config BackendConfig) string {
 	// SecretEnv is intentionally excluded: credential rotation or renaming an
-	// environment variable must not change placement. DataAPIEnabled and
-	// AuthEnabled are rollout capabilities, fenced by qualification's
+	// environment variable must not change placement. DataAPIEnabled,
+	// AuthEnabled and SessionEnabled are rollout capabilities, fenced by qualification's
 	// credential-access equality.
 	// Namespace and all non-secret settings fail closed if a backend is
 	// accidentally repurposed.

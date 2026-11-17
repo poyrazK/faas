@@ -11,6 +11,10 @@ export type ConnectionBudgetInventory = {
   auth_consumers: number;
   migration_bindings: number;
   other_bindings: number;
+  /**
+   * Session bindings are modeled at their role connection limit and are not counted in other_bindings.
+   */
+  session_bindings?: number;
   resident_instances: number;
   parked_instances: number;
   auxiliary_instances: number;

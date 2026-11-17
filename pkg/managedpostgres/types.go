@@ -14,6 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
@@ -25,7 +26,35 @@ var (
 	ErrUnsupported   = pgerrors.ErrUnsupported
 	ErrQuotaExceeded = pgerrors.ErrQuotaExceeded
 	ErrUsageStale    = pgerrors.ErrUsageStale
+	// ErrUsageLimitReached is the monthly usage ceiling refusing a new
+	// database, restore or resize. It is an ErrQuotaExceeded, but deleting a
+	// database cannot help, so it carries its own code and hint: the old
+	// "delete a database you no longer need" sent a 4-of-10 account hunting
+	// for a count problem it did not have (ChronoLake finding 18).
+	ErrUsageLimitReached = fmt.Errorf("%w: monthly usage ceiling reached", pgerrors.ErrQuotaExceeded)
 )
+
+// ErrReleaseSecretsPinned refuses a binding for an app whose project
+// environment pins its secrets to an active release: release capture refuses
+// managed credentials, and app-secret writes in that scope belong to an
+// atomic project release (ADR-20261110120000).
+var ErrReleaseSecretsPinned = fmt.Errorf("%w: the app's secrets in this environment are pinned to a project release", pgerrors.ErrConflict)
+
+// BindingLimitError is a new binding refused because its app already holds
+// the plan's PostgresBindingsPerAppMax live bindings (ADR-20261110120000).
+type BindingLimitError struct {
+	Limit    int
+	Observed int
+}
+
+func (e *BindingLimitError) Error() string {
+	return fmt.Sprintf("the app holds %d managed PostgreSQL bindings; the plan allows %d per app", e.Observed, e.Limit)
+}
+
+func (e *BindingLimitError) Is(target error) bool { return target == ErrQuotaExceeded }
+
+// UsageLimitHint is the remediation for ErrUsageLimitReached.
+const UsageLimitHint = "This month's managed PostgreSQL usage reached its ceiling (see compute_ceiling and guardrail_state in gregale postgres usage). Existing databases keep running; new databases and restores resume next month or when the ceiling is raised. Contact support if the ceiling is below your plan's allowance."
 
 // ChangeRejectedError is a provider's final refusal of an in-place change:
 // asking again for the same change cannot succeed. Code is a stable
@@ -91,6 +120,15 @@ func QuotaProblem(err error) (status int, code, title string) {
 	if errors.Is(err, ErrRestoreSlotInUse) {
 		return 403, "managed_postgres_restore_slot_in_use", "Another restored database holds the restore slot"
 	}
+	if errors.Is(err, ErrPreviewDatabaseLimit) {
+		return 403, "managed_postgres_preview_database_limit", "PR preview database limit reached"
+	}
+	if errors.Is(err, ErrBranchLimit) {
+		return 403, "managed_postgres_branch_limit", "Short-lived branch limit reached"
+	}
+	if errors.Is(err, ErrUsageLimitReached) {
+		return 403, "managed_postgres_usage_limit_reached", "Managed PostgreSQL monthly usage limit reached"
+	}
 	return 403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
 }
 
@@ -101,11 +139,11 @@ const (
 	UnavailableDetail        = "The managed PostgreSQL provider is temporarily unavailable. Existing databases keep running; retry later or contact support."
 )
 
-// UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
-// deleted database holds the gate until the hour it was deleted in has been
-// collected, so without it a timed wait reads like an outage (production-us
-// hunt #9, H9-P101; ADR-20261104143000).
-const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until the hour it was deleted in has closed and its usage is collected, usually under an hour. Existing databases keep running; retry later."
+// UsageStaleDetail is the customer-facing explanation for ErrUsageStale.
+// Without a timed hint the wait reads like an outage (production-us hunt #9,
+// H9-P101; ADR-20261104143000). A deleted database's final hour holds the gate
+// only for an account near a monthly ceiling (ADR-20261115190000).
+const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. Near a monthly usage limit, a recently deleted database also holds this until the hour it was deleted in has closed and its usage is collected, usually under an hour. Existing databases keep running; retry later."
 
 type State string
 
@@ -451,16 +489,41 @@ const (
 	// schemas (ADR-1190). GoTrue enables RLS on its tables, so its runtime
 	// must own them; no customer schema is reachable.
 	CredentialAuth CredentialAccess = "auth"
+	// Session logins have read_write privileges but always use the direct
+	// endpoint, for serving code that needs session features a transaction
+	// pooler cannot keep (LISTEN, advisory locks, prepared statements, SET)
+	// (ADR-20261109180000).
+	CredentialSession CredentialAccess = "session"
 )
+
+// knownCredentialAccess lists every portable credential mode.
+var knownCredentialAccess = [...]CredentialAccess{CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth, CredentialSession}
 
 // Known reports whether access is a portable credential mode. Every
 // validation site uses it so a new mode cannot be missed by one of them.
 func (a CredentialAccess) Known() bool {
-	switch a {
-	case CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth:
-		return true
+	for _, known := range knownCredentialAccess {
+		if a == known {
+			return true
+		}
 	}
 	return false
+}
+
+// Privileges is the SQL privilege class a login of this access mode receives.
+// Only the endpoint distinguishes session from read_write.
+func (a CredentialAccess) Privileges() CredentialAccess {
+	if a == CredentialSession {
+		return CredentialReadWrite
+	}
+	return a
+}
+
+// DirectOnly reports whether the login must bypass the transaction pooler.
+// Migration and auth logins run DDL and rely on role session defaults;
+// session logins are chosen for session features.
+func (a CredentialAccess) DirectOnly() bool {
+	return a == CredentialMigration || a == CredentialAuth || a == CredentialSession
 }
 
 type EndpointRole string
@@ -533,6 +596,10 @@ type CredentialRequest struct {
 	IdentityKey    string
 	Access         CredentialAccess
 	IdempotencyKey string
+	// CustomRoles names the database's declared custom roles the login may
+	// SET ROLE to (ADR-20261116213000). Roles not yet created are skipped;
+	// the next custom-role apply grants them.
+	CustomRoles CustomRoleGrants
 }
 
 type Meter string
@@ -689,7 +756,19 @@ type UsageSnapshot struct {
 	StorageByteSeconds int64
 	HistoryByteSeconds int64
 	EgressBytes        int64
-	CostMillicents     int64
+	// DatabaseEgress is each database's egress this month, by database ID.
+	// Neon's transfer allowance is per project and every database is its own
+	// project, so a database's egress allowance is its own
+	// (ADR-20261110160000 amendment 2026-11-11).
+	DatabaseEgress map[string]int64
+	// RestoreSources maps each of the subject's restore copies (a restore,
+	// branch or PR preview copy) to the database it was restored from. A copy
+	// shares its root source's egress allowance: on Neon it is a branch of the
+	// source's project, whose 500 GB transfer allowance is per project
+	// (billing review 2026-11-13, R6-1). Use EgressScopes rather than
+	// DatabaseEgress to compare egress with an allowance.
+	RestoreSources map[string]string
+	CostMillicents int64
 	// Databases carries completeness for ready databases and every known
 	// provider resource, including deletion tombstones. Restores whose
 	// usage is included in a source resolve to that source's coverage.
@@ -775,6 +854,34 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 	return items, nil
 }
 
+// lastObservedAt is the snapshot's reported observation time: the oldest
+// observation of a live database, since freshness waits on the slowest one.
+// A deleted database's coverage is final and never ages into a freshness
+// requirement, so its last observation (often months old) is left out; with
+// only deleted databases the newest observation is reported, and a live
+// database not observed yet reports none. Hunt 32 H32-4: `postgres usage`
+// said fresh with observed_at from a database deleted the month before.
+func lastObservedAt(databases []UsageProgress) time.Time {
+	var oldestLive, newestTerminal time.Time
+	live := false
+	for _, progress := range databases {
+		if progress.Terminal {
+			if progress.ObservedAt.After(newestTerminal) {
+				newestTerminal = progress.ObservedAt
+			}
+			continue
+		}
+		if !live || progress.ObservedAt.Before(oldestLive) {
+			oldestLive = progress.ObservedAt
+		}
+		live = true
+	}
+	if live {
+		return oldestLive
+	}
+	return newestTerminal
+}
+
 func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 	if !policy.Enabled {
 		return false
@@ -782,15 +889,45 @@ func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 	if len(s.Databases) > 0 && len(s.Databases) < s.ReadyDatabases {
 		return true
 	}
+	finalWindowPending := false
 	for _, progress := range s.Databases {
-		if progress.blockingIssues(policy, now) != 0 {
+		issues := progress.blockingIssues(policy, now)
+		if issues.hard() {
 			return true
 		}
+		finalWindowPending = finalWindowPending || issues != 0
+	}
+	// A deleted database's final window adds at most one window of one
+	// stopped database's usage. Admit through it only while the recorded
+	// month leaves headroom under every ceiling (ADR-20261115190000).
+	if finalWindowPending && !s.hasHeadroom(policy) {
+		return true
 	}
 	if len(s.Databases) > 0 || s.ReadyDatabases == 0 {
 		return false
 	}
 	return s.LastObservedAt.IsZero() || now.Sub(s.LastObservedAt) > policy.StaleAfter
+}
+
+// finalWindowHeadroomPercent is the share of each monthly ceiling an account
+// may have recorded and still be admitted while a deleted database's final
+// window is uncollected (ADR-20261115190000).
+const finalWindowHeadroomPercent = 90
+
+// hasHeadroom reports recorded usage below finalWindowHeadroomPercent of every
+// configured ceiling. A ceiling Exceeds would treat as reached leaves none.
+func (s UsageSnapshot) hasHeadroom(policy UsagePolicy) bool {
+	below := func(used, ceiling int64) bool {
+		const spare = 100 - finalWindowHeadroomPercent
+		// ceiling*spare/100 without overflowing near MaxInt64.
+		margin := ceiling/100*spare + ceiling%100*spare/100
+		return ceiling > 0 && used < ceiling-margin
+	}
+	return below(s.CostMillicents, policy.MaxMonthlyCostMillicents) &&
+		below(s.ComputeUnitSeconds, policy.MaxMonthlyComputeUnitSeconds) &&
+		below(s.StorageByteSeconds, policy.MaxMonthlyStorageByteSeconds) &&
+		(policy.MaxMonthlyHistoryByteSeconds <= 0 || below(s.HistoryByteSeconds, policy.MaxMonthlyHistoryByteSeconds)) &&
+		below(s.EgressBytes, policy.MaxMonthlyEgressBytes)
 }
 
 func (s UsageSnapshot) Exceeds(policy UsagePolicy) bool {
@@ -1097,6 +1234,16 @@ type Database struct {
 	// slot past its owner's database limit (ADR-20261031123259): when it
 	// passes with no room, the database's delete is scheduled.
 	RestoreSlotUntil time.Time
+	// ExpiresAt is when a restore made with a TTL (a branch) ends
+	// (ADR-20261106103654): the branch sweep revokes its bindings and purges
+	// it. Zero for every other database.
+	ExpiresAt time.Time
+	// Previews is what this database gives PR preview environments
+	// (ADR-20261102123523); empty reads as off.
+	Previews PreviewMode
+	// Preview names the PR preview environment that owns this database; it
+	// is zero for every other database.
+	Preview PreviewOwner
 }
 
 // RestoreRange is the span a point-in-time restore from d can target at now:
@@ -1158,6 +1305,9 @@ type Binding struct {
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
 	DeletedAt                  *time.Time
+	// appBindingLimit is the reservation's per-app ceiling, read by
+	// ReserveBinding and never stored; zero leaves the count unbounded.
+	appBindingLimit int
 }
 
 // CredentialSink is implemented by the app-secret subsystem. Put must seal
@@ -1261,6 +1411,20 @@ func validBindingScope(scope string) bool {
 	}
 	validScope := regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 	return validScope.MatchString(scope)
+}
+
+// customerBindingEnvironmentKeyError refuses keys a workload would never see
+// or that would shadow a platform setting (ADR-20261110120000): guest-init
+// accepts only keys that start with a letter and drops platform identity
+// keys, and PORT, GREGALE_* and FAAS_* belong to the platform.
+func customerBindingEnvironmentKeyError(key string) error {
+	if api.ValidateEnvKey(key) != nil {
+		return fmt.Errorf("%w: environment key %q must start with a letter and contain only A-Z, 0-9 and underscore", ErrInvalid, key)
+	}
+	if api.PlatformProvidedEnvKey(key) {
+		return fmt.Errorf("%w: environment key %q is set by the platform (PORT, GREGALE_*, FAAS_* and identity keys are reserved)", ErrInvalid, key)
+	}
+	return nil
 }
 
 func validEnvironmentKey(key string) bool {

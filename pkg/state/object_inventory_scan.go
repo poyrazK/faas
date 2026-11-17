@@ -85,3 +85,40 @@ func objectBucketInventoryStale(u ObjectBucketUsage, maxAge time.Duration, now t
 		now.Sub(s.ProgressAt) <= api.ObjectInventoryScanProgressWindow
 	return !progressing || objectInventoryStale(u.ObservedAt, api.ObjectInventoryScanMaxAge, now)
 }
+
+// objectBucketQuiet reports a bucket nothing was admitted to since its
+// published listing started (ADR-20261110151628 §2): its mutated_at is older
+// than the observation by more than the stamp granularity. A bucket with no
+// stamp, created after tracking began and never mutated, is quiet once
+// observed. An all-versions inventory keeps its own accounting and is never
+// quiet.
+func objectBucketQuiet(u ObjectBucketUsage) bool {
+	return !u.ObservedAt.IsZero() && u.InventoryScope != ObjectInventoryAllVersions &&
+		u.MutatedAt.Before(u.ObservedAt.Add(-api.ObjectInventoryMutationStampGranularity))
+}
+
+// objectBucketActiveAnchor is where an active bucket's window starts with
+// object_inventory_quiet on: when it turned active, if it was quiet on its
+// observation and turned active within ObjectInventoryQuietMaxAge of it (the
+// observation was exact until then), otherwise the observation.
+func objectBucketActiveAnchor(u ObjectBucketUsage) time.Time {
+	if !u.ObservedAt.IsZero() && u.InventoryScope != ObjectInventoryAllVersions && u.ActiveSince.After(u.ObservedAt) &&
+		u.ActiveSince.Sub(u.ObservedAt) < api.ObjectInventoryQuietMaxAge {
+		return u.ActiveSince
+	}
+	return u.ObservedAt
+}
+
+// objectBucketInventoryStaleQuiet is objectBucketInventoryStale with
+// object_inventory_quiet on under gateway-safety accounting: a quiet bucket's
+// inventory holds for ObjectInventoryQuietMaxAge, and an active bucket's
+// window starts at objectBucketActiveAnchor.
+func objectBucketInventoryStaleQuiet(u ObjectBucketUsage, maxAge time.Duration, now time.Time) bool {
+	if !objectBucketInventoryStale(u, maxAge, now) {
+		return false
+	}
+	if objectBucketQuiet(u) {
+		return objectInventoryStale(u.ObservedAt, api.ObjectInventoryQuietMaxAge, now)
+	}
+	return objectInventoryStale(objectBucketActiveAnchor(u), maxAge, now)
+}

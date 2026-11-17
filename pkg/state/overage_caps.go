@@ -1,6 +1,10 @@
 package state
 
-import "context"
+import (
+	"context"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // OverageCapsReader reads the overage caps of many accounts or organizations
 // in one query (ADR 20261103164725). schedd's reaper checks every account
@@ -30,24 +34,30 @@ func (s *PgStore) AccountOverageCaps(ctx context.Context, ids []string) (map[str
 	if len(valid) == 0 {
 		return out, nil
 	}
+	// A paid subject without a cap is held to its plan's self-service
+	// ceiling (ADR-20261105120000), so its row is read too.
 	rows, err := s.pool.Query(ctx, `
-		select a.id::text, a.overage_cap_cents
+		select a.id::text, a.overage_cap_cents, a.plan
 		  from accounts a
-		 where a.id = any($1::uuid[]) and a.overage_cap_cents is not null
+		 where a.id = any($1::uuid[]) and (a.overage_cap_cents is not null or a.plan <> 'free')
 		union all
-		select o.id::text, o.overage_cap_cents
+		select o.id::text, o.overage_cap_cents, o.plan
 		  from orgs o
-		 where o.id = any($1::uuid[]) and not o.personal_org and o.overage_cap_cents is not null
+		 where o.id = any($1::uuid[]) and not o.personal_org and (o.overage_cap_cents is not null or o.plan <> 'free')
 		   and not exists (select 1 from accounts a where a.id = o.id)`, valid)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id string
-		var cents int64
-		if err := rows.Scan(&id, &cents); err != nil {
+		var id, plan string
+		var stored *int64
+		if err := rows.Scan(&id, &stored, &plan); err != nil {
 			return nil, err
+		}
+		cents, ok := EffectiveOverageCapCents(api.Plan(plan), stored)
+		if !ok {
+			continue
 		}
 		out[id] = cents
 	}

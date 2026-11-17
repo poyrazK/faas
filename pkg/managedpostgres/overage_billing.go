@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/big"
 	"time"
 
@@ -63,6 +64,45 @@ func StorageOverageCharge(usedByteSeconds, poolBytes int64, month time.Time) (bi
 	return over.Int64(), price.Int64()
 }
 
+// EgressOverageCharge is the database egress a subject is charged for in a
+// month and its price (ADR-20261110160000 slice 3, amendment 2026-11-11).
+// Each database has its own allowance, as Neon's is per project: a database
+// is billed for what it sent past its allowance, at most one more allowance,
+// as the 2x hold allows. The subject's charge is the sum over its databases.
+func EgressOverageCharge(databaseEgress map[string]int64, allowanceBytes int64) (billedBytes, millicents int64) {
+	if allowanceBytes <= 0 {
+		return 0, 0
+	}
+	for _, egress := range databaseEgress {
+		over := min(max(egress-allowanceBytes, 0), allowanceBytes)
+		if over > math.MaxInt64-billedBytes {
+			billedBytes = math.MaxInt64
+			break
+		}
+		billedBytes += over
+	}
+	return billedBytes, egressOverageMillicents(billedBytes)
+}
+
+// egressOverageMillicents prices billed database egress, flooring a fraction
+// of a millicent.
+func egressOverageMillicents(billedBytes int64) int64 {
+	if billedBytes <= 0 {
+		return 0
+	}
+	price := new(big.Int).Mul(big.NewInt(billedBytes), big.NewInt(api.ManagedPostgresEgressOverageMillicentsPerGB))
+	return price.Quo(price, big.NewInt(1_000_000_000)).Int64()
+}
+
+// egressAllowance reads the subject's shared egress allowance at at; none
+// when the biller has no egress source.
+func (b *OverageBiller) egressAllowance(ctx context.Context, subjectID string, at time.Time) (EgressAllowance, error) {
+	if b.options.Egress == nil {
+		return EgressAllowance{}, nil
+	}
+	return b.options.Egress(ctx, subjectID, at)
+}
+
 // OverageDelivery is the cumulative charge delivered to one billing provider
 // for a subject's month.
 type OverageDelivery struct {
@@ -77,6 +117,10 @@ type OverageDelivery struct {
 	// BilledStorageByteSeconds is the storage past the pool the cumulative
 	// charge includes (ADR-20261031110037 amendment 2).
 	BilledStorageByteSeconds int64
+
+	// BilledEgressBytes is the database egress past the shared egress
+	// allowance the cumulative charge includes (ADR-20261110160000 slice 3).
+	BilledEgressBytes int64
 }
 
 // OverageSubject is a subject that reached its allowance in a month, as the
@@ -134,6 +178,7 @@ func validOveragePending(p OveragePendingStep) bool {
 	return p.Provider != "" && s.SubjectID != "" && !s.PeriodStart.IsZero() && s.PeriodStart.Equal(monthStart(s.PeriodStart)) &&
 		!s.At.Before(s.PeriodStart) && s.UsedUnitSeconds >= 0 && s.AllowanceSeconds >= 0 && s.BilledUnitSeconds >= 0 &&
 		s.UsedStorageByteSeconds >= 0 && s.StoragePoolBytes >= 0 && s.BilledStorageByteSeconds >= 0 &&
+		s.UsedEgressBytes >= 0 && s.AppEgressBytes >= 0 && s.EgressAllowanceBytes >= 0 && s.BilledEgressBytes >= 0 &&
 		s.DeliveredMillicents >= 0 && s.TargetMillicents > s.DeliveredMillicents && p.Previous.Millicents >= 0
 }
 
@@ -153,6 +198,15 @@ type OverageChargeStep struct {
 	UsedStorageByteSeconds   int64
 	StoragePoolBytes         int64
 	BilledStorageByteSeconds int64
+
+	// Database egress past each database's own egress allowance
+	// (ADR-20261110160000 slice 3, amendment 2026-11-11). AppEgressBytes is
+	// kept for the stored step's column and is always zero now: apps no
+	// longer share the databases' allowance.
+	UsedEgressBytes      int64
+	AppEgressBytes       int64
+	EgressAllowanceBytes int64
+	BilledEgressBytes    int64
 }
 
 // OverageAllowance resolves billing allowances for a UTC month. Closed
@@ -166,8 +220,23 @@ type OverageBillerOptions struct {
 	EffectiveFrom time.Time
 	Publish       func(context.Context, OverageChargeStep) error
 	Allowance     OverageAllowance
-	Now           func() time.Time
-	Logger        *slog.Logger
+	// PlanSpans, when set, splits month through at at the subject's plan
+	// changes, oldest first, each with its plan's allowance; each span's usage
+	// is billed against its own allowance (ADR-20261103131742 amendment 2).
+	PlanSpans func(ctx context.Context, subjectID string, month, at time.Time) ([]AllowanceSpan, error)
+	// Egress reads a subject's shared egress allowance, its apps' egress and
+	// whether its egress overage election lifts the allowance, at the step's
+	// time (ADR-20261110160000 slice 3). Nil bills no database egress.
+	Egress EgressAllowanceFunc
+	// CapRoom, when set, reads how much more a subject's spend cap lets the
+	// month be charged, in millicents, past everything already counted
+	// against it (compute, egress, object storage and the managed PostgreSQL
+	// charge delivered so far). capped is false when no cap binds. A live
+	// step never takes the month's charge past it (billing review
+	// 2026-11-13, R7-1: ADR-20261031110037 decision 7 amended).
+	CapRoom func(ctx context.Context, subjectID string, month, at time.Time) (roomMillicents int64, capped bool, err error)
+	Now     func() time.Time
+	Logger  *slog.Logger
 }
 
 // OverageBiller delivers managed PostgreSQL overage charges.
@@ -279,16 +348,26 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 		}
 		baseline = 0
 	}
-	// Overage counts when the subject reached its allowance with it on, has it
-	// on now, or was already charged this month.
-	if !subject.Overage && !limits.Overage && baseline == 0 {
+	// Compute and storage overage count when the subject reached its
+	// allowance with overage on, has it on now, or was already charged for
+	// them this month. Database egress counts while the subject's egress
+	// overage election lifts the egress allowance, or once it was charged
+	// (ADR-20261110160000 slice 3): an egress election alone never charges
+	// the compute or storage a sweep let past the allowance.
+	pgOverage := subject.Overage || limits.Overage || delivered.BilledUnitSeconds > 0 || delivered.BilledStorageByteSeconds > 0
+	egress, err := b.egressAllowance(ctx, subject.SubjectID, at)
+	if err != nil {
+		return err
+	}
+	egressOn := egress.OverageLifted || delivered.BilledEgressBytes > 0
+	if !pgOverage && !egressOn && baseline == 0 {
 		return nil
 	}
 	snapshot, err := b.usage.UsageSnapshot(ctx, subject.SubjectID, at)
 	if err != nil {
 		return err
 	}
-	if snapshot.ComputeUnitSeconds == 0 && snapshot.StorageByteSeconds == 0 {
+	if snapshot.ComputeUnitSeconds == 0 && snapshot.StorageByteSeconds == 0 && snapshot.EgressBytes == 0 {
 		// An account first enabling overage this month is also listed for
 		// last month. No usage needs no historical terms or charge.
 		return nil
@@ -296,18 +375,44 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	if allowanceErr != nil {
 		return allowanceErr
 	}
-	billed, target := OverageCharge(snapshot.ComputeUnitSeconds, max(limits.Allowance, subject.Allowance))
 	// Storage past the pool is charged while overage is on, and for the rest
 	// of a month that already charged it, so turning overage off never
 	// lowers the month's cumulative charge.
-	var storageBilled int64
-	if limits.Overage || delivered.BilledStorageByteSeconds > 0 {
-		var storage int64
-		storageBilled, storage = StorageOverageCharge(snapshot.StorageByteSeconds, limits.StorageAllowance, month)
-		target += storage
+	var charge spanCharge
+	if pgOverage {
+		charge, err = b.charge(ctx, subject, limits, month, at, snapshot, limits.Overage || delivered.BilledStorageByteSeconds > 0)
+		if err != nil {
+			return err
+		}
 	}
+	var egressBilled int64
+	if egressOn {
+		var egressMillicents int64
+		egressBilled, egressMillicents = EgressOverageCharge(snapshot.EgressByScope(), egress.CeilingBytes)
+		// A step never lowers what the month already billed for egress.
+		if egressBilled < delivered.BilledEgressBytes {
+			egressBilled, egressMillicents = delivered.BilledEgressBytes, egressOverageMillicents(delivered.BilledEgressBytes)
+		}
+		charge.millicents += egressMillicents
+	}
+	billed, target, storageBilled := charge.billedUnitSeconds, charge.millicents, charge.billedStorageByteSeconds
 	if target <= baseline {
 		return nil
+	}
+	if live && b.options.CapRoom != nil {
+		// The spend cap bounds the charge: billed exactly up to it and no
+		// further, as for compute and egress. The step's usage terms stay
+		// as measured; only the charge is held to the cap.
+		room, capped, err := b.options.CapRoom(ctx, subject.SubjectID, month, at)
+		if err != nil {
+			return err
+		}
+		if capped && target > saturatingAdd(baseline, max(room, 0)) {
+			target = saturatingAdd(baseline, max(room, 0))
+		}
+		if target <= baseline {
+			return nil
+		}
 	}
 	// The provider de-duplicates on the step's starting point, not its
 	// target: after an ambiguous publish (a timeout, apid restarting) the
@@ -316,15 +421,41 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	// identical step rather than computing a new one.
 	pending = OveragePendingStep{Provider: b.options.Provider, Live: live, Previous: delivered, Step: OverageChargeStep{
 		SubjectID: subject.SubjectID, PeriodStart: month, At: now,
-		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: max(limits.Allowance, subject.Allowance),
+		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: charge.allowance,
 		BilledUnitSeconds: billed, DeliveredMillicents: baseline, TargetMillicents: target,
-		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: limits.StorageAllowance, BilledStorageByteSeconds: storageBilled}}
+		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: charge.storageAllowance, BilledStorageByteSeconds: storageBilled,
+		UsedEgressBytes: max(snapshot.EgressBytes, 0), EgressAllowanceBytes: max(egress.CeilingBytes, 0),
+		BilledEgressBytes: egressBilled}}
 	reserved, err := b.billing.ReserveOverage(ctx, pending)
 	if err != nil || !reserved {
 		// Another replica holds this month's step; it sends it.
 		return err
 	}
 	return b.send(ctx, pending, summary)
+}
+
+// charge is the month's charge through at. With the subject's plan spans it
+// bills each span's usage against that span's allowance (ADR-20261103131742
+// amendment 2); without them, the month's usage against the allowance now,
+// or the one recorded when the subject reached it, whichever is larger.
+func (b *OverageBiller) charge(ctx context.Context, subject OverageSubject, limits CapLimits, month, at time.Time, snapshot UsageSnapshot, storage bool) (spanCharge, error) {
+	if reader, ok := b.usage.(UsageBeforeReader); ok && b.options.PlanSpans != nil {
+		spans, err := b.options.PlanSpans(ctx, subject.SubjectID, month, at)
+		if err != nil {
+			return spanCharge{}, err
+		}
+		if len(spans) > 0 {
+			return chargeBySpan(ctx, reader, subject.SubjectID, month, spans, snapshot, storage)
+		}
+	}
+	out := spanCharge{allowance: max(limits.Allowance, subject.Allowance), storageAllowance: limits.StorageAllowance}
+	out.billedUnitSeconds, out.millicents = OverageCharge(snapshot.ComputeUnitSeconds, out.allowance)
+	if storage {
+		var storageMillicents int64
+		out.billedStorageByteSeconds, storageMillicents = StorageOverageCharge(snapshot.StorageByteSeconds, limits.StorageAllowance, month)
+		out.millicents += storageMillicents
+	}
+	return out, nil
 }
 
 // send delivers a reserved step and records it. A failure leaves the step

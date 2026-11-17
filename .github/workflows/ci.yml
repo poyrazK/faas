@@ -49,10 +49,10 @@ permissions:
 env:
   # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
   # and the go.mod toolchain directive resolve to the same Go runtime.
-  # Go 1.26.10 fixes the reachable stdlib advisories reported by the
-  # October 2026 supply-chain gate (latest: GO-2026-6809, crypto/x509).
+  # Go 1.26.11 fixes the reachable stdlib advisories reported by the
+  # supply-chain gate (latest: GO-2026-6859, net/http MaxBytesReader race).
   # Keep all runtime/build pins aligned with the go.mod toolchain directive.
-  GO_VERSION: "1.26.10"
+  GO_VERSION: "1.26.11"
   # Bound cold CLI compilation just as the apid compiler guard below does.
   GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
@@ -113,6 +113,8 @@ env:
   PROM_VERSION: "2.54.1"
   PROM_TARBALL_SHA256_LINUX_AMD64: "31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f"
 
+# GitHub-hosted jobs pin ubuntu-24.04: ubuntu-latest became ubuntu-26.04 in
+# Nov 2026, which has no postgresql-16 package and no Playwright 1.57 Chromium.
 jobs:
   storage-node-starter:
     uses: ./.github/workflows/storage-node-starter.yml
@@ -162,7 +164,7 @@ jobs:
   # cd-digitalocean.yml still resolves if anyone re-enables it.
   go-lint:
     name: Go lint (shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -221,7 +223,7 @@ jobs:
     name: lint + build
     needs: go-lint
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # go vet ./... alone takes 37-45 min at GOMAXPROCS=2; 60 cancelled two
     # of three nightly runs on 2026-11-07.
     timeout-minutes: 90
@@ -507,11 +509,17 @@ jobs:
       - name: canary artifact retention gate
         run: make canary-artifact-retention-test
 
+      - name: go cache retention gate
+        run: make go-cache-retention-test
+
       - name: serving probe gate
         run: make serving-probe-test
 
       - name: cgroup metrics gate
         run: make cgroup-metrics-test
+
+      - name: Notification receiver metrics and receipt validation
+        run: make notification-receiver-metrics-test
 
       - name: observability go/no-go check tests
         run: make obs-gate-test
@@ -658,7 +666,7 @@ jobs:
   # pkg/e2etest (its fixture SQL must run against a real migrated schema)
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations ${{ matrix.part }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -850,7 +858,7 @@ jobs:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     if: always()
     needs: [unit-tests-pg-1]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -870,7 +878,7 @@ jobs:
   # tests several times slower under -race and coverage.
   unit-tests-pg-1-pgclone:
     name: unit tests (pg shard 1 — apidserver environment clone ${{ matrix.part }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -964,7 +972,7 @@ jobs:
   # Go's registered list guards against silently omitting a new test family.
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Eight shards keep each near 10-15 min of tests: with four, shard 3 alone
     # needed ~20 min and hit the 20m go test timeout (runs 39174391154 and
     # 39181126528); with six, shard 5 took 1185 s and then timed out (runs
@@ -1070,7 +1078,7 @@ jobs:
   # services. The state package itself runs in unit-tests-state above.
   unit-tests-pg-2:
     name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -1097,14 +1105,16 @@ jobs:
             # 2026-10-27, 1243 s on 2026-10-29 and passed the 30m package
             # timeout on 2026-10-30 (run 40995340344); it is 501 s without
             # race or coverage. The job keeps 30 minutes past the package
-            # budget for race compilation and coverage upload.
-            test_timeout: 45m
+            # budget for race compilation and coverage upload. It took 2611 s
+            # and 2702 s on 2026-11-14 and then hit the 45m bound (run
+            # 43569561576), so the bounds are 60m and 90 minutes.
+            test_timeout: 60m
             # Shard b alone runs the PostgreSQL native verdict, starter TLS,
             # fixture and GitOps compilation gates before its tests: about
             # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
             # minute test step. 45 cancelled it mid-suite. The gates moved to
             # shard c when they reached 36 minutes (run 40420329172).
-            job_timeout_minutes: 75
+            job_timeout_minutes: 90
           - id: c
             label: PostgreSQL native and starter gates
             # Shard b's pre-test gates took 26 minutes on 2026-10-26 and 36 on
@@ -1372,7 +1382,7 @@ jobs:
   state-coverage:
     name: pkg/state coverage gate (all shards)
     needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1, unit-tests-pg-1-pgclone]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1393,7 +1403,7 @@ jobs:
   # and additionally execute all traffic PG requirements against a real store.
   traffic-platform:
     name: traffic platform (unit + PostgreSQL evidence)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     defaults:
       run:
@@ -1502,7 +1512,7 @@ jobs:
     name: unit tests (pg shard 2a — state/reconcile/reposcan)
     if: always()
     needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -1522,7 +1532,7 @@ jobs:
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
     # The memory-bounded pkg/sched compile below roughly doubles that
@@ -1632,7 +1642,7 @@ jobs:
   # Shard 4 (pure Go light): all remaining packages. No Postgres needed.
   unit-tests-pure-2:
     name: unit tests (pure Go shard 2 — light packages)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # This job runs the package shard and property suite sequentially. Each
     # Go command has its own 10-minute test timeout, so the job budget must
     # leave time for both commands plus setup, coverage, and cleanup. The
@@ -1709,7 +1719,7 @@ jobs:
 
   container-contract:
     name: portable container contracts (strict)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -1830,7 +1840,7 @@ jobs:
     # step, unchanged; the former job names are kept as section markers
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The complete cold-run gate sequence can exhaust 30 minutes at the
     # final watchdog rule check. Retain time for every contract and safety
     # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
@@ -1841,7 +1851,7 @@ jobs:
     permissions:
       contents: read
     env:
-      GOVULNCHECK_VERSION: "1.7.0"
+      GOVULNCHECK_VERSION: "1.9.0"
       # Several contract gates compile the APID test package.
       GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 2GiB
@@ -1883,6 +1893,18 @@ jobs:
         run: make environment-preflight-action-check
       - name: synthetic-canary alert payload tests
         run: make canary-alert-test
+
+      - name: synthetic-canary missing-run heartbeat tests
+        run: make canary-heartbeat-test
+
+      - name: synthetic-canary SSH and notification fallback tests
+        run: make canary-transport-test
+
+      - name: post-deployment monitoring transport and workflow tests
+        run: make post-deployment-monitoring-test
+
+      - name: production monitoring qualification tests
+        run: make monitoring-qualification-test
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -2242,6 +2264,17 @@ jobs:
       - name: Alertmanager config check
         run: make alertmanager-config-check
 
+      - name: Notification delivery drill
+        run: NOTIFICATION_DRILL_REPORT="$RUNNER_TEMP/notification-drill.json" make notification-delivery-check
+
+      - name: Notification drill evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: notification-drill
+          path: ${{ runner.temp }}/notification-drill.json
+          if-no-files-found: error
+          retention-days: 7
+
   # Every promtool rule fixture, not a hand-picked list: an unlisted fixture
   # (slo_low_traffic) broke unnoticed when an alert changed. Each fixture
   # evaluates the full rule set, so they slow as rules grow: in the checks
@@ -2251,7 +2284,7 @@ jobs:
   # block, and xargs fails the step if any fixture fails.
   promtool-fixtures:
     name: promtool rule fixtures (shard ${{ matrix.shard }}/2)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -2298,7 +2331,7 @@ jobs:
   # Node SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-node:
     name: sdk-node (gen-check + smoke + unit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2313,6 +2346,8 @@ jobs:
           node-version: '22.10.0'
           cache: 'npm'
           cache-dependency-path: sdk/node/package-lock.json
+      - name: SDK source selection agrees with CLI
+        run: go test sdk/request-contracts/cli-source-preparation_test.go sdk/request-contracts/project-inspection-cli_test.go
       - name: build fakeapid fixture
         working-directory: sdk/fakeapid
         run: go build -o bin/fakeapid .
@@ -2352,7 +2387,7 @@ jobs:
 
   issue-slack-bridge:
     name: Issues Slack bridge (PostgreSQL receipts + bundle)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -2392,7 +2427,7 @@ jobs:
 
   workflow-operation-starter-browser:
     name: customer Operations starters (Chromium + packed SDK)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -2415,7 +2450,7 @@ jobs:
 
   customer-operation-starters:
     name: customer Operations starters (generated types + packed SDK)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -2453,7 +2488,7 @@ jobs:
   # Required database tests must run; unit-only SDK jobs skip these fixtures.
   operation-sdk-acceptance:
     name: operations (transaction + HTTP recovery + cross-SDK)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -2516,7 +2551,7 @@ jobs:
   # verified customer targeting or refresh after inactivity.
   flags-acceptance:
     name: flags (customer release + request evidence)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Measured 25 min on a green run (2026-10-19) and over 30 min under runner load
     # (run 39345797073): the suite passes but cold compilation of the SDK,
     # flags and apidserver packages dominates.
@@ -2565,7 +2600,7 @@ jobs:
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The storage starter acceptance suite alone runs several minutes; the job
     # took 9.4 of 10 minutes on run 39169411988 and was cancelled on the next.
     timeout-minutes: 20
@@ -2590,6 +2625,7 @@ jobs:
         run: |
           python -m pip install 'pip==26.2.2'
           python -m pip install 'ruamel.yaml==0.19.1' 'openapi-python-client==0.29.0' 'pytest==9.2.0' 'pytest-asyncio==1.4.1' 'httpx==0.28.1'
+          python -m pip install 'build==1.6.1' 'mypy==2.4.1' 'poetry-core>=2,<3'
           python -m pip install -e '.[auth]'
           python -m pip install -r ../../cmd/gregale/templates/rest-api-postgres-python/requirements.txt
           python -m pip install -r ../../cmd/gregale/templates/object-storage-python/requirements.txt
@@ -2631,7 +2667,7 @@ jobs:
 
   outbound-pool-load:
     name: outbound resilience (deadlines and pool load)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -2695,7 +2731,7 @@ jobs:
     # and otherwise queue forever — our org doesn't have them provisioned,
     # so the job sat QUEUED for ~19 h without starting.
     name: load (1k rps hot-path)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Cold module-download retries and race compilation exhausted the former
     # five-minute job budget. Leave room before the unchanged 10m Go test
     # timeout; the 1k rps latency assertions and runner remain unchanged.
@@ -2789,7 +2825,7 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     name: migration IDs, apply and replay
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       full-suite-needed: ${{ steps.migration-impact.outputs.needed }}
@@ -2959,7 +2995,7 @@ jobs:
     name: migration history (shard ${{ matrix.shard }})
     needs: migration-checks
     if: needs.migration-checks.outputs.full-suite-needed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 70
     strategy:
       fail-fast: false
@@ -3050,7 +3086,7 @@ jobs:
     name: migrations (IDs + apply)
     if: always()
     needs: [migration-checks, migrations-full]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -3079,7 +3115,7 @@ jobs:
     # dedicated job. Keep this separate from the name-sharded e2e jobs so a
     # new TestBootContract_* cannot compile successfully without ever running.
     name: boot-contract (production config)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       postgres:
@@ -3113,18 +3149,23 @@ jobs:
         # dropping back to the runner uid for the test process.
         run: |
           BOOT_CONTRACT_PATH="$PATH"
-          sudo -E setpriv \
+          # The runner's sudo (sudo-rs) ignores -E, so name the environment
+          # the test needs: HOME and the Go paths keep the build cache under
+          # the runner user instead of /root.
+          sudo setpriv \
             --bounding-set=-sys_admin \
             --reuid "$(id -u)" \
             --regid "$(id -g)" \
             --init-groups \
             --no-new-privs \
-            -- env "PATH=$BOOT_CONTRACT_PATH" \
+            -- env "PATH=$BOOT_CONTRACT_PATH" "HOME=$HOME" \
+              "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" "GOPATH=$(go env GOPATH)" \
+              "GOTOOLCHAIN=${GOTOOLCHAIN:-local}" "DATABASE_URL=${DATABASE_URL:-}" "FAAS_SKIP_PG_TESTS=${FAAS_SKIP_PG_TESTS:-}" \
             go test -race -count=1 -timeout=15m -run '^TestBootContract_' ./cmd/e2e/...
 
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The test command has a 40m package timeout; leave runner cleanup
     # headroom so slow shared runners fail with the test result instead of
     # being cancelled by the job budget first. The test steps took 10-18
@@ -3223,7 +3264,7 @@ jobs:
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     services:
       postgres:
@@ -3307,7 +3348,7 @@ jobs:
 
   e2e-shard3:
     name: e2e (shard 3 — 24 tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     services:
       postgres:
@@ -3391,7 +3432,7 @@ jobs:
 
   e2e-shard4:
     name: e2e (shard 4 — 22 tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     services:
       postgres:

@@ -16,6 +16,9 @@ func TestTerminalSafeEscapesControlCharacters(t *testing.T) {
 		"\x1b]52;c;cGF5bG9hZA==\x07 done": `\x1b]52;c;cGF5bG9hZA==\x07 done`,
 		"bell\x07 del\x7f c1\u009b":       `bell\x07 del\x7f c1\x9b`,
 		"unicode ünïcode ✓":               "unicode ünïcode ✓",
+		// A right-to-left override reorders what follows it (ADR-20261110090000).
+		"user=\u202egnp.exe": "user=\\u202egnp.exe",
+		"iso\u2066x\u2069":   "iso\\u2066x\\u2069",
 	} {
 		if got := main.TerminalSafe(in); got != want {
 			t.Fatalf("TerminalSafe(%q) = %q, want %q", in, got, want)

@@ -22,6 +22,8 @@ func TestJSONOperatorCommandReceipts(t *testing.T) {
 	}{
 		{[]string{"auth", "status"}, "GET", "/v1/account", `{"id":"operator-json","email":"operator@example.test","status":"active"}`, "email"},
 		{[]string{"accounts", "show", "--account-id", testAccountID}, "GET", "/v1/admin/obs/tenants/" + testAccountID, `{"account":{"account_id":"` + testAccountID + `","status":"active"}}`, "account"},
+		{[]string{"accounts", "find", "my-app"}, "GET", "/v1/admin/obs/lookup", `{"query":"my-app","matches":[{"kind":"app","account_id":"` + testAccountID + `","app_slug":"my-app"}]}`, "matches"},
+		{[]string{"accounts", "attention", "--kind", "deploy_failing"}, "GET", "/v1/admin/obs/attention", `{"items":[{"id":1,"account_id":"` + testAccountID + `","kind":"deploy_failing","subject":"shop","state":"open","observed":3,"first_seen_at":"2026-11-13T10:00:00Z","last_seen_at":"2026-11-13T10:05:00Z"}],"limit":200}`, "items"},
 		{[]string{"audit", "trace", "--trace-id", testBuildSweepTraceID}, "GET", "/v1/admin/obs/traces/" + testBuildSweepTraceID, `{"trace_id":"` + testBuildSweepTraceID + `","intents":[],"events":[]}`, "trace_id"},
 		{[]string{"builds", "sweep-stuck", "--older-than", "20m", "--reason", "test_incident", "--trace-id", testBuildSweepTraceID, "--yes"}, "POST", "/v1/admin/builds/sweep-stuck", `{"ok":true,"swept_count":3,"older_than_secs":1200}`, "swept_count"},
 		{[]string{"jobs", "active", "--account-id", testOperatorJobAccountID}, "GET", "/v1/admin/ops/jobs/runs", `{"account_id":"` + testOperatorJobAccountID + `","runs":[],"limit":20}`, "account_id"},

@@ -57,6 +57,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/agentapproval"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -123,6 +124,13 @@ type DeployTokenAuthenticator interface {
 // /v1/deployments route.
 type DeploymentAppResolver interface {
 	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
+}
+
+// EdgeRuleAppResolver is the optional store seam that loads the edge rule an
+// agent approval addresses by id, to tell a production app's rule from a
+// preview's (ADR-091 amendment 2026-11-07).
+type EdgeRuleAppResolver interface {
+	GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error)
 }
 
 // deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
@@ -233,6 +241,20 @@ type Middleware struct {
 	Audit        Auditor             // nil-safe; nil disables audit emit
 	Log          *slog.Logger        // nil-safe; nil disables the Warn path
 	Limiter      *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// ApprovalReviewURL is the page where a person decides an agent's
+	// approval request (ADR-20261104140058).
+	ApprovalReviewURL func(id string) string
+	// RemoteAgentGate, when set, decides agent requests that need approval
+	// instead of the store: a gateway asks apid, the only approvals writer
+	// (ADR-20261111150000).
+	RemoteAgentGate RemoteAgentGate
+	// ActivityRecorder records agent activity when Authn cannot: a gateway
+	// sends the rows to apid (ADR-20261111150000).
+	ActivityRecorder AgentActivityRecorder
+	// UndoCapture, when set, records how to reverse each agent write
+	// (ADR-20261112080601): it is called before the handler, and the
+	// capture finished after it answered. apid sets it; a gateway does not.
+	UndoCapture func(r *http.Request, acct state.Account, key state.APIKey) AgentUndoPending
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -571,6 +593,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			// error and emit the audit event from here so the
 			// store stays independent of the audit seam.
 			if err != nil {
+				// ADR-20261114190002: a revoked or expired key still
+				// names its account.
+				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
 					if m.Audit != nil {
@@ -597,6 +622,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// simply unknown; both surface as "invalid
 				// bearer" through the legacy 401 path.
 			} else {
+				noteAccount(r, acct.ID)
 				if !acct.Active() {
 					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
@@ -607,6 +633,43 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// ADR-20261104085712: an agent or mcp-login key limited to
 				// projects reaches only their apps and routes.
 				if m.limitKeyToProjects(w, r, acct, &key) {
+					return
+				}
+				// ADR 20261110190500: a company key cannot manage the
+				// holder's personal account, keys or sessions.
+				if m.refuseOrgKeyOnPersonalRoute(w, r, acct, key) {
+					return
+				}
+				// ADR-20261107220000: an agent's write requests are
+				// recorded once the handler answers; the approval gate
+				// notes the approval a request went through on.
+				// ADR-20261111114059 amendment 2026-11-13: a budget preview
+				// writes nothing, so it opens no approval and records no
+				// activity or undo; it only notes the approval the real
+				// request would wait for.
+				if Previewing(r) && ProjectLimitable(key) {
+					if m.notePreviewApproval(w, r, key) {
+						return
+					}
+					*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
+					next(w, r, acct)
+					return
+				}
+				var activity *agentActivityNote
+				if ProjectLimitable(key) && (agentWrite(r.Method) || agentapproval.RecordedRead(r.Pattern)) {
+					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
+					// ADR-20261111114059: a budget approval binds the exact
+					// change, so take the binding before the handler reads
+					// the body.
+					if agentapproval.ChargesBudget(r.Pattern) {
+						if binding, err := approvalBinding(r, key.ID); err == nil {
+							activity.binding = &binding
+						}
+					}
+				}
+				// ADR-20261104140058: an agent's risky request waits for a
+				// person's approval.
+				if m.requireAgentApproval(w, r, acct, key) {
 					return
 				}
 				*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
@@ -625,6 +688,28 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 							m.Log.Warn("api_key last_used_at touch failed", "key_id", id, "error", err.Error())
 						}
 					}(r.Context(), key.ID, t)
+				}
+				if activity != nil {
+					aw := &activityWriter{ResponseWriter: w}
+					activity.id = uuid.NewString()
+					// ADR-20261112080601: read what the write replaces.
+					var undo AgentUndoPending
+					if m.UndoCapture != nil && agentWrite(r.Method) {
+						undo = m.UndoCapture(r, acct, key)
+						aw.keepBody = undo != nil
+					}
+					recorded := false
+					//nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
+					aw.onHijack = func() {
+						recorded = true
+						m.recordAgentActivity(r, acct, key, aw.status, activity)
+					}
+					next(aw, r, acct)
+					if !recorded {
+						m.finishAgentUndo(r, undo, aw, activity.id)
+						m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
+					}
+					return
 				}
 				next(w, r, acct)
 				return
@@ -662,6 +747,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				api.WriteProblem(w, api.ErrCapacity("authenticate platform tenant access token"))
 				return
 			}
+			noteAccount(r, acct.ID)
 			if !acct.Active() {
 				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 					"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
@@ -705,6 +791,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		if api.ValidOIDCKeyFormat(tok) {
 			acct, key, err := m.Authn.AuthenticateOIDCBearer(r.Context(), api.HashAPIKey(tok))
 			if err == nil {
+				noteAccount(r, acct.ID)
 				// A bearer exchanged under a trust policy Gregale created is
 				// bound to one app and confined like a per-app deploy token
 				// (ADR-20261101100000).
@@ -747,6 +834,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
+					noteAccount(r, acct.ID)
 					if m.appBoundCredentialRefused(w, r, key, "Deploy token scope is app-bound") {
 						return
 					}
@@ -769,6 +857,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					next(w, r, acct)
 					return
 				}
+				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
 					api.WriteProblem(w, api.ErrAPIKeyExpired())
@@ -824,6 +913,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					r = r.WithContext(withSession(r.Context(), sess))
 					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
+						noteAccount(r, acct.ID)
 						if !acct.Active() {
 							if !inactiveCallerMayReach(r, acct) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
@@ -1136,6 +1226,24 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		}
 		return state.Session{}, true, nil
 	}
+	// (4.5) idle timeout (ADR 20261110120000): a session unused for
+	// api.DashboardSessionIdleTimeout ends, however long its cookie has
+	// left. The row is revoked so the cookie cannot come back to life.
+	if sessionIdle(sess, time.Now()) {
+		if _, revokeErr := m.Lookups.RevokeSession(ctx, env.Sid, env.AccountID); revokeErr != nil && m.Log != nil {
+			m.Log.Warn("idle session revoke failed", "sid", logsanitize.Field(env.Sid), "error", revokeErr.Error())
+		}
+		if m.Audit != nil {
+			m.Audit.Emit(ctx, "auth.session.idle_expired", &env.AccountID, map[string]any{
+				"sid":      env.Sid,
+				"idle_sec": int(api.DashboardSessionIdleTimeout.Seconds()),
+			})
+		}
+		m.clearSessionCookie(w)
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeSessionExpired,
+			"Session expired", "signed out after 48 hours without activity; sign in again"))
+		return state.Session{}, true, nil
+	}
 	// (5) stamp + async touch. Detached; bounded.
 	if t, fire := m.sessionDebounce.shouldTouch(env.Sid, time.Now(), m.sessionTouchWindow()); fire {
 		go func(parentCtx context.Context, sid string, ticket *TouchTicket) {
@@ -1151,6 +1259,17 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 }
 
 const sessionTouchWindow = 5 * time.Minute
+
+// sessionIdle reports whether sess saw no request for
+// api.DashboardSessionIdleTimeout. A row never touched counts from its
+// sign-in.
+func sessionIdle(sess state.Session, now time.Time) bool {
+	last := sess.IssuedAt
+	if sess.LastSeenAt != nil && sess.LastSeenAt.After(last) {
+		last = *sess.LastSeenAt
+	}
+	return !last.IsZero() && now.Sub(last) > api.DashboardSessionIdleTimeout
+}
 
 // sessionTouchDebounce mirrors keyTouchDebounce but keyed on the
 // session id (sid) rather than the API key id. Same pointer-version
@@ -1277,7 +1396,7 @@ func isBillingRecoveryRoute(method, path string) bool {
 		return true
 	}
 	switch method + " " + path {
-	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
+	case "GET /v1/account", "GET /v1/account/export", "GET /v1/account/health", "GET /v1/usage",
 		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
 		"GET /v1/billing/costs", "GET /v1/billing/forecast", "GET /v1/billing/budgets", "POST /v1/billing/budgets/preview",
 		"PATCH /v1/account/plan",
@@ -1788,7 +1907,51 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 			"Not found", detail))
 		return true
 	}
+	if appBoundCredentialDeniedRoute(r.Pattern) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, title,
+			"this token deploys its app; it cannot delete or rename the app, send its data elsewhere, mint credentials, or read its debug and crash data. Use an API key for that").
+			WithHint("Create an API key with `gregale key create` for app administration."))
+		return true
+	}
 	return false
+}
+
+// appBoundCredentialDeniedExact and appBoundCredentialDeniedAreas are the
+// /v1/apps/{slug} routes an app-bound credential (a deploy token, or an OIDC
+// bearer exchanged for one app) may not use although deploy:write opens them
+// to API keys: deleting or renaming the app, sending its data elsewhere (log
+// drains, mirrors, outbound webhooks), minting credentials (consumer keys, AI
+// access tokens, issue ingest tokens) and reading or forking its memory
+// (debug requests, crash snapshots, forks). A CI deploy, including a
+// gregale.yaml reconciliation, uses none of them; inbound webhooks are
+// separate routes and stay open.
+var appBoundCredentialDeniedExact = map[string]bool{
+	"DELETE /v1/apps/{slug}":      true,
+	"POST /v1/apps/{slug}/rename": true,
+}
+
+var appBoundCredentialDeniedAreas = map[string]bool{
+	"log-drains": true, "mirrors": true, "webhooks": true,
+	"consumers": true, "ai-access-tokens": true, "issue-ingest-tokens": true,
+	"debug": true, "crash-snapshots": true, "forks": true,
+}
+
+// appBoundCredentialDeniedRoute reports whether the matched route pattern is
+// outside what an app-bound credential may do.
+func appBoundCredentialDeniedRoute(pattern string) bool {
+	if appBoundCredentialDeniedExact[pattern] {
+		return true
+	}
+	_, path, ok := strings.Cut(pattern, " ")
+	if !ok {
+		return false
+	}
+	rest, ok := strings.CutPrefix(path, "/v1/apps/{slug}/")
+	if !ok {
+		return false
+	}
+	area, _, _ := strings.Cut(rest, "/")
+	return appBoundCredentialDeniedAreas[area]
 }
 
 // appBoundPreviewStatusReads are the PR preview status reads an app-bound

@@ -1,0 +1,22 @@
+Native table-retirement checkpoint regression, 2026-11-11
+
+Test: TestNativePipelineEndToEnd, including a held ACCESS SHARE table lock
+that forces the approved removal's ACCESS EXCLUSIVE lock to time out.
+
+Before the engine fix, the new assertion failed:
+  failed removal reported an uncommitted checkpoint: "retiring"
+  FAIL TestNativePipelineEndToEnd (184.73s)
+
+After the engine fix, the complete native test passed with -race:
+  PASS
+  ok github.com/onebox-faas/faas/pkg/datapipeline 167.575s
+
+Fixture: the pinned PostgreSQL and PostgREST images from
+scripts/test-data-pipeline.sh, real TLS, native publication/subscription,
+and the generated Data API runtime. A temporary Go test overlay loads the
+Node runtime from an external copy with its pinned dependencies. PostgreSQL
+uses a disposable 2 GiB tmpfs data directory to fit local disk capacity.
+
+The worker recovers the committed native receipt phase before attempting
+work, and advances the observed phase only after the operation succeeds.
+The test also completes the existing retry and lost-acknowledgement paths.

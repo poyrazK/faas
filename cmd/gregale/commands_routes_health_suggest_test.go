@@ -65,6 +65,27 @@ func TestBuildRouteHealthSuggestionReportRanksExposureAndRedactsCustomerDetails(
 	}
 }
 
+// The server reports overflow and unlabeled traffic for the deployment; those
+// rows name no selectable route and must not fail the report (prod 2026-11-09).
+func TestBuildRouteHealthSuggestionReportSkipsOverflowLabels(t *testing.T) {
+	usage := routeHealthSuggestionFixture()
+	usage.Routes = append(usage.Routes,
+		api.RouteCustomerUsage{Route: "__route_other__", Method: "GET", Requests: 12, IdentifiedRequests: 12, LastObservedAt: "2026-10-04T23:56:00Z", Customers: []api.RouteCustomerObservation{}},
+		api.RouteCustomerUsage{Route: "", Method: "POST", Requests: 3, AnonymousRequests: 3, LastObservedAt: "2026-10-04T23:55:00Z", Customers: []api.RouteCustomerObservation{}})
+	report, err := main.BuildRouteHealthSuggestionReport(usage, "api", main.CustomerBaseline, "tenant", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Suggestions) != 3 {
+		t.Fatalf("suggestions = %+v, want the three labeled routes only", report.Suggestions)
+	}
+	for _, suggestion := range report.Suggestions {
+		if suggestion.Selector.Path == "" || strings.Contains(suggestion.Selector.Path, "__route_other__") {
+			t.Fatalf("overflow label became a selector: %+v", suggestion)
+		}
+	}
+}
+
 func TestBuildRouteHealthSuggestionReportRejectsUnboundOrAmbiguousUsage(t *testing.T) {
 	for name, mutate := range map[string]func(*api.RouteCustomerUsageResponse){
 		"wrong app":        func(r *api.RouteCustomerUsageResponse) { r.Slug = "other" },

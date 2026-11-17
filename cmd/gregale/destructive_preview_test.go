@@ -37,7 +37,7 @@ func TestDestructivePreviewDryRunsOnlyRead(t *testing.T) {
 	} {
 		t.Run(strings.Join(command, "_"), func(t *testing.T) {
 			setupCLIRegression(t)
-			osStdin = forbiddenAutomationInput{t}
+			osStdin = forbiddenStoredWorkflowInput{t}
 			var reads, writes atomic.Int32
 			old := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339Nano)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,11 +103,11 @@ func TestDestructivePreviewDryRunsOnlyRead(t *testing.T) {
 }
 
 func TestDestructivePreviewMissingConfirmationNeverWrites(t *testing.T) {
-	for _, automation := range []bool{false, true} {
+	for _, storedWorkflow := range []bool{false, true} {
 		for _, command := range [][]string{{"apps", "--yes=false", "demo"}, {"deploys", "clear", previewTestDeploymentID}, {"deploys", "clear-obsolete", "--app", "demo"}} {
-			t.Run(fmt.Sprintf("automation_%t_%s", automation, strings.Join(command, "_")), func(t *testing.T) {
+			t.Run(fmt.Sprintf("stored_workflow_%t_%s", storedWorkflow, strings.Join(command, "_")), func(t *testing.T) {
 				setupCLIRegression(t)
-				osStdin = forbiddenAutomationInput{t}
+				osStdin = forbiddenStoredWorkflowInput{t}
 				var writes atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method != http.MethodGet {
@@ -129,7 +129,7 @@ func TestDestructivePreviewMissingConfirmationNeverWrites(t *testing.T) {
 				t.Setenv("FAAS_API", server.URL)
 				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
 				prefix := []string{"--json"}
-				if automation {
+				if storedWorkflow {
 					prefix = append(prefix, "--non-interactive")
 				}
 				code, out, errOut := capturePreviewRun(t, append(prefix, command...))
@@ -150,7 +150,7 @@ func TestDestructivePreviewPaginationAndTimestampFailuresAreClosed(t *testing.T)
 			}
 			t.Run(mode+"_"+command[0], func(t *testing.T) {
 				setupCLIRegression(t)
-				osStdin = forbiddenAutomationInput{t}
+				osStdin = forbiddenStoredWorkflowInput{t}
 				var pages, writes atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method != http.MethodGet {

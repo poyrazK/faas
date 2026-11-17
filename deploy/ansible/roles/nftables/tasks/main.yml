@@ -219,6 +219,47 @@
     fail_msg: "faas_public_entry_addrs entry {{ item }} must be a plain IPv4 or lowercase IPv6 address in canonical form"
   loop: "{{ faas_public_entry_addrs }}"
 
+# ADR-20261109100000: on bare metal every host has a public card. With
+# faas_private_iface set, private services accept only on that card; with
+# faas_ssh_restricted, sshd answers only faas_ssh_private_cidrs (the overlay)
+# and faas_ssh_allowed_cidrs (an operator bastion or VPN). Unset keeps the
+# cloud behaviour, where the provider firewall (GCP IAP) bounds sshd. The
+# template's faas_sshd macro renders the sshd rules.
+#
+# Restricting sshd from a source it no longer admits would cut this very
+# converge off at its next connection, so the play first proves the address
+# Ansible connects from is admitted.
+- name: nftables — read the address this converge connects from
+  ansible.builtin.shell: 'printf "%s" "${SSH_CLIENT%% *}"'
+  become: false
+  register: faas_nft_ssh_source
+  changed_when: false
+  check_mode: false
+  when:
+    - faas_ssh_restricted | default(false) | bool
+    - ansible_connection | default('ssh') not in ['local', 'community.docker.docker']
+
+- name: nftables — refuse an sshd restriction that would lock this converge out
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -I
+      - -c
+      - |
+        import ipaddress, json, sys
+        src = ipaddress.ip_address(sys.argv[1])
+        nets = [ipaddress.ip_network(c, strict=False) for c in json.loads(sys.argv[2])]
+        sys.exit(0 if any(src in n for n in nets) else 1)
+      - "{{ faas_nft_ssh_source.stdout }}"
+      - "{{ ((faas_ssh_private_cidrs | default([])) + (faas_ssh_allowed_cidrs | default([]))) | to_json }}"
+  register: faas_nft_ssh_source_admitted
+  changed_when: false
+  check_mode: false
+  failed_when: faas_nft_ssh_source_admitted.rc != 0
+  when:
+    - faas_ssh_restricted | default(false) | bool
+    - faas_nft_ssh_source.stdout | default('') | length > 0
+
 # The input chain's br-tenants rules let guests reach only the bridge
 # services (the per-netns chain narrows the ports), the public edge for
 # hairpin calls, and ICMP; the drop keeps bridge traffic from the rules below

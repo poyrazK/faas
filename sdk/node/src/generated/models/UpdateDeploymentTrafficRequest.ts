@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppReleaseReview } from './AppReleaseReview.js';
+import type { MCPReadinessExpectation } from './MCPReadinessExpectation.js';
 /**
  * Body for PATCH /v1/deployments/{id}/traffic. Optionally require a particular live sibling to remain the sole 100% serving deployment when the update commits.
  */
@@ -19,6 +20,11 @@ export type UpdateDeploymentTrafficRequest = {
    * Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic.
    */
   expected_serving_deployment_id?: string;
+  /**
+   * Optional split the change was planned from: every live release in the deployment's environment with positive traffic, keyed by deployment id, mapped to its percent (1-100, summing to 100, at most 100 releases). If the split differs at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic. Cannot be combined with expected_serving_deployment_id or expected_review.
+   */
+  expected_traffic?: Record<string, number>;
+  expected_mcp_readiness?: MCPReadinessExpectation;
   /**
    * Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership.
    */

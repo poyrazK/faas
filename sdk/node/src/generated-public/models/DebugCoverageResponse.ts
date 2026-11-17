@@ -24,5 +24,13 @@ export type DebugCoverageResponse = {
   guest_evidence: DebugCoverageSignal;
   oldest_telemetry_at?: string;
   latest_telemetry_at?: string;
+  /**
+   * Requests the app's request analytics counted in the window's whole
+   * minutes that the debugger did not keep, because the plan's
+   * per-minute debugger row limit turned them away. A lower bound;
+   * absent when request analytics do not cover the window.
+   *
+   */
+  requests_not_retained?: number;
 };
 

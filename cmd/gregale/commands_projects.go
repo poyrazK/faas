@@ -21,7 +21,7 @@ import (
 
 func cmdProjects(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects <list|info|update|environments|rm|rollback|preview-secrets>", "projects")
+		PrintUsage(os.Stderr, "usage: gregale projects <list|info|update|environments|rm|rollback|preview-secrets|import|export>", "projects")
 		return 1
 	}
 	switch args[0] {
@@ -39,6 +39,10 @@ func cmdProjects(args []string) int {
 		return cmdProjectsRollback(args[1:])
 	case "preview-secrets":
 		return cmdProjectsPreviewSecrets(args[1:])
+	case "import":
+		return cmdProjectsImport(args[1:])
+	case "export":
+		return cmdProjectsExport(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown projects subcommand %q\n", args[0])
 		return unknownSubcommandChoices(os.Stderr, "projects", nestedCliCommand("projects"), args[0])
@@ -47,14 +51,20 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|secrets|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|delete|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|secrets|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
 		return 1
+	}
+	// Environment branches are dark (envbranch.go); hidden, the verb is unknown.
+	if args[0] == "branch" && environmentBranchCLI() {
+		return cmdProjectsEnvironmentBranch(args[1:])
 	}
 	switch args[0] {
 	case "list", "ls":
 		return cmdProjectsEnvironmentsList(args[1:])
 	case "create":
 		return cmdProjectsEnvironmentCreate(args[1:])
+	case "delete", "rm":
+		return cmdProjectsEnvironmentDelete(args[1:])
 	case "protect":
 		return cmdProjectsEnvironmentProtection(args[1:], true)
 	case "unprotect":
@@ -1015,6 +1025,35 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	return renderProjectEnvironment(environment)
 }
 
+// cmdProjectsEnvironmentDelete removes a non-production environment (Hunt 32
+// H32-36: the API existed but the CLI had no command, so a stage environment
+// could not be removed). apid refuses protected and production environments
+// and ones with live or in-progress deployments.
+func cmdProjectsEnvironmentDelete(args []string) int {
+	flags, positional := splitArgsForFlags(args, "yes")
+	fs := newFlagSet("projects-environments-delete", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "confirm environment deletion")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !*yes {
+		PrintUsage(os.Stderr, "usage: gregale environment delete <project-slug> <environment-slug> --yes", "projects environments")
+		return 1
+	}
+	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
+		return printErr("Invalid environment", fmt.Errorf("project and environment slugs must use lowercase letters, numbers, and internal hyphens"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	if err := client.DeleteProjectEnvironment(context.Background(), positional[0], positional[1]); err != nil {
+		return printErr("Could not delete environment", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"project": positional[0], "environment": positional[1], "deleted": true}))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Deleted environment %s of project %s\n", positional[1], positional[0])
+	return 0
+}
+
 func cmdProjectsEnvironmentProtection(args []string, protected bool) int {
 	if len(args) != 2 || !api.ValidProjectSlug(args[0]) || !api.ValidProjectEnvironmentSlug(args[1]) {
 		verb := "unprotect"
@@ -1085,11 +1124,32 @@ func cmdProjectsInfo(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	project, err := client.GetProject(context.Background(), args[0])
+	ctx := context.Background()
+	project, err := client.GetProject(ctx, args[0])
 	if err != nil {
 		return printErr("Could not read project", err)
 	}
-	return renderProject(project)
+	if jsonOutput {
+		return renderProject(project)
+	}
+	return renderProjectParked(project, parkedProjectApps(ctx, client, project.Workloads))
+}
+
+// parkedProjectApps loads the parked workloads' apps so project info can say
+// why each is parked. The project response carries only the app status, and
+// printed the parked app's release as plain "live" (2026-11-12 agent
+// feedback). Best effort: an app that fails to load renders as "parked".
+func parkedProjectApps(ctx context.Context, client *Client, workloads []api.ProjectWorkloadResponse) map[string]api.AppResponse {
+	out := make(map[string]api.AppResponse)
+	for _, workload := range workloads {
+		if workload.Status != appStatusParked {
+			continue
+		}
+		if app, err := client.GetApp(ctx, workload.Slug); err == nil {
+			out[workload.Slug] = app
+		}
+	}
+	return out
 }
 
 func cmdProjectsUpdate(args []string) int {
@@ -1169,7 +1229,11 @@ func cmdProjectsRemove(args []string) int {
 			"deleting %s detaches its services, and these calls stop working: %s. Delete the services instead (gregale app delete), or add --detach-services if they no longer call each other by name",
 			positional[0], strings.Join(calls, ", ")))
 	}
-	if err := client.DeleteProject(context.Background(), positional[0]); err != nil {
+	deleteProject := client.DeleteProject
+	if *detach {
+		deleteProject = client.DeleteProjectDetachingServices
+	}
+	if err := deleteProject(context.Background(), positional[0]); err != nil {
 		return printErr("Could not delete project", err)
 	}
 	if jsonOutput {
@@ -1193,19 +1257,45 @@ func projectServiceCalls(workloads []api.ProjectWorkloadResponse) []string {
 }
 
 func renderProject(project api.ProjectResponse) int {
+	return renderProjectParked(project, nil)
+}
+
+// renderProjectParked renders a project; parked maps a parked workload's slug
+// to its app, for the parked reason.
+func renderProjectParked(project api.ProjectResponse, parked map[string]api.AppResponse) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(project))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  repository: %s\n  production branch: %s\n  scan source: %s\n  workloads: %d\n  exclusions: %s\n  last deploy: %s\n  last build: %s\n",
 		project.Slug, orDash(project.RepoFullName), orDash(project.ProductionBranch), orDash(project.ScanSource),
 		len(project.Workloads), orDash(strings.Join(project.Exclusions, ", ")), orDash(project.LastReconciliationStatus), orDash(project.LastBuildStatus))
-	printProjectServices(osStdout, project.Workloads)
+	printProjectServices(osStdout, project.Workloads, parked)
+	for _, workload := range project.Workloads {
+		if app, ok := parked[workload.Slug]; ok {
+			writeParkedNotice(osStdout, app)
+		}
+	}
 	return 0
 }
 
 // printProjectServices lists each service with its app, its latest
 // deployment and the services it declares it calls (ADR-20261026193018).
-func printProjectServices(w io.Writer, workloads []api.ProjectWorkloadResponse) {
+// projectWorkloadDeploymentStatus is the DEPLOYMENT cell: the latest
+// release's status, plus the parked state when the app is parked, so a
+// liveness-parked service no longer reads as plain "live".
+func projectWorkloadDeploymentStatus(workload api.ProjectWorkloadResponse, parked map[string]api.AppResponse) string {
+	status := orDash(workload.DeploymentStatus)
+	if workload.Status != appStatusParked {
+		return status
+	}
+	label := "parked"
+	if app, ok := parked[workload.Slug]; ok {
+		label = appParkedLabel(app)
+	}
+	return status + " (" + label + ")"
+}
+
+func printProjectServices(w io.Writer, workloads []api.ProjectWorkloadResponse, parked map[string]api.AppResponse) {
 	if len(workloads) == 0 {
 		return
 	}
@@ -1214,7 +1304,7 @@ func printProjectServices(w io.Writer, workloads []api.ProjectWorkloadResponse) 
 	_, _ = fmt.Fprintln(tw, "    NAME\tAPP\tDEPLOYMENT\tCALLS")
 	for _, workload := range workloads {
 		_, _ = fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\n", orDash(workload.WorkloadName), workload.Slug,
-			orDash(workload.DeploymentStatus), orDash(strings.Join(workload.DependsOn, ", ")))
+			projectWorkloadDeploymentStatus(workload, parked), orDash(strings.Join(workload.DependsOn, ", ")))
 	}
 	_ = tw.Flush()
 }

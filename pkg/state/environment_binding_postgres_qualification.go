@@ -41,7 +41,15 @@ type EnvironmentQualificationPostgresStore interface {
 }
 
 func candidatePostgresAccessSupported(access string) bool {
-	return access == "read_write" || access == "read_only" || access == "migration"
+	return access == "read_write" || access == "read_only" || access == "migration" || access == "session"
+}
+
+// candidatePostgresAccessSelfQualified reports the access modes whose
+// privilege contracts carry their own qualification evidence (data_api,
+// ADR-650; auth, ADR-1190). The ACL probe cannot judge them, so they do not
+// gate a candidate's deadline (ADR-20261110120000).
+func candidatePostgresAccessSelfQualified(access string) bool {
+	return access == "data_api" || access == "auth"
 }
 
 func qualificationPostgresReceiptKey(requestID string, attempt int64, bindingID string, generation, delivery int64) string {
@@ -68,6 +76,9 @@ func candidatePostgresEvidenceDeadline(request EnvironmentWorkloadQualificationR
 	receipts map[string]time.Time, captured, restored RuntimeConfigInputs, age time.Duration, now time.Time) (time.Time, error) {
 	var until time.Time
 	for _, d := range deliveries {
+		if candidatePostgresAccessSelfQualified(d.Access) {
+			continue
+		}
 		if !candidatePostgresAccessSupported(d.Access) || !d.Settled || d.DeliveryVersion < 1 {
 			return time.Time{}, ErrBindingReleaseRequired
 		}

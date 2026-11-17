@@ -432,6 +432,7 @@ func buildCapacityReport(
 				RequestCountTotal:   in.GetRequestCountTotal(),
 				LastRequestAt:       in.GetLastRequestAt(),
 				NetTxBytes:          in.GetNetTxBytes(),
+				InternalTxBytes:     in.GetInternalTxBytes(),
 				NetRxBytes:          in.GetNetRxBytes(),
 				OpenConns:           in.GetOpenConns(),
 				DiskUsedBytes:       in.GetDiskUsedBytes(),
@@ -448,6 +449,7 @@ func buildCapacityReport(
 				QuietLastPauseStartedAt:          in.GetQuietLastPauseStartedAt(),
 				QuietLastPauseEndedAt:            in.GetQuietLastPauseEndedAt(),
 				QuietPausedNsTotal:               in.GetQuietPausedNsTotal(),
+				IdleLadderLevel:                  in.GetIdleLadderLevel(),
 			}
 			report.Instances = append(report.Instances, row)
 		}

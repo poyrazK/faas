@@ -145,6 +145,10 @@ type InternalReverseProxy struct {
 	Logger              *slog.Logger
 	DialTimeout         time.Duration
 	TrustedIngressCIDRs []netip.Prefix
+	// AllowForwardedHTTP serves app requests a trusted ingress received over
+	// plain http instead of redirecting them to https
+	// (FAAS_GATEWAY_ALLOW_PLAIN_HTTP; see redirectForwardedHTTP).
+	AllowForwardedHTTP bool
 	// Drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker shared with Handler + TraceHandler + the
 	// control mux. nil = drain disabled. Wired via WithInFlightTracker
@@ -566,6 +570,9 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	defer done()
 
+	if p.redirectForwardedHTTP(w, r) {
+		return
+	}
 	if p.Dialer == nil || p.Target == nil {
 		// Wiring bug — log at ERROR because the customer sees the
 		// failure on the public listener.
@@ -886,7 +893,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
-	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, touch); err != nil && !shutdownEnded.Load() && (!errors.Is(err, context.Canceled) || trafficRevocationCause(bodyCtx) != nil) {
+	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, resp.ContentLength, touch); err != nil && !shutdownEnded.Load() && (!errors.Is(err, context.Canceled) || trafficRevocationCause(bodyCtx) != nil) {
 		p.logger().Warn("internal body copy failed",
 			"target", p.Target.String(),
 			"err", err)
@@ -984,7 +991,7 @@ func isHopByHop(h string) bool {
 // The function owns src's lifecycle: defer Body.Close in the
 // caller is redundant after this change.
 func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (int64, error) {
-	return copyResponseBodyWithActivity(ctx, dst, src, nil)
+	return copyResponseBodyWithActivity(ctx, dst, src, -1, nil)
 }
 
 // responseCopyBuffers recycles copyResponseBodyWithActivity's 32 KiB
@@ -996,7 +1003,17 @@ var responseCopyBuffers = sync.Pool{New: func() any {
 	return &buf
 }}
 
-func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, activity func()) (int64, error) {
+// copyResponseBodyWithActivity is copyResponseBody that calls activity after
+// each write.
+//
+// length is the body's declared length, or -1 when unknown. The chunk that
+// completes a declared length is not flushed on its own: the handler returns
+// right after, and the server sends those bytes with the end of the response
+// in one write. Over HTTP/2 each flush is its own TLS record and write
+// syscall, so a small response took three writes (headers, data, end of
+// stream) instead of one. A body of unknown length (SSE, chunked streams)
+// still flushes every chunk.
+func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, length int64, activity func()) (int64, error) {
 	if w, ok := dst.(http.ResponseWriter); ok {
 		stop, err := armResponseWriteContext(ctx, w)
 		if err != nil {
@@ -1088,7 +1105,7 @@ func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.Rea
 				if activity != nil && written > 0 {
 					activity()
 				}
-				if flusher != nil {
+				if flusher != nil && (length < 0 || total < length) {
 					flusher.Flush()
 				}
 			}
@@ -1227,6 +1244,31 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 		}
 	}
 	return clientIP.String(), proto
+}
+
+// redirectForwardedHTTP sends a 308 to https when a trusted ingress says the
+// client spoke plain http, as the platform hosts and custom domains already
+// do: an app must not evaluate credentials sent in cleartext or serve its
+// pages over http. It acts only on an explicit forwarded "http" from a
+// trusted peer, so probes and internal callers without forwarding headers
+// are served as before.
+func (p *InternalReverseProxy) redirectForwardedHTTP(w http.ResponseWriter, r *http.Request) bool {
+	// The forwarded scheme decides, not r.TLS: Cloudflare reaches a compute
+	// edge over mTLS even when the visitor used plain http.
+	if p.AllowForwardedHTTP || !TrustedIngressPeer(r, p.TrustedIngressCIDRs) {
+		return false
+	}
+	values := r.Header.Values("X-Forwarded-Proto")
+	if len(values) != 1 || !strings.EqualFold(strings.TrimSpace(values[0]), "http") || strings.HasPrefix(r.URL.Path, acmeChallengePrefix) {
+		return false
+	}
+	host := hostname(r.Host)
+	if host == "" {
+		return false
+	}
+	w.Header().Set("Location", "https://"+host+r.URL.RequestURI())
+	w.WriteHeader(http.StatusPermanentRedirect)
+	return true
 }
 
 // TrustedIngressPeer reports whether r's direct peer is a configured ingress

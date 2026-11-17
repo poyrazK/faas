@@ -28,10 +28,11 @@ import (
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
 	"CompleteSnapshotPrimeHandoff":           true,
+	"GetEdgeRuleByID":                        true,
 	"ListEdgeRulesForApp":                    true,
 	"ApplyConfigRestore":                     true,
-	"EvaluateAutomationFailurePolicies":      true,
-	"GetAutomationFailurePolicy":             true,
+	"EvaluateStoredWorkflowFailurePolicies":  true,
+	"GetStoredWorkflowFailurePolicy":         true,
 	"DefaultCustomDomain":                    true,
 	"DefaultCustomDomains":                   true,
 	"DeploymentWorkerDrainStatus":            true,
@@ -46,6 +47,7 @@ var memDispatched = map[string]bool{
 	"RestoreAppWithActivity":                 true,
 	"AppTaskByID":                            true,
 	"LiveDeployment":                         true,
+	"GetObjectBucketVersioning":              true,
 	"RuntimeConfigReceiptRequired":           true,
 	"ResolveEnvironmentGitOpsServiceBinding": true,
 
@@ -198,6 +200,7 @@ var memDispatched = map[string]bool{
 	"RouteInsightCandidateApps":                               true,
 	"RouteInsightsDetectedSince":                              true,
 	"RouteMonitorIncidentsSince":                              true,
+	"AIBudgetAlertsSince":                                     true,
 	"RouteHealthHoldsSince":                                   true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
@@ -302,6 +305,15 @@ var memDispatched = map[string]bool{
 	"CountOpenAPIDocsByAccount":                     true,
 }
 
+func (s *Mem) GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error) {
+	if over, ok := s.over.(interface {
+		GetEdgeRuleByID(context.Context, string) (state.EdgeRule, error)
+	}); ok {
+		return over.GetEdgeRuleByID(ctx, id)
+	}
+	return s.MemStore.GetEdgeRuleByID(ctx, id)
+}
+
 func (s *Mem) ListEdgeRulesForApp(ctx context.Context, app string) ([]state.EdgeRule, error) {
 	if over, ok := s.over.(interface {
 		ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRule, error)
@@ -320,22 +332,22 @@ func (s *Mem) ApplyConfigRestore(ctx context.Context, restore state.ConfigRestor
 	return s.MemStore.ApplyConfigRestore(ctx, restore)
 }
 
-func (s *Mem) EvaluateAutomationFailurePolicies(ctx context.Context, owner, after string, limit int, now time.Time) (string, error) {
+func (s *Mem) EvaluateStoredWorkflowFailurePolicies(ctx context.Context, owner, after string, limit int, now time.Time) (string, error) {
 	if o, ok := s.over.(interface {
-		EvaluateAutomationFailurePolicies(context.Context, string, string, int, time.Time) (string, error)
+		EvaluateStoredWorkflowFailurePolicies(context.Context, string, string, int, time.Time) (string, error)
 	}); ok {
-		return o.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+		return o.EvaluateStoredWorkflowFailurePolicies(ctx, owner, after, limit, now)
 	}
-	return s.MemStore.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+	return s.MemStore.EvaluateStoredWorkflowFailurePolicies(ctx, owner, after, limit, now)
 }
 
-func (s *Mem) GetAutomationFailurePolicy(ctx context.Context, appID, name string) (api.AutomationFailurePolicyResponse, error) {
+func (s *Mem) GetStoredWorkflowFailurePolicy(ctx context.Context, appID, name string) (api.StoredWorkflowFailurePolicyResponse, error) {
 	if o, ok := s.over.(interface {
-		GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error)
+		GetStoredWorkflowFailurePolicy(context.Context, string, string) (api.StoredWorkflowFailurePolicyResponse, error)
 	}); ok {
-		return o.GetAutomationFailurePolicy(ctx, appID, name)
+		return o.GetStoredWorkflowFailurePolicy(ctx, appID, name)
 	}
-	return s.MemStore.GetAutomationFailurePolicy(ctx, appID, name)
+	return s.MemStore.GetStoredWorkflowFailurePolicy(ctx, appID, name)
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -408,6 +420,15 @@ func (s *Mem) MCPTaskPromotionHolds(ctx context.Context, ids []string) (map[stri
 		return o.MCPTaskPromotionHolds(ctx, ids)
 	}
 	return s.MemStore.MCPTaskPromotionHolds(ctx, ids)
+}
+
+func (s *Mem) GetObjectBucketVersioning(ctx context.Context, account, app, bucket string) (state.ObjectBucketVersioning, error) {
+	if o, ok := s.over.(interface {
+		GetObjectBucketVersioning(context.Context, string, string, string) (state.ObjectBucketVersioning, error)
+	}); ok {
+		return o.GetObjectBucketVersioning(ctx, account, app, bucket)
+	}
+	return s.MemStore.GetObjectBucketVersioning(ctx, account, app, bucket)
 }
 
 func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
@@ -809,6 +830,15 @@ func (s *Mem) RouteInsightsDetectedSince(p0 context.Context, p1 string, p2 time.
 		return o.RouteInsightsDetectedSince(p0, p1, p2, p3)
 	}
 	return s.MemStore.RouteInsightsDetectedSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) AIBudgetAlertsSince(p0 context.Context, p1, p2 string, p3 time.Time, p4 int) ([]state.AIBudgetAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		AIBudgetAlertsSince(context.Context, string, string, time.Time, int) ([]state.AIBudgetAlert, int64, error)
+	}); ok {
+		return o.AIBudgetAlertsSince(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.AIBudgetAlertsSince(p0, p1, p2, p3, p4)
 }
 
 func (s *Mem) RouteMonitorIncidentsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteMonitorIncidentAlert, int64, error) {
@@ -3383,6 +3413,7 @@ func (s *Pg) WithInvocationVersionSnapshot(p0 context.Context, p1 func(state.Inv
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"RequestTelemetryAnalyticsTimeseriesGrouped": true,
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
 	"OperatorAlertCollectionHistory":                true,
@@ -5035,4 +5066,13 @@ func (s *Pg) SetDeploymentFailed(ctx context.Context, id, code, detail string) (
 		return o.SetDeploymentFailed(ctx, id, code, detail)
 	}
 	return s.PgStore.SetDeploymentFailed(ctx, id, code, detail)
+}
+
+func (s *Store) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
+	if override, ok := s.over.(interface {
+		RequestTelemetryAnalyticsTimeseriesGrouped(context.Context, sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error)
+	}); ok {
+		return override.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
+	}
+	return s.Store.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
 }

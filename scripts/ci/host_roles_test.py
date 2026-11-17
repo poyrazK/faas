@@ -184,6 +184,12 @@ class ChangedTest(unittest.TestCase):
                        "    - role: postgres\n      when:\n        - faas_postgres_enabled | default(true) | bool\n"
                        "        - faas_cp_converge_roles is none or 'postgres' in faas_cp_converge_roles\n")),
          False, []),
+        ("the compute role selection condition is not role content", "compute_nodes",
+         edit("deploy/ansible/bootstrap.yml", BOOTSTRAP
+              .replace("    - role: vmmd_service\n",
+                       "    - role: vmmd_service\n"
+                       "      when: faas_join_converge_roles | default(none) is none or 'vmmd_service' in faas_join_converge_roles\n")),
+         False, []),
         ("an included role's change selects its includer", "compute_nodes",
          edit("deploy/ansible/roles/vmmd_jail/tasks/main.yml", "- debug: {msg: jail2}\n"), False, ["vmmd_service"]),
         ("a role shared by both plays changes in both", "compute_nodes",

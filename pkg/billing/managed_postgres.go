@@ -70,6 +70,17 @@ type ManagedPostgresChargeStep struct {
 	UsedStorageByteSeconds   int64
 	StoragePoolBytes         int64
 	BilledStorageByteSeconds int64
+
+	// Database egress past each egress scope's own allowance: a database and
+	// its restore copies share one (ADR-20261110160000 slice 3, amendments
+	// 2026-11-11 and 2026-11-13). AppEgressBytes is always zero since apps
+	// stopped sharing the databases' allowance; it is kept for the stored
+	// step's column and not sent to the provider. Fields mirror
+	// managedpostgres.OverageChargeStep, which converts to this type.
+	UsedEgressBytes      int64
+	AppEgressBytes       int64
+	EgressAllowanceBytes int64
+	BilledEgressBytes    int64
 }
 
 // ManagedPostgresChargeSink is the provider seam for managed PostgreSQL

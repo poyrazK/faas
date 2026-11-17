@@ -1,4 +1,5 @@
 import { authenticatedFetch, dataAPIBase, requestIdOf, type DataClientOptions } from './client-fetch.js'
+import { storageUploads, type StorageUploads } from './storage-uploads.js'
 
 /**
  * A stored file's row in storage_objects (ADR-20261021101510). The owner's
@@ -13,6 +14,8 @@ export type StorageObject = Readonly<{
   content_type: string
   created_at: string
   updated_at: string
+  /** Opaque version for conditional replacement; absent on older runtimes. */
+  version?: string | null
 }>
 
 /** A refused or failed storage request, with the Data API's stable code. */
@@ -20,20 +23,25 @@ export class StorageError extends Error {
   readonly status: number
   readonly code: string
   readonly requestId: string | null
+  /** Preserve the upload session and reconcile its receipt before retrying. */
+  readonly uncertain: boolean
   constructor(status: number, code: string, requestId: string | null) {
     super(`storage request failed: ${code} (${status})`)
     this.name = 'StorageError'
     this.status = status
     this.code = code
     this.requestId = requestId
+    this.uncertain = code === 'storage_commit_unknown'
   }
 }
 
 export type StorageUploadBody = Blob | ArrayBuffer | ArrayBufferView | string
 
-export type StorageBucket = {
+export type StorageBucket = StorageUploads & {
   /** Stores a file, replacing any file of the same name the caller may update. */
   upload(name: string, body: StorageUploadBody, options?: { contentType?: string; signal?: AbortSignal }): Promise<StorageObject>
+  /** Read the current opaque version before a conditional replacement. */
+  head(name: string, options?: { signal?: AbortSignal }): Promise<{ size: number; contentType: string; version: string | null }>
   /** Fetches a file; read it with blob(), arrayBuffer() or its body stream. */
   download(name: string, options?: { range?: { start: number; end?: number }; signal?: AbortSignal }): Promise<Response>
   /** A link that works for 60 seconds without a token, for img, video and download links. */
@@ -81,6 +89,7 @@ export function createStorageClient(options: DataClientOptions): StorageClient {
   return {
     from(bucket) {
       return {
+        ...storageUploads(bucket, call, name => objectPath(bucket, name)),
         async upload(name, body, { contentType, signal } = {}) {
           const type = contentType ?? (typeof Blob !== 'undefined' && body instanceof Blob && body.type ? body.type : 'application/octet-stream')
           const response = await call(`object/${objectPath(bucket, name)}`, { method: 'PUT', body: body as BodyInit, headers: { 'Content-Type': type }, signal })
@@ -93,6 +102,11 @@ export function createStorageClient(options: DataClientOptions): StorageClient {
             headers.Range = `bytes=${range.start}-${range.end ?? ''}`
           }
           return call(`object/${objectPath(bucket, name)}`, { method: 'GET', headers, signal })
+        },
+        async head(name, { signal } = {}) {
+          const response = await call(`object/${objectPath(bucket, name)}`, { method: 'HEAD', signal })
+          const version = response.headers.get('x-gregale-storage-version')
+          return { size: Number(response.headers.get('content-length')), contentType: response.headers.get('content-type') ?? 'application/octet-stream', version: version && /^[a-f0-9]{32}$/.test(version) ? version : null }
         },
         async signedUrl(name, { signal } = {}) {
           const response = await call(`sign/${objectPath(bucket, name)}`, { method: 'POST', signal })

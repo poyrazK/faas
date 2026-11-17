@@ -152,6 +152,14 @@ func TestLowTrafficAdvanceAllowed(t *testing.T) {
 		{name: "candidate probe 5xx", d: sampleHold, mutate: func(o *CircuitBreakerObservation) {
 			o.Candidate.ProbeRequests, o.Candidate.ProbeServerErrors = 5, 1
 		}},
+		// ADR-20261028110044 amendment 7: the predecessor answered probes the
+		// candidate never answered, as when the candidate cannot wake.
+		{name: "candidate silent to probes its predecessor answered", d: sampleHold, mutate: func(o *CircuitBreakerObservation) {
+			o.Stable.ProbeRequests = 20
+		}},
+		{name: "both sides answered probes", d: sampleHold, mutate: func(o *CircuitBreakerObservation) {
+			o.Stable.ProbeRequests, o.Candidate.ProbeRequests = 20, 18
+		}, want: true},
 		{name: "oom signal unavailable", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.OOMSignalAvailable = false }},
 		{name: "oom kill", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.OOMKills = 1 }},
 		{name: "liveness restart", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.CandidateLivenessRestarts = 1 }},

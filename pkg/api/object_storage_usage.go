@@ -203,4 +203,17 @@ type ObjectStorageUsageResponse struct {
 	Charges     *ObjectStorageCharge `json:"charges,omitempty"`
 	BillingMode string               `json:"billing_mode"`
 	BillingFrom *time.Time           `json:"billing_from,omitempty"`
+	// OverCeiling is set while the account stores more than its ceiling:
+	// the excess is deleted on DeletionScheduledAt unless the account gets
+	// back under it first (ADR-20261111123000).
+	OverCeiling *ObjectStorageOverCeilingDeletion `json:"over_ceiling,omitempty"`
+}
+
+// ObjectStorageOverCeilingDeletion is the deletion an account storing more
+// than its ceiling faces (ADR-20261111123000). ExcessBytes is what it stored
+// above the ceiling at the last sweep.
+type ObjectStorageOverCeilingDeletion struct {
+	OverCeilingSince    time.Time `json:"over_ceiling_since"`
+	DeletionScheduledAt time.Time `json:"deletion_scheduled_at"`
+	ExcessBytes         int64     `json:"excess_bytes"`
 }

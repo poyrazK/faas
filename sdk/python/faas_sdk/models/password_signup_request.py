@@ -6,24 +6,28 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="PasswordSignupRequest")
 
 
 @_attrs_define
 class PasswordSignupRequest:
-    """Email + password for signup. Same shape as PasswordLoginRequest so the create-or-claim race detection reuses the
-    verifier.
-
-    """
+    """Email + password for signup. Same shape as PasswordLoginRequest with an optional referral code."""
 
     email: str
     password: str
+    referral_code: str | Unset = UNSET
+    """Optional six-character customer or salesperson referral code; case-insensitive. Requires the referral
+    program to be enabled."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         email = self.email
 
         password = self.password
+
+        referral_code = self.referral_code
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -33,6 +37,8 @@ class PasswordSignupRequest:
                 "password": password,
             }
         )
+        if referral_code is not UNSET:
+            field_dict["referral_code"] = referral_code
 
         return field_dict
 
@@ -43,9 +49,12 @@ class PasswordSignupRequest:
 
         password = d.pop("password")
 
+        referral_code = d.pop("referral_code", UNSET)
+
         password_signup_request = cls(
             email=email,
             password=password,
+            referral_code=referral_code,
         )
 
         password_signup_request.additional_properties = d

@@ -24,10 +24,12 @@ package apidserver
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,9 +80,10 @@ type cliAuthHandlers struct {
 // (cliAuthChain, server.go).
 func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request) {
 	_, deviceCodes := h.srv.store.(state.CliAuthDeviceCodeStore)
-	code, hash, device, err := mintBrowserAuthCode(r, deviceCodes)
+	code, hash, device, loopbackPort, challenge, err := mintBrowserAuthCode(r, deviceCodes)
 	if errors.Is(err, errBrowserAuthInput) {
-		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid authorization", "purpose must be empty, mcp-read, or mcp-write"))
+		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid authorization",
+			"purpose must be empty, mcp-read, or mcp-write; code_challenge needs device and 64 hex characters"))
 		return
 	}
 	if err != nil {
@@ -89,18 +92,23 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 		return
 	}
 	expiresAt := time.Now().Add(cliAuthCodeTTL)
-	deviceCode, err := h.issueCliAuthCode(r, hash, device, expiresAt)
+	deviceCode, err := h.issueCliAuthCode(r, hash, device, challenge, expiresAt)
 	if err != nil {
 		h.log.Error("cli_auth.issue", "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not persist code"))
 		return
 	}
+	h.recordCliAuthRequester(r, hash)
 	url := strings.TrimRight(h.urlBase, "/") + cliAuthPath + "?code=" + code
+	if loopbackPort != 0 {
+		url += "&port=" + strconv.Itoa(loopbackPort)
+	}
 	writeJSON(w, http.StatusOK, api.CliAuthCodeResponse{
 		Code:       code,
 		URL:        url,
 		ExpiresAt:  expiresAt.UTC().Format(time.RFC3339),
 		DeviceCode: deviceCode,
+		Loopback:   loopbackPort != 0,
 	})
 }
 
@@ -108,8 +116,9 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 // 32-byte device code, stores only its hash, and returns it: the row can
 // then be exchanged only with that device code, never with the short code
 // the user types (bug hunt 2026-10-28 H67). Without device, the code was
-// minted long enough to exchange by itself (mintBrowserAuthCode).
-func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device bool, expiresAt time.Time) (string, error) {
+// minted long enough to exchange by itself (mintBrowserAuthCode). A
+// challenge binds the row to the minting CLI's verifier as well (F10-3).
+func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device bool, challenge []byte, expiresAt time.Time) (string, error) {
 	if !device {
 		return "", h.srv.store.IssueCliAuthCode(r.Context(), hash, expiresAt)
 	}
@@ -121,7 +130,7 @@ func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device 
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
-	if err := devices.IssueCliAuthDeviceCode(r.Context(), hash, api.HashToken(raw), expiresAt); err != nil {
+	if err := devices.IssueCliAuthDeviceCode(r.Context(), hash, api.HashToken(raw), challenge, expiresAt); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(raw), nil
@@ -137,7 +146,17 @@ func (h *cliAuthHandlers) consumeCliAuthExchange(r *http.Request, req api.CliAut
 		if raw == nil || !ok {
 			return "", "", false, nil
 		}
-		status, accountID, err = devices.ConsumeCliAuthDeviceCode(r.Context(), api.HashToken(raw))
+		// The verifier's hash is what the CLI sent as its challenge.
+		var verifierHash []byte
+		if req.CodeVerifier != "" {
+			verifier := decodeCliAuthSecret(req.CodeVerifier)
+			if verifier == nil {
+				return "", "", false, nil
+			}
+			sum := sha256.Sum256(verifier)
+			verifierHash = sum[:]
+		}
+		status, accountID, err = devices.ConsumeCliAuthDeviceCode(r.Context(), api.HashToken(raw), verifierHash)
 		return status, accountID, true, err
 	}
 	hash, ok := normalizeCliAuthCode(req.Code)
@@ -156,7 +175,13 @@ func (h *cliAuthHandlers) consumeCliAuthExchange(r *http.Request, req api.CliAut
 // decodeCliDeviceCode decodes a hex device code, or returns nil for a
 // malformed one.
 func decodeCliDeviceCode(deviceCode string) []byte {
-	raw, err := hex.DecodeString(strings.TrimSpace(deviceCode))
+	return decodeCliAuthSecret(deviceCode)
+}
+
+// decodeCliAuthSecret decodes a 32-byte value sent as 64 hex characters (a
+// device code, a code verifier or its SHA-256 challenge), or returns nil.
+func decodeCliAuthSecret(value string) []byte {
+	raw, err := hex.DecodeString(strings.TrimSpace(value))
 	if err != nil || len(raw) != 32 {
 		return nil
 	}
@@ -183,7 +208,7 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	status, accountID, ok, err := h.consumeCliAuthExchange(r, req)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid code", "code must be 16 hex characters (XXXX-XXXX-XXXX-XXXX), or device_code 64 hex characters"))
+			"Invalid code", "code must be 16 hex characters (XXXX-XXXX-XXXX-XXXX), or device_code (and any code_verifier) 64 hex characters"))
 		return
 	}
 	if err != nil {
@@ -241,6 +266,19 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("account lookup failed"))
 		return
 	}
+	// Each `gregale login` mints a 30-day full-access key; keep only the
+	// newest CLILoginKeysMax so logins on many machines (or a CLI that
+	// failed to revoke the key it replaced) cannot pile them up (F11-2).
+	if label == cliLoginKeyLabel {
+		h.srv.retireOldLoginKeys(r, acct, cliLoginKeyLabel, api.CLILoginKeysMax)
+	}
+	// The approval page can be phished (device-code phishing), so the
+	// owner learns about every credential it hands out.
+	what := credentialCLISignIn
+	if isMCPAuthCode(req.Code) {
+		what = credentialAgentSignIn
+	}
+	h.srv.noticeCredentialCreated(r, acct, what, label)
 	writeJSON(w, http.StatusOK, api.CliAuthExchangeResponse{
 		Plaintext: plaintext,
 		KeyID:     k.ID,
@@ -321,6 +359,10 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		h.renderPromotionApprovalPage(w, r)
 		return
 	}
+	if r.URL.Query().Has("agent_approval") {
+		h.renderAgentApprovalPage(w, r)
+		return
+	}
 	if r.URL.Query().Has("secret") {
 		h.renderSecretEntryPage(w, r)
 		return
@@ -345,6 +387,9 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	// the POST handler can hash it. normalizeCliAuthCode strips the
 	// dash and uppercases; we put the hex back together.
 	raw := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(r.URL.Query().Get("code")), "-", ""))
+	if h.cliApprovalRefused(w, r, acct, raw) {
+		return
+	}
 
 	// Mint the CSRF token + authenticated cookie bound to this account.
 	token, err := middleware.IssueForAuthenticated(h.srv.sessions, "cli-auth", acct.ID)
@@ -364,12 +409,18 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	})
 
 	title := "Authorize CLI session"
-	// A CLI code is typed from the terminal, never carried from the link
-	// into the form, so a link someone sent cannot authorize their
-	// terminal. MCP codes arrive through the bridge's own OAuth redirect.
+	// A typed-flow CLI code is typed from the terminal, never carried from
+	// the link into the form, so a link someone sent cannot authorize their
+	// terminal. A one-click (loopback) code rides in the form because its
+	// approval sends the new device code to this browser's own machine, not
+	// to the terminal that minted it (ADR-20261111170000). MCP codes arrive
+	// through the bridge's own OAuth redirect.
 	shownCode := ""
+	loopbackPort := cliAuthLoopbackPort(r.URL.Query().Get("port"), raw)
 	if isMCPAuthCode(raw) {
 		title = "Authorize MCP connection"
+		shownCode = raw
+	} else if loopbackPort != 0 {
 		shownCode = raw
 	}
 	orgs := h.mcpOrgChoices(r, acct.ID, raw)
@@ -382,6 +433,8 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 			"CSRFToken":       token,
 			"AccountEmail":    acct.Email,
 			"MCP":             isMCPAuthCode(raw),
+			"LoopbackPort":    loopbackPort,
+			"Request":         h.cliAuthRequest(r, hash),
 			"MCPCapabilities": mcpCapabilities(raw),
 			"MCPOrgs":         orgs,
 			"MCPProjects":     h.mcpProjectChoices(r, acct.ID, raw, orgs),
@@ -421,6 +474,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		h.postPromotionApprovalPage(w, r)
 		return
 	}
+	if r.PostForm.Has("agent_approval") {
+		h.postAgentApprovalPage(w, r)
+		return
+	}
 	if r.PostForm.Has("secret") {
 		h.postSecretEntryPage(w, r)
 		return
@@ -444,8 +501,15 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		h.renderCliAuthError(w, r, "Invalid form", "Please reload the page and try again.")
 		return
 	}
+	if h.cliApprovalRefused(w, r, acct, rawCode) {
+		return
+	}
 
 	if !h.bindMCPOrg(w, r, acct.ID, rawCode, hash) || !h.bindMCPProjects(w, r, acct.ID, rawCode, hash) {
+		return
+	}
+	if port := cliAuthLoopbackPort(r.PostForm.Get("port"), rawCode); port != 0 {
+		h.approveLoopbackCode(w, r, acct.ID, rawCode, hash, port)
 		return
 	}
 	// Atomically claim the code for this account. ClaimCliAuthCode
@@ -471,10 +535,30 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	// server, in this tab (ADR-20261028205920). The target never comes from
 	// the request, so the form field cannot redirect anywhere else.
 	if continueURL := h.srv.hostedMCPContinueURL(); continueURL != "" && isMCPAuthCode(rawCode) && r.PostForm.Get("return") == "mcp" {
-		http.Redirect(w, r, continueURL, http.StatusSeeOther)
+		h.continueMCPApproval(w, r, continueURL)
 		return
 	}
 	http.Redirect(w, r, cliAuthDashboard, http.StatusFound)
+}
+
+// Finish the native form before navigating from the console to the API origin
+// (ADR-20261116170000). A cross-origin 303 is blocked by form-action 'self' in
+// Chromium. The caller supplies only the configured hosted continuation URL.
+func (h *cliAuthHandlers) continueMCPApproval(w http.ResponseWriter, r *http.Request, target string) {
+	w.Header().Add("Vary", "Accept")
+	if !api.AcceptsHTML(r) {
+		http.Redirect(w, r, target, http.StatusSeeOther)
+		return
+	}
+	page := dashboard.Page{
+		Title: "Continue to agent review",
+		Body:  "cli_auth",
+		Data:  map[string]any{"MCP": true, "MCPContinueURL": target},
+	}
+	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
+		h.log.Error("cli_auth.render_mcp_continue", "err", err)
+		renderProblem(w, h.log, err)
+	}
 }
 
 // hostedMCPContinueURL is where the hosted MCP server continues a connection
@@ -490,11 +574,17 @@ func (s *server) hostedMCPContinueURL() string {
 // renderCliAuthError renders the cli_auth template with the error
 // flag set, so the form is replaced with a banner.
 func (h *cliAuthHandlers) renderCliAuthError(w http.ResponseWriter, r *http.Request, title, detail string) {
+	isMCP := isMCPAuthCode(r.FormValue("code"))
+	if isMCP {
+		// An earlier POST may have claimed the code even when the browser
+		// could not continue. Do not promise that nothing was authorized.
+		detail = "This connection attempt can no longer continue."
+	}
 	page := dashboard.Page{
 		Title: title,
 		Body:  "cli_auth",
 		Flash: detail,
-		Data:  map[string]any{"Error": true},
+		Data:  map[string]any{"Error": true, "MCP": isMCP},
 	}
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		h.log.Error("cli_auth.render_error", "err", err)

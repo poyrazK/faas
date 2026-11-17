@@ -295,13 +295,17 @@ func TestAuditEvents_ListEndpointRespectsSince(t *testing.T) {
 	if err := json.Unmarshal(listRec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode list: %v body=%s", err, listRec.Body.String())
 	}
-	// We expect exactly the "second" event to come back; the "first"
-	// was emitted before cutoff so it must be excluded.
-	if len(list.Events) != 1 {
-		t.Fatalf("got %d events, want 1 (only events at >= cutoff); events=%+v", len(list.Events), list.Events)
+	// We expect exactly the "second" key.created to come back; the "first"
+	// was emitted before cutoff so it must be excluded. Creating a key also
+	// records its credential notice (#6796), which this filter ignores.
+	var created []api.AuditEventResponse
+	for _, event := range list.Events {
+		if event.Kind == "key.created" {
+			created = append(created, event)
+		}
 	}
-	if list.Events[0].Kind != "key.created" {
-		t.Errorf("event[0].Kind = %q, want key.created", list.Events[0].Kind)
+	if len(created) != 1 {
+		t.Fatalf("got %d key.created events, want 1 (only events at >= cutoff); events=%+v", len(created), list.Events)
 	}
 }
 
@@ -1285,6 +1289,10 @@ func TestAuditEvents_AppDeletedEmitsEvent(t *testing.T) {
 	}
 	if data["slug"] != app.Slug {
 		t.Errorf("Data.slug = %v, want %s", data["slug"], app.Slug)
+	}
+	// prod 2026-11-15: the row named only "apid", not the key that deleted it.
+	if !strings.HasPrefix(found.Actor, "api:") || data["actor_key_id"] == nil || data["actor_via"] != "api" {
+		t.Errorf("actor = %q, data = %+v; want the API key that deleted the app", found.Actor, data)
 	}
 }
 

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5" // #nosec G501 -- verifies the S3 Content-MD5 wire checksum in a fake server.
 	"encoding/base64"
 	"encoding/xml"
@@ -422,5 +423,37 @@ func TestBackendFromEnvSelectsS3InSharedMode(t *testing.T) {
 func TestS3IsRemoteBackendKind(t *testing.T) {
 	if !IsRemoteBackendKind("s3") || !IsRemoteBackendKind(" S3 ") {
 		t.Fatal("s3 is not a remote backend kind")
+	}
+}
+
+// ADR-20261115180000: in defer mode an S3 node records the delete and never
+// sends DELETE, so its per-node key can go without the delete right.
+func TestS3DeferDeletesRecordsInsteadOfDeleting(t *testing.T) {
+	fake, srv := newFakeS3(t)
+	backend := newTestS3Backend(t, srv.URL, "")
+	ctx := context.Background()
+	key := "snap/0b8f5a8e-7c1e-4f3a-9d2b-1a2b3c4d5e6f/mem"
+	if err := backend.Put(ctx, key, strings.NewReader("m")); err != nil {
+		t.Fatal(err)
+	}
+	d := &recordingDeferrer{}
+	if n, err := DeferDeletes(backend, d); err != nil || n != 1 {
+		t.Fatalf("DeferDeletes = %d, %v; want the S3 store", n, err)
+	}
+	if err := backend.Delete(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.keys) != 1 || d.keys[0] != key {
+		t.Fatalf("recorded %v; want %q", d.keys, key)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for _, r := range fake.requests {
+		if strings.HasPrefix(r, http.MethodDelete) {
+			t.Fatalf("deferred delete reached the store: %v", fake.requests)
+		}
+	}
+	if _, ok := fake.objects["gregale-artifacts/"+key]; !ok {
+		t.Fatal("object gone after a deferred delete")
 	}
 }

@@ -318,9 +318,18 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	// PlacementClaimSubscriber stamps the owner (see emitAppCreated
 	// for the full architectural rationale + docs/adr/055).
 	app.NodeID = ""
+	// ADR-20261111114059: a service or worker an agent creates runs its
+	// replicas from the start, so their standing cost is charged here.
+	commitBudget, answered := s.chargeAppCreate(w, r, acct, app)
+	if answered {
+		return
+	}
 	// The store serializes quota counting/insertion across creators and holds
 	// the organization plan stable. Personal pools exclude company apps.
 	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
+	if err == nil {
+		commitBudget()
+	}
 	if err != nil {
 		var qe *state.QuotaError
 		switch {
@@ -340,7 +349,7 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
-	s.audit.Emit(r.Context(), "app.created", &acct.ID, map[string]any{
+	s.audit.Emit(r.Context(), "app.created", &acct.ID, mergeAgentAudit(map[string]any{
 		"app_id":                   created.ID,
 		"slug":                     created.Slug,
 		"type":                     string(created.Type),
@@ -351,7 +360,7 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		"runtime":                  created.Runtime,
 		"visibility":               string(created.Visibility),
 		"platform_tenant_required": created.PlatformTenantRequired,
-	})
+	}, r))
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponseWithContext(r.Context(), created, acct.Plan)
 	resp.Status = api.AppStatusUndeployed
@@ -413,7 +422,8 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if ram == 0 {
 		ram = api.StandaloneAppDefaultRAMMB(limits)
 		if req.VCPU != 0 {
-			// An explicit vCPU asks for the plan's joint RAM/vCPU shape.
+			// An explicit vCPU without RAM asks for the plan's largest
+			// instance, whose vCPUs it must match (ADR-20261109172421).
 			ram = limits.RAMMB
 		}
 	}
@@ -449,6 +459,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, prob
 	}
 	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
+		return state.App{}, prob
+	}
+	// A new app has no binding yet: only the ordinary cap applies.
+	if prob := unboundAfterRestoreBudgetProblem(lifecycle.AfterRestore); prob != nil {
 		return state.App{}, prob
 	}
 	if prob := lifecycleObserverLinkProblem(req.Slug, lifecycle); prob != nil {
@@ -535,15 +549,13 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.RouteMetricsEnabled != nil {
 		rm = *req.RouteMetricsEnabled
 	}
-	// Issue #470 / ADR-055: per-app two-tier snapshot flag. Apply
-	// the plan-level default when the request didn't carry one —
-	// a Pro customer's brand-new app gets warm.snap capture
-	// without an extra PATCH round-trip. Free/Hobby default to
-	// false (the only legal value on those tiers; apid rejects
-	// PATCH-true with 403 plan_warm_snapshot_not_allowed). The
-	// per-request override on Pro/Scale lets a customer opt out
-	// (e.g. an app they know runs cold every request).
-	warmEnabled := acct.Plan.WarmSnapshotEnabled()
+	// Issue #470 / ADR-055: per-app two-tier snapshot flag. New apps
+	// are off on every plan (ADR-20261110180000): a warm snapshot
+	// restores the memory and /tmp of an instance's first requests in
+	// every later wake, so a Pro/Scale app opts in with the request
+	// field or a later PATCH. Free/Hobby may not (403
+	// plan_warm_snapshot_not_allowed).
+	warmEnabled := acct.Plan.WarmSnapshotNewAppDefault()
 	if req.WarmSnapshotEnabled != nil {
 		warmEnabled = *req.WarmSnapshotEnabled
 	}
@@ -996,6 +1008,13 @@ func (s *server) handleDevSourceDeploy(w http.ResponseWriter, r *http.Request, a
 		s.notFound(w, "no such developer environment")
 		return
 	}
+	// A sync must not build into an environment the janitor or --stop has
+	// claimed for teardown; the CLI renews the session first and gets the
+	// same answer there.
+	if app.PreviewPrState == state.PreviewPrStateTearingDown || app.PreviewPrState == state.PreviewPrStateTornDown {
+		api.WriteProblem(w, api.ErrDevSessionTearingDown())
+		return
+	}
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 		api.WriteProblem(w, api.ErrValidation("developer source sync requires multipart/form-data"))
 		return
@@ -1111,11 +1130,13 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		ID:                        a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
 		ProjectID:  a.ProjectID,
 		Visibility: string(api.NormalizeAppVisibility(a.Visibility)),
-		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		RAMMB:      a.RAMMB, VCPU: api.SizeVCPUs(a.RAMMB), CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
 		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
 		RequestTimeoutS:     a.Manifest.RequestTimeoutS,
 		FunctionConcurrency: a.Manifest.FunctionConcurrency,
+		FunctionCallables:   a.Manifest.FunctionCallables,
+		FunctionInputSchema: a.Manifest.FunctionInputSchema,
 		// Issue #559: platform-advertised per-VM concurrency cap
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall
@@ -1154,6 +1175,7 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 			WorkerReplicas:               apiManifestFromState(a.Manifest).WorkerReplicas,
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			Warmup:                       a.Manifest.Warmup,
 			Pause:                        a.Manifest.Pause,
 			Profiling:                    a.Manifest.Profiling,
 			Tracing:                      a.Manifest.Tracing,
@@ -1324,6 +1346,11 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		// writes and reads this column; omitting it here made a successful
 		// PATCH appear to remain false to API clients.
 		MaintenanceMode: a.MaintenanceMode,
+		// Issue #475: the DTO documents eviction_priority as the field
+		// customers read to verify their PATCH; it was never projected, so
+		// `app get` showed best_effort after a successful switch to reserved
+		// (Hunt 32 H32-55).
+		EvictionPriority: state.EvictionPriorityOrBestEffort(a.EvictionPriority),
 	}
 }
 
@@ -1363,11 +1390,11 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	}
 	cpuMillicores := effectiveAppCPUMillicores(a, plan)
 	requestRateRPS, requestRateBurst := appRequestRateLimits(a, plan)
-	planCPUMaxMillicores := int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
+	// An instance's vCPUs and weight follow its size (ADR-20261109172421).
 	return api.AppEffectiveLimits{
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
 		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
-		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
+		GuestVCPUs:         api.SizeVCPUs(a.RAMMB), CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: api.DefaultAppCPUMillicores, CPUWeight: api.SizeCPUWeight(a.RAMMB),
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.PerInstanceConcurrency(perInstance),
 		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
 		AppRequestRateRPS: requestRateRPS, AppRequestBurst: requestRateBurst,
@@ -1376,6 +1403,8 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
 		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
 		RequestBodyMaxBytes:   plan.MaxRequestBodyBytes(),
+		IdleTimeoutS:          limits.EffectiveIdleTimeoutS(string(a.Type), a.IdleTimeoutS),
+		Pause:                 api.EffectivePause(a.Manifest.Pause, a.Type == state.AppTypeFunction),
 	}
 }
 
@@ -1390,12 +1419,9 @@ func appRequestRateLimits(a state.App, plan api.Plan) (rps, burst int) {
 	return api.EffectiveAppRequestRateLimits(plan, rpsOverride, burstOverride)
 }
 
-func effectiveAppCPUMillicores(a state.App, plan api.Plan) int {
+func effectiveAppCPUMillicores(a state.App, _ api.Plan) int {
 	if a.CPUMillicores > 0 {
 		return a.CPUMillicores
-	}
-	if limits, ok := api.LimitsFor(plan); ok && limits.CPUQuotaUS > 0 && limits.CPUPeriodUS > 0 {
-		return int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
 	}
 	return api.DefaultAppCPUMillicores
 }
@@ -1481,6 +1507,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 			Metric: p.Target.Metric,
 			Value:  p.Target.Value,
 			Name:   p.Target.Name,
+			Labels: p.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules — the read half of the same gap
@@ -1488,7 +1515,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 	// configured even once the write path carried it.
 	for _, t := range p.Targets {
 		out.Targets = append(out.Targets, api.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = p.Timezone
@@ -1531,7 +1558,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		Limits: api.AccountLimits{
 			Plan:                        string(acct.Plan),
 			RAMMB:                       l.RAMMB,
-			VCPU:                        l.VCPU,
+			VCPU:                        api.SizeVCPUs(l.RAMMB), // the plan's largest instance (ADR-20261109172421)
 			MaxConcurrency:              l.MaxConcurrency,
 			DeployedApps:                l.DeployedApps,
 			PreviewApps:                 l.PreviewApps,
@@ -1552,8 +1579,11 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		},
 	}
 	if !acct.EmailVerified() {
-		graceEnds := acct.CreatedAt.Add(emailVerificationGrace)
+		graceEnds := verificationDeadline(acct)
 		resp.EmailVerificationGraceEndsAt = &graceEnds
+	}
+	if flow, ok := s.store.(state.AccountFlowStore); ok {
+		resp.DisplayName, _ = flow.AccountDisplayName(ctx, acct.ID)
 	}
 	if inst, err := s.store.GitHubInstallForAccount(ctx, acct.ID); err == nil {
 		resp.GitHubInstall = strconv.FormatInt(inst.InstallationID, 10)

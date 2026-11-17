@@ -122,7 +122,7 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 			return main.CmdOrgsTransferOwnership([]string{"--org", "demo-org", "--to", "user-id", "unexpected"})
 		}},
 		{"org key add", func() int {
-			return main.CmdOrgsKeysAdd([]string{"--org", "demo-org", "--label", "automation", "unexpected"})
+			return main.CmdOrgsKeysAdd([]string{"--org", "demo-org", "--label", "stored_workflow", "unexpected"})
 		}},
 		{"org update", func() int {
 			return main.CmdOrgsUpdate([]string{"--org", "demo-org", "--name", "Updated", "unexpected"})
@@ -132,9 +132,6 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 		}},
 		{"tenant hostname add", func() int {
 			return main.CmdTenantSurfacesHostnameAdd([]string{"--app", "demo", "--surface", "surface-id", "--hostname", "tenant.example.com", "unexpected"})
-		}},
-		{"github webhook secret set", func() int {
-			return main.GithubWebhookSecretSet([]string{"--installation-id", "1", "--secret", strings.Repeat("a", 32), "unexpected"})
 		}},
 		{"rollout recover", func() int {
 			return main.CmdRolloutsRecover([]string{"demo", "--action", "advance", "unexpected"})

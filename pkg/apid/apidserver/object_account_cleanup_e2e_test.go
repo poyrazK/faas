@@ -30,7 +30,7 @@ func TestObjectAccountCleanupE2EMem(t *testing.T) {
 	var offset atomic.Int64
 	now := time.Now()
 	(*e.Store()).SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
-	objectAccountCleanupE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), nil, func() { offset.Add(int64(2 * time.Hour)) })
+	objectAccountCleanupE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), nil, func() { offset.Add(int64(api.ObjectOwnedCleanupProtectedRetryMax + time.Hour)) })
 }
 func TestObjectAccountCleanupE2EPG(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
@@ -52,7 +52,7 @@ func objectAccountCleanupE2E(t *testing.T, s *apidserver.Server, st state.Store,
 	}
 	hold, retained, lost := true, true, true
 	bucketDeleted, lateWrite, lostBucket := false, true, true
-	var deletes, calls atomic.Int32
+	var deletes, calls, holdReleases atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -73,12 +73,14 @@ func objectAccountCleanupE2E(t *testing.T, s *apidserver.Server, st state.Store,
 		case q.Has("object-lock"):
 			_, _ = io.WriteString(w, `<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`)
 		case q.Has("versions"):
-			if q.Get("max-keys") != strconv.Itoa(api.ObjectOwnedCleanupBatchSize) || q.Get("key-marker") != "" || q.Get("version-id-marker") != "" {
-				t.Error("unbounded or stale cleanup cursor", q)
+			if q.Get("max-keys") != strconv.Itoa(api.ObjectOwnedCleanupBatchSize) || (q.Get("key-marker") == "") != (q.Get("version-id-marker") == "") {
+				t.Error("unbounded or malformed cleanup cursor", q)
 			}
 			ids := make([]string, 0, len(versions))
 			for id := range versions {
-				ids = append(ids, id)
+				if after := q.Get("version-id-marker"); after == "" || id > after {
+					ids = append(ids, id)
+				}
 			}
 			sort.Strings(ids)
 			truncated := len(ids) > api.ObjectOwnedCleanupBatchSize
@@ -97,6 +99,14 @@ func objectAccountCleanupE2E(t *testing.T, s *apidserver.Server, st state.Store,
 				}
 			}
 			_, _ = io.WriteString(w, `</ListVersionsResult>`)
+		case q.Has("legal-hold") && r.Method == http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "<Status>OFF</Status>") {
+				t.Error("cleanup placed a legal hold", string(body))
+			}
+			hold = false
+			holdReleases.Add(1)
+			w.WriteHeader(200)
 		case q.Has("legal-hold"):
 			if versions[q.Get("versionId")] {
 				t.Error("protection read on a marker")
@@ -214,23 +224,24 @@ func objectAccountCleanupE2E(t *testing.T, s *apidserver.Server, st state.Store,
 			t.Fatal("account metadata purged early", err)
 		}
 	}
+	// Erasure releases the legal hold, keeps the COMPLIANCE versions and
+	// deletes the rest it reaches (ADR-20261111123000 decision 8). The
+	// delete marker's deletion committed; its acknowledgment was lost.
 	if err = loop.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	checkPending("protected")
-	if deletes.Load() != 0 {
-		t.Fatal("legal hold bypassed")
+	checkPending("temporary")
+	if deletes.Load() != 1 || holdReleases.Load() != 1 {
+		t.Fatal("erasure did not release the hold and continue", deletes.Load(), holdReleases.Load())
 	}
-	mu.Lock()
-	hold = false
-	mu.Unlock()
 	advance()
 	if err = loop.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	// Only COMPLIANCE versions remain: never bypassed, retried when they end.
 	checkPending("protected")
-	if deletes.Load() != 0 {
-		t.Fatal("retention bypassed")
+	if deletes.Load() != 1 {
+		t.Fatal("retention bypassed", deletes.Load())
 	}
 	mu.Lock()
 	retained = false
@@ -239,18 +250,13 @@ func objectAccountCleanupE2E(t *testing.T, s *apidserver.Server, st state.Store,
 	if err = loop.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	checkPending("temporary")
-	if deletes.Load() != 1 {
-		t.Fatal("uncertain delete replayed within one attempt", deletes.Load())
+	checkPending("cleanup_pending")
+	if deletes.Load() != 1+api.ObjectOwnedCleanupBatchSize {
+		t.Fatal("expired retention not deleted in bounded batches", deletes.Load())
 	}
 	// A reconstructed server uses the stored deleting owner even with all
 	// customer ingress/capability enrollment disabled.
 	restarted := apidserver.NewServer(st, apidserver.TestLogger(), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(objectLockTestRegistry(t, upstream.URL, p, objectstorage.ObjectLockConfig{}))
-	advance()
-	if err = (*restarted.Object()).ReconcileObjectBuckets(t.Context(), nil); err != nil {
-		t.Fatal(err)
-	}
-	checkPending("cleanup_pending")
 	advance()
 	if err = (*restarted.Object()).ReconcileObjectBuckets(t.Context(), nil); err != nil {
 		t.Fatal(err)

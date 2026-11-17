@@ -19,6 +19,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class RunsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Get Runs capabilities and account limits.
    * Returns the authenticated account's Runs admission state, accepted
@@ -31,7 +32,7 @@ export class RunsService {
    * @throws ApiError
    */
   public static getExecutionCapabilities(): CancelablePromise<ExecutionCapabilitiesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/executions/capabilities',
       errors: {
@@ -76,7 +77,7 @@ export class RunsService {
      */
     workflowId?: string,
   }): CancelablePromise<ExecutionListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/executions',
       query: {
@@ -122,7 +123,7 @@ export class RunsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ExecutionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/executions',
       headers: {
@@ -174,7 +175,7 @@ export class RunsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedExecutionWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/execution-workflows',
       headers: {
@@ -218,7 +219,7 @@ export class RunsService {
      */
     workflowId: string,
   }): CancelablePromise<ExecutionWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/execution-workflows/{workflow_id}',
       path: {
@@ -247,7 +248,7 @@ export class RunsService {
      */
     id: string,
   }): CancelablePromise<ExecutionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/executions/{id}',
       path: {
@@ -281,7 +282,7 @@ export class RunsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ExecutionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/executions/{id}',
       path: {
@@ -303,6 +304,10 @@ export class RunsService {
    * ids are monotonically increasing control-plane cursors; reconnect with
    * `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
    * stderr, and terminal events and closes after the terminal event.
+   * When the cursor predates retained events, a gap event with
+   * `execution_id` and `through_sequence` precedes the retained events.
+   * Complete bounded stdout/stderr remain available in the terminal receipt;
+   * `output_truncated` describes the output byte limit, not replay retention.
    * Source, input, host paths, and VM internals are never included.
    * Runs-only keys can stream only receipts created by their own key family.
    * Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
@@ -333,7 +338,7 @@ export class RunsService {
      */
     lastEventId?: number,
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/executions/{id}/events',
       path: {
@@ -378,7 +383,7 @@ export class RunsService {
     id: string,
     requestBody: CreateExecutionArtifactGrantRequest,
   }): CancelablePromise<ExecutionArtifactGrantResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/executions/{id}/artifact-grants',
       path: {
@@ -422,7 +427,7 @@ export class RunsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<RevokeExecutionArtifactGrantResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/execution-artifact-grants/{id}',
       path: {
@@ -465,7 +470,7 @@ export class RunsService {
      */
     offset?: number,
   }): CancelablePromise<AppTaskListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/tasks',
       path: {
@@ -516,7 +521,7 @@ export class RunsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/tasks',
       path: {
@@ -560,7 +565,7 @@ export class RunsService {
      */
     id: string,
   }): CancelablePromise<AppTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/tasks/{id}',
       path: {
@@ -606,7 +611,7 @@ export class RunsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/tasks/{id}',
       path: {
@@ -667,7 +672,7 @@ export class RunsService {
      */
     cols?: number,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/tasks/{id}/attach',
       path: {

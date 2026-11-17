@@ -6,12 +6,13 @@ import type { CreateInboundWebhookEndpointRequest } from '../models/CreateInboun
 import type { InboundWebhookEndpointResponse } from '../models/InboundWebhookEndpointResponse.js';
 import type { InboundWebhookReceiptResponse } from '../models/InboundWebhookReceiptResponse.js';
 import type { UpdateInboundWebhookEndpointRequest } from '../models/UpdateInboundWebhookEndpointRequest.js';
-import type { WebhookAutomationReceiptResponse } from '../models/WebhookAutomationReceiptResponse.js';
+import type { WebhookWorkflowReceiptResponse } from '../models/WebhookWorkflowReceiptResponse.js';
 import type { WorkflowCallbackWebhookReceiptResponse } from '../models/WorkflowCallbackWebhookReceiptResponse.js';
 import type { CancelablePromise } from '../../generated/core/CancelablePromise.js';
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class InboundWebhooksService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List durable inbound webhook endpoints for this app.
    * @returns InboundWebhookEndpointResponse The configured endpoints. Public route tokens are never returned.
@@ -25,7 +26,7 @@ export class InboundWebhooksService {
      */
     slug: string,
   }): CancelablePromise<Array<InboundWebhookEndpointResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/inbound-webhooks',
       path: {
@@ -63,7 +64,7 @@ export class InboundWebhooksService {
     slug: string,
     requestBody: CreateInboundWebhookEndpointRequest,
   }): CancelablePromise<InboundWebhookEndpointResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/inbound-webhooks',
       path: {
@@ -108,7 +109,7 @@ export class InboundWebhooksService {
      */
     id: string,
   }): CancelablePromise<InboundWebhookEndpointResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/inbound-webhooks/{id}',
       path: {
@@ -146,7 +147,7 @@ export class InboundWebhooksService {
     id: string,
     requestBody: UpdateInboundWebhookEndpointRequest,
   }): CancelablePromise<InboundWebhookEndpointResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/inbound-webhooks/{id}',
       path: {
@@ -190,7 +191,7 @@ export class InboundWebhooksService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/inbound-webhooks/{id}',
       path: {
@@ -220,7 +221,7 @@ export class InboundWebhooksService {
    * durably instead of enqueuing an app invocation. Unmatched events keep
    * the ordinary invocation path.
    * Terminal callbacks are acknowledged as ignored after verification.
-   * An automation-bound endpoint captures its published definition in durable
+   * A stored-workflow-bound endpoint captures its published definition in durable
    * fanout work. Paused, unpublished or type-unmatched events are durably ignored;
    * content filters are evaluated by the scheduler. Provider retries return the
    * original receipt; changed content for the same event ID returns 409.
@@ -267,8 +268,8 @@ export class InboundWebhooksService {
      * Required for generic endpoints; sha256= followed by the lowercase hex HMAC-SHA256 digest.
      */
     xGregaleSignature?: string,
-  }): CancelablePromise<(WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | InboundWebhookReceiptResponse)> {
-    return __request(OpenAPI, {
+  }): CancelablePromise<(WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | InboundWebhookReceiptResponse)> {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/hooks/{token}',
       path: {
@@ -286,7 +287,7 @@ export class InboundWebhooksService {
       errors: {
         400: `code: inbound_webhook_invalid for malformed endpoint configuration/body or a missing Stripe event id; code: inbound_webhook_bad_signature when Stripe-Signature does not verify.`,
         404: `code: not_found`,
-        409: `Changed content for a retained provider event ID (webhook_automation_conflict).`,
+        409: `Changed content for a retained provider event ID (webhook_workflow_conflict).`,
         413: `code: inbound_webhook_too_large — the provider request body exceeds 1 MiB.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable

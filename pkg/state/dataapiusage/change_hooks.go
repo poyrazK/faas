@@ -21,6 +21,7 @@ func (s *Store) RecordChangeHooks(ctx context.Context, accountID, appID string, 
 		AppID: appID, AccountID: accountID, ReportedAt: ts(now), Pending: report.Pending, Failed: report.Failed,
 		OldestPendingAt: optionalTS(report.OldestPendingAt), LastPublishedAt: optionalTS(report.LastPublishedAt),
 		LastFailureCode: pgtype.Text{String: report.LastFailureCode, Valid: report.LastFailureCode != ""}, Publishing: report.Publishing,
+		LastDroppedAt: optionalTS(report.LastDroppedAt),
 	})
 	if err != nil {
 		return fmt.Errorf("dataapiusage: store change hook report: %w", err)
@@ -44,7 +45,7 @@ func (s *Store) ChangeHooks(ctx context.Context, appID string) (*api.DataAPIChan
 	return &api.DataAPIChangeHookStatus{
 		ReportedAt: row.ReportedAt.Time.UTC(), Pending: row.Pending, Failed: row.Failed,
 		OldestPendingAt: timePointer(row.OldestPendingAt), LastPublishedAt: timePointer(row.LastPublishedAt),
-		LastFailureCode: row.LastFailureCode.String, Publishing: row.Publishing,
+		LastFailureCode: row.LastFailureCode.String, Publishing: row.Publishing, LastDroppedAt: timePointer(row.LastDroppedAt),
 	}, nil
 }
 

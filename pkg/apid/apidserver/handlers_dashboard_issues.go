@@ -516,7 +516,7 @@ func dashboardIssueReplayActionFlash(r *http.Request) string {
 	case "replay_error":
 		switch r.URL.Query().Get("error") {
 		case api.CodeDebugReplayUnsupported:
-			return "Replay unavailable: this request does not have the selected enabled mirror target."
+			return "Replay unavailable: this request does not have the selected enabled mirror target, or its method needs a mirror rule that allows unsafe methods."
 		case api.CodeNotFound:
 			return "Replay unavailable: the retained request was not found or has aged out."
 		default:

@@ -7,6 +7,11 @@
   policy covers every app, worker and deployment, including newly created apps.
   App `gross_usage` policies and account policies must all fit atomically.
 
+The allowance rule below is superseded by
+[cost-control delivery safety](20261111140000-cost-control-delivery-safety.md):
+funding pins the smallest historical time-weighted hour-segment allowance;
+a later upgrade does not mint additional authority in an existing month.
+
 ## Quantity and monetary authority
 
 One durable account book per UTC month shares included MB-seconds across every

@@ -53,6 +53,14 @@ func (l *NodeLedger) servingCapacityLocked(appID, key string, production bool, c
 	if key == "" || strings.HasPrefix(key, "scope:") {
 		capacity.sharedLimit = configuredLimit
 	}
+	// While production has no instance, a non-production environment never
+	// takes the app's last shared slot: busy stages would otherwise refuse
+	// production's wake on a small plan (ADR-590 amendment 2026-11-10). A
+	// one-instance plan has no slot to spare, so its stages keep it.
+	if reserved := limits.MaxConcurrency - 1; !production && key != "" && reserved > 0 &&
+		l.perAppProduction[appID] == 0 && capacity.sharedLimit > reserved {
+		capacity.sharedLimit = reserved
+	}
 	// Overlap is a new revision of a serving environment. A sibling stage
 	// cannot supply that prerequisite or grant itself extra plan capacity.
 	if allowOverlap && capacity.concurrency > 0 {

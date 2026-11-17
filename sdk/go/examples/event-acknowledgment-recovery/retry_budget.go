@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/preview"
+	"github.com/gregale-dev/gregale-go/preview"
 )
 
 // StageCompletionWithRetryBudget requires the upgraded schema and exclusively

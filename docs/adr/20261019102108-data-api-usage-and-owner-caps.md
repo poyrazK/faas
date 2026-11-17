@@ -130,3 +130,50 @@ caps before storing any setting when it is `unavailable`. `--usage-reporting
 on` and `gregale data-api live enable` are stored with a warning: they take
 effect once the installation accepts reports. A control plane without the
 status route is not second-guessed.
+
+## Amendment (2026-11-05): only production reports; caps hold across restores
+
+A stage, preview or cloned environment runs under the production app's id. Its
+usage reports landed in production's rows: its traffic counted against
+production's monthly caps, and its access settings replaced the ones live
+reads use to decide tokenless access to the production database
+(`live_queries.go`). The usage route now accepts the same workloads as the
+change event routes: a `gregale:data-api:usage` token from a live instance of
+an active app whose token environment and deployment are production
+(`pkg/apid/dataapiworkload`). A valid token from anything else is refused for
+good with `403 workload_not_production`; the runtime stops reporting. Other
+refusals stay `401` and are retried.
+
+Month-to-date totals no longer reset on a snapshot restore. They only grow
+within a month, so the last totals known are a floor: a cap reached before
+an app parked stays reached while the first report after the wake is on its
+way, or while the platform cannot be reached. Pending counts are still
+dropped on restore, as before.
+
+## Amendment (2026-11-07): only admitted requests count; usage is flushed before a snapshot; the newest settings win
+
+**Only admitted requests count.** Caps count admitted requests, but the runtime
+recorded a request's access kind before checking its token, rate budget, row
+security and concurrency. A request with any `Bearer` token counted as a
+signed-in request even when the token was invalid, and no per-user limit
+applies before verification. Anonymous requests also counted when the rate
+limit refused them. Anyone could use up the `requests` cap, locking every
+caller out (`429`) until the month ended. The access kind is now recorded only
+once a request passes those checks; refusals before that count as
+`rejected_requests`.
+
+**Flushed before a snapshot.** A restore drops the counts not yet reported, so
+counts from an app's last seconds before it parked were lost. The
+before-checkpoint hook now also reports pending usage, within the hook's
+budget (`engineStopGraceMs`). A report still in flight keeps its id and is
+applied once by whichever restored copy sends it.
+
+**The newest settings win.** Access settings were last-writer-wins per app. A
+process older than the one that last reported could replace newer settings:
+one not yet replaced by a fresh restart, or one restored from an older
+snapshot. That could bring back a revoked server key for live reads for up to
+an hour. Reports now carry `started_at`, the reporting process's start time,
+and a report never replaces settings from a process that started later.
+Reports without it (older runtimes) still apply. The settings also carry
+`allow_without_rls`, so live reads apply the same row-security exemptions
+(ADR 20261026140223 amendment 2).

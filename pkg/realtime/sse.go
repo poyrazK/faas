@@ -146,11 +146,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if refusal, ok := m.tryReserve(node); !ok {
-		if refusal.scope != "" {
-			api.WriteProblem(w, refusal.problem())
-			return
-		}
-		http.Error(w, "connection limit reached", http.StatusTooManyRequests)
+		refuseConnection(w, refusal)
 		return
 	}
 	defer m.release(node)

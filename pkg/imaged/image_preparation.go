@@ -233,6 +233,7 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 		return imageRecoveryError(err)
 	}
 	markPreparationPhase(ctx, "replicate")
+	h.announceLayerPublished(ctx, app.ID, dep)
 	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
@@ -248,10 +249,14 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 			return err
 		}
 	}
-	if err := h.runDeployScan(ctx, app, dep); err != nil {
-		return err
+	// The stage still records the security gate; a scan the app does not
+	// gate on runs after the handoff (ADR-075 amendment 2026-11-17).
+	if h.deployScanGatesHandoff(ctx, app, dep) {
+		if err := h.runDeployScan(ctx, app, dep); err != nil {
+			return err
+		}
+		markPreparationPhase(ctx, "scan")
 	}
-	markPreparationPhase(ctx, "scan")
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -315,6 +320,11 @@ func (h *Handler) finishImageHandoff(ctx context.Context, images state.Deploymen
 		return imageRecoveryError(err)
 	}
 	h.handoffMetrics.commit("handed_off")
+	// Started only once the handoff is durable, so a crash before it
+	// resumes here and queues the scan exactly once.
+	if current.ScanStatus == "" && !h.deployScanGatesHandoff(ctx, app, current) {
+		h.startDeferredDeployScan(ctx, app, current)
+	}
 	return nil
 }
 

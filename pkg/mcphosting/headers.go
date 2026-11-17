@@ -54,8 +54,31 @@ func parameterHeaders(schema map[string]any, args map[string]any) (http.Header, 
 							return err
 						}
 					}
-				} else if err := walk(child, nil, false); err != nil {
-					return err
+				} else {
+					switch key {
+					case "$defs", "definitions", "patternProperties", "dependentSchemas":
+						if schemas, ok := child.(map[string]any); ok {
+							for _, sub := range schemas {
+								if err := walk(sub, nil, false); err != nil {
+									return err
+								}
+							}
+						}
+					case "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "items", "prefixItems", "additionalItems", "contains", "additionalProperties", "unevaluatedProperties", "unevaluatedItems", "propertyNames", "contentSchema":
+						if err := walk(child, nil, false); err != nil {
+							return err
+						}
+					case "dependencies":
+						if dependencies, ok := child.(map[string]any); ok {
+							for _, sub := range dependencies {
+								if _, schema := sub.(map[string]any); schema {
+									if err := walk(sub, nil, false); err != nil {
+										return err
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		case []any:

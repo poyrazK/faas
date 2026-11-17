@@ -111,7 +111,7 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 		t.Run(map[bool]string{false: "human", true: "json"}[asJSON], func(t *testing.T) {
 			row := restartStatusTestReceipt("retrying")
 			row.FailureReason = "requests_active"
-			posts, gets := 0, 0
+			posts, gets, healthReads := 0, 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == "POST" && r.URL.Path == "/v1/apps/demo/restart" {
@@ -130,6 +130,14 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 						out.CompletedAt = &at
 					}
 					_ = json.NewEncoder(w).Encode(out)
+				} else if r.Method == "GET" && r.URL.Path == "/v1/apps/demo/health" {
+					// --wait also waits for the replicas to pass readiness.
+					healthReads++
+					status := "fail"
+					if healthReads > 1 {
+						status = "pass"
+					}
+					_ = json.NewEncoder(w).Encode(api.AppHealthResponse{AppID: "demo", Checks: []api.AppHealthCheck{{Code: "readiness", Status: status}}})
 				} else {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 					http.Error(w, "unexpected", 500)
@@ -140,6 +148,11 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 			jsonOutput = false
 			stdout, stderr, restore := swapIO(t)
 			defer restore()
+			defer func() {
+				if healthReads != 2 {
+					t.Errorf("health reads = %d, want 2 (wait until readiness passes)", healthReads)
+				}
+			}()
 			args := []string{"demo", "restart", "--fresh", "--wait", "--poll-interval", "1ms", "--timeout", "1s"}
 			if asJSON {
 				args = append(args, "--json")
@@ -159,7 +172,7 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 				if err := decoder.Decode(&got); !errors.Is(err, io.EOF) {
 					t.Fatal("stdout contains more than one JSON receipt")
 				}
-			} else if !strings.Contains(stderr(), "Waiting for active requests to finish") || !strings.Contains(stdout.String(), "Application health has not been verified") {
+			} else if !strings.Contains(stderr(), "Waiting for active requests to finish") || !strings.Contains(stdout.String(), "passed their readiness checks") {
 				t.Fatalf("missing explanation: %s %s", stdout, stderr())
 			}
 		})
@@ -246,5 +259,28 @@ func TestCmdAppRestartSnapshotBehaviorAndArgumentValidation(t *testing.T) {
 	}
 	if posts != 1 {
 		t.Fatalf("invalid arguments submitted a restart: %d", posts)
+	}
+}
+
+// When --timeout ends the wait, the restart is still running server-side: the
+// CLI says so with the last status, not "Could not reach Gregale".
+func TestFollowAppRestartTimeoutSaysTheRestartContinues(t *testing.T) {
+	row := restartStatusTestReceipt("retrying")
+	row.FailureReason = "restart_attempt_failed"
+	client := &restartPollTestClient{rows: []api.RuntimeConfigRestartStatusResponse{row}}
+	var stdout, stderr strings.Builder
+	oldOut, oldErr := osStdout, osStderr
+	osStdout, osStderr = &stdout, &stderr
+	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	options := appRestartOptions{wakeID: row.WakeID, wait: true, fresh: true, timeout: 20 * time.Millisecond, interval: time.Hour}
+	if code := followAppRestart(ctx, t.Context(), client, "demo", options, false); code == 0 {
+		t.Fatal("a wait that ran out of time exited 0")
+	}
+	got := stderr.String()
+	if !strings.Contains(got, "Restart still processing") || !strings.Contains(got, "the restart continues") ||
+		!strings.Contains(got, "last status: retrying") || strings.Contains(got, "Could not reach") {
+		t.Fatalf("timeout output does not say the restart continues:\n%s", got)
 	}
 }

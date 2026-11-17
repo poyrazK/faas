@@ -90,6 +90,14 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 	if err != nil {
 		return sharedRuntimeLayers{}, err
 	}
+	return h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, archivePath, config, layers, manifest, app)
+}
+
+// sharedRuntimeAppLayersAt is sharedRuntimeAppLayers at the runner base
+// layers baseDiffIDs. The result follows from the artifact, baseDiffIDs,
+// runtime, manifest and app.StartCommand, so the app layer reuse key names
+// those instead of the result (ADR-20261112170911 amendment 1).
+func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, baseDiffIDs []string, archivePath string, config oci.Config, layers []io.ReadCloser, manifest *api.AppManifest, app state.App) (sharedRuntimeLayers, error) {
 	above, err := oci.LayersAboveBase(baseDiffIDs, config.DiffIDs)
 	if err != nil {
 		return sharedRuntimeLayers{}, fmt.Errorf("runtime base %s does not match the build artifact: %w", runtime, err)

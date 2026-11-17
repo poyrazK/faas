@@ -297,7 +297,10 @@ func TestCreateAppDefaultsPreAuthRateLimitToObserve(t *testing.T) {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
 	stored, err := (*e.Store()).AppBySlug(t.Context(), "default-guard")
-	want := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 5, Burst: 20}
+	free := api.MustLimitsFor(api.PlanFree)
+	want := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitObserve,
+		RequestsPerSecond: min(api.PreAuthDefaultRequestsPerSecond, free.RateLimitRPS),
+		Burst:             min(api.PreAuthDefaultBurst, free.RateLimitBurst)}
 	if err != nil || !reflect.DeepEqual(stored.Manifest.PreAuthRateLimit, want) {
 		t.Fatalf("default config = %+v, err=%v; want Free-clamped observe %+v", stored.Manifest.PreAuthRateLimit, err, want)
 	}
@@ -317,12 +320,13 @@ func TestCreateAppDefaultsPreAuthRateLimitToObserve(t *testing.T) {
 
 func TestAppPreAuthRateLimitRejectsInvalidConfig(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanFree)
+	free := api.MustLimitsFor(api.PlanFree)
 	for _, config := range []*api.PreAuthRateLimitConfig{
 		{Mode: "", RequestsPerSecond: 1, Burst: 1},
 		{Mode: "challenge", RequestsPerSecond: 1, Burst: 1},
 		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 0, Burst: 1},
-		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 6, Burst: 1},
-		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: 21},
+		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: free.RateLimitRPS + 1, Burst: 1},
+		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: free.RateLimitBurst + 1},
 		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 2, Burst: 4,
 			Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 3, Burst: 2}}},
 		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 2, Burst: 4,

@@ -31,21 +31,21 @@ func TestUpgradeParkedDatabase(t *testing.T) {
 	s, store, vmm := newTestScheduler(t, 4096)
 	vmm.archive = true
 	ctx := context.Background()
-	vm := provisionMajor(t, s, 14)
+	vm := provisionMajor(t, s, 15)
 	before := time.Now()
 	got, err := s.Upgrade(ctx, vm.DatabaseID, 17, uuid.NewString())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != StateParked || got.Major != 17 || got.LastError != "" || len(got.MajorHistory) != 1 || got.MajorHistory[0].Major != 14 ||
+	if got.State != StateParked || got.Major != 17 || got.LastError != "" || len(got.MajorHistory) != 1 || got.MajorHistory[0].Major != 15 ||
 		got.MajorHistory[0].Until.Before(before) || got.LastBackupAt.IsZero() || got.LastBackupAt.After(got.MajorHistory[0].Until) {
 		t.Fatalf("after the upgrade = %+v", got)
 	}
 	if vmm.running[vm.DatabaseID] || vmm.majors[vm.DatabaseID] != 17 || vmm.callCount("upgraded") != 1 {
 		t.Fatalf("volume on %d, running %v", vmm.majors[vm.DatabaseID], vmm.running[vm.DatabaseID])
 	}
-	if !slices.Contains(vmm.upgradeFroms, 14) {
-		t.Fatalf("no boot upgraded from 14: %v", vmm.upgradeFroms)
+	if !slices.Contains(vmm.upgradeFroms, 15) {
+		t.Fatalf("no boot upgraded from 15: %v", vmm.upgradeFroms)
 	}
 	// The next wake boots the new major.
 	woke, err := s.Wake(ctx, vm.DatabaseID)
@@ -83,10 +83,10 @@ func TestUpgradeRefusedStaysOnItsMajor(t *testing.T) {
 	s, _, vmm := newTestScheduler(t, 4096)
 	ctx := context.Background()
 	withMetrics(s)
-	vm := provisionMajor(t, s, 14)
+	vm := provisionMajor(t, s, 15)
 	vmm.upgradeCode = dbguest.ErrCodeUpgradeRefused
 	got, err := s.Upgrade(ctx, vm.DatabaseID, 17, uuid.NewString())
-	if !errors.Is(err, ErrUpgradeRefused) || got.State != StateParked || got.Major != 14 || got.LastError != dbguest.ErrCodeUpgradeRefused ||
+	if !errors.Is(err, ErrUpgradeRefused) || got.State != StateParked || got.Major != 15 || got.LastError != dbguest.ErrCodeUpgradeRefused ||
 		got.MajorHistory != nil || vmm.running[vm.DatabaseID] {
 		t.Fatalf("refused upgrade = %+v, %v", got, err)
 	}
@@ -94,7 +94,7 @@ func TestUpgradeRefusedStaysOnItsMajor(t *testing.T) {
 		t.Fatalf("refused upgrades counted %v", n)
 	}
 	vmm.upgradeCode = ""
-	if woke, err := s.Wake(ctx, vm.DatabaseID); err != nil || vmm.runMajor[vm.DatabaseID] != 14 {
+	if woke, err := s.Wake(ctx, vm.DatabaseID); err != nil || vmm.runMajor[vm.DatabaseID] != 15 {
 		t.Fatalf("wake on the old major = %+v, %v", woke, err)
 	}
 }
@@ -102,10 +102,10 @@ func TestUpgradeRefusedStaysOnItsMajor(t *testing.T) {
 func TestUpgradeFailedNeedsRestore(t *testing.T) {
 	s, _, vmm := newTestScheduler(t, 4096)
 	ctx := context.Background()
-	vm := provisionMajor(t, s, 14)
+	vm := provisionMajor(t, s, 15)
 	vmm.upgradeCode = dbguest.ErrCodeUpgradeFailed
 	got, err := s.Upgrade(ctx, vm.DatabaseID, 17, uuid.NewString())
-	if !errors.Is(err, ErrUpgradeFailed) || got.State != StateFailed || got.Major != 14 || got.LastError != dbguest.ErrCodeUpgradeFailed || vmm.running[vm.DatabaseID] {
+	if !errors.Is(err, ErrUpgradeFailed) || got.State != StateFailed || got.Major != 15 || got.LastError != dbguest.ErrCodeUpgradeFailed || vmm.running[vm.DatabaseID] {
 		t.Fatalf("broken upgrade = %+v, %v", got, err)
 	}
 	if _, err := s.Wake(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
@@ -187,7 +187,7 @@ func TestUpgradeValidation(t *testing.T) {
 func TestDeleteDuringUpgrade(t *testing.T) {
 	s, store, vmm := newTestScheduler(t, 4096)
 	ctx := context.Background()
-	vm := provisionMajor(t, s, 14)
+	vm := provisionMajor(t, s, 15)
 	vmm.upgradeHold = make(chan struct{})
 	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString()); err != nil {
 		t.Fatal(err)
@@ -208,14 +208,14 @@ func TestDeleteDuringUpgrade(t *testing.T) {
 func TestResumeUpgrade(t *testing.T) {
 	s, store, vmm := newTestScheduler(t, 4096)
 	ctx := context.Background()
-	vm := provisionMajor(t, s, 14)
+	vm := provisionMajor(t, s, 15)
 	// The stopped replica's upgrade: marked, booted, then abandoned.
 	upgrading, err := store.BeginUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString(), time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
 	boot := upgrading
-	boot.Major, boot.UpgradeFrom = 17, 14
+	boot.Major, boot.UpgradeFrom = 17, 15
 	vmm.upgradeHold = make(chan struct{})
 	node, _ := s.node(ctx, vm.NodeID)
 	if err := vmm.Start(ctx, node, boot); err != nil {
@@ -251,7 +251,7 @@ func TestUpgradeRetriesThenGivesUp(t *testing.T) {
 	s, store, vmm := newTestScheduler(t, 4096)
 	ctx := context.Background()
 	s.cfg.UpgradeLease, s.cfg.UpgradeTimeout = 30*time.Millisecond, time.Hour
-	vm := provisionMajor(t, s, 14)
+	vm := provisionMajor(t, s, 15)
 	vmm.startErr = errors.New("jailer exploded")
 	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString()); err != nil {
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestUpgradeRetriesThenGivesUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.upgradeWG.Wait()
-	if got, _ := store.Get(ctx, vm.DatabaseID); got.State != StateFailed || got.LastError != dbguest.ErrCodeUpgradeFailed || got.Major != 14 {
+	if got, _ := store.Get(ctx, vm.DatabaseID); got.State != StateFailed || got.LastError != dbguest.ErrCodeUpgradeFailed || got.Major != 15 {
 		t.Fatalf("after the timeout = %+v", got)
 	}
 }
@@ -290,7 +290,7 @@ func TestUpgradeReplicatedDatabase(t *testing.T) {
 	s, store, vmm := newTestScheduler(t, 4096)
 	ctx := context.Background()
 	seedNodes(t, store, Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 100 << 30, Lifecycle: NodeActive})
-	vm, err := s.Provision(ctx, ProvisionRequest{DatabaseID: uuid.NewString(), Major: 14, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30, Replicated: true})
+	vm, err := s.Provision(ctx, ProvisionRequest{DatabaseID: uuid.NewString(), Major: 15, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30, Replicated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestRestoreAcrossAnUpgrade(t *testing.T) {
 	s, store, vmm := newTestScheduler(t, 4096)
 	vmm.archive = true
 	ctx := context.Background()
-	source := provisionMajor(t, s, 14)
+	source := provisionMajor(t, s, 15)
 	// The source's history began well before its upgrade.
 	time.Sleep(20 * time.Millisecond)
 	beforeUpgrade := time.Now()
@@ -341,12 +341,12 @@ func TestRestoreAcrossAnUpgrade(t *testing.T) {
 	if _, err := restore(17, beforeUpgrade); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("restore before the upgrade on the new major = %v, want ErrInvalid", err)
 	}
-	old, err := restore(14, beforeUpgrade)
+	old, err := restore(15, beforeUpgrade)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.restoreWG.Wait()
-	if got, _ := store.Get(ctx, old.DatabaseID); got.State != StateParked || got.Major != 14 {
+	if got, _ := store.Get(ctx, old.DatabaseID); got.State != StateParked || got.Major != 15 {
 		t.Fatalf("old-major restore = %+v", got)
 	}
 	if len(vmm.untilEnd) != 1 || !vmm.untilEnd[0] || !vmm.flushes[source.DatabaseID].IsZero() {
@@ -358,7 +358,7 @@ func TestRestoreAcrossAnUpgrade(t *testing.T) {
 	if !after.After(until) {
 		t.Fatal("clock did not move past the upgrade")
 	}
-	if _, err := restore(14, after); !errors.Is(err, ErrInvalid) {
+	if _, err := restore(15, after); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("restore after the upgrade on the old major = %v, want ErrInvalid", err)
 	}
 	if _, err := restore(17, after); err != nil {
@@ -372,9 +372,9 @@ func TestRestoreAcrossAnUpgrade(t *testing.T) {
 
 func TestMajorAt(t *testing.T) {
 	t0 := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	vm := VM{Major: 17, MajorHistory: []MajorSpan{{Major: 14, Until: t0}, {Major: 16, Until: t0.Add(time.Hour)}}}
+	vm := VM{Major: 17, MajorHistory: []MajorSpan{{Major: 15, Until: t0}, {Major: 16, Until: t0.Add(time.Hour)}}}
 	for at, want := range map[time.Time]int{
-		t0.Add(-time.Hour): 14, t0.Add(-time.Nanosecond): 14, t0: 16, t0.Add(59 * time.Minute): 16, t0.Add(time.Hour): 17, t0.Add(48 * time.Hour): 17,
+		t0.Add(-time.Hour): 15, t0.Add(-time.Nanosecond): 15, t0: 16, t0.Add(59 * time.Minute): 16, t0.Add(time.Hour): 17, t0.Add(48 * time.Hour): 17,
 	} {
 		if got := vm.MajorAt(at); got != want {
 			t.Errorf("major at %v = %d, want %d", at, got, want)

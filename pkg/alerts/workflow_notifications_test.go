@@ -47,7 +47,7 @@ func TestWorkflowInvestigationLinksRespectOwnershipAndMetric(t *testing.T) {
 				}
 				return
 			}
-			if payload["app_id"] != app.ID || payload["automations_path"] != "/v1/apps/billing/automations" {
+			if payload["app_id"] != app.ID || payload["stored_workflows_path"] != "/v1/apps/billing/workflows/stored" {
 				t.Fatalf("wrong app context: %+v", payload)
 			}
 			if tc.metric == state.AlertMetricWorkflowFailures {

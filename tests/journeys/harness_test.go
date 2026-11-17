@@ -46,15 +46,23 @@ const (
 
 // target is the deployed Gregale the journeys run against.
 type target struct {
-	api        string
-	appsDomain string
-	token      string
-	useLogin   bool // no token: let the CLI use its own `gregale login`
-	cli        string
-	runID      string
-	tier       string
-	keep       bool
-	home       string // isolated HOME and working directory for the CLI
+	api             string
+	appsDomain      string
+	token           string
+	useLogin        bool // no token: let the CLI use its own `gregale login`
+	cli             string
+	runID           string
+	tier            string
+	keep            bool
+	home            string // isolated HOME and working directory for the CLI
+	mcpHostedTools  bool   // select hosted source publication in the preview journey
+	mcpPrivateTools bool   // opt-in credential-bound private invocation acceptance
+	mcpTools        bool   // explicit opt-in to the preview published-tool lifecycle
+	mcpURL          string // hosted bridge; defaults to the target API's /mcp
+	sensitiveMu     sync.RWMutex
+	sensitive       []string // synthetic journey credentials; never included in reports
+	// session carries the signed-in dashboard session for owner-only steps.
+	session string
 
 	preflightOnce sync.Once
 	preflightErr  error
@@ -111,6 +119,9 @@ func TestMain(m *testing.M) {
 func loadTarget(getenv func(string) string) (*target, error) {
 	api := strings.TrimRight(getenv("GREGALE_E2E_API"), "/")
 	if api == "" {
+		if getenv("GREGALE_E2E_MCP_TOOL_LIFECYCLE") == "1" || getenv("GREGALE_E2E_MCP_HOSTED_TOOL_LIFECYCLE") == "1" || getenv("GREGALE_E2E_MCP_PRIVATE_TOOL_LIFECYCLE") == "1" {
+			return nil, fmt.Errorf("the preview MCP tool journey requires an explicit GREGALE_E2E_API target")
+		}
 		return nil, nil
 	}
 	u, err := url.Parse(api)
@@ -122,6 +133,7 @@ func loadTarget(getenv func(string) string) (*target, error) {
 		appsDomain: getenv("GREGALE_E2E_APPS_DOMAIN"),
 		token:      getenv("GREGALE_E2E_TOKEN"),
 		useLogin:   getenv("GREGALE_E2E_AUTH") == "cli-login",
+		session:    getenv("GREGALE_E2E_SESSION"),
 		cli:        getenv("GREGALE_E2E_CLI"),
 		runID:      getenv("GREGALE_E2E_RUN_ID"),
 		tier:       getenv("GREGALE_E2E_TIER"),
@@ -141,6 +153,9 @@ func loadTarget(getenv func(string) string) (*target, error) {
 	}
 	if t.tier != tierSmoke && t.tier != tierFull {
 		return nil, fmt.Errorf("GREGALE_E2E_TIER %q: want %s or %s", t.tier, tierSmoke, tierFull)
+	}
+	if err := loadMCPToolJourney(t, getenv); err != nil {
+		return nil, err
 	}
 	if t.runID == "" {
 		t.runID = newRunID(time.Now())
@@ -357,6 +372,12 @@ func idempotentCommand(args []string) bool {
 		return sub == "bucket"
 	case "postgres":
 		return sub == "list" || sub == "get" || sub == "capabilities" || sub == "usage"
+	case "event":
+		// A publish with an explicit --id names one identity: repeating it
+		// answers the original receipt.
+		return sub == "get" || sub == "subscription" || (sub == "publish" && slices.Contains(args, "--id"))
+	case "dlq":
+		return sub == "list"
 	}
 	return false
 }
@@ -391,12 +412,26 @@ func (tg *target) execStdin(t *testing.T, stdin string, timeout time.Duration, a
 	return tg.execIn(t, tg.token, tg.home, stdin, timeout, args...)
 }
 
+// runWithEnv runs the CLI with the target's token and extra environment, for
+// a journey that turns on a CLI surface still hidden by default (such as
+// FAAS_ENVIRONMENT_BRANCHES_ENABLED). cliEnv drops the caller's FAAS_
+// variables, so the journey names each one it needs.
+func (tg *target) runWithEnv(t *testing.T, extra []string, timeout time.Duration, args ...string) cliResult {
+	t.Helper()
+	return tg.execInEnv(t, tg.token, tg.home, "", extra, timeout, args...)
+}
+
 func (tg *target) execIn(t *testing.T, token, dir, stdin string, timeout time.Duration, args ...string) cliResult {
+	t.Helper()
+	return tg.execInEnv(t, token, dir, stdin, nil, timeout, args...)
+}
+
+func (tg *target) execInEnv(t *testing.T, token, dir, stdin string, extra []string, timeout time.Duration, args ...string) cliResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, tg.cli, append([]string{"--non-interactive"}, args...)...)
-	cmd.Env = tg.cliEnv(token)
+	cmd.Env = append(tg.cliEnv(token), extra...)
 	cmd.Dir = dir
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -426,6 +461,17 @@ func (tg *target) execIn(t *testing.T, token, dir, stdin string, timeout time.Du
 func (tg *target) ok(t *testing.T, timeout time.Duration, args ...string) cliResult {
 	t.Helper()
 	res := tg.run(t, timeout, args...)
+	if res.exit != 0 {
+		t.Fatalf("gregale %s failed (exit %d): %s\nstdout: %s", strings.Join(args, " "), res.exit,
+			tg.redact(res.problem()), tg.redact(tail(string(res.stdout), 2000)))
+	}
+	return res
+}
+
+// runWithEnvOK is runWithEnv that fails the test on a non-zero exit.
+func (tg *target) runWithEnvOK(t *testing.T, extra []string, timeout time.Duration, args ...string) cliResult {
+	t.Helper()
+	res := tg.runWithEnv(t, extra, timeout, args...)
 	if res.exit != 0 {
 		t.Fatalf("gregale %s failed (exit %d): %s\nstdout: %s", strings.Join(args, " "), res.exit,
 			tg.redact(res.problem()), tg.redact(tail(string(res.stdout), 2000)))
@@ -512,6 +558,17 @@ func num(v any, path string) float64 {
 	default:
 		return 0
 	}
+}
+
+// isZeroNum reports whether path holds the number 0. objects decodes with
+// UseNumber, so comparing field() with float64(0) never matched a CLI value
+// (journeys 2026-11-16: HostedMCP budget_key failed on monthly_cents 0).
+func isZeroNum(v any, path string) bool {
+	switch field(v, path).(type) {
+	case json.Number, float64:
+		return num(v, path) == 0
+	}
+	return false
 }
 
 func compact(v any) string {
@@ -819,18 +876,27 @@ func probeSource(t *testing.T, version string) string {
 // labelled e2ej-<run>-<name> and revoked when the journey ends.
 func (tg *target) scopedKey(t *testing.T, name string, scopes ...string) string {
 	t.Helper()
+	key, _ := tg.scopedKeyWithID(t, t, name, scopes...)
+	return key
+}
+
+// scopedKeyWithID is scopedKey that also returns the key's id. The key is
+// revoked when owner ends: a story step that mints a key later steps use
+// passes the journey's top-level test.
+func (tg *target) scopedKeyWithID(t, owner *testing.T, name string, scopes ...string) (key, id string) {
+	t.Helper()
 	args := []string{"keys", "add", tg.slug(name)}
 	if len(scopes) > 0 {
 		args = append(args, "--scopes", strings.Join(scopes, ","))
 	}
 	res := tg.ok(t, time.Minute, args...)
-	key := apiKeyRe.FindString(string(res.stdout))
-	id := str(object(t, res.stdout), "id")
+	key = apiKeyRe.FindString(string(res.stdout))
+	id = str(object(t, res.stdout), "id")
 	if key == "" || id == "" {
 		t.Fatalf("key create printed no key or id")
 	}
-	t.Cleanup(func() { tg.run(t, time.Minute, "key", "delete", id) })
-	return key
+	owner.Cleanup(func() { tg.run(owner, time.Minute, "key", "delete", id) })
+	return key, id
 }
 
 // apiCall sends one request to the public API with a bearer key.
@@ -1152,7 +1218,36 @@ func (tg *target) sweep(hours string) error {
 		}
 		fmt.Fprintf(os.Stderr, "journeys: swept stale app %s\n", slug)
 	}
+	tg.sweepDatabases(cutoff)
 	return nil
+}
+
+// sweepDatabases purges managed databases journeys created in earlier runs,
+// after the apps that held their bindings are gone. A database a crashed or
+// refused cleanup left behind otherwise holds one of the account's database
+// slots forever. Failures are logged; the next run retries.
+func (tg *target) sweepDatabases(cutoff time.Time) {
+	docs, err := tg.cliJSON("postgres", "list")
+	if err != nil || len(docs) == 0 {
+		return
+	}
+	items, _ := docs[0]["items"].([]any)
+	var dbs []map[string]any
+	for _, item := range items {
+		if db, ok := item.(map[string]any); ok && str(db, "state") != "deleted" {
+			dbs = append(dbs, map[string]any{"slug": str(db, "name")})
+		}
+	}
+	for _, name := range staleSlugs(dbs, cutoff, tg.runID) {
+		rm := exec.Command(tg.cli, "--non-interactive", "postgres", "delete", name, "--purge", "--yes")
+		rm.Env = tg.cliEnv(tg.token)
+		rm.Dir = tg.home
+		if out, err := rm.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "journeys: sweep database %s: %v: %s\n", name, err, tail(string(out), 300))
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "journeys: swept stale database %s\n", name)
+	}
 }
 
 // previewSlugRe matches pull-request previews of journey apps:
@@ -1208,7 +1303,20 @@ func (tg *target) redact(s string) string {
 	if tg != nil && len(tg.token) >= 8 {
 		s = strings.ReplaceAll(s, tg.token, "<token>")
 	}
+	if tg != nil {
+		tg.sensitiveMu.RLock()
+		for _, credential := range tg.sensitive {
+			s = strings.ReplaceAll(s, credential, "<credential>")
+		}
+		tg.sensitiveMu.RUnlock()
+	}
 	return credentialRe.ReplaceAllString(s, "<credential>")
+}
+
+func (tg *target) addSensitive(value string) {
+	tg.sensitiveMu.Lock()
+	defer tg.sensitiveMu.Unlock()
+	tg.sensitive = append(tg.sensitive, value)
 }
 
 func tail(s string, n int) string {

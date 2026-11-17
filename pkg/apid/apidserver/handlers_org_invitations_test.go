@@ -59,7 +59,7 @@ func seedInvitationForPrincipal(t *testing.T, store *state.MemStore, org *state.
 		Role:               role,
 		TokenHash:          sum[:],
 		ExpiresAt:          time.Now().Add(time.Hour),
-		InvitedByAccountID: &ownerID,
+		InvitedByAccountID: seedInviter(store, org.ID, ownerID),
 	})
 	if err != nil {
 		t.Fatalf("CreateOrgInvitation: %v", err)
@@ -86,10 +86,30 @@ func seedInvitationNonce(t *testing.T, store *state.MemStore, org *state.Org, ow
 		Role:               role,
 		TokenHash:          sum[:],
 		ExpiresAt:          time.Now().Add(time.Hour),
-		InvitedByAccountID: &ownerID,
+		InvitedByAccountID: seedInviter(store, org.ID, ownerID),
 	}); err != nil {
 		t.Fatalf("CreateOrgInvitation: %v", err)
 	}
+}
+
+// seedInviter names who sent a seeded invitation. Accepting needs the
+// inviter to be an active owner or admin (ADR-20261111130000), so when the
+// given id is not one (tests often pass the invitee) it falls back to an
+// owner of the org, or to the given id when the org has none.
+func seedInviter(store *state.MemStore, orgID, preferred string) *string {
+	ctx := context.Background()
+	if m, err := store.OrgMemberByAccount(ctx, orgID, preferred); err == nil && m.RemovedAt == nil &&
+		(m.Role == state.OrgRoleOwner || m.Role == state.OrgRoleAdmin) {
+		return &preferred
+	}
+	members, _ := store.ListOrgMembers(ctx, orgID)
+	for _, m := range members {
+		if m.RemovedAt == nil && m.Role == state.OrgRoleOwner {
+			id := m.AccountID
+			return &id
+		}
+	}
+	return &preferred
 }
 
 // seedSharedOrgWithOwner creates a shared org on the given plan and
@@ -268,15 +288,17 @@ func TestOwnershipTransferAppearsInOrgActivity(t *testing.T) {
 	if err := e.store.AddOrgMember(context.Background(), org.ID, newOwner.ID, state.OrgRoleDeveloper, nil); err != nil {
 		t.Fatalf("AddOrgMember new owner: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/orgs/"+org.Slug+"/transfer_ownership", api.TransferOwnershipRequest{
+	rec := e.doSession(t, "", http.MethodPost, "/v1/orgs/"+org.Slug+"/transfer_ownership", api.TransferOwnershipRequest{
 		NewOwnerAccountID: newOwner.ID,
 	}, map[string]string{"X-Active-Org": org.Slug})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("transfer ownership: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	rows := assertOrgActivityKinds(t, e.store, org.ID, "org.ownership_transferred")
-	if len(rows) != 1 || rows[0].ActorLabel != "test" || rows[0].ResourceLabel != newOwner.Email ||
-		orgActivitySummary(rows[0]) != "test transferred ownership to "+newOwner.Email {
+	// A browser session, not an API key, transfers ownership, so the actor
+	// is the signed-in account rather than a key label.
+	if len(rows) != 1 || rows[0].ActorLabel != e.acct.Email || rows[0].ResourceLabel != newOwner.Email ||
+		orgActivitySummary(rows[0]) != e.acct.Email+" transferred ownership to "+newOwner.Email {
 		t.Fatalf("ownership transfer activity = %#v", rows)
 	}
 }

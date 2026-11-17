@@ -33,7 +33,7 @@ class ReplayEventFanoutFailureRequest:
     replacement returns 409 without mutation. Guarded replay targets the original acceptance snapshot, not
     backfills."""
     recovery_expectation: EventRoutingRecoveryExpectation | Unset = UNSET
-    """Reviewed acceptance-time automation routing state. All comparisons occur in the replay transaction;
+    """Reviewed acceptance-time stored workflow routing state. All comparisons occur in the replay transaction;
     mismatches return 409 event_recovery_changed without queuing a replay. Generation must be supplied for recipient
     routing and omitted for legacy routing. Does not bypass admission rules."""
     allow_expired: bool | Unset = False

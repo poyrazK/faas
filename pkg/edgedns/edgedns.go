@@ -300,6 +300,10 @@ func (r *Reconciler) observe(nodes []Node) (proxied, direct []netip.Addr) {
 		hasProxied = hasProxied || !name.DNSOnly
 		hasDirect = hasDirect || name.DNSOnly
 	}
+	proxiedPass := func(n Node) bool { return n.Ready }
+	directPass := func(n Node) bool { return n.Ready && n.Direct }
+	proxiedDrains := r.honoredDrains(nodes, proxiedPass, "proxied")
+	directDrains := r.honoredDrains(nodes, directPass, "dns-only")
 	for _, n := range nodes {
 		// Only a node that could be behind the names counts: a drained
 		// node or one without an address is not expected to answer.
@@ -308,11 +312,11 @@ func (r *Reconciler) observe(nodes []Node) (proxied, direct []netip.Addr) {
 			r.metrics.probeFailed(n.Name)
 		}
 		in := false
-		if hasProxied && r.step(r.nodes, n, n.Ready, "node's edge stopped answering; withdrawing it", "node's edge is ready; adding it") {
+		if hasProxied && r.step(r.nodes, drainView(n, proxiedDrains, proxiedPass), n.Ready, "node's edge stopped answering; withdrawing it", "node's edge is ready; adding it") {
 			proxied = append(proxied, n.Public)
 			in = true
 		}
-		if hasDirect && r.step(r.direct, n, n.Ready && n.Direct,
+		if hasDirect && r.step(r.direct, drainView(n, directDrains, directPass), n.Ready && n.Direct,
 			"node's public address stopped serving its DNS-only names; withdrawing it from them",
 			"node's public address serves its DNS-only names; adding it to them") {
 			direct = append(direct, n.Public)
@@ -321,6 +325,44 @@ func (r *Reconciler) observe(nodes []Node) (proxied, direct []netip.Addr) {
 		r.metrics.setNodeIn(n.Name, in)
 	}
 	return proxied, direct
+}
+
+// honoredDrains reports whether this tick's registry drains count for one
+// mode, whose nodes pass with pass. The registry is writable by every
+// compute node (they register themselves through one shared database role),
+// so a drain alone must not be able to empty the records onto one node: the
+// drained nodes whose edges still pass are withdrawn only while at least
+// half of the passing nodes stay (ADR-20261107180000). Otherwise none of
+// those drains is honored this tick and the refusal is logged and counted;
+// a drained node that stops passing still goes on its probes.
+func (r *Reconciler) honoredDrains(nodes []Node, pass func(Node) bool, mode string) bool {
+	healthy, drained := 0, 0
+	for _, n := range nodes {
+		if !n.Public.IsValid() || !pass(n) {
+			continue
+		}
+		healthy++
+		if !n.Active {
+			drained++
+		}
+	}
+	if drained == 0 || healthy-drained >= (healthy+1)/2 {
+		r.metrics.setDrainRefused(mode, 0)
+		return true
+	}
+	r.log.Warn("edgedns: refusing to withdraw drained nodes whose edges still pass: it would leave fewer than half of the healthy nodes",
+		"mode", mode, "healthy", healthy, "drained", drained)
+	r.metrics.setDrainRefused(mode, drained)
+	return false
+}
+
+// drainView is n as one mode's health sees it: a drained node that still
+// passes stays active while that mode's drains are not honored.
+func drainView(n Node, honored bool, pass func(Node) bool) Node {
+	if !honored && !n.Active && n.Public.IsValid() && pass(n) {
+		n.Active = true
+	}
+	return n
 }
 
 // step folds one probe result into n's health in healths and reports

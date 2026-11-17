@@ -181,7 +181,7 @@ func pgRecoveryPolicyCandidates(ctx context.Context, q *sqlc.Queries, db sqlc.DB
 	for _, row := range preflight.Sample {
 		rowsByPosition[row.Position] = row
 	}
-	items, err := q.EventRecoveryItems(ctx, db, sqlc.EventRecoveryItemsParams{JobID: mustPgUUID(job.ID), PageLimit: api.AutomationRecoveryBatchMaxRuns})
+	items, err := q.EventRecoveryItems(ctx, db, sqlc.EventRecoveryItemsParams{JobID: mustPgUUID(job.ID), PageLimit: api.StoredWorkflowRecoveryBatchMaxRuns})
 	if err != nil {
 		return candidates, err
 	}

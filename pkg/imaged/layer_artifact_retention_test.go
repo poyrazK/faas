@@ -102,6 +102,10 @@ func TestCleanupRetainsLayerReusedByStage(t *testing.T) {
 		t.Fatalf("source cleanup deleted stage layer: %v", err)
 	}
 	_ = rc.Close()
+	// An in-flight release cannot be hidden (#6968): end the stage first.
+	if _, err := store.SetDeploymentFailed(ctx, stage.ID, "test", "ended for the test"); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.ClearDeployment(ctx, stage.ID, "test"); err != nil {
 		t.Fatal(err)
 	}

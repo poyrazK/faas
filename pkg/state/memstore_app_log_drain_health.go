@@ -59,10 +59,23 @@ func (m *MemStore) ListAppLogDrainDeliveryAnalytics(_ context.Context, drainID s
 		return nil, ErrNotFound
 	}
 	out := make([]AppLogDrainDeliveryAnalytics, 0)
+	var baseline AppLogDrainDeliveryAnalytics
 	for _, sample := range m.appLogDrainAnalytics {
-		if sample.DrainID == drainID && !sample.BucketStart.Before(from) && !sample.BucketStart.After(to) {
+		if sample.DrainID != drainID {
+			continue
+		}
+		if sample.BucketStart.Before(from) {
+			if baseline.BucketStart.IsZero() || sample.BucketStart.After(baseline.BucketStart) {
+				baseline = sample
+			}
+			continue
+		}
+		if !sample.BucketStart.After(to) {
 			out = append(out, sample)
 		}
+	}
+	if !baseline.BucketStart.IsZero() {
+		out = append(out, baseline)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].BucketStart.Before(out[j].BucketStart) })
 	return out, nil

@@ -67,6 +67,8 @@ func summarizeTrafficRuntime(rows []state.ServingGatewayTrafficRuntime) api.Traf
 	s.SecurityRevocation = feature(func(r state.ServingGatewayTrafficRuntime) string { return boolean(r.SecurityRevocation) })
 	s.ManagedHTTP = feature(func(r state.ServingGatewayTrafficRuntime) string { return boolean(r.ManagedHTTP) })
 	s.ManagedCircuit = feature(func(r state.ServingGatewayTrafficRuntime) string { return boolean(r.ManagedCircuit) })
+	headerSecrets := feature(func(r state.ServingGatewayTrafficRuntime) string { return boolean(r.EdgeHeaderSecrets) })
+	s.EdgeHeaderSecrets = &headerSecrets
 	return s
 }
 

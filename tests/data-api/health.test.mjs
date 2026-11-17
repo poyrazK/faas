@@ -33,6 +33,9 @@ test('compiled health CLI validates runtime pool observations over trusted TLS a
   })
   await new Promise(resolve => engine.listen(0, '127.0.0.1', resolve))
   const config = runtimeConfig({ DATABASE_URL: 'postgres://restricted:test-only@localhost/db', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  // Each scenario changes the pool seconds apart; public /healthz would reuse
+  // a ready answer for DataAPIHealthCache (ADR-20261109160000).
+  config.healthCacheMs = 0
   const gateway = createServer(config, async () => { throw Error('health must not verify JWTs') }, engine.address().port, engine.address().port, () => {})
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
   const serving = https.createServer({ key: await readFile(key), cert: await readFile(cert) }, (req, res) => {

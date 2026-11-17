@@ -46,6 +46,11 @@ func (s *server) issueDashboardSession(ctx context.Context, r *http.Request, acc
 	sid := uuid.NewString()
 	ip := clientIPFromRequest(r)
 	ua := r.UserAgent()
+	// A browser the account remembered at the authenticator check skips
+	// it until the trust expires (ADR 20261108150000).
+	if mfaPending && s.trustedBrowserSkipsMFA(ctx, r, accountID) {
+		mfaPending = false
+	}
 	// IAM-3-Evolved (ADR-076): compute the binding-hash fingerprint
 	// (HMAC-SHA256 of ip + ua_family). The same value is stored
 	// on the sessions row and sealed into the cookie envelope so
@@ -53,6 +58,7 @@ func (s *server) issueDashboardSession(ctx context.Context, r *http.Request, acc
 	// request — a drifted fingerprint auto-revokes the session
 	// (the stolen-cookie defence).
 	bind := bindinghash.Compute(ip, bindinghash.UAFamily(ua), s.bindingKeyFn)
+	newSignIn := s.signInIsNew(ctx, accountID, ip, ua)
 	sess, err := s.store.CreateSessionWithBinding(ctx, sid, accountID, ip, ua, bind)
 	if err != nil {
 		return "", state.Session{}, fmt.Errorf("create session row: %w", err)
@@ -77,6 +83,9 @@ func (s *server) issueDashboardSession(ctx context.Context, r *http.Request, acc
 			"issued_ip": ip,
 		})
 	}
+	if newSignIn {
+		s.sendNewSignInNotice(ctx, accountID, ip, ua)
+	}
 	return cookie, sess, nil
 }
 
@@ -97,11 +106,17 @@ func (s *server) issueDashboardSessionWithGithub(ctx context.Context, r *http.Re
 	sid := uuid.NewString()
 	ip := clientIPFromRequest(r)
 	ua := r.UserAgent()
+	// A browser the account remembered at the authenticator check skips
+	// it until the trust expires (ADR 20261108150000).
+	if mfaPending && s.trustedBrowserSkipsMFA(ctx, r, accountID) {
+		mfaPending = false
+	}
 	// IAM-3-Evolved (ADR-076): compute the binding-hash fingerprint
 	// (HMAC-SHA256 of ip + ua_family). Stored on the sessions row
 	// and sealed into the cookie envelope for the stale-fingerprint
 	// auto-revoke defence.
 	bind := bindinghash.Compute(ip, bindinghash.UAFamily(ua), s.bindingKeyFn)
+	newSignIn := s.signInIsNew(ctx, accountID, ip, ua)
 	sess, err := s.store.CreateSessionWithBinding(ctx, sid, accountID, ip, ua, bind)
 	if err != nil {
 		return "", state.Session{}, fmt.Errorf("create session row: %w", err)
@@ -127,6 +142,9 @@ func (s *server) issueDashboardSessionWithGithub(ctx context.Context, r *http.Re
 			"method":    method,
 			"issued_ip": ip,
 		})
+	}
+	if newSignIn {
+		s.sendNewSignInNotice(ctx, accountID, ip, ua)
 	}
 	return cookie, sess, nil
 }

@@ -53,13 +53,7 @@ func topLevelUsage(showAll, showOperator bool) string {
 	if showAll && !showOperator {
 		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
 	}
-	b.WriteString("\nGlobal flags:\n")
-	b.WriteString("  --json                 Machine-readable output where supported. Slices emit\n")
-	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
-	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
-	b.WriteString("                         Interactive-only commands retain human prompts.\n")
-	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
-	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
+	writeGlobalFlagHelp(&b)
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -105,16 +99,41 @@ func init() {
 }
 
 func run(args []string) (status int) {
+	args = protectImageRunCommandArgs(args)
+	previousHTTPTimeout := httpRequestTimeout
+	httpRequestTimeout = 0
+	defer func() { httpRequestTimeout = previousHTTPTimeout }()
+	previousDebug, previousTrace := httpDebugEnabled, activeHTTPDebug.Load()
+	httpDebugEnabled = false
+	activeHTTPDebug.Store(nil)
+	var invocationTrace *httpDebugRecorder
+	defer func() {
+		if invocationTrace != nil {
+			invocationTrace.close()
+		}
+		httpDebugEnabled = previousDebug
+		activeHTTPDebug.Store(previousTrace)
+	}()
 	resetCapabilityView()
 	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
+	previousFlagHelpPath := invokedFlagHelpPath
 	defer func() {
 		jsonOutput = previousJSON
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
+		invokedFlagHelpPath = previousFlagHelpPath
 	}()
-	previousAutomation := nonInteractive
-	defer func() { nonInteractive = previousAutomation }()
+	previousRetries := httpReadRetries
+	httpReadRetries = 0
+	defer func() { httpReadRetries = previousRetries }()
+	previousAutomation, previousWait, previousOrg, previousReason := nonInteractive, approvalWaitEnabled, projectOrganization, agentReason
+	defer func() {
+		nonInteractive, approvalWaitEnabled, projectOrganization, agentReason = previousAutomation, previousWait, previousOrg, previousReason
+	}()
 	nonInteractive = false
+	projectOrganization = ""
+	agentReason = os.Getenv("GREGALE_AGENT_REASON")
+	approvalWaitEnabled = os.Getenv("GREGALE_WAIT_FOR_APPROVAL") == "1"
 	previousInsecureWarned := insecureAPIWarned
 	defer func() { insecureAPIWarned = previousInsecureWarned }()
 	insecureAPIWarned = false
@@ -140,6 +159,20 @@ func run(args []string) (status int) {
 	if profileErr != nil {
 		return printErr("Invalid connection profile", profileErr)
 	}
+	// The explicit help command offers structured discovery before argument
+	// rewriting or connection validation. --help keeps its human usage contract.
+	if jsonOutput && len(args) > 0 && args[0] == "help" {
+		return runJSONHelp(args[1:])
+	}
+	if httpDebugEnabled {
+		invocationTrace = &httpDebugRecorder{out: osStderr}
+		activeHTTPDebug.Store(invocationTrace)
+	}
+	// ADR-20261112223000 §5: help read by a coding agent starts with a
+	// pointer to the task guide, on stderr so help's stdout is unchanged.
+	if hasHelpFlag(args) || (len(args) > 0 && args[0] == "help") || len(args) == 0 {
+		printAgentHint(osStderr)
+	}
 	// ADR-20261026145832: a path in the new command tree runs the command
 	// that implements it today, so help, gating and dispatch see that path.
 	typed := args
@@ -150,6 +183,9 @@ func run(args []string) (status int) {
 		}
 		return printErr("Invalid app target", err)
 	}
+	if code, moved := movedOperatorCommand(args); moved {
+		return code
+	}
 	if slices.Equal(typed, args) {
 		printCliTreeHint(osStderr, typed)
 	}
@@ -159,6 +195,14 @@ func run(args []string) (status int) {
 	if len(args) > 0 {
 		if name, hidden := hiddenFlagArg(manifestLeafFlags(args), args[1:]); hidden {
 			return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag %s; run 'gregale %s --help' for its options", name, leadingWords(typed)))
+		}
+	}
+	// A bare group that has nothing to run on its own lists its commands, as
+	// its --help does; `gregale bucket` printed one subcommand's usage and
+	// `gregale mcp` the usage of `mcp server` (Hunt 32 H32-2).
+	if len(typed) == 1 && bareGroupListsCommands[typed[0]] {
+		if printTreeManifestHelp(osStderr, typed) {
+			return 1
 		}
 	}
 	// Help under a tree noun or a shortcut comes from the tree manifest the
@@ -188,11 +232,15 @@ func run(args []string) (status int) {
 	defer func() { treeUsageFrom, treeUsageTo = previousUsageFrom, previousUsageTo }()
 	if len(args) > 0 {
 		if noun, ok := lookupCliTreeNoun(args[0]); ok && oldPathDepth(args[:1]) == 0 {
-			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name))
+			return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name), cliUnknownCommand, strings.Fields(leadingWords(args))))
 		}
 	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
+	invokedFlagHelpPath = ""
+	if jsonOutput {
+		invokedFlagHelpPath = flagDiagnosticInvocationPath(typed)
+	}
 	previousHelpPrinted, previousHelpPath := flagHelpPrinted, helpRequestPath
 	flagHelpPrinted, helpRequestPath = false, ""
 	if jsonUsageHelp {
@@ -226,7 +274,7 @@ func run(args []string) (status int) {
 	// Help is always local and comes from the same manifest as completion and
 	// the generated reference. This also handles flags preceding --help.
 	if len(args) > 1 && args[0] != "help" && hasHelpFlag(args[1:]) {
-		if command, ok := lookupDiscoverableCommand(args[0]); ok {
+		if command, ok := lookupNamedHelpCommand(args[0]); ok {
 			if printManifestHelpAs(typed, args, command, args[1:]) {
 				return 0
 			}
@@ -267,7 +315,7 @@ func run(args []string) (status int) {
 			_, _ = fmt.Fprint(osStdout, topLevelUsage(showAll, showOperator))
 			return 0
 		}
-		if command, ok := lookupDiscoverableCommand(args[1]); ok && cliCommandAvailable(command.Name) {
+		if command, ok := lookupNamedHelpCommand(args[1]); ok && cliCommandAvailable(command.Name) {
 			if printManifestHelpAs(typed, args, command, args[2:]) {
 				return 0
 			}
@@ -280,6 +328,13 @@ func run(args []string) (status int) {
 		}
 		PrintUsage(os.Stderr, message, "cli")
 		return 1
+	case "update":
+		// Updating the CLI must work when saved configuration is broken:
+		// a newer CLI may be the fix.
+		return cmdUpdate(args[1:])
+	case "export":
+		// Local integrity checks work without a usable connection profile.
+		return cmdExport(args[1:])
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
 		// via cmdCompletion; the dispatcher is in completion.go. Like help,
@@ -289,6 +344,9 @@ func run(args []string) (status int) {
 		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
 		// gregale-<command>(1). Dispatcher is in man.go.
 		return cmdMan(args[1:])
+	case "guide":
+		// ADR-20261112223000 §4: the task index; offline, like man.
+		return cmdGuide(args[1:])
 	}
 	if err := validateSelectedProfile(); err != nil {
 		return printErr("Invalid connection profile", err)
@@ -369,6 +427,8 @@ func run(args []string) (status int) {
 		return cmdConnect(args[1:])
 	case "github":
 		return cmdGithub(args[1:])
+	case "functions":
+		return cmdFunction(args[1:])
 	case "open":
 		return cmdOpen(args[1:])
 	case dispatchDoctor:
@@ -554,6 +614,8 @@ func run(args []string) (status int) {
 		return cmdDomains(args[1:])
 	case "deploy-tokens":
 		return cmdDeployTokens(args[1:])
+	case "sandbox-templates":
+		return cmdSandboxTemplates(args[1:])
 	case "sites":
 		return cmdSites(args[1:])
 	case "tenant-surfaces":
@@ -630,17 +692,13 @@ func run(args []string) (status int) {
 		// every leaf calls authedClient() and hits apid. The
 		// operator-only surfaces (sign-keys, node-key, pki,
 		// host-age, manifest, release, backup) moved to
-		// `gregalectl` in PR-6.5 — this is the only operator verb
-		// that stayed in `gregale` because it's a customer/admin
-		// API surface.
+		// `gregalectl` in PR-6.5, and admin credit/refund/abuse-hold,
+		// github-webhook-secret and the Postgres accounting verbs
+		// followed (commands_moved_operator.go). This one stays: its
+		// routes check the customer's own account-admin scope.
 		return cmdTrustedPublishers(args[1:])
 	case "secrets":
 		return cmdSecrets(args[1:])
-	case "github-webhook-secret":
-		// PR-D / ADR-012 §7 amendment. Distinct top-level
-		// command; dispatches to a single verb (set) for the
-		// per-tenant webhook secret rotation.
-		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
 	case "channels":
@@ -715,11 +773,14 @@ func run(args []string) (status int) {
 	case "workflows":
 		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
-	case "automations":
-		// Manage declarative automation definitions: validate, save a draft, publish.
-		return cmdAutomations(args[1:])
+	case "stored-workflows":
+		// Manage stored workflow definitions: validate, save a draft, publish.
+		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
+	case "postgres-changes":
+		// Capture Postgres row changes into an app queue (ADR-20261112140000).
+		return cmdPostgresChanges(args[1:])
 	case "data-repair":
 		return cmdDataRepair(args[1:])
 	case "events":
@@ -746,8 +807,6 @@ func run(args []string) (status int) {
 		// button has a CLI twin. Subcommands live in
 		// commands_billing.go.
 		return cmdBilling(args[1:])
-	case "admin":
-		return cmdAdmin(args[1:])
 	case "logs":
 		return cmdLogs(args[1:])
 	case "tail":
@@ -808,7 +867,7 @@ func run(args []string) (status int) {
 		// requires an authenticated session + 5-min step-up.
 		return cmdInvitations(args[1:])
 	case "overage-cap":
-		// Tier B audit gap: per-account overage cap ($0.01/GB-h
+		// Tier B audit gap: per-account overage cap ($0.05/GB-h
 		// above the plan's included GB-h). schedd refuses new wakes
 		// once the cap is hit.
 		return cmdOverageCap(args[1:])
@@ -826,10 +885,10 @@ func run(args []string) (status int) {
 }
 
 func unknownCommand(name string) int {
-	if suggestion, ok := suggestCommand(name); ok {
-		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", name, suggestion))
+	if suggestion, ok := rootCommandSuggestion(name); ok {
+		return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; did you mean 'gregale %s'?", name, suggestion), cliUnknownCommand, strings.Fields(name)))
 	}
-	return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", name))
+	return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; run 'gregale help' for usage", name), cliUnknownCommand, strings.Fields(name)))
 }
 
 // printManifestHelp resolves verb paths without invoking a command parser or
@@ -979,6 +1038,11 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 	usage := "gregale " + command.Name
 	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals && command.Name != "logs" {
 		choice := " <" + command.subcommandChoice() + ">"
+		if len(command.Flags) > 0 {
+			// A command with flags of its own also runs without a child:
+			// `release list [alias] [flags]` (Hunt 33 H33-4).
+			choice = " [" + command.subcommandChoice() + "]"
+		}
 		// Compact help stays within 80 columns; its Commands section lists
 		// the choices when they no longer fit on the usage line. Full help
 		// lists them too, so it takes the bad-invocation synopsis limit:
@@ -1070,7 +1134,7 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []string) {
 	usage := localHelpSubcommandPath(command, names)
 	if len(sub.Subcommands) > 0 {
-		usage += " <" + sub.subcommandChoice() + ">"
+		usage += " " + sub.subcommandSynopsis()
 	}
 	if sub.SubcommandsAfterPositionals {
 		usage = localHelpArguments(usage, nil, sub.Flags, false)
@@ -1161,7 +1225,9 @@ func printLocalHelpFlag(w io.Writer, flag cliFlag) {
 	if flag.Req {
 		description += " (required)"
 	}
-	if flag.Repeatable {
+	// Many descriptions already end in "(repeatable)"; saying it twice read
+	// "OIDC audience (repeatable) (repeatable)".
+	if flag.Repeatable && !strings.Contains(description, "(repeatable") {
 		description += " (repeatable)"
 	}
 	label := mdFlagLabel(flag)
@@ -1192,3 +1258,7 @@ func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
 	}
 	return cliSub{}, false
 }
+
+// bareGroupListsCommands names the groups whose bare invocation prints their
+// command list (on stderr, exit 1) instead of one subcommand's usage.
+var bareGroupListsCommands = map[string]bool{"bucket": true, "mcp": true}

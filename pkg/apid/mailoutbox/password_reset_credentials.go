@@ -84,7 +84,9 @@ func (c *ResetCredentials) redeem(ctx context.Context, hash []byte, phc string, 
 	if err != nil {
 		return "", err
 	}
-	if account.Status != "active" || !account.EmailVerifiedAt.Valid || !strings.EqualFold(account.Email, token.EmailAddress) || account.PasswordResetRevision != token.PasswordRevision || token.ConsumedAt.Valid || !token.ExpiresAt.Time.After(now.Time) {
+	// A past-due account must be able to reset its password, sign in and
+	// pay, as with a magic link (ADR 20261109120000).
+	if (account.Status != "active" && account.Status != "past_due") || !account.EmailVerifiedAt.Valid || !strings.EqualFold(account.Email, token.EmailAddress) || account.PasswordResetRevision != token.PasswordRevision || token.ConsumedAt.Valid || !token.ExpiresAt.Time.After(now.Time) {
 		return "", ErrPasswordResetInvalid
 	}
 	n, err := queries.ReplaceResetPassword(ctx, tx, q.ReplaceResetPasswordParams{ID: account.ID, PasswordResetRevision: token.PasswordRevision, Hash: phc})

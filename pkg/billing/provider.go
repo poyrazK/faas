@@ -582,6 +582,10 @@ type InvoiceData struct {
 	AmountPaidCents  int64
 	Currency         string
 	PDFAvailable     bool
+	// ProviderDiscountID and DiscountCents are the discount the provider
+	// applied to the order, if any (ADR-20261104212028).
+	ProviderDiscountID string
+	DiscountCents      int64
 }
 
 // Event is the normalized envelope apid's dunning state machine

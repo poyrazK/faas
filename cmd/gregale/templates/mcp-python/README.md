@@ -184,6 +184,12 @@ changed. In external OAuth mode, add dynamic entry names and resource patterns
 to the corresponding scope allow-lists. The registry is process-local, so
 every serving replica needs the same application registration code.
 
+For custom resource subscriptions, pass `authorize=` to `register_resource` and
+`replace_resource`. The synchronous callback receives `(uri, context)` with the
+verified subject, client ID and scopes; return `True` to permit access. Reads,
+subscription setup and update delivery share the callback. Custom resources
+without a callback remain readable through their handlers but cannot be subscribed.
+
 Register durable handlers in `server.py` before its `main()` call starts the
 runtime. The same registrations must be present in web and worker processes
 sharing the queue. Calls from clients that advertise MCP Tasks are queued for

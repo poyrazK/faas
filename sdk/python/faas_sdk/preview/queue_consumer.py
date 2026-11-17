@@ -41,6 +41,53 @@ _TOKEN_REFRESH_MARGIN_SECONDS = 60
 _MAX_BACKOFF_SECONDS = 30.0
 # A call may not outlive its server-side wait by more than this.
 _CALL_SLACK_SECONDS = 10.0
+_SETTLE_RETRY_DELAYS_SECONDS = (0.5, 2.0)
+# Acks and lease extensions that come due within this window share one call of
+# up to _MAX_BATCH receipts, so a busy consumer makes far fewer requests.
+_SETTLE_BATCH_WINDOW_SECONDS = 0.02
+
+
+class _ReceiptBatch:
+    """Gathers receipts for one settle verb and applies them in one call; each
+    caller learns whether its own receipt still held its message."""
+
+    def __init__(self, apply: Callable[[list[str]], Awaitable[list[str]]]) -> None:
+        self._apply = apply
+        self._pending: list[tuple[str, asyncio.Future[bool]]] = []
+        self._timer: asyncio.TimerHandle | None = None
+        self._flushes: set[asyncio.Task[None]] = set()
+
+    def add(self, receipt: str) -> asyncio.Future[bool]:
+        loop = asyncio.get_running_loop()
+        held: asyncio.Future[bool] = loop.create_future()
+        self._pending.append((receipt, held))
+        if len(self._pending) >= _MAX_BATCH:
+            self._flush()
+        elif self._timer is None:
+            self._timer = loop.call_later(_SETTLE_BATCH_WINDOW_SECONDS, self._flush)
+        return held
+
+    def _flush(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        batch, self._pending = self._pending, []
+        if batch:
+            task = asyncio.ensure_future(self._settle(batch))
+            self._flushes.add(task)
+            task.add_done_callback(self._flushes.discard)
+
+    async def _settle(self, batch: list[tuple[str, asyncio.Future[bool]]]) -> None:
+        try:
+            succeeded = set(await self._apply([receipt for receipt, _ in batch]))
+        except Exception as error:  # every waiter reports it
+            for _, held in batch:
+                if not held.done():
+                    held.set_exception(error)
+            return
+        for receipt, held in batch:
+            if not held.done():
+                held.set_result(receipt in succeeded)
 
 
 @dataclass(frozen=True)
@@ -125,6 +172,10 @@ class QueueConsumer:
         self._token: tuple[str, float] | None = None
         self._stopping = asyncio.Event()
         self._in_flight: set[asyncio.Task[None]] = set()
+        self._acks = _ReceiptBatch(lambda receipts: self._settle_many(":ack", receipts, {}))
+        self._extensions = _ReceiptBatch(
+            lambda receipts: self._settle_many(":extend", receipts, {"visibility_timeout_seconds": self._visibility})
+        )
 
     async def run(self) -> None:
         """Run until :meth:`stop`; returns once in-flight messages are settled."""
@@ -223,33 +274,57 @@ class QueueConsumer:
         if lost.is_set():
             return  # the message belongs to its next delivery now
         try:
-            if failure is None:
-                held = await self._settle(":ack", receipt, {})
-            else:
-                held = await self._settle(
-                    ":nack", receipt, {"error": _error_text(failure), "delay_seconds": self._retry_delay}
-                )
+            # A transient settle failure is retried: otherwise the handled
+            # message was redelivered after its timeout (ADR-20261113180000).
+            for delay in (*_SETTLE_RETRY_DELAYS_SECONDS, None):
+                try:
+                    if failure is None:
+                        held = await self._acks.add(receipt)
+                    else:
+                        held = await self._settle(
+                            ":nack", receipt, {"error": _error_text(failure), "delay_seconds": self._retry_delay}
+                        )
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    if delay is None or self._stopping.is_set():
+                        raise
+                    await asyncio.sleep(delay)
             if not held:
                 self._report(RuntimeError(f"Queue lease for message {message.id} expired before it was settled"))
         except Exception as error:  # redelivered after the timeout
             self._report(error)
 
     async def _extend_until_done(self, receipt: str, lost: asyncio.Event) -> None:
+        # Extend every third of the visibility timeout, so one failed extend
+        # still leaves a retry before the lease runs out; once none has held
+        # for a whole timeout the lease has lapsed and the message is being
+        # redelivered, so the handler is told (ADR-20261113180000, R6-2).
+        held_at = time.monotonic()
         while True:
-            await asyncio.sleep(self._visibility / 2)
+            await asyncio.sleep(self._visibility / 3)
+            if time.monotonic() - held_at >= self._visibility:
+                lost.set()
+                return
             try:
-                if not await self._settle(":extend", receipt, {"visibility_timeout_seconds": self._visibility}):
+                if not await self._extensions.add(receipt):
                     lost.set()
                     return
+                held_at = time.monotonic()
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # the next tick retries
                 self._report(error)
 
     async def _settle(self, verb: str, receipt: str, extra: Mapping[str, Any]) -> bool:
-        out = await self._call(verb, {"receipts": [receipt], **extra}, 0)
+        return receipt in await self._settle_many(verb, [receipt], extra)
+
+    async def _settle_many(self, verb: str, receipts: list[str], extra: Mapping[str, Any]) -> list[str]:
+        """Applies receipts in one call; returns those that still held their messages."""
+        out = await self._call(verb, {"receipts": receipts, **extra}, 0)
         succeeded = out.get("succeeded") if isinstance(out, Mapping) else None
-        return isinstance(succeeded, list) and receipt in succeeded
+        return [str(receipt) for receipt in succeeded] if isinstance(succeeded, list) else []
 
     async def _call(self, verb: str, body: Mapping[str, Any], wait_seconds: float) -> Any:
         client = self._http_client()
@@ -273,7 +348,10 @@ class QueueConsumer:
         assert self._identity_url is not None
         response = await self._http_client().get(self._identity_url, timeout=5.0)
         if not response.is_success:
-            raise RuntimeError("Queue workload identity unavailable")
+            raise RuntimeError(
+                f"Queue workload identity unavailable ({response.status_code}): this platform may not issue "
+                "workload tokens; pass api_key (a key with queues:consume) instead"
+            )
         token = response.json()
         access = token.get("access_token") if isinstance(token, Mapping) else None
         if not isinstance(access, str) or not access or len(access) > 8192:

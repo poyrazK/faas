@@ -52,6 +52,10 @@ type Upstream struct {
 	Dial func(ctx context.Context) (net.Conn, error)
 	// Used, when set, runs once for each request this upstream carries.
 	Used func()
+	// Hop, when set, opens a connection to the destination's binary HTTP
+	// listener (ADR-20261110081523). A proxy with the binary hop on sends
+	// the request there, and over Dial's HTTP/1.1 when that fails.
+	Hop func(ctx context.Context) (net.Conn, error)
 }
 
 // upstreamIdleConnTimeout closes an idle edge connection well before
@@ -85,6 +89,10 @@ type upstreamTransport struct {
 	dialTimeout time.Duration
 	// upstreams maps a pool host to the upstream its connections reach.
 	upstreams sync.Map
+	// binary sends a request to an upstream with a Hop in binary HTTP;
+	// hopFallback counts each that went over HTTP/1.1 instead, by reason.
+	binary      *binaryHopTransport
+	hopFallback func(reason string)
 }
 
 func newUpstreamTransport(picker UpstreamPicker, base *http.Transport, dialTimeout time.Duration) *upstreamTransport {
@@ -119,7 +127,7 @@ func (u *upstreamTransport) RoundTrip(req *http.Request) (*http.Response, error)
 			}
 			return nil, err
 		}
-		resp, err := u.transport.RoundTrip(u.attempt(req, upstream, body))
+		resp, err := u.roundTripUpstream(req, upstream, body)
 		if err == nil {
 			body.release(false)
 			rec.RecordDialed(upstream.Node)
@@ -136,6 +144,37 @@ func (u *upstreamTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		failed = append(failed, upstream.Key)
 		lastErr = err
 	}
+}
+
+// roundTripUpstream sends one attempt to upstream: in binary HTTP when it
+// offers a hop and the request is not an upgrade, and over HTTP/1.1 when it
+// does not or the hop's dial fails, which sends nothing.
+func (u *upstreamTransport) roundTripUpstream(req *http.Request, upstream Upstream, body *heldBody) (*http.Response, error) {
+	if u.binary != nil && upstream.Hop != nil && !isUpgradeRequest(req) {
+		resp, err := u.binary.roundTrip(u.attempt(req, upstream, body), upstream.Hop)
+		var dialErr *hopDialError
+		if !errors.As(err, &dialErr) {
+			return resp, err
+		}
+		if u.hopFallback != nil {
+			u.hopFallback(dialErr.reason())
+		}
+	}
+	return u.transport.RoundTrip(u.attempt(req, upstream, body))
+}
+
+// WithBinaryHop sends requests to an upstream that offers a Hop in binary
+// HTTP (ADR-20261110081523), counting each that falls back to HTTP/1.1 with
+// fallback. It needs WithUpstreamKeepAlive first and reports whether it took
+// effect.
+func (p *InternalReverseProxy) WithBinaryHop(fallback func(reason string)) bool {
+	u, ok := p.Transport.(*upstreamTransport)
+	if !ok {
+		return false
+	}
+	u.binary = newBinaryHopTransport(p.DialTimeout)
+	u.hopFallback = fallback
+	return true
 }
 
 // attempt is req addressed to upstream's pool host. Only the URL changes: the

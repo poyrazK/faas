@@ -2,8 +2,6 @@ from typing import Literal
 
 CreatePlatformTenantAccessTokenRequestScopesItem = Literal[
     "platform_tenant:activation:read",
-    "platform_tenant:automations:manage",
-    "platform_tenant:automations:read",
     "platform_tenant:consumers:manage",
     "platform_tenant:credentials:manage",
     "platform_tenant:credentials:read",
@@ -13,6 +11,8 @@ CreatePlatformTenantAccessTokenRequestScopesItem = Literal[
     "platform_tenant:invocations:manage",
     "platform_tenant:invocations:read",
     "platform_tenant:statements:read",
+    "platform_tenant:stored_workflows:manage",
+    "platform_tenant:stored_workflows:read",
     "platform_tenant:usage:read",
 ]
 
@@ -20,8 +20,6 @@ CREATE_PLATFORM_TENANT_ACCESS_TOKEN_REQUEST_SCOPES_ITEM_VALUES: set[
     CreatePlatformTenantAccessTokenRequestScopesItem
 ] = {
     "platform_tenant:activation:read",
-    "platform_tenant:automations:manage",
-    "platform_tenant:automations:read",
     "platform_tenant:consumers:manage",
     "platform_tenant:credentials:manage",
     "platform_tenant:credentials:read",
@@ -31,6 +29,8 @@ CREATE_PLATFORM_TENANT_ACCESS_TOKEN_REQUEST_SCOPES_ITEM_VALUES: set[
     "platform_tenant:invocations:manage",
     "platform_tenant:invocations:read",
     "platform_tenant:statements:read",
+    "platform_tenant:stored_workflows:manage",
+    "platform_tenant:stored_workflows:read",
     "platform_tenant:usage:read",
 }
 

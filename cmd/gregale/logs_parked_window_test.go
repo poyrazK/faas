@@ -25,13 +25,17 @@ func TestParkedWindowInstances(t *testing.T) {
 		{ID: "parked-before-window", State: "parked", StartedAt: at(-5 * time.Hour), ParkedAt: at(-3 * time.Hour)},
 		{ID: "straddles-window", State: "stopped", StartedAt: at(-3 * time.Hour), LastRequestAt: at(-100 * time.Minute)},
 		{ID: "no-start", State: "parked"},
+		// Replaced by a deploy after serving no tracked request: no end is
+		// recorded, so it may have run into the window (prod findings
+		// 2026-11-15 #11).
+		{ID: "replaced-no-end", State: "stopped", StartedAt: at(-6 * time.Hour)},
 	}
 	got := main.ParkedWindowInstances(instances, since, now)
 	var ids []string
 	for _, ins := range got {
 		ids = append(ids, ins.ID)
 	}
-	if want := []string{"straddles-window", "parked-in-window"}; !reflect.DeepEqual(ids, want) {
+	if want := []string{"replaced-no-end", "straddles-window", "parked-in-window"}; !reflect.DeepEqual(ids, want) {
 		t.Fatalf("instances = %v, want %v (oldest first, no running or out-of-window)", ids, want)
 	}
 
@@ -82,14 +86,26 @@ func TestPrintParkedWindowLogs(t *testing.T) {
 			{ID: "live", State: "running", StartedAt: now.Add(-10 * time.Minute).Format(time.RFC3339)},
 			{ID: "parked", State: "parked", StartedAt: start.Format(time.RFC3339), ParkedAt: now.Add(-90 * time.Minute).Format(time.RFC3339)},
 		},
-		archives: map[string]string{"parked/" + day: line(since.Add(-time.Minute), "before window marker") + line(start.Add(time.Minute), "h10log marker") + line(start.Add(2*time.Minute), "unrelated")},
+		archives: map[string]string{"parked/" + day: line(since.Add(-time.Minute), "before window marker") + line(start.Add(time.Minute), "[error] h10log marker") + line(start.Add(90*time.Second), "info marker") + line(start.Add(2*time.Minute), "unrelated")},
 	}
 	var out, errOut bytes.Buffer
 	n := main.PrintParkedWindowLogs(context.Background(), client, "h9-echo", api.LogFilter{Grep: "marker", Level: "error"}, since, &out, &errOut)
-	if n != 1 || !strings.Contains(out.String(), "h10log marker") || strings.Contains(out.String(), "before window") || strings.Contains(out.String(), "unrelated") {
+	if n != 1 || !strings.Contains(out.String(), "h10log marker") || strings.Contains(out.String(), "before window") || strings.Contains(out.String(), "unrelated") || strings.Contains(out.String(), "info marker") {
 		t.Fatalf("printed %d lines:\n%s", n, out.String())
 	}
-	if h := errOut.String(); !strings.Contains(h, "Retained logs of parked instance parked") || !strings.Contains(h, "--level is not applied") {
+	if h := errOut.String(); !strings.Contains(h, "Retained logs of parked instance parked") || strings.Contains(h, "--level is not applied") {
 		t.Fatalf("header = %q", h)
+	}
+
+	// More instances than the pass reads: it says so instead of dropping
+	// the oldest silently (prod findings 2026-11-15 #11).
+	var many []api.InstanceResponse
+	for i := 0; i < main.ParkedWindowInstanceLimit+2; i++ {
+		many = append(many, api.InstanceResponse{ID: fmt.Sprintf("old-%d", i), State: "stopped", StartedAt: now.Add(time.Duration(-60+i) * time.Minute).Format(time.RFC3339)})
+	}
+	errOut.Reset()
+	main.PrintParkedWindowLogs(context.Background(), parkedWindowFakeClient{instances: many}, "h9-echo", api.LogFilter{}, since, &out, &errOut)
+	if h := errOut.String(); !strings.Contains(h, "2 earlier instances also ran in this window") || !strings.Contains(h, "--archive --instance old-0") {
+		t.Fatalf("truncation note = %q", h)
 	}
 }

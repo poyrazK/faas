@@ -57,6 +57,11 @@ func cmdBucketVersionsList(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
+	if len(out.Items) == 0 && len(out.CommonPrefixes) == 0 && out.NextKeyMarker == "" {
+		// An empty list printed nothing (Hunt 33 H33-23).
+		_, _ = fmt.Fprintf(osStdout, "No object versions in bucket %s.\n", bucket)
+		return 0
+	}
 	for _, v := range out.Items {
 		_, _ = fmt.Fprintf(osStdout, "%q\t%s\t%d bytes\tlatest=%t\tdelete-marker=%t\n", v.Key, v.VersionID, v.SizeBytes, v.IsLatest, v.DeleteMarker)
 	}

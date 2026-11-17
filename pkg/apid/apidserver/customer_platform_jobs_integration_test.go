@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -68,7 +69,9 @@ func testCustomerPlatformQueuedWork(t *testing.T, e apidserver.PgHandlerEnv, bac
 		if err := json.Unmarshal(w.Body.Bytes(), &accepted); err != nil {
 			t.Fatal(err)
 		}
-		if accepted.StatusURL != "/v1/platform-tenant-self/invocations/"+accepted.ID {
+		// The gateway answers an absolute status URL (Hunt 32 H32-53); the
+		// customer's own status route is what matters here.
+		if status, err := url.Parse(accepted.StatusURL); err != nil || status.Path != "/v1/platform-tenant-self/invocations/"+accepted.ID {
 			t.Fatalf("wrong customer status URL: %s", accepted.StatusURL)
 		}
 		return accepted

@@ -2,15 +2,15 @@
 
 Gregale can cache public `GET` and `HEAD` API responses at the gateway. A
 cache rule declares which route is cacheable and for how long; Gregale builds
-the key, enforces response safety, propagates invalidations, and optionally
-shares entries across gateway instances through Redis.
+the key, enforces response safety, propagates invalidations, and can share
+entries across gateways.
 
 ## Create a rule
 
 Inside a linked project, declare the common case directly:
 
 ```sh
-gregale cache GET /products/:id for 30s \
+gregale edge cache GET /products/:id for 30s \
   --stale-while-revalidate 1m \
   --stale-if-error 5m \
   --vary-on Accept-Language
@@ -24,7 +24,7 @@ glob `/products/*`. `GET` and `HEAD` are supported.
 The lower-level edge-rule form exposes the same configuration explicitly:
 
 ```sh
-gregale edge-rules create \
+gregale edge rule create \
   --app shop \
   --kind cache \
   --match-host api.example.com \
@@ -58,18 +58,23 @@ stored. Only the documented safe status codes and bodies up to 1 MiB are
 eligible. A cache miss or cache-backend failure always falls through to the
 application.
 
+A response served from the cache, fresh or stale, counts toward the app's
+monthly egress like a response from the app itself
+([plans](plans.md#what-each-limit-means)). It does not wake the app or use
+compute.
+
 ## Purge entries
 
 Purge an app completely:
 
 ```sh
-gregale cache purge shop
+gregale edge cache purge shop
 ```
 
 Purge matching normalized paths:
 
 ```sh
-gregale cache purge shop --path '/products/*'
+gregale edge cache purge shop --path '/products/*'
 ```
 
 For content shared across routes, the app can mark a cacheable origin response
@@ -78,7 +83,7 @@ invalidation metadata and removes the header from the client response. Purge
 all entries carrying one tag within the app, regardless of path:
 
 ```sh
-gregale cache purge shop --tag product:42
+gregale edge cache purge shop --tag product:42
 ```
 
 Tags are case-insensitive ASCII identifiers using letters, digits, `-`, `_`,
@@ -94,16 +99,12 @@ shared Redis tier. `active` means the purge was applied; `pending` means at
 least one gateway is behind or its shared-cache invalidation failed.
 
 Rule changes and deployments also invalidate affected app entries. Purges
-apply to the local gateway caches and, when configured, the shared Redis tier.
+apply to every cache tier.
 
-## Distributed caching
+## Where cached responses live
 
-Operators can set `FAAS_GATEWAY_RESPONSE_CACHE_REDIS_URL` in
-`/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env` to a `redis://` or
-`rediss://` URL. The gateway keeps its bounded in-process cache as L1 and uses
-Redis as an optional L2. Redis is an optimization, not a source of truth: if it
-is unavailable at startup or during a request, Gregale continues with the local
-cache and origin.
-
-Cached records expire at the later configured stale boundary. They are not
-written to Postgres or gateway disks.
+Cached responses are held in memory on Gregale's gateways and can be shared
+between them. The cache is an optimization, not a source of truth: when an
+entry is missing or the shared tier is unavailable, the request goes to your
+app. Cached records expire at the later configured stale boundary and are never
+written to disk.

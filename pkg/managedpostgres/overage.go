@@ -2,7 +2,10 @@ package managedpostgres
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -11,13 +14,17 @@ import (
 
 // Compute overage (ADR-20261025094915 decision 2): a paid account may let its
 // databases run past the plan's monthly compute allowance, up to twice it,
-// before the cap suspends them. Off is the default; an account without a row
-// is off. The setting is keyed by the usage subject: the organization when it
+// before the cap suspends them. A subject without a row never chose: its
+// plan's default applies (api.ManagedPostgresOverageEffective; on only for
+// Scale, ADR-20261025094915 amendment 2026-11-11). The setting is keyed by the usage subject: the organization when it
 // owns resources, else the namespace, exactly as the ledger pools usage.
 
 // OverageStore is an optional Store capability.
 type OverageStore interface {
 	OverageEnabled(ctx context.Context, subjectID string) (bool, error)
+	// OverageSetting reports the subject's stored choice and whether it made
+	// one; a subject that never chose gets its plan's default.
+	OverageSetting(ctx context.Context, subjectID string) (enabled, chosen bool, err error)
 	SetOverage(ctx context.Context, subjectID string, enabled bool, now time.Time) error
 }
 
@@ -35,6 +42,21 @@ func (s *PostgresStore) OverageEnabled(ctx context.Context, subjectID string) (b
 	}
 	enabled, err := sqlc.New().ManagedPostgresOverageEnabled(ctx, s.catalog, subject)
 	return enabled, mapPostgresError(err)
+}
+
+func (s *PostgresStore) OverageSetting(ctx context.Context, subjectID string) (bool, bool, error) {
+	subject, err := postgresUUID(subjectID)
+	if err != nil {
+		return false, false, ErrInvalid
+	}
+	enabled, err := sqlc.New().ManagedPostgresOverageSetting(ctx, s.catalog, subject)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, mapPostgresError(err)
+	}
+	return enabled, true, nil
 }
 
 func (s *PostgresStore) SetOverage(ctx context.Context, subjectID string, enabled bool, now time.Time) error {
@@ -76,6 +98,16 @@ func (s *MemoryStore) OverageEnabled(_ context.Context, subjectID string) (bool,
 	return s.overage[subjectID], nil
 }
 
+func (s *MemoryStore) OverageSetting(_ context.Context, subjectID string) (bool, bool, error) {
+	if subjectID == "" {
+		return false, false, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	enabled, chosen := s.overage[subjectID]
+	return enabled, chosen, nil
+}
+
 func (s *MemoryStore) SetOverage(_ context.Context, subjectID string, enabled bool, now time.Time) error {
 	if subjectID == "" || now.IsZero() {
 		return ErrInvalid
@@ -84,6 +116,16 @@ func (s *MemoryStore) SetOverage(_ context.Context, subjectID string, enabled bo
 	defer s.mu.Unlock()
 	s.overage[subjectID] = enabled
 	return nil
+}
+
+// SetEgressOverageElected records whether subjectID elected egress overage,
+// which the Postgres store reads from the account or organization row: the
+// overage biller then lists the subject so its database egress past the
+// shared allowance is billed (ADR-20261110160000 slice 3).
+func (s *MemoryStore) SetEgressOverageElected(subjectID string, elected bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.egressElected[subjectID] = elected
 }
 
 func (s *MemoryStore) UsageSubjects(_ context.Context, databaseIDs []string) (map[string]string, error) {
@@ -98,14 +140,14 @@ func (s *MemoryStore) UsageSubjects(_ context.Context, databaseIDs []string) (ma
 	return subjects, nil
 }
 
-// Overage reports whether the subject's compute overage is on. A store
-// without the capability reads as off.
-func (s *Service) Overage(ctx context.Context, subjectID string) (bool, error) {
+// Overage reports the subject's stored compute overage choice and whether it
+// made one. A store without the capability reads as never chosen.
+func (s *Service) Overage(ctx context.Context, subjectID string) (enabled, chosen bool, err error) {
 	store, ok := s.store.(OverageStore)
 	if !ok {
-		return false, nil
+		return false, false, nil
 	}
-	return store.OverageEnabled(ctx, subjectID)
+	return store.OverageSetting(ctx, subjectID)
 }
 
 // SetOverage records the subject's compute overage choice. Plan and

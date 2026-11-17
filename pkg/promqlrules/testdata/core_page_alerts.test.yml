@@ -160,9 +160,9 @@ tests:
         exp_alerts: []
 
   - interval: 30s
-    name: "resident RAM above 92% of the ceiling pages"
+    name: "admitted RAM above 92% of the ceiling pages"
     input_series:
-      - series: 'fcvm_resident_ram_pct{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+      - series: 'fcvm_admission_ram_pct{job="schedd-compute",instance="fsn-2.gregale.dev:9103"}'
         values: '95x30'
     alert_rule_test:
       - eval_time: 10m
@@ -173,18 +173,35 @@ tests:
               component: "vmmd"
               family: "resident_ram"
             exp_annotations:
-              summary: "Resident RAM > 92% of tenant budget"
-              description: "Σ(ram_mb + 8) over live instances has exceeded 92% of the 47,600 MB ceiling for 5m. New wakes will start failing admission."
+              summary: "Admitted RAM > 92% of a node's admission ceiling"
+              description: "The memory admission counts on a node (measured memory under measured admission, Σ(ram_mb + 8) under reservation admission) has been above 92% of the node's ceiling for 5m. At the ceiling new wakes on that node fail admission, and under measured admission schedd evicts."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
 
   - interval: 30s
-    name: "resident RAM at 85% stays quiet"
+    name: "admitted RAM at 85% stays quiet"
     input_series:
-      - series: 'fcvm_resident_ram_pct{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+      - series: 'fcvm_admission_ram_pct{job="schedd-compute",instance="fsn-2.gregale.dev:9103"}'
         values: '85x30'
     alert_rule_test:
       - eval_time: 10m
         alertname: FaasHighResidentRamPct
+        exp_alerts: []
+
+  # Prod 2026-11-16: bookings 136% of fsn-3's ceiling under measured
+  # admission (cap 250%) while 34% of its memory was in use.
+  - interval: 30s
+    name: "bookings past the ceiling under measured admission do not page"
+    input_series:
+      - series: 'fcvm_resident_ram_pct{job="schedd-compute",instance="fsn-3.gregale.dev:9103"}'
+        values: '136x30'
+      - series: 'fcvm_admission_ram_pct{job="schedd-compute",instance="fsn-3.gregale.dev:9103"}'
+        values: '34x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasHighResidentRamPct
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: FaasHighResidentRamPctWarn
         exp_alerts: []
 
   - interval: 30s
@@ -234,6 +251,8 @@ tests:
               description: "The fc logical volume is past 90% used for 5m. imaged will start refusing new deploys; tenant snapshots can no longer be parked."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
 
+  # ADR-20261114182830 amendment 1: a full artifact cache holds /srv/fc at
+  # its 15% free floor, ~85% used. That is the design point: no page, no warn.
   - interval: 30s
     name: "lv-fc at 85% stays quiet"
     input_series:
@@ -241,6 +260,30 @@ tests:
         values: '85x30'
     alert_rule_test:
       - eval_time: 10m
+        alertname: FaasLvFcUsageHighPage
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: FaasLvFcUsageHighWarn
+        exp_alerts: []
+
+  - interval: 30s
+    name: "lv-fc past the cache floor warns"
+    input_series:
+      - series: 'fcvm_lv_fc_used_pct{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+        values: '88x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasLvFcUsageHighWarn
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "vmmd"
+              family: "lv_fc"
+            exp_annotations:
+              summary: "lv-fc usage > 87%"
+              description: "lv-fc usage between 87% and 90% for 10m: above the 85% the artifact cache fills to and defends by eviction, so eviction is not keeping up or something outside the cache is filling /srv/fc. Find it before the page-tier crossing."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
+      - eval_time: 15m
         alertname: FaasLvFcUsageHighPage
         exp_alerts: []
 
@@ -296,6 +339,52 @@ tests:
               summary: "Daemon schedd is abandoning Postgres pool acquisitions (schedd pool)"
               description: "schedd has callers giving up while waiting for a pool connection. Compare <daemon>_db_pool_conns against <daemon>_db_pool_max_conns: at the cap, the daemon's DaemonMaxConnections entry is too small for its concurrency; below the cap, connections are being held too long by a slow query or a leaked transaction."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
+
+  # ADR-20261023104734 step 3: a refused statement pages at once, per pool;
+  # apid's two pools stay apart (the rc.319 label collision).
+  - interval: 30s
+    name: "statements refused for missing privileges page per pool"
+    input_series:
+      - series: 'apid_db_permission_denied_total{job="apid",instance="127.0.0.1:9101"}'
+        values: '0x10 1x30'
+      - series: 'apid_background_db_permission_denied_total{job="apid",instance="127.0.0.1:9101"}'
+        values: '0x10 3x30'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: FaasDBPermissionDenied
+        exp_alerts:
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              pool: "apid"
+              severity: "page"
+              component: "platform"
+              family: "db_pool"
+            exp_annotations:
+              summary: "Postgres refused apid's statements for missing privileges (apid pool)"
+              description: "apid ran statements its database role is not granted (SQLSTATE 42501) in the last 10 minutes. If this daemon's grants were just narrowed, roll back by restoring the role's faas_runtime membership; otherwise grant the missing table and verb. The Postgres log names the statement and role."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPermissionDenied.md"
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              pool: "apid_background"
+              severity: "page"
+              component: "platform"
+              family: "db_pool"
+            exp_annotations:
+              summary: "Postgres refused apid's statements for missing privileges (apid_background pool)"
+              description: "apid ran statements its database role is not granted (SQLSTATE 42501) in the last 10 minutes. If this daemon's grants were just narrowed, roll back by restoring the role's faas_runtime membership; otherwise grant the missing table and verb. The Postgres log names the statement and role."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPermissionDenied.md"
+
+  - interval: 30s
+    name: "a flat permission-denied counter stays quiet"
+    input_series:
+      - series: 'schedd_db_permission_denied_total{job="schedd",instance="127.0.0.1:9103"}'
+        values: '2x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasDBPermissionDenied
+        exp_alerts: []
 
   - interval: 30s
     name: "a flat canceled-acquire counter stays quiet"

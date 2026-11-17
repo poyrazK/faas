@@ -127,6 +127,7 @@ type sharedPreviewStore interface {
 	PutPRPreviewSet(context.Context, state.PRPreviewSet) error
 	GetPRPreviewSet(context.Context, int64, string, int) (state.PRPreviewSet, error)
 	ClosePRPreviewSet(context.Context, int64, string, int) error
+	PinPRPreviewMembers(context.Context, state.PRPreviewHead, map[string]string) error
 }
 
 func testSharedPRPreviewSets(t *testing.T, store sharedPreviewStore) {
@@ -155,6 +156,19 @@ func testSharedPRPreviewSets(t *testing.T, store sharedPreviewStore) {
 	head := state.PRPreviewHead{InstallationID: 7, RepoFullName: "octo/shared", PRNumber: 42, CommitSHA: strings.Repeat("a", 40)}
 	if err := store.FailPRPreviewSetup(ctx, head, "ambiguous"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("ambiguous failure update: %v", err)
+	}
+	if err := store.PinPRPreviewMembers(ctx, head, map[string]string{roots[0]: strings.Repeat("b", 40)}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("ambiguous pin: %v", err)
+	}
+	if err := store.PinPRPreviewMembers(githubscope.WithAccount(ctx, ids[0]), head, map[string]string{roots[0]: strings.Repeat("b", 40)}); err != nil {
+		t.Fatalf("scoped pin: %v", err)
+	}
+	pinned, err := store.GetPRPreviewSet(githubscope.WithAccount(ctx, ids[0]), 7, "octo/shared", 42)
+	if err != nil || pinned.MemberCommit(roots[0]) != strings.Repeat("b", 40) {
+		t.Fatalf("scoped pin read = (%+v, %v)", pinned, err)
+	}
+	if other, err := store.GetPRPreviewSet(githubscope.WithAccount(ctx, ids[1]), 7, "octo/shared", 42); err != nil || other.MemberCommitSHAs != nil {
+		t.Fatalf("pin crossed accounts = (%+v, %v)", other, err)
 	}
 	if err := store.FailPRPreviewSetup(githubscope.WithAccount(ctx, ids[1]), head, "second only"); err != nil {
 		t.Fatal(err)

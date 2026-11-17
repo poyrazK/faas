@@ -38,7 +38,7 @@ func confirmProjectPlan(plan api.PlanResponse, excludeList []string, showAffecte
 	// the machine-readable stdout stream. Emit the complete plan first, then
 	// fail closed so an operator or CI job must make the approval explicit.
 	if jsonOutput {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		return printErr("Confirmation required", errors.New("project deploy requires --yes in JSON mode"))
@@ -130,7 +130,7 @@ func deployConnectedRepoProject(ctx context.Context, d connectedRepoProjectDeplo
 	}
 	var timeouts []projectWaitTimeout
 	if d.wait && len(apply.Builds) > 0 {
-		apply, timeouts = waitForProjectApplyTimeouts(ctx, client, apply, d.waitTimeout)
+		apply, timeouts = waitForProjectApplyTimeouts(withProjectWaitProgress(ctx, osStderr, jsonOutput), client, apply, d.waitTimeout)
 	}
 	return renderProjectDeployReceiptAfterWait(plan, apply, session, timeouts)
 }

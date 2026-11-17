@@ -187,8 +187,8 @@ func TestAccountNodeShareLimit(t *testing.T) {
 			t.Fatalf("unlimited endpoint refused with %d", status)
 		}
 	}
-	if _, status, problem := node.dial(t, unlimited); status != http.StatusTooManyRequests || problem.Code != "" {
-		t.Fatalf("node-full refusal = %d %+v, want the plain node limit", status, problem)
+	if _, status, problem := node.dial(t, unlimited); status != http.StatusTooManyRequests || problem.Code != api.CodeRealtimeConnectionLimit || problem.Limit == nil || *problem.Limit != 4 || !strings.Contains(problem.Detail, "realtime node holds its maximum") {
+		t.Fatalf("node-full refusal = %d %+v, want the node limit problem (limit 4)", status, problem)
 	}
 }
 

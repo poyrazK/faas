@@ -594,3 +594,24 @@ func TestUnitDeploysAreWatchedAndPauseAfterARollback(t *testing.T) {
 		t.Error("cd-unit-watch must never disable host-key checking")
 	}
 }
+
+// TestUnitReleaseBuildIsSupersededOnlyByARunDeployingToTheSamePlace: a
+// newer build supersedes an older one, but a push that deploys nothing must
+// not cancel a dispatched deploy's build (2026-11-07: #6769's push build
+// cancelled the first dispatch, and with autodeploy off nothing deployed).
+// The build's concurrency group is keyed by the deploy target exactly as the
+// preflight's `if:` decides it.
+func TestUnitReleaseBuildIsSupersededOnlyByARunDeployingToTheSamePlace(t *testing.T) {
+	release := readWorkflow(t, "release-units.yml")
+	build := jobBlock(t, release, "build")
+	const group = "group: release-units-build-${{ inputs.deploy_environment || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}"
+	if !strings.Contains(build, group) {
+		t.Fatalf("the build job's concurrency group must be keyed by the deploy target; want %q", group)
+	}
+	if strings.Contains(build, "group: release-units-build\n") {
+		t.Error("a single build group lets a build-only push cancel a dispatched deploy")
+	}
+	if !strings.Contains(release, "(inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))") {
+		t.Error("the preflight's deploy condition changed; key the build group the same way")
+	}
+}

@@ -106,7 +106,7 @@ func (e *ResponseTruncatedError) Error() string {
 	return fmt.Sprintf("API response was truncated: expected %d bytes, received %d", e.Expected, e.Received)
 }
 
-var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
+var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/capabilities(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
@@ -124,9 +124,15 @@ var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/(sessions|capabilities)(/.*)?|
 type Client struct {
 	baseURL string
 	token   string
+	// projectOrg routes /v1/projects calls to a company's projects
+	// (WithProjectOrganization).
+	projectOrg string
 
 	http       *http.Client // 30s default — used for every JSON call
 	deployHTTP *http.Client // optional, used by DeployMultipart
+	// requestTimeoutExplicit prevents operation-specific defaults from
+	// extending a budget selected by NewClientWithRequestTimeout.
+	requestTimeoutExplicit bool
 
 	// cache powers `gregale completion <shell>` for the per-account
 	// positional completion paths (e.g. <slug> in `gregale app <slug>`).
@@ -139,6 +145,13 @@ type Client struct {
 	// noConfigGuard sends `guard=false` on env and secret writes, so they
 	// open no config guard (ADR-1451, CLI --no-guard).
 	noConfigGuard bool
+
+	// approvalWait makes a call answered approval_required wait for a
+	// person's decision and retry once (WaitForApproval).
+	approvalWait   bool
+	approvalNotify func(AgentApprovalPendingInfo)
+	approvalPoll   time.Duration
+	readRetries    int // opt-in, restricted JSON reads only (WithReadRetries)
 }
 
 // WithoutConfigGuard returns a client whose env and secret writes open no
@@ -192,9 +205,9 @@ func newClientTransport() http.RoundTripper {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
 		clone := transport.Clone()
 		clone.ResponseHeaderTimeout = DefaultClientTimeout
-		return clone
+		return agentReasonTransport{next: clone}
 	}
-	return http.DefaultTransport
+	return agentReasonTransport{next: http.DefaultTransport}
 }
 
 // SetCompletionCache wires a (possibly nil) cache. Passing nil
@@ -224,9 +237,23 @@ func (c *Client) CompletionCache() *CompletionCache {
 func NewClientWithDeployTimeout(baseURL, token string, deployTimeout time.Duration) *Client {
 	c := NewClient(baseURL, token)
 	if deployTimeout > 0 {
-		c.deployHTTP = &http.Client{Timeout: deployTimeout, Transport: newClientTransport()}
+		c.deployHTTP = &http.Client{Timeout: deployTimeout, Transport: newClientTransportWithHeaderTimeout(deployTimeout)}
 	}
 	return c
+}
+
+// newClientTransportWithHeaderTimeout is newClientTransport waiting up to d
+// for response headers. The upload client used the 30s header wait of JSON
+// requests, so a synchronous upload the server took longer to accept failed
+// with "timeout awaiting response headers" whatever deploy timeout the
+// caller chose (seen on a cold `gregale dev` first sync, 2026-11-11).
+func newClientTransportWithHeaderTimeout(d time.Duration) http.RoundTripper {
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = d
+		return agentReasonTransport{next: clone}
+	}
+	return agentReasonTransport{next: http.DefaultTransport}
 }
 
 // HTTPClient returns the underlying JSON HTTP client. Exposed so SDK
@@ -329,6 +356,10 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
 		).WithDocs(docsBase + "/cli#cookie-only-routes")
 	}
+	path, err := c.projectRoute(path)
+	if err != nil {
+		return err
+	}
 	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -351,15 +382,41 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 	} else {
 		idempotencyKey = ""
 	}
+	waitedForApproval := false
+	readEligible := c.readRetries > 0 && retryableReadRoute(method, path)
+	readRetry, readDelay := 0, time.Duration(0)
 	for attempt := 1; ; attempt++ {
-		req, err := c.newJSONRequest(ctx, method, path, payload, body != nil, idempotencyKey, headers)
+		if readEligible && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		requestCtx := ctx
+		if readEligible {
+			requestCtx = context.WithValue(ctx, readRetryAttemptKey{}, ReadRetryAttempt{Attempt: readRetry + 1, MaxAttempts: c.readRetries + 1, Delay: readDelay})
+		}
+		req, err := c.newJSONRequest(requestCtx, method, path, payload, body != nil, idempotencyKey, headers)
 		if err != nil {
 			return err
 		}
-		err = c.doReq(cli, req, out)
+		response, err := c.doReqWithResponseMeta(cli, req, out)
+		if pending, ok := pendingApproval(err); ok && c.approvalWait && !waitedForApproval {
+			// The approval gate answers before the idempotency layer, so
+			// the retry may carry the same Idempotency-Key.
+			waitedForApproval = true
+			if waitErr := c.awaitApproval(ctx, pending, err); waitErr != nil {
+				return waitErr
+			}
+			continue
+		}
 		pause, retry := trafficPolicyRetryPause(err, attempt)
+		if readEligible {
+			pause, retry = c.readRetryPause(ctx, response, err, readRetry+1)
+		}
 		if !retry {
 			return err
+		}
+		if readEligible {
+			readRetry++
+			readDelay = pause
 		}
 		timer := time.NewTimer(pause)
 		select {
@@ -416,7 +473,7 @@ func trafficPolicyRetryPause(err error, attempt int) (time.Duration, bool) {
 }
 
 func (c *Client) rollbackHTTP() *http.Client {
-	if c.http == nil || c.http.Timeout == 0 || c.http.Timeout >= rollbackRequestTimeout {
+	if c.requestTimeoutExplicit || c.http == nil || c.http.Timeout == 0 || c.http.Timeout >= rollbackRequestTimeout {
 		return c.http
 	}
 	copy := *c.http
@@ -432,7 +489,14 @@ func (c *Client) rollbackHTTP() *http.Client {
 // recipe; methods that need a custom header set it on req before
 // calling doReq.
 func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
-	return c.doReqWithSuccess(cli, req, out, func(resp *http.Response) bool {
+	_, err := c.doReqWithResponseMeta(cli, req, out)
+	return err
+}
+
+// The response body is closed before return. Retry decisions use its actual
+// status and headers rather than trusting a problem body's claimed status.
+func (c *Client) doReqWithResponseMeta(cli *http.Client, req *http.Request, out any) (readRetryResponse, error) {
+	return c.doReqWithSuccessAndResponseMeta(cli, req, out, func(resp *http.Response) bool {
 		return resp.StatusCode >= 200 && resp.StatusCode < 300
 	})
 }
@@ -443,6 +507,11 @@ func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
 // errors. Keeping the predicate local prevents that dashboard
 // convention from changing response handling for every other method.
 func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, success func(*http.Response) bool) error {
+	_, err := c.doReqWithSuccessAndResponseMeta(cli, req, out, success)
+	return err
+}
+
+func (c *Client) doReqWithSuccessAndResponseMeta(cli *http.Client, req *http.Request, out any, success func(*http.Response) bool) (readRetryResponse, error) {
 	// ADR-093 / PR-E: outbound SDK call becomes a child of the
 	// inbound budget when one is attached. The CLI / SDK never
 	// receives a Budget from the user today — but apid's
@@ -466,11 +535,15 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	preventDeploymentReplay(req)
 	if err := recordDeploymentSubmissionBoundary(req); err != nil {
-		return err
+		return readRetryResponse{}, err
 	}
 	resp, err := cli.Do(req)
+	result := readRetryResponse{}
+	if resp != nil {
+		result = readRetryResponse{status: resp.StatusCode, headers: resp.Header}
+	}
 	if err != nil {
-		return fmt.Errorf("could not reach the API: %w", err)
+		return result, fmt.Errorf("could not reach the API: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -483,10 +556,10 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	data, err := readBoundedResponse(resp, limit)
 	if err != nil {
-		return err
+		return result, err
 	}
 	if !success(resp) {
-		return apiErrorFromResponse(resp, data)
+		return result, apiErrorFromResponse(resp, data)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		// Tier A8 / ADR-083: auto-refresh the completion cache on every
@@ -499,11 +572,11 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 		}
 		if out != nil && len(data) > 0 {
 			if err := json.Unmarshal(data, out); err != nil {
-				return fmt.Errorf("decode response: %w", err)
+				return result, fmt.Errorf("decode response: %w", err)
 			}
 		}
 	}
-	return nil
+	return result, nil
 }
 
 // doBytes executes an HTTP request and returns the raw response body
@@ -513,17 +586,27 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 // caller passes a *[]byte and receives the body untouched. Returns
 // (nil, *APIError) on a non-2xx, same shape as do.
 func (c *Client) doBytes(ctx context.Context, method, path string, body, out any) error {
+	_, err := c.doBytesWithHeader(ctx, method, path, body, out)
+	return err
+}
+
+// doBytesWithHeader is doBytes that also returns the response headers.
+func (c *Client) doBytesWithHeader(ctx context.Context, method, path string, body, out any) (http.Header, error) {
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("marshal request: %w", err)
+			return nil, fmt.Errorf("marshal request: %w", err)
 		}
 		r = bytes.NewReader(b)
 	}
+	path, err := c.projectRoute(path)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -536,31 +619,31 @@ func (c *Client) doBytes(ctx context.Context, method, path string, body, out any
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("could not reach the API: %w", err)
+		return nil, fmt.Errorf("could not reach the API: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return apiErrorFromResponse(resp, data)
+		return nil, apiErrorFromResponse(resp, data)
 	}
 	if out != nil {
 		if bp, ok := out.(*[]byte); ok {
 			*bp = data
-			return nil
+			return resp.Header, nil
 		}
 		// Fall through: caller wants JSON-decoded, do the same
 		// unmarshal as doReq. Untyped callers will get a decode
 		// error if they pass anything other than *[]byte.
 		if len(data) > 0 {
 			if err := json.Unmarshal(data, out); err != nil {
-				return fmt.Errorf("decode response: %w", err)
+				return nil, fmt.Errorf("decode response: %w", err)
 			}
 		}
 	}
-	return nil
+	return resp.Header, nil
 }
 
 func readBoundedResponse(resp *http.Response, limit int64) ([]byte, error) {
@@ -604,6 +687,9 @@ func apiErrorFromResponse(resp *http.Response, data []byte) error {
 			p = *p.WithHeader(name, value)
 		}
 	}
+	if id := ResponseRequestID(resp.Header); id != "" {
+		p = *p.WithRequestID(id)
+	}
 	return &APIError{Problem: p}
 }
 
@@ -632,6 +718,14 @@ var ErrNoBody = errors.New("api: response body was empty")
 func (c *Client) Whoami(ctx context.Context) (AccountResponse, error) {
 	var out AccountResponse
 	return out, c.do(ctx, "GET", "/v1/account", nil, &out)
+}
+
+// GetAccountHealth returns what may stop the authenticated account from
+// working: restrictions, failed deployments, custom-domain problems and
+// refused API requests (ADR-20261112210000).
+func (c *Client) GetAccountHealth(ctx context.Context) (AccountHealth, error) {
+	var out AccountHealth
+	return out, c.do(ctx, "GET", "/v1/account/health", nil, &out)
 }
 
 // PatchAccountBilling updates the authenticated account's legal billing
@@ -825,6 +919,14 @@ func (c *Client) PostAccountMfaDisable(ctx context.Context, req MFADisableReques
 func (c *Client) PostAccountMfaDisableEmail(ctx context.Context, req MFADisableEmailRequest) (MFADisableEmailResponse, error) {
 	var out MFADisableEmailResponse
 	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email", req, &out)
+}
+
+// PostAccountMfaDisableEmailCancel cancels every pending email-assisted MFA
+// disable on the account. It needs a session that passed the second factor
+// (or a full-access key); a session from a password reset alone cannot.
+func (c *Client) PostAccountMfaDisableEmailCancel(ctx context.Context, req MFADisableEmailCancelRequest) (MFADisableEmailCancelResponse, error) {
+	var out MFADisableEmailCancelResponse
+	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email-cancel", req, &out)
 }
 
 // PostAccountMfaDisableEmailConfirm consumes the emailed token after the
@@ -1092,6 +1194,21 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 		path += "?" + query.Encode()
 	}
 	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
+// DestroyDevSessionByApp stops a developer environment selected by its
+// backing dev-* app slug instead of the local workspace, for environments
+// whose checkout moved (DELETE /v1/dev/sessions/{project}?app=).
+func (c *Client) DestroyDevSessionByApp(ctx context.Context, project, appSlug string) error {
+	path := "/v1/dev/sessions/" + project + "?" + url.Values{"app": {appSlug}}.Encode()
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
+// GetDevSessions is the path-shaped SDK method for GET /v1/dev/sessions: the
+// account's developer environments, wherever they were started.
+func (c *Client) GetDevSessions(ctx context.Context) (DevSessionListResponse, error) {
+	var out DevSessionListResponse
+	return out, c.do(ctx, "GET", "/v1/dev/sessions", nil, &out)
 }
 
 // RegisterScenarioTest gives a run's developer sessions a private service
@@ -1613,7 +1730,17 @@ func (c *Client) DeployDevSource(ctx context.Context, slug string, source io.Rea
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Idempotency-Key", newUUIDv4())
+	// Like DeployTarball: a caller-supplied key and attempt identity let a
+	// retried or timed-out sync replay or recover the same deployment
+	// instead of starting a second build nobody can cancel.
+	idempotencyKey := IdempotencyKeyFromContext(ctx)
+	if idempotencyKey == "" {
+		idempotencyKey = newUUIDv4()
+	}
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	for key, values := range deploymentAttemptHeaders(ctx) {
+		req.Header[key] = values
+	}
 	var out DeploymentResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
@@ -1910,7 +2037,11 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 	if err := w.Close(); err != nil {
 		return PlanResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/projects/scan", &b)
+	scanPath, err := c.projectRoute("/v1/projects/scan")
+	if err != nil {
+		return PlanResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+scanPath, &b)
 	if err != nil {
 		return PlanResponse{}, err
 	}
@@ -2066,7 +2197,11 @@ func (c *Client) applyProjectPlan(
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
-	endpoint := c.baseURL + projectApplyRequestPath(ctx)
+	applyPath, err := c.projectRoute(projectApplyRequestPath(ctx))
+	if err != nil {
+		return ApplyResponse{}, err
+	}
+	endpoint := c.baseURL + applyPath
 	if planToken != "" {
 		endpoint += "?plan_token=" + url.QueryEscape(planToken)
 	}
@@ -2475,6 +2610,14 @@ func (c *Client) DeleteProject(ctx context.Context, slug string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug), nil, nil)
 }
 
+// DeleteProjectDetachingServices deletes a project whose services may still
+// call each other by service name: the caller confirms they no longer do, so
+// the API's 409 project_services_call_each_other refusal is waived
+// (ADR-20261104221217).
+func (c *Client) DeleteProjectDetachingServices(ctx context.Context, slug string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug)+"?detach_services=true", nil, nil)
+}
+
 func writeProjectTenantPolicy(w *multipart.Writer, policy []*bool) error {
 	if len(policy) == 0 || policy[0] == nil {
 		return nil
@@ -2728,6 +2871,15 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 	var out DeploymentResponse
 	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
+}
+
+// PatchDeploymentTrafficIfSplit updates traffic only if the environment's
+// split still matches expected (live release ID → positive percent) at the
+// transaction boundary; otherwise apid answers 409 traffic_serving_changed.
+func (c *Client) PatchDeploymentTrafficIfSplit(ctx context.Context, id string, percent int, expected map[string]int) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
+		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedTraffic: expected}, &out)
 }
 
 // PatchDeploymentTrafficIfServing updates traffic only if the named live
@@ -4125,6 +4277,14 @@ func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendReques
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/send", req, &out)
 }
 
+// QueueSendBatch sends up to QueueSendBatchMaxMessages messages to one queue
+// in order, as one API request. Each result says whether its message was
+// accepted.
+func (c *Client) QueueSendBatch(ctx context.Context, slug string, req QueueSendBatchRequest) (QueueSendBatchResponse, error) {
+	var out QueueSendBatchResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/queues/send-batch", req, &out)
+}
+
 // SendAppMessage reliably enqueues a CloudEvents-wrapped message for another
 // Gregale application. The returned invocation id is visible through the
 // ordinary invocation and DLQ APIs.
@@ -4583,6 +4743,14 @@ func (c *Client) RotateKey(ctx context.Context, id string) (RotateKeyResponse, e
 	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", nil, &out)
 }
 
+// RotateKeyWithGrace rotates a key and sets, for this rotation only, how
+// many days the old key keeps working. 0 revokes the old key at once; use
+// it when the key leaked.
+func (c *Client) RotateKeyWithGrace(ctx context.Context, id string, graceWindowDays int) (RotateKeyResponse, error) {
+	var out RotateKeyResponse
+	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", RotateKeyRequest{GraceWindowDays: &graceWindowDays}, &out)
+}
+
 // GetGraceWindow returns the customer's per-account rotation
 // grace-window override (issue #189 / IAM-5). days=null means
 // "no override" — the rotation handler uses the plan default.
@@ -4867,8 +5035,40 @@ func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, sin
 // MintCliAuthCode anonymously mints a fresh login code bound to a device
 // code; ExchangeCliAuthLogin exchanges it.
 func (c *Client) MintCliAuthCode(ctx context.Context) (CliAuthCodeResponse, error) {
+	return c.mintCliAuthLoginCode(ctx, CliAuthCodeRequest{Device: true})
+}
+
+// MintCliAuthLoopbackCode mints a one-click login code whose approval is
+// sent to 127.0.0.1:port (ADR-20261111170000). The response's Loopback is
+// false when the server kept the typed-code flow.
+func (c *Client) MintCliAuthLoopbackCode(ctx context.Context, port int) (CliAuthCodeResponse, error) {
+	return c.mintCliAuthLoginCode(ctx, CliAuthCodeRequest{Device: true, LoopbackPort: port})
+}
+
+// mintCliAuthLoginCode mints a login code bound to a fresh verifier, whose
+// SHA-256 goes as the code challenge and which only the exchange sees, so a
+// device code that leaks on its way back (browser history, a local server's
+// log) is useless alone. A server that predates code challenges refuses the
+// unknown field with 400; the request is then sent once without it.
+func (c *Client) mintCliAuthLoginCode(ctx context.Context, req CliAuthCodeRequest) (CliAuthCodeResponse, error) {
+	verifier, challenge, err := NewCliAuthVerifier()
+	if err != nil {
+		return CliAuthCodeResponse{}, err
+	}
+	withChallenge := req
+	withChallenge.CodeChallenge = challenge
 	var out CliAuthCodeResponse
-	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true}, &out)
+	err = c.do(ctx, "POST", "/v1/cli-auth/code", withChallenge, &out)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Problem.Status == http.StatusBadRequest {
+		out = CliAuthCodeResponse{}
+		return out, c.do(ctx, "POST", "/v1/cli-auth/code", req, &out)
+	}
+	if err != nil {
+		return out, err
+	}
+	out.Verifier = verifier
+	return out, nil
 }
 
 // ExchangeCliAuthLogin polls for a minted code's approval: with its device
@@ -4879,7 +5079,7 @@ func (c *Client) ExchangeCliAuthLogin(ctx context.Context, minted CliAuthCodeRes
 	}
 	var out CliAuthExchangeResponse
 	return out, c.do(ctx, "POST", "/v1/cli-auth/exchange",
-		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode}, &out)
+		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode, CodeVerifier: minted.Verifier}, &out)
 }
 
 // ExchangeCliAuthCode polls the server for the user's approval.
@@ -6063,6 +6263,37 @@ func (c *Client) ListEgressFlows(ctx context.Context, q EgressFlowQuery) (Egress
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAccountRisk reads an account's abuse risk via
+// GET /v1/admin/accounts/{id}/risk (ADR-20261115090000). includePII adds
+// email, sign-up address and user agent and is audited. Operator-only.
+func (c *Client) GetAccountRisk(ctx context.Context, accountID string, includePII bool) (AccountRiskResponse, error) {
+	path := "/v1/admin/accounts/" + url.PathEscape(accountID) + "/risk"
+	if includePII {
+		path += "?include_pii=1"
+	}
+	var out AccountRiskResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListHeldLinks lists links to abuse-held accounts detected in the last
+// since via GET /v1/admin/held-links (ADR-20261114174600). since and limit
+// default to 24h and 200 when zero. Operator-only.
+func (c *Client) ListHeldLinks(ctx context.Context, since time.Duration, limit int) (HeldLinksResponse, error) {
+	v := url.Values{}
+	if since > 0 {
+		v.Set("since", since.String())
+	}
+	if limit > 0 {
+		v.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/admin/held-links"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out HeldLinksResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // PlaceAccountAbuseHold places an ADR-361 account abuse hold via
 // POST /v1/admin/accounts/{id}/abuse-hold. note is the operator's audit note
 // (3..500 chars). Operator-only, like credits.
@@ -6486,6 +6717,20 @@ func (c *Client) RemoveOrgMember(ctx context.Context, slug, accountID string) er
 func (c *Client) TransferOrgOwnership(ctx context.Context, slug string, req TransferOwnershipRequest) (OrgResponse, error) {
 	var out OrgResponse
 	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/transfer_ownership", req, &out)
+}
+
+// GetOrgSecurityPolicy returns the organization's security policy, such
+// as whether members must use two-factor authentication.
+func (c *Client) GetOrgSecurityPolicy(ctx context.Context, slug string) (OrgSecurityPolicy, error) {
+	var out OrgSecurityPolicy
+	return out, c.do(ctx, "GET", "/v1/orgs/"+slug+"/security-policy", nil, &out)
+}
+
+// PutOrgSecurityPolicy replaces the organization's security policy. Only
+// an owner can change it, after a fresh step-up.
+func (c *Client) PutOrgSecurityPolicy(ctx context.Context, slug string, req OrgSecurityPolicy) (OrgSecurityPolicy, error) {
+	var out OrgSecurityPolicy
+	return out, c.do(ctx, "PUT", "/v1/orgs/"+slug+"/security-policy", req, &out)
 }
 
 // PeekInvitation is a read-only lookup that returns the invitation
@@ -7561,6 +7806,24 @@ func (c *Client) ListAppDebugRequestsAll(ctx context.Context, slug string, opts 
 // Limit is capped by the server at 10,000 rows. Request bodies, headers, and
 // raw span attributes are never included.
 func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts DebugTelemetryExportOptions) ([]byte, error) {
+	export, err := c.ExportAppDebugRequestsWithInfo(ctx, slug, opts)
+	return export.Data, err
+}
+
+// DebugTelemetryExport is a downloaded export with what the server applied:
+// the effective window, whether plan retention clamped it, and whether the
+// row limit cut it short. It is assembled from the response headers, not a
+// wire schema.
+type DebugTelemetryExport struct {
+	Data             []byte
+	Window           string
+	RetentionClamped bool
+	Truncated        bool
+}
+
+// ExportAppDebugRequestsWithInfo is ExportAppDebugRequests with the window
+// the server applied and whether the row limit cut the export short.
+func (c *Client) ExportAppDebugRequestsWithInfo(ctx context.Context, slug string, opts DebugTelemetryExportOptions) (DebugTelemetryExport, error) {
 	path := "/v1/apps/" + slug + "/debug/requests/export"
 	q := url.Values{}
 	if opts.Since != "" {
@@ -7575,11 +7838,33 @@ func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts D
 	if opts.Limit > 0 {
 		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
+	if opts.DeploymentID != "" {
+		q.Set("deployment_id", opts.DeploymentID)
+	}
+	if opts.Status != 0 {
+		q.Set("status", strconv.Itoa(opts.Status))
+	}
+	if opts.ColdBoot != nil {
+		q.Set("cold_boot", strconv.FormatBool(*opts.ColdBoot))
+	}
+	if opts.ConsumerID != "" {
+		q.Set("consumer_id", opts.ConsumerID)
+	}
+	if opts.MinLatencyMS > 0 {
+		q.Set("min_latency_ms", strconv.Itoa(opts.MinLatencyMS))
+	}
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out []byte
-	return out, c.doBytes(ctx, http.MethodGet, path, nil, &out)
+	var out DebugTelemetryExport
+	header, err := c.doBytesWithHeader(ctx, http.MethodGet, path, nil, &out.Data)
+	if err != nil {
+		return out, err
+	}
+	out.Window = header.Get("X-Faas-Request-Log-Window")
+	out.RetentionClamped, _ = strconv.ParseBool(header.Get("X-Faas-Request-Log-Retention-Clamped"))
+	out.Truncated, _ = strconv.ParseBool(header.Get("X-Faas-Request-Log-Truncated"))
+	return out, nil
 }
 
 // GetAppDebugCoverage returns observed debugger signal coverage for one app.

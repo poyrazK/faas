@@ -1,6 +1,7 @@
 package sched
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -105,6 +106,16 @@ func (o *WorkflowOrchestrator) resolveCodeWaits(ctx context.Context, store state
 					"duration": item.Descriptor.Duration().String(), "wake_at": deadline,
 				})
 			}
+		case workflowcode.KindCall:
+			// A call settles from its invocation's terminal transition; here
+			// it can only time out.
+			if item.Row.StartedAt != nil && !time.Now().UTC().Before(item.Row.StartedAt.Add(item.Descriptor.Timeout())) {
+				message := fmt.Sprintf("function %s did not finish within %s", item.Descriptor.Function, item.Descriptor.Timeout())
+				if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, entry.Name, state.WorkflowStepStatusFailed, item.Row.Attempt, nil, &message); err != nil {
+					return false, err
+				}
+				resolved = true
+			}
 		case workflowcode.KindEvent:
 			event, timedOut, _, err := store.ParkWorkflowCodeEvent(ctx, run.ID, entry.Name, item.Descriptor.Event, item.Descriptor.Timeout())
 			if err != nil {
@@ -168,10 +179,14 @@ func workflowCodeDue(journal workflowcode.Journal, now time.Time) (bool, time.Ti
 			consider(*item.Row.NextRetry, state.WorkflowRunStatusPending)
 		case entry.Status == workflowcode.EntryWaiting && item.Row.StartedAt != nil:
 			limit := item.Descriptor.Duration()
-			if entry.Kind == workflowcode.KindEvent {
+			if entry.Kind == workflowcode.KindEvent || entry.Kind == workflowcode.KindCall {
 				limit = item.Descriptor.Timeout()
 			}
-			consider(item.Row.StartedAt.Add(limit), state.WorkflowRunStatusAwaitingEvent)
+			deadline := item.Row.StartedAt.Add(limit)
+			if entry.Kind == workflowcode.KindCall && now.Add(workflowCallPoll).Before(deadline) {
+				deadline = now.Add(workflowCallPoll)
+			}
+			consider(deadline, state.WorkflowRunStatusAwaitingEvent)
 		}
 	}
 	if wake.IsZero() {
@@ -220,13 +235,17 @@ func (o *WorkflowOrchestrator) invokeCodeWorkflow(ctx context.Context, store sta
 	if len(input) == 0 {
 		input = json.RawMessage(`{}`)
 	}
-	body, err := json.Marshal(workflowcode.Request{
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	err = encoder.Encode(workflowcode.Request{
 		Protocol: api.WorkflowCodeProtocol, RunID: run.ID, Workflow: run.WorkflowName,
 		Input: input, Invocation: attempt, Journal: journal.Sent(time.Now().UTC()),
 	})
 	if err != nil {
 		return false, err
 	}
+	body := bytes.TrimSuffix(encoded.Bytes(), []byte("\n"))
 	if int64(len(body)) > api.WorkflowCodeRequestMaxBytes {
 		message := fmt.Sprintf("%s: entry request is %d bytes, limit %d", workflowcode.ErrLimit, len(body), api.WorkflowCodeRequestMaxBytes)
 		return false, o.finishCodeRunDead(ctx, store, run, attempt, nil, failures, seen, message)
@@ -299,6 +318,14 @@ func (o *WorkflowOrchestrator) applyCodeResponse(ctx context.Context, store stat
 	now := time.Now().UTC()
 	writes := make([]state.WorkflowCodeOpWrite, 0, len(plan.Ops))
 	for _, op := range plan.Ops {
+		if op.Kind == workflowcode.KindCall {
+			write, err := o.codeCallWrite(ctx, run, op)
+			if err != nil {
+				return false, err
+			}
+			writes = append(writes, write)
+			continue
+		}
 		write := state.WorkflowCodeOpWrite{StepName: op.Name, New: op.New, Input: workflowcode.EncodeDescriptor(op.Descriptor), Status: state.WorkflowStepStatusPending}
 		if op.Kind == workflowcode.KindStep {
 			write.Attempt = op.Attempt

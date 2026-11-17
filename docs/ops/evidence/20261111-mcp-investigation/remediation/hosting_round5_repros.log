@@ -1,0 +1,11 @@
+=== RUN   TestInvestigationSSEAcceptsResultWithinDiagnosticBudget
+=== RUN   TestInvestigationSSEAcceptsResultWithinDiagnosticBudget/json
+=== RUN   TestInvestigationSSEAcceptsResultWithinDiagnosticBudget/sse
+--- PASS: TestInvestigationSSEAcceptsResultWithinDiagnosticBudget (0.09s)
+    --- PASS: TestInvestigationSSEAcceptsResultWithinDiagnosticBudget/json (0.04s)
+    --- PASS: TestInvestigationSSEAcceptsResultWithinDiagnosticBudget/sse (0.05s)
+=== RUN   TestInvestigationDoctorFailsRejectedToolDefinitions
+    zz_investigation_round5_test.go:87: doctor OK=false; accepted tools=0; rejected tools=[{Name:broken_header_tool Reason:invalid or duplicate x-mcp-header annotation}]; checks=[{Name:modern_catalog_discovery Status:passed Detail:} {Name:catalog_definitions Status:failed Detail:catalog contains 1 rejected tool definitions} {Name:untrusted_origin Status:passed Detail:}]
+--- PASS: TestInvestigationDoctorFailsRejectedToolDefinitions (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/mcphosting	0.213s

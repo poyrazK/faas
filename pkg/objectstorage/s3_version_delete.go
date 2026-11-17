@@ -13,13 +13,29 @@ import (
 )
 
 var _ ObjectVersionDeleter = (*S3)(nil)
+var _ GovernanceBypassDeleter = (*S3)(nil)
 
 func (p *S3) DeleteObjectVersion(ctx context.Context, bucket, key, version string) (VersionDeleteResult, error) {
+	return p.deleteObjectVersion(ctx, bucket, key, version, false)
+}
+
+// DeleteObjectVersionBypassingGovernance deletes a version under GOVERNANCE
+// retention with x-amz-bypass-governance-retention. Only the platform's own
+// erasure and over-ceiling deletion use it (ADR-20261111123000 decision 8).
+func (p *S3) DeleteObjectVersionBypassingGovernance(ctx context.Context, bucket, key, version string) (VersionDeleteResult, error) {
+	return p.deleteObjectVersion(ctx, bucket, key, version, true)
+}
+
+func (p *S3) deleteObjectVersion(ctx context.Context, bucket, key, version string, bypass bool) (VersionDeleteResult, error) {
 	result := VersionDeleteResult{}
 	if !ValidKey(key) || !validNativeVersionID(version) || version == "null" {
 		return result, ErrInvalid
 	}
-	out, err := p.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), VersionId: aws.String(version)}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
+	in := &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), VersionId: aws.String(version)}
+	if bypass {
+		in.BypassGovernanceRetention = aws.Bool(true)
+	}
+	out, err := p.client.DeleteObject(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchVersion" {

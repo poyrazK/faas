@@ -101,6 +101,7 @@ type GitHubDeploymentPolicy struct {
 	PreviewDraftPRs      bool     `json:"preview_draft_prs"`
 	PreviewServicePolicy string   `json:"preview_service_policy"`
 	ProductionTrigger    string   `json:"production_trigger"`
+	PreviewMode          string   `json:"preview_mode"`
 }
 
 // GitHubDeploymentPolicyPatch is the partial update shape for the policy.
@@ -113,6 +114,7 @@ type GitHubDeploymentPolicyPatch struct {
 	PreviewDraftPRs      *bool     `json:"preview_draft_prs,omitempty"`
 	PreviewServicePolicy *string   `json:"preview_service_policy,omitempty"`
 	ProductionTrigger    *string   `json:"production_trigger,omitempty"`
+	PreviewMode          *string   `json:"preview_mode,omitempty"`
 }
 
 // OpenAPIContractDiffResponse is the read-only production contract check.

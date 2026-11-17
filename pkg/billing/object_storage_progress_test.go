@@ -138,8 +138,9 @@ func TestObjectStorageStepLosesARaceWithoutPublishing(t *testing.T) {
 
 func TestObjectStorageStepReservesBeforeReadingTheCapAndStaysUnderIt(t *testing.T) {
 	store, sink, accounts, period := objectStorageProgressFixture(api.PlanHobby, 9)
-	// A 10-cent cap with 4 GB-hours of compute overage leaves 6000 millicents.
-	store.caps = map[string]int64{"acct": 10}
+	// A 26-cent cap with 4 GB-hours of compute overage (20000 millicents at
+	// $0.05/GB-h) leaves 6000 millicents.
+	store.caps = map[string]int64{"acct": 26}
 	store.usage = map[string][]state.Usage{"acct": {{Month: period.Add(time.Hour), MBSeconds: api.IncludedMBSeconds(api.PlanHobby) + 4*api.SecondsPerGBHour}}}
 	if _, err := deliverObjectStorageProgressAt(t, store, accounts, sink, period.AddDate(0, 0, 4)); err != nil {
 		t.Fatal(err)
@@ -193,5 +194,21 @@ func TestObjectStorageProgressSkipsMonthsBeforeActivation(t *testing.T) {
 	sink.policy.EffectiveFrom = period.AddDate(0, 1, 0)
 	if n, err := deliverObjectStorageProgressAt(t, store, accounts, sink, period.AddDate(0, 0, 4)); err != nil || n != 0 || len(store.progress) != 0 {
 		t.Fatalf("pre-activation step = %d, %v, progress %+v", n, err, store.progress)
+	}
+}
+
+// A month whose buckets were all deleted still has its provider usage
+// reports; the daily step must bill them, not treat the account as idle.
+func TestObjectStorageProgressBillsReportsAfterBucketsAreGone(t *testing.T) {
+	store, sink, accounts, period := objectStorageProgressFixture(api.PlanHobby, 3)
+	snapshot := store.snapshots["acct"]
+	snapshot.Buckets = nil
+	store.snapshots["acct"] = snapshot
+	day5 := period.AddDate(0, 0, 4).Add(12 * time.Hour)
+	if n, err := deliverObjectStorageProgressAt(t, store, accounts, sink, day5); err != nil || n != 1 {
+		t.Fatalf("step with reports but no buckets = %d, %v; want 1", n, err)
+	}
+	if len(sink.charges) != 1 || sink.charges[0] != 3000 {
+		t.Fatalf("charges = %v, want 3000", sink.charges)
 	}
 }

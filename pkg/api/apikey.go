@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -425,21 +426,21 @@ const (
 	// Reserved for synthetic principals backed by platform_tenant_access_tokens.
 	// They are deliberately excluded from validScopes and cannot be minted as
 	// account-wide API-key scopes.
-	ScopePlatformTenantUsageRead         = "platform_tenant:usage:read"
-	ScopePlatformTenantStatementsRead    = "platform_tenant:statements:read"
-	ScopePlatformTenantActivationRead    = "platform_tenant:activation:read"
-	ScopePlatformTenantHostnamesManage   = "platform_tenant:hostnames:manage"
-	ScopePlatformTenantCredentialsRead   = "platform_tenant:credentials:read"
-	ScopePlatformTenantCredentialsManage = "platform_tenant:credentials:manage"
-	ScopePlatformTenantConsumersManage   = "platform_tenant:consumers:manage"
-	ScopePlatformTenantInvocationsRead   = "platform_tenant:invocations:read"
-	ScopePlatformTenantInvocationsManage = "platform_tenant:invocations:manage"
-	ScopePlatformTenantOperationsRead    = "platform_tenant:operations:read"
-	ScopePlatformTenantOperationsManage  = "platform_tenant:operations:manage"
-	ScopePlatformTenantEventsRead        = "platform_tenant:events:read"
-	ScopePlatformTenantEventsManage      = "platform_tenant:events:manage"
-	ScopePlatformTenantAutomationsRead   = "platform_tenant:automations:read"
-	ScopePlatformTenantAutomationsManage = "platform_tenant:automations:manage"
+	ScopePlatformTenantUsageRead             = "platform_tenant:usage:read"
+	ScopePlatformTenantStatementsRead        = "platform_tenant:statements:read"
+	ScopePlatformTenantActivationRead        = "platform_tenant:activation:read"
+	ScopePlatformTenantHostnamesManage       = "platform_tenant:hostnames:manage"
+	ScopePlatformTenantCredentialsRead       = "platform_tenant:credentials:read"
+	ScopePlatformTenantCredentialsManage     = "platform_tenant:credentials:manage"
+	ScopePlatformTenantConsumersManage       = "platform_tenant:consumers:manage"
+	ScopePlatformTenantInvocationsRead       = "platform_tenant:invocations:read"
+	ScopePlatformTenantInvocationsManage     = "platform_tenant:invocations:manage"
+	ScopePlatformTenantOperationsRead        = "platform_tenant:operations:read"
+	ScopePlatformTenantOperationsManage      = "platform_tenant:operations:manage"
+	ScopePlatformTenantEventsRead            = "platform_tenant:events:read"
+	ScopePlatformTenantEventsManage          = "platform_tenant:events:manage"
+	ScopePlatformTenantStoredWorkflowsRead   = "platform_tenant:stored_workflows:read"
+	ScopePlatformTenantStoredWorkflowsManage = "platform_tenant:stored_workflows:manage"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -482,6 +483,16 @@ func IsValidScope(s string) bool {
 	return ok
 }
 
+// ValidScopeNames lists every API key scope, sorted.
+func ValidScopeNames() []string {
+	out := make([]string, 0, len(validScopes))
+	for s := range validScopes {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // NormalizeCreateKeyScopes validates + defaults + dedupes the requested
 // scopes for POST /v1/keys and the CLI exchange path.
 //
@@ -503,7 +514,9 @@ func NormalizeCreateKeyScopes(requested []string) ([]string, error) {
 	out := make([]string, 0, len(requested))
 	for _, s := range requested {
 		if !IsValidScope(s) {
-			return nil, fmt.Errorf("unknown scope %q", s)
+			// Name the valid scopes: "unknown scope \"invoke\"" left the
+			// caller guessing (prod 2026-11-15).
+			return nil, fmt.Errorf("unknown scope %q; valid scopes: %s", s, strings.Join(ValidScopeNames(), ", "))
 		}
 		if _, dup := seen[s]; dup {
 			continue
@@ -658,8 +671,11 @@ var (
 
 	// Object-storage route surfaces. Admin remains the universal escape
 	// hatch; session-cookie principals are implicitly admin in requireScope.
-	ScopesStorageManageSurface             = []string{ScopeAdmin, ScopeStorageManage}
-	ScopesStorageReadSurface               = []string{ScopeAdmin, ScopeStorageRead}
+	ScopesStorageManageSurface = []string{ScopeAdmin, ScopeStorageManage}
+	ScopesStorageReadSurface   = []string{ScopeAdmin, ScopeStorageRead}
+	// ScopesStorageBindingReadSurface reads compute-binding metadata (never a
+	// credential), so a least-privilege CI key can run `app binding check`.
+	ScopesStorageBindingReadSurface        = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead}
 	ScopesStorageWriteSurface              = []string{ScopeAdmin, ScopeStorageWrite}
 	ScopesStorageListSurface               = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite}
 	ScopesManagedPostgresManageSurface     = []string{ScopeAdmin, ScopeManagedPostgresManage}

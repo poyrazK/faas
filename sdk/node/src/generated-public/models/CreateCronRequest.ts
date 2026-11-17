@@ -50,6 +50,10 @@ export type CreateCronRequest = {
    * Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only.
    */
   retry_backoff_seconds?: number;
+  /**
+   * Project environment the cron runs in; omitted or production is the app's production environment. Immutable once created.
+   */
+  environment?: string;
   schedule_policy?: SchedulePolicy;
   failure_rules?: FailureRules;
 };

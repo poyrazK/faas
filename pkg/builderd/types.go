@@ -119,6 +119,10 @@ type VMRequest struct {
 	// Dockerfile build pulls its base images with (ADR-20261026091500);
 	// vmmd opens them into the builder VM's Docker config.
 	RegistryCredentials []SealedRegistryCredential
+	// BuildKitSeedOnly marks the run that creates the node's BuildKit seed
+	// (ADR-20261030122204): Spawn gives it an empty drive2, and the caller
+	// keeps that drive as the seed when the run succeeds.
+	BuildKitSeedOnly bool
 }
 
 // VMResult is the legacy single-step result — kept for backwards compat
@@ -152,6 +156,12 @@ type BuildHandle struct {
 	// DeferredCache is set when the build's manifest asked the guest to defer
 	// its dependency-cache export.
 	DeferredCache *DeferredCacheSpec
+	// HostSeedDrive is the build's drive2: its copy of the node's BuildKit
+	// seed, or the empty drive of a seed run. WaitForCompletion removes a
+	// copy; a seed run's caller installs or removes its drive.
+	HostSeedDrive string
+	// SeedOnly marks a seed run.
+	SeedOnly bool
 }
 
 // BuildOutcome is what WaitForCompletion returns. The orchestrator at
@@ -218,4 +228,7 @@ type BuildOutcome struct {
 	// BuilderSliceOOMKills is the parent faas-cp-build.slice oom_kill delta
 	// observed while this build owned the single host builder slot.
 	BuilderSliceOOMKills uint64
+	// BuildKitSeeded reports that BuildKit ran on the seeded drive2
+	// (api.BuildDone.BuildKitSeeded).
+	BuildKitSeeded bool
 }

@@ -41,17 +41,23 @@ type overageUsageStore struct {
 	*MemoryStore
 	used   map[string]int64
 	stored map[string]int64 // storage byte-seconds
+	egress map[string]int64 // one database's egress bytes
 }
 
 func (s *overageUsageStore) UsageSnapshot(_ context.Context, subjectID string, at time.Time) (UsageSnapshot, error) {
 	key := subjectID + monthStart(at).Format("2006-01")
-	return UsageSnapshot{PeriodStart: monthStart(at), ComputeUnitSeconds: s.used[key], StorageByteSeconds: s.stored[key]}, nil
+	snapshot := UsageSnapshot{PeriodStart: monthStart(at), ComputeUnitSeconds: s.used[key], StorageByteSeconds: s.stored[key], EgressBytes: s.egress[key]}
+	if egress := s.egress[key]; egress != 0 {
+		snapshot.DatabaseEgress = map[string]int64{"db": egress}
+	}
+	return snapshot, nil
 }
 
 type overageFixture struct {
 	store     *overageUsageStore
 	now       time.Time
 	limits    CapLimits
+	egress    EgressAllowance // nil biller Egress while zero
 	monthly   map[string]CapLimits
 	published []OverageChargeStep
 	fail      error
@@ -62,7 +68,7 @@ type overageFixture struct {
 
 func newOverageFixture(t *testing.T, now time.Time) *overageFixture {
 	t.Helper()
-	return &overageFixture{store: &overageUsageStore{MemoryStore: NewMemoryStore(), used: map[string]int64{}, stored: map[string]int64{}}, now: now,
+	return &overageFixture{store: &overageUsageStore{MemoryStore: NewMemoryStore(), used: map[string]int64{}, stored: map[string]int64{}, egress: map[string]int64{}}, now: now,
 		limits: CapLimits{Allowance: testAllowance, Ceiling: 2 * testAllowance, Overage: true}}
 }
 
@@ -78,6 +84,9 @@ func (f *overageFixture) biller(t *testing.T, live bool, from time.Time) *Overag
 			}
 			return f.limits, nil
 		}}
+	if f.egress != (EgressAllowance{}) {
+		options.Egress = func(context.Context, string, time.Time) (EgressAllowance, error) { return f.egress, nil }
+	}
 	if live {
 		options.Publish = func(_ context.Context, step OverageChargeStep) error {
 			if f.fail != nil {
@@ -134,6 +143,33 @@ func TestOverageBillerDeliversCumulativeStepsOnce(t *testing.T) {
 	delivery, err := f.store.OverageDelivered(ctx, "polar", "acct", november)
 	if err != nil || !delivery.Live || delivery.Millicents != 25*api.ManagedPostgresOverageMillicentsPerComputeUnitHour || delivery.BilledUnitSeconds != testAllowance {
 		t.Fatalf("recorded %+v, %v", delivery, err)
+	}
+}
+
+// The spend cap bounds the managed PostgreSQL charge like every other meter:
+// a live step stops at the room the cap leaves, and nothing is charged once
+// none is left (billing review 2026-11-13, R7-1).
+func TestOverageBillerStopsAtTheSpendCap(t *testing.T) {
+	ctx := context.Background()
+	november := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	f := newOverageFixture(t, november.Add(10*24*time.Hour))
+	biller := f.biller(t, true, november)
+	room, capped := int64(api.ManagedPostgresOverageMillicentsPerComputeUnitHour), true
+	biller.options.CapRoom = func(context.Context, string, time.Time, time.Time) (int64, bool, error) {
+		return room, capped, nil
+	}
+	f.reachAllowance(t, "acct", november, true)
+	f.store.used["acct2026-11"] = testAllowance + 3*3600
+	if _, err := biller.Deliver(ctx); err != nil || len(f.published) != 1 || f.published[0].TargetMillicents != api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
+		t.Fatalf("capped step = %+v, %v; want one compute-unit hour", f.published, err)
+	}
+	room = 0
+	if _, err := biller.Deliver(ctx); err != nil || len(f.published) != 1 {
+		t.Fatalf("a step past the cap was sent: %+v, %v", f.published, err)
+	}
+	room, capped = 0, false
+	if _, err := biller.Deliver(ctx); err != nil || len(f.published) != 2 || f.published[1].TargetMillicents != 3*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
+		t.Fatalf("uncapped step = %+v, %v; want the rest", f.published, err)
 	}
 }
 

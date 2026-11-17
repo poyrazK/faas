@@ -2,8 +2,10 @@ package canary
 
 import (
 	"context"
+	"errors"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type ProfileGateRecoveryStore interface {
@@ -23,6 +25,13 @@ func (p *Progression) profileGateRecoveryReady(ctx context.Context, row CanaryRo
 		return true
 	}
 	decision, err := reader.ProfileCanaryGate(ctx, row)
+	if errors.Is(err, state.ErrNotFound) {
+		// The app or deployment was deleted after the list. Nothing is left
+		// to gate or advance, and the safe-deploy orchestrator closes the
+		// rollout; warning every tick until then only made noise.
+		stats.SkippedGone++
+		return false
+	}
 	if err != nil {
 		p.Log.Warn("canary: profiling gate read failed", "deployment_id", row.ID, "err", err)
 		stats.Errors++

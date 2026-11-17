@@ -69,6 +69,14 @@ AND i.attempts=1 AND i.replay_generation=0 AND NOT c.cancelled AND c.expires_at>
 -- name: LockQueueCanaryApp :one
 SELECT id FROM apps WHERE id=sqlc.arg(app_id) AND account_id=sqlc.arg(account_id) AND status<>'deleted' FOR UPDATE;
 
+-- name: LockQueueClaimApp :one
+-- A queue claim takes its app's share lock before the binding lock (Hunt 33
+-- H33-27). Capped enqueues lock the app FOR UPDATE and then the binding FOR
+-- SHARE (invocation insert trigger); a claim that locked the binding first
+-- and reached the app through the invocation update triggers deadlocked
+-- against them.
+SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid FOR SHARE;
+
 -- name: ActiveQueueCanaryExists :one
 SELECT EXISTS(SELECT 1 FROM queue_binding_canaries c JOIN invocations i ON i.id=c.id WHERE c.app_id=sqlc.arg(app_id) AND c.binding_id=sqlc.arg(binding_id) AND NOT c.cancelled AND c.expires_at>clock_timestamp() AND i.state IN ('pending','dispatching'))::boolean;
 

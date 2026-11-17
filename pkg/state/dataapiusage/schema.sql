@@ -41,5 +41,6 @@ CREATE TABLE data_api_change_hook_reports (
  oldest_pending_at timestamptz,
  last_published_at timestamptz,
  last_failure_code text,
- publishing text NOT NULL
+ publishing text NOT NULL,
+ last_dropped_at timestamptz
 );

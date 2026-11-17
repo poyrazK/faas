@@ -11,10 +11,10 @@ import (
 )
 
 func TestUpgradeArgs(t *testing.T) {
-	run := strings.Join(pgUpgradeArgs(14, 17, 2, false), " ")
+	run := strings.Join(pgUpgradeArgs(15, 17, 2, false), " ")
 	for _, want := range []string{
 		"/usr/lib/postgresql/17/bin/pg_upgrade",
-		"--old-bindir=/run/gregale-upgrade/old/usr/lib/postgresql/14/bin",
+		"--old-bindir=/run/gregale-upgrade/old/usr/lib/postgresql/15/bin",
 		"--new-bindir=/usr/lib/postgresql/17/bin",
 		"--old-datadir=" + databasePGData, "--new-datadir=" + databaseUpgradeData,
 		"--username=postgres", "--socketdir=" + databaseUpgradeSocketDir, "--link", "--jobs=2",
@@ -23,10 +23,10 @@ func TestUpgradeArgs(t *testing.T) {
 			t.Errorf("pg_upgrade lacks %s: %s", want, run)
 		}
 	}
-	if strings.Contains(run, "--check") || !slices.Contains(pgUpgradeArgs(14, 17, 0, true), "--check") {
+	if strings.Contains(run, "--check") || !slices.Contains(pgUpgradeArgs(15, 17, 0, true), "--check") {
 		t.Error("only the check checks")
 	}
-	if !slices.Contains(pgUpgradeArgs(14, 17, 0, false), "--jobs=1") {
+	if !slices.Contains(pgUpgradeArgs(15, 17, 0, false), "--jobs=1") {
 		t.Error("jobs not floored at 1")
 	}
 
@@ -78,8 +78,8 @@ func TestControlDataField(t *testing.T) {
 }
 
 func TestRecoveryServerArgs(t *testing.T) {
-	args := recoveryServerArgs(14, 512<<10)
-	if args[0] != "/run/gregale-upgrade/old/usr/lib/postgresql/14/bin/postgres" {
+	args := recoveryServerArgs(15, 512<<10)
+	if args[0] != "/run/gregale-upgrade/old/usr/lib/postgresql/15/bin/postgres" {
 		t.Fatalf("recovery runs %s, not the old major's postgres", args[0])
 	}
 	joined := strings.Join(args, " ")
@@ -89,7 +89,7 @@ func TestRecoveryServerArgs(t *testing.T) {
 		}
 	}
 	// The cluster's own server arguments are not changed underneath.
-	if databaseServerArgs(14, 512<<10, true)[0] != databaseBinDir(14)+"/postgres" {
+	if databaseServerArgs(15, 512<<10, true)[0] != databaseBinDir(15)+"/postgres" {
 		t.Fatal("recoveryServerArgs changed databaseServerArgs")
 	}
 }

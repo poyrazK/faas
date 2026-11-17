@@ -95,6 +95,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class PlatformTenantsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List account-level platform customers.
    * @returns PlatformTenantListResponse One page of platform customers.
@@ -118,7 +119,7 @@ export class PlatformTenantsService {
      */
     pageToken?: string,
   }): CancelablePromise<PlatformTenantListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants',
       query: {
@@ -142,7 +143,7 @@ export class PlatformTenantsService {
   }: {
     requestBody: CreatePlatformTenantRequest,
   }): CancelablePromise<PlatformTenantResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants',
       body: requestBody,
@@ -163,7 +164,7 @@ export class PlatformTenantsService {
   }: {
     requestBody: ApplyPlatformTenantRequest,
   }): CancelablePromise<ApplyPlatformTenantResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/apply',
       body: requestBody,
@@ -191,7 +192,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: PlanPlatformTenantReconciliationRequest,
   }): CancelablePromise<PlatformTenantReconciliationPlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/reconciliation-plan',
       path: {
@@ -231,7 +232,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantOffboardingPlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/offboarding-plan',
       path: {
@@ -271,7 +272,7 @@ export class PlatformTenantsService {
     idempotencyKey: string,
     requestBody: ApplyPlatformTenantOffboardingRequest,
   }): CancelablePromise<PlatformTenantOffboardingApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/offboarding-plan/apply',
       path: {
@@ -314,7 +315,7 @@ export class PlatformTenantsService {
      */
     pageToken?: string,
   }): CancelablePromise<PlatformTenantOffboardingReceiptListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/offboardings',
       path: {
@@ -349,7 +350,7 @@ export class PlatformTenantsService {
      */
     receiptId: string,
   }): CancelablePromise<PlatformTenantOffboardingReceiptResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/offboardings/{receipt_id}',
       path: {
@@ -389,7 +390,7 @@ export class PlatformTenantsService {
     idempotencyKey: string,
     requestBody: ApplyPlatformTenantReconciliationRequest,
   }): CancelablePromise<PlatformTenantReconciliationApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/reconciliation-plan/apply',
       path: {
@@ -433,7 +434,7 @@ export class PlatformTenantsService {
      */
     pageToken?: string,
   }): CancelablePromise<PlatformTenantReconciliationReceiptListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/reconciliations',
       path: {
@@ -469,7 +470,7 @@ export class PlatformTenantsService {
      */
     receiptId: string,
   }): CancelablePromise<PlatformTenantReconciliationReceiptResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/reconciliations/{receipt_id}',
       path: {
@@ -495,7 +496,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantDetailResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}',
       path: {
@@ -522,7 +523,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: SetPlatformTenantStatusRequest,
   }): CancelablePromise<PlatformTenantResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/account/platform-tenants/{id}',
       path: {
@@ -550,7 +551,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: LinkPlatformTenantConsumerRequest,
   }): CancelablePromise<APIConsumerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/consumers',
       path: {
@@ -579,7 +580,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: LinkPlatformTenantSurfaceRequest,
   }): CancelablePromise<PlatformTenantSurfaceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/surfaces',
       path: {
@@ -607,7 +608,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantActivationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/activation',
       path: {
@@ -632,7 +633,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantHostnamePolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/hostname-policy',
       path: {
@@ -659,7 +660,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: SetPlatformTenantHostnamePolicyRequest,
   }): CancelablePromise<PlatformTenantHostnamePolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/platform-tenants/{id}/hostname-policy',
       path: {
@@ -687,7 +688,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantCredentialPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/credential-policy',
       path: {
@@ -714,7 +715,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: SetPlatformTenantCredentialPolicyRequest,
   }): CancelablePromise<PlatformTenantCredentialPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/platform-tenants/{id}/credential-policy',
       path: {
@@ -741,7 +742,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantConsumerProvisioningPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/consumer-provisioning-policy',
       path: {
@@ -768,7 +769,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: SetPlatformTenantConsumerProvisioningPolicyRequest,
   }): CancelablePromise<PlatformTenantConsumerProvisioningPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/platform-tenants/{id}/consumer-provisioning-policy',
       path: {
@@ -795,7 +796,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantRequestBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/request-budget',
       path: {
@@ -822,7 +823,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: SetPlatformTenantRequestBudgetRequest,
   }): CancelablePromise<PlatformTenantRequestBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/platform-tenants/{id}/request-budget',
       path: {
@@ -849,7 +850,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantRateCardListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/rate-cards',
       path: {
@@ -883,7 +884,7 @@ export class PlatformTenantsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PlatformTenantRateCardResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/rate-cards',
       path: {
@@ -914,7 +915,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantTrialResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/trial',
       path: {
@@ -947,7 +948,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: PutAPIConsumerTrialRequest,
   }): CancelablePromise<PlatformTenantTrialResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/platform-tenants/{id}/trial',
       path: {
@@ -977,7 +978,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/platform-tenants/{id}/trial',
       path: {
@@ -1002,7 +1003,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantCreditListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/credits',
       path: {
@@ -1044,7 +1045,7 @@ export class PlatformTenantsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PlatformTenantCreditResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/credits',
       path: {
@@ -1082,7 +1083,7 @@ export class PlatformTenantsService {
      */
     creditId: string,
   }): CancelablePromise<PlatformTenantCreditResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/platform-tenants/{id}/credits/{credit_id}',
       path: {
@@ -1108,7 +1109,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantSpendCapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/spend-cap',
       path: {
@@ -1144,7 +1145,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: PutAPIConsumerSpendCapRequest,
   }): CancelablePromise<PlatformTenantSpendCapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/platform-tenants/{id}/spend-cap',
       path: {
@@ -1173,7 +1174,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/platform-tenants/{id}/spend-cap',
       path: {
@@ -1191,7 +1192,7 @@ export class PlatformTenantsService {
    * @throws ApiError
    */
   public static getPlatformTenantBillingPolicy(): CancelablePromise<PlatformTenantBillingPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenant-billing-policy',
       errors: {
@@ -1217,7 +1218,7 @@ export class PlatformTenantsService {
   }: {
     requestBody: PutAPIConsumerBillingPolicyRequest,
   }): CancelablePromise<PlatformTenantBillingPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/platform-tenant-billing-policy',
       body: requestBody,
@@ -1235,7 +1236,7 @@ export class PlatformTenantsService {
    * @throws ApiError
    */
   public static deletePlatformTenantBillingPolicy(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/platform-tenant-billing-policy',
       errors: {
@@ -1250,7 +1251,7 @@ export class PlatformTenantsService {
    * @throws ApiError
    */
   public static listPlatformTenantOverdueHolds(): CancelablePromise<PlatformTenantOverdueHoldListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenant-overdue-holds',
       errors: {
@@ -1264,7 +1265,7 @@ export class PlatformTenantsService {
    * @throws ApiError
    */
   public static listPlatformTenantPlans(): CancelablePromise<PlatformTenantPlanListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenant-plans',
       errors: {
@@ -1290,7 +1291,7 @@ export class PlatformTenantsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PlatformTenantPlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenant-plans',
       headers: {
@@ -1318,7 +1319,7 @@ export class PlatformTenantsService {
      */
     planId: string,
   }): CancelablePromise<PlatformTenantPlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenant-plans/{plan_id}',
       path: {
@@ -1346,7 +1347,7 @@ export class PlatformTenantsService {
     planId: string,
     requestBody: PlatformTenantPlanRequest,
   }): CancelablePromise<PlatformTenantPlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/platform-tenant-plans/{plan_id}',
       path: {
@@ -1375,7 +1376,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantPlanAssignmentListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/plan-assignments',
       path: {
@@ -1414,7 +1415,7 @@ export class PlatformTenantsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PlatformTenantPlanAssignmentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/plan-assignments',
       path: {
@@ -1453,11 +1454,11 @@ export class PlatformTenantsService {
      */
     since?: string,
     /**
-     * Exclusive UTC end of the usage window, snapped to midnight.
+     * Exclusive UTC end of the usage window, snapped to midnight. Defaults to the next UTC midnight, so today is included.
      */
     until?: string,
   }): CancelablePromise<PlatformTenantUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/usage',
       path: {
@@ -1511,7 +1512,7 @@ export class PlatformTenantsService {
      */
     cursor?: string,
   }): CancelablePromise<PlatformTenantActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/activity',
       path: {
@@ -1554,7 +1555,7 @@ export class PlatformTenantsService {
      */
     periodEnd: string,
   }): CancelablePromise<PlatformTenantStatementListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/usage-statements',
       path: {
@@ -1592,7 +1593,7 @@ export class PlatformTenantsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PlatformTenantStatementResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/usage-statements',
       path: {
@@ -1627,7 +1628,7 @@ export class PlatformTenantsService {
      */
     statementId: string,
   }): CancelablePromise<PlatformTenantStatementResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}',
       path: {
@@ -1664,7 +1665,7 @@ export class PlatformTenantsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PlatformTenantStatementResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/finalize',
       path: {
@@ -1698,7 +1699,7 @@ export class PlatformTenantsService {
      */
     statementId: string,
   }): CancelablePromise<PlatformTenantStatementHandoffResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff',
       path: {
@@ -1738,7 +1739,7 @@ export class PlatformTenantsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PlatformTenantStatementHandoffResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff',
       path: {
@@ -1774,7 +1775,7 @@ export class PlatformTenantsService {
      */
     statementId: string,
   }): CancelablePromise<StatementInvoiceExportResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice',
       path: {
@@ -1831,7 +1832,7 @@ export class PlatformTenantsService {
     idempotencyKey?: string,
     requestBody?: CreateStatementInvoiceRequest,
   }): CancelablePromise<StatementInvoiceExportResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice',
       path: {
@@ -1866,7 +1867,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantWebhookListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/webhooks',
       path: {
@@ -1900,7 +1901,7 @@ export class PlatformTenantsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PlatformTenantWebhookResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/webhooks',
       path: {
@@ -1936,7 +1937,7 @@ export class PlatformTenantsService {
      */
     webhookId: string,
   }): CancelablePromise<PlatformTenantWebhookResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}',
       path: {
@@ -1968,7 +1969,7 @@ export class PlatformTenantsService {
     webhookId: string,
     requestBody: UpdatePlatformTenantWebhookRequest,
   }): CancelablePromise<PlatformTenantWebhookResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}',
       path: {
@@ -2001,7 +2002,7 @@ export class PlatformTenantsService {
      */
     webhookId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}',
       path: {
@@ -2033,7 +2034,7 @@ export class PlatformTenantsService {
     webhookId: string,
     requestBody: RotateAppWebhookSecretRequest,
   }): CancelablePromise<RotateAppWebhookSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/rotate-secret',
       path: {
@@ -2075,7 +2076,7 @@ export class PlatformTenantsService {
      */
     pageToken?: string,
   }): CancelablePromise<AppWebhookDeliveryListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries',
       path: {
@@ -2114,7 +2115,7 @@ export class PlatformTenantsService {
      */
     did: string,
   }): CancelablePromise<AppWebhookRetryDeliveryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/retry',
       path: {
@@ -2161,7 +2162,7 @@ export class PlatformTenantsService {
      */
     pageToken?: string,
   }): CancelablePromise<AppWebhookDeliveryAttemptListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/attempts',
       path: {
@@ -2198,7 +2199,7 @@ export class PlatformTenantsService {
      */
     webhookId: string,
   }): CancelablePromise<AppWebhookDeliveryHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/health',
       path: {
@@ -2234,7 +2235,7 @@ export class PlatformTenantsService {
      */
     offset?: number,
   }): CancelablePromise<PlatformTenantCredentialsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/credentials',
       path: {
@@ -2265,7 +2266,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: ApplyPlatformTenantCredentialsRequest,
   }): CancelablePromise<ApplyPlatformTenantCredentialsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/credentials/apply',
       path: {
@@ -2292,7 +2293,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantAccessTokenListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/platform-tenants/{id}/access-tokens',
       path: {
@@ -2319,7 +2320,7 @@ export class PlatformTenantsService {
     id: string,
     requestBody: CreatePlatformTenantAccessTokenRequest,
   }): CancelablePromise<CreatePlatformTenantAccessTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{id}/access-tokens',
       path: {
@@ -2353,7 +2354,7 @@ export class PlatformTenantsService {
      */
     tokenId: string,
   }): CancelablePromise<PlatformTenantAccessTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/platform-tenants/{id}/access-tokens/{token_id}',
       path: {
@@ -2372,7 +2373,7 @@ export class PlatformTenantsService {
    * @throws ApiError
    */
   public static getPlatformTenantSelfActivation(): CancelablePromise<PlatformTenantSelfActivationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/activation',
     });
@@ -2384,7 +2385,7 @@ export class PlatformTenantsService {
    * @throws ApiError
    */
   public static listPlatformTenantSelfConsumers(): CancelablePromise<PlatformTenantSelfConsumersResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/consumers',
       errors: {
@@ -2405,7 +2406,7 @@ export class PlatformTenantsService {
   }: {
     requestBody: CreatePlatformTenantSelfConsumerRequest,
   }): CancelablePromise<PlatformTenantSelfConsumerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/consumers',
       body: requestBody,
@@ -2431,7 +2432,7 @@ export class PlatformTenantsService {
   }: {
     requestBody: ApplyPlatformTenantSelfConsumersRequest,
   }): CancelablePromise<ApplyPlatformTenantSelfConsumersResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/consumers/apply',
       body: requestBody,
@@ -2457,7 +2458,7 @@ export class PlatformTenantsService {
   }: {
     requestBody: RevokePlatformTenantSelfConsumersRequest,
   }): CancelablePromise<PlatformTenantSelfConsumerRevocationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/consumers/revoke',
       body: requestBody,
@@ -2490,7 +2491,7 @@ export class PlatformTenantsService {
      */
     offset?: number,
   }): CancelablePromise<PlatformTenantCredentialsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/credentials',
       query: {
@@ -2515,7 +2516,7 @@ export class PlatformTenantsService {
   }: {
     requestBody: ApplyPlatformTenantCredentialsRequest,
   }): CancelablePromise<ApplyPlatformTenantCredentialsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/credentials/apply',
       body: requestBody,
@@ -2540,7 +2541,7 @@ export class PlatformTenantsService {
   }: {
     requestBody: CreatePlatformTenantSelfHostnameRequest,
   }): CancelablePromise<PlatformTenantSelfHostnameResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/hostnames',
       body: requestBody,
@@ -2568,7 +2569,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantInvocationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/invocations/{id}',
       path: {
@@ -2595,7 +2596,7 @@ export class PlatformTenantsService {
      */
     id: string,
   }): CancelablePromise<PlatformTenantInvocationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/invocations/{id}/cancel',
       path: {
@@ -2636,7 +2637,7 @@ export class PlatformTenantsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AsyncInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/invocations/{id}/replay',
       path: {
@@ -2668,11 +2669,11 @@ export class PlatformTenantsService {
      */
     since?: string,
     /**
-     * Exclusive UTC-day boundary; buckets before this instant are included.
+     * Exclusive UTC-day boundary; buckets before this instant are included. Defaults to the next UTC midnight, so today is included.
      */
     until?: string,
   }): CancelablePromise<PlatformTenantUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/usage',
       query: {
@@ -2715,7 +2716,7 @@ export class PlatformTenantsService {
      */
     offset?: number,
   }): CancelablePromise<PlatformTenantSelfStatementListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/usage-statements',
       query: {
@@ -2746,7 +2747,7 @@ export class PlatformTenantsService {
      */
     statementId: string,
   }): CancelablePromise<PlatformTenantStatementResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/usage-statements/{statement_id}',
       path: {

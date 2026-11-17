@@ -161,10 +161,10 @@ func (s *server) loadWorkflowScheduleForPreview(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrCapacity("failed to read workflow deployment"))
 		return state.Deployment{}, api.WorkflowTriggerSpec{}, false
 	}
-	if store, ok := s.store.(state.AutomationStore); ok {
+	if store, ok := s.store.(state.StoredWorkflowStore); ok {
 		deployment.Workflows, err = store.EffectiveWorkflowDefinitions(r.Context(), app.ID, deployment.Workflows)
 		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("failed to read published automations"))
+			api.WriteProblem(w, api.ErrCapacity("failed to read published stored workflows"))
 			return state.Deployment{}, api.WorkflowTriggerSpec{}, false
 		}
 	}

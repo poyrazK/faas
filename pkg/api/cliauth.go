@@ -1,6 +1,12 @@
 package api
 
-import "context"
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+)
 
 // CLI auth device-code flow (spec §2.2). The CLI mints a code
 // anonymously, the user pastes it into the browser at /cli-auth, the
@@ -38,13 +44,43 @@ type CliAuthCodeResponse struct {
 	// never Code, so guessing the short code a user approves yields nothing
 	// (bug hunt 2026-10-28 H67).
 	DeviceCode string `json:"device_code,omitempty"`
+	// Loopback is true when the server took the request's LoopbackPort: URL
+	// then opens a one-click approval page that sends a fresh device code to
+	// http://127.0.0.1:<port>/callback, and DeviceCode no longer exchanges
+	// once the code is approved that way (ADR-20261111170000). A CLI that
+	// sees false falls back to the typed-code flow.
+	Loopback bool `json:"loopback,omitempty"`
+	// Verifier is the secret (64 hex characters) whose SHA-256 the CLI sent
+	// as the request's CodeChallenge. It stays in the CLI's memory and goes
+	// only to the exchange; empty when the server did not take a challenge.
+	Verifier string `json:"-"`
 }
+
+// NewCliAuthVerifier returns a random 32-byte code verifier and its SHA-256
+// challenge, both hex.
+func NewCliAuthVerifier() (verifier, challenge string, err error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", fmt.Errorf("code verifier: %w", err)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(raw), hex.EncodeToString(sum[:]), nil
+}
+
+// CliAuthLoopbackCallbackPath is the path the CLI serves on 127.0.0.1 for
+// the one-click login. The browser arrives with ?code=<the short code>&
+// device_code=<64 hex>.
+const CliAuthLoopbackCallbackPath = "/callback"
 
 // CliAuthExchangeRequest is the CLI's poll body: DeviceCode for a code
 // minted with one, else Code (CLIs that predate device codes).
 type CliAuthExchangeRequest struct {
 	Code       string `json:"code,omitempty"`
 	DeviceCode string `json:"device_code,omitempty"`
+	// CodeVerifier is the 32-byte secret (64 hex characters) whose SHA-256
+	// the CLI sent as CliAuthCodeRequest.CodeChallenge. A code minted with
+	// a challenge exchanges only together with it.
+	CodeVerifier string `json:"code_verifier,omitempty"`
 }
 
 // CliAuthExchangeResponse is the only response the CLI writes to disk.
@@ -65,6 +101,15 @@ type CliAuthCodeRequest struct {
 	// Device asks for a CLI login code bound to a device code
 	// (CliAuthCodeResponse.DeviceCode).
 	Device bool `json:"device,omitempty"`
+	// LoopbackPort, with Device, asks for a one-click login: the CLI listens
+	// on 127.0.0.1:LoopbackPort (1024-65535) and receives the device code
+	// from the approving browser instead of the user typing the code.
+	LoopbackPort int `json:"loopback_port,omitempty"`
+	// CodeChallenge, with Device, is the SHA-256 (64 hex characters) of a
+	// secret verifier the CLI keeps in memory. The device code then
+	// exchanges only together with that verifier, so a device code seen in
+	// a browser's history or a local server's log is useless alone.
+	CodeChallenge string `json:"code_challenge,omitempty"`
 }
 
 const CliAuthPurposeMCPRead = "mcp-read"

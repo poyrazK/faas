@@ -1,6 +1,6 @@
 package faas
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 // Type aliases for every request/response DTO the Client methods
 // accept and return. The aliases preserve identity (a faas.App
@@ -195,6 +195,7 @@ type (
 	AppManifest          = api.AppManifest
 	AfterRestoreHook     = api.AfterRestoreHook
 	BeforeCheckpointHook = api.BeforeCheckpointHook
+	WarmupHook           = api.WarmupHook
 	ServiceReplicas      = api.ServiceReplicas
 
 	// Issue #477 / ADR-079: per-app public-URL auth. Both

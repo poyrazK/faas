@@ -162,3 +162,24 @@ func TestRequestTelemetryAppJournal(t *testing.T) {
 		t.Fatalf("ACK erased concurrent losses: %d %d", loss, unattributed)
 	}
 }
+
+// adr: 20261028110044 amendment 8 — a batch the gateway could not deliver at
+// all (receiver unreachable, retries exhausted) is a platform gap: it ends the
+// node's healthy coverage instead of becoming per-app gaps that route health
+// and the monitor ignore (prod 2026-11-09 19:20:16, 534 requests).
+func TestRequestTelemetryUndeliveredBatchIsPlatformLoss(t *testing.T) {
+	recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 4}, nil)
+	for i := 0; i < 3; i++ {
+		recorder.RecordFromObserve(makeRow())
+	}
+	var coverage RequestTelemetryCoverage
+	publisher := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{Enabled: true, FlushBatchSize: 4, MaxRetries: 1,
+		OnCoverage: func(_ context.Context, c RequestTelemetryCoverage) error { coverage = c; return nil },
+	}, recorder, func(context.Context, []RequestTelemetryRow) error {
+		return errors.New("receive outcome: context deadline exceeded")
+	}, nil)
+	publisher.tick(context.Background())
+	if coverage.DroppedTotal != 3 || coverage.UnattributedDroppedTotal != 3 || len(coverage.AppGaps) != 0 {
+		t.Fatalf("coverage = %+v, want 3 unattributed drops and no app gaps", coverage)
+	}
+}

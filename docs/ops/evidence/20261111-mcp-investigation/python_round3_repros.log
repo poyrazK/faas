@@ -1,0 +1,55 @@
+test_boolean_property_schema_is_callable_over_modern_http (__main__.PythonRoundThreeInvestigation.test_boolean_property_schema_is_callable_over_modern_http) ... ----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 45652)
+Traceback (most recent call last):
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/socketserver.py", line 766, in __init__
+    self.handle()
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/http/server.py", line 440, in handle
+    self.handle_one_request()
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/http/server.py", line 428, in handle_one_request
+    method()
+  File "/workspace/faas/cmd/gregale/templates/mcp-python/server.py", line 850, in do_POST
+    self._handle_post()
+  File "/workspace/faas/cmd/gregale/templates/mcp-python/server.py", line 915, in _handle_post
+    if not validate_mcp_headers(self.headers, message, protocol, MCP_CATALOG):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/faas/cmd/gregale/templates/mcp-python/protocol_headers.py", line 24, in validate_mcp_headers
+    if entry and not _validate_params(headers, entry["definition"].get("inputSchema", {}), params.get("arguments", {})):
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/faas/cmd/gregale/templates/mcp-python/protocol_headers.py", line 33, in _validate_params
+    suffix = prop.get("x-mcp-header")
+             ^^^^^^^^
+AttributeError: 'bool' object has no attribute 'get'
+----------------------------------------
+FAIL
+
+======================================================================
+FAIL: test_boolean_property_schema_is_callable_over_modern_http (__main__.PythonRoundThreeInvestigation.test_boolean_property_schema_is_callable_over_modern_http)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/faas/docs/ops/evidence/20261111-mcp-investigation/python_round3_repro_test.py", line 42, in test_boolean_property_schema_is_callable_over_modern_http
+    response = connection.getresponse()
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/http/client.py", line 1478, in getresponse
+    response.begin()
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/http/client.py", line 343, in begin
+    version, status, reason = self._read_status()
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/http/client.py", line 312, in _read_status
+    raise RemoteDisconnected("Remote end closed connection without"
+http.client.RemoteDisconnected: Remote end closed connection without response
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/workspace/faas/docs/ops/evidence/20261111-mcp-investigation/python_round3_repro_test.py", line 44, in test_boolean_property_schema_is_callable_over_modern_http
+    self.fail('legal boolean property schema caused the server to close HTTP without a response')
+AssertionError: legal boolean property schema caused the server to close HTTP without a response
+
+----------------------------------------------------------------------
+Ran 1 test in 0.506s
+
+FAILED (failures=1)

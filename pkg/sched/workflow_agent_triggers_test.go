@@ -90,12 +90,12 @@ func TestSignedWebhookStartsAgentStep(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		starts := store.(state.WebhookAutomationStore)
-		if _, err := starts.SaveWebhookAutomationBinding(ctx, state.WebhookAutomationBindingOptions{EndpointID: endpoint.ID,
+		starts := store.(state.WebhookWorkflowStore)
+		if _, err := starts.SaveWebhookWorkflowBinding(ctx, state.WebhookWorkflowBindingOptions{EndpointID: endpoint.ID,
 			AppID: app.ID, AccountID: app.AccountID, WorkflowName: "review-order", EventType: "order.*"}); err != nil {
 			t.Fatal(err)
 		}
-		receipt, handled, err := starts.AcceptVerifiedWebhookAutomation(ctx, endpoint, "evt_order_1", "order.paid",
+		receipt, handled, err := starts.AcceptVerifiedWebhookWorkflow(ctx, endpoint, "evt_order_1", "order.paid",
 			json.RawMessage(`{"order_id":"ord_1"}`), true)
 		if err != nil || !handled || receipt.Status != "accepted" {
 			t.Fatalf("accept %+v %v %v", receipt, handled, err)

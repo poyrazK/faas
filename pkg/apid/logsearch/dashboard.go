@@ -12,7 +12,7 @@ import (
 )
 
 // dashboardFields are the query parameters the page's form submits.
-var dashboardFields = []string{"q", "since", "level", "status", "route", "source", "cursor"}
+var dashboardFields = []string{"q", "since", "level", "status", "route", "source", "cursor", "until"}
 
 // DashboardData builds the log search page. Facets are shown on the first
 // page when the window is within the facet bound.
@@ -57,6 +57,8 @@ func (s *Service) DashboardData(ctx context.Context, acct state.Account, app sta
 		for key, v := range params {
 			next[key] = v
 		}
+		next.Set("since", filter.Since.UTC().Format(time.RFC3339Nano))
+		next.Set("until", filter.Until.UTC().Format(time.RFC3339Nano))
 		next.Set("cursor", EncodeCursor(last.OccurredAt, last.ID))
 		data.NextURL = "/dashboard/apps/" + url.PathEscape(app.Slug) + "/log-search?" + next.Encode()
 	}

@@ -23,7 +23,7 @@ func (s *Service) pushSiblingAddresses(ctx context.Context, fsys fs.FS, project 
 	if len(scan.Workloads) < 2 || s.Reconcile == nil {
 		return nil
 	}
-	opts := s.scanOptions(project.AccountID)
+	opts := s.scanOptions(s.capabilitySubject(ctx, project.AccountID, project.OrgID))
 	env, err := reposcan.ReadProjectEnv(fsys, opts, scan.Workloads)
 	if err != nil {
 		return nil

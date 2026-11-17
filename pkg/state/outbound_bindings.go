@@ -53,6 +53,9 @@ type OutboundIntegrationOffer struct {
 	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
 	// (ADR-1437).
 	AIAutoPromptCache bool
+	// AISemanticCache answers calls that mean the same as a cached one
+	// (ADR 20261112194947); nil when off.
+	AISemanticCache *api.OutboundAISemanticCache
 	// AILogExport sends settled app calls to the app's log drains
 	// (ADR-1340).
 	AILogExport bool
@@ -174,6 +177,10 @@ type OutboundAIPolicy struct {
 	OnlineEvalModel              string
 	OnlineEvalRubric             string
 	QualityAlerts                bool
+	// SemanticCache answers calls that mean the same as a cached one; it
+	// needs a provider, the response cache and an embedding integration
+	// (ADR 20261112194947). Nil or disabled turns it off.
+	SemanticCache *api.OutboundAISemanticCache
 }
 
 func (p OutboundAIPolicy) valid() bool {
@@ -186,7 +193,19 @@ func (p OutboundAIPolicy) valid() bool {
 		api.ValidOutboundAITraceLimits(p.Provider, p.TraceMaxCalls, p.TraceMaxCost, p.TraceMaxRepeatedToolCalls) &&
 		api.ValidOutboundAIOnlineEvaluation(p.Provider, p.OnlineEvalPercent, p.OnlineEvalJudgeIntegrationID, p.OnlineEvalModel,
 			p.OnlineEvalRubric) &&
-		(p.OnlineEvalPercent == nil || p.RequestLogContent) && (!p.QualityAlerts || p.Provider != "")
+		(p.OnlineEvalPercent == nil || p.RequestLogContent) && (!p.QualityAlerts || p.Provider != "") &&
+		p.SemanticCache.Valid(p.Provider)
+}
+
+// semanticCache is the stored form of the policy's semantic cache: nil
+// when it is off.
+func (p OutboundAIPolicy) semanticCache() *api.OutboundAISemanticCache {
+	if p.SemanticCache == nil || !p.SemanticCache.Enabled || p.Provider == "" {
+		return nil
+	}
+	stored := *p.SemanticCache
+	stored.ThresholdBasisPoints = stored.Threshold()
+	return &stored
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

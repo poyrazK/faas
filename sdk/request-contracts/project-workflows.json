@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "preview": {
+    "project_slug": "shop",
+    "scan_source": "compose",
+    "tier": "compose",
+    "workloads": [
+      {
+        "name": "api",
+        "app_slug": "shop-api",
+        "root_dir": "api",
+        "command": [],
+        "ports": [
+          8080
+        ]
+      },
+      {
+        "name": "worker",
+        "app_slug": "shop-worker",
+        "root_dir": "worker",
+        "command": [],
+        "ports": []
+      }
+    ],
+    "managed": [
+      {
+        "name": "db",
+        "kind": "postgres",
+        "env_hint": "DATABASE_URL",
+        "source": "compose",
+        "image": "postgres:17"
+      }
+    ],
+    "crons": null,
+    "observed_apps": 0,
+    "observed_crons": 0,
+    "limit_apps": 25,
+    "limit_crons": 25,
+    "can_apply": true,
+    "plan_token": "reviewed-token",
+    "will_deploy": [
+      {
+        "slug": "shop-api",
+        "action": "create"
+      },
+      {
+        "slug": "shop-worker",
+        "action": "create"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "complete application",
+      "scenario": "success",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "lost apply reply",
+      "scenario": "lost_reply",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "unknown acceptance never resubmits",
+      "scenario": "unknown",
+      "outcome": "acceptance_unknown"
+    },
+    {
+      "name": "expired source needs new preview",
+      "scenario": "expired",
+      "outcome": "preview_expired"
+    },
+    {
+      "name": "stale environment needs new preview",
+      "scenario": "stale",
+      "outcome": "plan_stale"
+    },
+    {
+      "name": "wrong account denied",
+      "scenario": "permission",
+      "outcome": "permission_denied"
+    },
+    {
+      "name": "quota blocks apply",
+      "scenario": "blocked_plan",
+      "outcome": "blocked"
+    },
+    {
+      "name": "receipt selection still processing",
+      "scenario": "processing",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "receipt poll limit",
+      "scenario": "poll_limit",
+      "outcome": "poll_limit"
+    },
+    {
+      "name": "restart after acceptance",
+      "scenario": "restart",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "crash after durable intent before HTTP",
+      "scenario": "before_post",
+      "outcome": "acceptance_unknown"
+    },
+    {
+      "name": "one workload enqueue fails",
+      "scenario": "partial",
+      "outcome": "partial"
+    },
+    {
+      "name": "one release fails",
+      "scenario": "failed_release",
+      "outcome": "partial"
+    },
+    {
+      "name": "one release held",
+      "scenario": "blocked_release",
+      "outcome": "blocked"
+    },
+    {
+      "name": "interrupted selection",
+      "scenario": "interrupted",
+      "outcome": "partial"
+    },
+    {
+      "name": "unchanged service retained",
+      "scenario": "unchanged",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "image workload has no build",
+      "scenario": "image",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "wrong receipt attempt",
+      "scenario": "wrong_receipt",
+      "outcome": "invalid_response"
+    },
+    {
+      "name": "wrong receipt project",
+      "scenario": "wrong_project",
+      "outcome": "invalid_response"
+    },
+    {
+      "name": "wrong receipt app ID",
+      "scenario": "wrong_app",
+      "outcome": "invalid_response"
+    },
+    {
+      "name": "missing workload result",
+      "scenario": "missing_row",
+      "outcome": "partial"
+    },
+    {
+      "name": "empty acceptance cannot succeed",
+      "scenario": "empty_receipt",
+      "outcome": "failed"
+    },
+    {
+      "name": "accepted deployment with checkpoint error",
+      "scenario": "accepted_error",
+      "outcome": "partial"
+    },
+    {
+      "name": "initial configuration stays private",
+      "scenario": "secrets",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "explicit environment and app allocation",
+      "scenario": "environment",
+      "outcome": "succeeded"
+    }
+  ],
+  "portable_plan": {
+    "version": 1,
+    "base_url": "https://projects.test/prefix",
+    "project_slug": "shop",
+    "environment": null,
+    "source": {
+      "size": 123,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "preview": {
+      "project_slug": "shop",
+      "scan_source": "compose",
+      "tier": "compose",
+      "workloads": [
+        {
+          "name": "api",
+          "app_slug": "shop-api",
+          "root_dir": "api",
+          "command": [],
+          "ports": [
+            8080
+          ]
+        },
+        {
+          "name": "worker",
+          "app_slug": "shop-worker",
+          "root_dir": "worker",
+          "command": [],
+          "ports": []
+        }
+      ],
+      "managed": [
+        {
+          "name": "db",
+          "kind": "postgres",
+          "env_hint": "DATABASE_URL",
+          "source": "compose",
+          "image": "postgres:17"
+        }
+      ],
+      "crons": [],
+      "observed_apps": 0,
+      "observed_crons": 0,
+      "limit_apps": 25,
+      "limit_crons": 25,
+      "can_apply": true,
+      "plan_token": "reviewed-token",
+      "will_deploy": [
+        {
+          "slug": "shop-api",
+          "action": "create"
+        },
+        {
+          "slug": "shop-worker",
+          "action": "create"
+        }
+      ],
+      "numeric_hints": {
+        "small": 1e-09,
+        "large": 1e+21,
+        "zero": -0.0,
+        "text": "n0000000000000000"
+      }
+    },
+    "fingerprint": "43f54dd167409249aa0133644c702fdb994a23d713c60278c2a482e3b7fb7300"
+  }
+}

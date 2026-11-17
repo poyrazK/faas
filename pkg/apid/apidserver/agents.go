@@ -58,6 +58,15 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	if runs, ok := h.Store.(agents.RunCallbackStore); ok {
 		h.RunCallbacks = runs
 	}
+	if tasks, ok := h.Store.(agents.SandboxTaskStore); ok {
+		h.SandboxTasks = tasks
+	}
+	if browsers, ok := h.Store.(agents.BrowserSessionStore); ok {
+		h.BrowserSessions = browsers
+	}
+	if subs, ok := h.Store.(agents.GitHubSubscriptionStore); ok {
+		h.GitHubSubscriptions = subs
+	}
 	if s.sessions != nil {
 		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
 			h.Callbacks = signer
@@ -106,6 +115,11 @@ func (s *server) agentHandlers(w http.ResponseWriter) (*agents.Handler, bool) {
 func (s *server) withAgentOutputFiles(backend storage.StorageBackend) {
 	if s.agentAPI != nil {
 		s.agentAPI.Files = backend
+	}
+	// ADR-20261117065818 §5: gregale_browser's screenshots live in the
+	// same store.
+	if s.sandboxAPI != nil {
+		s.sandboxAPI.Files = backend
 	}
 }
 
@@ -343,4 +357,14 @@ func (s *server) cancelAgentRun(w http.ResponseWriter, r *http.Request, acct sta
 	if h, ok := s.agentHandlers(w); ok {
 		h.CancelRun(w, r, acct)
 	}
+}
+
+// deliverGitHubSubscriptions publishes a GitHub event githubd forwarded to
+// the agent threads subscribed to it with gregale_github_subscribe
+// (ADR-20261030125501 §4).
+func (s *server) deliverGitHubSubscriptions(ctx context.Context, accountID, deliveryID string, event api.GitHubPullRequestEvent) error {
+	if s.agentAPI == nil {
+		return nil
+	}
+	return s.agentAPI.DeliverGitHubEvent(ctx, accountID, deliveryID, event)
 }

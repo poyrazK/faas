@@ -55,6 +55,24 @@ func testImageRunJobs(t *testing.T, fx *Fixture) {
 	if err != nil || again.Created || again.Requeued || again.Job.ImageMaterializationStatus != "ready" {
 		t.Fatalf("cached ensure = %+v, %v", again, err)
 	}
+	// Refresh must preserve an already-admitted command's image. RAM belongs
+	// to this run, independently of later updates to the shared runner.
+	pinCommand, one, runRAM := []string{"/entry"}, 1, 256
+	pinned, _, err := fx.Store.JobRunCreate(fx.Ctx, a.ID, fx.Account.ID, "manual", &one, nil, nil, nil, 1,
+		state.JobRunOptions{CommandArgs: &pinCommand, RAMMB: &runRAM, ExpectedImageStorageKey: again.Job.ImageStorageKey})
+	if err != nil || pinned.RAMMBSnapshot == nil || *pinned.RAMMBSnapshot != runRAM {
+		t.Fatalf("per-run RAM snapshot = %+v, %v", pinned, err)
+	}
+	if _, err := ensure(nameA, true, 2); !errors.Is(err, state.ErrImageRunBusy) {
+		t.Fatalf("refresh with queued work = %v, want busy", err)
+	}
+	if _, _, err := fx.Store.JobRunCreate(fx.Ctx, a.ID, fx.Account.ID, "manual", &one, nil, nil, nil, 1,
+		state.JobRunOptions{CommandArgs: &pinCommand, ExpectedImageStorageKey: "jobs/stale-image.ext4"}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("admit stale image command = %v, want conflict", err)
+	}
+	if err := fx.Store.JobTaskMarkTerminal(fx.Ctx, pinned.ID, 0, "succeeded", 0, "", "", time.Now().UTC()); err != nil {
+		t.Fatalf("settle pinned run: %v", err)
+	}
 	pulled, err := ensure(nameA, true, 2)
 	if err != nil || !pulled.Requeued || pulled.Job.ImageMaterializationStatus != "pending" || pulled.Job.ImageConfigRecorded {
 		t.Fatalf("pull-always ensure = %+v, %v", pulled, err)
@@ -68,6 +86,13 @@ func testImageRunJobs(t *testing.T, fx *Fixture) {
 	}
 	if _, err := fx.Store.JobGetByID(fx.Ctx, a.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("evicted runner still visible: %v", err)
+	}
+	history, ok := fx.Store.(state.ImageRunHistoryStore)
+	if !ok {
+		t.Fatalf("%T does not preserve image run history", fx.Store)
+	}
+	if retained, err := history.JobGetByIDForRunHistory(fx.Ctx, a.ID); err != nil || retained.ID != a.ID || retained.Status != "deleted" {
+		t.Fatalf("evicted runner history = %+v, %v", retained, err)
 	}
 	// A queued task pins B, so a third image finds the cache full.
 	args := []string{"/bin/true"}
@@ -87,6 +112,16 @@ func testImageRunJobs(t *testing.T, fx *Fixture) {
 	}
 	if _, err := ensure(taken, false, 5); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("ensure over customer job err = %v, want ErrConflict", err)
+	}
+	customer, err := fx.Store.JobGetByName(fx.Ctx, fx.Account.ID, taken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fx.Store.JobSoftDelete(fx.Ctx, customer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := history.JobGetByIDForRunHistory(fx.Ctx, customer.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("history lookup exposed deleted customer template: %v", err)
 	}
 }
 

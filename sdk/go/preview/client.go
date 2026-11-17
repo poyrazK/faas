@@ -14,8 +14,8 @@
 package preview
 
 import (
-	faas "github.com/poyrazK/faas/sdk/go"
-	"github.com/poyrazK/faas/sdk/go/internal/api"
+	faas "github.com/gregale-dev/gregale-go"
+	"github.com/gregale-dev/gregale-go/internal/api"
 )
 
 // Client is a faas.Client with the preview capabilities' methods. Every

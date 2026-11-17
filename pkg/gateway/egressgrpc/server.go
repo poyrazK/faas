@@ -167,7 +167,7 @@ func (s *Server) StreamBytes(req *egresspb.StreamBytesRequest, stream grpc.Serve
 				s.log.Warn("egressgrpc: durable replay ledger write failed", "err", err)
 				continue
 			}
-			if err := s.sendRecords(records, stream.Send); err != nil {
+			if err := s.sendRecords(records, req.GetEdgeFrames(), stream.Send); err != nil {
 				s.log.Warn("egressgrpc: send failed; closing stream", "err", err)
 				return nil
 			}
@@ -208,11 +208,19 @@ func (s *Server) replayRecords() ([]replayRecord, error) {
 	return out, nil
 }
 
-func (s *Server) sendRecords(records []replayRecord, send func(*egresspb.BytesFrame) error) error {
+// sendRecords sends the replay set. An edge record (AppID set,
+// ADR-20261104132753) goes only to a client that asked for edge frames; it
+// stays pending for the next one that does, so an older meterd, which cannot
+// persist it, never receives it.
+func (s *Server) sendRecords(records []replayRecord, edgeFrames bool, send func(*egresspb.BytesFrame) error) error {
 	for _, pending := range records {
 		rec := pending.record
+		if rec.AppID != "" && !edgeFrames {
+			continue
+		}
 		if err := send(&egresspb.BytesFrame{
 			InstanceId: rec.InstanceID,
+			AppId:      rec.AppID,
 			Minute:     timestamppb.New(rec.Minute.UTC()),
 			Bytes:      rec.Bytes,
 			Requests:   rec.Requests,

@@ -52,6 +52,13 @@ var warningRules = map[string]warningRule{
 		title:  "Source too large to inspect fully",
 		remedy: "The verdict covers only part of the tree; treat it as provisional.",
 	},
+	// A raw TCP server built from source never answers the HTTP readiness
+	// probe; the message names the image deploy that works.
+	"non_http_service": {
+		level:  LevelAmber,
+		title:  "TCP server will fail the HTTP readiness probe",
+		remedy: "A datastore is not run: use managed PostgreSQL or a hosted service. Another TCP server: deploy its published image with `gregale deploy --image <image>@sha256:<digest>`.",
+	},
 	// Expected on every container deploy: the image, not the source, carries
 	// the entrypoint. Informational, so it never downgrades an otherwise
 	// clean container app.

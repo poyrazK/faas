@@ -126,14 +126,74 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchSupportAccess,
+		DocSlug: "support-access",
+		Short:   "Ask for, list and use customer-granted support access (deploy, retry, cancel, rollback, restart)",
+		Subcommands: []cliSub{
+			{Name: "request", Short: "Ask an organization's owners and admins for access", Flags: []cliFlag{
+				{Name: "org", Short: "organization slug", Req: true}, {Name: "reason", Short: "why; the customer reads it", Req: true},
+			}},
+			{Name: "grants", Short: "List live grants customers gave support"},
+			{Name: "status", Short: "Show an app's latest deployment under a grant", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
+			}},
+			{Name: "deploy", Short: "Build and deploy the app's connected repository at its production branch", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
+				{Name: "repo", Short: "connected GitHub repository (owner/name)", Req: true}, {Name: "ref", Short: "the app's production branch", Req: true},
+				{Name: "reason", Short: "reason recorded on the deployment"},
+			}},
+			{Name: "retry", Short: "Retry a deployment from a stage", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "deployment", Short: "deployment id", Req: true},
+				{Name: "from-stage", Short: "stage to retry from (default build)"},
+			}},
+			{Name: "cancel", Short: "Cancel a deployment", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true}, {Name: "deployment", Short: "deployment id", Req: true},
+			}},
+			{Name: "rollback", Short: "Roll an app back", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
+				{Name: "to", Short: "target deployment id (default: previous)"}, {Name: "reason", Short: "reason recorded on the rollback"},
+			}},
+			{Name: "restart", Short: "Restart an app", Flags: []cliFlag{
+				{Name: "grant", Short: "support grant id", Req: true}, {Name: "app", Short: "app slug", Req: true},
+				{Name: "fresh", Short: "discard snapshots and cold boot"},
+			}},
+		},
+	},
+	{
 		Name:    dispatchBilling,
 		DocSlug: "billing",
-		Short:   "Operator billing catalog, reconciliation, and webhook diagnostics",
+		Short:   "Operator billing catalog, credits, refunds, reconciliation, and webhook diagnostics",
 		Subcommands: []cliSub{
 			{Name: "price-catalog", Short: "List, sync, or reset the provider catalog"},
 			{Name: "reconcile", Short: "Reconcile usage for one account"},
 			{Name: "reconcile-paddle-overage", Short: "Check Paddle overage schema readiness"},
 			{Name: "webhook-test", Short: "Send a locally signed Paddle or Stripe webhook"},
+			{Name: "credit", Short: "Issue a billing credit to an account", Flags: []cliFlag{
+				{Name: "account-id", Short: "account id (uuid)", Req: true},
+				{Name: "cents", Short: "credit amount in USD cents", Req: true},
+				{Name: "reason", Short: "reason text (3..500 chars)", Req: true},
+				{Name: "yes", Short: "acknowledge issuing a credit", Req: true},
+			}},
+			{Name: "refund", Short: "Refund part or all of a paid invoice", Flags: []cliFlag{
+				{Name: "account-id", Short: "account id (uuid)", Req: true},
+				{Name: "invoice-id", Short: "local invoice id (uuid)", Req: true},
+				{Name: "cents", Short: "refund amount in USD cents", Req: true},
+				{Name: "reason", Short: "reason text (3..500 chars)", Req: true},
+				{Name: "idempotency-key", Short: "provider idempotency key (derived from the intent when empty)"},
+				{Name: "yes", Short: "acknowledge moving money back to the customer", Req: true},
+			}},
+			{Name: "consume-credits", Short: "Apply an account's credits to an invoice's overage", Flags: []cliFlag{
+				{Name: "invoice-id", Short: "local invoice id (uuid)", Req: true},
+				{Name: "idempotency-key", Short: "Idempotency-Key (generated when empty)"},
+				{Name: "yes", Short: "acknowledge consuming the account's credits", Req: true},
+			}},
+			{Name: "postgres", Short: "Managed PostgreSQL accounting: diagnostics | usage-import | reconcile", Flags: []cliFlag{
+				{Name: "account-id", Short: "account id (uuid)", Req: true},
+				{Name: "file", Short: "evidence JSON file (usage-import, reconcile)"},
+				{Name: "apply", Short: "apply the reviewed preview revision (usage-import, reconcile)"},
+				{Name: "after", Short: "resume after this database id (diagnostics)"},
+				{Name: "limit", Short: "maximum databases per page, 1..100 (diagnostics)"},
+			}},
 		},
 	},
 	{
@@ -201,6 +261,14 @@ var cliCommands = []cliCommand{
 					{Name: "yes", Short: "acknowledge retrying the GitHub Check Run write", Req: true},
 				},
 			},
+			{
+				Name:  "webhook-secret",
+				Short: "Rotate a legacy installation-scoped webhook secret (set; secret hex on stdin)",
+				Flags: []cliFlag{
+					{Name: "installation-id", Short: "GitHub App installation_id", Req: true},
+					{Name: "yes", Short: "acknowledge replacing the installation's webhook secret", Req: true},
+				},
+			},
 		},
 	},
 	{
@@ -226,6 +294,18 @@ var cliCommands = []cliCommand{
 					{Name: "manifest-file", Short: "production manifest path (required)"},
 					{Name: "no-cache", Short: "bypass the local read-through cache"},
 					{Name: "refresh", Short: "fetch from shared storage and replace the local cache"},
+				},
+			},
+			{
+				Name:  "resign",
+				Short: "Convert stored layers' v1 signatures to key-bound v2 ones (ADR-20261109170000)",
+				Flags: []cliFlag{
+					{Name: "env-file", Short: "storage.env path (required)"},
+					{Name: "pg-dsn", Short: "PostgreSQL DSN"},
+					{Name: "db-env", Short: "database environment file"},
+					{Name: "sign-key", Short: "the fleet signing key signd holds"},
+					{Name: "dry-run", Short: "verify and count, write nothing"},
+					{Name: "json", Short: "emit a machine-readable report"},
 				},
 			},
 		},
@@ -712,6 +792,20 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  "find",
+				Short: "Find the account behind an email, app slug, hostname, URL, id, request id or trace id",
+			},
+			{
+				Name:  "attention",
+				Short: "List customers who are probably stuck (failed deploys, refused bursts, stuck domains)",
+				Flags: []cliFlag{
+					{Name: "kind", Short: "signal kind", ClosedSet: []string{"deploy_failing", "app_oom", "boot_failing", "jobs_failing", "domain_stuck", "refused_burst", "limit_pressure", "payment_failing"}},
+					{Name: "state", Short: "signal state", ClosedSet: []string{"active", "open", "dismissed", "resolved"}},
+					{Name: "account-id", Short: "only this account (uuid)"},
+					{Name: "limit", Short: "maximum signals (1..200)"},
+				},
+			},
+			{
 				Name:  "show",
 				Short: "Show one account's apps, orgs, API keys, and sessions",
 				Flags: []cliFlag{
@@ -721,7 +815,7 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:  "360",
-				Short: "Show one account's usage and billing support view",
+				Short: "Show one account's usage, billing and diagnosis support view",
 				Flags: []cliFlag{
 					{Name: "account-id", Short: "account id (uuid)", Req: true},
 					{Name: "month", Short: "usage month (YYYY-MM)"},
@@ -750,6 +844,69 @@ var cliCommands = []cliCommand{
 				Name:  "revoke-sessions",
 				Short: "Revoke every active session for an account",
 				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "reset-mfa",
+				Short: "Clear a customer's two-factor authentication after verified recovery",
+				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "revert-email",
+				Short: "Move a customer back to the email address their last confirmed change replaced",
+				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "make-org-owner",
+				Short: "Make an active member the owner of an organization whose owner cannot act",
+				Flags: append(accountMutationCLIFlags(), cliFlag{Name: "org", Short: "organization slug", Req: true}),
+			},
+			{
+				Name:  "abuse-hold",
+				Short: "Place or release an account abuse hold (place|release)",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "note", Short: "audit note (3..500 chars)", Req: true},
+					{Name: "yes", Short: "acknowledge the hold change", Req: true},
+				},
+			},
+			{
+				Name:  "egress-flows",
+				Short: "Search the egress flow log: which account connected to an address, and when",
+				Flags: []cliFlag{
+					{Name: "remote", Short: "remote IP address or CIDR"},
+					{Name: "account-id", Short: "account id (uuid)"},
+					{Name: "from", Short: "window start, RFC 3339"},
+					{Name: "to", Short: "window end, RFC 3339"},
+					{Name: "limit", Short: "maximum rows (1..1000)"},
+				},
+			},
+			{
+				Name:  "risk",
+				Short: "Show an account's abuse risk: hold, sign-up record, links to held accounts, strikes, abuse events",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "include-pii", Short: "include email, sign-up address and user agent (audited)"},
+				},
+			},
+			{
+				Name:  "held-links",
+				Short: "List new accounts linked to abuse-held accounts, for review",
+				Flags: []cliFlag{
+					{Name: "since", Short: "window, a duration up to 720h (default 24h)"},
+					{Name: "limit", Short: "maximum rows (1..1000)"},
+				},
+			},
+			{
+				Name:  "complimentary",
+				Short: "Give an account a paid plan without a subscription, or end it",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "plan", Short: "the complimentary plan; none returns the account to Free", Req: true, ClosedSet: []string{"hobby", "pro", "scale", "none"}},
+					{Name: "until", Short: "RFC 3339 time the account returns to Free"},
+					{Name: "reason", Short: "audit reason slug ([a-z0-9_]{1,64})", Req: true},
+					{Name: "trace-id", Short: "OTel 32-char-hex trace id"},
+					{Name: "yes", Short: "acknowledge the plan change", Req: true},
+				},
 			},
 		},
 	},
@@ -1206,6 +1363,7 @@ var cliCommands = []cliCommand{
 			{Name: subRotate, Short: "Rotate host.age (delegates to host-age rotate)"},
 			{Name: subStatus, Short: "Show mode/mtime/sha256 for the 5 secret files"},
 			{Name: subSecretsStamp, Short: "Stamp the existing vmmd TLS certificate without rotating secrets"},
+			{Name: "rekey-progress", Short: "Show the customer-secret re-key walk's counters (operator session)"},
 		},
 		Flags: []cliFlag{
 			{Name: "dir", Short: "root secrets directory (default /etc/faas/secrets)"},
@@ -1325,6 +1483,12 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name: subObsNotificationHealth, Short: "Inspect alert notification pipeline evidence", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsServingHealth, Short: "Inspect expected fleet serving-probe coverage", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsVerifyDeployment, Short: "Wait for post-deployment monitoring evidence and save a report", Flags: []cliFlag{{Name: "release", Short: "requested full release SHA (40 lowercase hex characters)"}, {Name: "after", Short: "RFC3339 rollout evidence boundary"}, {Name: "wait-timeout", Short: "wait budget (default derives from probe policy; maximum 1h)"}, {Name: "poll-interval", Short: "poll interval (default 10s; maximum 1m)"}, {Name: "report", Short: "private JSON report path, updated atomically"}, {Name: "admin-token", Short: "admin bearer (default: operator session, then $FAAS_ADMIN_TOKEN)"}, {Name: "token-stdin", Short: "read the admin bearer from one stdin line"}, {Name: "json", Short: "emit the final report as JSON"}},
 			},
 			{
 				Name: subObsRuleHealth, Short: "Inspect current alert-rule evaluation diagnostics", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},

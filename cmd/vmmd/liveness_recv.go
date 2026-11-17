@@ -148,6 +148,9 @@ type livenessProbeLoop struct {
 	mgr          *fcvm.Manager
 	log          *slog.Logger
 	count        int // current consecutive-failure count
+	// lastStatus is the HTTP status of the last answered probe (0 when the
+	// guest answered with a transport error), logged with a reported failure.
+	lastStatus int
 	// probeFn is the test seam: production code uses dialAndProbe
 	// (Firecracker's Unix-vsock proxy), tests inject a stub that returns the
 	// closed-set outcome string ("ok", "non_200", "unauthorized",
@@ -339,6 +342,11 @@ func (l *livenessProbeLoop) runOne(ctx context.Context, timeoutMs int) bool {
 			// into the relay so the schedd side audit
 			// event names the cluster correctly.
 			reason := classifyLivenessFailureReason(outcome)
+			l.log.Warn("liveness: reporting failure",
+				"instance", l.instance, "deployment_id", l.deploymentID,
+				"reason", reason, "consecutive", l.count,
+				"path", l.cfg.Path, "grpc", l.cfg.GRPC, "port", l.cfg.Port,
+				"unpromised_path", l.cfg.UnpromisedPath, "last_status", l.lastStatus)
 			l.mgr.ReportLivenessFailed(ctx, l.instance, reason)
 			// Exit the loop — schedd's Engine.DestroyForLivenessFailure
 			// will Park / destroy the instance, and the
@@ -446,6 +454,7 @@ const livenessProbeDialTimeout = 5 * time.Second
 // guest CID directly. The classification mirrors the four classes the
 // guest-init reports — see guest/init/liveness_linux.go.
 func (l *livenessProbeLoop) dialAndProbe(ctx context.Context, timeoutMs int) string {
+	l.lastStatus = 0
 	if l.socketPath == "" {
 		return livenessOutcomeConnErr
 	}
@@ -544,17 +553,19 @@ func (l *livenessProbeLoop) dialAndProbe(ctx context.Context, timeoutMs int) str
 			return livenessOutcomeConnErr
 		}
 	}
-	return classifyLivenessStatus(resp.Status, l.cfg.NotFoundIsAlive)
+	l.lastStatus = resp.Status
+	return classifyLivenessStatus(resp.Status, l.cfg.UnpromisedPath)
 }
 
 // classifyLivenessStatus maps a probe's HTTP status to an outcome.
-// notFoundIsAlive accepts 404 for an image whose readiness contract is its
-// TCP listener and which never promised the default path (H10-23).
-func classifyLivenessStatus(status int, notFoundIsAlive bool) string {
+// unpromisedPath marks the plan-default path on an app whose startup never
+// proved it (a declared health path, or TCP readiness): any answer below 500
+// shows the server is alive (ADR-079 amendment 1, H10-23).
+func classifyLivenessStatus(status int, unpromisedPath bool) string {
 	if status >= 200 && status < 300 {
 		return livenessOutcomeOK
 	}
-	if status == http.StatusNotFound && notFoundIsAlive {
+	if unpromisedPath && status >= 100 && status < 500 {
 		return livenessOutcomeOK
 	}
 	// Error-explanations cluster (spec §6.4 amendment 1):

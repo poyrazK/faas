@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -199,6 +200,12 @@ type Config struct {
 	// fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
 
+	// CPUAbuseMode (ADR-20261112120603) is the sustained CPU abuse switch:
+	// off, shadow (audit and count only; the default) or enforce (recycle
+	// Free instances pinned at their CPU quota for 15 minutes and escalate
+	// repeats to the account abuse hold). FAAS_CPU_ABUSE_MODE overrides it.
+	CPUAbuseMode string `toml:"cpu_abuse_mode"`
+
 	// MeasuredCPUAdmission (ADR 20261029151111) makes the vCPU and CPU gates
 	// charge an instance the latest instance stats sample measured its
 	// measured host CPU instead of its booking, never less than
@@ -226,6 +233,16 @@ type Config struct {
 	// billed seconds once its quiet_pause_unbilled switch is on. Off by
 	// default; FAAS_QUIET_PAUSE_LEDGER overrides it.
 	QuietPauseLedger bool `toml:"quiet_pause_ledger"`
+	// IdleLadderIdleOut (ADR-20261107122928 §3) hands idle-out to vmmd's
+	// idle ladder: an instance vmmd holds quiet-paused stays resident past
+	// its idle timeout and parks IdleLadderSnapshotAfterSeconds after its
+	// last request, or sooner under RAM pressure, instead of freezing. It
+	// applies only to accounts the quiet_pause_unbilled platform flag
+	// releases, since only the pause ledger leaves those seconds unbilled,
+	// and is ignored unless quiet_pause_ledger is on. Turn it on only where
+	// meterd's quiet_pause_unbilled mode is on. Off by default;
+	// FAAS_IDLE_LADDER_IDLE_OUT overrides it.
+	IdleLadderIdleOut bool `toml:"idle_ladder_idle_out"`
 
 	// FrozenTier (ADR-1151) freezes an idle eligible function instance in
 	// place at its idle timeout instead of parking it: vmmd keeps the VM
@@ -540,6 +557,8 @@ func LoadConfig(path string) (*Config, error) {
 		// manifest, so only a binary default keeps them on; each stays an
 		// opt-out (= false in schedd.toml).
 		QuietPauseAdmission: true,
+		// ADR-20261112120603: shadow until production signals are reviewed.
+		CPUAbuseMode: string(sched.DefaultCPUAbuseMode),
 		// ADR 20261031143521: zswap (the role's canary list) gates it per
 		// node.
 		FrozenProactiveCompress: true,
@@ -630,6 +649,14 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.QuietPauseLedger = enabled
 	}
+	// ADR-20261107122928: FAAS_IDLE_LADDER_IDLE_OUT overrides idle_ladder_idle_out.
+	if v := os.Getenv("FAAS_IDLE_LADDER_IDLE_OUT"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_IDLE_LADDER_IDLE_OUT must be a boolean (got %q)", v)
+		}
+		c.IdleLadderIdleOut = enabled
+	}
 	// ADR-1151: FAAS_FROZEN_TIER overrides frozen_tier.
 	if v := os.Getenv("FAAS_FROZEN_TIER"); v != "" {
 		enabled, err := strconv.ParseBool(v)
@@ -707,6 +734,14 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if s := c.FrozenTierEarlyFreezeAfterS; s != 0 && (s < api.FrozenEarlyFreezeMinSeconds || s > api.FrozenEarlyFreezeMaxSeconds) {
 		return nil, fmt.Errorf("schedd: frozen_tier_early_freeze_after_s must be 0 or %d-%d (got %d)", api.FrozenEarlyFreezeMinSeconds, api.FrozenEarlyFreezeMaxSeconds, s)
+	}
+	// ADR-20261112120603: an environment drop-in survives the manifest
+	// render that rewrites schedd.toml at every rollout.
+	if v := os.Getenv("FAAS_CPU_ABUSE_MODE"); v != "" {
+		c.CPUAbuseMode = v
+	}
+	if _, err := sched.ParseCPUAbuseMode(c.CPUAbuseMode); err != nil {
+		return nil, fmt.Errorf("schedd: cpu_abuse_mode: %w", err)
 	}
 	applyRoutingEnv()
 	return c, loadDatabaseSchedulerFile(c)

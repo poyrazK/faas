@@ -1,0 +1,279 @@
+# ObjectInventoriesDue at 200,000 buckets (ADR-20261111152144), from
+# FAAS_INVENTORY_CAPACITY=1 go test -run 'TestInventorySweepCapacity/due-query' -v ./pkg/apid/object
+# after VACUUM ANALYZE; auto_explain (analyze, buffers). Query text omitted.
+
+## object_inventory_quiet on
+
+duration: 4.214 ms  plan:
+Query Parameters: $1 = '100000', $2 = '3600', $3 = '30', $4 = '{}', $5 = '82800', $6 = '86400', $7 = '900', $8 = '100', $9 = 't'
+Limit  (cost=1742.53..1742.55 rows=8 width=357) (actual time=4.114..4.127 rows=100 loops=1)
+  Buffers: shared hit=5299
+  InitPlan 2 (returns $8)
+    ->  Aggregate  (cost=1483.98..1483.99 rows=1 width=32) (actual time=1.688..1.693 rows=1 loops=1)
+          Buffers: shared hit=2414
+          ->  Append  (cost=1.26..1483.23 rows=301 width=16) (actual time=0.078..1.658 rows=300 loops=1)
+                Buffers: shared hit=2414
+                ->  Subquery Scan on "*SELECT* 1"  (cost=1.26..126.88 rows=100 width=16) (actual time=0.078..0.835 rows=100 loops=1)
+                      Buffers: shared hit=805
+                      ->  Limit  (cost=1.26..125.88 rows=100 width=24) (actual time=0.077..0.825 rows=100 loops=1)
+                            Buffers: shared hit=805
+                            ->  Nested Loop Left Join  (cost=1.26..249225.82 rows=199998 width=24) (actual time=0.076..0.816 rows=100 loops=1)
+                                  Filter: ((cu.lease_until IS NULL) OR (cu.lease_until < now()))
+                                  Buffers: shared hit=805
+                                  ->  Nested Loop  (cost=0.84..142519.00 rows=199998 width=24) (actual time=0.060..0.634 rows=100 loops=1)
+                                        Buffers: shared hit=405
+                                        ->  Nested Loop Anti Join  (cost=0.42..20636.41 rows=199998 width=24) (actual time=0.039..0.229 rows=100 loops=1)
+                                              Join Filter: (r.bucket_id = s_1.bucket_id)
+                                              Buffers: shared hit=5
+                                              ->  Nested Loop Anti Join  (cost=0.42..18136.42 rows=199999 width=24) (actual time=0.037..0.152 rows=100 loops=1)
+                                                    Join Filter: (v.bucket_id = s_1.bucket_id)
+                                                    Buffers: shared hit=5
+                                                    ->  Index Only Scan using object_inventory_schedule_attempt on object_inventory_schedule s_1  (cost=0.42..15636.42 rows=200000 width=24) (actual time=0.030..0.044 rows=100 loops=1)
+                                                          Index Cond: (attempt_at < (now() - '00:05:00'::interval))
+                                                          Heap Fetches: 0
+                                                          Buffers: shared hit=5
+                                                    ->  Seq Scan on object_bucket_versioning v  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                                          Filter: (state <> 'ready'::text)
+                                              ->  Seq Scan on object_storage_capacity_reconciliations r  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                                    Filter: (state = ANY ('{waiting,scanning}'::text[]))
+                                        ->  Index Scan using object_buckets_pkey on object_buckets cb  (cost=0.42..0.61 rows=1 width=16) (actual time=0.004..0.004 rows=1 loops=100)
+                                              Index Cond: (id = s_1.bucket_id)
+                                              Filter: (state = 'ready'::text)
+                                              Buffers: shared hit=400
+                                  ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage cu  (cost=0.42..0.52 rows=1 width=24) (actual time=0.001..0.001 rows=1 loops=100)
+                                        Index Cond: (bucket_id = s_1.bucket_id)
+                                        Buffers: shared hit=400
+                ->  Subquery Scan on "*SELECT* 2"  (cost=1.13..177.85 rows=100 width=16) (actual time=0.045..0.528 rows=100 loops=1)
+                      Buffers: shared hit=804
+                      ->  Limit  (cost=1.13..176.85 rows=100 width=24) (actual time=0.044..0.523 rows=100 loops=1)
+                            Buffers: shared hit=804
+                            ->  Nested Loop Anti Join  (cost=1.13..117146.99 rows=66667 width=24) (actual time=0.043..0.517 rows=100 loops=1)
+                                  Join Filter: (r_1.bucket_id = s_2.bucket_id)
+                                  Buffers: shared hit=804
+                                  ->  Nested Loop Anti Join  (cost=1.13..116313.65 rows=66667 width=24) (actual time=0.042..0.476 rows=100 loops=1)
+                                        Join Filter: (v_1.bucket_id = s_2.bucket_id)
+                                        Buffers: shared hit=804
+                                        ->  Nested Loop Left Join  (cost=1.13..115480.31 rows=66667 width=24) (actual time=0.040..0.415 rows=100 loops=1)
+                                              Filter: ((cu_1.lease_until IS NULL) OR (cu_1.lease_until < now()))
+                                              Buffers: shared hit=804
+                                              ->  Nested Loop  (cost=0.71..69105.50 rows=66667 width=24) (actual time=0.029..0.312 rows=100 loops=1)
+                                                    Buffers: shared hit=404
+                                                    ->  Index Only Scan using object_inventory_schedule_active on object_inventory_schedule s_2  (cost=0.29..5888.02 rows=66667 width=24) (actual time=0.017..0.027 rows=100 loops=1)
+                                                          Index Cond: (attempt_at < (now() - '00:05:00'::interval))
+                                                          Heap Fetches: 0
+                                                          Buffers: shared hit=4
+                                                    ->  Index Scan using object_buckets_pkey on object_buckets cb_1  (cost=0.42..0.95 rows=1 width=16) (actual time=0.003..0.003 rows=1 loops=100)
+                                                          Index Cond: (id = s_2.bucket_id)
+                                                          Filter: (state = 'ready'::text)
+                                                          Buffers: shared hit=400
+                                              ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage cu_1  (cost=0.42..0.68 rows=1 width=24) (actual time=0.001..0.001 rows=1 loops=100)
+                                                    Index Cond: (bucket_id = s_2.bucket_id)
+                                                    Buffers: shared hit=400
+                                        ->  Seq Scan on object_bucket_versioning v_1  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                              Filter: (state <> 'ready'::text)
+                                  ->  Seq Scan on object_storage_capacity_reconciliations r_1  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                        Filter: (state = ANY ('{waiting,scanning}'::text[]))
+                ->  Subquery Scan on "*SELECT* 3"  (cost=1.26..1177.00 rows=100 width=16) (actual time=0.023..0.273 rows=100 loops=1)
+                      Buffers: shared hit=805
+                      ->  Limit  (cost=1.26..1176.00 rows=100 width=24) (actual time=0.023..0.269 rows=100 loops=1)
+                            Buffers: shared hit=805
+                            ->  Nested Loop Anti Join  (cost=1.26..34561.84 rows=2942 width=24) (actual time=0.022..0.265 rows=100 loops=1)
+                                  Join Filter: (r_2.bucket_id = s_3.bucket_id)
+                                  Buffers: shared hit=805
+                                  ->  Nested Loop Anti Join  (cost=1.26..34525.07 rows=2942 width=24) (actual time=0.022..0.230 rows=100 loops=1)
+                                        Join Filter: (v_2.bucket_id = s_3.bucket_id)
+                                        Buffers: shared hit=805
+                                        ->  Nested Loop Left Join  (cost=1.26..34488.29 rows=2942 width=24) (actual time=0.021..0.194 rows=100 loops=1)
+                                              Filter: ((cu_2.lease_until IS NULL) OR (cu_2.lease_until < now()))
+                                              Buffers: shared hit=805
+                                              ->  Nested Loop  (cost=0.84..21941.04 rows=2942 width=24) (actual time=0.016..0.121 rows=100 loops=1)
+                                                    Buffers: shared hit=405
+                                                    ->  Index Scan using object_inventory_schedule_quiet on object_inventory_schedule s_3  (cost=0.42..6574.56 rows=2942 width=24) (actual time=0.011..0.023 rows=100 loops=1)
+                                                          Index Cond: (observed_at <= (now() - '23:00:00'::interval))
+                                                          Filter: (attempt_at < (now() - '00:05:00'::interval))
+                                                          Buffers: shared hit=5
+                                                    ->  Index Scan using object_buckets_pkey on object_buckets cb_2  (cost=0.42..5.22 rows=1 width=16) (actual time=0.001..0.001 rows=1 loops=100)
+                                                          Index Cond: (id = s_3.bucket_id)
+                                                          Filter: (state = 'ready'::text)
+                                                          Buffers: shared hit=400
+                                              ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage cu_2  (cost=0.42..4.25 rows=1 width=24) (actual time=0.001..0.001 rows=1 loops=100)
+                                                    Index Cond: (bucket_id = s_3.bucket_id)
+                                                    Buffers: shared hit=400
+                                        ->  Seq Scan on object_bucket_versioning v_2  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                              Filter: (state <> 'ready'::text)
+                                  ->  Seq Scan on object_storage_capacity_reconciliations r_2  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                        Filter: (state = ANY ('{waiting,scanning}'::text[]))
+                ->  Seq Scan on object_storage_inventory_scans i  (cost=0.00..0.00 rows=1 width=16) (actual time=0.004..0.004 rows=0 loops=1)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > (now() - '01:00:00'::interval)))
+  ->  Sort  (cost=258.54..258.56 rows=8 width=357) (actual time=4.114..4.117 rows=100 loops=1)
+        Sort Key: (CASE WHEN COALESCE(((object_inventory_quiet_mode() = 'on'::text) AND (u.observed_at IS NOT NULL) AND (u.inventory_scope = 'current'::text) AND (COALESCE(a.mutated_at, '-infinity'::timestamp with time zone) < (u.observed_at - '00:00:30'::interval))), false) THEN (u.observed_at + '23:45:00'::interval) ELSE u.attempt_at END) NULLS FIRST, b.id
+        Sort Method: quicksort  Memory: 126kB
+        Buffers: shared hit=5299
+        ->  Nested Loop Left Join  (cost=1.26..258.42 rows=8 width=357) (actual time=2.062..3.985 rows=200 loops=1)
+              Filter: (((u.lease_until IS NULL) OR (u.lease_until < now())) AND ((u.attempt_at IS NULL) OR (u.attempt_at < (now() - '00:05:00'::interval)) OR (SubPlan 3)) AND ((NOT COALESCE(((object_inventory_quiet_mode() = 'on'::text) AND (u.observed_at IS NOT NULL) AND (u.inventory_scope = 'current'::text) AND (COALESCE(a.mutated_at, '-infinity'::timestamp with time zone) < (u.observed_at - '00:00:30'::interval))), false)) OR (SubPlan 4) OR (u.observed_at <= (now() - '23:00:00'::interval))))
+              Buffers: shared hit=5293
+              ->  Nested Loop Anti Join  (cost=0.84..169.02 rows=10 width=356) (actual time=1.735..2.310 rows=200 loops=1)
+                    Join Filter: (c.bucket_id = b.id)
+                    Buffers: shared hit=4017
+                    ->  Nested Loop Anti Join  (cost=0.84..168.90 rows=10 width=356) (actual time=1.734..2.229 rows=200 loops=1)
+                          Join Filter: (object_bucket_versioning.bucket_id = b.id)
+                          Buffers: shared hit=4017
+                          ->  Nested Loop Left Join  (cost=0.84..168.77 rows=10 width=356) (actual time=1.732..2.137 rows=200 loops=1)
+                                Buffers: shared hit=4017
+                                ->  Index Scan using object_buckets_pkey on object_buckets b  (cost=0.42..84.40 rows=10 width=348) (actual time=1.726..1.954 rows=200 loops=1)
+                                      Index Cond: (id = ANY ($8))
+                                      Filter: (state = 'ready'::text)
+                                      Buffers: shared hit=3217
+                                ->  Index Scan using object_bucket_activity_pkey on object_bucket_activity a  (cost=0.42..8.44 rows=1 width=24) (actual time=0.001..0.001 rows=1 loops=200)
+                                      Index Cond: (bucket_id = b.id)
+                                      Buffers: shared hit=800
+                          ->  Seq Scan on object_bucket_versioning  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=200)
+                                Filter: (state <> 'ready'::text)
+                    ->  Seq Scan on object_storage_capacity_reconciliations c  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=200)
+                          Filter: (state = ANY ('{waiting,scanning}'::text[]))
+              ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage u  (cost=0.42..8.44 rows=1 width=56) (actual time=0.001..0.001 rows=1 loops=200)
+                    Index Cond: (bucket_id = b.id)
+                    Buffers: shared hit=800
+              SubPlan 1
+                ->  Seq Scan on object_storage_inventory_scans s  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=200)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > COALESCE(u.observed_at, '-infinity'::timestamp with time zone)) AND (bucket_id = b.id) AND (started_at > (now() - '01:00:00'::interval)))
+              SubPlan 3
+                ->  Seq Scan on object_storage_inventory_scans s_4  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > COALESCE(u.observed_at, '-infinity'::timestamp with time zone)) AND (bucket_id = b.id) AND (started_at > (now() - '01:00:00'::interval)))
+              SubPlan 4
+                ->  Seq Scan on object_storage_inventory_scans s_5  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=100)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > COALESCE(u.observed_at, '-infinity'::timestamp with time zone)) AND (bucket_id = b.id) AND (started_at > (now() - '01:00:00'::interval)))
+
+## object_inventory_quiet off
+
+duration: 1.894 ms  plan:
+Query Parameters: $1 = '100000', $2 = '3600', $3 = '30', $4 = '{}', $5 = '82800', $6 = '86400', $7 = '900', $8 = '100', $9 = 'f'
+Limit  (cost=1653.43..1653.46 rows=10 width=357) (actual time=1.777..1.789 rows=100 loops=1)
+  Buffers: shared hit=4023
+  InitPlan 2 (returns $8)
+    ->  Aggregate  (cost=1483.98..1483.99 rows=1 width=32) (actual time=1.095..1.099 rows=1 loops=1)
+          Buffers: shared hit=2414
+          ->  Append  (cost=1.26..1483.23 rows=301 width=16) (actual time=0.026..1.081 rows=300 loops=1)
+                Buffers: shared hit=2414
+                ->  Subquery Scan on "*SELECT* 1"  (cost=1.26..126.88 rows=100 width=16) (actual time=0.026..0.426 rows=100 loops=1)
+                      Buffers: shared hit=805
+                      ->  Limit  (cost=1.26..125.88 rows=100 width=24) (actual time=0.026..0.422 rows=100 loops=1)
+                            Buffers: shared hit=805
+                            ->  Nested Loop Left Join  (cost=1.26..249225.82 rows=199998 width=24) (actual time=0.026..0.418 rows=100 loops=1)
+                                  Filter: ((cu.lease_until IS NULL) OR (cu.lease_until < now()))
+                                  Buffers: shared hit=805
+                                  ->  Nested Loop  (cost=0.84..142519.00 rows=199998 width=24) (actual time=0.019..0.331 rows=100 loops=1)
+                                        Buffers: shared hit=405
+                                        ->  Nested Loop Anti Join  (cost=0.42..20636.41 rows=199998 width=24) (actual time=0.012..0.114 rows=100 loops=1)
+                                              Join Filter: (r.bucket_id = s_1.bucket_id)
+                                              Buffers: shared hit=5
+                                              ->  Nested Loop Anti Join  (cost=0.42..18136.42 rows=199999 width=24) (actual time=0.011..0.079 rows=100 loops=1)
+                                                    Join Filter: (v.bucket_id = s_1.bucket_id)
+                                                    Buffers: shared hit=5
+                                                    ->  Index Only Scan using object_inventory_schedule_attempt on object_inventory_schedule s_1  (cost=0.42..15636.42 rows=200000 width=24) (actual time=0.010..0.016 rows=100 loops=1)
+                                                          Index Cond: (attempt_at < (now() - '00:05:00'::interval))
+                                                          Heap Fetches: 0
+                                                          Buffers: shared hit=5
+                                                    ->  Seq Scan on object_bucket_versioning v  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                                          Filter: (state <> 'ready'::text)
+                                              ->  Seq Scan on object_storage_capacity_reconciliations r  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                                    Filter: (state = ANY ('{waiting,scanning}'::text[]))
+                                        ->  Index Scan using object_buckets_pkey on object_buckets cb  (cost=0.42..0.61 rows=1 width=16) (actual time=0.002..0.002 rows=1 loops=100)
+                                              Index Cond: (id = s_1.bucket_id)
+                                              Filter: (state = 'ready'::text)
+                                              Buffers: shared hit=400
+                                  ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage cu  (cost=0.42..0.52 rows=1 width=24) (actual time=0.001..0.001 rows=1 loops=100)
+                                        Index Cond: (bucket_id = s_1.bucket_id)
+                                        Buffers: shared hit=400
+                ->  Subquery Scan on "*SELECT* 2"  (cost=1.13..177.85 rows=100 width=16) (actual time=0.018..0.400 rows=100 loops=1)
+                      Buffers: shared hit=804
+                      ->  Limit  (cost=1.13..176.85 rows=100 width=24) (actual time=0.018..0.396 rows=100 loops=1)
+                            Buffers: shared hit=804
+                            ->  Nested Loop Anti Join  (cost=1.13..117146.99 rows=66667 width=24) (actual time=0.018..0.393 rows=100 loops=1)
+                                  Join Filter: (r_1.bucket_id = s_2.bucket_id)
+                                  Buffers: shared hit=804
+                                  ->  Nested Loop Anti Join  (cost=1.13..116313.65 rows=66667 width=24) (actual time=0.018..0.359 rows=100 loops=1)
+                                        Join Filter: (v_1.bucket_id = s_2.bucket_id)
+                                        Buffers: shared hit=804
+                                        ->  Nested Loop Left Join  (cost=1.13..115480.31 rows=66667 width=24) (actual time=0.017..0.322 rows=100 loops=1)
+                                              Filter: ((cu_1.lease_until IS NULL) OR (cu_1.lease_until < now()))
+                                              Buffers: shared hit=804
+                                              ->  Nested Loop  (cost=0.71..69105.50 rows=66667 width=24) (actual time=0.014..0.243 rows=100 loops=1)
+                                                    Buffers: shared hit=404
+                                                    ->  Index Only Scan using object_inventory_schedule_active on object_inventory_schedule s_2  (cost=0.29..5888.02 rows=66667 width=24) (actual time=0.008..0.015 rows=100 loops=1)
+                                                          Index Cond: (attempt_at < (now() - '00:05:00'::interval))
+                                                          Heap Fetches: 0
+                                                          Buffers: shared hit=4
+                                                    ->  Index Scan using object_buckets_pkey on object_buckets cb_1  (cost=0.42..0.95 rows=1 width=16) (actual time=0.002..0.002 rows=1 loops=100)
+                                                          Index Cond: (id = s_2.bucket_id)
+                                                          Filter: (state = 'ready'::text)
+                                                          Buffers: shared hit=400
+                                              ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage cu_1  (cost=0.42..0.68 rows=1 width=24) (actual time=0.001..0.001 rows=1 loops=100)
+                                                    Index Cond: (bucket_id = s_2.bucket_id)
+                                                    Buffers: shared hit=400
+                                        ->  Seq Scan on object_bucket_versioning v_1  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                              Filter: (state <> 'ready'::text)
+                                  ->  Seq Scan on object_storage_capacity_reconciliations r_1  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                        Filter: (state = ANY ('{waiting,scanning}'::text[]))
+                ->  Subquery Scan on "*SELECT* 3"  (cost=1.26..1177.00 rows=100 width=16) (actual time=0.019..0.242 rows=100 loops=1)
+                      Buffers: shared hit=805
+                      ->  Limit  (cost=1.26..1176.00 rows=100 width=24) (actual time=0.019..0.237 rows=100 loops=1)
+                            Buffers: shared hit=805
+                            ->  Nested Loop Anti Join  (cost=1.26..34561.84 rows=2942 width=24) (actual time=0.019..0.234 rows=100 loops=1)
+                                  Join Filter: (r_2.bucket_id = s_3.bucket_id)
+                                  Buffers: shared hit=805
+                                  ->  Nested Loop Anti Join  (cost=1.26..34525.07 rows=2942 width=24) (actual time=0.018..0.200 rows=100 loops=1)
+                                        Join Filter: (v_2.bucket_id = s_3.bucket_id)
+                                        Buffers: shared hit=805
+                                        ->  Nested Loop Left Join  (cost=1.26..34488.29 rows=2942 width=24) (actual time=0.018..0.164 rows=100 loops=1)
+                                              Filter: ((cu_2.lease_until IS NULL) OR (cu_2.lease_until < now()))
+                                              Buffers: shared hit=805
+                                              ->  Nested Loop  (cost=0.84..21941.04 rows=2942 width=24) (actual time=0.014..0.097 rows=100 loops=1)
+                                                    Buffers: shared hit=405
+                                                    ->  Index Scan using object_inventory_schedule_quiet on object_inventory_schedule s_3  (cost=0.42..6574.56 rows=2942 width=24) (actual time=0.009..0.019 rows=100 loops=1)
+                                                          Index Cond: (observed_at <= (now() - '23:00:00'::interval))
+                                                          Filter: (attempt_at < (now() - '00:05:00'::interval))
+                                                          Buffers: shared hit=5
+                                                    ->  Index Scan using object_buckets_pkey on object_buckets cb_2  (cost=0.42..5.22 rows=1 width=16) (actual time=0.001..0.001 rows=1 loops=100)
+                                                          Index Cond: (id = s_3.bucket_id)
+                                                          Filter: (state = 'ready'::text)
+                                                          Buffers: shared hit=400
+                                              ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage cu_2  (cost=0.42..4.25 rows=1 width=24) (actual time=0.001..0.001 rows=1 loops=100)
+                                                    Index Cond: (bucket_id = s_3.bucket_id)
+                                                    Buffers: shared hit=400
+                                        ->  Seq Scan on object_bucket_versioning v_2  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                              Filter: (state <> 'ready'::text)
+                                  ->  Seq Scan on object_storage_capacity_reconciliations r_2  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=100)
+                                        Filter: (state = ANY ('{waiting,scanning}'::text[]))
+                ->  Seq Scan on object_storage_inventory_scans i  (cost=0.00..0.00 rows=1 width=16) (actual time=0.002..0.002 rows=0 loops=1)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > (now() - '01:00:00'::interval)))
+  ->  Sort  (cost=169.44..169.46 rows=10 width=357) (actual time=1.776..1.779 rows=100 loops=1)
+        Sort Key: u.attempt_at NULLS FIRST, b.id
+        Sort Method: quicksort  Memory: 126kB
+        Buffers: shared hit=4023
+        ->  Nested Loop Anti Join  (cost=0.84..169.27 rows=10 width=357) (actual time=1.179..1.686 rows=200 loops=1)
+              Join Filter: (c.bucket_id = b.id)
+              Buffers: shared hit=4017
+              ->  Nested Loop Anti Join  (cost=0.84..169.12 rows=10 width=372) (actual time=1.177..1.540 rows=200 loops=1)
+                    Join Filter: (object_bucket_versioning.bucket_id = b.id)
+                    Buffers: shared hit=4017
+                    ->  Nested Loop Left Join  (cost=0.84..169.00 rows=10 width=372) (actual time=1.176..1.465 rows=200 loops=1)
+                          Filter: (((u.lease_until IS NULL) OR (u.lease_until < now())) AND ((u.attempt_at IS NULL) OR (u.attempt_at < (now() - '00:05:00'::interval)) OR (SubPlan 3)))
+                          Buffers: shared hit=4017
+                          ->  Index Scan using object_buckets_pkey on object_buckets b  (cost=0.42..84.40 rows=10 width=348) (actual time=1.172..1.323 rows=200 loops=1)
+                                Index Cond: (id = ANY ($8))
+                                Filter: (state = 'ready'::text)
+                                Buffers: shared hit=3217
+                          ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage u  (cost=0.42..8.44 rows=1 width=48) (actual time=0.001..0.001 rows=1 loops=200)
+                                Index Cond: (bucket_id = b.id)
+                                Buffers: shared hit=800
+                          SubPlan 3
+                            ->  Seq Scan on object_storage_inventory_scans s_4  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                                  Filter: ((NOT complete) AND (pages > 0) AND (started_at > COALESCE(u.observed_at, '-infinity'::timestamp with time zone)) AND (bucket_id = b.id) AND (started_at > (now() - '01:00:00'::interval)))
+                    ->  Seq Scan on object_bucket_versioning  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=200)
+                          Filter: (state <> 'ready'::text)
+              ->  Seq Scan on object_storage_capacity_reconciliations c  (cost=0.00..0.00 rows=1 width=16) (actual time=0.000..0.000 rows=0 loops=200)
+                    Filter: (state = ANY ('{waiting,scanning}'::text[]))
+              SubPlan 1
+                ->  Seq Scan on object_storage_inventory_scans s  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=200)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > COALESCE(u.observed_at, '-infinity'::timestamp with time zone)) AND (bucket_id = b.id) AND (started_at > (now() - '01:00:00'::interval)))

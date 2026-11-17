@@ -61,7 +61,9 @@ def sync_detailed(
 ) -> Response[AccountResponse | Problem]:
     """Restore a `deleted_pending` account.
 
-     Cancels a staged deletion. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
+     Cancels a staged deletion and emails the account. Needs a full-access (`admin`) key or a browser
+    session, and two-factor authentication when it is required. Returns 409 `account_not_restorable` if
+    the 30-day grace has elapsed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -86,7 +88,9 @@ def sync(
 ) -> AccountResponse | Problem | None:
     """Restore a `deleted_pending` account.
 
-     Cancels a staged deletion. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
+     Cancels a staged deletion and emails the account. Needs a full-access (`admin`) key or a browser
+    session, and two-factor authentication when it is required. Returns 409 `account_not_restorable` if
+    the 30-day grace has elapsed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -107,7 +111,9 @@ async def asyncio_detailed(
 ) -> Response[AccountResponse | Problem]:
     """Restore a `deleted_pending` account.
 
-     Cancels a staged deletion. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
+     Cancels a staged deletion and emails the account. Needs a full-access (`admin`) key or a browser
+    session, and two-factor authentication when it is required. Returns 409 `account_not_restorable` if
+    the 30-day grace has elapsed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,7 +136,9 @@ async def asyncio(
 ) -> AccountResponse | Problem | None:
     """Restore a `deleted_pending` account.
 
-     Cancels a staged deletion. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
+     Cancels a staged deletion and emails the account. Needs a full-access (`admin`) key or a browser
+    session, and two-factor authentication when it is required. Returns 409 `account_not_restorable` if
+    the 30-day grace has elapsed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

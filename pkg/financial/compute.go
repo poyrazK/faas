@@ -14,6 +14,32 @@ var (
 	ErrComputeUnavailable = errors.New("financial: compute authority unavailable")
 )
 
+// Reasons an app-scope strict compute budget cannot activate (Hunt 34
+// H34-15). apid used to answer every one with the same paragraph, so the
+// customer could not tell what to fix.
+const (
+	// ComputeUnavailableNodes: an active node runs no current, capable
+	// enforcement owner. An installation condition, not the customer's.
+	ComputeUnavailableNodes = "nodes"
+	// ComputeUnavailableRunning: the app has running instances or tasks.
+	ComputeUnavailableRunning = "running"
+	// ComputeUnavailableAccounting: this month's usage accounting for the
+	// app is not complete yet.
+	ComputeUnavailableAccounting = "accounting"
+)
+
+// ComputeUnavailableError is ErrComputeUnavailable with the condition that
+// failed.
+type ComputeUnavailableError struct{ Reason string }
+
+func (e *ComputeUnavailableError) Error() string {
+	return ErrComputeUnavailable.Error() + ": " + e.Reason
+}
+func (e *ComputeUnavailableError) Unwrap() error { return ErrComputeUnavailable }
+
+// ComputeUnavailableBecause returns ErrComputeUnavailable naming reason.
+func ComputeUnavailableBecause(reason string) error { return &ComputeUnavailableError{Reason: reason} }
+
 // StrictAppCompute caps gross compute for one app, independently of allowance.
 func StrictAppCompute(p BudgetSpec) bool {
 	return p.Mode == "strict" && p.Scope.Kind == "app" && p.Basis == "gross_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0

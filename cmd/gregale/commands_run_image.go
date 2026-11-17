@@ -61,28 +61,85 @@ var disposableRunFlags = map[string]bool{
 	"poll-interval": true, "wait-timeout": true,
 }
 
-// runImageRequested reports whether `gregale run` selects image mode: an
-// --image flag, or a positional argument without any disposable-run flag,
-// before any "--" terminator.
+// runImageRequested selects image mode from its options or positional image.
+// Arguments belonging to the image command are never scanned as source flags.
 func runImageRequested(args []string) bool {
-	positional := false
-	for _, arg := range args {
+	requested, _ := imageRunArgumentBoundary(args)
+	return requested
+}
+
+// imageRunValueFlags lets routing skip option values without interpreting
+// the image command's arguments as Gregale options.
+var imageRunValueFlags = map[string]bool{
+	"image": true, "entrypoint": true, "env": true, "e": true,
+	"env-file": true, "user": true, "u": true, "workdir": true, "w": true,
+	"registry-username": true, "docker-config": true, "ram": true,
+	"timeout": true, "pull": true,
+}
+
+// The boundary is the positional image, or the command when --image is
+// explicit. A terminator already protects the remaining arguments.
+func imageRunArgumentBoundary(args []string) (bool, int) {
+	image := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--" {
-			break
+			return image || i+1 < len(args), -1
 		}
 		if !strings.HasPrefix(arg, "-") {
-			positional = true
-			continue
+			return true, i
 		}
-		name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
-		if name == "image" {
-			return true
+		name, _, assigned := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if !image && (disposableRunFlags[name] || name == "follow") {
+			return false, -1
 		}
-		if disposableRunFlags[name] {
-			return false
+		image = image || name == "image"
+		if imageRunValueFlags[name] && !assigned {
+			i++
 		}
 	}
-	return positional
+	return image, -1
+}
+
+// Protect the image/command tail before global JSON, help and flag-alias
+// processing. Both public spellings reach this path before tree rewriting.
+func protectImageRunCommandArgs(args []string) []string {
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		if args[i] == "--" {
+			return args
+		}
+		if args[i] == "--http-retries" {
+			i += 2
+			continue
+		}
+		if args[i] == "--profile" || args[i] == "--http-timeout" {
+			i++
+		}
+		i++
+	}
+	if i >= len(args) {
+		return args
+	}
+	switch args[i] {
+	case "run":
+		i++
+	case "sandbox":
+		if i+1 >= len(args) || args[i+1] != "run" {
+			return args
+		}
+		i += 2
+	default:
+		return args
+	}
+	image, boundary := imageRunArgumentBoundary(args[i:])
+	if !image || boundary < 0 {
+		return args
+	}
+	i += boundary
+	out := append([]string{}, args[:i]...)
+	out = append(out, "--")
+	return append(out, args[i:]...)
 }
 
 // imageRunEnv builds the run environment as docker does: --env-file files
@@ -242,9 +299,15 @@ func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 	if len(env) > 0 {
 		req.Env = env
 	}
-	if *entrypoint != "" {
-		req.Entrypoint = &[]string{*entrypoint}
-	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "entrypoint" {
+			argv := []string{}
+			if *entrypoint != "" {
+				argv = append(argv, *entrypoint)
+			}
+			req.Entrypoint = &argv
+		}
+	})
 	if len(rest) > 0 {
 		req.Args = &rest
 	}
@@ -523,6 +586,10 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 
 func liveIncompleteReason(live jobTaskLogFollow, err error) string {
 	switch {
+	case live.AttemptChanges > 0:
+		return "the task attempt changed while reconnecting; some earlier output may be unavailable"
+	case live.UnverifiedResume:
+		return "the resumed stream did not identify its attempt; output may be incomplete"
 	case live.Gaps > 0:
 		return "some lines were dropped before they could be sent"
 	case live.Reason == api.JobTaskLogsEndStoredOutput:
@@ -530,7 +597,7 @@ func liveIncompleteReason(live jobTaskLogFollow, err error) string {
 	case live.Reason != "":
 		return live.Reason
 	case err != nil:
-		return err.Error()
+		return redactErrorText(err.Error())
 	default:
 		return "the stream closed early"
 	}

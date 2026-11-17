@@ -174,15 +174,7 @@ func (r *startRunner) authenticate() int {
 		return printErr("Login required", errors.New("sign in with gregale login before starting a deployment"))
 	}
 	client := NewClient(apiBase(), "")
-	code, err := client.MintCliAuthCode(r.ctx)
-	if err != nil {
-		return printErr("Could not start login", err)
-	}
-	_, _ = fmt.Fprintf(osStdout, "Approve this session in your browser with code %s:\n  %s\n", code.Code, code.URL)
-	if err := openBrowser(code.URL); err != nil {
-		PrintWarn(osStdout, "Open the link above manually: %v", err)
-	}
-	if result := waitForApproval(r.ctx, client, code); result != 0 {
+	if result := browserLogin(r.ctx, client, false); result != 0 {
 		if r.ctx.Err() != nil {
 			return 130
 		}
@@ -721,7 +713,11 @@ func (r *startRunner) finish() {
 	}
 	cli, source, app := recoveryCLI(), recoveryArgument(r.session.SourcePath), recoveryArgument(r.session.AppSlug)
 	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Update: %s deploy --path %s --source=worktree --name %s --environment=%s\n  Logs:   %s logs %s --deployment %s --follow\n", cli, source, app, recoveryArgument(r.session.Environment), cli, app, recoveryArgument(r.session.DeploymentID))
-	if r.session.Environment == "" {
+	// A public app checked through the account (its response lacked a
+	// deployment header) is still publicly reachable, so it keeps the Open line.
+	if r.lastRequest != nil && r.lastRequest.private && !r.lastRequest.publicDeploymentCheck {
+		_, _ = fmt.Fprintf(osStdout, "  Test:   %s\n", deploymentResponseCheckCommand(r.session.AppSlug, r.session.DeploymentID, r.lastRequest.path, r.session.ProjectID, r.session.EnvironmentID))
+	} else if r.session.Environment == "" {
 		_, _ = fmt.Fprintf(osStdout, "  Open:   %s open %s\n", cli, app)
 	} else if r.lastRequest != nil && r.lastRequest.httpStatus != 0 && !r.lastRequest.private {
 		_, _ = fmt.Fprintf(osStdout, "  Open URL: %s\n", startResponseText(r.lastRequest.appURL))

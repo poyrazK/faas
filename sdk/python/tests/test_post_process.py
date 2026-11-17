@@ -162,13 +162,45 @@ def _fixture_generator(tmp_path, monkeypatch):
     package.mkdir(parents=True)
     originals = {
         "faas_sdk/_wrapper.py": b"# existing custom wrapper\n",
+        "faas_sdk/job_runtime.py": b"# uncommitted typed worker runtime\n",
+        "faas_sdk/_typed_jobs.py": b"# uncommitted typed job handles\n",
+        "faas_sdk/job_types.py": b"# uncommitted job type generator\n",
+        "faas_sdk/_project_verification.py": b"# uncommitted exact-deployment verification\n",
         "faas_sdk/preview/_binding_runner.py": b"# uncommitted verification runner\n",
+        "faas_sdk/preview/files.py": b"# uncommitted preview file workflows\n",
+        "faas_sdk/preview/event_contract.py": b"# uncommitted event schemas\n",
+        "faas_sdk/preview/event_types.py": b"# uncommitted event generation\n",
+        "faas_sdk/preview/event_pipeline_state.py": b"# uncommitted event start receipts\n",
+        "faas_sdk/preview/_event_outbox_protocol.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_outbox.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_outbox_state.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_outbox_transaction.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/event_publication.py": b"# uncommitted outbox runtime\n",
+        "faas_sdk/preview/pipeline_schedules.py": b"# uncommitted schedules\n",
+        "faas_sdk/preview/pipeline_schedule_state.py": b"# uncommitted schedule metadata\n",
+        "faas_sdk/preview/_stripe_webhook_protocol.py": b"# uncommitted Stripe adapter\n",
+        "faas_sdk/preview/stripe_webhook_state.py": b"# uncommitted Stripe adapter\n",
+        "faas_sdk/preview/_pipeline_tool_protocol.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/pipeline_tool_state.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/_pipeline_compensation_protocol.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_compensation_state.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_compensations.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_compensation_mcp.py": b"# uncommitted compensation\n",
+        "faas_sdk/preview/pipeline_tools.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/pipeline_tool_mcp.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/stripe_webhooks.py": b"# uncommitted Stripe adapter\n",
+        "faas_sdk/preview/event_pipelines.py": b"# uncommitted event adapters\n",
+        "faas_sdk/preview/pipeline_children.py": b"# uncommitted child runtime\n",
+        "faas_sdk/preview/pipeline_children_state.py": b"# uncommitted child receipts\n",
+        "faas_sdk/preview/pipeline_gates.py": b"# uncommitted approval/input gates\n",
+        "faas_sdk/preview/file_pipelines.py": b"# uncommitted typed file pipelines\n",
         "faas_sdk/preview/_binding_runner_diagnostics.py": b"# uncommitted automatic diagnostics\n",
         "faas_sdk/preview/_binding_creation.py": b"# uncommitted reviewed creation\n",
         "faas_sdk/preview/_binding_qualification.py": b"# uncommitted qualification waiting\n",
         "faas_sdk/preview/operations_runtime.py": b"# uncommitted runtime authority\n",
         "faas_sdk/secret_reload_runtime.py": b"# uncommitted secret reload authority\n",
         "faas_sdk/lifecycle_runtime.py": b"# uncommitted lifecycle hooks\n",
+        "faas_sdk/functions_runtime.py": b"# uncommitted typed function calls\n",
         "faas_sdk/_binding_client_runtime.py": b"# shared owned-resource lifecycle\n",
         "faas_sdk/preview/postgres_pool_runtime.py": b"# PostgreSQL pool adoption\n",
         "faas_sdk/preview/async_postgres_pool_runtime.py": b"# async PostgreSQL pool adoption\n",
@@ -309,3 +341,135 @@ def test_regenerated_barrel_exports_binding_runner(tmp_path):
     barrel = tmp_path / "__init__.py"
     generator._rewrite_init_py(barrel)
     assert "_binding_runner" not in barrel.read_text()
+
+
+def test_regenerated_barrels_export_project_verification(tmp_path):
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "gen.py"
+    spec = importlib.util.spec_from_file_location("sdk_generator_verification_exports", script)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    assert "_project_verification.py" in generator.ROOT_WRAPPER_MODULES
+    barrel = tmp_path / "__init__.py"
+    generator._rewrite_init_py(barrel)
+    for name in (
+        "ProjectVerificationTarget",
+        "ProjectVerificationReport",
+        "ProjectVerificationOptions",
+        "VerificationCode",
+        "VerificationCheck",
+        "project_verification_target",
+    ):
+        assert f"{name} as {name}" in barrel.read_text()
+        assert f"{name} as {name}" in generator._PREVIEW_INIT_PY_TEMPLATE
+
+
+def test_regenerated_barrels_export_typed_jobs(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for name in ("job_runtime.py", "_typed_jobs.py", "job_types.py"):
+        assert name in generator.ROOT_WRAPPER_MODULES
+    for name in ("JobContract", "TypedJob", "TypedJobRun", "JobCheckpoint", "run_job_task"):
+        assert f"{name} as {name}" in generator._INIT_PY_TEMPLATE
+        assert f"{name} as {name}" in generator._PREVIEW_INIT_PY_TEMPLATE
+
+
+def test_regenerated_preview_barrel_exports_files(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert "files.py" in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("FileBucket", "FileCheckpoint", "FileOptions", "PathFileSource"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+
+
+def test_regenerated_preview_barrel_exports_file_pipelines(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert "file_pipelines.py" in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("FilePipeline", "FilePipelineReceipt", "NativeFileVerifier", "PostgresFilePipelineStore"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_barrel_preserves_live_jobs(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert "live_jobs.py" in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("LiveJob", "LiveJobSnapshot", "LiveJobSink", "realtime_live_job_source"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_barrel_preserves_job_pipelines(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("pipeline_state.py", "job_pipelines.py", "job_pipeline_client.py", "pipeline_gates.py", "pipeline_children.py", "pipeline_children_state.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("JobPipelineClient", "JobPipeline", "PipelineScope", "PipelineJobReceipt", "job_pipeline_live_snapshot", "PipelineGateService", "PipelineGateOptions", "PipelineChildren", "PipelineChildOptions"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_barrel_preserves_event_pipelines(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("event_contract.py", "event_types.py", "event_pipeline_state.py", "event_pipelines.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("EventContract", "EventPipeline", "EventPipelineReceipt", "EventPipelineDelivery", "PostgresEventPipelineStore"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_event_outbox(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_event_outbox_protocol.py", "event_outbox.py", "event_outbox_state.py", "event_outbox_transaction.py", "event_publication.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_typed_schedules(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("pipeline_schedules.py", "pipeline_schedule_state.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("PipelineSchedule", "PipelineScheduleClient", "ScheduledPipelineRun", "PipelineSchedulePreview"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_stripe_webhooks(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_stripe_webhook_protocol.py", "stripe_webhook_state.py", "stripe_webhooks.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("StripeWebhookAdapter", "StripeWebhookStage", "StripeWebhookReceipt", "STRIPE_WEBHOOK_SCHEMA"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_pipeline_tools(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_pipeline_tool_protocol.py", "pipeline_tool_state.py", "pipeline_tools.py", "pipeline_tool_mcp.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PIPELINE_TOOL_SCHEMA"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_compensation(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in (
+        "_pipeline_compensation_protocol.py",
+        "pipeline_compensation_state.py",
+        "pipeline_compensations.py",
+        "pipeline_compensation_mcp.py",
+    ):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("PipelineCompensation", "CompensationMCP", "CompensationCommand", "PIPELINE_COMPENSATION_SCHEMA"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")

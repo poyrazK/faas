@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func (m *MemStore) ClaimObjectInventoryScan(ctx context.Context, bucket, token string) (ObjectInventoryScan, error) {
@@ -53,14 +55,23 @@ func (m *MemStore) CheckpointObjectInventoryScan(ctx context.Context, bucket, to
 }
 
 func (m *MemStore) FinishObjectInventoryScan(ctx context.Context, bucket, token string, scan ObjectInventoryScan) error {
+	_, err := m.FinishObjectInventoryScanVerified(ctx, bucket, token, scan)
+	return err
+}
+
+func (m *MemStore) FinishObjectInventoryScanVerified(ctx context.Context, bucket, token string, scan ObjectInventoryScan) (ObjectInventoryVerification, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
-		return err
+		return ObjectInventoryVerification{}, err
 	}
 	u := m.objectUsage[bucket]
 	if m.inventoryPublicationRefusedLocked(bucket, token) || !scan.Complete || !validInventoryScanProgress(scan) || !u.InventoryScan.StartedAt.Equal(scan.StartedAt) || !scan.StartedAt.After(u.ObservedAt) {
-		return ErrConflict
+		return ObjectInventoryVerification{}, ErrConflict
+	}
+	v := ObjectInventoryVerification{
+		Quiet:         m.objectInventoryQuietModeLocked() != api.ObjectInventoryQuietOff && objectBucketQuiet(m.objectUsageWithActivityLocked(bucket)),
+		PreviousBytes: u.ObservedBytes, PreviousKeys: u.ObservedKeys, Bytes: scan.Bytes, Keys: scan.Keys,
 	}
 	if u.ObservedAt.IsZero() {
 		u.BaselineBytes, u.BaselineKeys = scan.Bytes, scan.Keys
@@ -69,5 +80,6 @@ func (m *MemStore) FinishObjectInventoryScan(ctx context.Context, bucket, token 
 	u.InventoryScan = ObjectInventoryScan{}
 	u.Token, u.LeaseUntil = "", time.Time{}
 	m.objectUsage[bucket] = u
-	return nil
+	m.markOutstandingObjectMutationsLocked(bucket)
+	return v, nil
 }

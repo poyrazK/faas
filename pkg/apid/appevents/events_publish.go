@@ -1,6 +1,7 @@
 package appevents
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -47,14 +48,15 @@ func (s *Service) PublishEvent(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, AppSourceReservedProblem())
 		return
 	}
-	if !s.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
-		return
-	}
 	producer, problem := s.accountProducer(r.Context(), acct)
 	if problem == nil {
-		problem = s.PublishRateProblem(acct, 1)
+		problem = s.PublishRateProblem(r.Context(), acct, 1)
 	}
 	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if envelope.EnvironmentID, problem = s.PublishEnvironment(r.Context(), acct.ID, req.EnvironmentID); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -84,21 +86,26 @@ func (s *Service) persistPublishedEvent(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
-	if !api.WorkflowEventEnvelopeFits(payload) {
-		// Retained identities accepted before the envelope limit remain
-		// retryable with their original content.
-		if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
-			_, lookupErr := lookup.LookupPublishedEventAcceptance(r.Context(), acct.ID, payload)
-			if lookupErr == nil {
-				s.writePublishedEventReceipt(w, r, acct, envelope)
-				return
-			}
+	if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
+		_, lookupErr := lookup.LookupPublishedEventAcceptance(r.Context(), acct.ID, payload)
+		if lookupErr == nil {
+			s.writePublishedEventReceipt(w, r, acct, envelope)
+			return
+		}
+		if !errors.Is(lookupErr, state.ErrNotFound) {
 			if errors.Is(lookupErr, state.ErrConflict) {
 				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 					"Event identity conflict", "source and id already identify an event with different type, schema version, or data"))
-				return
+			} else {
+				api.WriteProblem(w, api.ErrCapacity("failed to look up retained event acceptance"))
 			}
+			return
 		}
+	}
+	if !s.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
+		return
+	}
+	if !api.WorkflowEventEnvelopeFits(payload) {
 		api.WriteProblem(w, api.ErrWorkflowEventEnvelopeTooLarge())
 		return
 	}
@@ -162,4 +169,26 @@ func (s *Service) ValidateEventSchemaForIngress(w http.ResponseWriter, r *http.R
 	s.Host.Logger().Error("event schema lookup failed", "source", logsanitize.Field(envelope.Source), "type", logsanitize.Field(envelope.Type), "err", logsanitize.FieldAny(err))
 	api.WriteProblem(w, api.ErrCapacity("failed to validate event schema"))
 	return false
+}
+
+// PublishEnvironment validates the environment an account-level publish names
+// and returns the envelope's environment: "" for production
+// (ADR-20261104120000). An environment of another account is not found.
+func (s *Service) PublishEnvironment(ctx context.Context, accountID, requested string) (string, *api.Problem) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return "", nil
+	}
+	store, ok := s.Host.Store().(state.EventEnvironmentStore)
+	if !ok {
+		return "", api.ErrInternal("event environment store")
+	}
+	environment, err := store.AccountEventEnvironment(ctx, accountID, requested)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", api.ErrValidation("environmentid must name a project environment of this account")
+	}
+	if err != nil {
+		return "", api.ErrCapacity("failed to resolve event environment")
+	}
+	return environment, nil
 }

@@ -363,7 +363,7 @@ func (c *Client) QueryRange(ctx context.Context, query, start, end, step string)
 				continue
 			}
 			ts, ok := v[0].(float64)
-			if !ok {
+			if !ok || math.IsNaN(ts) || math.IsInf(ts, 0) {
 				continue
 			}
 			raw, ok := v[1].(string)
@@ -395,8 +395,9 @@ func (c *Client) QueryRange(ctx context.Context, query, start, end, step string)
 // samples whose label resolves to ""): the rollup's "6 round-trips
 // regardless of N apps" promise depends on the per-app loop only
 // seeing per-app keys; an unlabeled metric would otherwise poison
-// the loop with a "" key. NaN / Inf samples parse to NaN / +Inf —
-// callers guard with safeFloat / safeRoundNonNeg.
+// the loop with a "" key. A NaN / Inf sample (0/0 for an idle app) is
+// dropped too, so one app's sample cannot fail the whole map: platform
+// alerts' outage detection failed every pass on prod because of it.
 func (c *Client) QueryMap(ctx context.Context, query string) (map[string]float64, error) {
 	if c == nil || c.baseURL == "" {
 		return nil, fmt.Errorf("promql: client not configured")
@@ -412,6 +413,9 @@ func (c *Client) QueryMap(ctx context.Context, query string) (map[string]float64
 			continue
 		}
 		f, err := parseSampleValue(row.Value, query)
+		if errors.Is(err, errNonFiniteSample) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -556,6 +560,9 @@ func (c *Client) doVector(ctx context.Context, query string) ([]struct {
 	return pr.Data.Result, nil
 }
 
+// errNonFiniteSample marks a NaN or Inf sample value.
+var errNonFiniteSample = errors.New("non-finite value")
+
 // parseSampleValue parses the second element of a Prometheus sample
 // value pair (timestamp + stringified float). Returns a structured
 // error so callers can wrap with the offending query.
@@ -569,7 +576,7 @@ func parseSampleValue(v [2]any, query string) (float64, error) {
 		return 0, fmt.Errorf("parse %q for query %q: %w", raw, query, err)
 	}
 	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, fmt.Errorf("non-finite value %q for query %q", raw, query)
+		return 0, fmt.Errorf("%w %q for query %q", errNonFiniteSample, raw, query)
 	}
 	return f, nil
 }

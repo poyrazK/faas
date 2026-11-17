@@ -323,16 +323,13 @@ func deliveryValueRecipients() ([]*age.X25519Recipient, error) {
 }
 
 // triggerConfigRecipients returns who a trigger config's credentials are
-// sealed to: as deliveryValueRecipients, except that domain mode still
-// seals to the fleet recipient too. A schedd of the previous release opens
-// trigger configs with the fleet identity alone, so domain-only trigger
-// configs wait for the release after this one (ADR 20261022111812).
+// sealed to, as deliveryValueRecipients. The release that taught schedd to
+// open trigger configs with the delivery identity sealed them to the fleet
+// recipient too even in domain mode; every schedd now opens them with the
+// domain, so domain mode seals to the domain alone and the delivery
+// re-seal moves the stored ones (ADR 20261022111812).
 func triggerConfigRecipients() ([]*age.X25519Recipient, error) {
-	mode := deliveryWriteMode
-	if mode == sealdomain.WriteDomain {
-		mode = sealdomain.WriteDual
-	}
-	return sealdomain.Recipients(mode, recipientOrNil(deliveryDomainRecipient), hostSecretRecipient())
+	return deliveryValueRecipients()
 }
 
 // commitConnectionRecipients is deliveryValueRecipients for a commit

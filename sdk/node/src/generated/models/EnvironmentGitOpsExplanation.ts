@@ -16,6 +16,13 @@ export type EnvironmentGitOpsExplanation = {
   generation: number;
   intent_version: number;
   source_freshness: 'unknown' | 'stale' | 'fresh';
+  /**
+   * Latest completed report matching the current revision, generation and intent version.
+   */
+  report_id?: string;
+  report_status?: 'blocked' | 'partial' | 'failed' | 'drifted' | 'overridden' | 'converged';
+  report_freshness?: 'unknown' | 'stale' | 'fresh';
+  report_observed_at?: string;
   observed_commit_sha?: string;
   approved_revision_id?: string;
   applied_revision_id?: string;

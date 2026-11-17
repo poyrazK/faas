@@ -50,6 +50,9 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 	x.Result = nil // Tool schemas are represented once, in Report.Tools.
 	report.Discovery = x
 	add("modern_catalog_discovery", err)
+	if len(x.RejectedTools) != 0 {
+		add("catalog_definitions", fmt.Errorf("catalog contains %d rejected tool definitions", len(x.RejectedTools)))
+	}
 	if err != nil {
 		return report
 	}
@@ -73,7 +76,11 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 			old.HTTP = c.HTTP
 			err = old.Initialize(ctx)
 			if err == nil {
-				_, _, err = old.DiscoverCatalog(ctx)
+				var exchange Exchange
+				_, exchange, err = old.DiscoverCatalog(ctx)
+				if err == nil && len(exchange.RejectedTools) != 0 {
+					err = fmt.Errorf("legacy catalog contains rejected tool definitions")
+				}
 			}
 		}
 		add("legacy_stateless_compatibility", err)

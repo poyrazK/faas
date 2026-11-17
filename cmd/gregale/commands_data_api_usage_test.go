@@ -95,6 +95,29 @@ func TestConfigureDataAPIUsageStoresTheURLBeforeCapsAndRemovesItAfter(t *testing
 	}
 }
 
+// ChronoLake finding 21: the API answers a missing secret with 400
+// secret_not_found, so `--usage-reporting off` without caps failed.
+func TestUnsetDataAPISettingToleratesMissingSecret(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		if strings.HasSuffix(r.URL.Path, "/DATA_API_MONTHLY_CAPS") {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(api.Problem{Status: 400, Code: api.CodeSecretNotFound, Title: "Secret not found"})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(api.Problem{Status: 400, Code: "validation_failed", Title: "Invalid"})
+	}))
+	defer server.Close()
+	client := api.NewClient(server.URL, "test-token")
+	if err := unsetDataAPISetting(context.Background(), client, "shop-data", dataAPIMonthlyCapsKey, api.DefaultEnvScope); err != nil {
+		t.Fatalf("missing secret not tolerated: %v", err)
+	}
+	if err := unsetDataAPISetting(context.Background(), client, "shop-data", "DATA_API_USAGE_URL", api.DefaultEnvScope); err == nil {
+		t.Fatal("another 400 was swallowed")
+	}
+}
+
 func TestDataAPIConfigureRefusesCapsWithoutAnHTTPSAPI(t *testing.T) {
 	resetJSONOut(t)
 	server := newSettingsAPI(t)
@@ -116,7 +139,7 @@ func TestDataAPIConfigureRefusesCapsWithoutAnHTTPSAPI(t *testing.T) {
 	if code := cmdDataAPIConfigure([]string{"shop-data", "--usage-reporting", "off", "--monthly-caps", "off", "--no-restart"}); code != 0 {
 		t.Fatal("turning reporting and caps off must work on any API")
 	}
-	if got := strings.Join(server.calls(), "|"); got != "DELETE /v1/apps/shop-data/secrets/DATA_API_MONTHLY_CAPS|DELETE /v1/apps/shop-data/secrets/DATA_API_USAGE_URL" {
+	if got := strings.Join(server.calls(), "|"); got != "GET /v1/apps/shop-data/secrets|DELETE /v1/apps/shop-data/secrets/DATA_API_MONTHLY_CAPS|DELETE /v1/apps/shop-data/secrets/DATA_API_USAGE_URL" {
 		t.Fatalf("calls = %s", got)
 	}
 }

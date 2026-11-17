@@ -192,6 +192,12 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 			snapshot.HistoryByteSeconds, err = addUsage(snapshot.HistoryByteSeconds, record.Quantity)
 		case MeterEgressBytes:
 			snapshot.EgressBytes, err = addUsage(snapshot.EgressBytes, record.Quantity)
+			if err == nil {
+				if snapshot.DatabaseEgress == nil {
+					snapshot.DatabaseEgress = map[string]int64{}
+				}
+				snapshot.DatabaseEgress[record.DatabaseID], err = addUsage(snapshot.DatabaseEgress[record.DatabaseID], record.Quantity)
+			}
 		}
 		if err != nil {
 			return UsageSnapshot{}, err
@@ -201,11 +207,18 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 			return UsageSnapshot{}, err
 		}
 	}
-	for i, progress := range snapshot.Databases {
-		if i == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
-			snapshot.LastObservedAt = progress.ObservedAt
+	if len(snapshot.DatabaseEgress) > 0 {
+		for _, database := range s.databases {
+			if database.RestoreSourceDatabaseID == "" || s.billingSubject(database) != accountID {
+				continue
+			}
+			if snapshot.RestoreSources == nil {
+				snapshot.RestoreSources = map[string]string{}
+			}
+			snapshot.RestoreSources[database.ID] = database.RestoreSourceDatabaseID
 		}
 	}
+	snapshot.LastObservedAt = lastObservedAt(snapshot.Databases)
 	return snapshot, nil
 }
 

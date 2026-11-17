@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -57,7 +58,37 @@ type devAllApp struct {
 // childEnv hands a child loop its group identity: the name it registers
 // under and the siblings it gets service URLs for.
 func (a devAllApp) childEnv() []string {
-	return []string{devGroupServiceEnv + "=" + a.Service, devGroupDependsEnv + "=" + strings.Join(a.Depends, ",")}
+	return []string{devGroupServiceEnv + "=" + a.Service, devGroupDependsEnv + "=" + strings.Join(a.Depends, ","),
+		devAllParentEnv + "=" + strconv.Itoa(os.Getpid())}
+}
+
+// devAllParentEnv carries the supervising `gregale dev --all` process ID to
+// each child loop, which stops itself when that parent is gone (killed
+// without a chance to forward Ctrl-C), instead of running on as an orphan.
+const devAllParentEnv = "GREGALE_DEV_ALL_PARENT"
+
+// devAllStopGrace is how long children get to stop after Ctrl-C before the
+// supervisor kills them, so one stuck child cannot hang the command.
+const devAllStopGrace = 15 * time.Second
+
+// watchDevAllParent interrupts this process once the parent named by
+// GREGALE_DEV_ALL_PARENT has exited. It does nothing outside a --all child.
+func watchDevAllParent(interrupt func()) {
+	raw := os.Getenv(devAllParentEnv)
+	parent, err := strconv.Atoi(raw)
+	if raw == "" || err != nil || parent <= 1 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if os.Getppid() != parent {
+				interrupt()
+				return
+			}
+		}
+	}()
 }
 
 // devAllOptions are the single-app flags forwarded unchanged to every child.
@@ -74,6 +105,11 @@ type devAllOptions struct {
 	// command to run (devWatchSuggestion) or sets dev.watch itself; the
 	// others keep production-shaped developer builds.
 	watch bool
+	// watchSet preserves an explicit --watch=false when launching children.
+	watchSet bool
+	// yes skips the one confirmation before --stop deletes every app's
+	// developer database and buckets.
+	yes bool
 }
 
 // devAllWatches reports whether a child for app gets --watch.
@@ -97,7 +133,9 @@ func (o devAllOptions) childArgs(app devAllApp, jsonMode bool) []string {
 	if o.ttl != "" {
 		args = append(args, "--ttl", o.ttl)
 	}
-	if o.devAllWatches(app) {
+	if !o.stop && o.watchSet && !o.watch {
+		args = append(args, "--watch=false")
+	} else if o.devAllWatches(app) {
 		args = append(args, "--watch")
 	}
 	if app.GoCommand != "" && !o.stop {
@@ -389,11 +427,6 @@ func runDevAll(ctx context.Context, apps []devAllApp, opts devAllOptions, launch
 		if jsonOutput {
 			out = newDevJSONTagger(app, &mu, stdout, stderr)
 		}
-		if opts.watch && !opts.stop && !opts.devAllWatches(app) && !jsonOutput {
-			mu.Lock()
-			_, _ = fmt.Fprintf(stdout, "%swatch mode: no development command detected; this app keeps production-shaped builds\n", prefix)
-			mu.Unlock()
-		}
 		process, err := launch(opts.childArgs(app, jsonOutput), app.childEnv(), out, errOut)
 		if err != nil {
 			_ = out.Close()
@@ -427,6 +460,15 @@ func runDevAll(ctx context.Context, apps []devAllApp, opts devAllOptions, launch
 				_ = process.Signal(os.Interrupt)
 			}
 			procMu.Unlock()
+			select {
+			case <-time.After(devAllStopGrace):
+				procMu.Lock()
+				for _, process := range processes {
+					_ = process.Signal(os.Kill) // already-exited children just return an error
+				}
+				procMu.Unlock()
+			case <-forwardDone:
+			}
 		case <-forwardDone:
 		}
 	}()
@@ -469,6 +511,12 @@ func cmdDevAll(sourceDir string, opts devAllOptions) int {
 	if err != nil {
 		return printErr("Could not identify developer workspace", err)
 	}
+	if opts.stop && !opts.yes && devStopPromptable() {
+		question := fmt.Sprintf("Stop %d developer environment(s) and delete their databases and buckets?", len(apps))
+		if code := confirmYesNo(question, "--yes", "stopping the developer environments"); code != 0 {
+			return code
+		}
+	}
 	if !opts.stop {
 		workspaceIDs := make([]string, len(apps))
 		for i := range apps {
@@ -510,6 +558,7 @@ func cmdDevAll(sourceDir string, opts devAllOptions) int {
 // directory). Per-app config belongs in each member's gregale.yaml dev block,
 // which every child loop reads for its own source root.
 func cmdDevAllFromFlags(cwd, sourcePath string, explicit map[string]bool, opts devAllOptions) int {
+	opts.watchSet = explicit["watch"]
 	for _, flag := range []string{"name", "env-file", "service-override-file", "postgres-seed", "reseed", "debug", "debug-port"} {
 		if explicit[flag] {
 			return printErr("Invalid flags", fmt.Errorf("--%s cannot be combined with --all; set per-app values in each app's gregale.yaml dev block", flag))

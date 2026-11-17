@@ -155,6 +155,10 @@ type Config struct {
 	// DeferCacheExport, from DeferCacheExportEnv, exports a build's
 	// dependency cache after the image handoff (ADR-20261029171525).
 	DeferCacheExport bool `toml:"-"`
+	// BuildKitSeed, from BuildKitSeedEnv, keeps a per-node BuildKit seed
+	// that Railpack builds start from (ADR-20261030122204). The VM driver
+	// must have it on too (VMMDriver.WithBuildKitSeed).
+	BuildKitSeed bool `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -694,6 +698,23 @@ func (b *Builderd) stopIfBuildOutpaced(ctx context.Context, claim state.Build) b
 	return true
 }
 
+// recordBuildNode records this node on a build it just claimed
+// (ADR-20261110210000 slice 3j-3): secretd admits only that node to pull the
+// app's private base images for the builder VM. Under a per-node database
+// login the claim already recorded it and this changes nothing. A failure
+// is logged, not fatal: the build still runs, and only a mirrored private
+// pull is refused.
+func (b *Builderd) recordBuildNode(ctx context.Context, buildID string) {
+	recorder, ok := b.store.(state.BuildNodeRecorder)
+	if !ok || b.builderNodeID == "" {
+		return
+	}
+	if err := recorder.RecordBuildNode(ctx, buildID, b.builderNodeID); err != nil {
+		b.log.Warn("builderd: record the build's node; private base-image pulls through the mirror will be refused",
+			"build", buildID, "err", err)
+	}
+}
+
 // requeueClaim returns a worker-owned claim to the durable queue. Production
 // stores implement the claim-fenced capability; the legacy fallback preserves
 // compatibility with older state.Store implementations.
@@ -721,6 +742,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.requeueClaimAfterCancellation(ctx, build)
 		}
 	}()
+	b.recordBuildNode(ctx, build.ID)
 
 	dep, err := b.store.DeploymentByID(ctx, build.DeploymentID)
 	if err != nil {
@@ -1377,6 +1399,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if line := guestTimingsLog(out.Timings); line != "" {
 		b.emitBuildLog(ctx, build.ID, line)
 	}
+	if out.BuildKitSeeded {
+		b.emitBuildLog(ctx, build.ID, "[build] BuildKit started from this node's seed of platform images\n")
+	}
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
@@ -1428,9 +1453,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	} else if cacheOwed {
 		b.emitBuildLog(ctx, build.ID, "dependency cache will be saved after the image is handed off\n")
 	}
-	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
-		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
-	}
+	b.emitGuestBuildLog(ctx, build.ID, "[guest build output]", out.LogTail)
 	if line := sharedRuntimeBuildLog(out.SharedRuntime); line != "" && out.ExitCode == 0 {
 		b.emitBuildLog(ctx, build.ID, line)
 	}
@@ -1473,18 +1496,28 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// emitted) — that's the path the `failure_class` UX copy
 		// already covers; markFailedEx is the typed-code addition.
 		failureCode, failurePkg := out.FailureCode, out.FailurePkg
+		failureMsg := fmt.Sprintf("build exited %d", out.ExitCode)
 		if fc == state.FailureUserError && failureCode == "" && platformBaseFetchFailed(out.LogTail, runtimeBaseRef) {
 			// The builder could not fetch Gregale's own runtime base: the
 			// customer's source never ran, so this is not their failure.
 			fc = state.FailureInfra
 		}
+		if fc == state.FailureUserError && failureCode == "" {
+			// A toolchain, build-tool or default-registry download the build
+			// tooling chose failed upstream: deploying again is the fix, not
+			// editing source (#6666).
+			if host := upstreamFetchFailed(out.LogTail, fw == FrameworkDocker); host != "" {
+				fc = state.FailureInfra
+				failureMsg += ": a download from " + host + " failed upstream"
+			}
+		}
 		if failureCode == "" && fc == state.FailureUserError {
 			failureCode, failurePkg = classifyBuildOutput(out.LogTail)
 		}
 		if failureCode != "" {
-			b.markFailedEx(ctx, build, fc, failureCode, failurePkg, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+			b.markFailedEx(ctx, build, fc, failureCode, failurePkg, failureMsg, buildStart)
 		} else {
-			b.markFailed(ctx, build, fc, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+			b.markFailed(ctx, build, fc, failureMsg, buildStart)
 		}
 		return BuildResult{}, fmt.Errorf("builderd: vm exit %d", out.ExitCode)
 	}
@@ -1537,7 +1570,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return result, err
 	}
 	phases.completed = time.Now()
-	b.log.Info("builderd: build phases", append(append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...), guestTimingAttrs(out.Timings)...)...)
+	b.log.Info("builderd: build phases", append(append([]any{"build", build.ID, "deployment", build.DeploymentID, "buildkit_seeded", out.BuildKitSeeded}, phases.attrs()...), guestTimingAttrs(out.Timings)...)...)
 	// Only cache a successfully committed build produced by the same builder
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.
@@ -1591,9 +1624,7 @@ func (b *Builderd) exportDeferredCache(ctx context.Context, vm DeferredCacheVM, 
 		// goes to the deployment's build log, as a failed build's does, and
 		// never to the operator log.
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
-		if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
-			b.emitBuildLog(ctx, build.ID, "[dependency cache export output]\n"+tail+"\n")
-		}
+		b.emitGuestBuildLog(ctx, build.ID, "[dependency cache export output]", out.LogTail)
 		return
 	}
 	b.log.Info("builderd: deferred dependency cache saved", "build", build.ID,
@@ -2140,9 +2171,15 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 // failing step (production-us hunt #9: a RUN exiting 3 showed "ot complete
 // successfully: exit code: 3" and Go frames). The customer's build output gets
 // the budget first; the daemon log keeps only a short tail for operators.
+//
+// The tail used to be cut to one NOTIFY payload (3 KiB), which lost output a
+// customer printed on purpose (Kroki feedback 2026-11-17: `du` sizes printed
+// mid-build were pushed out by the export lines that followed). It is now
+// guestBuildLogTailMaxBytes and emitGuestBuildLog sends it in NOTIFY-sized
+// chunks.
 func boundedGuestBuildLogTail(raw string) string {
 	const (
-		maxBytes       = 3 * 1024
+		maxBytes       = guestBuildLogTailMaxBytes
 		daemonTail     = 512
 		daemonSection  = "\n[buildkitd]\n"
 		customerHeader = "[build]\n"

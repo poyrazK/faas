@@ -166,6 +166,14 @@ func (unavailableScheduler) DeleteDatabaseSnapshot(context.Context, *scheddpb.Da
 	return nil, errDescribeOnly
 }
 
+func (unavailableScheduler) HoldDatabase(context.Context, *scheddpb.HoldDatabaseRequest, ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	return nil, errDescribeOnly
+}
+
+func (unavailableScheduler) SetDatabaseComputeQuota(context.Context, *scheddpb.SetDatabaseComputeQuotaRequest, ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	return nil, errDescribeOnly
+}
+
 // unavailableVerifiers refuses every write.
 type unavailableVerifiers struct{}
 

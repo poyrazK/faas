@@ -27,7 +27,21 @@ const (
 type signupMetrics struct {
 	registry prometheus.Registerer
 	signups  *prometheus.CounterVec
+	// capped counts sign-ups refused by the daily caps, by scope: one
+	// address or network, or the whole platform (ADR 20261110120000).
+	capped *prometheus.CounterVec
+	// factsFailed counts sign-ups whose ADR-20261113160000 sign-up record
+	// could not be stored; the account is created either way.
+	factsFailed *prometheus.CounterVec
+	// heldLinks counts new accounts flagged as resembling an abuse-held
+	// account, by signal (ADR-20261114174600); "error" counts failed checks.
+	heldLinks *prometheus.CounterVec
 }
+
+const (
+	signupCapNetwork = "network"
+	signupCapFleet   = "fleet"
+)
 
 func newSignupMetrics(reg prometheus.Registerer, prefix string) *signupMetrics {
 	m := &signupMetrics{registry: reg, signups: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -41,12 +55,63 @@ func newSignupMetrics(reg prometheus.Registerer, prefix string) *signupMetrics {
 		}
 		m.signups = already.ExistingCollector.(*prometheus.CounterVec)
 	}
+	m.capped = registerCounterVec(reg, prometheus.CounterOpts{
+		Name: prefix + "_signups_capped_total",
+		Help: "Sign-ups refused by the daily caps, by scope: network (one address or network) or fleet (the platform's daily total).",
+	}, []string{"scope"})
+	m.factsFailed = registerCounterVec(reg, prometheus.CounterOpts{
+		Name: prefix + "_signup_facts_failed_total",
+		Help: "Sign-ups whose sign-up record (address, country, network owner, email domain) could not be stored; the account was created.",
+	}, nil)
+	m.factsFailed.WithLabelValues().Add(0)
+	m.heldLinks = registerCounterVec(reg, prometheus.CounterOpts{
+		Name: prefix + "_signup_held_links_total",
+		Help: "New accounts linked to an abuse-held account for operator review, by signal: signup_network, email_domain, or error (the check failed).",
+	}, []string{"signal"})
+	for _, signal := range []string{"signup_network", "email_domain", "error"} {
+		m.heldLinks.WithLabelValues(signal).Add(0)
+	}
+	for _, scope := range []string{signupCapNetwork, signupCapFleet} {
+		m.capped.WithLabelValues(scope).Add(0)
+	}
 	for _, method := range []string{signupMethodPassword, signupMethodMagicLink, signupMethodGoogle, signupMethodGitHub} {
 		for _, source := range []string{signupSourceAgent, signupSourceCLI, signupSourceDirect} {
 			m.signups.WithLabelValues(method, source).Add(0)
 		}
 	}
 	return m
+}
+
+func (m *signupMetrics) observeHeldLink(signal string) {
+	if m != nil {
+		m.heldLinks.WithLabelValues(signal).Inc()
+	}
+}
+
+func (m *signupMetrics) observeFactsFailed() {
+	if m != nil {
+		m.factsFailed.WithLabelValues().Inc()
+	}
+}
+
+func (m *signupMetrics) observeCapped(scope string) {
+	if m != nil {
+		m.capped.WithLabelValues(scope).Inc()
+	}
+}
+
+// registerCounterVec registers c, or returns the collector already
+// registered under its name.
+func registerCounterVec(reg prometheus.Registerer, opts prometheus.CounterOpts, labels []string) *prometheus.CounterVec {
+	c := prometheus.NewCounterVec(opts, labels)
+	if err := reg.Register(c); err != nil {
+		var already prometheus.AlreadyRegisteredError
+		if !errors.As(err, &already) {
+			panic(err)
+		}
+		return already.ExistingCollector.(*prometheus.CounterVec)
+	}
+	return c
 }
 
 func (m *signupMetrics) observe(method, source string) {
@@ -71,4 +136,20 @@ func signupSource(next string) string {
 func (s *server) recordSignup(ctx context.Context, accountID, method, source string) {
 	s.signupMetrics.observe(method, source)
 	s.audit.Emit(ctx, "auth.signup", &accountID, map[string]any{"method": method, "source": source})
+}
+
+// registerBackgroundMailDropped exports the security-mail pool's refusals:
+// password reset, sign-in links, verification and notices that were never
+// sent because the pool was full (ADR 20261110120000).
+func registerBackgroundMailDropped(reg prometheus.Registerer, prefix string, pool *backgroundWork) {
+	c := prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: prefix + "_background_mail_dropped_total",
+		Help: "Security mails (password reset, sign-in links, verification, account notices) not sent because the background mail pool was full.",
+	}, pool.droppedCount)
+	if err := reg.Register(c); err != nil {
+		var already prometheus.AlreadyRegisteredError
+		if !errors.As(err, &already) {
+			panic(err)
+		}
+	}
 }

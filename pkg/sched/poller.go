@@ -59,6 +59,7 @@ import (
 // item_identifier) guarantee from migrations/00267_triggers.sql.
 type SourceRecord struct {
 	ItemIdentifier string `json:"item_identifier"`
+	StoredReplay   bool   `json:"-"`
 	// InvocationID and InvocationAttempt are set only by the durable queue
 	// poller. Broker metadata and headers cannot select an invocation identity.
 	InvocationID               string `json:"-"`

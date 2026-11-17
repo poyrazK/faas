@@ -399,3 +399,53 @@ func TestRecordUsage(t *testing.T) {
 		t.Fatalf("another account read the usage: %v %v", found, err)
 	}
 }
+
+// A version's peak is the p95 of its recent measured runs of one input class,
+// leaving out runs with too many missing samples (ADR-20261027090015 §3).
+func TestVersionPeak(t *testing.T) {
+	pool, s := agentdFixture(t)
+	ctx := context.Background()
+	record := func(run agents.Run, peakMB int64, samples int, checkout bool) {
+		t.Helper()
+		token := "tok-" + run.ID
+		if _, found, err := s.ClaimRun(ctx, "agentd-1", token, ttl, maxLive(100)); err != nil || !found {
+			t.Fatalf("claim %v %v", found, err)
+		}
+		if err := s.MarkRunning(ctx, run.ID, token, "agents-1", "agent-"+run.ID, 200_000); err != nil {
+			t.Fatal(err)
+		}
+		if checkout {
+			if _, err := pool.Exec(ctx, `UPDATE agent_runs SET checkout_repository='acme/app', checkout_commit='0123456789abcdef0123456789abcdef01234567',
+				checkout_installation_id=7 WHERE id=$1`, run.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.RecordUsage(ctx, run.ID, token, agents.Usage{Method: 1, Samples: samples, ExpectedSamples: 10,
+			MeasuredMillis: 10_000, PeakPrivateMB: peakMB}); err != nil {
+			t.Fatal(err)
+		}
+		exit := 0
+		if err := s.FinishRun(ctx, account, run.ID, token, agents.Finish{State: agents.StateSucceeded, ExitCode: &exit}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agent, _, _ := s.Agent(ctx, account, "triage")
+	if peak, runs, err := s.VersionPeak(ctx, account, agent.ID, 1, false); err != nil || peak != 0 || runs != 0 {
+		t.Fatalf("an unmeasured version: %d MB over %d runs, %v", peak, runs, err)
+	}
+	for mb := int64(1); mb <= 20; mb++ {
+		record(admit(t, s, agents.Admission{}), mb*10, 10, false)
+	}
+	record(admit(t, s, agents.Admission{}), 5000, 7, false) // 30% of samples missing: left out
+	record(admit(t, s, agents.Admission{}), 9000, 10, true) // another input class
+	peak, runs, err := s.VersionPeak(ctx, account, agent.ID, 1, false)
+	if err != nil || runs != 20 || peak != 190 {
+		t.Fatalf("peak %d MB over %d runs, %v; want the p95 190 over 20", peak, runs, err)
+	}
+	if peak, runs, _ := s.VersionPeak(ctx, account, agent.ID, 1, true); runs != 1 || peak != 9000 {
+		t.Fatalf("checkout class: %d MB over %d runs", peak, runs)
+	}
+	if _, runs, _ := s.VersionPeak(ctx, other, agent.ID, 1, false); runs != 0 {
+		t.Fatal("another account read the version's history")
+	}
+}

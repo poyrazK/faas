@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -65,7 +66,7 @@ func cmdInvocations(args []string) int {
 	case "wait":
 		return cmdInvocationsWait(args[1:])
 	}
-	printCommandValidation(os.Stderr, "unknown invocations subcommand %q\n", args[0])
+	printUnknownCommandValidation(os.Stderr, "invocations", args[0], "unknown invocations subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "invocations", nestedCliCommand("invocations"), args[0])
 }
 
@@ -82,7 +83,10 @@ func cmdInvocationsWait(args []string) int {
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || fs.NArg() != 0 || *timeout < 0 || *interval <= 0 {
+	if rejectArgumentCount(fs.Name(), invocationWaitCmdUsage, invocationCmdDocsTopic, len(positional), 1, 1, "ID") {
+		return 1
+	}
+	if fs.NArg() != 0 || validateInvocationWaitDurations(*timeout, *interval) != nil {
 		PrintUsage(os.Stderr, invocationWaitCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -105,8 +109,19 @@ func cmdInvocationsWait(args []string) int {
 		PrintProgress(osStderr, "Waiting for invocation %s…", id)
 	}
 	inv, err := waitForInvocation(ctx, client, id, *interval)
+	return renderInvocationWaitOutcome(ctx, id, inv, err, false)
+}
+
+func renderInvocationWaitOutcome(ctx context.Context, id string, inv api.Invocation, err error, accepted bool) int {
 	if err != nil {
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			if accepted || jsonOutput {
+				return renderInvocationWaitProblem(api.Problem{
+					Code: "invocation_wait_interrupted", Title: "Invocation wait interrupted",
+					Detail: fmt.Sprintf("stopped waiting for invocation %s; it may still be running", id),
+					Hint:   invocationResumeHint(id), DocsURL: cliDocsURL,
+				}, 130, id)
+			}
 			return 130
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -123,9 +138,12 @@ func cmdInvocationsWait(args []string) int {
 				Hint:    fmt.Sprintf("Inspect it with 'gregale invocation get %s'.", id),
 				DocsURL: cliDocsURL,
 			}
+			if accepted {
+				problem.Hint = invocationResumeHint(id)
+			}
 			// The CLI wait deadline keeps its conventional exit status; it
 			// does not cancel the durable invocation on the server.
-			_ = renderInvocationWaitProblem(problem, 124)
+			_ = renderInvocationWaitProblem(problem, 124, id)
 			return 124
 		}
 		var remote *APIError
@@ -136,9 +154,13 @@ func cmdInvocationsWait(args []string) int {
 			} else if remote.Problem.Status >= 500 {
 				code = 3
 			}
-			return renderInvocationWaitProblem(remote.Problem, code)
+			problem := diagnosticProblem(remote.Problem)
+			if accepted {
+				problem.Hint = strings.TrimSpace(problem.Hint + " " + invocationResumeHint(id))
+			}
+			return renderInvocationWaitProblem(problem, code, id)
 		}
-		return printErr("Could not wait for invocation", err)
+		return renderInvocationWaitError(err, id, accepted)
 	}
 
 	if code := renderInvocationWaitResult(inv); code != 0 {
@@ -156,6 +178,9 @@ func waitForInvocation(ctx context.Context, client *api.Client, id string, inter
 		inv, err := client.GetInvocation(ctx, id)
 		if err != nil {
 			return latest, err
+		}
+		if inv.ID != id {
+			return latest, errors.New("invocation status response does not match the requested ID")
 		}
 		latest = inv
 		if invocationStateTerminal(inv.State) {
@@ -216,6 +241,10 @@ func cmdInvocationsList(args []string) int {
 	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
 	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
+	stream := fs.Bool("stream", false, "emit rows as JSON Lines as pages arrive (stdout requires --json --all)")
+	outputPath := fs.String("output", "", "publish a new JSON Lines file after all pages complete (requires --all)")
+	progress := fs.String("progress", "off", "export progress on stderr: off, plain or ndjson (requires --all --output)")
+	timeout := fs.Duration("timeout", 0, "overall list read budget including page requests and retries (positive duration)")
 	limit := fs.Int("limit", 50, "max rows (1..100; server caps at 100)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -228,20 +257,49 @@ func cmdInvocationsList(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale invocation list [--cursor C] [--limit N] [--all] (1 <= N <= 100)", "invocations")
 		return 1
 	}
+	if err := validateListTimeout(*timeout, flagWasSet(fs, "timeout")); err != nil {
+		return printErr("Invalid list timeout", err)
+	}
+	progressMode, err := parseListExportProgress(*progress)
+	if err != nil {
+		return printErr("Invalid list progress", err)
+	}
+	if violation := listFlagRuleViolation(listProgressRequiresExport, listFlagRuleState{Progress: progressMode != listExportProgressOff, Output: flagWasSet(fs, "output"), All: *all}, "invocation list"); violation != nil {
+		return printErr("Invalid list progress", violation)
+	}
+	output, err := prepareListOutput(*outputPath, flagWasSet(fs, "output"), *all, "invocation list")
+	if err != nil {
+		return printErr("Invalid list output", err)
+	}
+	if output != nil {
+		defer output.Close()
+	} else if !validateListStream(*stream, *all, "invocation list") {
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	ctx, cancel := listReadContext(context.Background(), *timeout)
+	defer cancel()
 	// The ledger is account-wide, so a row needs its app: "POST /healthz
 	// failed" named no app (Hunt 12 H12-33).
 	var slugs map[string]string
-	if !jsonOutput {
-		slugs = appSlugsByID(client)
+	if !jsonOutput && output == nil {
+		slugs = appSlugsByIDContext(ctx, client)
 	}
-	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.Invocation, string, error) {
+	fetch := func(ctx context.Context, cursor string) ([]api.Invocation, string, error) {
 		page, err := client.ListInvocations(ctx, cursor, *limit)
 		return page.Invocations, page.NextBefore, err
-	})
+	}
+	if output != nil {
+		return runListFileExport(ctx, "Could not list invocations", *before, output, progressMode, fetch)
+	}
+	if *stream {
+		return runStreamList(ctx, "Could not list invocations", *before, fetch)
+	}
+	items, next, err := collectListPages(ctx, *before, *all, fetch)
+	err = listReadError(ctx, err)
 	resp := api.ListInvocationsResponse{Invocations: items, NextBefore: next}
 	if err != nil {
 		return printErr("Could not list invocations", err)
@@ -260,7 +318,7 @@ func cmdInvocationsList(args []string) int {
 		return 0
 	}
 	for _, inv := range resp.Invocations {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path, appLabel(slugs, inv.AppID), inv.Source)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path, appLabel(slugs, inv.AppID), invocationSourceLabel(inv))
 	}
 	if resp.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", resp.NextBefore)
@@ -286,7 +344,10 @@ func cmdInvocationsGet(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *replay && *replayKeyed {
+	if rejectArgumentCount(fs.Name(), invocationGetCmdUsage, invocationCmdDocsTopic, fs.NArg(), 1, 1, "ID") {
+		return 1
+	}
+	if *replay && *replayKeyed {
 		PrintUsage(os.Stderr, invocationGetCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -299,7 +360,7 @@ func cmdInvocationsGet(args []string) int {
 	inv, err := client.GetInvocation(ctx, id)
 	if err != nil {
 		var ae *APIError
-		if errors.As(err, &ae) {
+		if !jsonOutput && errors.As(err, &ae) {
 			renderAPIError(os.Stderr, ae)
 			return exitCodeForStatus(ae.Problem.Status)
 		}
@@ -314,7 +375,7 @@ func cmdInvocationsGet(args []string) int {
 		}
 		if err != nil {
 			var ae *APIError
-			if errors.As(err, &ae) {
+			if !jsonOutput && errors.As(err, &ae) {
 				renderAPIError(os.Stderr, ae)
 				return exitCodeForStatus(ae.Problem.Status)
 			}
@@ -354,7 +415,7 @@ func renderInvocation(w io.Writer, inv api.Invocation) {
 	if inv.InstanceID != "" {
 		_, _ = fmt.Fprintf(w, "Instance:   %s\n", inv.InstanceID)
 	}
-	_, _ = fmt.Fprintf(w, "Source:     %s\n", inv.Source)
+	_, _ = fmt.Fprintf(w, "Source:     %s\n", invocationSourceLabel(inv))
 	_, _ = fmt.Fprintf(w, "State:      %s\n", inv.State)
 	_, _ = fmt.Fprintf(w, "Method:     %s\n", inv.Method)
 	_, _ = fmt.Fprintf(w, "Path:       %s\n", inv.Path)
@@ -430,14 +491,19 @@ func oneLine(s string) string {
 	return b.String()
 }
 
-// Invocation wait retains its dedicated exit contract instead of the shared
-// HTTP mapping. Encode the actual returned status in machine diagnostics.
-func renderInvocationWaitProblem(problem api.Problem, code int) int {
-	problem = diagnosticProblem(problem)
-	if jsonOutput {
-		_ = writeJSONProblemWithExit(osStderr, problem, code)
-	} else {
-		renderAPIError(osStderr, &APIError{Problem: problem})
+// invocationSourceLabel names a synchronous `gregale invoke` sync_invoke. The
+// row is stored with the async source and retry_policy.sync_invoke, so lists
+// showed every sync call as async_invoke (Hunt 33 H33-16). --json keeps the
+// stored values.
+func invocationSourceLabel(inv api.Invocation) string {
+	if inv.Source != "async_invoke" || len(inv.RetryPolicyJSON) == 0 {
+		return inv.Source
 	}
-	return code
+	var policy struct {
+		SyncInvoke bool `json:"sync_invoke"`
+	}
+	if json.Unmarshal(inv.RetryPolicyJSON, &policy) == nil && policy.SyncInvoke {
+		return "sync_invoke"
+	}
+	return inv.Source
 }

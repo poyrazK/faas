@@ -58,6 +58,10 @@ func (s *server) setDeploymentAlias(w http.ResponseWriter, r *http.Request, acct
 	if !ok {
 		return
 	}
+	if prob := s.deploymentAliasQuotaProblem(r.Context(), store, acct, app, name); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	alias, err := store.SetDeploymentAlias(r.Context(), app.ID, name, req.DeploymentID)
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, aliasTargetNotRoutableDetail(r.Context(), s.store, app.ID, req.DeploymentID))
@@ -107,6 +111,29 @@ func (s *server) deleteDeploymentAlias(w http.ResponseWriter, r *http.Request, a
 		"app_id": app.ID, "name": name,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deploymentAliasQuotaProblem refuses a new alias name above the plan's
+// DeploymentAliasesMax; re-pointing an existing alias is always allowed, so
+// an app already above a lowered cap can still move its aliases.
+func (s *server) deploymentAliasQuotaProblem(ctx context.Context, store state.DeploymentAliasStore, acct state.Account, app state.App, name string) *api.Problem {
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok || limits.DeploymentAliasesMax <= 0 {
+		return nil
+	}
+	rows, err := store.ListDeploymentAliases(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not count deployment aliases")
+	}
+	for _, row := range rows {
+		if row.Name == name {
+			return nil
+		}
+	}
+	if len(rows) >= limits.DeploymentAliasesMax {
+		return api.ErrPlanLimitDeploymentAliases(limits, len(rows))
+	}
+	return nil
 }
 
 func (s *server) deploymentAliasStore(w http.ResponseWriter) (state.DeploymentAliasStore, bool) {

@@ -550,6 +550,29 @@ A third review found these gaps:
 - **`PYTHONPATH`.** The bootstrap appended an empty entry, which Python reads
   as the working directory, when the image set none.
 
+## Amendment: review round 4 follow-up (2026-11-10)
+
+Round 4 (#6826) bounded the profile broker, the series count and the parser's
+top-level elements. Three gaps remained:
+
+- **Per-sample elements.** The precheck counted samples, locations, functions,
+  mappings and strings, but not what one sample holds: a single sample with
+  millions of packed location ids, or thousands of labels, was still built by
+  the parser before its depth check. The precheck now also bounds each sample
+  (`ProfileMaxStackDepth` location ids, `ProfileMaxSampleTypes` values,
+  `ProfileMaxSampleLabels` labels), each location's inlined lines, and the
+  totals (`ProfileMaxTotalFrames`, `ProfileMaxTotalLabels`).
+- **Capture merges in apid.** Views, comparisons, downloads and the dashboard
+  page parsed up to eight guest-supplied blobs per kind with no concurrency
+  bound, unlike continuous queries. An apid now runs at most
+  `ProfileCaptureMaxConcurrentMerges` (2) merges and answers others `503`;
+  the dashboard shows the kind as busy.
+- **Lifetimes sharing a collector slot.** With 32 `collector_id` values, two
+  lifetimes in one slot with identical samples and capture times (heap
+  snapshots are stamped in whole seconds) still collapsed into one. Each
+  lifetime now shifts its capture times by its own offset below a
+  millisecond, taken from identity bits the slot does not use.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

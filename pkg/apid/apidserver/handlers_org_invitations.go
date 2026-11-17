@@ -108,6 +108,12 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 	if !s.requireOrgAction(w, r, authz.OrgActionTransferOwnership) {
 		return
 	}
+	if !requireBrowserSession(w, r, "Transferring an organization's ownership") {
+		return
+	}
+	if !s.sessionPresenceForIrreversible(w, r, acct, "org_ownership_transfer") {
+		return
+	}
 	mem, ok := s.requireMembership(w, r)
 	if !ok {
 		return
@@ -146,6 +152,10 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 				"Member not found", "the new owner is not an active member of this org"))
 		case errors.Is(err, state.ErrOrgLastOwner):
 			api.WriteProblem(w, api.ErrOrgLastOwner())
+		case errors.Is(err, state.ErrOrgOwnerInactive):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"New owner's account is not active",
+				"the member's account is suspended or pending deletion; choose an active member"))
 		default:
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 				api.CodeCapacity,
@@ -164,6 +174,8 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 		"from_account": acct.ID,
 		"to_account":   newOwnerID,
 	})
+	s.mailOrgSecurityEvent(responseCtx, "org_ownership_transferred", mem.OrgID,
+		"ownership moved from "+s.orgMemberLabel(responseCtx, acct.ID)+" to "+s.orgMemberLabel(responseCtx, newOwnerID), acct.ID, newOwnerID)
 	updated, ok := s.rehydrateOrg(responseCtx, w, mem)
 	if !ok {
 		return
@@ -259,7 +271,7 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, acct s
 		"invitation": inv.ID,
 	})
 
-	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberToRow(r.Context(), membership)))
+	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberRowWithName(r.Context(), membership)))
 }
 
 // revokeInvitation stamps revoked_at on a still-pending invitation

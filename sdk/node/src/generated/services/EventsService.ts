@@ -134,6 +134,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class EventsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Preview event routing without publishing.
    * Evaluates an event against the authenticated account's enabled
@@ -150,7 +151,7 @@ export class EventsService {
   }: {
     requestBody: PreviewEventRequest,
   }): CancelablePromise<PreviewEventResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/events:preview',
       body: requestBody,
@@ -213,7 +214,7 @@ export class EventsService {
      */
     expectedAcceptedAt?: string,
   }): CancelablePromise<AppEventPublicationVerification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/events/verify-publication',
       path: {
@@ -292,7 +293,7 @@ export class EventsService {
      */
     expectedAcceptedAt?: string,
   }): CancelablePromise<AppEventPublishStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/events/publish-status',
       path: {
@@ -353,7 +354,7 @@ export class EventsService {
     slug: string,
     requestBody: AppPublishEventRequest,
   }): CancelablePromise<AppPublishEventResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/events:publish',
       path: {
@@ -412,7 +413,7 @@ export class EventsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PublishEventResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/events:publish',
       headers: {
@@ -480,7 +481,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventRetentionHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/events/retention',
       query: {
@@ -533,7 +534,7 @@ export class EventsService {
   }: {
     requestBody: PublishEventBatchRequest,
   }): CancelablePromise<PublishEventBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/events:publish-batch',
       body: requestBody,
@@ -553,7 +554,7 @@ export class EventsService {
     });
   }
   /**
-   * Publish an event for an automation linked to this tenant.
+   * Publish an event for a stored workflow linked to this tenant.
    * Requires platform_tenant:events:manage. The tenant identity comes from
    * the bearer token, and the app must be actively linked to that tenant.
    * The platform scopes the event to that app's published event-triggered
@@ -575,7 +576,7 @@ export class EventsService {
     slug: string,
     requestBody: PublishEventRequest,
   }): CancelablePromise<PlatformTenantPublishEventResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/apps/{slug}/events:publish',
       path: {
@@ -634,7 +635,7 @@ export class EventsService {
      */
     after?: string,
   }): CancelablePromise<EventReceiptResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/apps/{slug}/events/receipts/{event_id}',
       path: {
@@ -671,7 +672,7 @@ export class EventsService {
   }: {
     requestBody: EventRecipientBlockerBatchRequest,
   }): CancelablePromise<EventRecipientBlockerBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/events/recipient-blockers',
       body: requestBody,
@@ -727,7 +728,7 @@ export class EventsService {
      */
     expectedAcceptedAt: string,
   }): CancelablePromise<EventRecipientBlockerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/events/recipient-blocker',
       query: {
@@ -838,7 +839,7 @@ export class EventsService {
      */
     consumerLimit?: number,
   }): CancelablePromise<EventBacklogResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/events/backlog',
       query: {
@@ -878,7 +879,7 @@ export class EventsService {
    * @throws ApiError
    */
   public static getEventStorageUsage(): CancelablePromise<EventStorageUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/events/storage',
       errors: {
@@ -937,7 +938,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventReceiptResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/events/receipt',
       query: {
@@ -1005,7 +1006,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventReceiptReplayHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/events/receipt/replays',
       query: {
@@ -1076,7 +1077,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventReceiptAttemptHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/events/receipt/attempts',
       query: {
@@ -1111,7 +1112,7 @@ export class EventsService {
   }: {
     requestBody: EventSchemaRolloutRequest,
   }): CancelablePromise<EventSchemaRolloutResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-schemas:preview-rollout',
       body: requestBody,
@@ -1147,7 +1148,7 @@ export class EventsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<RegisterEventSchemaResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-schemas',
       headers: {
@@ -1180,7 +1181,7 @@ export class EventsService {
      */
     type: string,
   }): CancelablePromise<Array<EventSchema>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-schemas',
       query: {
@@ -1206,7 +1207,7 @@ export class EventsService {
      */
     slug: string,
   }): CancelablePromise<EventSubscriptionListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions',
       path: {
@@ -1279,7 +1280,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventReplayPreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview',
       path: {
@@ -1354,7 +1355,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<WorkflowEventReplayPreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-event-replay-preview',
       path: {
@@ -1418,7 +1419,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: EventReplayBackfillRequest,
   }): CancelablePromise<EventReplayBackfillJobResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays',
       path: {
@@ -1477,7 +1478,7 @@ export class EventsService {
     slug: string,
     requestBody: WorkflowEventReplayBackfillRequest,
   }): CancelablePromise<EventReplayBackfillJobResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-event-replays',
       path: {
@@ -1524,7 +1525,7 @@ export class EventsService {
      */
     window?: '5m' | '15m' | '1h' | '6h' | '24h',
   }): CancelablePromise<EventConsumerDeliveryHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health',
       path: {
@@ -1570,7 +1571,7 @@ export class EventsService {
     requestId: string,
     requestBody: ControlEventExecutionLineageCaseBackfillRequest,
   }): CancelablePromise<EventExecutionLineageCaseBackfill> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/pause',
       path: {
@@ -1618,7 +1619,7 @@ export class EventsService {
     requestId: string,
     requestBody: ControlEventExecutionLineageCaseBackfillRequest,
   }): CancelablePromise<EventExecutionLineageCaseBackfill> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/resume',
       path: {
@@ -1666,7 +1667,7 @@ export class EventsService {
     requestId: string,
     requestBody: ControlEventExecutionLineageCaseBackfillRequest,
   }): CancelablePromise<EventExecutionLineageCaseBackfill> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/cancel',
       path: {
@@ -1707,7 +1708,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventExecutionLineageCaseBackfill> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill',
       path: {
@@ -1746,7 +1747,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: RequestEventExecutionLineageCaseBackfillRequest,
   }): CancelablePromise<EventExecutionLineageCaseBackfill> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill',
       path: {
@@ -1800,7 +1801,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventExecutionLineageCases> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-preview',
       path: {
@@ -1862,7 +1863,7 @@ export class EventsService {
      */
     attention?: '' | 'any' | 'stalled' | 'retention_risk',
   }): CancelablePromise<EventExecutionLineageRetryJobs> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs',
       path: {
@@ -1906,7 +1907,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: CreateEventExecutionLineageRetryJobRequest,
   }): CancelablePromise<EventExecutionLineageRetryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs',
       path: {
@@ -1980,7 +1981,7 @@ export class EventsService {
      */
     credentialType?: '' | 'session' | 'api_key' | 'deploy_token' | 'platform_tenant_token' | 'internal',
   }): CancelablePromise<EventExecutionLineageRetryJobControls> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/controls',
       path: {
@@ -2033,7 +2034,7 @@ export class EventsService {
     requestId: string,
     requestBody: ControlEventExecutionLineageRetryJobRequest,
   }): CancelablePromise<EventExecutionLineageRetryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/pause',
       path: {
@@ -2082,7 +2083,7 @@ export class EventsService {
     requestId: string,
     requestBody: ControlEventExecutionLineageRetryJobRequest,
   }): CancelablePromise<EventExecutionLineageRetryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/resume',
       path: {
@@ -2131,7 +2132,7 @@ export class EventsService {
     requestId: string,
     requestBody: CancelEventExecutionLineageRetryJobRequest,
   }): CancelablePromise<EventExecutionLineageRetryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/cancel',
       path: {
@@ -2178,7 +2179,7 @@ export class EventsService {
      */
     requestId: string,
   }): CancelablePromise<EventExecutionLineageRetryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}',
       path: {
@@ -2226,7 +2227,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventExecutionLineageCases> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases',
       path: {
@@ -2274,7 +2275,7 @@ export class EventsService {
     outboxId: number,
     requestBody: RetryEventExecutionLineageCaseRequest,
   }): CancelablePromise<EventExecutionLineageCase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases/{outboxID}/retry',
       path: {
@@ -2314,7 +2315,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventExecutionReconciliation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation',
       path: {
@@ -2350,7 +2351,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventExecutionReconciliation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation',
       path: {
@@ -2391,7 +2392,7 @@ export class EventsService {
      */
     window?: '5m' | '15m' | '1h' | '6h' | '24h',
   }): CancelablePromise<EventConsumerExecutionHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health',
       path: {
@@ -2435,7 +2436,7 @@ export class EventsService {
      */
     window?: '5m' | '15m' | '1h' | '6h' | '24h',
   }): CancelablePromise<EventConsumerHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/health',
       path: {
@@ -2474,7 +2475,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventCircuitBreakerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker',
       path: {
@@ -2512,7 +2513,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: EventCircuitBreakerPolicy,
   }): CancelablePromise<EventCircuitBreakerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker',
       path: {
@@ -2550,7 +2551,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventCircuitBreakerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker',
       path: {
@@ -2586,7 +2587,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventCircuitBreakerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker/reset',
       path: {
@@ -2622,7 +2623,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventSubscriptionSchemaVersionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions',
       path: {
@@ -2660,7 +2661,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: EventSubscriptionSchemaVersionsRequest,
   }): CancelablePromise<EventSubscriptionSchemaVersionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions',
       path: {
@@ -2698,7 +2699,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventSubscriptionSchemaVersionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions',
       path: {
@@ -2734,7 +2735,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventRoutingRetryPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy',
       path: {
@@ -2772,7 +2773,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: EventRoutingRetryPolicy,
   }): CancelablePromise<EventRoutingRetryPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy',
       path: {
@@ -2810,7 +2811,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventRoutingRetryPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy',
       path: {
@@ -2846,7 +2847,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventSubscriptionDeliveryControl> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control',
       path: {
@@ -2882,7 +2883,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventSubscriptionDeliveryControl> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause',
       path: {
@@ -2920,7 +2921,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: EventSubscriptionResumeRequest,
   }): CancelablePromise<EventSubscriptionDeliveryControl> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume',
       path: {
@@ -2993,7 +2994,7 @@ export class EventsService {
      */
     waitingReason?: 'circuit_open' | 'circuit_probe_wait' | 'circuit_recovery_rate_limited' | 'subscription_paused' | 'subscription_rate_limited' | 'ordering_blocked' | 'capacity_consumer' | 'capacity_app' | 'capacity_account' | 'routing_in_progress' | 'receipt_processing' | 'retry_backoff' | 'workflow_routing' | 'ready',
   }): CancelablePromise<EventSubscriptionDeadlinePage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadlines',
       path: {
@@ -3043,7 +3044,7 @@ export class EventsService {
      */
     withinMillis: number,
   }): CancelablePromise<EventSubscriptionDeadlineWindow> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadline-window',
       path: {
@@ -3082,7 +3083,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventSubscriptionPendingSummary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pending-summary',
       path: {
@@ -3120,7 +3121,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: EventSubscriptionRatePreviewRequest,
   }): CancelablePromise<EventSubscriptionRatePreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/preview',
       path: {
@@ -3160,7 +3161,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: EventSubscriptionRateRequest,
   }): CancelablePromise<EventSubscriptionRateCommandReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit',
       path: {
@@ -3205,7 +3206,7 @@ export class EventsService {
      */
     after?: number,
   }): CancelablePromise<EventSubscriptionRateCommands> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands',
       path: {
@@ -3249,7 +3250,7 @@ export class EventsService {
      */
     commandId: string,
   }): CancelablePromise<EventSubscriptionRateCommandReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands/{commandID}',
       path: {
@@ -3288,7 +3289,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: EventSubscriptionCapacityRequest,
   }): CancelablePromise<EventSubscriptionDeliveryControl> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity',
       path: {
@@ -3343,7 +3344,7 @@ export class EventsService {
      */
     after?: string,
   }): CancelablePromise<EventSubscriptionCapacityCommands> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands',
       path: {
@@ -3389,7 +3390,7 @@ export class EventsService {
      */
     commandId: string,
   }): CancelablePromise<EventSubscriptionCapacityCommandReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}',
       path: {
@@ -3436,7 +3437,7 @@ export class EventsService {
      */
     cursor?: string,
   }): CancelablePromise<EventRecoveryNotificationRetryBacklog> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-recoveries/notification-retry-backlog',
       path: {
@@ -3473,7 +3474,7 @@ export class EventsService {
      */
     slug: string,
   }): CancelablePromise<EventRecoveryHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-recoveries/health',
       path: {
@@ -3505,7 +3506,7 @@ export class EventsService {
     slug: string,
     requestBody: EventRecoveryRequest,
   }): CancelablePromise<EventRecoveryPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-recoveries/preview',
       path: {
@@ -3572,7 +3573,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventRecoveryJobs> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-recoveries',
       path: {
@@ -3620,7 +3621,7 @@ export class EventsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<EventRecoveryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-recoveries',
       path: {
@@ -3656,7 +3657,7 @@ export class EventsService {
      */
     jobId: string,
   }): CancelablePromise<EventRecoveryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}',
       path: {
@@ -3691,7 +3692,7 @@ export class EventsService {
      */
     requestBody?: EventRecoveryControlRequest,
   }): CancelablePromise<EventRecoveryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-recoveries/{jobID}/cancel',
       path: {
@@ -3728,7 +3729,7 @@ export class EventsService {
      */
     requestBody?: EventRecoveryControlRequest,
   }): CancelablePromise<EventRecoveryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-recoveries/{jobID}/pause',
       path: {
@@ -3766,7 +3767,7 @@ export class EventsService {
      */
     requestBody?: EventRecoveryControlRequest,
   }): CancelablePromise<EventRecoveryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-recoveries/{jobID}/resume',
       path: {
@@ -3801,7 +3802,7 @@ export class EventsService {
     jobId: string,
     requestBody: EventRecoveryRateRequest,
   }): CancelablePromise<EventRecoveryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/event-recoveries/{jobID}/rate',
       path: {
@@ -3834,7 +3835,7 @@ export class EventsService {
      */
     slug: string,
   }): CancelablePromise<WorkflowRecoveryPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy',
       path: {
@@ -3867,7 +3868,7 @@ export class EventsService {
      */
     requestBody: SetWorkflowRecoveryPolicyRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/recovery-policy',
       path: {
@@ -3901,7 +3902,7 @@ export class EventsService {
     slug: string,
     requestBody: WorkflowRecoveryPolicyEvaluationRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyEvaluation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/evaluate',
       path: {
@@ -3937,7 +3938,7 @@ export class EventsService {
      */
     requestBody: SetWorkflowRecoveryPolicyRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyChangePreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/change-preview',
       path: {
@@ -3975,7 +3976,7 @@ export class EventsService {
      */
     requestBody: ControlWorkflowRecoveryPolicyRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/control',
       path: {
@@ -4013,7 +4014,7 @@ export class EventsService {
     failureId: string,
     requestBody: WorkflowInitialRecoveryReviewRequest,
   }): CancelablePromise<WorkflowInitialRecoveryReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-failures/{failureID}/recovery-reviews',
       path: {
@@ -4055,7 +4056,7 @@ export class EventsService {
      */
     actionId: string,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent',
       path: {
@@ -4092,7 +4093,7 @@ export class EventsService {
     actionId: string,
     requestBody: WorkflowInitialEvidenceRepairRequest,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent/repair',
       path: {
@@ -4129,7 +4130,7 @@ export class EventsService {
      */
     actionId: string,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence',
       path: {
@@ -4166,7 +4167,7 @@ export class EventsService {
     actionId: string,
     requestBody: WorkflowInitialEvidenceRepairRequest,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/repair',
       path: {
@@ -4198,7 +4199,7 @@ export class EventsService {
      */
     reviewId: string,
   }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence',
       path: {
@@ -4229,7 +4230,7 @@ export class EventsService {
     reviewId: string,
     requestBody: WorkflowInitialEvidenceRepairRequest,
   }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence/repair',
       path: {
@@ -4259,7 +4260,7 @@ export class EventsService {
      */
     reviewId: string,
   }): CancelablePromise<WorkflowInitialRecoveryReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}',
       path: {
@@ -4295,7 +4296,7 @@ export class EventsService {
     reviewId: string,
     requestBody: WorkflowInitialRecoveryReviewDecisionRequest,
   }): CancelablePromise<WorkflowInitialRecoveryReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/decision',
       path: {
@@ -4337,7 +4338,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<WorkflowInitialRecoveryReviews> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/initial-recovery-reviews',
       path: {
@@ -4384,7 +4385,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<WorkflowInitialFailures> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-failures',
       path: {
@@ -4422,7 +4423,7 @@ export class EventsService {
      */
     failureId: string,
   }): CancelablePromise<WorkflowInitialRecoveryPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview',
       path: {
@@ -4486,7 +4487,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<WorkflowRecoveryHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/history',
       path: {
@@ -4543,7 +4544,7 @@ export class EventsService {
      */
     createdBefore?: string,
   }): CancelablePromise<WorkflowRecoveryReport> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/report',
       path: {
@@ -4582,7 +4583,7 @@ export class EventsService {
      */
     stallAfterSeconds?: number,
   }): CancelablePromise<WorkflowRecoveryPolicyHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/health',
       path: {
@@ -4613,7 +4614,7 @@ export class EventsService {
      */
     slug: string,
   }): CancelablePromise<WorkflowRecoveryAutomaticQueue> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/queue',
       path: {
@@ -4651,7 +4652,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<WorkflowRecoveryPolicyReviews> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews',
       path: {
@@ -4688,7 +4689,7 @@ export class EventsService {
      */
     reviewId: string,
   }): CancelablePromise<WorkflowRecoveryPolicyReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}',
       path: {
@@ -4724,7 +4725,7 @@ export class EventsService {
     reviewId: string,
     requestBody: WorkflowRecoveryReviewDecisionRequest,
   }): CancelablePromise<WorkflowRecoveryPolicyReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision',
       path: {
@@ -4771,7 +4772,7 @@ export class EventsService {
      */
     requestBody: SuppressWorkflowRecoveryAutomaticActionRequest,
   }): CancelablePromise<WorkflowRecoveryAutomaticAction> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress',
       path: {
@@ -4809,7 +4810,7 @@ export class EventsService {
      */
     reviewId: string,
   }): CancelablePromise<WorkflowRecoveryReviewStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status',
       path: {
@@ -4843,7 +4844,7 @@ export class EventsService {
      */
     requestId: string,
   }): CancelablePromise<WorkflowRecoveryActionReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}/workflow-action-receipts/{requestID}',
       path: {
@@ -4877,7 +4878,7 @@ export class EventsService {
      */
     requestId: string,
   }): CancelablePromise<EventRecoveryJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-recoveries/by-request/{requestID}',
       path: {
@@ -4911,7 +4912,7 @@ export class EventsService {
      */
     requestBody: WorkflowRecoveryCancellationRequest,
   }): CancelablePromise<WorkflowRecoveryCancellationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-recoveries/{jobID}/workflow-cancellation-preview',
       path: {
@@ -4946,7 +4947,7 @@ export class EventsService {
      */
     requestBody: WorkflowRecoveryCancellationRequest,
   }): CancelablePromise<WorkflowRecoveryCancellationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-recoveries/{jobID}/workflow-cancel',
       path: {
@@ -4982,7 +4983,7 @@ export class EventsService {
      */
     retry?: boolean,
   }): CancelablePromise<EventRecoveryPreflight> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}/preflight',
       path: {
@@ -5016,7 +5017,7 @@ export class EventsService {
      */
     jobId: string,
   }): CancelablePromise<EventRecoveryNotifications> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}/notifications',
       path: {
@@ -5046,7 +5047,7 @@ export class EventsService {
      */
     jobId: string,
   }): CancelablePromise<EventRecoveryNotificationRetryPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}/notifications/retry-preview',
       path: {
@@ -5080,7 +5081,7 @@ export class EventsService {
     jobId: string,
     requestBody: EventRecoveryNotificationRetryRequest,
   }): CancelablePromise<EventRecoveryNotificationRetryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-recoveries/{jobID}/notifications/retry',
       path: {
@@ -5120,7 +5121,7 @@ export class EventsService {
      */
     status?: string,
   }): CancelablePromise<EventRecoveryNotificationRetryHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}/notification-retry-decisions',
       path: {
@@ -5158,7 +5159,7 @@ export class EventsService {
      */
     requestId: string,
   }): CancelablePromise<EventRecoveryNotificationRetryDecisionDetail> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}',
       path: {
@@ -5199,7 +5200,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventRecoveryHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}/history',
       path: {
@@ -5243,7 +5244,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventRecoveryItems> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}/items',
       path: {
@@ -5277,7 +5278,7 @@ export class EventsService {
      */
     jobId: string,
   }): CancelablePromise<EventReplayBackfillJobResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-replays/{jobID}',
       path: {
@@ -5320,7 +5321,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventReplayBackfillItemsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/event-replays/{jobID}/items',
       path: {
@@ -5356,7 +5357,7 @@ export class EventsService {
     jobId: string,
     requestBody: EventReplayBackfillRetryRequest,
   }): CancelablePromise<EventReplayBackfillRetryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-replays/{jobID}/retry-failed',
       path: {
@@ -5393,7 +5394,7 @@ export class EventsService {
      */
     jobId: string,
   }): CancelablePromise<EventReplayBackfillJobResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/event-replays/{jobID}/cancel',
       path: {
@@ -5464,7 +5465,7 @@ export class EventsService {
      */
     fanoutBefore?: string,
   }): CancelablePromise<EventDeliveryListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-deliveries',
       path: {
@@ -5533,7 +5534,7 @@ export class EventsService {
      */
     limit?: number,
   }): CancelablePromise<EventFanoutAttemptHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-deliveries/attempts',
       path: {
@@ -5588,7 +5589,7 @@ export class EventsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ReplayEventFanoutFailureResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-deliveries:replay-fanout-failure',
       path: {
@@ -5642,7 +5643,7 @@ export class EventsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ReplayRetryableEventFanoutFailuresResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-deliveries:replay-retryable-fanout-failures',
       path: {
@@ -5714,7 +5715,7 @@ export class EventsService {
      */
     cursor?: string,
   }): CancelablePromise<EventAcknowledgmentHistoryPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history/pages',
       path: {
@@ -5763,7 +5764,7 @@ export class EventsService {
      */
     invocationId?: string,
   }): CancelablePromise<EventAcknowledgmentHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history',
       path: {
@@ -5802,7 +5803,7 @@ export class EventsService {
      */
     subscriptionId: string,
   }): CancelablePromise<EventAcknowledgmentPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy',
       path: {
@@ -5841,7 +5842,7 @@ export class EventsService {
     subscriptionId: string,
     requestBody: EventAcknowledgmentPolicyRequest,
   }): CancelablePromise<EventAcknowledgmentPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy',
       path: {
@@ -5880,7 +5881,7 @@ export class EventsService {
      */
     invocationId: string,
   }): CancelablePromise<EventAcknowledgmentStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment',
       path: {
@@ -5919,7 +5920,7 @@ export class EventsService {
     invocationId: string,
     requestBody: EventAcknowledgmentRequest,
   }): CancelablePromise<EventAcknowledgmentStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/renew',
       path: {
@@ -5960,7 +5961,7 @@ export class EventsService {
     invocationId: string,
     requestBody: EventAcknowledgmentRequest,
   }): CancelablePromise<EventAcknowledgmentStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/complete',
       path: {
@@ -6001,7 +6002,7 @@ export class EventsService {
     invocationId: string,
     requestBody: EventAcknowledgmentFailureRequest,
   }): CancelablePromise<EventAcknowledgmentStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/retry',
       path: {
@@ -6042,7 +6043,7 @@ export class EventsService {
     invocationId: string,
     requestBody: EventAcknowledgmentFailureRequest,
   }): CancelablePromise<EventAcknowledgmentStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter',
       path: {

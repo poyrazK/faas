@@ -30,10 +30,11 @@ make test-metal     # integration tests tagged //go:build metal — needs KVM + 
 make leakcheck      # asserts zero leaked netns/TAPs/jail uids/cgroups after tests
 make lint           # golangci-lint + custom checks (see Conventions)
 make lint-changed   # golangci-lint only the packages your diff touches + teststorecheck; use before a PR
+make migrations-land # branch adds migrations and main moved: merge main, re-version, regen schema.sql + sqlc
 make native-m9-acceptance # guarded two-node failure-safe acceptance on native x86_64
 ```
 
-Go 1.26.10 (the version pinned by `go.mod`). One binary per `cmd/` dir. If a
+Go 1.26.11 (the version pinned by `go.mod`). One binary per `cmd/` dir. If a
 change touches VM lifecycle, run `test-metal` and `leakcheck` before calling it
 done. Metal and snapshot acceptance is supported only on the dedicated native
 x86_64 Linux KVM hosts; macOS and nested virtualization are not supported
@@ -82,7 +83,8 @@ docs/adr/
    (ADR-20261031105227). Steady state is still `max_concurrency`.
 2. Σ(ram_mb + 8) over live instances ≤ 47,600 MB (85% of 56 GB tenant budget).
    Under measured admission (ADR-909, schedd's default) a node's measured memory
-   ≤ 47,600 MB and Σ(ram_mb + 8) ≤ 2× that, with eviction above the ceiling.
+   ≤ 47,600 MB and Σ(ram_mb + 8) ≤ 2.5× that (ADR-909 amendment 3), with
+   eviction above the ceiling.
 3. An app always has a live snapshot OR a cold-bootable rootfs — never neither.
 4. A parked app consumes zero resident RAM (its cgroup must be gone).
 5. Two instances restored from one snapshot never share IP, netns, jail uid, or RNG stream.
@@ -110,7 +112,7 @@ docs/adr/
 ## Hard limits (source: financial model §1 as amended by the Oct 2026 COGS report, ADR-1430; encoded in pkg/api/limits.go)
 
 Plans (deployed/concurrent/RAM MB/GB-h): Free 1/1/256/20 · Hobby 5/2/512/200 ·
-Pro 25/5/1024/1000 · Scale 100/20/2048/3000. Overage $0.01/GB-h (USD, ADR-1430). Source tarball ≤100 MB
+Pro 25/5/1024/1000 · Scale 100/20/2048/3000. Overage $0.05/GB-h (USD, ADR-20261107192333). Source tarball ≤100 MB
 (≤250 MB Pro+). App layer ≤256 MB/512 MB/1 GB/2 GB by plan. Build VM: 2 vCPU, 2048 MB,
 15 min (ADR-791). Idle timeouts: 60/60/300/600 s by plan (functions default to 30 s on every plan, ADR-974; spec §4.3). RAM admission ceiling: 47,600 MB.
 Fleet snapshot average target: 130 MB — `snapshot_fleet_avg_mb` alerts at 160.
@@ -139,7 +141,8 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 
 - cgroups v2 only; host `unprivileged_userns_clone=0`; nothing runs as root except vmmd.
 - Every VM via jailer: unique uid/gid (20000–29999), chroot, seccomp, cgroup scope
-  `memory.max = plan + 8 MB`.
+  `memory.max = plan + 8 MB + 24 MB VMM headroom` (`api.AppVMMemoryMaxMB`, ADR-20261116191801;
+  admission and billing stay at plan + 8 MB).
 - Tenant egress: deny 25/465/587, deny RFC1918 + link-local + metadata ranges.
 - No shared host directories with guests — block devices only. virtio-rng always attached.
 - Post-restore resume hook must re-seed entropy + step clock before readiness (test V6).

@@ -112,6 +112,13 @@ func (m *MemStore) publishMemTrafficAppPurgeLocked(appID string) {
 			delete(m.edgeRules, id)
 		}
 	}
+	// Sealed header values go with their app, as the foreign key cascades
+	// them in Postgres (ADR-20261108110000).
+	for id, secret := range m.edgeRuleHeaderSecrets {
+		if secret.AppID == appID {
+			delete(m.edgeRuleHeaderSecrets, id)
+		}
+	}
 	for id, preset := range m.corsPresets {
 		if preset.AppID == appID {
 			delete(m.corsPresets, id)

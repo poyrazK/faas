@@ -14,6 +14,7 @@ from ..models.custom_metric_series_response_range import (
     CustomMetricSeriesResponseRange,
     check_custom_metric_series_response_range,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.custom_metric_series_point import CustomMetricSeriesPoint
@@ -36,6 +37,8 @@ class CustomMetricSeriesResponse:
     source: str
     """"prometheus", or "degraded: <reason>" when the metric history could not be read."""
     points: list[CustomMetricSeriesPoint] | None
+    labels: str | Unset = UNSET
+    """The series key this history is for; absent for the metric's aggregate."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +64,8 @@ class CustomMetricSeriesResponse:
         else:
             points = self.points
 
+        labels = self.labels
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -74,6 +79,8 @@ class CustomMetricSeriesResponse:
                 "points": points,
             }
         )
+        if labels is not UNSET:
+            field_dict["labels"] = labels
 
         return field_dict
 
@@ -114,6 +121,8 @@ class CustomMetricSeriesResponse:
 
         points = _parse_points(d.pop("points"))
 
+        labels = d.pop("labels", UNSET)
+
         custom_metric_series_response = cls(
             app_id=app_id,
             name=name,
@@ -122,6 +131,7 @@ class CustomMetricSeriesResponse:
             step=step,
             source=source,
             points=points,
+            labels=labels,
         )
 
         custom_metric_series_response.additional_properties = d

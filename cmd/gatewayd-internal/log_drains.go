@@ -101,12 +101,15 @@ type appLogDrainAppLookupStore interface {
 }
 
 type appLogDrainManager struct {
-	store     appLogDrainStore
-	resolver  logStreamerResolver
-	unseal    func([]byte) (string, error)
-	metrics   *gateway.Metrics
-	log       *slog.Logger
-	spoolRoot string
+	store    appLogDrainStore
+	resolver logStreamerResolver
+	unseal   func([]byte) (string, error)
+	// openHeader, when set, opens a drain's header by reference through
+	// secretd instead of unseal (ADR-20261110210000 slice 3f).
+	openHeader logDrainHeaderOpener
+	metrics    *gateway.Metrics
+	log        *slog.Logger
+	spoolRoot  string
 	// spoolBudget bounds the pending bytes of every drain queue on the node.
 	spoolBudget *logdrain.SpoolBudget
 	// httpClient delivers to customer-supplied drain URLs. It must carry
@@ -122,6 +125,10 @@ type appLogDrainManager struct {
 	// log-drains capability is off (ADR-20261023115741); its running
 	// workers retire at the next reconcile. Nil delivers every drain.
 	capabilityAllowed func(capability, accountID string) bool
+	// edgeEgress meters each delivered line's bytes as the app's egress
+	// (ADR-20261104132753): a drain sends them from Gregale's network on the
+	// app's behalf. Nil meters nothing.
+	edgeEgress func(appID string, n int64)
 
 	mu                      sync.Mutex
 	shutdownMu              sync.Mutex
@@ -319,11 +326,17 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec state.AppLogDrain) (*appLogDrainWorker, error) {
 	authHeader := ""
 	if len(spec.AuthHeaderSealed) > 0 {
-		if m.unseal == nil {
+		var err error
+		switch {
+		case m.openHeader != nil:
+			// ADR-20261110210000 slice 3f: by reference through secretd;
+			// the sealed bytes on the row are not opened here.
+			authHeader, err = m.openHeader(parent, spec.AppID, spec.ID)
+		case m.unseal != nil:
+			authHeader, err = m.unseal(spec.AuthHeaderSealed)
+		default:
 			return nil, errors.New("host age identities are unavailable")
 		}
-		var err error
-		authHeader, err = m.unseal(spec.AuthHeaderSealed)
 		if err != nil {
 			return nil, err
 		}
@@ -361,6 +374,9 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 			})
 		},
 		OnDelivered: func(record logdrain.Record) {
+			if m.edgeEgress != nil {
+				m.edgeEgress(spec.AppID, int64(len(record.Line)))
+			}
 			standardObserver.delivered(record)
 			standardHealth.delivered(record)
 			m.metrics.ObserveLogDrainDelivered(spec.AppID, string(spec.Kind))

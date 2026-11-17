@@ -13,12 +13,14 @@ import (
 
 type setupWaker struct{}
 
-func (setupWaker) Wake(context.Context, string) (string, error) { return "node", nil }
-func (setupWaker) Touch(context.Context, string, int64) error   { return nil }
+func (setupWaker) Wake(context.Context, string) (Backend, error) {
+	return Backend{Target: "node", Node: "db-node"}, nil
+}
+func (setupWaker) Touch(context.Context, string, int64) error { return nil }
 
-type setupDialer func(context.Context, string, string) (io.ReadWriteCloser, error)
+type setupDialer func(context.Context, Backend, string) (io.ReadWriteCloser, error)
 
-func (d setupDialer) Dial(ctx context.Context, node, id string) (io.ReadWriteCloser, error) {
+func (d setupDialer) Dial(ctx context.Context, node Backend, id string) (io.ReadWriteCloser, error) {
 	return d(ctx, node, id)
 }
 
@@ -57,7 +59,7 @@ func TestBackendSetupDeadlineReleasesPoolCapacity(t *testing.T) {
 	for _, phase := range []string{"authentication", "before_ready"} {
 		t.Run(phase, func(t *testing.T) {
 			client, _ := setupBackend(t, phase)
-			p := &Proxy{cfg: Config{PoolWait: 30 * time.Millisecond, WakeTimeout: 30 * time.Millisecond, PoolMaxServers: 1}, waker: setupWaker{}, dialer: setupDialer(func(context.Context, string, string) (io.ReadWriteCloser, error) { return client, nil })}
+			p := &Proxy{cfg: Config{PoolWait: 30 * time.Millisecond, WakeTimeout: 30 * time.Millisecond, PoolMaxServers: 1}, waker: setupWaker{}, dialer: setupDialer(func(context.Context, Backend, string) (io.ReadWriteCloser, error) { return client, nil })}
 			p.pools = newPoolSet(p)
 			pl := p.pools.join(poolKey{databaseID: "database", role: "reader", dbname: "gregale", verifier: "v1"}, make([]byte, 32), make([]byte, 32), map[string]string{"user": "reader", "database": "gregale"})
 			defer pl.leave()
@@ -84,7 +86,7 @@ func TestBackendSetupDeadlineReleasesPoolCapacity(t *testing.T) {
 			// The freed slot serves another setup, whose stream survives the
 			// setup context ending after ReadyForQuery.
 			fresh, closed := setupBackend(t, "ready")
-			p.dialer = setupDialer(func(context.Context, string, string) (io.ReadWriteCloser, error) { return fresh, nil })
+			p.dialer = setupDialer(func(context.Context, Backend, string) (io.ReadWriteCloser, error) { return fresh, nil })
 			ctxReady, cancelReady := context.WithCancel(t.Context())
 			p.cfg.PoolWait = time.Second
 			p.cfg.WakeTimeout = time.Second

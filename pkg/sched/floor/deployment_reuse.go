@@ -200,6 +200,12 @@ func (t *Trigger) evaluateDeployment(ctx context.Context, d state.Deployment, ap
 	if !plan.MinInstancesAllowed() || app.WorkloadClass == state.WorkloadClassWorker {
 		return disabled
 	}
+	// ADR-20261105120000: a floor saved under a larger plan is capped by the
+	// current one.
+	effective = min(effective, plan.MaxMinInstances())
+	if effective <= 0 {
+		return disabled
+	}
 	var conc int
 	if t.ledger != nil {
 		conc = t.ledger.ConcurrencyForDeployment(d.AppID, d.ID)

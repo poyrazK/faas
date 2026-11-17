@@ -43,6 +43,7 @@ func (h *Handler) applyEdgeRuleRespond(w http.ResponseWriter, r *http.Request, a
 	w.WriteHeader(rule.StatusCode)
 	if r.Method != http.MethodHead && len(rule.Body) > 0 && rule.StatusCode != http.StatusNoContent && rule.StatusCode != http.StatusNotModified {
 		_, _ = w.Write(rule.Body)
+		h.recordEdgeEgress(r, app, len(rule.Body))
 	}
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.respond_matched", nil, map[string]any{

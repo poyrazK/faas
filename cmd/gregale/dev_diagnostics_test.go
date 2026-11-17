@@ -22,7 +22,7 @@ func TestDevDiagnosticFromDeploymentUsesCatalogAndContext(t *testing.T) {
 	if !d.Catalog || d.Hint == "" || d.Fix == "" {
 		t.Fatalf("diagnostic did not use catalog prose: %+v", d)
 	}
-	if d.DeploymentID != "dep-123" || d.LogsCommand != "gregale logs --deployment dep-123" {
+	if d.DeploymentID != "dep-123" || d.LogsCommand != "" {
 		t.Fatalf("diagnostic context = %+v", d)
 	}
 }
@@ -47,6 +47,11 @@ func TestClassifyDevRuntimeLog(t *testing.T) {
 		{name: "module", line: "Error: Cannot find module 'express'", code: main.DevDiagImportFailure},
 		{name: "bind", line: "listen EADDRINUSE: address already in use", code: main.DevDiagBindFailure},
 		{name: "upstream", line: "upstream connection refused", code: main.DevDiagUpstreamFailure},
+		{name: "local database refusal", line: "Error: connect ECONNREFUSED 127.0.0.1:5432", code: main.DevDiagUpstreamFailure},
+		{name: "IPv6 dependency refusal", line: "dial tcp [::1]:6379: connect: connection refused", code: main.DevDiagUpstreamFailure},
+		{name: "unavailable interface", line: "listen EADDRNOTAVAIL 192.0.2.1:8080", code: main.DevDiagBindFailure},
+		{name: "loopback listener", line: "listener bound to 127.0.0.1; unreachable from the gateway", code: api.CodeAppLoopbackBound},
+		{name: "traceback mentioning local URL", line: "Traceback: failed request to http://127.0.0.1:8080", code: main.DevDiagStartupCrash},
 		{name: "oom", line: "process OOMKilled by memory limit", code: api.CodeAppRuntimeOOM},
 		{name: "panic", line: "panic: nil pointer dereference", code: main.DevDiagStartupCrash},
 	}
@@ -58,8 +63,18 @@ func TestClassifyDevRuntimeLog(t *testing.T) {
 			}
 		})
 	}
-	if _, ok := main.ClassifyDevRuntimeLog("server listening on 0.0.0.0:8080"); ok {
-		t.Fatal("normal readiness log should not emit a diagnostic")
+	for _, line := range []string{
+		"server listening on 0.0.0.0:8080",
+		"Local: http://127.0.0.1:5173",
+		"server listening on localhost:8080",
+		"server bound to 127.0.0.1:5173",
+		"server bound to localhost:8080",
+		"upstream healthy",
+		"request from 127.0.0.1 succeeded",
+	} {
+		if d, ok := main.ClassifyDevRuntimeLog(line); ok {
+			t.Fatalf("normal log %q emitted a diagnostic: %+v", line, d)
+		}
 	}
 }
 

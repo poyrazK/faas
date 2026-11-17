@@ -159,7 +159,11 @@ without an `outboundd` restart. Requests already admitted retain their original
 deadline, and reducing `max_in_flight` does not terminate calls already running.
 The credential remains unavailable until uploaded and the gateway fails closed
 if it is missing or revoked. A maximum of 25 enabled customer integrations is
-allowed per account.
+allowed per account. AI calls of one account across all its customer
+integrations are also limited per `outboundd` process to
+`OutboundAIAccountRatePerSecondMax` (Free 20, Hobby 40, Pro 200, Scale 1000
+per second, burst twice that); excess calls get `429
+outbound_ai_account_rate_limited` (ADR 20261027132936 amendment 2).
 
 The account plan bounds each integration's request policy:
 
@@ -284,9 +288,12 @@ path and query. It returns `429 application/problem+json` with `Retry-After`
 when the rate or concurrency budget is exhausted; inspect
 `X-Gregale-Outbound-Rejection` for `rate_limit` versus `concurrency_limit`.
 By default, Gregale makes one upstream attempt. A configured `max_retries`
-(0–2) enables retries only for bodyless `GET` and `HEAD` requests, and only
-for network timeouts/resets or provider `408`, `425`, `429`, `502`, `503`, and
-`504` responses. Other methods and requests with bodies are never retried.
+(0–2) enables retries for bodyless `GET` and `HEAD` requests, on network
+timeouts/resets or provider `408`, `425`, `429`, `502`, `503`, and `504`
+responses. A buffered AI `POST` (ADR-990) is also retried, but only when the
+provider cannot have run it: a request that failed before it was sent, or a
+`425`, `429`, `502` or `503` answer (ADR 20261027132936 amendment 1). Other
+methods and requests with bodies are never retried.
 Exponential backoff starts at 100 ms. Automatic retries honor a valid provider
 `Retry-After` only when it fits within the one-second retry window; longer
 delays are never shortened into an early retry, and the current provider
@@ -393,6 +400,22 @@ status codes.
 >
 > The rollout steps, alerts and rollback are in the
 > [AI gateway runbook](../runbooks/FaasAIGateway.md).
+>
+> **Before turning the flag on (ADR 20261027132936 amendment 1).** Deployed
+> apps reach the gateway only through the [app relay](#app-relay), so turning
+> on the flag alone serves no app.
+>
+> 1. Install the workload-identity key on the control plane.
+> 2. Set `faas_outboundd_relay_listen` for the control plane.
+> 3. Set `faas_vmmd_outbound_relay_target` and
+>    `faas_vmmd_outbound_relay_tls_managed` for compute nodes, then converge.
+> 4. Check that `outbound_ai_app_relay_ready` is 1 on every `outboundd`.
+>
+> `FaasAIGatewayEnabledWithoutAppRelay` warns while the flag is on and the
+> relay is off. The public host for access tokens
+> (`faas_ai_gateway_public_enabled`) is optional; calls through it wait at
+> most `OutboundAIPublicHeaderTimeoutSeconds` (90 s) for headers, under
+> Cloudflare's 100-second limit.
 
 An integration in front of an LLM provider can declare `ai_provider`. Use
 `openai` for OpenAI and any provider that speaks its wire format, or
@@ -621,6 +644,16 @@ call:
   model's `cached_requests` and adds the cost the provider call would have had,
   priced from the cached response, to `cache_saved_millicents`.
   `outbound_ai_response_cache_saved_millicents_total` counts it.
+- **Semantic cache** (ADR 20261112194947, Pro and Scale): an AI policy's
+  `semantic_cache` answers a cache miss from an entry whose last user turn
+  embeds within the threshold of the call's and whose rest of the call
+  matches exactly. The embedding runs in process through the named OpenAI or
+  Gemini integration under the caller `semantic_cache` (1 s, fail-open).
+  Each outboundd process indexes at most 2,000 entries per integration, 256
+  integrations and 64 MiB. `outbound_ai_semantic_cache_total{result}`
+  counts `hit`, `miss`, `skipped` (not a candidate) and `error` (the
+  embedding failed). outboundd ignores the settings when the plan no longer
+  includes them or the response cache is off.
 - **Prompt-cache savings:** every call also adds
   `prompt_cache_saved_millicents`: its cost with cached reads and cache
   writes priced as plain input, minus its cost. It is negative when cache
@@ -873,8 +906,21 @@ from the catalog for the integration's provider. Reservations and settlement
 use the same price.
 
 - The file records its LiteLLM source commit, generation date and currency.
-  Prices are base-tier list prices; batch, priority, long-context tiers
-  and negotiated discounts are not modelled.
+  Prices are base-tier list prices; batch and priority tiers and negotiated
+  discounts are not modelled.
+- Long-context tiers and one-hour cache writes are (ADR 20261027132936
+  amendment 3). Claude Sonnet 4.x and Gemini 2.5 Pro cost 2x input and 1.5x
+  output above 200k prompt tokens, Gemini 1.5 Pro 2x both above 128k
+  (`pkg/outbound/aiprices/long_context.go`); Claude's one-hour cache writes
+  cost the higher of the cache-write price and twice the input price. The
+  catalog response shows both as `long_context` and
+  `cache_write_1h_millicents_per_mtok`.
+- A customer price list entry can set its own: `long_context`
+  (`above_input_tokens` 1,000 to 2,000,000, `input_percent` and
+  `output_percent` 100 to 1,000) and `cache_write_1h_millicents_per_mtok`.
+  An entry without a tier is billed flat; without a one-hour price, its
+  one-hour writes use the rule above. With the CLI:
+  `gregale ai prices set <id> --price model=claude,input=3,output=15,cache-write-1h=6,long-context=200000:200:150`.
 - A dated or versioned model the catalog lacks is priced as its family
   (`gpt-4o-2024-08-06` as `gpt-4o`, `claude-sonnet-4-5@20250929` as
   `claude-sonnet-4-5`). Bedrock cross-region prefixes and ARNs are stripped.
@@ -1508,7 +1554,9 @@ replays or the gateway's own checks.
   outbound_ai_response_flagged` after moderation. A flag sends
   `X-Gregale-AI-Response-Moderation: flagged=<categories>`.
 - A failed moderation check under `--moderation-on-error block` answers `503
-  outbound_ai_moderation_unavailable`. A response the gateway cannot read or
+  outbound_ai_moderation_unavailable`. Without `--moderation-on-error`, a
+  `block` check blocks on failure and a `flag` check allows (ADR 20261027132936
+  amendment 2). A response the gateway cannot read or
   that is over 4 MiB answers `502 outbound_ai_response_unchecked`.
 - Gemini's `streamGenerateContent` without `alt=sse` is a JSON array, so it
   is checked whole and arrives at the end.
@@ -1847,6 +1895,93 @@ a route's evaluations.
 
 `outbound_ai_evaluations_total` counts finished evaluations by result (`pass`,
 `fail` or `failed`).
+
+## Managed prompts
+
+A managed prompt (ADR 20261114180740) is a named, versioned call recipe on the
+account. Apps call it by name; changing the prompt never needs a deploy.
+
+- **Versions:** each version is immutable and holds:
+  - up to 32 `messages` (`system`, `developer`, `user`, `assistant`) whose
+    content may use `{{variable}}` placeholders (names
+    `[A-Za-z_][A-Za-z0-9_]{0,63}`, at most 50 per version);
+  - `defaults` for variables a call may omit;
+  - a `target`: an openai-format route, or a managed AI integration that an
+    openai-format route accepts, with a `model`;
+  - `params`: `temperature`, `top_p`, `max_tokens`, up to 4 `stop` strings
+    and a `response_format` object;
+  - an optional `note`.
+
+  Messages, defaults and params together are at most 64 KiB. Each prompt
+  keeps 200 versions; pushing one more deletes the oldest version that is
+  neither live, previous live nor in a canary.
+- **Pushing:** `gregale ai prompts push support.yaml` (or
+  `POST /v1/outbound/ai-prompts/{name}/versions`) stores a version. A
+  prompt's first version is live; later ones are live only with `--live`. A
+  push identical to the latest version stores nothing, so pushing from CI on
+  every deploy is safe. Prompts per account: Hobby 25, Pro 100, Scale 500
+  (`OutboundAIPromptsMax`).
+
+  ```yaml
+  name: support
+  description: Support replies
+  target: { integration_id: 3f1c..., model: gpt-4o }
+  params: { temperature: 0.2, max_tokens: 400 }
+  defaults: { tone: friendly }
+  messages:
+    - role: system
+      content: You answer for Acme support in a {{tone}} tone.
+    - role: user
+      content: "{{question}}"
+  ```
+- **Calling:** `POST $GREGALE_OUTBOUND_URL/p/{name}` (or the public AI host
+  with an access token) with
+  `{"variables": {...}, "messages": [...], "stream": true, "version": 7}`:
+  - `variables` fill the placeholders as plain text: a value is never scanned
+    for placeholders, so user input cannot change the template;
+  - `messages` (optional) are OpenAI chat messages appended after the
+    template's, for a conversation;
+  - `version` (optional) pins a version, for tests and CI.
+
+  The gateway renders the version into an OpenAI chat completions request
+  and serves it through the version's route, or a one-target openai-format
+  route to its integration, so translation, fallback, caps, guardrails,
+  caches, tags and traces all apply. The answer is OpenAI chat completions
+  JSON or SSE, and `X-Gregale-AI-Prompt-Version` names the version that
+  served it.
+- **Going live:** `gregale ai prompts promote <name> <version>` makes a
+  version live, keeping the old one as the previous version;
+  `gregale ai prompts rollback <name>` puts the previous version back. Both
+  end any canary.
+- **Canaries:** `gregale ai prompts canary <name> <version> --percent 10`
+  sends that share of unpinned calls to a version, sticky per
+  `X-Gregale-AI-Session`, else `X-Gregale-AI-User`, else at random.
+  outboundd judges it with the route canary rule (error-rate and optional
+  latency margins after `min_calls`) and rolls it back on its own;
+  `canary <name> promote` makes it live and `canary <name> stop` ends it.
+- **Stats:** `gregale ai prompts stats <name>` shows each version's
+  attempts, errors, mean time to first byte, cost and good and bad feedback
+  over the last 24 hours. Attempts are counted per attempt, so a route
+  fallback counts as an error for the version; both sides of a canary face
+  the same providers. The request log records each call's `prompt_id` and
+  `prompt_version`.
+- **Evaluations:** `gregale ai prompts evaluate <name> <version> --cases
+  cases.jsonl --judge <id> --judge-model gpt-5 [--canary-percent 10]`
+  renders the candidate and the live version for each of up to 50 variable
+  sets, calls each version's target in process (a route target uses its
+  first target) under the caller `evaluation`, and asks the judge which
+  answer is better with the route evaluation's judge prompt and pass rule. A
+  passing evaluation starts its canary while the baseline is still live and
+  no canary is active. Captured traffic is not replayed: captures hold
+  rendered text, not variables.
+- **Other commands:** `list`, `get <name> [--version N]`,
+  `diff <name> <a> <b>`, `render <name> --var k=v` (shows what a version
+  sends, without calling a model) and `rm <name>`.
+
+`outbound_ai_prompt_calls_total{pick}` counts prompt calls by how their
+version was picked (`live`, `canary`, `pinned`), and
+`outbound_ai_prompt_canary_rollbacks_total{reason}` counts prompt canary
+rollbacks.
 
 ## Runs
 

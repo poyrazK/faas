@@ -78,7 +78,7 @@ func polarCatalogServer(t *testing.T, includeMeter bool) string {
 			case "scale-product":
 				fixed = 9900
 			}
-			_, _ = io.WriteString(w, `{"id":"`+id+`","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"usd","price_amount":`+strconv.Itoa(fixed)+`,"is_archived":false},{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`)
+			_, _ = io.WriteString(w, `{"id":"`+id+`","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"usd","price_amount":`+strconv.Itoa(fixed)+`,"is_archived":false},{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"5","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`)
 		case includeMeter && r.URL.Path == "/v1/meters/meter-1":
 			_, _ = io.WriteString(w, `{"id":"meter-1","unit":"scalar","archived_at":null,"filter":{"conjunction":"and","clauses":[{"property":"name","operator":"eq","value":"ram_usage"}]},"aggregation":{"func":"sum","property":"gb_ram_hours"}}`)
 		default:

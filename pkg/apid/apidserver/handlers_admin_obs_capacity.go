@@ -139,13 +139,14 @@ func (s *server) obsTenant360(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	writeJSON(w, http.StatusOK, api.ObsTenant360Response{
-		Account:  detail.Account,
-		Apps:     detail.Apps,
-		Orgs:     detail.Orgs,
-		APIKeys:  detail.APIKeys,
-		Sessions: detail.Sessions,
-		Usage:    usage,
-		Billing:  billing,
+		Account:   detail.Account,
+		Apps:      detail.Apps,
+		Orgs:      detail.Orgs,
+		APIKeys:   detail.APIKeys,
+		Sessions:  detail.Sessions,
+		Usage:     usage,
+		Billing:   billing,
+		Diagnosis: s.buildTenantDiagnosis(r.Context(), target, billing),
 	})
 }
 
@@ -226,6 +227,12 @@ func projectObsTenantBilling(r *http.Request, st state.Store, provider billing.P
 		return api.ObsTenantBilling{}, err
 	}
 	billingView.CurrentMonthOverageCents = saturatingAddCents(billingView.CurrentMonthOverageCents, storageCents)
+	// And the managed PostgreSQL overage charge (billing review 2026-11-13).
+	databaseCents, err := meter.SpendCapManagedPostgresCents(r.Context(), st, acct.ID, month)
+	if err != nil {
+		return api.ObsTenantBilling{}, err
+	}
+	billingView.CurrentMonthOverageCents = saturatingAddCents(billingView.CurrentMonthOverageCents, databaseCents)
 	capCents, hasCap, err := st.GetAccountOverageCapCents(r.Context(), acct.ID)
 	if err != nil {
 		return api.ObsTenantBilling{}, err

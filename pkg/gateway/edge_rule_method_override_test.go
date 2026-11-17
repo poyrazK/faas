@@ -6,8 +6,37 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 )
+
+// ADR-20261107190000: a gate's match condition reads every path
+// form its match_path covers, so "maintenance on everything but /public"
+// still covers /public/../admin, which frameworks serve as /admin.
+func TestMatchProtectiveEdgeRuleConditionCoversPathForms(t *testing.T) {
+	exceptPublic, err := api.CompileEdgeRuleMatch(&api.EdgeRuleMatchExpr{Not: &api.EdgeRuleMatchExpr{Field: "path", Op: "prefix", Value: "/public"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := maintenanceRule("all-but-public", 10)
+	rule.PathGlob = "/**"
+	rule.Match = exceptPublic
+	rules := []gateway.EdgeRuleMaintenanceResolved{rule}
+	for _, tc := range []struct {
+		target string
+		want   bool
+	}{
+		{"/public/logo.png", false},
+		{"/admin/users", true},
+		{"/public/../admin/users", true},
+		{"/public/%2e%2e/admin/users", true},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "http://example.test"+tc.target, nil)
+		if got := matchMaintenance(r, rules); (got != nil) != tc.want {
+			t.Fatalf("%s: match = %#v, want matched=%v", tc.target, got, tc.want)
+		}
+	}
+}
 
 func maintenanceRule(id string, priority int, methods ...string) gateway.EdgeRuleMaintenanceResolved {
 	rule := gateway.EdgeRuleMaintenanceResolved{ID: id, AccountID: "acct", Priority: priority, PathGlob: "/admin/**", RetryAfterSeconds: 1}

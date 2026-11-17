@@ -399,3 +399,22 @@ func TestPlanProblem_PreservesExistingOrdering(t *testing.T) {
 			p.Code, api.CodePlanLimitApps)
 	}
 }
+
+// ChronoLake finding 11: a plan blocked only by a post-filter admission
+// reason (the pre-exclude gate passed) used to fall through to
+// plan_cron_quota, printing "plan caps crons at 500; you have 10".
+func TestPlanProblem_AdmissionReasonIsNotCronQuota(t *testing.T) {
+	plan := basePlan()
+	plan.CanApply = false
+	plan.CanApplyPreExclude = true
+	plan.LimitCrons, plan.ObservedCrons = 500, 10
+	plan.CanApplyReasons = []string{`workload "compactor" depends on unknown service "store"`}
+
+	p := main.PlanProblem(plan)
+	if p.Code != api.CodePlanGateBlocked {
+		t.Fatalf("code = %q, want %q (detail %q)", p.Code, api.CodePlanGateBlocked, p.Detail)
+	}
+	if !strings.Contains(p.Detail, "unknown service") || strings.Contains(p.Detail, "crons") {
+		t.Fatalf("detail = %q", p.Detail)
+	}
+}

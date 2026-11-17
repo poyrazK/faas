@@ -28,6 +28,25 @@ func startTraceBridge(cfg *api.TracingConfig, log *slog.Logger) error {
 	}
 	bridge := newTraceBridge(sendTraceFrame)
 	bridge.observe = newTraceOutcomeLogger(log)
+	if cfg.Forward.Enabled() {
+		source := &forwardHeaderSource{path: secretsEnvPath, name: cfg.Forward.HeadersSecret}
+		bridge.forward = newTraceForwarder(cfg.Forward, source.get)
+		bridge.forward.observe = newForwardOutcomeLogger(log)
+		go bridge.forward.run(context.Background(), 2)
+		log.Info("trace forwarding enabled", "endpoint", cfg.Forward.Endpoint)
+	}
+	// OTLP/gRPC beside OTLP/HTTP (ADR-20261108100000). A bind failure (the
+	// app owns 4317) only disables the gRPC receiver.
+	if grpcLn, grpcErr := net.Listen("tcp4", api.TraceLocalGRPCListen); grpcErr != nil {
+		log.Warn("trace bridge gRPC receiver unavailable", "err", grpcErr)
+	} else {
+		grpcSrv := newTraceGRPCServer(bridge.grpcHandler())
+		go func() {
+			if err := grpcSrv.Serve(grpcLn); err != nil && err != http.ErrServerClosed {
+				log.Warn("trace bridge gRPC receiver stopped", "err", err)
+			}
+		}()
+	}
 	srv := &http.Server{
 		Handler:           bridge.handler(),
 		ReadHeaderTimeout: time.Second,

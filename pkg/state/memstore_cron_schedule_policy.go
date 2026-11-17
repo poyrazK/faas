@@ -41,6 +41,13 @@ func (m *MemStore) CreateScheduledCronInvocationOccurrence(_ context.Context, cr
 	invocation.FailureRules = workpolicy.Clone(cron.FailureRules)
 	cronIDCopy := cronID
 	invocation.CronID = &cronIDCopy
+	if cron.DeploymentScope != "" {
+		env, err := m.cronEnvironmentLocked(app, cron)
+		if err != nil {
+			return Invocation{}, ScheduleOccurrence{}, false, err
+		}
+		invocation.EnvironmentID, invocation.DeploymentScope = env.ID, env.Slug
+	}
 	if err := m.platformTenantInvocationAllowedLocked(invocation); err != nil {
 		return Invocation{}, ScheduleOccurrence{}, false, err
 	}
@@ -81,6 +88,13 @@ func (m *MemStore) CreateScheduledCronInvocationOccurrence(_ context.Context, cr
 					}
 				}
 				replacedPending = active
+			}
+		} else if policy.Overlap == "skip" {
+			for _, candidate := range m.invocations {
+				if candidate.CronID != nil && *candidate.CronID == cronID && candidate.Source == InvocationCron && timedOutRunMayStillRun(candidate, time.Now()) {
+					status, reason, blocker = "skipped_overlap", "an earlier run of this cron timed out and may still be running", candidate.OccurrenceID
+					break
+				}
 			}
 		}
 	}

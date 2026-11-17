@@ -128,7 +128,10 @@ changing the domain.
 
 A domain is attached to one app, and edge rules send parts of it to other apps
 in the same account. Declare the layout in `gregale.yaml` so it deploys with
-the code:
+the code. A reviewed deploy (`gregale deploy`, the dashboard) applies it; a
+GitHub push that changes it deploys its services but not the routes, and a
+failed `gregale / <project> (project settings)` check says to run a reviewed
+deploy:
 
 ```yaml
 routes:
@@ -215,8 +218,7 @@ and a value tied to your account. Publish it and add the domain again. The
 other account's unverified claim moves to your app, and verification
 completes as usual. A verified domain cannot be taken this way. Tenant
 hostnames on a tenant surface work the same, and a surface may hold at most
-as many unverified hostnames as its plan allows verified ones. See
-[the ADR](adr/20261020090500-dns-proof-takes-over-pending-claims.md).
+as many unverified hostnames as its plan allows verified ones.
 
 The default `*.gregale.dev` hostname works without a custom domain. Domain
 entitlement, certificate limits, and wildcard behavior are listed in

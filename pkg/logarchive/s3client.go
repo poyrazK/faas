@@ -170,6 +170,57 @@ func (c *S3Client) PutObject(ctx context.Context, key, contentType string, r io.
 	return parseS3Response(resp, "PUT")
 }
 
+// PutObjectIfAbsent creates {bucket}/{key} only when no object holds the key
+// yet, and reports false when one already does. Part keys name their content
+// (partKey), so an existing object is this upload from an earlier attempt.
+// On GCS the PUT carries x-goog-if-generation-match: 0, which a create-only
+// role (storage.objectCreator) needs: without the precondition a second PUT
+// of the same key is an overwrite and is refused. Other S3 stores let a
+// PutObject-only policy overwrite, so the PUT there is plain.
+func (c *S3Client) PutObjectIfAbsent(ctx context.Context, key, contentType string, r io.Reader, size int64) (bool, error) {
+	body, payloadHash, err := prepareUploadBody(r, size)
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.objectURL(key), body)
+	if err != nil {
+		return false, fmt.Errorf("logarchive: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	if c.isGCS() {
+		req.Header.Set("x-goog-if-generation-match", "0")
+	}
+	req.ContentLength = size
+	if size == 0 {
+		req.Body = http.NoBody
+	}
+	if err := c.authorize(req, payloadHash); err != nil {
+		return false, err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("logarchive: put: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusPreconditionFailed {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return false, nil
+	}
+	if err := parseS3Response(resp, "PUT"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// isGCS reports a Google Cloud Storage endpoint, keyless or HMAC.
+func (c *S3Client) isGCS() bool {
+	if c.TokenSource != nil {
+		return true
+	}
+	u, err := url.Parse(c.Endpoint)
+	return err == nil && (u.Hostname() == "storage.googleapis.com" || strings.HasSuffix(u.Hostname(), ".storage.googleapis.com"))
+}
+
 func prepareUploadBody(r io.Reader, size int64) (io.Reader, string, error) {
 	if size < 0 {
 		return nil, "", &Permanent{Code: "BodyLengthMismatch", Message: "negative body size"}

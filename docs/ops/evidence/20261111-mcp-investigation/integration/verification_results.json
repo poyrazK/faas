@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-11",
+  "code_head": "19bd74d38d1400c6c4bbe22806dbc72783b05a10",
+  "integrated_main": "b376664ec965c8663be7c433b1e10592515bd6dd",
+  "checks": [
+    {
+      "check": "Go retained regressions, authorization and cron history",
+      "exit_code": 0,
+      "log": "go_regressions.log"
+    },
+    {
+      "check": "Full Node starter suite with PostgreSQL",
+      "exit_code": 0,
+      "passed": 236,
+      "skipped": 0,
+      "log": "node_suite.log"
+    },
+    {
+      "check": "Full Python starter suite with PostgreSQL and pinned PyJWT",
+      "exit_code": 0,
+      "passed": 101,
+      "skipped": 0,
+      "log": "python_suite.log"
+    }
+  ]
+}

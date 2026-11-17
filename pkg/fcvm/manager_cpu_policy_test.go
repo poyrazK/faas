@@ -22,13 +22,18 @@ type cpuPolicyTestVMM struct {
 	guestCPULimitCalls []cpuLimitCall
 	cpuLimitErr        error
 	writeCgroup        bool
+	// onCPULimit runs before UpdateCPULimit answers.
+	onCPULimit func(Lease)
 }
 
 func (v *cpuPolicyTestVMM) UpdateCPULimit(_ context.Context, lease Lease, cpuMillicores int) error {
 	v.mu.Lock()
 	v.cpuLimitCalls = append(v.cpuLimitCalls, cpuLimitCall{instance: lease.Instance, cpu: cpuMillicores})
-	err := v.cpuLimitErr
+	err, hook := v.cpuLimitErr, v.onCPULimit
 	v.mu.Unlock()
+	if hook != nil {
+		hook(lease)
+	}
 	if err != nil {
 		return err
 	}
@@ -124,7 +129,7 @@ func TestManagerWakeAppliesLatestAppCPULimitBeforePublication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read live cpu.max: %v", err)
 	}
-	if got, want := string(body), fmt.Sprintf("%d %d\n", 125000, api.PlanPro.CPUPeriodUS()); got != want {
+	if got, want := string(body), fmt.Sprintf("%d %d\n", 250*cpuMaxPeriodUS/1000, cpuMaxPeriodUS); got != want {
 		t.Fatalf("cpu.max = %q, want %q", got, want)
 	}
 }

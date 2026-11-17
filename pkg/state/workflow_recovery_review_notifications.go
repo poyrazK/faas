@@ -35,7 +35,7 @@ func recoveryReviewNotificationID(id string) string {
 func recoveryReviewReadyPayload(r api.WorkflowRecoveryPolicyReview, now time.Time) api.WorkflowRecoveryReviewReadyWebhookPayload {
 	p := r.Plan
 	path := "/v1/apps/" + url.PathEscape(p.App) + "/recovery-policy/reviews/" + r.ID
-	command := "gregale automations recovery-policy-reviews --app " + strconv.Quote(p.App) + " --review " + r.ID
+	command := "gregale workflow stored recovery-policy-reviews --app " + strconv.Quote(p.App) + " --review " + r.ID
 	out := api.WorkflowRecoveryReviewReadyWebhookPayload{EventID: recoveryReviewNotificationID(r.ID), ReviewID: r.ID, AppID: r.AppID, App: p.App, JobID: r.JobID, PolicyVersion: r.PolicyVersion, PreparedAt: p.CreatedAt, ObservedAt: now, ReviewURL: path, StatusURL: path + "/status", ReviewCommand: command, ExportCommand: command + " --plan-out recovery-plan.json", Targets: []api.WorkflowRecoveryPolicyDecision{}}
 	for _, d := range r.Decisions {
 		if d.Outcome == "prepared" {

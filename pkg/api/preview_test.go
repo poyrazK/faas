@@ -62,6 +62,52 @@ func TestGetPreviewStatusRejectsProductionApp(t *testing.T) {
 	}
 }
 
+// CI holding an app-bound deploy token or a preview-read bearer can read
+// /v1/preview/{slug} but not /v1/apps (ADR-20261105090226).
+func TestGetPreviewStatusReadsPreviewRouteFirst(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/preview/pr-42-web" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"forbidden","status":403}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(PreviewResourceResponse{
+			App:              AppResponse{Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42},
+			LatestDeployment: &DeploymentResponse{ID: "deploy-42", Status: "live"},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := NewClient(srv.URL, "token").GetPreviewStatus(context.Background(), "pr-42-web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.App.PreviewPRNumber != 42 || got.LatestDeployment == nil || got.LatestDeployment.ID != "deploy-42" {
+		t.Fatalf("status = %+v", got)
+	}
+}
+
+func TestGetPreviewStatusKeepsNonNotFoundPreviewRouteErrors(t *testing.T) {
+	var appReads int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/preview/pr-42-web" {
+			appReads++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":"forbidden","status":403}`))
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient(srv.URL, "token").GetPreviewStatus(context.Background(), "pr-42-web"); err == nil {
+		t.Fatal("GetPreviewStatus succeeded on a 403")
+	}
+	if appReads != 0 {
+		t.Fatalf("app route reads = %d, want none after a non-404 preview error", appReads)
+	}
+}
+
 func TestGetPreviewReturnsFirstClassResource(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/preview/pr-42-web" {

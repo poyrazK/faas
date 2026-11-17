@@ -155,3 +155,76 @@ func TestPGManagedPostgresPlanExcessSkipsWhatItMustNotMail(t *testing.T) {
 		})
 	}
 }
+
+// ADR-20261110184700: linking the email stores the deletion date it names on
+// the notice, so the cap sweep deletes only on a date the owner was mailed.
+func TestPGManagedPostgresPlanExcessStoresTheMailedDeletionDate(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for _, tc := range []struct {
+		name     string
+		deleteAt time.Time
+	}{
+		{"with a deletion date", now.Add(api.ManagedPostgresPlanExcessDeleteAfter)},
+		{"without one", time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := planExcessFixture(t)
+			id := account(t, f)
+			notice := planExcessNotice(t, f, "database_limit", "development", now.Add(-time.Minute))
+			notice.DeleteAt = tc.deleteAt
+			if err := f.service.NoticeManagedPostgresPlanExcess(t.Context(), id, notice); err != nil {
+				t.Fatal(err)
+			}
+			var stored *time.Time
+			if err := f.pool.QueryRow(t.Context(), "SELECT delete_at FROM managed_postgres_plan_excess_notices WHERE database_id=$1", notice.DatabaseID).Scan(&stored); err != nil {
+				t.Fatal(err)
+			}
+			if tc.deleteAt.IsZero() != (stored == nil) || (stored != nil && !stored.Equal(tc.deleteAt)) {
+				t.Fatalf("stored delete_at %v; want %v", stored, tc.deleteAt)
+			}
+		})
+	}
+}
+
+// ADR-20261110184700 amendment 2026-11-12: the reminder is queued once per
+// mailed deletion date, names that date, and leaves the first email's link.
+func TestPGManagedPostgresPlanExcessRemindsOnce(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	f := planExcessFixture(t)
+	id := account(t, f)
+	notice := planExcessNotice(t, f, "database_limit", "development", now.Add(-time.Minute))
+	deleteAt := now.Add(5 * 24 * time.Hour)
+	notice.DeleteAt = deleteAt
+	if err := f.service.NoticeManagedPostgresPlanExcess(t.Context(), id, notice); err != nil {
+		t.Fatal(err)
+	}
+	reminder := notice
+	reminder.Reminder, reminder.RecordedAt = true, now
+	// A reminder naming another date is not queued.
+	moved := reminder
+	moved.DeleteAt = deleteAt.Add(time.Hour)
+	if err := f.service.NoticeManagedPostgresPlanExcess(t.Context(), id, moved); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := f.service.NoticeManagedPostgresPlanExcess(t.Context(), id, reminder); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var first, second *string
+	var stored time.Time
+	if err := f.pool.QueryRow(t.Context(), "SELECT mail_intent_id::text,reminder_mail_intent_id::text,delete_at FROM managed_postgres_plan_excess_notices WHERE database_id=$1",
+		notice.DatabaseID).Scan(&first, &second, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if first == nil || second == nil || *first == *second || !stored.Equal(deleteAt) {
+		t.Fatalf("first %v, reminder %v, delete_at %v; want two intents and the first date", first, second, stored)
+	}
+	var intents int
+	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM platform_mail_producer_outbox WHERE template='managed_postgres_plan_excess' AND account_id=$1", id).Scan(&intents); err != nil {
+		t.Fatal(err)
+	}
+	if intents != 2 {
+		t.Fatalf("intents %d; want the first email and one reminder", intents)
+	}
+}

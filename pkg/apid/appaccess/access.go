@@ -3,6 +3,7 @@ package appaccess
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"net/http"
 	"strings"
@@ -116,13 +117,15 @@ func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) aut
 func addressedApp(r *http.Request, store Store, actorID string) (state.App, bool, error) {
 	// No app lookup is needed on account, authentication or organization
 	// management endpoints, including degraded-server health tests.
-	if r.PathValue("organization") != "" && strings.Contains(r.Pattern, "/apps/{slug}") {
+	// An organization path, or an organization storage path apid's mirror
+	// dispatched to the /v1/apps/{slug}/... handler (object storage audit OS-4).
+	if organization := authmw.OrganizationSlug(r); organization != "" && strings.Contains(r.Pattern, "/apps/{slug}") {
 		app, err := store.AppBySlug(r.Context(), r.PathValue("slug"))
 		if err != nil {
 			return state.App{}, true, err
 		}
 		org, err := store.OrgByID(r.Context(), app.OrgID)
-		if err != nil || org.Personal || org.Slug != r.PathValue("organization") {
+		if err != nil || org.Personal || org.Slug != organization {
 			return state.App{}, true, state.ErrNotFound
 		}
 		return app, true, nil
@@ -192,6 +195,9 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	_, key, _, ok := authmw.PrincipalFrom(r)
 	if !ok {
 		return state.Account{}, api.ErrCapacity("application authorization requires an authenticated principal")
+	}
+	if support, ok := SupportFrom(r.Context()); ok {
+		return authorizeSupport(r, store, actor, key, app, support)
 	}
 	// A key limited to projects reaches only their apps (ADR-20261104085712).
 	if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID || authmw.AppOutsideKeyProjects(key, app)) {
@@ -351,6 +357,12 @@ func lookupProblem(r *http.Request, err error) *api.Problem {
 	// A path ID that is no UUID names no resource either (Hunt 14 H14-65).
 	if errors.Is(err, state.ErrNotFound) || state.IsMalformedID(err) {
 		return notFound(r)
+	}
+	// The caller only sees a generic 503; this line is the only record of
+	// why (a gregale logs call failed this way with no trace, 2026-11-16).
+	if !errors.Is(err, context.Canceled) {
+		slog.Default().WarnContext(r.Context(), "appaccess: authorization lookup failed; answering 503",
+			"method", r.Method, "path", r.URL.Path, "err", err)
 	}
 	return api.ErrCapacity("could not authorize application access")
 }

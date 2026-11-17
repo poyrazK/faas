@@ -1,0 +1,557 @@
+package state
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+func simulateTest(t *testing.T, request api.SimulateStoredWorkflowRequest) api.SimulateStoredWorkflowResponse {
+	t.Helper()
+	response, err := SimulateStoredWorkflow(context.Background(), request, api.PlanHobby)
+	if err != nil || !response.DefinitionValid {
+		t.Fatalf("simulation: %+v %v", response, err)
+	}
+	return response
+}
+
+func simulationStep(t *testing.T, response api.SimulateStoredWorkflowResponse, name string) api.StoredWorkflowSimulationStep {
+	t.Helper()
+	for _, row := range response.Trace {
+		if row.StepName == name {
+			return row
+		}
+	}
+	t.Fatalf("missing trace step %q", name)
+	return api.StoredWorkflowSimulationStep{}
+}
+
+func TestAutomationSimulationBranchJoinMatchesRuntime(t *testing.T) {
+	request := api.SimulateStoredWorkflowRequest{Definition: joinTestSpec(), Input: json.RawMessage(`{"active":false}`), MockOutputs: map[string]json.RawMessage{"a": json.RawMessage(`{"n":9007199254740993,"literal":"{{input.secret}}"}`), "b": json.RawMessage(`null`)}}
+	request.Definition.Steps[3].Input = json.RawMessage(`{"value":"{{steps.merge.output.value}}"}`)
+	before, _ := json.Marshal(request)
+	response := simulateTest(t, request)
+	if response.Complete || len(response.Warnings) != 1 || len(response.DefinitionHash) != 64 {
+		t.Fatalf("unexpected completeness or warnings: %+v", response)
+	}
+	b := simulationStep(t, response, "b")
+	if b.State != "skipped" || b.Reason != WorkflowSkipWhenFalse || b.WhenMatched == nil || *b.WhenMatched {
+		t.Fatalf("guard: %+v", b)
+	}
+	merge := simulationStep(t, response, "merge")
+	if merge.State != "resolved" || string(merge.Output) != `{"source":"a","value":{"n":9007199254740993,"literal":"{{input.secret}}"}}` {
+		t.Fatalf("join: %+v", merge)
+	}
+	next := simulationStep(t, response, "next")
+	if next.State != "would_execute" || string(next.Input) != `{"value":{"literal":"{{input.secret}}","n":9007199254740993}}` || next.Path != "/next" || next.Method != "POST" {
+		t.Fatalf("mapping: %+v", next)
+	}
+	store := NewMemStore()
+	run := seedGuardRunWithSpec(t, store, request.Definition, string(request.Input))
+	ctx := context.Background()
+	if err := store.MarkWorkflowStepStatus(ctx, run.ID, "a", WorkflowStepStatusSucceeded, 1, request.MockOutputs["a"], nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ResolveWorkflowStepGuard(ctx, run.ID, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := store.ResolveWorkflowStepJoin(ctx, run.ID, "merge"); err != nil || !ready {
+		t.Fatalf("runtime join: %v %v", ready, err)
+	}
+	if !equalWorkflowJSON(guardStep(t, store, run.ID, "merge").Output, merge.Output) {
+		t.Fatal("simulation diverged from runtime")
+	}
+	second := simulateTest(t, request)
+	firstRaw, _ := json.Marshal(response)
+	secondRaw, _ := json.Marshal(second)
+	if string(firstRaw) != string(secondRaw) {
+		t.Fatal("trace is not deterministic")
+	}
+	merge.Output[0] = 'x'
+	next.Input[0] = 'x'
+	after, _ := json.Marshal(request)
+	if string(before) != string(after) {
+		t.Fatal("simulation mutated caller data")
+	}
+}
+
+func TestStoredWorkflowSimulationMissingOutputsAndWaits(t *testing.T) {
+	spec := api.WorkflowSpec{Name: "waits", Steps: []api.WorkflowStepSpec{
+		{Name: "a", Run: "lookup"},
+		{Name: "next", Run: "next", DependsOn: []string{"a"}},
+		{Name: "event", WaitForEvent: "paid", Timeout: time.Minute, OnTimeout: "fallback"},
+		{Name: "fallback", Run: "fallback"},
+		{Name: "callback", WaitForCallback: true, Timeout: time.Minute},
+		{Name: "delay", WaitForDuration: time.Second},
+		{Name: "condition", WaitForCondition: &api.WorkflowConditionSpec{Run: "check", Interval: time.Minute, MaxAttempts: 3}, Timeout: time.Minute},
+	}}
+	response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: spec})
+	if response.Complete {
+		t.Fatal("assumed missing outputs")
+	}
+	if row := simulationStep(t, response, "next"); row.State != "blocked" || strings.Join(row.BlockedBy, ",") != "a" {
+		t.Fatalf("dependent action: %+v", row)
+	}
+	for _, name := range []string{"event", "callback", "delay", "condition"} {
+		if row := simulationStep(t, response, name); row.State != "would_wait" {
+			t.Fatalf("wait executed: %+v", row)
+		}
+	}
+	if row := simulationStep(t, response, "fallback"); row.State != "blocked" || row.Reason != "exception_outcome_missing" {
+		t.Fatalf("invented timeout: %+v", row)
+	}
+}
+
+func TestStoredWorkflowSimulationFailureRouteOrderingAndNull(t *testing.T) {
+	spec := api.WorkflowSpec{Name: "routes", Steps: []api.WorkflowStepSpec{
+		{Name: "z_source", Run: "lookup", OnFailure: "a_handler"},
+		{Name: "a_handler", Run: "recover", Input: json.RawMessage(`"{{failure}}"`)},
+		{Name: "next", Run: "next", DependsOn: []string{"z_source"}, Input: json.RawMessage(`"{{steps.z_source.output}}"`)},
+	}}
+	request := api.SimulateStoredWorkflowRequest{Definition: spec, MockOutputs: map[string]json.RawMessage{"z_source": json.RawMessage(`null`), "next": json.RawMessage(`false`)}}
+	response := simulateTest(t, request)
+	if !response.Complete || len(response.Issues) != 0 {
+		t.Fatalf("successful null: %+v", response)
+	}
+	if row := simulationStep(t, response, "a_handler"); row.Reason != WorkflowSkipRouteNotTaken {
+		t.Fatalf("exception ordering: %+v", row)
+	}
+	if row := simulationStep(t, response, "next"); string(row.Input) != "null" || row.State != "mocked" {
+		t.Fatalf("null lost: %+v", row)
+	}
+	delete(request.MockOutputs, "z_source")
+	response = simulateTest(t, request)
+	if row := simulationStep(t, response, "a_handler"); row.State != "blocked" {
+		t.Fatalf("missing result activated failure handler: %+v", row)
+	}
+}
+
+func TestStoredWorkflowSimulationRetriesThenSucceeds(t *testing.T) {
+	status := 503
+	spec := api.WorkflowSpec{Name: "retry", Steps: []api.WorkflowStepSpec{
+		{Name: "source", Run: "lookup", Retry: &api.WorkflowRetrySpec{MaxAttempts: 3}},
+		{Name: "handler", Run: "recover", OnFailure: ""},
+	}}
+	// Route the recovery step from the source after it has become terminally
+	// failed in the second half of this test; successful retries skip it.
+	spec.Steps[0].OnFailure = "handler"
+	response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: spec, MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{
+		"source": {{Outcome: "failure", HTTPStatus: &status}, {Outcome: "success", Output: json.RawMessage(`{"ok":true}`)}},
+	}, MockOutputs: map[string]json.RawMessage{"handler": json.RawMessage(`null`)}})
+	source := simulationStep(t, response, "source")
+	if !response.Complete || source.State != "mocked" || len(source.Attempts) != 2 || source.Attempts[0].Outcome != "failure" || source.Attempts[1].Outcome != "success" {
+		t.Fatalf("retry success trace: %+v", response)
+	}
+	if handler := simulationStep(t, response, "handler"); handler.State != "skipped" || handler.Reason != WorkflowSkipRouteNotTaken {
+		t.Fatalf("successful retry activated recovery: %+v", handler)
+	}
+}
+
+func TestStoredWorkflowSimulationTerminalFailureRoutesFailureContext(t *testing.T) {
+	failureStatus := 503
+	terminalStatus := 400
+	spec := api.WorkflowSpec{Name: "recover", Steps: []api.WorkflowStepSpec{
+		{Name: "source", Run: "charge", Retry: &api.WorkflowRetrySpec{MaxAttempts: 3}, OnFailure: "handler"},
+		{Name: "handler", Run: "recover", Input: json.RawMessage(`"{{failure}}"`)},
+		{Name: "dependent", Run: "notify", DependsOn: []string{"source"}},
+	}}
+	response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: spec, MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{
+		"source": {{Outcome: "failure", HTTPStatus: &failureStatus}, {Outcome: "failure", HTTPStatus: &terminalStatus}},
+	}, MockOutputs: map[string]json.RawMessage{"handler": json.RawMessage(`{"recovered":true}`)}})
+	source := simulationStep(t, response, "source")
+	if !response.Complete || source.State != WorkflowStepStatusFailed || source.Reason != "non_retryable_failure" || len(source.Attempts) != 2 {
+		t.Fatalf("terminal failure trace: %+v", response)
+	}
+	handler := simulationStep(t, response, "handler")
+	wantFailure := `{"step":"source","status":"failed","attempt":2,"message":"HTTP 400"}`
+	if handler.State != "mocked" || !equalWorkflowJSON(handler.Input, json.RawMessage(wantFailure)) {
+		t.Fatalf("failure context was not resolved: %+v", handler)
+	}
+	if dependent := simulationStep(t, response, "dependent"); dependent.State != "skipped" || dependent.Reason != WorkflowSkipDependencyFailed {
+		t.Fatalf("failure did not close dependent branch: %+v", dependent)
+	}
+}
+
+func TestStoredWorkflowSimulationWaitTimeoutRoutesHandler(t *testing.T) {
+	spec := api.WorkflowSpec{Name: "timeout", Steps: []api.WorkflowStepSpec{
+		{Name: "event", WaitForEvent: "paid", Timeout: time.Minute, OnTimeout: "fallback"},
+		{Name: "fallback", Run: "notify"},
+	}}
+	response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: spec,
+		MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{"event": {{Outcome: "timeout"}}},
+		MockOutputs:  map[string]json.RawMessage{"fallback": json.RawMessage(`{"sent":true}`)},
+	})
+	event := simulationStep(t, response, "event")
+	if !response.Complete || event.State != "timed_out" || string(event.Output) != `{"timeout":true}` {
+		t.Fatalf("timeout trace: %+v", response)
+	}
+	if fallback := simulationStep(t, response, "fallback"); fallback.State != "mocked" {
+		t.Fatalf("timeout route was not activated: %+v", fallback)
+	}
+}
+
+func TestStoredWorkflowSimulationIncompleteRetryWaitsForNextMock(t *testing.T) {
+	status := 503
+	spec := api.WorkflowSpec{Name: "retry", Steps: []api.WorkflowStepSpec{
+		{Name: "source", Run: "lookup", Retry: &api.WorkflowRetrySpec{MaxAttempts: 2}, OnFailure: "handler"},
+		{Name: "handler", Run: "recover"},
+	}}
+	response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: spec, MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{
+		"source": {{Outcome: "failure", HTTPStatus: &status}},
+	}})
+	if response.Complete {
+		t.Fatal("missing retry outcome produced a complete trace")
+	}
+	if source := simulationStep(t, response, "source"); source.State != "would_retry" {
+		t.Fatalf("retry was not left unresolved: %+v", source)
+	}
+	if handler := simulationStep(t, response, "handler"); handler.State != "blocked" || handler.Reason != "exception_outcome_missing" {
+		t.Fatalf("incomplete retry triggered failure handler: %+v", handler)
+	}
+}
+
+func TestStoredWorkflowSimulationMatchesOutboundRetrySafety(t *testing.T) {
+	const integrationID = "00000000-0000-0000-0000-000000000001"
+	status := 429
+	safe := api.WorkflowSpec{Name: "safe", Steps: []api.WorkflowStepSpec{{
+		Name: "read", Outbound: &api.WorkflowOutboundSpec{IntegrationID: integrationID, Method: "GET", Path: "/v1/items"},
+		Retry: &api.WorkflowRetrySpec{MaxAttempts: 2},
+	}}}
+	response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: safe, MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{
+		"read": {{Outcome: "failure", HTTPStatus: &status}, {Outcome: "success", Output: json.RawMessage(`[]`)}},
+	}})
+	if !response.Complete || simulationStep(t, response, "read").State != "mocked" || len(simulationStep(t, response, "read").Attempts) != 2 {
+		t.Fatalf("safe outbound did not retry a transient response: %+v", response)
+	}
+	unsafe := api.WorkflowSpec{Name: "unsafe", Steps: []api.WorkflowStepSpec{{
+		Name: "write", Outbound: &api.WorkflowOutboundSpec{IntegrationID: integrationID, Method: "POST", Path: "/v1/items"},
+	}}}
+	response = simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: unsafe, MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{
+		"write": {{Outcome: "failure", HTTPStatus: &status}},
+	}})
+	write := simulationStep(t, response, "write")
+	if !response.Complete || write.State != WorkflowStepStatusFailed || write.Reason != "non_retryable_failure" || len(write.Attempts) != 1 {
+		t.Fatalf("unsafe outbound incorrectly retried a transient response: %+v", response)
+	}
+}
+
+func TestStoredWorkflowSimulationResolvesOutboundTargets(t *testing.T) {
+	request := api.SimulateStoredWorkflowRequest{
+		Definition: api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{
+			{Name: "lookup", Run: "lookup"},
+			{Name: "read", DependsOn: []string{"lookup"}, Outbound: &api.WorkflowOutboundSpec{
+				IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "GET",
+				Path: "/contacts/{{steps.lookup.output.id}}", Query: map[string]string{"email": "{{input.email}}", "source": "automation"},
+			}},
+		}},
+		Input:       json.RawMessage(`{"email":"a+b@example.com"}`),
+		MockOutputs: map[string]json.RawMessage{"lookup": json.RawMessage(`{"id":"contact 42"}`), "read": json.RawMessage(`null`)},
+	}
+	before, _ := json.Marshal(request)
+	response := simulateTest(t, request)
+	row := simulationStep(t, response, "read")
+	if !response.Complete || row.State != "mocked" || row.Path != "/contacts/contact%2042" || row.RawQuery != "email=a%2Bb%40example.com&source=automation" || len(row.Input) != 0 {
+		t.Fatalf("resolved outbound trace: %+v", response)
+	}
+	after, _ := json.Marshal(request)
+	if string(before) != string(after) {
+		t.Fatal("simulation mutated the definition or samples")
+	}
+	for _, invalid := range []string{`{"id":"../private-value"}`, `{"id":null}`, `{}`} {
+		request.MockOutputs["lookup"] = json.RawMessage(invalid)
+		response = simulateTest(t, request)
+		row = simulationStep(t, response, "read")
+		if response.Complete || row.State != "error" || row.Reason != "outbound_target_resolution_failed" || len(row.Attempts) != 0 || row.RawQuery != "" {
+			t.Fatalf("invalid target accepted success mock: %+v", response)
+		}
+		if strings.Contains(strings.Join(response.Issues, " "), "private-value") {
+			t.Fatal("resolution error exposed the invalid sample")
+		}
+	}
+}
+
+func TestStoredWorkflowSimulationResolvesOutboundLoopTargets(t *testing.T) {
+	request := api.SimulateStoredWorkflowRequest{
+		Definition: api.WorkflowSpec{Name: "batch", Steps: []api.WorkflowStepSpec{{Name: "batch", ForEach: &api.WorkflowForEachSpec{
+			Items: "input.items", Action: api.WorkflowForEachActionSpec{Outbound: &api.WorkflowOutboundSpec{
+				IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "GET",
+				Path: "/contacts/{{input.item}}", Query: map[string]string{"index": "{{input.index}}", "source": "{{input.input.source}}"},
+			}},
+		}}}},
+		Input:           json.RawMessage(`{"items":["one","two"],"source":"a&b"}`),
+		MockItemOutputs: map[string][]json.RawMessage{"batch": {json.RawMessage(`null`), json.RawMessage(`null`)}},
+	}
+	response := simulateTest(t, request)
+	if !response.Complete {
+		t.Fatalf("loop did not resolve: %+v", response)
+	}
+	for index, id := range []string{"one", "two"} {
+		row := simulationStep(t, response, api.WorkflowForEachItemName("batch", index))
+		if row.Path != "/contacts/"+id || row.RawQuery != fmt.Sprintf("index=%d&source=a%%26b", index) || len(row.Input) != 0 {
+			t.Fatalf("loop context: %+v", row)
+		}
+	}
+	request.Input = json.RawMessage(`{"items":["../unsafe","two"],"source":"a&b"}`)
+	response = simulateTest(t, request)
+	if response.Complete || simulationStep(t, response, api.WorkflowForEachItemName("batch", 0)).State != "error" || simulationStep(t, response, api.WorkflowForEachItemName("batch", 1)).State != "blocked" {
+		t.Fatalf("invalid loop target accepted mock: %+v", response)
+	}
+	request.Definition.Steps[0].ForEach.Action.Outbound.Path = "/contacts/{{input.item.id}}"
+	request.Definition.Steps[0].ForEach.Action.When = &api.WorkflowGuardSpec{Ref: "input.item.active", Op: "eq", Value: json.RawMessage(`true`)}
+	request.Input = json.RawMessage(`{"items":[{"id":"../unsafe","active":false},{"id":"one","active":true}],"source":"a&b"}`)
+	response = simulateTest(t, request)
+	first := simulationStep(t, response, api.WorkflowForEachItemName("batch", 0))
+	second := simulationStep(t, response, api.WorkflowForEachItemName("batch", 1))
+	if !response.Complete || first.State != "skipped" || first.RawQuery != "" || second.Path != "/contacts/one" || second.RawQuery != "index=1&source=a%26b" {
+		t.Fatalf("skipped loop target was resolved: %+v", response)
+	}
+}
+
+func TestStoredWorkflowSimulationOutboundTargetControlFlow(t *testing.T) {
+	target := &api.WorkflowOutboundSpec{IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "GET", Path: "/contacts/{{input.id}}", Query: map[string]string{"email": "{{input.email}}"}}
+	request := api.SimulateStoredWorkflowRequest{
+		Definition: api.WorkflowSpec{Name: "guard", Steps: []api.WorkflowStepSpec{{Name: "read", Outbound: target,
+			When: &api.WorkflowGuardSpec{Ref: "input.active", Op: "eq", Value: json.RawMessage(`true`)},
+		}}},
+		Input: json.RawMessage(`{"active":false,"id":"../private-value"}`),
+	}
+	response := simulateTest(t, request)
+	if !response.Complete || len(response.Issues) != 0 || simulationStep(t, response, "read").State != "skipped" {
+		t.Fatalf("skipped target was resolved: %+v", response)
+	}
+	request.Definition.Steps[0].When = nil
+	request.Definition.Steps[0].DependsOn = []string{"lookup"}
+	request.Definition.Steps = append(request.Definition.Steps, api.WorkflowStepSpec{Name: "lookup", Run: "lookup"})
+	response = simulateTest(t, request)
+	if len(response.Issues) != 0 || simulationStep(t, response, "read").State != "blocked" {
+		t.Fatalf("blocked target was resolved: %+v", response)
+	}
+	request.Definition.Steps = request.Definition.Steps[:1]
+	request.Definition.Steps[0].DependsOn = nil
+	request.MockAttempts = map[string][]api.StoredWorkflowSimulationMockAttempt{"read": {{Outcome: "success", Output: json.RawMessage(`null`)}}}
+	request.Input = json.RawMessage(`{"id":"42","email":{"invalid":true}}`)
+	response = simulateTest(t, request)
+	row := simulationStep(t, response, "read")
+	if response.Complete || row.State != "error" || row.Reason != "outbound_target_resolution_failed" || len(row.Attempts) != 0 {
+		t.Fatalf("invalid query accepted an attempt mock: %+v", response)
+	}
+}
+
+func TestStoredWorkflowSimulationTransportErrorIsDead(t *testing.T) {
+	spec := api.WorkflowSpec{Name: "transport-error", Steps: []api.WorkflowStepSpec{{Name: "source", Run: "lookup", Retry: &api.WorkflowRetrySpec{MaxAttempts: 1}}}}
+	response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: spec, MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{
+		"source": {{Outcome: "failure", Error: "connection reset"}},
+	}})
+	if !response.Complete {
+		t.Fatalf("transport error did not produce a terminal trace: %+v", response)
+	}
+	if source := simulationStep(t, response, "source"); source.State != WorkflowStepStatusDead || source.Reason != "retry_limit_reached" {
+		t.Fatalf("transport error did not match scheduler terminal status: %+v", source)
+	}
+}
+
+func TestStoredWorkflowSimulationEvaluationErrorAndInactiveDescendants(t *testing.T) {
+	spec := api.WorkflowSpec{Name: "errors", Steps: []api.WorkflowStepSpec{
+		{Name: "bad", Run: "read", Input: json.RawMessage(`"{{input.missing}}"`), OnFailure: "handler"},
+		{Name: "handler", Run: "recover"},
+		{Name: "child", Run: "child", DependsOn: []string{"bad"}},
+		{Name: "inactive", Run: "inactive", When: &api.WorkflowGuardSpec{Ref: "input.active", Op: "eq", Value: json.RawMessage(`true`)}},
+		{Name: "skip", Run: "skip", DependsOn: []string{"inactive"}},
+	}}
+	response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: spec, Input: json.RawMessage(`{"active":false,"secret":"private"}`)})
+	for name, want := range map[string]string{"bad": "input_resolution_failed", "child": WorkflowSkipDependencyFailed, "handler": "exception_outcome_missing", "skip": WorkflowSkipDependencySkipped} {
+		if row := simulationStep(t, response, name); row.Reason != want {
+			t.Fatalf("%s: %+v", name, row)
+		}
+	}
+	if len(response.Issues) != 1 || strings.Contains(strings.Join(response.Issues, ""), "private") {
+		t.Fatalf("unsafe diagnostics: %+v", response)
+	}
+}
+
+func TestStoredWorkflowSimulationRejectsReservedTimeoutOutcome(t *testing.T) {
+	spec := api.WorkflowSpec{Name: "timeout-route", Steps: []api.WorkflowStepSpec{
+		{Name: "source", Run: "source", OnTimeout: "handler"},
+		{Name: "handler", Run: "handler"},
+	}}
+	for _, raw := range []string{`{"timeout":true}`, ` { "timeout" : true } `} {
+		_, err := SimulateStoredWorkflow(context.Background(), api.SimulateStoredWorkflowRequest{Definition: spec, MockOutputs: map[string]json.RawMessage{"source": json.RawMessage(raw)}}, api.PlanHobby)
+		if !errors.Is(err, ErrStoredWorkflowSimulationInvalid) {
+			t.Fatalf("reserved timeout outcome accepted: %v", err)
+		}
+	}
+	for _, raw := range []string{`{"timeout":false}`, `{"timeout":true,"data":null}`, `{"body":{"timeout":true}}`, `null`} {
+		response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: spec, MockOutputs: map[string]json.RawMessage{"source": json.RawMessage(raw)}})
+		if !response.Complete || simulationStep(t, response, "handler").Reason != WorkflowSkipRouteNotTaken {
+			t.Fatalf("ordinary output misclassified: %+v", response)
+		}
+	}
+}
+
+func simulationLoopSpec() api.WorkflowSpec {
+	return api.WorkflowSpec{Name: "batch", Steps: []api.WorkflowStepSpec{
+		{Name: "batch", ForEach: &api.WorkflowForEachSpec{Items: "input.items", Action: api.WorkflowForEachActionSpec{Run: "send", Input: json.RawMessage(`{"item":"{{input.item}}","index":"{{input.index}}"}`)}}},
+		{Name: "finish", Run: "finish", DependsOn: []string{"batch"}, Input: json.RawMessage(`"{{steps.batch.output}}"`)},
+	}}
+}
+
+func TestStoredWorkflowSimulationSequentialLoop(t *testing.T) {
+	for _, count := range []int{0, 1, 3} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			mocks := []json.RawMessage{json.RawMessage(`{"n":9007199254740993}`), json.RawMessage(`null`), json.RawMessage(`true`)}[:count]
+			request := api.SimulateStoredWorkflowRequest{Definition: simulationLoopSpec(), Input: json.RawMessage(`{"items":["a",null,"{{input.secret}}"]}`), MockItemOutputs: map[string][]json.RawMessage{"batch": mocks}}
+			response := simulateTest(t, request)
+			batch := simulationStep(t, response, "batch")
+			if batch.ItemCount == nil || *batch.ItemCount != 3 || len(response.Trace) != 5 {
+				t.Fatalf("loop expansion: %+v", response)
+			}
+			for index := range 3 {
+				row := simulationStep(t, response, api.WorkflowForEachItemName("batch", index))
+				want := "blocked"
+				if index < count {
+					want = "mocked"
+				} else if index == count {
+					want = "would_execute"
+				}
+				if row.State != want || row.ParentStep != "batch" || row.ItemIndex == nil || *row.ItemIndex != index {
+					t.Fatalf("sequential item: %+v", row)
+				}
+			}
+			finish := simulationStep(t, response, "finish")
+			if count == 3 {
+				if batch.State != "resolved" || string(finish.Input) != `[{"n":9007199254740993},null,true]` {
+					t.Fatalf("aggregate: %+v %+v", batch, finish)
+				}
+			} else if finish.State != "blocked" {
+				t.Fatalf("premature continuation: %+v", finish)
+			}
+		})
+	}
+	response := simulateTest(t, api.SimulateStoredWorkflowRequest{Definition: simulationLoopSpec(), Input: json.RawMessage(`{"items":[]}`), MockOutputs: map[string]json.RawMessage{"finish": json.RawMessage(`null`)}})
+	if !response.Complete || string(simulationStep(t, response, "batch").Output) != "[]" {
+		t.Fatalf("empty loop: %+v", response)
+	}
+}
+
+func TestStoredWorkflowSimulationForEachGuardsPreserveItemPositions(t *testing.T) {
+	spec := simulationLoopSpec()
+	spec.Steps[0].ForEach.OnItemFailure = "continue"
+	spec.Steps[0].ForEach.Action.When = &api.WorkflowGuardSpec{Ref: "input.item.active", Op: "eq", Value: json.RawMessage("true")}
+	request := api.SimulateStoredWorkflowRequest{
+		Definition:      spec,
+		Input:           json.RawMessage(`{"items":[{"id":"skip","active":false},{"id":"send","active":true},{"id":"skip-too","active":false}]}`),
+		MockItemOutputs: map[string][]json.RawMessage{"batch": {json.RawMessage(`null`), json.RawMessage(`"sent"`), json.RawMessage(`null`)}},
+		MockOutputs:     map[string]json.RawMessage{"finish": json.RawMessage(`null`)},
+	}
+	response := simulateTest(t, request)
+	batch := simulationStep(t, response, "batch")
+	if !response.Complete || batch.State != "resolved" || string(batch.Output) != `[null,"sent",null]` {
+		t.Fatalf("guarded simulation did not preserve positional results: %+v", response)
+	}
+	for index, matched := range []bool{false, true, false} {
+		item := simulationStep(t, response, api.WorkflowForEachItemName("batch", index))
+		if item.WhenMatched == nil || *item.WhenMatched != matched {
+			t.Fatalf("item %d guard trace: %+v", index, item)
+		}
+		if !matched && (item.State != "skipped" || item.Reason != WorkflowSkipWhenFalse) {
+			t.Fatalf("item %d skip trace: %+v", index, item)
+		}
+	}
+}
+
+func TestStoredWorkflowSimulationInvalidSamplesAndDefinitions(t *testing.T) {
+	base := api.WorkflowSpec{Name: "test", Steps: []api.WorkflowStepSpec{{Name: "a", Run: "a"}}}
+	for name, request := range map[string]api.SimulateStoredWorkflowRequest{
+		"unknown":                  {Definition: base, MockOutputs: map[string]json.RawMessage{"missing": json.RawMessage(`null`)}},
+		"invalid JSON":             {Definition: base, Input: json.RawMessage(`{`)},
+		"empty output":             {Definition: base, MockOutputs: map[string]json.RawMessage{"a": nil}},
+		"control mock":             {Definition: simulationLoopSpec(), MockOutputs: map[string]json.RawMessage{"batch": json.RawMessage(`[]`)}},
+		"wrong item parent":        {Definition: base, MockItemOutputs: map[string][]json.RawMessage{"a": {json.RawMessage(`null`)}}},
+		"excess item samples":      {Definition: simulationLoopSpec(), Input: json.RawMessage(`{"items":[]}`), MockItemOutputs: map[string][]json.RawMessage{"batch": {json.RawMessage(`null`)}}},
+		"attempts on control":      {Definition: simulationLoopSpec(), MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{"batch": {{Outcome: "timeout"}}}},
+		"empty attempts":           {Definition: base, MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{"a": {}}},
+		"output after success":     {Definition: base, MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{"a": {{Outcome: "success", Output: json.RawMessage(`null`)}, {Outcome: "success", Output: json.RawMessage(`null`)}}}},
+		"conflicting mock formats": {Definition: base, MockOutputs: map[string]json.RawMessage{"a": json.RawMessage(`null`)}, MockAttempts: map[string][]api.StoredWorkflowSimulationMockAttempt{"a": {{Outcome: "success", Output: json.RawMessage(`null`)}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := SimulateStoredWorkflow(context.Background(), request, api.PlanHobby); !errors.Is(err, ErrStoredWorkflowSimulationInvalid) {
+				t.Fatalf("invalid sample accepted: %v", err)
+			}
+		})
+	}
+	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby} {
+		spec := base
+		if plan == api.PlanHobby {
+			spec.Name = ""
+		}
+		response, err := SimulateStoredWorkflow(context.Background(), api.SimulateStoredWorkflowRequest{Definition: spec}, plan)
+		if err != nil || response.DefinitionValid || response.Complete || len(response.Trace) != 0 || len(response.Issues) == 0 {
+			t.Fatalf("invalid definition: %+v %v", response, err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := SimulateStoredWorkflow(ctx, api.SimulateStoredWorkflowRequest{Definition: base}, api.PlanHobby); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}
+
+func TestStoredWorkflowSimulationBudgets(t *testing.T) {
+	base := api.WorkflowSpec{Name: "test", Steps: []api.WorkflowStepSpec{{Name: "a", Run: "a"}}}
+	large, _ := json.Marshal(strings.Repeat("x", int(api.WorkflowRunInputMaxBytes)/2+10))
+	for name, build := range map[string]func() api.SimulateStoredWorkflowRequest{
+		"input": func() api.SimulateStoredWorkflowRequest {
+			return api.SimulateStoredWorkflowRequest{Definition: base, Input: json.RawMessage(`"` + strings.Repeat("x", int(api.WorkflowRunInputMaxBytes)) + `"`)}
+		},
+		"steps": func() api.SimulateStoredWorkflowRequest {
+			spec := base
+			spec.Steps = make([]api.WorkflowStepSpec, api.StoredWorkflowSimulationMaxSteps+1)
+			return api.SimulateStoredWorkflowRequest{Definition: spec}
+		},
+		"template expansion": func() api.SimulateStoredWorkflowRequest {
+			spec := base
+			spec.Steps = []api.WorkflowStepSpec{{Name: "a", Run: "a", Input: json.RawMessage(`["{{input}}","{{input}}"]`)}}
+			return api.SimulateStoredWorkflowRequest{Definition: spec, Input: large}
+		},
+		"loop inputs": func() api.SimulateStoredWorkflowRequest {
+			spec := simulationLoopSpec()
+			spec.Steps[0].ForEach.Action.Input = json.RawMessage(`"{{input.input.large}}"`)
+			raw, _ := json.Marshal(map[string]any{"items": []int{0, 1, 2}, "large": strings.Repeat("x", int(api.WorkflowRunInputMaxBytes)/2)})
+			return api.SimulateStoredWorkflowRequest{Definition: spec, Input: raw}
+		},
+		"loop item count": func() api.SimulateStoredWorkflowRequest {
+			return api.SimulateStoredWorkflowRequest{Definition: simulationLoopSpec(), Input: json.RawMessage(`{"items":[` + strings.Repeat(`0,`, api.WorkflowForEachMaxItems) + `0]}`)}
+		},
+		"loop outputs": func() api.SimulateStoredWorkflowRequest {
+			return api.SimulateStoredWorkflowRequest{Definition: simulationLoopSpec(), Input: json.RawMessage(`{"items":[0,1]}`), MockItemOutputs: map[string][]json.RawMessage{"batch": {large, large}}}
+		},
+		"trace entries": func() api.SimulateStoredWorkflowRequest {
+			spec := api.WorkflowSpec{Name: "many"}
+			for index := range 9 {
+				spec.Steps = append(spec.Steps, api.WorkflowStepSpec{Name: fmt.Sprintf("batch%d", index), ForEach: &api.WorkflowForEachSpec{Items: "input.items", Action: api.WorkflowForEachActionSpec{Run: "send"}}})
+			}
+			return api.SimulateStoredWorkflowRequest{Definition: spec, Input: json.RawMessage(`{"items":[` + strings.Repeat(`0,`, 127) + `0]}`)}
+		},
+		"response bytes": func() api.SimulateStoredWorkflowRequest {
+			spec := api.WorkflowSpec{Name: "big"}
+			for index := range 10 {
+				spec.Steps = append(spec.Steps, api.WorkflowStepSpec{Name: fmt.Sprintf("a%d", index), Run: "a"})
+			}
+			return api.SimulateStoredWorkflowRequest{Definition: spec, Input: large}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := SimulateStoredWorkflow(context.Background(), build(), api.PlanHobby)
+			var limit *StoredWorkflowSimulationLimitError
+			if !errors.As(err, &limit) || limit.Observed <= limit.Limit {
+				t.Fatalf("budget not enforced: %v", err)
+			}
+		})
+	}
+}

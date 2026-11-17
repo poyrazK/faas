@@ -158,7 +158,7 @@ func (m *MemStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pr
 	}
 	target = queueServiceBindingCheck(ctx, target, ServiceRolloutActionAbort, predecessorID, predecessorID, reason)
 	accountID := uuid.MustParse(m.apps[target.AppID].AccountID)
-	auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{DeploymentID: uuid.MustParse(id), AccountID: &accountID, Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: time.Now().UTC(), Data: serviceAbortReceiptData(ctx, target, reason)})
+	auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{DeploymentID: uuid.MustParse(id), AccountID: &accountID, Kind: DeployRolledBack, Actor: rolloutRecoveryActor(ctx), At: time.Now().UTC(), Data: serviceAbortReceiptData(ctx, target, reason)})
 	if err != nil {
 		return target, 0, err
 	}

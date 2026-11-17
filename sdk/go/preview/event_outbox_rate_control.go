@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 // EventOutboxRateLimitOptions configures one token per Interval, up to Burst.

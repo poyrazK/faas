@@ -23,7 +23,10 @@ type AIUsage struct {
 	InputTokens       int64
 	CachedInputTokens int64
 	CacheWriteTokens  int64
-	OutputTokens      int64
+	// CacheWrite1hTokens is the part of CacheWriteTokens written with a
+	// one-hour TTL (Anthropic), priced above the five-minute rate.
+	CacheWrite1hTokens int64
+	OutputTokens       int64
 	// Media usage (ADR-997). InputImageTokens and OutputImageTokens are the
 	// image parts of InputTokens and OutputTokens. Images counts images a
 	// call is billed for per image, AudioSeconds the input audio of a
@@ -116,6 +119,9 @@ type AIUsageRecord struct {
 	// Route is a route attempt while the route runs a canary; it adds to
 	// the target's per-minute row (ADR-1340).
 	Route *AIRouteAttemptRecord
+	// Prompt is an attempt of a managed prompt call; it adds to the
+	// version's per-minute row (ADR 20261114180740).
+	Prompt *AIPromptAttemptRecord
 	// Export is the call's line for the calling app's log drains
 	// (ADR-1340).
 	Export *AILogExport
@@ -138,6 +144,16 @@ type AIRouteAttemptRecord struct {
 	TTFBMS   *int64
 }
 
+// AIPromptAttemptRecord is one settled attempt of a managed prompt call:
+// an error for any provider status of 400 or above, and the time to first
+// byte of a successful attempt (ADR 20261114180740).
+type AIPromptAttemptRecord struct {
+	PromptID string
+	Version  int
+	Error    bool
+	TTFBMS   *int64
+}
+
 // AILogExport is one export line and its OTLP attributes (ADR-1340).
 type AILogExport struct {
 	AppID      string
@@ -149,9 +165,13 @@ type AILogExport struct {
 // AIRequestLog is the non-usage metadata of one logged AI call. It holds
 // content only when the integration opted in to capture (ADR-996).
 type AIRequestLog struct {
-	RouteID    string
-	Status     int
-	DurationMS int64
+	RouteID string
+	// PromptID and PromptVersion name the managed prompt version of a
+	// prompt call (ADR 20261114180740).
+	PromptID      string
+	PromptVersion int
+	Status        int
+	DurationMS    int64
 	// TTFBMS is nil when no response byte arrived.
 	TTFBMS   *int64
 	Attempts int
@@ -221,6 +241,9 @@ func newAIRequestLog(settlement aiSettlement, timeToFirstByte time.Duration, now
 		RouteID: settlement.routeID, Status: settlement.status, Attempts: settlement.attempts,
 		DurationMS: max(now.Sub(settlement.started).Milliseconds(), 0),
 	}
+	if validUUID(settlement.prompt.promptID) && settlement.prompt.version >= 1 {
+		log.PromptID, log.PromptVersion = settlement.prompt.promptID, settlement.prompt.version
+	}
 	if timeToFirstByte > 0 {
 		ttfb := timeToFirstByte.Milliseconds()
 		log.TTFBMS = &ttfb
@@ -254,11 +277,15 @@ const AIUsageCallerModeration = "moderation"
 // (ADR-1431).
 const AIUsageCallerEvaluation = "evaluation"
 
+// AIUsageCallerSemanticCache aggregates the semantic cache's embedding
+// calls (ADR 20261112194947).
+const AIUsageCallerSemanticCache = "semantic_cache"
+
 // appCaller reports whether a settled caller is an app ID, which has app
 // budgets, minute counters and alert webhooks.
 func appCaller(caller string) bool {
 	switch caller {
-	case AIUsageCallerRuns, AIUsageCallerReplay, AIUsageCallerModeration, AIUsageCallerEvaluation, aiBatchReader:
+	case AIUsageCallerRuns, AIUsageCallerReplay, AIUsageCallerModeration, AIUsageCallerEvaluation, AIUsageCallerSemanticCache, aiBatchReader:
 		return false
 	}
 	return true
@@ -316,6 +343,9 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	if err := validateAIRouteAttempt(record.Route); err != nil {
 		return err
 	}
+	if err := validateAIPromptAttempt(record.Prompt); err != nil {
+		return err
+	}
 	if err := validateAILogExport(record.Export); err != nil {
 		return err
 	}
@@ -329,6 +359,16 @@ func validateAIRouteAttempt(attempt *AIRouteAttemptRecord) error {
 	if !validUUID(attempt.RouteID) || attempt.Position < 1 || attempt.Position > api.OutboundAIRouteTargetsMax ||
 		(attempt.TTFBMS != nil && (*attempt.TTFBMS < 0 || *attempt.TTFBMS > 1<<31-1)) {
 		return fmt.Errorf("%w: AI route attempt is out of range", ErrInvalidIntegration)
+	}
+	return nil
+}
+
+func validateAIPromptAttempt(attempt *AIPromptAttemptRecord) error {
+	if attempt == nil {
+		return nil
+	}
+	if !validUUID(attempt.PromptID) || attempt.Version < 1 || (attempt.TTFBMS != nil && (*attempt.TTFBMS < 0 || *attempt.TTFBMS > 1<<31-1)) {
+		return fmt.Errorf("%w: AI prompt attempt is out of range", ErrInvalidIntegration)
 	}
 	return nil
 }
@@ -372,6 +412,11 @@ type aiUsageFields struct {
 
 	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+	// Anthropic's cache-write breakdown by TTL: one-hour writes cost twice
+	// the input price, five-minute writes 1.25 times (review round 3 #3).
+	CacheCreation *struct {
+		Ephemeral1h *int64 `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 	// Anthropic server tool uses (ADR-1433).
 	ServerToolUse *struct {
 		WebSearchRequests *int64 `json:"web_search_requests"`
@@ -381,6 +426,10 @@ type aiUsageFields struct {
 	CandidatesTokenCount    *int64 `json:"candidatesTokenCount"`
 	CachedContentTokenCount *int64 `json:"cachedContentTokenCount"`
 	ThoughtsTokenCount      *int64 `json:"thoughtsTokenCount"`
+	// ToolUsePromptTokenCount counts what built-in tools, such as code
+	// execution, fed back to the model; Google bills it as input (ADR
+	// 20261020161811 amendment 1).
+	ToolUsePromptTokenCount *int64 `json:"toolUsePromptTokenCount"`
 	// Gemini token counts by modality (ADR-997).
 	PromptTokensByModality     []geminiModalityCount `json:"promptTokensDetails"`
 	CandidatesTokensByModality []geminiModalityCount `json:"candidatesTokensDetails"`
@@ -537,9 +586,11 @@ func vertexPredictionTokens(envelope aiEnvelope) *int64 {
 // providers repeat or grow counts across events, never shrink them.
 type aiRawUsage struct {
 	prompt, completion, input, output, cached, cacheRead, cacheCreation int64
+	cacheCreation1h                                                     int64
 	seenPrompt, seenCompletion, seen                                    bool
 	// Gemini, Bedrock Converse and Bedrock invocation metrics counts.
 	geminiPrompt, geminiCandidates, geminiCached, geminiThoughts     int64
+	geminiToolUse                                                    int64
 	bedrockInput, bedrockOutput, bedrockCacheRead, bedrockCacheWrite int64
 	metricInput, metricOutput, metricCacheRead, metricCacheWrite     int64
 	seenMetrics                                                      bool
@@ -618,6 +669,9 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	}
 	take(&r.cacheRead, fields.CacheReadInputTokens)
 	take(&r.cacheCreation, fields.CacheCreationInputTokens)
+	if fields.CacheCreation != nil {
+		take(&r.cacheCreation1h, fields.CacheCreation.Ephemeral1h)
+	}
 	if fields.ServerToolUse != nil && fields.ServerToolUse.WebSearchRequests != nil {
 		r.webSearchRequests = max(r.webSearchRequests, min(max(*fields.ServerToolUse.WebSearchRequests, 0), api.OutboundAIToolUsesPerCallMax))
 	}
@@ -626,6 +680,7 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	take(&r.geminiCandidates, fields.ResponseTokenCount)
 	take(&r.geminiCached, fields.CachedContentTokenCount)
 	take(&r.geminiThoughts, fields.ThoughtsTokenCount)
+	take(&r.geminiToolUse, fields.ToolUsePromptTokenCount)
 	take(&r.bedrockInput, fields.BedrockInputTokens)
 	take(&r.bedrockOutput, fields.BedrockOutputTokens)
 	take(&r.bedrockCacheRead, fields.BedrockCacheReadTokens)
@@ -802,11 +857,12 @@ func (r aiRawUsage) normalizeTokens(format aiWireFormat, media aiMediaKind) AIUs
 		usage.InputTokens = r.input + r.cacheRead + r.cacheCreation
 		usage.CachedInputTokens = r.cacheRead
 		usage.CacheWriteTokens = r.cacheCreation
+		usage.CacheWrite1hTokens = min(r.cacheCreation1h, r.cacheCreation)
 		usage.OutputTokens = r.output
 	case format == aiFormatGemini:
-		// promptTokenCount includes cached content; thinking is billed as
-		// output.
-		usage.InputTokens = r.geminiPrompt
+		// promptTokenCount includes cached content; tool-use prompt tokens
+		// are billed as input and thinking as output.
+		usage.InputTokens = min(r.geminiPrompt+r.geminiToolUse, api.OutboundAIMaxTokensPerResponse)
 		usage.CachedInputTokens = min(r.geminiCached, r.geminiPrompt)
 		usage.OutputTokens = r.geminiCandidates + r.geminiThoughts
 		usage.InputImageTokens = min(r.geminiPromptImage, usage.InputTokens)

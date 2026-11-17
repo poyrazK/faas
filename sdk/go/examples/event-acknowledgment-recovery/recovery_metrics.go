@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/preview"
+	"github.com/gregale-dev/gregale-go/preview"
 )
 
 // RecoveryHealthMetricsHost separates explicit polling from a cache-only server.

@@ -226,6 +226,11 @@ type EnqueueParams struct {
 	// The activity is a prevalidated customer-safe projection; Enqueue fills
 	// its deployment identifiers before crossing the store boundary.
 	Activity *state.OrgActivity
+	// BuildNotBefore, when set, queues the build so no claim takes it before
+	// then (ADR-20261021221906): the convergence build of a developer sync that
+	// already reached the running instance as a live patch. A store without
+	// state.DeferredBuildStore builds at once.
+	BuildNotBefore time.Time
 	// Annotation fields (issue #977 / ADR-116). Optional;
 	// empty/zero values mean "no annotation" and the pgstore
 	// collapses them to NULL on the row. PRNumber=0 → NULL via
@@ -245,16 +250,20 @@ type EnqueueParams struct {
 	MCPTaskMigrationOverride bool
 	OverrideHealthcheck      json.RawMessage
 	OverrideLivenessProbe    json.RawMessage
-	OverrideMainDependsOn    json.RawMessage
-	TrafficPercent           int
-	TrafficPercentExplicit   bool
-	RollbackOn5xx            bool
-	DisableStartupCPUBoost   bool
-	CanaryPreset             string
-	CanaryStep               int
-	CanaryTotalSteps         int
-	CanaryStepStartedAt      *time.Time
-	CanaryStages             json.RawMessage
+	// OverrideReadinessProbe is the primary app's steady-state traffic gate
+	// (request override or gregale.yaml hosting.readiness_probe). Source
+	// deploys dropped it before it reached the deployment row.
+	OverrideReadinessProbe json.RawMessage
+	OverrideMainDependsOn  json.RawMessage
+	TrafficPercent         int
+	TrafficPercentExplicit bool
+	RollbackOn5xx          bool
+	DisableStartupCPUBoost bool
+	CanaryPreset           string
+	CanaryStep             int
+	CanaryTotalSteps       int
+	CanaryStepStartedAt    *time.Time
+	CanaryStages           json.RawMessage
 	// ReleaseCommand is immutable source intent. The deployment orchestrator
 	// consumes it after the build has produced an artifact; Enqueue only pins
 	// the validated declaration to this exact deployment row.
@@ -439,12 +448,51 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	if p.ImagePort < 0 || p.ImagePort > 65535 {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: port %d out of range", p.ImagePort)
 	}
+	reader, _ := any(store).(BuildMinutesStore)
+	if problem := buildMinutesProblem(ctx, reader, p); problem != nil {
+		return EnqueueResult{}, problem
+	}
 	sourceStorage, err := sourceBackendFromEnv(ctx)
 	if err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: %w", err)
 	}
 
 	return enqueueWithSourceStorage(ctx, store, notif, p, sourceStorage)
+}
+
+// BuildMinutesStore reads the builder time the account paying for an app used
+// this UTC month (ADR-20261104132753). *state.PgStore implements it.
+type BuildMinutesStore interface {
+	BuildSecondsThisMonth(ctx context.Context, appID string, now time.Time) (api.Plan, int64, error)
+}
+
+// buildMinutesNow is the clock of the build-minute check; tests replace it.
+var buildMinutesNow = time.Now
+
+// buildMinutesProblem refuses a build once the paying account used its plan's
+// monthly build minutes (ADR-20261104132753). A store without the read, a read
+// error or an unknown plan admits the build: the quota bounds shared builder
+// time, and an outage of its read must not stop every deploy.
+func buildMinutesProblem(ctx context.Context, reader BuildMinutesStore, p EnqueueParams) *api.Problem {
+	if reader == nil {
+		return nil
+	}
+	plan, usedSeconds, err := reader.BuildSecondsThisMonth(ctx, p.AppID, buildMinutesNow())
+	if err != nil {
+		if p.Log != nil {
+			p.Log.Warn("apidsource: build minutes read failed; admitting build", "app_id", p.AppID, "err", err)
+		}
+		return nil
+	}
+	limits, ok := api.LimitsFor(plan)
+	if !ok || limits.BuildMinutesPerMonth <= 0 {
+		return nil
+	}
+	used := int(usedSeconds / 60)
+	if used < limits.BuildMinutesPerMonth {
+		return nil
+	}
+	return api.ErrPlanLimitBuildMinutes(limits, used)
 }
 
 func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, p EnqueueParams, sourceStorage storage.StorageBackend) (EnqueueResult, error) {
@@ -500,6 +548,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	var sourceErr error
 	sourceSHA256 := ""
 	var inferredProfile json.RawMessage
+	// Slice 3j-4: recorded only from an accepted archive; a recovered row
+	// already has its own, a retry keeps none.
+	var buildRegistryScope []string
 	if recovered != nil {
 		sourceSHA256 = recovered.SourceSHA256
 		inferredProfile = append(json.RawMessage(nil), recovered.InferredProfile...)
@@ -584,6 +635,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				inferredProfile = nil
 			}
 		}
+		buildRegistryScope = sourceBuildRegistryScope(p)
 		sourceErr = publishSourceWithDeadline(ctx, sourceStorage, buildID, p.SourcePath, p.OperationID != "")
 	}
 	if err := sourceErr; err != nil {
@@ -651,8 +703,10 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		MCPTaskMigrationOverride: p.MCPTaskMigrationOverride,
 		OverrideHealthcheck:      append(json.RawMessage(nil), p.OverrideHealthcheck...),
 		OverrideLivenessProbe:    append(json.RawMessage(nil), p.OverrideLivenessProbe...),
+		OverrideReadinessProbe:   append(json.RawMessage(nil), p.OverrideReadinessProbe...),
 		OverrideMainDependsOn:    append(json.RawMessage(nil), p.OverrideMainDependsOn...),
 		InferredProfile:          append(json.RawMessage(nil), inferredProfile...),
+		BuildRegistryScope:       buildRegistryScope,
 		TrafficPercent:           p.TrafficPercent,
 		TrafficPercentExplicit:   p.TrafficPercentExplicit,
 		RollbackOn5xx:            p.RollbackOn5xx,
@@ -751,29 +805,35 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// pipeline at build time.
 	var build state.Build
 	var activityOutboxID int64
+	var activity *state.OrgActivity
 	if p.Activity != nil {
-		activity := *p.Activity
+		prepared := *p.Activity
 		deploymentID, parseErr := uuid.Parse(d.ID)
 		if parseErr != nil {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: parse activity deployment id: %w", parseErr)
 		}
-		activity.DeploymentID = &deploymentID
-		activity.SourceType = "deployment.requested"
-		activity.SourceID = d.ID
-		if activity.AppID == nil {
+		prepared.DeploymentID = &deploymentID
+		prepared.SourceType = "deployment.requested"
+		prepared.SourceID = d.ID
+		if prepared.AppID == nil {
 			appID, parseErr := uuid.Parse(d.AppID)
 			if parseErr != nil {
 				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: parse activity app id: %w", parseErr)
 			}
-			activity.AppID = &appID
+			prepared.AppID = &appID
 		}
-		if activityStore, ok := store.(state.OrgActivityDeploymentMutationStore); ok {
-			build, activityOutboxID, err = activityStore.CreateBuildWithIDAndActivity(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"), activity)
-		} else {
-			build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
-		}
-	} else {
-		build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
+		activity = &prepared
+	}
+	logPath := filepath.Join(logDir, "build.log")
+	deferredStore, canDefer := store.(state.DeferredBuildStore)
+	activityStore, hasActivity := store.(state.OrgActivityDeploymentMutationStore)
+	switch {
+	case !p.BuildNotBefore.IsZero() && canDefer:
+		build, activityOutboxID, err = deferredStore.CreateDeferredBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, logPath, p.BuildNotBefore, activity)
+	case activity != nil && hasActivity:
+		build, activityOutboxID, err = activityStore.CreateBuildWithIDAndActivity(ctx, buildID, d.ID, p.Kind, p.SourceBytes, logPath, *activity)
+	default:
+		build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, logPath)
 	}
 	if err != nil {
 		if replayable && errors.Is(err, state.ErrConflict) {
@@ -822,17 +882,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// Step 6: NotifyBuildQueued. Best-effort. builderd's poll-
 	// recovery (state.Store.ClaimNextQueuedBuild, FOR UPDATE SKIP
 	// LOCKED) files missing notifies.
-	queuedPayload, _ := json.Marshal(map[string]any{
-		"build":      build.ID,
-		"deployment": d.ID,
-		"app":        p.AppID,
-		"kind":       string(p.Kind),
-		"source":     source,
-	})
-	if err := notif.Notify(ctx, db.NotifyBuildQueued, string(queuedPayload)); err != nil {
-		p.Log.Warn("apidsource.Enqueue: notify build_queued (durable recovery will pick it up)",
-			"build", build.ID, "deployment", d.ID, "app", p.AppID, "err", err)
-	}
+	NotifyBuildQueued(ctx, notif, p.Log, build, p.AppID, source)
 
 	// Step 7: notify only when CreateDeployment actually superseded the
 	// predecessor. Stable redeploys deliberately keep a live predecessor
@@ -909,4 +959,25 @@ func workflowScope(scope string) string {
 		return api.DefaultEnvScope
 	}
 	return scope
+}
+
+// NotifyBuildQueued tells builderd a build is claimable. Best-effort:
+// builderd's polling claim (state.Store.ClaimNextQueuedBuild) files missing
+// notifications. apid calls it again when it starts a deferred build early
+// (ADR-20261021221906).
+func NotifyBuildQueued(ctx context.Context, notif Notifier, log *slog.Logger, build state.Build, appID, source string) {
+	if source == "" {
+		source = string(build.Kind)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"build":      build.ID,
+		"deployment": build.DeploymentID,
+		"app":        appID,
+		"kind":       string(build.Kind),
+		"source":     source,
+	})
+	if err := notif.Notify(ctx, db.NotifyBuildQueued, string(payload)); err != nil && log != nil {
+		log.Warn("apidsource: notify build_queued (durable recovery will pick it up)",
+			"build", build.ID, "deployment", build.DeploymentID, "app", appID, "err", err)
+	}
 }

@@ -717,7 +717,7 @@ func readResource(w http.ResponseWriter, r *http.Request, id, rawParams json.Raw
 		return
 	}
 	entry, variables, registered := mcpRuntimeCatalog.resource(params.URI)
-	if !registered {
+	if !registered || !resourceAccessAllowed(r.Context(), params.URI, auth, identity, false) {
 		writeRPCError(w, id, -32002, "resource not found", http.StatusNotFound)
 		return
 	}
@@ -843,11 +843,6 @@ func customerRecordID(uri string) (string, bool) {
 		return "", false
 	}
 	return recordID, true
-}
-
-func configuredResourceURI(uri string) bool {
-	_, _, registered := mcpRuntimeCatalog.resource(uri)
-	return registered
 }
 
 func getPrompt(w http.ResponseWriter, r *http.Request, id, rawParams json.RawMessage, auth *authenticator, identity *authContext) {

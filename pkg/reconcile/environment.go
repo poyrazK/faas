@@ -97,6 +97,12 @@ func (s *Service) ReconcileEnvironment(ctx context.Context, project state.Projec
 			s.emitWorkloadAdded(ctx, project, app, commitSHA)
 		}
 		s.labelAddedApps(ctx, applied.Added, scan.Workloads)
+		if err := s.syncAddedAppProtocols(ctx, applied.Added, scan.Workloads); err != nil {
+			return out, err
+		}
+		if err := s.syncAppComposeSettings(ctx, applied.Added, scan.Workloads); err != nil {
+			return out, err
+		}
 	}
 	for _, w := range scan.Workloads {
 		app, found := byName[w.Name]

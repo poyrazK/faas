@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -80,6 +81,15 @@ type AsyncRouteRequest struct {
 	// EdgeJWT is the caller a kind=jwt rule verified (ADR-091 amendment
 	// 2026-11-04, round 11); zero when no rule did.
 	EdgeJWT EdgeJWTIdentity
+	// SentByAppID and OnCompleteAppID record a function send()
+	// (ADR-20261112160000); empty for every other producer.
+	SentByAppID     string
+	OnCompleteAppID string
+	// MaxPending and MaxBacklogBytes are the target plan's queue caps
+	// (MaxQueueDepth per app, MaxQueueBacklogBytesPerAccount), counted
+	// without the app lock (ADR-20261022105723 amendment 2026-11-13).
+	MaxPending      int
+	MaxBacklogBytes int64
 }
 
 type AsyncRouteAccepted struct {
@@ -173,8 +183,27 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		Payload:          payload,
 		Headers:          asyncRouteHeaders(r.Header),
 		IdempotencyKey:   r.Header.Get("Idempotency-Key"),
+		MaxPending:       limits.MaxQueueDepth,
+		MaxBacklogBytes:  limits.MaxQueueBacklogBytesPerAccount,
 	})
+	var depth *state.InvocationDepthError
+	if errors.As(err, &depth) {
+		api.WriteProblem(w, api.ErrPlanAsyncBacklog(depth.Limit, depth.Observed))
+		h.observeAsyncRule(rule, "blocked", "error")
+		return true
+	}
+	var backlog *state.InvocationBacklogBytesError
+	if errors.As(err, &backlog) {
+		api.WriteProblem(w, api.ErrPlanQueueBacklogBytes(backlog.Limit, backlog.Observed).WithHeader("Retry-After", "60"))
+		h.observeAsyncRule(rule, "blocked", "error")
+		return true
+	}
 	if err != nil {
+		if errors.Is(err, ErrAsyncRouteIdempotencyConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "idempotency_conflict", "Idempotency key conflict", "the key was already accepted for a different request"))
+			h.observeAsyncRule(rule, "blocked", "error")
+			return true
+		}
 		if errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "invocation_environment_work_isolation_unavailable",
 				"Stage work unavailable", "Work policies, queues, and completion destinations need isolated stage configuration."))
@@ -206,10 +235,11 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		return true
 	}
 
-	statusURL := "/v1/invocations/" + accepted.ID
+	statusPath := "/v1/invocations/" + accepted.ID
 	if authenticatedFrom(r.Context()).PlatformTenantID != "" {
-		statusURL = "/v1/platform-tenant-self/invocations/" + accepted.ID
+		statusPath = "/v1/platform-tenant-self/invocations/" + accepted.ID
 	}
+	statusURL := asyncRouteStatusURL(hostidentity.Configured().Platform, statusPath)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(api.InvocationIDHeader, accepted.ID)
 	if accepted.ReleaseID != "" {
@@ -308,4 +338,15 @@ func asyncRouteHeaders(in http.Header) map[string]string {
 		out[canonical] = strings.Join(values, ", ")
 	}
 	return out
+}
+
+// asyncRouteStatusURL makes an async route's status_url absolute on the
+// platform API host. The 202 is served on the app's own host, where a
+// relative /v1/invocations/{id} path reaches the app instead of the API
+// (Hunt 32 H32-53). Without a configured platform domain it stays relative.
+func asyncRouteStatusURL(platformDomain, path string) string {
+	if platformDomain == "" {
+		return path
+	}
+	return "https://api." + platformDomain + path
 }

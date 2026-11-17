@@ -154,6 +154,11 @@ func listBucketWrites(ctx context.Context, c bucketWritesClient, o bucketWritesO
 	if jsonOutput {
 		return jsonOut(writeJSON(page))
 	}
+	if len(page.Items) == 0 && page.NextCursor == "" {
+		// An empty list printed nothing (Hunt 33 H33-48).
+		_, _ = fmt.Fprintf(osStdout, "No %s write receipts for bucket %s.\n", o.status, o.bucket)
+		return 0
+	}
 	for _, receipt := range page.Items {
 		_ = printBucketWrite(receipt)
 	}

@@ -20,7 +20,8 @@ func TestAfterRestoreHookValidation(t *testing.T) {
 		{name: "query", hook: AfterRestoreHook{Path: "/restore?next=/"}, want: "absolute path"},
 		{name: "percent-escape", hook: AfterRestoreHook{Path: "/restore%2F"}, want: "absolute path"},
 		{name: "control", hook: AfterRestoreHook{Path: "/restore\t"}, want: "control characters"},
-		{name: "timeout", hook: AfterRestoreHook{Path: "/restore", TimeoutMS: AfterRestoreHookMaxTimeoutMS + 1}, want: "timeout_ms"},
+		{name: "bound budget", hook: AfterRestoreHook{Path: "/restore", TimeoutMS: AfterRestoreHookBoundMaxTimeoutMS}},
+		{name: "timeout", hook: AfterRestoreHook{Path: "/restore", TimeoutMS: AfterRestoreHookBoundMaxTimeoutMS + 1}, want: "timeout_ms"},
 		{name: "worker", hook: AfterRestoreHook{Path: "/restore"}, mode: ExecutionModeWorker, want: "request or service"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

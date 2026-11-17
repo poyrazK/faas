@@ -29,11 +29,8 @@ func (m *MemStore) BeginObjectBucketMutation(ctx context.Context, b ObjectBucket
 	if _, fenced := m.objectWriteFences[b.ID]; fenced {
 		return ObjectBucketMutation{}, ErrObjectBucketWriteFenced
 	}
-	if m.objectMutations == nil {
-		m.objectMutations = map[string]ObjectBucketMutation{}
-	}
 	out := ObjectBucketMutation{ID: uuid.NewString(), Bucket: m.objectBuckets[b.ID], Kind: kind, CreatedAt: time.Now().UTC()}
-	m.objectMutations[out.ID] = out
+	m.putObjectMutationLocked(out)
 	return out, nil
 }
 
@@ -54,7 +51,7 @@ func (m *MemStore) FinishObjectBucketMutation(ctx context.Context, receipt Objec
 	if !exists || actual.UploadID != "" || actual.MultipartUploadID != "" || actual.MultipartPartWriterID != "" || actual.Kind != receipt.Kind || !sameObjectMutationBucket(receipt.Bucket, actual.Bucket) || !sameObjectMutationBucket(receipt.Bucket, m.objectBuckets[receipt.Bucket.ID]) {
 		return ErrConflict
 	}
-	delete(m.objectMutations, receipt.ID)
+	m.dropObjectMutationLocked(receipt.ID)
 	return nil
 }
 

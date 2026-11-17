@@ -203,3 +203,108 @@ cancellation by itself, because the customer may have cancelled before asking
 for deletion; the restore notice names Keep subscription instead. Whether a
 re-added card passes a later upgrade depends on the bank; it still needs a
 sandbox run with a 3-D Secure test card.
+
+## Amendment 2 (2026-11-04, revised 2026-11-08): the GA charging fixes
+
+- **Owner decisions (2026-11-04, billing GA questions):** egress "stop free,
+  on paid plans default no overage at egress, if overage enabled, 0.03 on
+  gib"; builds "Free, monthly quota"; the go-live gate includes fixing the
+  charging bugs first.
+- **Revision (2026-11-08):** the egress overage election landed separately
+  (ADR-20261104204500, #6743) and the monthly build-minute quota has its own
+  decision (ADR-20261104132753). This amendment keeps only what neither
+  covers: the egress price, per-hour plan pricing and the charging fixes
+  below. An earlier draft's `egress_overage_choices` table and build quota
+  were dropped in favour of those.
+
+The billing GA review found these charging bugs:
+
+- meterd priced each egress hour by the subject's current plan. A downgrade
+  re-priced earlier hours, and hours spent on Free could be billed after an
+  upgrade.
+- The egress price came only from an environment value.
+- A `min_instances` floor was priced without its sidecars. The sampler kept
+  writing floor rows for subjects whose spend cap had stopped them, so they
+  were billed for time that did not run.
+- The object storage allowance was the largest plan held in the month: a
+  one-day upgrade gave the whole month the bigger allowance.
+- Managed PostgreSQL overage was billed for the whole month against the
+  current plan. A downgrade re-billed usage the larger allowance had already
+  covered, and an upgrade dropped overage that had already been billed.
+
+Decisions:
+
+1. **Egress overage costs $0.03 per GiB.** `api.EgressOverageMillicentsPerGiB`
+   = 3,000 is the published rate. The Polar provider defaults to it and
+   refuses to start with any other egress price while egress billing is
+   shadow or live. Who pays it is ADR-20261104204500's election.
+2. **Each egress hour is priced by the plan held in that hour.**
+   - The plan comes from the subject's price snapshots (`monthGrants.planAt`).
+     A Free hour settles with a zero receipt, also after an upgrade.
+   - The allowance and price the hour is billed against are that plan's.
+3. **`min_instances` floors are priced and stopped like the instances they
+   stand for.**
+   - A floor row is priced at
+     `api.BillableRAMMBWithSidecars(app.RAMMB, sidecars)` of the floor's
+     deployment.
+   - The sampler writes no floor row for a subject whose cap is reached,
+     using schedd's admission rule: compute overage at or above the cap, or a
+     hold that applies to this cap.
+   - A failed cap read writes the row.
+4. **The object storage allowance is shared across the month's plans.** It
+   is weighted by how long each plan was held
+   (`state.MonthPlanSpans`, `state.WeightedMonthAllowance`), like the
+   included GB-RAM-hours.
+5. **Managed PostgreSQL overage is billed per plan span.**
+   - Each span's usage above that span's plan allowance is billed, as app
+     compute is billed hour by hour against the allowance in force
+     (ADR-20261030093512). Closed months keep their recorded terms.
+   - The month's charge is then clamped once to the current plan's ceiling:
+     one more allowance.
+   - Suspension stays on the current plan's limits. After a downgrade, the
+     month's usage so far counts against the new allowance. Suspension
+     protects capacity, not the bill.
+
+Consequences:
+
+- $0.03 per GiB is below the list price of internet egress on the current
+  GCP production (about $0.085 to $0.12 per GiB). Elected egress overage
+  loses money there until production moves to bare metal with bundled
+  traffic, or the price changes.
+- A deployment whose Polar egress billing is shadow or live with
+  `FAAS_POLAR_EGRESS_MILLICENTS_PER_GIB` set to anything but 3000 fails to
+  start its billing provider: unset it or set 3000 before upgrading.
+
+## Amendment 3 (2026-11-13): the quota stop parks apps, warns first, and leaves databases running
+
+The billing review of 2026-11-13 (R10-1, R10-2) found that the egress
+ceiling reused the Free plan's quota stop, which suspends the whole subject.
+A paid account that reached its app egress allowance therefore also lost
+every managed PostgreSQL database (the cap sweep holds an inactive subject's
+databases to one compute-second) and heard nothing: no warning before the
+stop, no mail at it, and a `billing_past_due` notice that read like a
+payment problem.
+
+1. The quota stop (`suspended_reason = 'free_quota'`, the Free compute
+   allowance or an app egress allowance the plan does not bill) keeps
+   parking the subject's apps and refusing deploys, but a subject in it is
+   not inactive for managed PostgreSQL (`state.PgStore.QuotaSuspended`,
+   `managedPostgresSubjectInactive`): databases keep their own allowances.
+   Payment, abuse and operator suspensions still stop them.
+2. meterd mails the subject once a UTC day from 80% of a stopping
+   allowance (`mail.QuotaApproachingBody`), sharing the daily quota-warning
+   stamp, and once when the stop transitions (`mail.QuotaStoppedBody`).
+3. The stop's `billing_past_due` notification keeps its channel for the
+   dashboard and SSE consumers and adds `"kind":"quota_stop"`.
+
+## Amendment 2026-11-14 (billing review H17-4)
+
+Decision 4 parked apps outside the plan without telling anyone: the customer
+saw only the 403 on the next request. meterd now emails the billing subject,
+on the dunning interval, when its set of apps outside the plan changes. The
+email names each parked app and why (RAM above the plan's, or past the
+deployed-app count with the oldest kept) and what lets it wake. The plan and
+a digest of the app set last mailed are kept in `plan_fit_notices`, so one
+email goes out per set and plan, and the row is removed once the subject
+fits again. Parking stays immediate (owner decision 2026-11-14: notice, no
+grace).

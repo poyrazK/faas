@@ -27,6 +27,7 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -237,9 +238,18 @@ type Service struct {
 	// AutomationEvents forwards pull_request deliveries to apid as
 	// gregale.github events (ADR-20261027090010 §9); nil forwards none.
 	AutomationEvents AutomationEventPublisher
+	// PullRequestBranches asks apid for branch-backed PR previews
+	// (ADR-20261113121342); nil keeps every pull request on app previews.
+	PullRequestBranches PullRequestBranchClient
 	// CapabilityAllowed decides a product capability's platform flag for an
 	// account (ADR-20261023115741). nil releases every capability.
-	CapabilityAllowed func(capability, accountID string) bool
+	// The subject carries the resource's organization and plan
+	// (ADR-20261105090226).
+	CapabilityAllowed func(capability string, subject platformflags.Subject) bool
+	// PreviewDatabaseEnvKeys lists the keys an app's PR previews get from
+	// their own databases (ADR-20261102123523). nil reads them from the
+	// store when it is a state.PreviewDatabaseEnvKeyStore.
+	PreviewDatabaseEnvKeys func(ctx context.Context, accountID, appID string) ([]string, error)
 }
 
 // NewService builds a Service. Tests inject fakes for the seams;
@@ -546,7 +556,14 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 	if !deployProject && len(boundApps) == 0 {
 		return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonActionsTrigger)
 	}
-	if !s.capabilityAllowed(CapabilityGitHubDeploys, binding.AccountID) {
+	// The flag subject is the resource's organization and plan, as in apid
+	// (ADR-20261105090226).
+	pushOrgID := project.OrgID
+	if !projectBound && len(boundApps) > 0 {
+		pushOrgID = boundApps[0].OrgID
+	}
+	pushSubject := s.capabilitySubject(ctx, binding.AccountID, pushOrgID)
+	if !s.capabilityAllowed(CapabilityGitHubDeploys, pushSubject) {
 		s.Ops.ObserveGithubdPushSkipped(wire.PushSkippedReasonCapability)
 		s.Log.Info("githubd: push ignored; capability off",
 			"capability", CapabilityGitHubDeploys, "account_id", binding.AccountID,
@@ -615,7 +632,7 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 	// App-bound apps have nothing to reconcile.
 	var scan reposcan.Result
 	if deployProject {
-		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(project.AccountID))
+		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(pushSubject))
 		if err != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
 		}
@@ -654,7 +671,7 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 		exclude := make([]string, 0, len(kept))
 		for _, app := range kept {
 			exclude = append(exclude, app.WorkloadName)
-			held[app.ID] = fmt.Sprintf("Kept: %s is not in the Compose file at this commit, and a GitHub push does not remove services. It keeps serving its last release. Deploy with `gregale deploy` or from the dashboard to review and remove it.", app.WorkloadName)
+			held[app.ID] = pushKeptMessage(app)
 		}
 		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, exclude)
 		if err != nil {
@@ -814,6 +831,7 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 	if deployProject {
 		s.holdPushOverDeployRate(ctx, project, toEnqueue, held)
 		siblingAddresses = s.pushSiblingAddresses(ctx, tree.FS(), project, scan)
+		s.reportReviewedOnlyProjectSettings(ctx, tree.FS(), changedFiles, filterMode, install.InstallationID, ev.Repository.FullName, ev.After, project, deploymentScope)
 	}
 	// App-bound apps have no project dependency graph and deploy to their
 	// production scope, whichever scope the branch maps the project's to.
@@ -1150,6 +1168,13 @@ func (s *Service) filterByPath(touched []state.App, changedFiles []string, filte
 	// Shared files can affect every build even when the same push also
 	// changes a file inside one member. Check each path before filtering.
 	for _, path := range changedFiles {
+		// gregale.yaml at the root declares every function of a functions
+		// project (ADR-20261108160000 §3), so a change to it rebuilds every
+		// member even when one is rooted at the repository root.
+		switch path {
+		case "gregale.yaml", "gregale.yml", "gregale.toml":
+			return touched, nil
+		}
 		memberPath := false
 		for _, app := range touched {
 			if app.RootDir == "" || pathIntersectsDir([]string{path}, app.RootDir) {
@@ -1676,6 +1701,9 @@ type pullRequestTarget struct {
 	// previewsOff, when set, says why previews are off for this PR's
 	// project or account.
 	previewsOff string
+	// branchFallback says why a project on branch previews gives this pull
+	// request an app preview (ADR-20261113121342).
+	branchFallback string
 }
 
 // resolvePullRequestTarget resolves the (repo) binding, its installation and
@@ -1768,7 +1796,7 @@ func (s *Service) resolvePullRequestTarget(ctx context.Context, ev PullRequestEv
 	// A closed PR still tears its preview down when previews are off; any
 	// other event retires the PR's open previews (handlePullRequest).
 	switch {
-	case !s.previewsAllowed(binding.AccountID):
+	case !s.previewsAllowed(s.capabilitySubject(ctx, binding.AccountID, parentApp.OrgID)):
 		target.previewsOff = "PR previews are not enabled for this account; this pull request's preview is being torn down."
 	case !policy.PreviewEnabled:
 		target.previewsOff = "PR previews are turned off for this project; this pull request's preview is being torn down."
@@ -1913,6 +1941,11 @@ func previewableProductionApp(app state.App) bool {
 // current delivery. A *previewSetupError reports a failure the PR head or
 // account must fix; other errors retry the delivery.
 func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, target pullRequestTarget) (reconcile.Result, error) {
+	branchResult, branched, fallback, branchErr := s.branchPreview(ctx, ev, target)
+	if branched || branchErr != nil {
+		return branchResult, branchErr
+	}
+	target.branchFallback = fallback
 	binding, install, parentApp, policy := target.binding, target.install, target.parent, target.policy
 
 	// 5. Derive the preview slug + provision the preview apps row.
@@ -2020,6 +2053,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	var workloads map[string]reposcan.Workload
 	var available map[string]struct{}
 	var headValues map[string]map[string]string
+	var keep map[string]previewKeep
 	if sourceReady {
 		reopened, reopenErr := s.reopenLivePullRequestPreview(ctx, ev, install.InstallationID, previewLimits,
 			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
@@ -2051,7 +2085,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			return reconcile.Result{}, fmt.Errorf("githubd: fetch preview source: %w", err)
 		}
 		defer func() { _ = tree.Close() }()
-		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(binding.AccountID))
+		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(s.capabilitySubject(ctx, binding.AccountID, parentApp.OrgID)))
 		if err != nil {
 			return reconcile.Result{}, previewSetupFailure("Gregale could not read the project at this commit: %s", strings.TrimPrefix(err.Error(), "reposcan: "))
 		}
@@ -2074,7 +2108,25 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 		if reasons := reconcile.WorkloadPlanAdmissionReasons(account.Plan, previewedWorkloads(workloads, parentApp, dependencies)); len(reasons) > 0 {
 			return reconcile.Result{}, previewSetupFailure("the pull request does not fit the %s plan: %s", account.Plan, strings.Join(reasons, "; "))
 		}
-		headValues = prHeadComposeValues(tree.FS(), scan, s.scanOptions(binding.AccountID), previewLimits)
+		subject := s.capabilitySubject(ctx, binding.AccountID, parentApp.OrgID)
+		headValues = prHeadComposeValues(tree.FS(), scan, s.scanOptions(subject), previewLimits)
+		// Refuse before reserving anything: a service that would start without
+		// its datastore, or a set whose builds do not all fit the hour's PR
+		// preview deploys, fails the check with the reason (ADR-20261108140000).
+		previewed := append([]state.App{parentApp}, dependencies...)
+		shortfall, shortfallErr := s.previewDatastoreShortfall(ctx, tree.FS(), subject, scan, previewed, headValues)
+		if shortfallErr != nil {
+			return reconcile.Result{}, shortfallErr
+		}
+		// A push rebuilds only the services whose files changed; the others
+		// keep serving their build (ADR-20261108150000).
+		keep = s.previewUnchangedServices(ctx, ev, install.InstallationID, policy, previewed, workloads)
+		if shortfall == "" {
+			shortfall = s.previewDeployShortfall(ctx, account, len(previewed)-len(keep))
+		}
+		if shortfall != "" {
+			return reconcile.Result{}, previewSetupFailure("%s", shortfall)
+		}
 	}
 	// Source fetching and scanning can take longer than a PR head update.
 	// Recheck before the first preview mutation or build reservation.
@@ -2122,6 +2174,9 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			var quota *state.QuotaError
 			if errors.As(reserveErr, &quota) {
 				return reconcile.Result{}, previewSetupFailure("%s", previewQuotaSummary(quota, len(batch)))
+			}
+			if errors.Is(reserveErr, state.ErrPreviewOwnsBuckets) {
+				return reconcile.Result{}, previewSetupFailure("a service this pull request no longer previews still owns object storage buckets on its preview; delete those buckets so the preview can change")
 			}
 			if errors.Is(reserveErr, state.ErrConflict) {
 				return reconcile.Result{}, previewSetupFailure("a preview app name for this pull request is already used by another app or pull request")
@@ -2227,6 +2282,9 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	if s.WritePreviewCommentForInstallation != nil {
 		marker := previewCommentMarker(previewSlugVal)
 		status, detail := "queued", previewCommentQueued
+		if target.branchFallback != "" {
+			detail += " " + target.branchFallback
+		}
 		if ev.Action == PullRequestActionClosed {
 			status, detail = "closed", previewCommentClosed
 		}
@@ -2277,8 +2335,8 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 		if werr := s.writePreviewCheck(ctx, install.InstallationID,
 			ev.Repository.FullName, ev.PullRequest.HeadSHA,
 			githubdgrpc.CheckPhaseQueued, previewURL,
-			fmt.Sprintf("Preview provisioned for PR #%d against %q",
-				ev.Number, parentApp.Slug)); werr != nil {
+			strings.TrimSpace(fmt.Sprintf("Preview provisioned for PR #%d against %q. %s",
+				ev.Number, parentApp.Slug, target.branchFallback))); werr != nil {
 			s.Log.Warn("githubd: write queued preview check", "err", werr,
 				"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA,
 				"preview_slug", previewSlugVal)
@@ -2290,7 +2348,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	// all three and therefore turns every open/synchronize/reopen event into a
 	// real DeploymentKindPreview build.
 	if sourceReady {
-		if parentApp.ProjectID != "" {
+		pinned := s.pinUnchangedPreviews(ctx, state.PRPreviewHead{
+			InstallationID: install.InstallationID,
+			RepoFullName:   ev.Repository.FullName,
+			PRNumber:       ev.Number,
+			CommitSHA:      ev.PullRequest.HeadSHA,
+		}, keep, append([]state.App{created}, siblingPreviews...))
+		// A kept service keeps the configuration of the build it serves.
+		if parentApp.ProjectID != "" && !pinned[created.ID] {
 			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy,
 				headValues[strings.ToLower(parentApp.WorkloadName)], previewPlatformEnv(ev))
 			if err != nil {
@@ -2298,11 +2363,22 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			}
 			result.Added[0] = created
 		}
+		// Frontend build URLs of production apps point at this PR's
+		// previews of them (ADR-20261105090226).
+		buildURLHosts := previewBuildURLHosts(append([]state.App{parentApp}, dependencies...), append([]state.App{created}, siblingPreviews...))
+		if created, err = s.syncPreviewBuildURLs(ctx, created, parentApp, buildURLHosts); err != nil {
+			return result, err
+		}
+		result.Added[0] = created
 		toBuild := make([]state.App, 0, len(dependencies)+1)
 		for i, dependency := range dependencies {
 			preview, refreshErr := s.Reconcile.Store.RefreshPRPreview(ctx, siblingPreviews[i].ID, expiresAt)
 			if refreshErr != nil {
 				return result, fmt.Errorf("githubd: refresh PR dependency %q: %w", dependency.WorkloadName, refreshErr)
+			}
+			if pinned[preview.ID] {
+				result.Added = append(result.Added, preview)
+				continue
 			}
 			if dependency.ProjectID != "" {
 				// An app bound without a project builds as it is, like the root.
@@ -2312,10 +2388,15 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 					return result, fmt.Errorf("githubd: apply PR head dependency %q: %w", dependency.WorkloadName, err)
 				}
 			}
+			if preview, err = s.syncPreviewBuildURLs(ctx, preview, dependency, buildURLHosts); err != nil {
+				return result, err
+			}
 			toBuild = append(toBuild, preview)
 			result.Added = append(result.Added, preview)
 		}
-		toBuild = append(toBuild, created)
+		if !pinned[created.ID] {
+			toBuild = append(toBuild, created)
+		}
 		project := state.Project{
 			AccountID:        binding.AccountID,
 			RepoFullName:     ev.Repository.FullName,

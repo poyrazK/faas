@@ -1,0 +1,18 @@
+# Managed by the tetragon role (ADR-20261110183000).
+[Unit]
+Description=Tetragon eBPF runtime detection (observe only)
+Documentation=https://tetragon.io/
+After=network.target local-fs.target
+StartLimitBurst=10
+StartLimitIntervalSec=2min
+
+[Service]
+Environment="PATH={{ tetragon_release_dir }}/usr/local/lib/tetragon:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart={{ tetragon_release_dir }}/usr/local/bin/tetragon --config-dir {{ tetragon_config_dir }}
+Restart=on-failure
+RestartSec=5
+CPUWeight={{ tetragon_cpu_weight }}
+MemoryMax={{ tetragon_memory_max }}
+
+[Install]
+WantedBy=multi-user.target

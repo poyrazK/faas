@@ -13,6 +13,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class CronsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List cron triggers.
    * @returns CronResponse Cron triggers on the account, or on the app named by slug.
@@ -26,7 +27,7 @@ export class CronsService {
      */
     slug?: string,
   }): CancelablePromise<Array<CronResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/crons',
       query: {
@@ -63,7 +64,7 @@ export class CronsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<CronResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/crons',
       headers: {
@@ -103,7 +104,7 @@ export class CronsService {
      */
     id: string,
   }): CancelablePromise<CronResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/crons/{id}',
       path: {
@@ -138,7 +139,7 @@ export class CronsService {
      */
     requestBody: UpdateCronRequest,
   }): CancelablePromise<CronResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/crons/{id}',
       path: {
@@ -171,7 +172,7 @@ export class CronsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/crons/{id}',
       path: {
@@ -221,7 +222,7 @@ export class CronsService {
      */
     limit?: number,
   }): CancelablePromise<ListCronRunsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/crons/{id}/runs',
       path: {
@@ -266,7 +267,7 @@ export class CronsService {
      */
     before?: string,
   }): CancelablePromise<ListScheduleOccurrencesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/crons/{id}/occurrences',
       path: {
@@ -311,7 +312,7 @@ export class CronsService {
      */
     runId: string,
   }): CancelablePromise<AppTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/crons/{id}/runs/{run_id}',
       path: {
@@ -364,7 +365,7 @@ export class CronsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/crons/{id}/runs/{run_id}/cancel',
       path: {
@@ -424,7 +425,7 @@ export class CronsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<FireCronResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/crons/{id}/run',
       path: {

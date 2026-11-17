@@ -11,6 +11,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const checkSupportGrant = `-- name: CheckSupportGrant :one
+SELECT g.id FROM support_grants g
+JOIN orgs o ON o.id = g.org_id
+JOIN accounts a ON a.id = g.created_by_account_id AND a.status IN ('active', 'past_due')
+WHERE g.id = $1::uuid AND g.org_id = $2::uuid
+  AND g.revoked_at IS NULL AND g.expires_at > now()
+  AND (EXISTS (SELECT 1 FROM org_memberships m
+               WHERE m.org_id = g.org_id AND m.account_id = g.created_by_account_id
+                 AND m.removed_at IS NULL AND m.role IN ('owner', 'admin'))
+       OR (o.personal_org AND o.personal_owner_account_id = g.created_by_account_id))
+`
+
+type CheckSupportGrantParams struct {
+	ID    pgtype.UUID
+	OrgID pgtype.UUID
+}
+
+// CheckSupportGrant is LockSupportGrant for a read-only transaction, where
+// PostgreSQL prohibits row locks.
+func (q *Queries) CheckSupportGrant(ctx context.Context, db DBTX, arg CheckSupportGrantParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, checkSupportGrant, arg.ID, arg.OrgID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockAPIKey = `-- name: LockAPIKey :one
 SELECT id FROM api_keys
 WHERE id = $1 AND account_id = $2 AND org_id = $3
@@ -33,7 +59,7 @@ func (q *Queries) LockAPIKey(ctx context.Context, db DBTX, arg LockAPIKeyParams)
 
 const lockDeployToken = `-- name: LockDeployToken :one
 SELECT id FROM deploy_tokens
-WHERE id = $1 AND account_id = $2 AND app_id = $3
+WHERE id = $1 AND coalesce(created_by_account_id, account_id) = $2::uuid AND app_id = $3
   AND status IN ('active', 'grace') AND expires_at > now()
 FOR SHARE
 `
@@ -44,6 +70,7 @@ type LockDeployTokenParams struct {
 	AppID     pgtype.UUID
 }
 
+// A token authenticates as its minter when it has one (ADR 20261110190500).
 func (q *Queries) LockDeployToken(ctx context.Context, db DBTX, arg LockDeployTokenParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockDeployToken, arg.ID, arg.AccountID, arg.AppID)
 	var id pgtype.UUID
@@ -52,9 +79,12 @@ func (q *Queries) LockDeployToken(ctx context.Context, db DBTX, arg LockDeployTo
 }
 
 const lockMembership = `-- name: LockMembership :one
-SELECT role, access_revision FROM org_memberships
-WHERE org_id = $1 AND account_id = $2 AND removed_at IS NULL
-FOR SHARE
+SELECT m.role, m.access_revision FROM org_memberships m
+WHERE m.org_id = $1 AND m.account_id = $2 AND m.removed_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM org_security_policies p JOIN accounts a ON a.id = m.account_id
+    WHERE p.org_id = m.org_id AND p.require_mfa AND a.mfa_enrolled_at IS NULL)
+FOR SHARE OF m
 `
 
 type LockMembershipParams struct {
@@ -92,6 +122,35 @@ func (q *Queries) LockOIDCBearer(ctx context.Context, db DBTX, arg LockOIDCBeare
 	return id, err
 }
 
+const lockSupportGrant = `-- name: LockSupportGrant :one
+SELECT g.id FROM support_grants g
+JOIN orgs o ON o.id = g.org_id
+JOIN accounts a ON a.id = g.created_by_account_id AND a.status IN ('active', 'past_due')
+WHERE g.id = $1::uuid AND g.org_id = $2::uuid
+  AND g.revoked_at IS NULL AND g.expires_at > now()
+  AND (EXISTS (SELECT 1 FROM org_memberships m
+               WHERE m.org_id = g.org_id AND m.account_id = g.created_by_account_id
+                 AND m.removed_at IS NULL AND m.role IN ('owner', 'admin'))
+       OR (o.personal_org AND o.personal_owner_account_id = g.created_by_account_id))
+FOR SHARE OF g
+`
+
+type LockSupportGrantParams struct {
+	ID    pgtype.UUID
+	OrgID pgtype.UUID
+}
+
+// A support grant fences a support request instead of a membership
+// (ADR-20261116163508): the grant must still be unrevoked, unexpired and
+// held by an active owner or admin. Revoking takes a row lock, so a revoke
+// and an in-flight support write have a database-defined order.
+func (q *Queries) LockSupportGrant(ctx context.Context, db DBTX, arg LockSupportGrantParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockSupportGrant, arg.ID, arg.OrgID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const notifyIntent = `-- name: NotifyIntent :exec
 SELECT pg_notify($1::text, $2::text)
 `
@@ -107,8 +166,11 @@ func (q *Queries) NotifyIntent(ctx context.Context, db DBTX, arg NotifyIntentPar
 }
 
 const snapshot = `-- name: Snapshot :one
-SELECT role, access_revision FROM org_memberships
-WHERE org_id = $1 AND account_id = $2 AND removed_at IS NULL
+SELECT m.role, m.access_revision FROM org_memberships m
+WHERE m.org_id = $1 AND m.account_id = $2 AND m.removed_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM org_security_policies p JOIN accounts a ON a.id = m.account_id
+    WHERE p.org_id = m.org_id AND p.require_mfa AND a.mfa_enrolled_at IS NULL)
 `
 
 type SnapshotParams struct {
@@ -121,6 +183,8 @@ type SnapshotRow struct {
 	AccessRevision int64
 }
 
+// A member without two-factor authentication is not admitted to an
+// organization that requires it (ADR-20261114170352).
 func (q *Queries) Snapshot(ctx context.Context, db DBTX, arg SnapshotParams) (SnapshotRow, error) {
 	row := db.QueryRow(ctx, snapshot, arg.OrgID, arg.AccountID)
 	var i SnapshotRow

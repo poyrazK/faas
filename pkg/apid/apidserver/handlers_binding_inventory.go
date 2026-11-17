@@ -88,7 +88,7 @@ func (s *server) collectBindingInventory(parent context.Context, r *http.Request
 		{api.BindingTypePostgres, api.ScopesManagedPostgresReadSurface, func(ctx context.Context) bindingInventorySection {
 			return s.postgresBindingInventory(ctx, acct.ID, app.ID, scope)
 		}},
-		{api.BindingTypeObjectStorage, api.ScopesStorageManageSurface, func(ctx context.Context) bindingInventorySection {
+		{api.BindingTypeObjectStorage, api.ScopesStorageBindingReadSurface, func(ctx context.Context) bindingInventorySection {
 			return s.objectStorageBindingInventory(ctx, acct.ID, app.ID, scope)
 		}},
 		{api.BindingTypeQueue, api.ScopesReadSurface, func(ctx context.Context) bindingInventorySection {

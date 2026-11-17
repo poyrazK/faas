@@ -16,7 +16,9 @@
 - **Scale costs more for compute only.** On neon.com/pricing (2026-11-02) both plans charge the same:
   - storage: $0.35 per GB-month;
   - restore history: $0.20 per GB-month;
-  - egress: $0.10 per GB past 500 GB.
+  - egress: $0.10 per GB past 500 GB per project. Transfer is counted per
+    project, not per organization (amended 2026-11-11; each database's
+    egress allowance follows it, ADR-20261110160000).
 
   Compute is the difference: $0.106 per CU-hour on Launch and $0.222 on Scale.
 - **The current price sells below cost.** ADR-20261031110037 bills overage at the October COGS report's $0.20 per CU-hour, so every billed overage hour loses $0.022 on Scale. Storage overage (ADR-20261031165104, still open) was planned at $0.60 per GiB-month.

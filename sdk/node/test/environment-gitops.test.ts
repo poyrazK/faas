@@ -89,6 +89,7 @@ test('GitOps status carries scoped diagnostics without inventing serving', async
   const explanation: EnvironmentGitOpsExplanation = {
     read_only: true, assessed_at: '2026-10-16T12:00:00Z', status: 'blocked', summary: 'Waiting for current serving proof.',
     source_id: 'source', generation: 3, intent_version: 5, source_freshness: 'stale',
+    report_id: 'current-report', report_status: 'blocked', report_freshness: 'fresh', report_observed_at: '2026-10-16T12:00:00Z',
     approved_revision_id: 'approved', applied_revision_id: 'historical',
     workloads: [{ resource: 'workload/report', app_id: 'app', execution_mode: 'job', preparation: 'complete',
       qualification: 'complete', activation: 'complete', serving: 'unknown', blocking_reasons: ['environment_serving_evidence_missing'] }],

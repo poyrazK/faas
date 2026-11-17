@@ -22,6 +22,7 @@ import (
 	main "github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/secretscan"
 )
 
 // auditDeployCLI points the CLI at handler with JSON output and returns the
@@ -236,9 +237,11 @@ func TestDoctorEnvRequiredKnowsPlatformAndAppVariables(t *testing.T) {
 	}
 }
 
-// Finding 4: a local-files deploy uploads .env and key files without a
-// word. It still uploads them (user decision) but names them.
-func TestLocalFilesDeployWarnsAboutCredentialFiles(t *testing.T) {
+// Finding 4: a local-files deploy uploaded .env and key files without a
+// word. Since prod findings 2026-11-15 (owner decision 2026-11-16) it leaves
+// them out and names them; a negated .gregaleignore rule uploads one, and a
+// CA bundle without a private key is not a credential.
+func TestLocalFilesDeployExcludesCredentialFiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	main.WriteFile(t, dir, "package.json", "{}")
@@ -248,6 +251,10 @@ func TestLocalFilesDeployWarnsAboutCredentialFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	main.WriteFile(t, filepath.Join(dir, "certs"), "server.key", "not a real key\n")
+	main.WriteFile(t, filepath.Join(dir, "certs"), "ca.pem", "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n")
+	main.WriteFile(t, dir, "credentials.json", "{}")
+	main.WriteFile(t, dir, ".npmrc", "registry=https://registry.example\n")
+	main.WriteFile(t, dir, ".gregaleignore", "!.npmrc\n")
 	var archive []byte
 	stdout, stderr := auditDeployCLI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -278,20 +285,49 @@ func TestLocalFilesDeployWarnsAboutCredentialFiles(t *testing.T) {
 	if code := main.CmdDeployTarball([]string{"--name", "probe-app", "--no-wait", "--no-doctor", "--secret-scan", "off"}); code != 0 {
 		t.Fatalf("deploy exit=%d stderr=%s", code, stderr)
 	}
-	warning := ".env, certs/server.key, which may hold credentials"
-	if !strings.Contains(stderr.String(), warning) || !strings.Contains(stderr.String(), ".gregaleignore") || !strings.Contains(stderr.String(), "gregale env push") || strings.Contains(stderr.String(), ".env.example") {
+	warning := "not uploading .env, certs/server.key, credentials.json, which may hold credentials"
+	if !strings.Contains(stderr.String(), warning) || !strings.Contains(stderr.String(), ".gregaleignore") || !strings.Contains(stderr.String(), "gregale env push") {
 		t.Fatalf("stderr = %s", stderr)
 	}
 	var receipt main.DeployReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil || len(receipt.Warnings) != 1 || !strings.Contains(receipt.Warnings[0], warning) {
 		t.Fatalf("receipt warnings = %v (err %v)\n%s", receipt.Warnings, err, stdout)
 	}
-	packed := false
+	packed := map[string]bool{}
 	for name := range main.ReadCapturedDeployArchive(t, archive) {
-		packed = packed || strings.HasSuffix(name, "/.env") || name == ".env"
+		_, rel, _ := strings.Cut(name, "/")
+		packed[rel] = true
 	}
-	if !packed {
-		t.Fatal("the warning changed what is packed: .env is missing from the upload")
+	for _, name := range []string{".env", "certs/server.key", "credentials.json"} {
+		if packed[name] {
+			t.Errorf("%s was uploaded; archive = %v", name, packed)
+		}
+	}
+	for _, name := range []string{".npmrc", ".env.example", "certs/ca.pem", "package.json"} {
+		if !packed[name] {
+			t.Errorf("%s is missing from the upload; archive = %v", name, packed)
+		}
+	}
+}
+
+// A secret in a .env the upload leaves out is no reason to warn, or under
+// --secret-scan=strict to refuse the deploy.
+func TestSecretScanIgnoresExcludedFiles(t *testing.T) {
+	dir := t.TempDir()
+	excludes := []string{filepath.Join(dir, ".env")}
+	local := secretscan.Finding{File: ".env", Line: 1}
+	uploaded := secretscan.Finding{File: "config/settings.env", Line: 2}
+	findings, err := main.WithoutExcludedFindings(dir, excludes, []secretscan.Finding{local, uploaded}, nil)
+	if err != nil || len(findings) != 1 || findings[0].File != uploaded.File {
+		t.Fatalf("findings = %+v err = %v", findings, err)
+	}
+	strict := &main.StrictSecretScanError{Findings: []secretscan.Finding{local}}
+	if _, err := main.WithoutExcludedFindings(dir, excludes, []secretscan.Finding{local}, strict); err != nil {
+		t.Fatalf("strict scan still refuses a deploy whose only finding stays local: %v", err)
+	}
+	strict = &main.StrictSecretScanError{Findings: []secretscan.Finding{local, uploaded}}
+	if _, err := main.WithoutExcludedFindings(dir, excludes, nil, strict); err == nil || len(strict.Findings) != 1 {
+		t.Fatalf("strict scan must still refuse an uploaded secret: err=%v findings=%+v", err, strict.Findings)
 	}
 }
 
@@ -299,7 +335,9 @@ func TestCredentialFileName(t *testing.T) {
 	for name, want := range map[string]bool{
 		".env": true, "api/.env.production": true, ".npmrc": true, "certs/tls.pem": true, "server.KEY": true,
 		"keys/id_rsa": true, "id_ed25519": true, ".aws/credentials": true,
-		".env.example": false, "id_rsa.pub": false, "server.js": false, "keyboard.js": false, "credentials.md": false,
+		"credentials.json": true, ".aws-credentials": true, "deploy/service-account.json": true,
+		"my-proj-firebase-adminsdk-x1y2z-0a1b2c3d4e.json": true, "client_secret_123.apps.googleusercontent.com.json": true,
+		".env.example": false, "id_rsa.pub": false, "server.js": false, "keyboard.js": false, "credentials.md": false, "package.json": false,
 	} {
 		if got := main.CredentialFileName(name); got != want {
 			t.Errorf("credentialFileName(%q) = %v, want %v", name, got, want)
@@ -348,6 +386,41 @@ func TestDeployCheckProjectOnlyFlagNamesProject(t *testing.T) {
 		stderr.Reset()
 		if code := main.CmdDeployCheck([]string{flag}); code != 1 || !strings.Contains(stderr.String(), "needs --project") {
 			t.Errorf("deploy check %s exit=%d stderr=%q", flag, code, stderr.String())
+		}
+	}
+}
+
+// Hunt 33 H33-60: a migration script reading MIGRATION_DATABASE_URL, the key
+// of the app's migration-access managed PostgreSQL binding, was reported as
+// an undeclared variable to set with `secrets set`.
+func TestDoctorEnvRequiredCountsManagedPostgresBindingKeys(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	main.WriteFile(t, dir, "package.json", "{}")
+	main.WriteFile(t, dir, "migrate.js", "const url = process.env.MIGRATION_DATABASE_URL;\n")
+	for _, tc := range []struct {
+		scope      string
+		wantStatus string
+	}{{"default", "ok"}, {"staging", "error"}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/v1/apps/pg/secrets":
+				main.WriteJSONTest(w, api.AppSecretListResponse{})
+			case "/v1/apps/pg/env":
+				main.WriteJSONTest(w, api.AppEnvListResponse{})
+			case "/v1/apps/pg/postgres-bindings":
+				main.WriteJSONTest(w, api.AppPostgresBindingList{Items: []api.AppPostgresBinding{{ID: "b1", Scope: tc.scope, EnvironmentKey: "MIGRATION_DATABASE_URL", Access: "migration", State: "ready"}}})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_live_fixture")
+		code, check := doctorEnvCheck(t, dir, "--app", "pg")
+		srv.Close()
+		if check.Status != tc.wantStatus || (tc.wantStatus == "ok") != (code == 0) {
+			t.Errorf("binding in scope %s: exit=%d check=%+v, want %s", tc.scope, code, check, tc.wantStatus)
 		}
 	}
 }

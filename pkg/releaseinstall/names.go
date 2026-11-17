@@ -22,6 +22,15 @@ var supportBinaryNames = []string{
 	"init",
 	"mcp-bridged",
 	"edgednsd",
+	// ADR-20261109170000: the control plane's artifact signer, started by
+	// the signd_service role from the active release.
+	"signd",
+	// ADR-20261110210000 §3: the control plane's secret opener, started by
+	// the secretd_service role from the active release.
+	"secretd",
+	// ADR-20261112160000: the Neon key holder, started by the neond_service
+	// role from the active release.
+	"neond",
 	"schedd-brokerq-apply",
 	"s3-gatewayd",
 	"vmmd-jail-helper",
@@ -34,6 +43,10 @@ var supportBinaryNames = []string{
 	// the signed bundle so compute hosts never rebuild a host-specific kernel
 	// during a production join.
 	"vmlinux",
+	// firecracker-vmm is the release-built Firecracker with the host-owned
+	// virtio-net header patch (ADR-20261108170000). node_join installs it as
+	// the upstream-named binary; releases built before it simply lack it.
+	"firecracker-vmm",
 	// imaged verifies platform base provenance offline against the Sigstore
 	// root its own release shipped, and admits the frozen pre-attestation
 	// digest list without an attestation (ADR-20261029155852).

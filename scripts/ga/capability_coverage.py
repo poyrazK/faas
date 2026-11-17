@@ -30,10 +30,20 @@ INVENTORY = os.path.join(ROOT, "docs", "ga-capability-inventory.md")
 # Target: inventory row key (unique substring of the Capability cell), or
 # "INFRA" / "TOOLING" / "TEST" for identifiers that are not customer capabilities.
 RULES = [
+    (r"(^|/|-)support([/-]|$)", "Native customer support"),
+    (r"(^|/|-)customer-attention([/-]|$)", "Native customer support"),
+    # Offline export tools belong to the existing CLI capability (row 156).
+    (r"^export$", "`gregale` CLI"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
-    (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck", "TOOLING"),
+    (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck|^mutate$", "TOOLING"),
+    # First-hour acceptance and baseline docs describe qualification tooling.
+    (r"^first-hour-(acceptance|baseline)$", "TOOLING"),
     # --- attribution fixes: specific names that broader keywords would misfile
+    (r"hosted-task-source|tasktoolsource|task-tool-source-intents|mcp-hosted-task-source-retention", "Gregale management MCP server"),
+    # Agent-authored tools and exact delegated execution remain management MCP preview.
+    (r"^/v1/(delegated-)?tool-(publications|registry|invocations|grants|oauth-connections|connections)(/|$)", "Gregale management MCP server"),
+    (r"^tool-(publications|invocations|grants|oauth-(connections|authorizations))$|^tool(connection|grant|invocation|publication)$|^mcp-private-tool-invocation$", "Gregale management MCP server"),
     (r"scheduled-release", "Scheduled releases"),
     (r"release-review", "Release review"),
     (r"image-run|interactive-run", "Image runs"),
@@ -72,7 +82,7 @@ RULES = [
     (r"retained-service-spans|spans-", "Tracing:"),
     (r"response-status-hooks", "Throttle suggestions"),
     (r"^warmup$", "Warm pool"),
-    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|private-ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|entry-addrs|health-path|host|iface|ingress-cidrs|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
+    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|private-(control-|peer-)?ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|entry-addrs|health-path|host|iface|ingress-cidrs|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
     (r"^(control|dns-handoff|edge-health-outcome|handler|inflight|pgbackend|rule-label-set|stale-target|workload-retirement)$", "INFRA"),
     (r"^/v1/apps/\\$|^/v1\?api.key", "TEST"),
     (r"^app-layer-max", "Builds in builder"),
@@ -80,7 +90,7 @@ RULES = [
     # --- round-4 triage: specific identifiers seen unmatched
     (r"^/(checkout\\?|generate=\d+\\|orders/\{id\}|users/4f8a|\.\.\.|app\.css|compile)$|^/v1\?api-key|^/v1/users|^/v1/apps/\{slug\}\\$|^$", "TEST"),
     (r"^/compile$|livequery", "Live queries"),
-    (r"^/connections|data/connections|data-connection", "Data pipelines"),
+    (r"^/connections|data/(connections|pipeline-setups)|data-connection", "Data pipelines"),
     (r"/v1/hooks/", "Durable inbound webhooks"),
     (r"/v1/status|status-incident", "Public status page"),
     (r"/v1/synthesize|synth", "INFRA"),
@@ -110,6 +120,7 @@ RULES = [
     (r"database-dependency", "Managed Postgres"),
     (r"bucket-dependency", "Object storage"),
     (r"function-spec|function-config", "Function runtimes"),
+    (r"fnadapter", "Function runtimes"),
     (r"worker-spec", "Worker pools"),
     (r"lifecycle-config|healthcheckproto", "Health probes"),
     (r"^manifest\.|release-config", "`gregale.yaml` deploy overrides"),
@@ -137,6 +148,23 @@ RULES = [
     # Keyed credential hashes (ADR 20261029202403): storage plumbing under
     # every credential, no capability of its own.
     (r"^credhash$", "INFRA"),
+    # ADR-20261115180000: shared-store object deletion on the control plane.
+    (r"^objectgc$", "INFRA"),
+    # ADR-20261109170000: signd's record of the layers it signed.
+    (r"^artifact-signatures$", "INFRA"),
+    # ADR-20261109170000: the layer verifiers' v2-only switch.
+    (r"^artifact-signature-require-v2$", "INFRA"),
+    # ADR-20261109170000: signd's listener and imaged's signd target.
+    (r"^signd-", "INFRA"),
+    # ADR-20261110210000 §4: which logins may set an app's owner node, its
+    # record, and schedd's FAAS_APP_OWNER_AUTHORITY switch.
+    (r"^app-owner-(authority|writes|release-requests)$", "INFRA"),
+    # ADR-20261110210000 §3: secretd, its peer grants and open audit.
+    (r"^(secretd|secretpg|secret-grants|secret-open-audit)$", "INFRA"),
+    # ADR-20261110210000 §3: secretd's listener, budget and identity settings.
+    (r"^secretd-", "INFRA"),
+    # ADR-20261112160000: neond's key file, socket and delete limit.
+    (r"^neond-", "INFRA"),
     # Compile-on-first-use regexps for package-level patterns
     # (ADR-20261101215228 measurement); no capability of its own.
     (r"^lazyregexp$", "INFRA"),
@@ -162,7 +190,7 @@ RULES = [
     (r"^browser$|whycopy", "`gregale` CLI"),
     (r"edgevalidate", "Edge rules (incl"),
     (r"^focus$", "Plans, usage, invoices"),
-    (r"gitfetch|reposcan", "Repo decomposition"),
+    (r"gitfetch|reposcan|featurehints", "Repo decomposition"),
     (r"hostport", "TCP listeners"),
     (r"^markers$", "Framework profiles"),
     (r"simpleapp", "Apps: create"),
@@ -177,7 +205,7 @@ RULES = [
     (r"internal/hosting|hosting-|internal-frontend|^sites$|^hosting|frontend-hosting|site-", "Internal frontend hosting"),
     (r"internal-?mail|maild|mailctl|mail-feedback|mail-metrics|mail-report|productemail|product-email", "Internal mail service"),
     (r"product-control|productcontrol|product_control|/product/|^product$|product-customers", "Product control"),
-    (r"agent-run|agent-execution|agent-callback|agent-tool|^agent|agents", "Gregale Agents"),
+    (r"agent-run|agent-execution|agent-callback|agent-tool|sandbox|^agent|agents", "Gregale Agents"),
     (r"oci/registry|^/v2/?$|registry-storage|ociregistry", "Platform OCI registry"),
     (r"^/v1/admin|^admin|gregalectl|compute-nodes|operator|break-glass|abuse|^/admin|deployctl|nodes?-|fleet|cluster-signing", "Operator admin"),
     (r"data-repair|datarepair|repair", "Selective data repair"),
@@ -198,14 +226,14 @@ RULES = [
     (r"keys?$|api-key|^/v1/keys|scopes|service-caller-key|key-pool", "API keys"),
     (r"^mail$|mail|email|notification-email|magic-link|postmark|resend", "Customer notification emails"),
     (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink", "Signup, login"),
-    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags", "Customer feature flags"),
+    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags|^flag-(kills|request-attributes)$|^flag-(experiments|experiment-units|experiment-latency|conversion-daily|event-usage|event-names)$", "Customer feature flags"),
     # --- developer tools
-    (r"mcp-management|mcpmanagement|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
-    (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories", "Docs site and trust pages"),
+    (r"mcp-management|mcpmanagement|mcp[-_]?openapi|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
+    (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories|^/(terms|privacy|acceptable-use)$|^legal$|legal[-_]pages|^legal-acceptances$", "Docs site and trust pages"),
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
     (r"dashboard|templates?/|^index$|^app\.(css|js)|\.js$|^stateless$|email-verification-banner|email-verified|set-password|password-reset|^login$|^profile$", "Web dashboard"),
-    (r"^gregale$|^cli|cli-|completion|^man$|^menu$|^start$|^open$|^config$|^version$|doctor|^context|profiles?-config|^init$", "`gregale` CLI"),
+    (r"^gregale$|^cli|cli-|completion|^man$|^menu$|^start$|^open$|^config$|^version$|^update$|doctor|^context|profiles?-config|^init$", "`gregale` CLI"),
     # --- observability
     (r"status-page|^/status|public-status|^status$|status/slo", "Public status page"),
     (r"audit", "Audit log"),
@@ -231,7 +259,7 @@ RULES = [
     (r"datadog", "Datadog integration"),
     (r"log-drain|drain-analytics|log-analytics", "Log drains"),
     (r"logs?$|^log-|log-archive|tail|logarchive|/logs", "Logs, tail"),
-    (r"metrics|analytics|request-telemetry|telemetry", "App, service and account metrics"),
+    (r"metrics|analytics|request-telemetry|telemetry|long-lived-latency", "App, service and account metrics"),
     # --- data
     (r"ai-gateway|ai-access|aigateway|^ai$|llm|moderation|prompt", "AI gateway"),
     (r"outbound|integration", "Outbound integrations"),
@@ -244,7 +272,7 @@ RULES = [
     # --- async
     (r"inbound-webhook", "Durable inbound webhooks"),
     (r"webhook|account-release-webhook|delivery-format", "Outbound webhooks"),
-    (r"automation", "Automations:"),
+    (r"stored-workflow|storedworkflow|stored_workflow|workflows/stored", "Stored workflows:"),
     (r"operation|business-(invariant|decision|effect|compensation)|customer-operation", "Operations:"),
     (r"inbox|outbox|messaging|application-message|send$|deliver$", "Application inbox and outbox"),
     (r"worker-pool|^workers$|worker-replica", "Worker pools"),
@@ -274,7 +302,9 @@ RULES = [
     (r"cors", "CORS presets"),
     (r"edge-protection|pre-auth|challenge|waf|bot", "Edge protection"),
     (r"edge-rule|edgerule|geo|asn|jwt|rewrite|redirect", "Edge rules (incl"),
-    (r"require-authn|public-auth|appaccess|app-access|authn|ip-allowlist", "App access control"),
+    # ADR-20261110210000 slice 3h: verify-only basic auth (app-basic-auth-verifiers,
+    # basicverifier, the gateway's basic-auth-verifiers).
+    (r"require-authn|public-auth|appaccess|app-access|authn|ip-allowlist|basic-auth-verifiers|basicverifier", "App access control"),
     (r"retry", "Gateway request retry"),
     (r"circuit", "Circuit breaking"),
     (r"static-egress|reserved-ip|egress-ip", "Static egress IP"),
@@ -310,7 +340,7 @@ RULES = [
     (r"wake-ahead", "Service wake-ahead"),
     (r"autoscal|scale-up|scaling|min-instance|max-instance|max-concurrency|concurrency", "Autoscaling and min instances"),
     (r"prewarm|park|wake", "Manual park / wake"),
-    (r"runner|runtime|function|node22|node24|python3|go124|binary", "Function runtimes"),
+    (r"runner|runtime|function|handler-api|node22|node24|python3|go124|binary", "Function runtimes"),
     (r"firecracker|jailer|isolation|vmm", "Firecracker isolation"),
     (r"scale-to-zero|idle|cold-wake|cold-boot|reaper", "Scale to zero"),
     # --- releases
@@ -335,6 +365,9 @@ RULES = [
     (r"affected|deploydiff|^diff$|^scan$", "Affected-workload preview"),
     (r"stateless|source-review|unreviewed", "Stateless-contract checks"),
     (r"registry", "Private registry credentials"),
+    # ADR-20261110210000 slice 3j-4: the Dockerfile reader that scopes a
+    # build's private-registry pulls.
+    (r"^dockerfilebase$", "Private registry credentials"),
     (r"trusted-signer|signer|require-signed|signature-enforcement|fleet-signing", "Signed deploys"),
     (r"deploy-token", "Per-app deploy tokens"),
     (r"source-ref", "Source-ref deploys"),
@@ -348,19 +381,23 @@ RULES = [
     (r"oci|image|container", "Container / OCI image"),
     (r"build|railpack|buildkit", "Builds in builder"),
     (r"upload|tarball|source|deploy", "Source deploys:"),
-    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|apps-list|apps-new|app-detail", "Apps: create"),
+    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|^reserved-app-slugs$|apps-list|apps-new|app-detail", "Apps: create"),
 ]
 
 # Checked before everything else, for every source: names a broad rule or the
 # infra list would misfile.
 PRIORITY_RULES = [
+    # Sales qualification and message templates are real staff surfaces, not test/tooling names.
+    (r"^/v1/referrals(?:/|$)|^/dashboard/referrals$|^referrals?$|^referral-", "Referral codes and conversion estimates"),
+    (r"^/v1/sales/inquiries(?:/|$)|^sales-(?:inquiries|intake)(?:-|$)", "Website sales inquiries"),
+    (r"^/v1/sales(?:/|$)|^/dashboard/sales$|^sales(?:-|$)", "Sales workspace and lead management"),
     (r"^docs-and-trust$", "Docs site and trust pages"),
     (r"^ai-(content-policy|request-replay)$", "AI gateway"),
     (r"^security-headers$", "Edge rules (incl"),
     (r"^signed-urls$", "Object storage"),
     (r"^test$|^scenario-tests$|^scenario-(test|object|postgres)", "Scenario tests"),
     (r"^(project-)?environment-(workload-)?qualification|^project-environment-qualifications$", "Environments and Environment GitOps"),
-    (r"automation-test", "Automations:"),
+    (r"stored-workflow-test", "Stored workflows:"),
     (r"realtime-customer-examples", "Realtime channels"),
     (r"^durableentity$", "Durable entities"),
     (r"^appmetrics$", "App, service and account metrics"),
@@ -382,21 +419,33 @@ INFRA_RULES = [
     r"^(state|statetest|wire|db|migrate|migration-new|schema-dump|goose|sqlc|pgx|api|apid|apidserver|httpkit|durable|receivers|object$)",
     r"sched|schedd|vmmd|fcvm|netns|rootfs|imaged|meterd|gateway$|gatewayd|snapshot|base-|layer-|nft|denylist|hostage|jail|cgroup|kernel|rng|reseed|guest-init|init-helper|vsock|sdunit|guestdisk",
     r"lock|lease-|fence|leader|ledger|journal|outbox-reconcil|receipt|idempotency-key|retention|gc$|janitor|reconcil|watchdog|spool|backpressure|ratelimit|rate-limit|quota|admission|eviction",
-    r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
+    r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|errorcodes-md|docsmarkers|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
     r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics|^loki-",
-    r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$",
+    r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$|^boot-tracker$",
     # ADR-20261030115139: the public edge's status for platform problems.
     r"^platform-error-status$",
     # ADR-20261031105055: the compute edge's host-to-node routing and its switch.
     r"^edge-placement(-routing)?$",
     # ADR-20261102081618 §5: local first for an app on several nodes.
     r"^edge-local-first$",
+    # Manifest hot_path: the compute edge keeps connections to each node's
+    # gatewayd-internal alive.
+    r"^internal-keepalive-per-node$",
+    # ADR-20261110081523: binary HTTP on that hop, its switch and its codec.
+    r"^edge-internal-hop$",
+    r"^binhttp$",
     # ADR-20261102081618: the records that send Cloudflare to the compute edges.
     r"^edgednsd?(-.*)?$",
+    # ADR-20261109170000: the control plane's artifact signer.
+    r"^signd$",
+    # ADR-20261112160000: the control plane's holder of the Neon API keys.
+    r"^neond$",
     # ADR-20261103163954: what stands in front of a compute edge's TLS listener.
     r"^edge-public-front$",
     # ADR-20261103163954 §4: the compute edge's per-client-address limits.
     r"^edge-client-limits$",
+    # ADR-20261110123517: the compute edge sheds load when its node is overloaded.
+    r"^edge-overload$",
     # ADR-20261103163954 §4: Cloudflare's ranges skip those connection limits.
     r"^edge-proxy-cidrs$",
 ]

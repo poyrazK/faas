@@ -11,16 +11,24 @@ const (
 	ManagedPostgresCapAllowance      = "allowance"
 	ManagedPostgresCapCeilingWarning = "ceiling_warning"
 	ManagedPostgresCapSuspended      = "suspended"
+	// ManagedPostgresCapEgressHeld: a database sent its own monthly egress
+	// allowance (ADR-20261110160000 amendment 2026-11-11). Its amounts are
+	// bytes, not compute-unit seconds.
+	ManagedPostgresCapEgressHeld = "egress_held"
 )
 
 // ManagedPostgresCapNotice is the frozen snapshot one cap email reports.
 type ManagedPostgresCapNotice struct {
-	Threshold   string
-	UsedSeconds int64
-	Allowance   int64
-	Ceiling     int64
-	Overage     bool
-	ReachedAt   time.Time
+	// DatabaseName names the database an egress hold is for; empty on the
+	// compute thresholds, and on egress holds recorded per subject before
+	// ADR-20261110160000's 2026-11-13 amendment.
+	DatabaseName string
+	Threshold    string
+	UsedSeconds  int64
+	Allowance    int64
+	Ceiling      int64
+	Overage      bool
+	ReachedAt    time.Time
 }
 
 // ManagedPostgresCapBodyV1 renders one compute cap email. Amounts are
@@ -53,6 +61,21 @@ func ManagedPostgresCapBodyV1(email string, n ManagedPostgresCapNotice) (subject
 			next = "Upgrade your plan to resume them sooner."
 		}
 		detail = fmt.Sprintf("They used this month's %s compute limit at %s, so they were suspended.\nTheir data, backups and connection settings are kept. They resume on %s.\n%s", ceiling, n.ReachedAt.UTC().Format("2006-01-02 15:04 UTC"), resume, next)
+	case ManagedPostgresCapEgressHeld:
+		subject = "A managed PostgreSQL database is paused until next month"
+		limit := fmt.Sprintf("Each database has its own %s monthly egress allowance.", egressGB(n.Allowance))
+		next := "\nTurn on egress overage with gregale billing egress-overage on to resume it sooner."
+		if n.Overage {
+			limit = fmt.Sprintf("Each database has its own %s monthly egress allowance. Egress overage is on, so egress past it is billed and a database is paused at %s.", egressGB(n.Allowance), egressGB(n.Ceiling))
+			next = ""
+		}
+		which := "A database"
+		if n.DatabaseName != "" {
+			subject = fmt.Sprintf("Managed PostgreSQL database %s is paused until next month", n.DatabaseName)
+			which = "Your database " + n.DatabaseName
+		}
+		detail = fmt.Sprintf("%s %s sent %s by %s, so it now refuses connections. Your apps and other databases are not affected; any other database that reaches its own limit is paused the same way, with its own email.\nIts data, backups and connection settings are kept. It resumes on %s.%s",
+			limit, which, egressGB(n.UsedSeconds), n.ReachedAt.UTC().Format("2006-01-02 15:04 UTC"), resume, next)
 	default:
 		return "", "", false
 	}
@@ -66,6 +89,12 @@ See usage with gregale postgres usage or on the PostgreSQL page of the dashboard
 — Gregale
 `, safeRecipient(email), detail)
 	return subject, body, true
+}
+
+// egressGB renders bytes of egress as GB (10^9 bytes), the unit Neon prices
+// and the allowance is set in.
+func egressGB(bytes int64) string {
+	return fmt.Sprintf("%.1f GB", float64(bytes)/1e9)
 }
 
 func cuHours(seconds int64) string {

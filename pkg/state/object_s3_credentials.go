@@ -74,7 +74,7 @@ type ObjectS3ComputeBindingCreateRequest struct {
 
 func validObjectS3ComputeBindingCreateRequest(req ObjectS3ComputeBindingCreateRequest) bool {
 	c := req.Credential
-	if !validObjectS3Credential(c) || c.ManagedAppID == "" || c.IssuerAccountID != "" || c.IssuerAccessRevision != 0 || req.MaxCredentialsPerBucket < 1 || req.MaxSecretsPerApp < 6 || len(req.Secrets) != 6 {
+	if !validObjectS3Credential(c) || c.ManagedAppID == "" || c.IssuerAccountID != "" || c.IssuerAccessRevision != 0 || req.MaxCredentialsPerBucket < 1 || req.MaxSecretsPerApp < 1 || len(req.Secrets) != 6 {
 		return false
 	}
 	for _, id := range []string{c.ID, c.AccountID, c.BucketID, c.ManagedAppID} {
@@ -140,6 +140,9 @@ func validateObjectS3CredentialRotationSecrets(req ObjectS3CredentialRotationReq
 type ObjectS3CredentialRotationStore interface {
 	StageObjectS3CredentialRotation(context.Context, ObjectS3CredentialRotationRequest) (ObjectS3Credential, error)
 	PendingObjectS3CredentialRotation(context.Context, string, string, string) (string, error)
+	// PendingObjectS3CredentialRotations maps each binding of one bucket with
+	// a staged rotation to its wake ID, in one read.
+	PendingObjectS3CredentialRotations(ctx context.Context, accountID, bucketID string) (map[string]string, error)
 	StampObjectS3CredentialRotation(context.Context, string, string) error
 	FinalizeObjectS3CredentialRotationsForApp(context.Context, string, string) error
 }

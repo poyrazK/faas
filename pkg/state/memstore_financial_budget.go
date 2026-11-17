@@ -169,7 +169,7 @@ func (m *MemStore) CreateFinancialBudget(_ context.Context, account, id, actor s
 		m.financialBudgets = map[string]FinancialBudget{}
 		m.financialBudgetRevisions = map[string][]FinancialBudgetRevision{}
 	}
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	p := FinancialBudget{ID: id, AccountID: account, Revision: 1, Spec: cloneFinancialBudgetSpec(spec), CreatedAt: now, UpdatedAt: now}
 	m.recordFinancialBudgetLocked(p, actor, "created")
 	compute.commit()
@@ -191,8 +191,12 @@ func (m *MemStore) UpdateFinancialBudget(_ context.Context, account, id string, 
 		return FinancialBudget{}, ErrConflict
 	}
 	spec = m.resolveFinancialBudgetScopeLocked(spec)
-	if err := m.financialBudgetScopeOwnedLocked(account, spec); err != nil {
-		return FinancialBudget{}, err
+	// The owned policy remains removable from enforcement after its resource
+	// is deleted. A changed scope still needs an independent ownership check.
+	if spec.Enabled || spec.Scope != p.Spec.Scope {
+		if err := m.financialBudgetScopeOwnedLocked(account, spec); err != nil {
+			return FinancialBudget{}, err
+		}
 	}
 	compute := newMemComputeTxn(m, account)
 	continuing := p.Spec.Enabled && financial.StrictCompute(p.Spec) && p.Spec.Scope == spec.Scope && slices.Equal(p.Spec.Meters, spec.Meters)

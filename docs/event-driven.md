@@ -92,8 +92,8 @@ workflow concurrency quota remains shared.
 
 An app owner can add `tenant_configurable: true` to a schedule trigger to let a
 linked customer manage its own cron expression, timezone, overlap behavior, and
-enabled state. The customer token needs `platform_tenant:automations:read` to
-list opted-in schedules and `platform_tenant:automations:manage` to update one:
+enabled state. The customer token needs `platform_tenant:stored_workflows:read` to
+list opted-in schedules and `platform_tenant:stored_workflows:manage` to update one:
 
 ```http
 GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules
@@ -401,8 +401,8 @@ limit") and retried under the invocation's retry policy, so work that needs
 longer belongs in a job.
 
 ```bash
-gregale invoke --async --payload @payload.json APP_ID
-gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
+gregale invocation run --async --payload @payload.json APP_ID
+gregale invocation run --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
 gregale job run nightly --tasks 10
 gregale cron create --app APP_ID --schedule "0 * * * *" --path /jobs/nightly
 gregale cron create --app APP_ID --schedule "*/15 * * * *" --command bin/maintenance --arg=--compact
@@ -411,7 +411,7 @@ gregale job create nightly-export --image registry.example/exporter:v1 --schedul
 
 Use a scheduled job when work should run to completion in an isolated job
 environment, and an HTTP app cron when the schedule should make a request to
-an app route; see [Crons](crons). Command crons, which run a command from
+an app route; see [Crons](crons.md). Command crons, which run a command from
 the app's deployment on a schedule, are in preview and documented there too.
 Scheduled jobs create one task per occurrence and pick up the job's current
 configuration at fire time.
@@ -498,6 +498,10 @@ event deliveries, async edge routes and inbound webhooks. Async invokes and
 delayed tasks can ask for a shorter window with `retention_seconds`
 (`--retention` in the CLI).
 
+A completed queue message keeps its payload for 24 hours after a worker acks
+it; after that its history entry shows `"payload": null`, and its id, timings,
+attempts and outcome stay for the full retention.
+
 Failed and dead-lettered invocations are kept for at least 30 days, so you can
 inspect and replay them from the dead-letter queue (`gregale dlq list <app>`) on
 every plan. After the window, the invocation, its attempt history and its
@@ -509,7 +513,6 @@ idempotency keys, lasts as long as that invocation is kept.
 A failed queue or delayed-task message is one entry in `gregale dlq list <app>`: its
 invocation. When a push binding delivered it, the binding's receipt failure
 stays in `gregale trigger dlq list`, and replaying the entry re-arms that receipt.
-See [ADR-20261022203653](adr/20261022203653-one-dead-letter-entry-per-queue-message.md).
 
 ## Queue limits
 
@@ -535,8 +538,24 @@ A send to an app whose pending messages are at its plan's limit fails with
 
 A send while the account's pending messages hold its plan's byte limit fails
 with `403 plan_queue_backlog_bytes`, carrying the limit and the observed bytes.
-The limit counts every app of the account. Two sends to different apps at the
+The limit counts every app of the account, and pending async invocations and
+delayed tasks share it with queue messages. Two sends to different apps at the
 same moment may pass it by their own sizes.
+
+### Async backlog
+
+Async invocations (`gregale invocation run --async`, async routes and a function's
+`send()`) wait in the same kind of backlog as queue messages, so they meet the
+same plan limits: an app holds at most its plan's queue depth of pending async
+invocations, and their payload bytes count towards the account's queue backlog.
+At either limit a new async invocation fails with `429 plan_async_backlog` or
+`plan_queue_backlog_bytes` and `Retry-After: 60`; nothing is queued. Retrying an
+async route request with the same `Idempotency-Key` still answers with the
+invocation it already accepted. The count is taken without serializing the
+app's enqueues, so concurrent requests may pass the limit by the requests in
+flight. A function's `send()` is also held to the target app's plan request
+rate (`429 function_send_rate_limited`). Delayed tasks keep their own count
+limit and share the account's byte limit.
 
 ### Message expiry
 
@@ -553,8 +572,7 @@ queue depth and queue backlog limits a send is. Replaying one message into a ful
 queue fails with the same `403 plan_queue_depth` or `403 plan_queue_backlog_bytes`
 problem, and the message stays in the dead-letter queue. A replay-all skips such
 messages and replays the rest; when it could replay nothing else, it answers with
-the limit problem. See
-[ADR-20261101093812](adr/20261101093812-queue-replay-meets-queue-limits.md).
+the limit problem.
 
 ## Application inbox
 
@@ -608,7 +626,11 @@ delivery to that destination.
 
 Gregale signs the same canonical string and emits the same delivery headers as
 ordinary app webhooks. Receivers should verify the signature, reject stale
-timestamps, and deduplicate the durable delivery id.
+timestamps, and deduplicate the durable delivery id. Because the two look the
+same, an explicit delivery cannot use a type Gregale itself delivers
+(`deployment.failed`, `consumer.plan_changed`, `workflow.finished` and the rest
+of the platform events you can subscribe to); such a type is refused with
+`400 app_webhook_invalid`.
 Use `--idempotency-key` when retrying a `gregale webhook deliver` call whose outcome
 is unknown; a new key can enqueue a second delivery.
 
@@ -634,7 +656,12 @@ requests in flight across the platform, and a subscription at most 4. A
 receiver that times out pauses its subscription for a minute, as a `429` or
 `503` with `Retry-After` does; then one probe delivery decides whether it
 reopens. A suspended or deleted account's deliveries, and an app's after
-the app is deleted, wait without being sent.
+the app is deleted, wait without being sent. A deleted app's waiting deliveries
+do not count towards the account's caps; they go when the app is purged, or
+resume if it is restored. Replaying a dead delivery from the dead-letter queue
+meets the same caps: into a full outbox it is refused with
+`429 webhook_outbox_full` and stays in the dead-letter queue, and a replay-all
+skips it.
 
 ## Inbound webhooks
 
@@ -707,8 +734,7 @@ Both payloads include `app_id`, `deployment_id`, and `rollout_state`, plus
 `completed_at` or `aborted_at` respectively. When the safe-release circuit
 breaker, a person, or the worker lease expiry decided the outcome, the payload
 also carries `decision`: the rule and the request, 5xx, probe, latency, OOM and
-restart counts for both revisions behind it
-([ADR-1447](adr/1447-explained-rollout-decisions.md)). An outcome is enqueued once per
+restart counts for both revisions behind it. An outcome is enqueued once per
 state transition, in the same transaction as the state change; updating an
 already-terminal rollout does not enqueue another event. Webhook delivery is
 at least once, so receivers must deduplicate by the stable delivery id.

@@ -31,6 +31,19 @@ func JudgePostRelease(release, predecessor canary.HealthWindow) (rule, reason st
 	return "", "", false
 }
 
+// ConfirmPostReleaseLatency re-judges a whole-app p95 regression over only the
+// routes both releases served (ADR-1445 amendment 2026-11-10). A route the
+// predecessor never served in its baseline, such as a new endpoint that is
+// slow by design, cannot roll a release back by itself, and the shared sample
+// must meet the canary request floor on both sides (Hunt 32 H32-33).
+func ConfirmPostReleaseLatency(release, predecessor canary.HealthWindow) (rule, reason string, regressed bool) {
+	decision, ok := canary.LatencyRegression(release, predecessor)
+	if !ok {
+		return "", "", false
+	}
+	return api.RolloutRuleAbortPostReleaseP95, "after the rollout completed: " + decision.Reason + " on routes both releases served", true
+}
+
 // PostReleaseDecision is the ADR-1447 record of a post-release rollback.
 func PostReleaseDecision(rule, reason, predecessorID string, release, predecessor canary.HealthWindow, windowStart, windowEnd, now time.Time) api.RolloutDecision {
 	sample := func(w canary.HealthWindow) *api.RolloutDecisionSample {

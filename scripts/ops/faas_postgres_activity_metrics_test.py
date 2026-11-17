@@ -20,8 +20,10 @@ sys.modules[SPEC.name] = MODULE
 LOADER.exec_module(MODULE)
 
 
-def fake_psql(overrides=None, fail=()):
-    """Answers each collector query by a fragment of its SQL."""
+def fake_psql(overrides=None, fail=(), calls=None):
+    """Answers each collector query by a fragment of its SQL. calls, when
+    given, records each statements read ("counters" or "text")."""
+    calls = [] if calls is None else calls
     table = {
         "FROM pg_stat_database": [["100", "2", "50", "950", "1", "2", "3", "4", "5", "0", "4096", "1048576"]],
         "GROUP BY 1, 2, 3, 4": [
@@ -46,7 +48,19 @@ def fake_psql(overrides=None, fail=()):
     }
     table.update(overrides or {})
 
+    statements = table.pop("FROM pg_stat_statements\n")
+
     def q(db, sql):
+        # Counters (no text) and the texts of named queryids both come from
+        # the statement rows: queryid, calls, time, rows, blocks, text.
+        if "pg_stat_statements(false)" in sql or "WHERE queryid IN" in sql:
+            if "FROM pg_stat_statements\n" in fail:
+                raise subprocess.CalledProcessError(1, ["psql"])
+            calls.append("text" if "WHERE queryid IN" in sql else "counters")
+            if "WHERE queryid IN" in sql:
+                wanted = sql.split("WHERE queryid IN (")[1].split(")")[0].split(",")
+                return [[r[0], r[5]] for r in statements if r[0] in wanted]
+            return [r[:5] for r in statements]
         for fragment, rows in table.items():
             if fragment in sql:
                 if fragment in fail:
@@ -61,7 +75,8 @@ class PostgresActivityMetricsTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.out = Path(self.temp.name) / "faas_postgres_activity.prom"
-        self.env = {"FAAS_PG_METRICS_TEXTFILE": str(self.out)}
+        self.cache = Path(self.temp.name) / "statement-labels.json"
+        self.env = {"FAAS_PG_METRICS_TEXTFILE": str(self.out), "FAAS_PG_METRICS_LABEL_CACHE": str(self.cache)}
 
     def tearDown(self):
         self.temp.cleanup()
@@ -136,6 +151,42 @@ class PostgresActivityMetricsTest(unittest.TestCase):
         self.assertIn('faas_postgres_activity_metrics_errors{section="database"} 0', body)
         self.assertIn("faas_postgres_xact_commit_total 100", body)
         self.assertNotIn("faas_postgres_statement_info", body)
+
+    def test_statement_text_is_read_only_for_new_statements(self):
+        # The text file is ~400 ms to read on production; the counters ~85 ms.
+        calls = []
+        q = fake_psql(calls=calls)
+        _, first = self.run_collector(q)
+        self.assertEqual(calls, ["counters", "text"])
+        calls.clear()
+        _, second = self.run_collector(q)
+        self.assertEqual(calls, ["counters"], "a known statement set must not read the text again")
+        self.assertIn('query="SELECT * FROM instances WHERE node_id = $1"', second)
+        self.assertNotIn("ALTER ROLE", second)
+        self.assertNotIn('queryid="-77"', second)
+
+    def test_a_new_statement_waits_for_the_refresh_interval(self):
+        calls = []
+        stmts = [["123", "1000", "2500.0", "1000", "40", "SELECT 1 FROM t"]]
+        self.run_collector(fake_psql({"FROM pg_stat_statements\n": stmts}, calls=calls))
+        stmts.append(["999", "50", "9000.0", "5", "0", "SELECT 2 FROM u"])
+        calls.clear()
+        _, body = self.run_collector(fake_psql({"FROM pg_stat_statements\n": stmts}, calls=calls))
+        self.assertEqual(calls, ["counters"])
+        self.assertNotIn('queryid="999"', body, "unlabelled until the next text read")
+        calls.clear()
+        MODULE.main(q=fake_psql({"FROM pg_stat_statements\n": stmts}, calls=calls), env=self.env,
+                    now=lambda: 1792760000 + MODULE.LABEL_REFRESH_SECONDS)
+        self.assertEqual(calls, ["counters", "text"])
+        self.assertIn('query="SELECT 2 FROM u"', self.out.read_text())
+
+    def test_an_unusable_cache_reads_the_text_every_run(self):
+        self.env["FAAS_PG_METRICS_LABEL_CACHE"] = str(Path(self.temp.name) / "missing-dir" / "labels.json")
+        calls = []
+        q = fake_psql(calls=calls)
+        self.run_collector(q)
+        self.run_collector(q)
+        self.assertEqual(calls, ["counters", "text", "counters", "text"])
 
     def test_database_names_must_be_identifiers(self):
         with self.assertRaises(ValueError):

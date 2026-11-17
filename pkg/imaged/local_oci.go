@@ -67,29 +67,8 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 		return oci.Config{}, nil, func() {}, err
 	}
 
-	indexBytes, err := readLocalOCIEntryFrom(ctx, archive, "index.json", api.LocalOCIMaxIndexBytes)
+	manifest, err := readVerifiedLocalOCIManifest(ctx, archive)
 	if err != nil {
-		return fail(fmt.Errorf("read OCI index: %w", err))
-	}
-	var index localOCIIndex
-	if err := json.Unmarshal(indexBytes, &index); err != nil {
-		return fail(fmt.Errorf("decode OCI index: %w", err))
-	}
-	if len(index.Manifests) != 1 {
-		return fail(fmt.Errorf("OCI index has %d manifests, want exactly one", len(index.Manifests)))
-	}
-	if index.SchemaVersion != 2 || (index.MediaType != "" && index.MediaType != "application/vnd.oci.image.index.v1+json") {
-		return fail(errors.New("unsupported OCI index format"))
-	}
-	manifestBytes, err := readLocalOCIDescriptor(ctx, archive, index.Manifests[0], api.LocalOCIMaxManifestBytes)
-	if err != nil {
-		return fail(fmt.Errorf("read OCI manifest: %w", err))
-	}
-	var manifest oci.Manifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return fail(fmt.Errorf("decode OCI manifest: %w", err))
-	}
-	if err := validateLocalOCIManifest(index.Manifests[0], manifest); err != nil {
 		return fail(err)
 	}
 	for i := range manifest.Layers {
@@ -124,6 +103,119 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 		readers[i] = f
 	}
 	return config, readers, cleanup, nil
+}
+
+// localOCIAppLayer produces a source deployment's app layer from its built
+// OCI image. An unsigned build whose layer inputs match an earlier layer of
+// the account republishes that layer (ADR-20261112170911) without reading
+// the image's layers. Otherwise the layers are extracted and verified, split
+// at the shared runner base when runtime names one, and built.
+func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding, runtime string, manifest api.AppManifest, in rootfs.BuildInput) (rootfs.BuildResult, error) {
+	var baseDiffIDs []string
+	if runtime != "" {
+		_, ids, err := h.runtimeBaseDiffIDs(ctx, runtime, "")
+		if err != nil {
+			return rootfs.BuildResult{}, fmt.Errorf("imaged: shared runtime app layer: %w", err)
+		}
+		baseDiffIDs = ids
+	}
+	reuseKey := ""
+	if source == nil {
+		reuseKey = h.appLayerReuseKey(app, acct, dep.ImageDigest, runtime, baseDiffIDs, manifest)
+	}
+	in.Manifest = manifest
+	var prepareErr error
+	prepare := func(build *rootfs.BuildInput) (func(), error) {
+		config, layers, cleanup, err := loadLocalOCIArchiveContext(ctx, dep.RootfsPath)
+		if err != nil {
+			prepareErr = fmt.Errorf("imaged: load built OCI image: %w", err)
+			return nil, prepareErr
+		}
+		build.Layers = layersAsReaders(layers)
+		if runtime == "" {
+			return cleanup, nil
+		}
+		shared, err := h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, dep.RootfsPath, config, layers, &build.Manifest, app)
+		if err != nil {
+			cleanup()
+			prepareErr = fmt.Errorf("imaged: shared runtime app layer: %w", err)
+			return nil, prepareErr
+		}
+		if shared.Reason != "" {
+			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason)
+		}
+		build.Layers = shared.layers
+		return func() { shared.cleanup(); cleanup() }, nil
+	}
+	result, err := h.buildOrReuseAppLayer(ctx, reuseKey, app, dep, in, prepare)
+	switch {
+	case err == nil:
+		return result, nil
+	case prepareErr != nil:
+		return rootfs.BuildResult{}, prepareErr
+	default:
+		return rootfs.BuildResult{}, fmt.Errorf("imaged: build local OCI app layer: %w", err)
+	}
+}
+
+// readVerifiedLocalOCIManifest reads an archive's single image manifest
+// through its index and checks the manifest against its descriptor and the
+// local OCI format limits.
+func readVerifiedLocalOCIManifest(ctx context.Context, archive io.ReadSeeker) (oci.Manifest, error) {
+	indexBytes, err := readLocalOCIEntryFrom(ctx, archive, "index.json", api.LocalOCIMaxIndexBytes)
+	if err != nil {
+		return oci.Manifest{}, fmt.Errorf("read OCI index: %w", err)
+	}
+	var index localOCIIndex
+	if err := json.Unmarshal(indexBytes, &index); err != nil {
+		return oci.Manifest{}, fmt.Errorf("decode OCI index: %w", err)
+	}
+	if len(index.Manifests) != 1 {
+		return oci.Manifest{}, fmt.Errorf("OCI index has %d manifests, want exactly one", len(index.Manifests))
+	}
+	if index.SchemaVersion != 2 || (index.MediaType != "" && index.MediaType != "application/vnd.oci.image.index.v1+json") {
+		return oci.Manifest{}, errors.New("unsupported OCI index format")
+	}
+	manifestBytes, err := readLocalOCIDescriptor(ctx, archive, index.Manifests[0], api.LocalOCIMaxManifestBytes)
+	if err != nil {
+		return oci.Manifest{}, fmt.Errorf("read OCI manifest: %w", err)
+	}
+	var manifest oci.Manifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return oci.Manifest{}, fmt.Errorf("decode OCI manifest: %w", err)
+	}
+	if err := validateLocalOCIManifest(index.Manifests[0], manifest); err != nil {
+		return oci.Manifest{}, err
+	}
+	return manifest, nil
+}
+
+// loadLocalOCIConfigContext reads and verifies only a builderd OCI export's
+// image config: index, manifest and config, each against its descriptor.
+// Its tar passes seek over the layer blobs, so it costs a few small reads
+// where loadLocalOCIArchiveContext copies and decompresses every layer.
+func loadLocalOCIConfigContext(ctx context.Context, archivePath string) (oci.Config, error) {
+	archive, err := openLocalOCIArchive(archivePath)
+	if err != nil {
+		return oci.Config{}, err
+	}
+	defer func() { _ = archive.Close() }()
+	manifest, err := readVerifiedLocalOCIManifest(ctx, archive)
+	if err != nil {
+		return oci.Config{}, err
+	}
+	configBytes, err := readLocalOCIDescriptor(ctx, archive, manifest.Config, api.LocalOCIMaxConfigBytes)
+	if err != nil {
+		return oci.Config{}, fmt.Errorf("read OCI config: %w", err)
+	}
+	config, err := oci.ParseConfig(bytes.NewReader(configBytes))
+	if err != nil {
+		return oci.Config{}, fmt.Errorf("parse OCI config: %w", err)
+	}
+	if len(manifest.Layers) != len(config.DiffIDs) {
+		return oci.Config{}, fmt.Errorf("OCI layer count mismatch: manifest=%d config=%d", len(manifest.Layers), len(config.DiffIDs))
+	}
+	return config, nil
 }
 
 // functionBuildArtifact selects the portion of a builderd OCI export that
@@ -674,11 +766,12 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: pin source build digest: %w", err)
 	}
 	dep.ImageDigest = digest
-	config, layers, cleanup, err := loadLocalOCIArchiveContext(ctx, dep.RootfsPath)
+	// The config alone gives the manifest. The layers are read only when the
+	// app layer is built, not when an earlier one is reused.
+	config, err := loadLocalOCIConfigContext(ctx, dep.RootfsPath)
 	if err != nil {
 		return fmt.Errorf("imaged: load built OCI image: %w", err)
 	}
-	defer cleanup()
 
 	healthcheck, err := sourceComposeHealthcheck(*dep)
 	if err != nil {
@@ -688,6 +781,11 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: Compose healthcheck: %w", err)
 	}
 	config = applySourceBuildProcess(config, *dep)
+	if app.SandboxTemplate && len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+		// A template image never runs its own command: sessions run
+		// guest-init's sandbox server, and their commands need a shell.
+		config.Cmd = []string{sandboxTemplateShell}
+	}
 	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
@@ -725,14 +823,26 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)
 	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		return fmt.Errorf("imaged: persist local OCI before_checkpoint hook: %w", err)
+	}
 
 	be, err := h.storageFor()
 	if err != nil {
 		return fmt.Errorf("imaged: local OCI storageFor: %w", err)
 	}
 	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
-	buildLayers := layersAsReaders(layers)
 	runtime := sharedRuntimeClaim(app, source)
+	if app.SandboxTemplate {
+		// A template boots as a whole root filesystem over the agent base,
+		// never on a runner base (ADR-20261027090013).
+		_, layers, cleanup, err := loadLocalOCIArchiveContext(ctx, dep.RootfsPath)
+		if err != nil {
+			return fmt.Errorf("imaged: load built OCI image: %w", err)
+		}
+		defer cleanup()
+		return h.publishSandboxTemplateRootfs(ctx, app, *dep, acct, source, be, appsKey, layersAsReaders(layers), manifest)
+	}
 	if source == nil {
 		unsigned, provErr := h.sharedRuntimeFromProvenance(ctx, app, *dep)
 		if provErr != nil {
@@ -740,20 +850,8 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		}
 		runtime = unsigned
 	}
-	if runtime != "" {
-		shared, sharedErr := h.sharedRuntimeAppLayers(ctx, runtime, dep.RootfsPath, config, layers, &manifest, app)
-		if sharedErr != nil {
-			return fmt.Errorf("imaged: shared runtime app layer: %w", sharedErr)
-		}
-		defer shared.cleanup()
-		buildLayers = shared.layers
-		if shared.Reason != "" {
-			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason)
-		}
-	}
-	result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
-		Layers:         buildLayers,
-		Manifest:       manifest,
+	ctx = withImageProgress(ctx, h.store, dep.ID, "app image")
+	result, err := h.localOCIAppLayer(ctx, app, *dep, acct, source, runtime, manifest, rootfs.BuildInput{
 		GuestInitPath:  h.guestInitPath,
 		Plan:           acct.Plan,
 		Storage:        be,
@@ -762,7 +860,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
 	})
 	if err != nil {
-		return fmt.Errorf("imaged: build local OCI app layer: %w", err)
+		return err
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
 	if runtime != "" {

@@ -260,6 +260,20 @@ func encodeTarballManifest(manifest Manifest) ([]byte, error) {
 	return encodeManifest(manifest)
 }
 
+// SignedManifestDigest is the sha256 of the manifest bytes embedded in and
+// signed with the canonical tarball: the on-disk manifest without the
+// installer's signature stamp. Every host that installed the same release
+// reports the same digest (ADR-20261110183000), so a host whose manifest was
+// edited to match a swapped binary stands out.
+func SignedManifestDigest(m Manifest) (string, error) {
+	body, err := encodeTarballManifest(m)
+	if err != nil {
+		return "", fmt.Errorf("releaseinstall: encode manifest: %w", err)
+	}
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // Read loads and validates the manifest at <root>/<git-sha>/release-manifest.json.
 func Read(root, gitSHA string) (Manifest, error) {
 	path := filepath.Join(BundleRoot(root, gitSHA), ManifestName)

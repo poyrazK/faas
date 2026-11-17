@@ -2,8 +2,11 @@ package apidserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -53,7 +56,7 @@ func (l *loginFailureLimiter) recentLocked(key string, now time.Time) *loginFail
 
 // retryAfter returns how long password sign-in for key stays refused; zero
 // when it may be tried.
-func (l *loginFailureLimiter) retryAfter(key string) time.Duration {
+func (l *loginFailureLimiter) retryAfter(key string, maxFailures int) time.Duration {
 	if l == nil {
 		return 0
 	}
@@ -61,15 +64,15 @@ func (l *loginFailureLimiter) retryAfter(key string) time.Duration {
 	defer l.mu.Unlock()
 	now := l.now()
 	f := l.recentLocked(key, now)
-	if f == nil || len(f.at) < api.LoginFailuresPerEmail {
+	if f == nil || len(f.at) < maxFailures {
 		return 0
 	}
-	return f.at[len(f.at)-api.LoginFailuresPerEmail].Add(api.LoginFailureEmailWindow).Sub(now)
+	return f.at[len(f.at)-maxFailures].Add(api.LoginFailureEmailWindow).Sub(now)
 }
 
 // record counts a failure for key. It reports true when this failure used up
 // the budget and the owner has not been told within the window.
-func (l *loginFailureLimiter) record(key string) bool {
+func (l *loginFailureLimiter) record(key string, maxFailures int) bool {
 	if l == nil {
 		return false
 	}
@@ -93,10 +96,10 @@ func (l *loginFailureLimiter) record(key string) bool {
 		l.failures[key] = f
 	}
 	f.at = append(f.at, now)
-	if len(f.at) > api.LoginFailuresPerEmail {
-		f.at = f.at[len(f.at)-api.LoginFailuresPerEmail:]
+	if len(f.at) > maxFailures {
+		f.at = f.at[len(f.at)-maxFailures:]
 	}
-	if len(f.at) < api.LoginFailuresPerEmail || now.Sub(f.notified) < api.LoginFailureEmailWindow {
+	if len(f.at) < maxFailures || now.Sub(f.notified) < api.LoginFailureEmailWindow {
 		return false
 	}
 	f.notified = now
@@ -143,6 +146,139 @@ func (l *loginFailureLimiter) sweepLocked(now time.Time) {
 	}
 }
 
+// loginFailureBudget is the per-address, per-client-network budget the
+// shared store enforces. Counting per network means failures from an
+// attacker's networks do not pause the owner's (F10-1, ADR-20261115100000).
+var loginFailureBudget = state.LoginFailureBudget{
+	MaxFailures: api.LoginFailuresPerEmail,
+	Window:      api.LoginFailureEmailWindow,
+}
+
+// loginFailureFleetBudget is the per-address budget over every network. It
+// is much higher than the per-network one, so it still bounds a guessing
+// attack spread over many networks without one network pausing everyone.
+var loginFailureFleetBudget = state.LoginFailureBudget{
+	MaxFailures: api.LoginFailuresPerEmailFleet,
+	Window:      api.LoginFailureEmailWindow,
+}
+
+type loginNetworkKey struct{}
+
+// withLoginNetwork returns ctx carrying r's client network for the
+// failed-password budget, so a password check counts against the network it
+// came from.
+func withLoginNetwork(ctx context.Context, r *http.Request) context.Context {
+	return context.WithValue(ctx, loginNetworkKey{}, loginNetwork(clientIPFromRequest(r)))
+}
+
+// loginNetwork is the client network a password check is counted under: the
+// /24 of an IPv4 address or the /48 of an IPv6 one. An address that does not
+// parse counts under one shared "unknown" network.
+func loginNetwork(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return "unknown"
+	}
+	addr = addr.Unmap()
+	bits := 48
+	if addr.Is4() {
+		bits = 24
+	}
+	prefix, err := addr.Prefix(bits)
+	if err != nil {
+		return "unknown"
+	}
+	return prefix.String()
+}
+
+// loginFailureKeys returns the budget keys for email: the per-network key for
+// ctx's client network and the fleet-wide key. Both are keyed email hashes,
+// so no address or network is stored in the clear.
+func loginFailureKeys(ctx context.Context, email string) (network, fleet string) {
+	fleet = auth.HashEmail(email)
+	n, _ := ctx.Value(loginNetworkKey{}).(string)
+	if n == "" {
+		n = "unknown"
+	}
+	sum := sha256.Sum256([]byte(fleet + "\x00" + n))
+	return fleet + "." + hex.EncodeToString(sum[:8]), fleet
+}
+
+// sharedLoginFailures returns the store's shared counter, or nil when the
+// store has none: every apid then counts on its own (ADR 20261111150000).
+func (s *server) sharedLoginFailures() state.LoginFailureBudgetStore {
+	st, _ := s.store.(state.LoginFailureBudgetStore)
+	return st
+}
+
+// loginRetryAfter reports how long password checks for email stay refused.
+// The counts are shared by every apid; when the shared counter cannot be
+// read this process's own counts decide.
+func (s *server) loginRetryAfter(ctx context.Context, email string) time.Duration {
+	network, fleet := loginFailureKeys(ctx, email)
+	if st := s.sharedLoginFailures(); st != nil {
+		perNetwork, err := st.LoginFailureRetryAfter(ctx, network, loginFailureBudget)
+		if err == nil {
+			var everywhere time.Duration
+			everywhere, err = st.LoginFailureRetryAfter(ctx, fleet, loginFailureFleetBudget)
+			if err == nil {
+				return max(perNetwork, everywhere)
+			}
+		}
+		s.log.Warn("auth: shared sign-in failure budget unavailable, using this process's", "err", err)
+	}
+	return max(s.loginFailures.retryAfter(network, api.LoginFailuresPerEmail),
+		s.loginFailures.retryAfter(fleet, api.LoginFailuresPerEmailFleet))
+}
+
+// countLoginFailure records one failure against email's per-network and
+// fleet-wide budgets and reports whether it used up either with the owner
+// not yet told.
+func (s *server) countLoginFailure(ctx context.Context, email string) bool {
+	network, fleet := loginFailureKeys(ctx, email)
+	if st := s.sharedLoginFailures(); st != nil {
+		notifyNetwork, err := st.RecordLoginFailure(ctx, network, loginFailureBudget)
+		if err == nil {
+			var notifyFleet bool
+			notifyFleet, err = st.RecordLoginFailure(ctx, fleet, loginFailureFleetBudget)
+			if err == nil {
+				return notifyNetwork || notifyFleet
+			}
+		}
+		s.log.Warn("auth: shared sign-in failure budget unavailable, using this process's", "err", err)
+	}
+	notifyNetwork := s.loginFailures.record(network, api.LoginFailuresPerEmail)
+	return s.loginFailures.record(fleet, api.LoginFailuresPerEmailFleet) || notifyNetwork
+}
+
+// resetLoginFailures lifts a failed-password pause on email from ctx's client
+// network and the fleet-wide one: its owner proved control of the address.
+// Pauses on other networks stay; they only hold back those networks.
+func (s *server) resetLoginFailures(ctx context.Context, email string) {
+	network, fleet := loginFailureKeys(ctx, email)
+	for _, key := range []string{network, fleet} {
+		s.loginFailures.reset(key)
+		if st := s.sharedLoginFailures(); st != nil {
+			if err := st.ResetLoginFailures(ctx, key); err != nil {
+				s.log.Warn("auth: could not reset shared sign-in failure budget", "err", err)
+			}
+		}
+	}
+}
+
+// refuseWhileLoginLimited answers 429 while email is out of failed-password
+// budget. Every password check (sign-in, enrollment, email change, password
+// change, turning off two-factor) shares the budget, so a stolen session
+// cannot guess the password through a route sign-in does not count.
+func (s *server) refuseWhileLoginLimited(w http.ResponseWriter, r *http.Request, email string) bool {
+	wait := s.loginRetryAfter(withLoginNetwork(r.Context(), r), email)
+	if wait <= 0 {
+		return false
+	}
+	api.WriteProblem(w, api.ErrAuthRateLimited(int(math.Ceil(wait.Seconds()))))
+	return true
+}
+
 // decodeCredentials reads a password sign-in body and refuses it with 429
 // while the address is out of failed-sign-in budget.
 func (s *server) decodeCredentials(w http.ResponseWriter, r *http.Request) (string, string, bool) {
@@ -150,8 +286,7 @@ func (s *server) decodeCredentials(w http.ResponseWriter, r *http.Request) (stri
 	if !ok {
 		return "", "", false
 	}
-	if wait := s.loginFailures.retryAfter(auth.HashEmail(email)); wait > 0 {
-		api.WriteProblem(w, api.ErrAuthRateLimited(int(math.Ceil(wait.Seconds()))))
+	if s.refuseWhileLoginLimited(w, r, email) {
 		return "", "", false
 	}
 	return email, password, true
@@ -162,7 +297,7 @@ func (s *server) decodeCredentials(w http.ResponseWriter, r *http.Request) (stri
 // the request so the response time does not reveal whether the address has
 // an account.
 func (s *server) recordLoginFailure(ctx context.Context, email string, acct *state.Account) {
-	if !s.loginFailures.record(auth.HashEmail(email)) {
+	if !s.countLoginFailure(ctx, email) {
 		return
 	}
 	var accountID *string

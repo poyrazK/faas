@@ -12,6 +12,7 @@ from ..models.traffic_runtime_status_enforcement_status import (
 )
 from ..models.traffic_runtime_status_scope import TrafficRuntimeStatusScope, check_traffic_runtime_status_scope
 from ..models.traffic_runtime_status_state import TrafficRuntimeStatusState, check_traffic_runtime_status_state
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.traffic_runtime_feature_status import TrafficRuntimeFeatureStatus
@@ -59,6 +60,9 @@ class TrafficRuntimeStatus:
     managed_circuit: TrafficRuntimeFeatureStatus
     """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
     shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
+    edge_header_secrets: TrafficRuntimeFeatureStatus | Unset = UNSET
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,6 +96,10 @@ class TrafficRuntimeStatus:
 
         managed_circuit = self.managed_circuit.to_dict()
 
+        edge_header_secrets: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.edge_header_secrets, Unset):
+            edge_header_secrets = self.edge_header_secrets.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -113,6 +121,8 @@ class TrafficRuntimeStatus:
                 "managed_circuit": managed_circuit,
             }
         )
+        if edge_header_secrets is not UNSET:
+            field_dict["edge_header_secrets"] = edge_header_secrets
 
         return field_dict
 
@@ -151,6 +161,13 @@ class TrafficRuntimeStatus:
 
         managed_circuit = TrafficRuntimeFeatureStatus.from_dict(d.pop("managed_circuit"))
 
+        _edge_header_secrets = d.pop("edge_header_secrets", UNSET)
+        edge_header_secrets: TrafficRuntimeFeatureStatus | Unset
+        if isinstance(_edge_header_secrets, Unset):
+            edge_header_secrets = UNSET
+        else:
+            edge_header_secrets = TrafficRuntimeFeatureStatus.from_dict(_edge_header_secrets)
+
         traffic_runtime_status = cls(
             scope=scope,
             state=state,
@@ -167,6 +184,7 @@ class TrafficRuntimeStatus:
             security_revocation=security_revocation,
             managed_http=managed_http,
             managed_circuit=managed_circuit,
+            edge_header_secrets=edge_header_secrets,
         )
 
         traffic_runtime_status.additional_properties = d

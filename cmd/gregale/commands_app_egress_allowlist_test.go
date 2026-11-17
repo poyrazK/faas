@@ -1,27 +1,32 @@
 package main_test
 
 import (
-	"github.com/onebox-faas/faas/cmd/gregale"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	main "github.com/onebox-faas/faas/cmd/gregale"
 )
 
-// The CLI names the restart exactly when vmmd cannot patch running
-// instances in place (H10-36).
-func TestEgressAllowlistChangeNeedsRestart(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		before, after []string
-		want          bool
-	}{
-		{"first entry", nil, []string{"1.1.1.1/32"}, true},
-		{"clear", []string{"1.1.1.1/32"}, nil, true},
-		{"edit within v4", []string{"1.1.1.1/32"}, []string{"8.8.8.0/24"}, false},
-		{"add another v4", []string{"1.1.1.1/32"}, []string{"1.1.1.1/32", "8.8.8.0/24"}, false},
-		{"v6 gains its first entry", []string{"1.1.1.1/32"}, []string{"1.1.1.1/32", "2001:db8::/32"}, true},
-		{"empty stays empty", nil, nil, false},
-	} {
-		if got := main.EgressAllowlistChangeNeedsRestart(tc.before, tc.after); got != tc.want {
-			t.Errorf("%s: needs restart = %t, want %t", tc.name, got, tc.want)
-		}
+// TestEgressAllowlistEditsDoNotAskForARestart pins Hunt 32 H32-29: a first
+// entry and a clear applied to the running instance within seconds, but the
+// CLI said they waited for the next start and to run `app restart`.
+func TestEgressAllowlistEditsDoNotAskForARestart(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"slug":"demo","egress_allowlist":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	out, restore := main.SwapStdout(t)
+	defer restore()
+	if code := main.Run([]string{"app", "demo", "egress-allowlist", "add", "1.1.1.1/32"}); code != 0 {
+		t.Fatalf("add exit = %d", code)
+	}
+	if got := out.String(); strings.Contains(got, "restart") || !strings.Contains(got, "within seconds") {
+		t.Fatalf("output = %q, want no restart advice", got)
 	}
 }

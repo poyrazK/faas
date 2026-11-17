@@ -29,7 +29,7 @@ def test_queue_evidence_round_trip_and_legacy_fields():
                 "item_position": 1,
             },
             "evidence_url": "/reviews/review/actions/action/evidence/parent",
-            "cli_command": "gregale automations recovery-retry-evidence --app orders --parent",
+            "cli_command": "gregale workflow stored recovery-retry-evidence --app orders --parent",
         },
     )
     assert WorkflowRecoveryAutomaticQueueEntry.from_dict(body).to_dict() == body

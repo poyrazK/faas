@@ -262,6 +262,17 @@ func (p *pool) cancel(ctx context.Context, w *worker, id string, grace time.Dura
 			p.retire(w)
 		}
 	case <-sendCtx.Done():
+		if debuggerHolds() {
+			// A worker paused at a breakpoint cannot acknowledge; killing it
+			// would end the debugging session. Wait for the acknowledgement
+			// it sends once resumed.
+			log.Printf("workerpool: worker %d is held by the developer debugger; waiting for it to cancel", w.cmd.Process.Pid)
+			<-done
+			if w.mux.failed() {
+				p.retire(w)
+			}
+			return
+		}
 		log.Printf("workerpool: worker %d did not finish cancelling a request within %s; restarting it", w.cmd.Process.Pid, grace)
 		p.retire(w)
 	}

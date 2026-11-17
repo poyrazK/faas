@@ -124,6 +124,7 @@ type QualificationReport struct {
 	ReadOnlyCredentials  *ReadOnlyCredentialEvidence  `json:"read_only_credentials,omitempty"`
 	DataAPICredentials   *DataAPICredentialEvidence   `json:"data_api_credentials,omitempty"`
 	AuthCredentials      *AuthCredentialEvidence      `json:"auth_credentials,omitempty"`
+	SessionCredentials   *SessionCredentialEvidence   `json:"session_credentials,omitempty"`
 	ClassResize          bool                         `json:"class_resize"`
 	ScaleToZeroUpdate    bool                         `json:"scale_to_zero_update"`
 	ComputePolicy        *ComputePolicyEvidence       `json:"compute_policy,omitempty"`
@@ -322,7 +323,7 @@ func ValidateQualificationReport(report QualificationReport) error {
 		return ErrInvalid
 	}
 	requiredChecks := requiredProviderQualificationChecks[:]
-	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > 5 {
+	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > len(knownCredentialAccess) {
 		return ErrInvalid
 	}
 	seenAccess := make(map[CredentialAccess]bool, len(report.CredentialAccess))
@@ -354,6 +355,14 @@ func ValidateQualificationReport(report QualificationReport) error {
 			return ErrUnavailable
 		}
 	} else if report.AuthCredentials != nil {
+		return ErrInvalid
+	}
+	if seenAccess[CredentialSession] {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "session_credentials_probe")
+		if report.SessionCredentials == nil || report.SessionCredentials.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.SessionCredentials != nil {
 		return ErrInvalid
 	}
 	if report.ClassResize {
@@ -486,6 +495,8 @@ func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBacke
 				add("data_api_evidence_missing")
 			} else if contains(artifact.Report.CredentialAccess, CredentialAuth) && (artifact.Report.AuthCredentials == nil || artifact.Report.AuthCredentials.Validate() != nil) {
 				add("auth_evidence_missing")
+			} else if contains(artifact.Report.CredentialAccess, CredentialSession) && (artifact.Report.SessionCredentials == nil || artifact.Report.SessionCredentials.Validate() != nil) {
+				add("session_evidence_missing")
 			} else if artifact.Report.CredentialPrivileges == nil || artifact.Report.CredentialPrivileges.Validate() != nil {
 				add("credential_privileges_evidence_missing")
 			} else if artifact.Report.Restore != nil && (!artifact.Report.Restore.Restored || !artifact.Report.Restore.DataVerified || !artifact.Report.Restore.CredentialsIsolated || !artifact.Report.Restore.Deleted) {
@@ -1039,6 +1050,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			probeErr = evidence.Validate()
 		}
 		if !record("auth_credentials_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if contains(capabilities.CredentialAccess, CredentialSession) {
+		prober, ok := provider.(SessionCredentialProber)
+		if !ok {
+			record("session_credentials_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeSessionCredentials(ctx, providerResourceID)
+		report.SessionCredentials = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("session_credentials_probe", probeErr) {
 			return report, resultErr
 		}
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 // TestCookieOnlyRouteTripwire_NoLiteralOutsideGuard pins the rule:
-// the only place a literal matching ^/v1/auth/(sessions|capabilities)
+// the only place a literal matching ^/v1/auth/capabilities
 // may appear in pkg/api is the guard itself (pkg/api/client.go's
 // cookieOnlyPathRE). The guard is the closed allow-list — any future
 // path-construction that hard-codes one of those routes would
@@ -21,18 +21,15 @@ import (
 // pattern, same allow-list shape: a single canonical home + the
 // rest of the tree).
 //
-// The allowed regex literal `^/v1/auth/(sessions|capabilities)(/.*)?$`
+// The allowed regex literal `^/v1/auth/capabilities(/.*)?$`
 // in pkg/api/client.go is the guard — the tripwire's substring
 // match is anchored on the path prefix, not the regex body, so the
 // regex literal itself does not trigger. The single-file allow-list
 // below is the discharge valve.
 func TestCookieOnlyRouteTripwire_NoLiteralOutsideGuard(t *testing.T) {
 	cookieOnlyPathPrefixes := []string{
-		// Matches every permutation of /v1/auth/sessions[/*]
-		// construction the CLI might use. The closed set is the
-		// server-side mount (cmd/apid/server.go:1097) and the
-		// three handlers at handlers_sessions.go:99/134/174.
-		"/v1/auth/sessions",
+		// /v1/auth/sessions left the set: the session routes take
+		// API keys too (ADR-20261107103000).
 		// /v1/auth/capabilities is the single mount point
 		// (server.go:1085); the [/*] subpath shape is not used
 		// today, but the prefix is enough to fire on any literal
@@ -142,7 +139,7 @@ func TestCookieOnlyRouteTripwire_SelfTest(t *testing.T) {
 
 // This file is a synthetic violation injected by the
 // self-test. It exists only during the test run.
-var cookieOnlyPath = "/v1/auth/sessions/test"
+var cookieOnlyPath = "/v1/auth/capabilities/test"
 `
 	if err := os.WriteFile(syntheticPath, []byte(synthetic), 0o600); err != nil {
 		t.Fatalf("write synthetic: %v", err)
@@ -160,7 +157,7 @@ var cookieOnlyPath = "/v1/auth/sessions/test"
 		if !ok || lit.Kind != token.STRING {
 			return true
 		}
-		if strings.Contains(lit.Value, "/v1/auth/sessions") {
+		if strings.Contains(lit.Value, "/v1/auth/capabilities") {
 			hit = true
 		}
 		return true

@@ -407,6 +407,7 @@ type ServiceProxy struct {
 	endpointTTL               time.Duration
 	now                       func() time.Time
 	log                       *slog.Logger
+	policyRefusals            publicRoutingRefusalLog
 	resolveEnvironmentBinding ServiceProxyEnvironmentBindingResolver
 	observeCall               func(callerAppID, targetAppID string, woken bool)
 
@@ -543,6 +544,10 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 // <service>.internal alias. The service segment is resolved to an app; the
 // remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Outermost: a gRPC caller gets the platform's errors as gRPC statuses;
+	// the trace and dependency-health writers still see the HTTP status.
+	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
+	defer finishGRPC()
 	defer func() { cancelStampedRequestBudget(r.Context()) }() //nolint:contextcheck // release every timer on the final rebound request context.
 	dependencyStarted := p.now()
 	service, targetPath, alias, ok := parseServiceProxyRequest(r)
@@ -1653,7 +1658,16 @@ func (p *ServiceProxy) WakeTarget(ctx context.Context, appID string, port int) (
 	if len(endpoints) == 0 {
 		return Target{}, ErrNoServiceTarget
 	}
+	// A Node inspector client opens one connection to list targets and
+	// another to attach by target ID, each through its own tunnel. Pick the
+	// same instance every time (lowest instance ID) rather than whichever the
+	// registry lists first, so both land on the process that issued the ID.
 	endpoint := endpoints[0]
+	for _, candidate := range endpoints[1:] {
+		if candidate.InstanceID < endpoint.InstanceID {
+			endpoint = candidate
+		}
+	}
 	return Target{AppID: appID, NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, DeploymentID: endpoint.DeploymentID, Port: port}, nil
 }
 
@@ -1761,6 +1775,7 @@ func (p *ServiceProxy) prepareGuestRequest(ctx context.Context, request *http.Re
 		callerEnv = servicecallerEnvPreview
 		request.Header.Set(ServiceCallerEnvHeader, callerEnv)
 		request.Header.Set(ServiceCallerPreviewOfHeader, caller.PreviewOfSlug)
+		ctx = context.WithValue(ctx, trustedServiceCallerEnvContextKey{}, true)
 		if target.PreviewScoped {
 			p.metrics.IncServicePreviewToPreview()
 		} else {
@@ -2014,11 +2029,33 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
-		forwardReq, buffer.onResponse = p.withServiceRequestObservation(forwardReq, target, caller, endpoint, woken)
+		var observe func(int)
+		forwardReq, observe = p.withServiceRequestObservation(forwardReq, target, caller, endpoint, woken)
+		responded := 0
+		if observe != nil {
+			buffer.onResponse = func(status int) {
+				// A gRPC call's outcome is in its trailers, so it is observed
+				// when the response completes (below). Other responses keep
+				// their evidence at the first header, before a stream ends.
+				if isGRPCContentType(buffer.header.Get("Content-Type")) {
+					responded = status
+					return
+				}
+				observe(status)
+			}
+		}
 		recordTrafficAttempt(ctx)
 		forwardTarget := serviceEndpointTarget(appID, endpoint)
 		oteltrace.SpanFromContext(ctx).SetAttributes(completionTargetAttributes(forwardTarget)...)
 		p.forward(forwardTarget).ServeHTTP(buffer, forwardReq)
+		if responded != 0 {
+			// A failed RPC answered with HTTP 200 is recorded as the failure
+			// its grpc-status trailer says.
+			if mapped, ok := grpcObservedStatus(buffer.header); ok && responded == http.StatusOK {
+				responded = mapped
+			}
+			observe(responded)
+		}
 		if attempt > 0 && forwardReq.Body != nil {
 			_ = forwardReq.Body.Close()
 		}

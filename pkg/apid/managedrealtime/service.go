@@ -91,6 +91,11 @@ type Service struct {
 	// (ADR 20261021080640); legacy is the environment gate that decides until
 	// an operator writes the flag. Nil uses legacy.
 	PreviewReleased func(r *http.Request, acct state.Account, flagKey string, legacy bool) bool
+	// NodesServePreview reports whether every realtime node serves a preview
+	// (realtime.NodePreview*). A released preview the nodes cannot serve
+	// answers as off, so apid never accepts a ticket, access change or
+	// occupancy read the nodes would ignore. Nil trusts the flags alone.
+	NodesServePreview func(name string) bool
 	// EndpointPreviews are the per-account preview decisions sent with an
 	// endpoint's registration. A nil result sends none, so realtimed's own
 	// switches decide.

@@ -317,9 +317,9 @@ func DelayedRootFailureImageAboveBase(repo, helloBody string) (fakeImage, string
 //
 // The spin is a pure userland loop, not `dd` or `openssl speed`: the goal
 // is *CPU saturation*, not I/O or crypto throughput, and the kernel
-// scheduler's throttle ratio is the only thing that can throttle it —
-// exactly the signal the issue's `vmmd_cpu_throttle_ratio{slice}` gauge
-// measures. (It used to be a `/bin/sh` busy-loop; the image has no shell.)
+// scheduler's cpu.max quota is the only thing that can throttle it —
+// exactly the signal vmmd_cpu_throttle_seconds_total measures. (It used
+// to be a `/bin/sh` busy-loop; the image has no shell.)
 //
 // Pair with HelloImage for the quiet side of the experiment:
 //   - CPUBoundImage (hot)        on plan=Hobby → saturates tenant-hobby.slice

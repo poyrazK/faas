@@ -231,6 +231,8 @@ func cmdConfig(args []string) int {
 		return cmdConfigGet(args[1:])
 	case "set":
 		return cmdConfigSet(args[1:])
+	case "explain":
+		return cmdConfigExplain(args[1:])
 	default:
 		return printUnknownSubcommand(os.Stderr, "config", parent, args[0])
 	}

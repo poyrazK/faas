@@ -35,11 +35,13 @@ func decodeChangeTimeline(t *testing.T, rec *httptest.ResponseRecorder) api.AppC
 	return out
 }
 
-func TestGetChangeTimeline_DisabledReturns503(t *testing.T) {
+// A disabled preview is permanent until enabled, not a retryable 503
+// (ChronoLake finding 33).
+func TestGetChangeTimeline_DisabledReturns403(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	createApp(t, e, "shop")
 	rec := e.do(t, http.MethodGet, "/v1/apps/shop/changes", nil, nil)
-	assertProblem(t, rec, http.StatusServiceUnavailable, "change_timeline_unavailable")
+	assertProblem(t, rec, http.StatusForbidden, "change_timeline_unavailable")
 }
 
 func TestGetChangeTimeline_RejectsInvalidWindows(t *testing.T) {

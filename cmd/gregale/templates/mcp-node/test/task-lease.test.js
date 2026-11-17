@@ -38,6 +38,8 @@ for (const outage of ['rejected', 'blocked', 'recovered']) {
     t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 0 });
     t.mock.method(performance, 'now', () => Date.now());
     let claimed = false, calls = 0, writes = 0, signal, lateHeartbeat;
+    let handlerStarted;
+    const executing = new Promise(resolve => { handlerStarted = resolve; });
     const task = { task_id: randomUUID(), lease_token: randomUUID(), tool_name: 'build_report', handler_version: '1', arguments: {}, attempt_count: 1 };
     const store = {
       async initialize() {},
@@ -52,9 +54,11 @@ for (const outage of ['rejected', 'blocked', 'recovered']) {
     };
     const runtime = createMcpTaskRuntime({ store, handlers: { build_report: { version: '1', execute(_args, context) {
       signal = context.signal;
+      handlerStarted();
       return new Promise(resolve => signal.addEventListener('abort', () => resolve({ content: [] }), { once: true }));
     } } } });
     await runtime.start();
+    await executing;
     t.after(() => runtime.stop());
     const deadline = outage === 'recovered' ? 45000 : 30000;
     for (let elapsed = 0; elapsed < deadline - 1000; elapsed += 1000) { t.mock.timers.tick(1000); await flush(); }
@@ -81,7 +85,7 @@ test('shutdown includes an unresolved claim in its deadline and releases a late 
   await flush();
   t.mock.timers.tick(1000); await flush();
   assert.deepEqual(await stopping, { timedOut: true });
-  respond(task); await starting;
+  respond(task); await starting; await flush();
   assert.equal(released, 1);
   assert.equal(executions, 0);
 });

@@ -37,14 +37,18 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
 		PlatformTenantRequired:    w.PlatformTenantRequired,
 		Visibility:                NewWorkloadVisibility(w),
+		AppProtocol:               w.AppProtocol,
+		Streaming:                 w.Streaming,
+		WakeAhead:                 w.WakeAhead,
 
-		Class:      string(w.Class),
-		Schedule:   w.Schedule,
-		Ports:      append([]int{}, w.Ports...),
-		EnvKeys:    w.EnvKeys,
-		Source:     w.Source,
-		Tier:       w.Tier.String(),
-		DetectedBy: planDetection(w.DetectedBy),
+		Class:       string(w.Class),
+		Schedule:    w.Schedule,
+		Ports:       append([]int{}, w.Ports...),
+		EnvKeys:     w.EnvKeys,
+		SourceHosts: append([]api.PlanSourceHost(nil), w.SourceHosts...),
+		Source:      w.Source,
+		Tier:        w.Tier.String(),
+		DetectedBy:  planDetection(w.DetectedBy),
 	}
 }
 

@@ -82,7 +82,10 @@ func TestPropertyEnvironmentLedgerCountsMatchConcurrentAdmissions(t *testing.T) 
 		go func(i int) {
 			id := fmt.Sprintf("instance-%d", i)
 			environment := fmt.Sprintf("environment:%d", i%3)
-			err := ledger.Admit(sched.Request{Instance: id, AppID: "app", EnvironmentKey: environment, Plan: api.PlanScale, RAMMB: 128})
+			// environment:0 is production: stages alone stop one short of
+			// the plan cap (ADR-590 amendment 2026-11-10), production
+			// takes the reserved slot.
+			err := ledger.Admit(sched.Request{Instance: id, AppID: "app", EnvironmentKey: environment, ProductionEnvironment: i%3 == 0, Plan: api.PlanScale, RAMMB: 128})
 			results <- admitted{id, environment, err}
 		}(i)
 	}
@@ -213,6 +216,7 @@ func TestSeedLedgerRebuildsPinnedEnvironmentAndDeploymentCounters(t *testing.T) 
 	}
 	// The raw production projection cannot replace a deployed CPU policy or
 	// cause recovery to omit already-resident capacity after a cap reduction.
+	// Each instance books its size's CPU (ADR-20261109172421): 250 m at 256 MB.
 	sharedCPU, sharedCap := 2000, 1
 	if _, err := (*f.Store()).UpdateApp(ctx, (*f.App()).ID, state.UpdateAppParams{CPUMillicores: &sharedCPU, MaxConcurrency: &sharedCap}); err != nil {
 		t.Fatal(err)
@@ -229,7 +233,7 @@ func TestSeedLedgerRebuildsPinnedEnvironmentAndDeploymentCounters(t *testing.T) 
 		t.Fatal(err)
 	}
 	ledger := (*engine.XLedger())
-	if ledger.Concurrency((*f.App()).ID) != 3 || ledger.ConcurrencyForEnvironment((*f.App()).ID, sched.RuntimeEnvironmentAdmissionKey(prodOwner.Scope, prodOwner.EnvironmentID)) != 1 || ledger.ConcurrencyForEnvironment((*f.App()).ID, sched.RuntimeEnvironmentAdmissionKey(stageOwner.Scope, stageOwner.EnvironmentID)) != 2 || ledger.ConcurrencyForDeployment((*f.App()).ID, stage.ID) != 1 || ledger.ConcurrencyForDeployment((*f.App()).ID, newStage.ID) != 1 || ledger.ResidentRAM() != 5*(256+api.PerVMOverheadMB) || ledger.UsedCPUMillicoresForNode((*engine.DefaultLocalNodeID())) != 4500 {
+	if ledger.Concurrency((*f.App()).ID) != 3 || ledger.ConcurrencyForEnvironment((*f.App()).ID, sched.RuntimeEnvironmentAdmissionKey(prodOwner.Scope, prodOwner.EnvironmentID)) != 1 || ledger.ConcurrencyForEnvironment((*f.App()).ID, sched.RuntimeEnvironmentAdmissionKey(stageOwner.Scope, stageOwner.EnvironmentID)) != 2 || ledger.ConcurrencyForDeployment((*f.App()).ID, stage.ID) != 1 || ledger.ConcurrencyForDeployment((*f.App()).ID, newStage.ID) != 1 || ledger.ResidentRAM() != 5*(256+api.PerVMOverheadMB) || ledger.UsedCPUMillicoresForNode((*engine.DefaultLocalNodeID())) != 5*sched.AppCPUBookingMillicores(state.App{RAMMB: 256}) {
 		t.Fatalf("recovery lost original policy/counts: all=%d stage=%d new=%d ram=%d cpu=%d", ledger.Concurrency((*f.App()).ID), ledger.ConcurrencyForDeployment((*f.App()).ID, stage.ID), ledger.ConcurrencyForDeployment((*f.App()).ID, newStage.ID), ledger.ResidentRAM(), ledger.UsedCPUMillicoresForNode((*engine.DefaultLocalNodeID())))
 	}
 }

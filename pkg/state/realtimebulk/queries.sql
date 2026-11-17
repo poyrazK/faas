@@ -14,7 +14,7 @@ SELECT status,ordering_key,dead_since,deadline_invalid,coalesce(delivery_deadlin
 SELECT EXISTS(SELECT 1 FROM managed_realtime_consumer_group_messages WHERE group_id=sqlc.arg(group_id)::text::uuid AND ordering_key=sqlc.arg(ordering_key)::text AND status='leased')::boolean;
 
 -- name: ReplayDeadLetter :exec
-UPDATE managed_realtime_consumer_group_messages SET status='ready',attempts=0,worker='',token_hash=NULL,lease_until=NULL,
+UPDATE managed_realtime_consumer_group_messages SET status='ready',attempts=0,release_count=0,worker='',token_hash=NULL,lease_until=NULL,
  failure_code='',credential_id=NULL,available_at=clock_timestamp() WHERE group_id=sqlc.arg(group_id)::text::uuid AND sequence=sqlc.arg(sequence)::bigint AND status='dead';
 
 -- name: FreezeDeadline :exec
@@ -190,10 +190,17 @@ WITH removed AS (DELETE FROM managed_realtime_group_delivery_history WHERE group
 UPDATE managed_realtime_consumer_groups SET history_pruned_events=history_pruned_events+(SELECT count(*) FROM removed) WHERE id=sqlc.arg(group_id)::text::uuid AND EXISTS(SELECT 1 FROM removed);
 
 -- name: ReleaseGroupMessage :one
-UPDATE managed_realtime_consumer_group_messages SET status='ready',attempts=greatest(0,attempts-1),release_count=release_count+1,
- worker='',token_hash=NULL,lease_until=NULL,credential_id=NULL,failure_code='',available_at=clock_timestamp()
+-- A release hands the attempt back; at max_releases it dead-letters as
+-- release_limit instead, so a worker that always releases cannot loop on
+-- one message forever.
+UPDATE managed_realtime_consumer_group_messages SET
+ status=CASE WHEN release_count+1>=sqlc.arg(max_releases)::integer THEN 'dead' ELSE 'ready' END,
+ attempts=greatest(0,attempts-1),release_count=release_count+1,
+ worker='',token_hash=NULL,lease_until=NULL,credential_id=NULL,
+ failure_code=CASE WHEN release_count+1>=sqlc.arg(max_releases)::integer THEN 'release_limit' ELSE '' END,
+ available_at=clock_timestamp()
  WHERE group_id=sqlc.arg(group_id)::text::uuid AND sequence=sqlc.arg(sequence)::bigint AND status='leased'
- AND token_hash=sqlc.arg(token_hash)::bytea AND lease_until>clock_timestamp() RETURNING available_at;
+ AND token_hash=sqlc.arg(token_hash)::bytea AND lease_until>clock_timestamp() RETURNING status, available_at;
 
 -- name: PruneSettlementReceipts :exec
 DELETE FROM managed_realtime_group_settlement_receipts WHERE group_id=sqlc.arg(group_id)::text::uuid AND expires_at<=clock_timestamp();
@@ -333,6 +340,26 @@ WHERE c.node_name<>sqlc.arg(node_name)::text
  AND s.synced_at>clock_timestamp()-make_interval(secs=>sqlc.arg(stale_seconds)::double precision)
 GROUP BY c.account_id ORDER BY sum(c.connections) DESC,c.account_id
 LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ClearNodeEndpointConnectionsExcept :exec
+DELETE FROM realtime_node_endpoint_connections WHERE node_name=sqlc.arg(node_name)::text AND NOT (endpoint_id=ANY(sqlc.arg(endpoint_ids)::uuid[]));
+
+-- name: UpsertNodeEndpointConnections :exec
+-- Writes only the counts that changed since the node's previous sync.
+INSERT INTO realtime_node_endpoint_connections AS t (node_name,endpoint_id,connections)
+SELECT sqlc.arg(node_name)::text,(sqlc.arg(endpoint_ids)::uuid[])[g.i],(sqlc.arg(counts)::integer[])[g.i]
+FROM generate_subscripts(sqlc.arg(endpoint_ids)::uuid[],1) AS g(i)
+ON CONFLICT (node_name,endpoint_id) DO UPDATE SET connections=excluded.connections
+WHERE t.connections<>excluded.connections;
+
+-- name: ReadRemoteNodeEndpointConnections :many
+-- Other nodes' fresh counts for the endpoints this node reported.
+SELECT c.endpoint_id::text AS endpoint_id,sum(c.connections)::bigint AS connections
+FROM realtime_node_endpoint_connections c JOIN realtime_node_connection_syncs s ON s.node_name=c.node_name
+WHERE c.node_name<>sqlc.arg(node_name)::text
+ AND c.endpoint_id=ANY(sqlc.arg(endpoint_ids)::uuid[])
+ AND s.synced_at>clock_timestamp()-make_interval(secs=>sqlc.arg(stale_seconds)::double precision)
+GROUP BY c.endpoint_id;
 
 -- name: ReadAccountOpenConnections :one
 -- An account's open connections across nodes with a fresh sync (ADR-1323).

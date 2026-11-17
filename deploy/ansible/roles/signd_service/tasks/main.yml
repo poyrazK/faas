@@ -1,0 +1,99 @@
+---
+# signd_service — install and run signd (ADR-20261109170000). It holds the
+# fleet signing key and signs the app layers compute nodes build, so it runs
+# on the control plane only, as its own OS user.
+- name: signd_service — require a control-plane host and a tcp:// listener
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+      - faas_signd_listen is match('^tcp://[^/]+:[0-9]+$')
+      - not (faas_signd_listen is match('^tcp://(0\.0\.0\.0|\[::\])?:'))
+    fail_msg: >-
+      faas_signd_listen is {{ faas_signd_listen }}: signd runs on a
+      control-plane (or single-box) host and listens on that host's private
+      address, tcp://<private address>:<port>, never on every address.
+  when: faas_signd_listen | length > 0
+
+- name: signd_service — inspect the fleet signing key
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/sign.key
+  register: faas_signd_sign_key
+  when: faas_signd_listen | length > 0
+
+- name: signd_service — require the fleet signing key
+  ansible.builtin.assert:
+    that:
+      - faas_signd_sign_key.stat.exists
+    fail_msg: >-
+      signd signs with /etc/faas/secrets/sign.key, which this host lacks.
+      Provision it with `gregalectl sign-keys init` (the same key compute
+      nodes hold today), then rerun.
+  when: faas_signd_listen | length > 0
+
+# The user exists everywhere the role runs so pg_ident's faas-signd line maps
+# a real user; it has no shell, no home and no password.
+- name: signd_service — create the faas-signd user
+  ansible.builtin.user:
+    name: faas-signd
+    group: faas
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+  when: faas_signd_listen | length > 0
+
+- name: signd_service — install systemd unit
+  ansible.builtin.copy:
+    src: faas-signd.service
+    dest: /etc/systemd/system/faas-signd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-signd
+
+- name: signd_service — create unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-signd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# A fleet-PKI feature leaf (pkg/pki artifact-signer) for signd.faas, issued
+# from the CA on this host. A run keeps a leaf valid for 30 days or more, so
+# this is also its renewal. The key stays root-only: systemd hands it to
+# signd as a credential.
+- name: signd_service — issue signd's server leaf
+  ansible.builtin.command:
+    argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, artifact-signer, --box-role, control-plane,
+           --ca-dir, /etc/faas/tls, --root-dir, /etc/faas/tls]
+  register: faas_signd_leaf
+  changed_when: (faas_signd_leaf.stdout | from_json).issued | length > 0
+  when: faas_signd_listen | length > 0
+  notify: restart faas-signd
+
+- name: signd_service — install configuration drop-in
+  ansible.builtin.template:
+    src: 50-faas-signd.conf.j2
+    dest: /etc/systemd/system/faas-signd.service.d/50-faas-signd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_signd_listen | length > 0
+  notify: restart faas-signd
+
+# Without the drop-in the unit has no listener and no key; CD's start step
+# reads its absence as "signd off".
+- name: signd_service — remove the drop-in while signd is off
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-signd.service.d/50-faas-signd.conf
+    state: absent
+  when: faas_signd_listen | length == 0
+  register: faas_signd_dropin_removed
+
+- name: signd_service — stop signd while it is off
+  ansible.builtin.systemd_service:
+    name: faas-signd.service
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  when: faas_signd_listen | length == 0 and faas_signd_dropin_removed is changed

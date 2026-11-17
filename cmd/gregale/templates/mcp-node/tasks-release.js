@@ -16,6 +16,7 @@ try {
   const timeoutMs = plan.timeoutMs ?? 60000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 600000) throw new Error('Invalid deadline');
   for (const hook of [plan.start, plan.drain]) if (!Array.isArray(hook) || !hook.length || hook.some(arg => typeof arg !== 'string' || !arg || arg.includes('\0'))) throw new Error('Invalid hook');
+  if (plan.authorize !== undefined && (!Array.isArray(plan.authorize) || !plan.authorize.length || plan.authorize.some(arg => typeof arg !== 'string' || !arg || arg.includes('\0')))) throw new Error('Invalid authorization hook');
   if (!process.env.MCP_TASK_MIGRATION_DATABASE_URL) throw new Error('Migration binding required');
   const config = JSON.parse(readFileSync(new URL('./gregale-mcp.json', import.meta.url)));
   const settings = resolveMcpTaskSettings(config, { role: 'worker' });
@@ -36,14 +37,17 @@ try {
   };
   const report = await releaseMcpTasks({ checkpoint, saveCheckpoint, releaseID: plan.releaseId, pool, namespace: settings.namespace, handlers: mcpTaskHandlers,
     store: createPostgresMcpTaskStore({ pool, ...settings }), timeoutMs,
-    migrate: () => createPostgresMcpTaskStore({ pool: migrationPool, ...settings }).migrate({ admissionHandlers: Object.entries(mcpTaskHandlers).map(([name, handler]) => ({ name, version: handler.version })) }),
+    migrate: async () => {
+      if (plan.authorize) await run(plan.authorize, { stage: 'migrations' });
+      return createPostgresMcpTaskStore({ pool: migrationPool, ...settings }).migrate({ admissionHandlers: Object.entries(mcpTaskHandlers).map(([name, handler]) => ({ name, version: handler.version })) });
+    },
     start: async input => JSON.parse(await run(plan.start, input)).workerIDs,
     drain: input => run(plan.drain, input),
   });
-  console.log(JSON.stringify(report));
+  console.log(JSON.stringify({ ...report, executorSettled: true }));
   if (!report.ok) process.exitCode = 1;
 } catch {
-  console.log(JSON.stringify({ ok: false, stage: 'configuration', detail: 'Check release plan, Task bindings, and migration credentials' }));
+  console.log(JSON.stringify({ ok: false, executorSettled: true, stage: 'configuration', detail: 'Check release plan, Task bindings, and migration credentials' }));
   process.exitCode = 1;
 } finally {
   await pool?.end().catch(() => {});

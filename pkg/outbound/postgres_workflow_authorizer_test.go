@@ -306,7 +306,7 @@ func TestWorkflowForEachOutboundPostgresAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := api.WorkflowSpec{Name: "batch", Steps: []api.WorkflowStepSpec{{Name: "send", ForEach: &api.WorkflowForEachSpec{Items: "input.items", Action: api.WorkflowForEachActionSpec{Outbound: &api.WorkflowOutboundSpec{IntegrationID: offer.ID, Method: "POST", Path: "/v1/contacts", IdempotencySupported: true}}}}}}
-	if err := store.ValidateWorkflowOutboundBindings(ctx, app.ID, spec); !errors.Is(err, state.ErrAutomationInvalid) {
+	if err := store.ValidateWorkflowOutboundBindings(ctx, app.ID, spec); !errors.Is(err, state.ErrStoredWorkflowInvalid) {
 		t.Fatalf("nested action bypassed binding validation: %v", err)
 	}
 	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {

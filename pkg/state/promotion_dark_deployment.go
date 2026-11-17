@@ -60,7 +60,7 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	if dep.EnvironmentWorkloadManaged() || managed {
 		return ErrConflict
 	}
-	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
+	if err := s.checkDeploymentStoredWorkflows(ctx, tx, dep); err != nil {
 		return err
 	}
 	if dep.Status == DeployLive && dep.TrafficPercent == 0 && dep.TrafficPercentExplicit {
@@ -112,7 +112,7 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(dep)); err != nil {
 		return err
 	}
-	if err := m.checkDeploymentAutomationsLocked(dep); err != nil {
+	if err := m.checkDeploymentStoredWorkflowsLocked(dep); err != nil {
 		return err
 	}
 	before := dep

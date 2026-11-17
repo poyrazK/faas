@@ -29,6 +29,7 @@ def make_cgroup(root, rel, files):
 
 FULL = {
     "cpu.stat": "usage_usec 2500000\nuser_usec 2000000\nsystem_usec 500000\nnr_periods 10\nnr_throttled 2\nthrottled_usec 125000\n",
+    "cpu.max": "200000 100000\n",
     "memory.current": "1073741824\n",
     "memory.peak": "2147483648\n",
     "memory.max": "3758096384\n",
@@ -70,6 +71,7 @@ class CgroupMetricsTest(unittest.TestCase):
         for line in (
             'faas_cgroup_cpu_usage_seconds_total{cgroup="faas-obs.slice"} 2.5',
             'faas_cgroup_cpu_throttled_seconds_total{cgroup="faas-obs.slice"} 0.125',
+            'faas_cgroup_cpu_quota_cores{cgroup="faas-obs.slice"} 2',
             'faas_cgroup_memory_bytes{cgroup="faas-obs.slice"} 1073741824',
             'faas_cgroup_memory_peak_bytes{cgroup="faas-obs.slice"} 2147483648',
             'faas_cgroup_memory_max_bytes{cgroup="faas-obs.slice"} 3758096384',
@@ -86,6 +88,15 @@ class CgroupMetricsTest(unittest.TestCase):
             self.assertIn(line, body)
         # memory.high "max" means unlimited: no sample rather than a fake number.
         self.assertNotIn("faas_cgroup_memory_high_bytes{", body)
+
+    def test_an_unlimited_cpu_quota_has_no_sample(self):
+        # ADR-20261109172421: the tenant slice's quota is per host; "max"
+        # means none, so FaasNodeCPUSaturated has nothing to divide by.
+        make_cgroup(self.root, "faas.slice/faas-tenant.slice", {"cpu.stat": "usage_usec 1\n", "cpu.max": "max 100000\n"})
+        make_cgroup(self.root, "faas.slice/faas-cp.slice", {"cpu.stat": "usage_usec 1\n", "cpu.max": "50000 100000\n"})
+        body = self.run_collector("faas-tenant.slice faas-cp.slice")
+        self.assertNotIn('faas_cgroup_cpu_quota_cores{cgroup="faas-tenant.slice"}', body)
+        self.assertIn('faas_cgroup_cpu_quota_cores{cgroup="faas-cp.slice"} 0.5', body)
 
     def test_globs_match_children_and_skip_missing_paths(self):
         make_cgroup(self.root, "faas-cp.slice", {"cpu.stat": "usage_usec 1\n"})

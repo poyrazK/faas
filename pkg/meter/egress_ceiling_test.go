@@ -7,23 +7,16 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// liveEgressPolicy is a provider that bills egress live for every plan.
-type liveEgressPolicy struct{ billing.Provider }
-
-func (liveEgressPolicy) MeterUsagePolicy(api.Plan, state.BillingMeter) (billing.MeterUsagePolicy, bool) {
-	return billing.MeterUsagePolicy{Mode: billing.MeterDeliveryLive}, true
-}
-
 // Egress no plan bills is capped at the plan's monthly egress: a Pro account
 // past 500 GiB stops like a Free account past its compute allowance, and the
-// next month lifts the stop. Once egress bills live there is no ceiling.
-// adr: 20261103131742
+// next month lifts the stop. The ceiling holds even when egress bills live:
+// the account has not elected egress overage (ADR-20261104204500).
+// adr: 20261103131742 20261104090000
 func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -35,11 +28,11 @@ func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ceiling := meter.EgressCeilingBytes(nil, api.PlanPro)
-	if ceiling != 500<<30 || meter.EgressCeilingBytes(liveEgressPolicy{}, api.PlanPro) != 0 || meter.EgressCeilingBytes(nil, api.PlanFree) != 10<<30 {
-		t.Fatalf("ceilings: Pro %d, Pro billed live %d, Free %d", ceiling, meter.EgressCeilingBytes(liveEgressPolicy{}, api.PlanPro), meter.EgressCeilingBytes(nil, api.PlanFree))
+	ceiling := meter.EgressCeilingBytes(nil, api.PlanPro, state.EgressOverageElection{}, now)
+	if ceiling != 500<<30 || meter.EgressCeilingBytes(nil, api.PlanFree, state.EgressOverageElection{}, now) != 10<<30 {
+		t.Fatalf("ceilings: Pro %d, Free %d", ceiling, meter.EgressCeilingBytes(nil, api.PlanFree, state.EgressOverageElection{}, now))
 	}
-	notif, parker := &fakeNotifier{}, &fakeParker{}
+	notif, parker, mailer := &fakeNotifier{}, &fakeParker{}, &fakeMailer{}
 	enforce := func(at time.Time) meter.QuotaAction {
 		t.Helper()
 		usages, err := s.UsageByMonth(ctx, acct.ID, meter.AccountMonthKey(at))
@@ -50,7 +43,7 @@ func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		params := meter.QuotaParams{Store: s, Notif: notif, Parker: parker, Mailer: &fakeMailer{}, Log: discardLog(),
+		params := meter.QuotaParams{Store: s, Notif: notif, Parker: parker, Mailer: mailer, Log: discardLog(),
 			EgressBytes: meter.MonthlyEgressBytes(usages), EgressCeilingBytes: ceiling}
 		act, err := params.Enforce(ctx, current, meter.MonthlyUsageGB(usages), at)
 		if err != nil {
@@ -65,6 +58,14 @@ func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	if act := enforce(now); act.Action != "" || len(parker.parked) != 0 {
 		t.Fatalf("below the ceiling: %+v, parked %v", act, parker.parked)
 	}
+	// Past 80% of the allowance the account hears of the stop before it
+	// comes, once a day (bug hunt 2026-11-13 R10-2).
+	if mailer.count() != 1 || !strings.Contains(mailer.sent[0].Subject, "app egress") {
+		t.Fatalf("approaching mails = %+v, want one egress warning", mailer.sent)
+	}
+	if enforce(now.Add(30 * time.Second)); mailer.count() != 1 {
+		t.Fatalf("second tick the same day sent %d mails, want 1", mailer.count())
+	}
 	if err := s.AppendUsage(ctx, acct.ID, app.ID, ins.ID, now.Add(time.Minute), 60, 0, 0, 0, 1, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +78,11 @@ func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	if len(parker.parked) != 1 || parker.parked[0].Reason != "quota_exceeded_egress" {
 		t.Fatalf("parked = %+v, want the instance parked for egress", parker.parked)
 	}
-	if calls := notif.byChannel(db.NotifyBillingPastDue); len(calls) != 1 || !strings.Contains(calls[0].Payload, `"reason":"egress"`) {
-		t.Fatalf("billing_past_due = %+v, want one egress notice", calls)
+	if calls := notif.byChannel(db.NotifyBillingPastDue); len(calls) != 1 || !strings.Contains(calls[0].Payload, `"reason":"egress"`) || !strings.Contains(calls[0].Payload, `"kind":"quota_stop"`) {
+		t.Fatalf("billing_past_due = %+v, want one egress quota-stop notice", calls)
+	}
+	if mailer.count() != 2 || !strings.Contains(mailer.sent[1].Subject, "parked") {
+		t.Fatalf("mails = %+v, want the stop mail", mailer.sent)
 	}
 
 	if act := enforce(time.Date(2026, 12, 1, 0, 5, 0, 0, time.UTC)); act.Action != "" {

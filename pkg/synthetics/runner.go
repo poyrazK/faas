@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -33,19 +34,31 @@ const (
 // response, never enough for a hostile app to hold the runner.
 const bodyReadLimit = 64 << 10
 
-// Runner executes due checks. Concurrency bounds simultaneous probes so a
-// burst of due checks cannot flood the edge from the control plane.
+// Runner executes due checks. A pass starts the due checks a probe slot is
+// free for and returns without waiting for them (ADR-20261104142830): a
+// slow or hanging app holds only its own probes, never the pass. Concurrency
+// bounds simultaneous probes so a burst of due checks cannot flood the edge
+// from the control plane, and PerAccount bounds one account's share of them,
+// so one account's checks can never hold every slot. The most overdue check
+// starts first, so a check waiting for a slot is not passed over.
 type Runner struct {
 	Store       state.SyntheticRunStore
 	Client      *http.Client // nil = NewClient()
 	AppsDomain  string
 	Concurrency int
+	PerAccount  int // 0 = api.SyntheticCheckProbesPerAccount
 	Log         *slog.Logger
 	Now         func() time.Time
 	// Released decides whether a due check is still probed: its account's
 	// plan and the synthetic-checks capability flag (ADR-20261028101615).
 	// nil probes every due check.
 	Released func(ctx context.Context, check state.RunnableSyntheticCheck) bool
+
+	mu       sync.Mutex
+	inFlight map[string]bool // check id → probing
+	accounts map[string]int  // account id → probes in flight
+	finished RunStats        // outcomes of probes finished since the last pass
+	wg       sync.WaitGroup
 }
 
 // NewClient returns the probe client: no redirects (a 3xx is the result),
@@ -66,25 +79,31 @@ func NewClient() *http.Client {
 	}
 }
 
-// RunStats summarises one pass.
+// RunStats summarises one pass. Due counts the due checks not already
+// being probed; Started of them got a slot and Deferred wait for one.
+// OK, Failed and RecordErrors count the probes that finished since the
+// previous pass.
 type RunStats struct {
-	Due, OK, Failed, RecordErrors int
+	Due, Started, Deferred, OK, Failed, RecordErrors int
 	// NotReleased counts due checks not probed because Released refused them.
 	NotReleased int
 	Purged      int64
+	// Backlog is how late the most overdue deferred check is.
+	Backlog time.Duration
 }
 
-// RunOnce runs every due check once and purges runs past retention.
+// RunOnce starts the due checks there are probe slots for, reports the
+// probes finished since the previous pass, and purges runs past retention.
 func (r *Runner) RunOnce(ctx context.Context) (RunStats, error) {
 	var stats RunStats
 	now := r.now()
 	checks, err := r.Store.ListRunnableSyntheticChecks(ctx)
 	if err != nil {
-		return stats, err
+		return r.collect(stats), err
 	}
 	var due []state.RunnableSyntheticCheck
 	for _, c := range checks {
-		if !Due(c, now) {
+		if !Due(c, now) || r.probing(c.ID) {
 			continue
 		}
 		if r.Released != nil && !r.Released(ctx, c) {
@@ -94,33 +113,88 @@ func (r *Runner) RunOnce(ctx context.Context) (RunStats, error) {
 		due = append(due, c)
 	}
 	stats.Due = len(due)
-	var mu sync.Mutex
-	sem := make(chan struct{}, max(r.Concurrency, 1))
-	var wg sync.WaitGroup
+	// Most overdue first: never run, then the longest past its interval.
+	sort.SliceStable(due, func(i, j int) bool { return dueAt(due[i]).Before(dueAt(due[j])) })
 	for _, c := range due {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(c state.RunnableSyntheticCheck) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			run := r.Probe(ctx, c)
-			err := r.Store.RecordSyntheticCheckRun(ctx, run)
-			mu.Lock()
-			defer mu.Unlock()
-			switch {
-			case err != nil && !errors.Is(err, state.ErrNotFound): // deleted mid-run is fine
-				stats.RecordErrors++
-				r.log().Warn("synthetics: record run", "check", c.ID, "err", err)
-			case run.OK:
-				stats.OK++
-			default:
-				stats.Failed++
-			}
-		}(c)
+		if !r.start(ctx, c) {
+			stats.Deferred++
+			stats.Backlog = max(stats.Backlog, now.Sub(dueAt(c)))
+			continue
+		}
+		stats.Started++
 	}
-	wg.Wait()
+	stats = r.collect(stats)
 	stats.Purged, err = r.Store.PurgeSyntheticCheckRunsBefore(ctx, now.Add(-api.SyntheticCheckRunRetentionDays*24*time.Hour))
 	return stats, err
+}
+
+// Wait blocks until every started probe has finished and been recorded.
+func (r *Runner) Wait() { r.wg.Wait() }
+
+// dueAt is when a check fell due; a check that never ran is due from its
+// creation.
+func dueAt(c state.RunnableSyntheticCheck) time.Time {
+	if c.LastRunAt.IsZero() {
+		return c.CreatedAt
+	}
+	return c.LastRunAt.Add(time.Duration(c.IntervalSeconds) * time.Second)
+}
+
+func (r *Runner) probing(checkID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inFlight[checkID]
+}
+
+// start probes c in the background when a global and an account slot are
+// free, and reports whether it did.
+func (r *Runner) start(ctx context.Context, c state.RunnableSyntheticCheck) bool {
+	perAccount := r.PerAccount
+	if perAccount <= 0 {
+		perAccount = api.SyntheticCheckProbesPerAccount
+	}
+	r.mu.Lock()
+	if r.inFlight == nil {
+		r.inFlight, r.accounts = map[string]bool{}, map[string]int{}
+	}
+	if len(r.inFlight) >= max(r.Concurrency, 1) || r.accounts[c.AccountID] >= perAccount {
+		r.mu.Unlock()
+		return false
+	}
+	r.inFlight[c.ID] = true
+	r.accounts[c.AccountID]++
+	r.wg.Add(1)
+	r.mu.Unlock()
+	go func() {
+		defer r.wg.Done()
+		run := r.Probe(ctx, c)
+		err := r.Store.RecordSyntheticCheckRun(ctx, run)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.inFlight, c.ID)
+		if r.accounts[c.AccountID]--; r.accounts[c.AccountID] <= 0 {
+			delete(r.accounts, c.AccountID)
+		}
+		switch {
+		case err != nil && !errors.Is(err, state.ErrNotFound): // deleted mid-run is fine
+			r.finished.RecordErrors++
+			r.log().Warn("synthetics: record run", "check", c.ID, "err", err)
+		case run.OK:
+			r.finished.OK++
+		default:
+			r.finished.Failed++
+		}
+	}()
+	return true
+}
+
+// collect moves the outcomes of finished probes into stats.
+func (r *Runner) collect(stats RunStats) RunStats {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stats.OK, stats.Failed, stats.RecordErrors = r.finished.OK, r.finished.Failed, r.finished.RecordErrors
+	r.finished = RunStats{}
+	return stats
 }
 
 // Due reports whether a check should run at now: never run, or its interval
@@ -147,6 +221,10 @@ func (r *Runner) Probe(ctx context.Context, c state.RunnableSyntheticCheck) stat
 		return run
 	}
 	req.Header.Set("User-Agent", "Gregale-Synthetics/1 (+https://gregale.dev/docs/synthetic-checks)")
+	// A request with a cookie is never answered from the edge cache, fresh
+	// or stale (ADR-122 D3), so a probe checks the app, not a copy the edge
+	// kept (ADR-20261104142830).
+	req.AddCookie(&http.Cookie{Name: api.SyntheticProbeCookieName, Value: "1"})
 	resp, err := r.client().Do(req)
 	if err == nil {
 		_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, bodyReadLimit))

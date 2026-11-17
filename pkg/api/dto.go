@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -16,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 
@@ -41,6 +44,11 @@ type PublishEventRequest struct {
 	Data            json.RawMessage `json:"data"`
 	AccountID       string          `json:"accountid,omitempty"`
 	SchemaVersion   string          `json:"schemaversion,omitempty"`
+	// EnvironmentID names the project environment the event belongs to
+	// (ADR-20261104120000); omitted is production. Only subscriptions of that
+	// environment receive the event, and only production events start
+	// workflows.
+	EnvironmentID string `json:"environmentid,omitempty"`
 }
 
 func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
@@ -354,8 +362,11 @@ type EventSubscriptionResponse struct {
 	WorkAction         string                   `json:"work_action,omitempty"`
 	Ordered            bool                     `json:"ordered,omitempty"`
 	Enabled            bool                     `json:"enabled"`
-	CreatedAt          time.Time                `json:"created_at"`
-	UpdatedAt          time.Time                `json:"updated_at"`
+	// Environment is the project environment slug whose events the
+	// subscription receives; omitted is production (ADR-20261104120000).
+	Environment string    `json:"environment,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // EventSubscriptionListResponse is the app-scoped, read-only subscription
@@ -577,6 +588,9 @@ type CreateAppRequest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000). An empty path clears it.
+	Warmup *WarmupHook `json:"warmup,omitempty"`
 	// Pause declares when the platform may pause the VM (ADR-1151):
 	// between_requests, when_idle or never. Empty selects the default for
 	// the app's type.
@@ -857,6 +871,10 @@ type DevPatchPreview struct {
 	// Generation is set when this sync published a live patch; poll
 	// GET /v1/dev/sessions/{project}/patches/{generation} for delivery.
 	Generation int64 `json:"generation,omitempty"`
+	// BuildDeferredUntil is set when the sync's convergence build waits
+	// for the developer to stop saving (ADR-20261021221906): the live patch is the
+	// sync, and a later sync supersedes this build before it starts.
+	BuildDeferredUntil *time.Time `json:"build_deferred_until,omitempty"`
 }
 
 // DevPatchStatusResponse reports whether a published live patch reached the
@@ -903,6 +921,26 @@ type DevSessionResponse struct {
 	// none. A client that asked for one and finds it missing is talking to an
 	// API that ignores the request field.
 	GoCommand string `json:"go_command,omitempty"`
+	// LivePatches reports whether this control plane delivers ADR-740 live
+	// source patches. Watch mode is only faster than a developer build when
+	// they are delivered, so automatic watch selection falls back without
+	// them. Omitted by servers that predate the field.
+	LivePatches *bool `json:"live_patches,omitempty"`
+}
+
+// DevSessionSummary is one developer environment in GET /v1/dev/sessions.
+// App is the backing dev-* slug, accepted by DELETE /v1/dev/sessions/{project}?app=.
+type DevSessionSummary struct {
+	Project   string    `json:"project"`
+	App       string    `json:"app"`
+	URL       string    `json:"url"`
+	State     string    `json:"state,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// DevSessionListResponse lists the account's developer environments.
+type DevSessionListResponse struct {
+	Sessions []DevSessionSummary `json:"sessions"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
@@ -1034,6 +1072,9 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000). An empty path clears it.
+	Warmup *WarmupHook `json:"warmup,omitempty"`
 	// Pause replaces the declared pause value; "" restores the default.
 	Pause            *string          `json:"pause,omitempty"`
 	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
@@ -1050,6 +1091,14 @@ type UpdateAppRequest struct {
 	// worker serves at once (ADR-1342). It takes effect on the next deploy;
 	// an explicit 0 restores one request per worker.
 	FunctionConcurrency *int `json:"function_concurrency,omitempty"`
+	// FunctionCallables replaces the names a function's typed client may
+	// call and their app slugs (ADR-20261111150000); {} clears them. It takes
+	// effect on the next deploy, as GREGALE_FUNCTIONS.
+	FunctionCallables *map[string]string `json:"function_callables,omitempty"`
+	// FunctionInputSchema replaces the JSON Schema typed-client calls to
+	// the function are checked against; {} clears it. It takes effect on
+	// the next deploy.
+	FunctionInputSchema *json.RawMessage `json:"function_input_schema,omitempty"`
 	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
 	// request token bucket without changing the deployment. Zero restores the
 	// plan default; positive values may lower, but never exceed, the plan cap.
@@ -1822,6 +1871,10 @@ type ScalingTarget struct {
 	// kind of accepted-but-inert field this codebase keeps having to
 	// remove.
 	Name string `json:"name,omitempty"`
+	// Labels selects one labelled series of the custom metric
+	// (ADR-20261108160000 slice C2). Empty: the metric's aggregate (the
+	// maximum of its fresh series). Only valid with Metric "custom".
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ScalingSchedule is one recurring window that raises the warm floor
@@ -1959,6 +2012,13 @@ type AppEffectiveLimits struct {
 	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
 	RequestBodyMaxBytes    int64 `json:"request_body_max_bytes"`
+	// IdleTimeoutS is the idle timeout the reaper applies: the app's own
+	// setting, or its type's default, clamped to the plan bounds (spec §4.3).
+	IdleTimeoutS int `json:"idle_timeout_s,omitempty"`
+	// Pause is when the platform may pause the VM (ADR-1151): the declared
+	// value, or the default for the app's type. Apps attached to a private
+	// network are never paused whatever they declare.
+	Pause string `json:"pause,omitempty"`
 }
 
 // AppConfiguredResources is the resource shape selected for an app. It is
@@ -2029,6 +2089,12 @@ type AppResponse struct {
 	// FunctionConcurrency is the requests one function worker serves at
 	// once (ADR-1342); omitted means one.
 	FunctionConcurrency int `json:"function_concurrency,omitempty"`
+	// FunctionCallables are the names the function's typed client may call
+	// and their app slugs (ADR-20261111150000).
+	FunctionCallables map[string]string `json:"function_callables,omitempty"`
+	// FunctionInputSchema is the JSON Schema typed-client calls to the
+	// function are checked against (ADR-20261111150000).
+	FunctionInputSchema json.RawMessage `json:"function_input_schema,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
@@ -2864,12 +2930,13 @@ func (h *DeploymentHealthcheck) Clone() *DeploymentHealthcheck {
 // DeploymentReadinessProbe is a reversible, steady-state traffic gate for
 // the primary app. It is distinct from Healthcheck (startup admission) and
 // LivenessProbe (which restarts a wedged VM).
+// The yaml tags let gregale.yaml hosting.readiness_probe use the same keys.
 type DeploymentReadinessProbe struct {
-	Path             string                     `json:"path,omitempty"`
-	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
-	PeriodS          int                        `json:"period_s,omitempty"`
-	TimeoutS         int                        `json:"timeout_s,omitempty"`
-	FailureThreshold int                        `json:"failure_threshold,omitempty"`
+	Path             string                     `json:"path,omitempty" yaml:"path,omitempty"`
+	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty" yaml:"grpc,omitempty"`
+	PeriodS          int                        `json:"period_s,omitempty" yaml:"period_s,omitempty"`
+	TimeoutS         int                        `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty"`
+	FailureThreshold int                        `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
@@ -3877,11 +3944,48 @@ type DeploymentAliasListResponse struct {
 // its own "min_instances required" presence rule. Splitting the
 // DTOs keeps each handler's contract crisp.
 type UpdateDeploymentTrafficRequest struct {
-	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
-	TrafficPercent int               `json:"traffic_percent"`
+	ExpectedMCPReadiness *MCPReadinessExpectation `json:"expected_mcp_readiness,omitempty"`
+	ExpectedReview       *AppReleaseReview        `json:"expected_review,omitempty"`
+	TrafficPercent       int                      `json:"traffic_percent"`
 	// An explicit empty id requires no live sibling with positive traffic.
 	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
 	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
+	// ExpectedTraffic makes the change conditional on the split it was planned
+	// from: every live release in the deployment's environment with positive
+	// traffic, mapped to its percent. Any difference at write time is a 409
+	// traffic_serving_changed.
+	ExpectedTraffic map[string]int `json:"expected_traffic,omitempty"`
+}
+
+// MaxExpectedTrafficReleases bounds expected_traffic; no split serves more
+// releases than an app's largest concurrency.
+const MaxExpectedTrafficReleases = 100
+
+// ValidateExpectedTraffic checks the bounds of an expected_traffic map.
+func (r UpdateDeploymentTrafficRequest) ValidateExpectedTraffic() error {
+	if r.ExpectedTraffic == nil {
+		return nil
+	}
+	if len(r.ExpectedTraffic) == 0 || len(r.ExpectedTraffic) > MaxExpectedTrafficReleases {
+		return fmt.Errorf("expected_traffic must name between 1 and %d releases", MaxExpectedTrafficReleases)
+	}
+	if r.ExpectedServingDeploymentID != nil || r.ExpectedReview != nil {
+		return fmt.Errorf("expected_traffic cannot be combined with expected_serving_deployment_id or expected_review")
+	}
+	sum := 0
+	for id, percent := range r.ExpectedTraffic {
+		if _, err := uuid.Parse(id); err != nil {
+			return fmt.Errorf("expected_traffic key %q is not a deployment id", id)
+		}
+		if percent < 1 || percent > 100 {
+			return fmt.Errorf("expected_traffic percent for %s must be between 1 and 100", id)
+		}
+		sum += percent
+	}
+	if sum != 100 {
+		return fmt.Errorf("expected_traffic percents must sum to 100, got %d", sum)
+	}
+	return nil
 }
 
 // AdvanceCanaryRequest is the compare-and-swap body for
@@ -4100,6 +4204,19 @@ func ParseMirrorWindow(s string) (MirrorWindowDuration, error) {
 	return 0, errInvalidMirrorWindow
 }
 
+// MirrorSafeMethod reports whether a method is mirrored and replayed without
+// the mirror rule's allow_unsafe_methods opt-in: GET, HEAD and OPTIONS. Live
+// mirroring, debugger replay and the replay dispatcher share it, so a rule
+// that opted out of side effects is never replayed with one.
+func MirrorSafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
 // MirrorAlwaysStrippedHeaders is the set of headers the gateway
 // strips from every mirror invocation regardless of the
 // customer-supplied RedactHeaders list (issue #72 / ADR-125
@@ -4234,6 +4351,8 @@ type AccountResponse struct {
 	ID            string            `json:"id"`
 	Email         string            `json:"email"`
 	EmailVerified bool              `json:"email_verified"`
+	// DisplayName is the account's optional human name; omitted when unset.
+	DisplayName string `json:"display_name,omitempty"`
 	// EmailVerificationGraceEndsAt is present only for unverified password
 	// accounts so API and dashboard clients can render the 30-day deadline.
 	EmailVerificationGraceEndsAt *time.Time    `json:"email_verification_grace_ends_at,omitempty"`
@@ -4307,6 +4426,35 @@ type AccountOverageCapResponse struct {
 	OverageCapCents *int64 `json:"overage_cap_cents"`
 }
 
+// EgressOverageRequest is PUT /v1/account/egress-overage and
+// PUT /v1/orgs/{slug}/egress-overage.
+type EgressOverageRequest struct {
+	// Enabled turns the election on or off. Required.
+	Enabled *bool `json:"enabled"`
+}
+
+// EgressOverageResponse is the billing subject's egress overage election.
+type EgressOverageResponse struct {
+	// Enabled is whether the election is on.
+	Enabled bool `json:"enabled"`
+	// Electable is whether the plan allows the election.
+	Electable bool `json:"electable"`
+	// EnabledAt is when the election started; it is kept when the election
+	// is turned off and on again.
+	EnabledAt *time.Time `json:"enabled_at,omitempty"`
+	// DisabledAt is when the election was last turned off.
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
+	// IncludedGiB is the plan's monthly egress allowance.
+	IncludedGiB int64 `json:"included_gib"`
+	// Billing is EgressOverageBillingLive or EgressOverageBillingOff.
+	Billing string `json:"billing"`
+	// PriceMillicentsPerGiB prices egress above the allowance while billing
+	// is live.
+	PriceMillicentsPerGiB int64 `json:"price_millicents_per_gib,omitempty"`
+	// Currency is the price's currency.
+	Currency string `json:"currency,omitempty"`
+}
+
 // OrgBillingEmailRequest sets the email an organization bills to. The billing
 // provider sends this address the organization's invoices and lets it sign in
 // to the organization's billing portal (ADR-20261103131742).
@@ -4371,6 +4519,9 @@ type APIKeyResponse struct {
 	// Projects are the slugs of the projects an agent key is limited to;
 	// absent for an unlimited key (ADR-20261104085712).
 	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action a person must approve for
+	// an agent key, when it chose them (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // DeployTokenResponse is the redacted representation of a per-app CI
@@ -4478,6 +4629,10 @@ type CreateKeyRequest struct {
 	// Projects limits an agent key to these projects' apps, by slug
 	// (ADR-20261104085712).
 	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action an agent key must have a
+	// person approve; absent for every kind, empty for none
+	// (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // CreateOrgAPIKeyRequest is the body of POST /v1/orgs/{slug}/keys
@@ -4495,6 +4650,9 @@ type CreateOrgAPIKeyRequest struct {
 	// Projects limits an agent key to these projects' apps, by slug
 	// (ADR-20261104085712).
 	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories: as CreateKeyRequest's; the organization's floor
+	// applies on top (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // ListOrgAPIKeysResponse is the body of GET /v1/orgs/{slug}/keys
@@ -4515,6 +4673,18 @@ type ListOrgAPIKeysResponse struct {
 // re-bound.
 type RotateOrgAPIKeyRequest struct {
 	Label string `json:"label,omitempty"`
+	// GraceWindowDays overrides, for this rotation only, how many days the
+	// old key keeps working (0 revokes it at once). Omitted uses the
+	// account setting or the plan default.
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
+}
+
+// RotateKeyRequest is the optional body of POST /v1/keys/{id}/rotate.
+// GraceWindowDays overrides, for this rotation only, how many days the old
+// key keeps working; 0 revokes it at once, which is what to do with a key
+// that leaked. Omitted uses the account setting or the plan default.
+type RotateKeyRequest struct {
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
 }
 
 // RotateOrgAPIKeyResponse is the body of
@@ -4749,10 +4919,32 @@ type CronResponse struct {
 	SkipIfRunning       bool                       `json:"skip_if_running"`
 	CreatedAt           string                     `json:"created_at"`
 	LastFiredAt         string                     `json:"last_fired_at,omitempty"`
+	// Environment is the project environment the cron runs in; omitted for
+	// the app's production environment (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it (ADR-20261104120000).
+	ClonePaused bool `json:"clone_paused,omitempty"`
 	// Labels are the cron's key/value labels (ADR-20261031100025), on its
 	// list and read while the resource-labels capability is on for the
 	// caller. Labels are not secret.
 	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// ResumeEnvironmentAutomationResponse reports the automation a resume
+// enabled in one project environment: the crons a full clone copied paused
+// that the source ran (ADR-20261104120000). A cron the source had disabled,
+// or one already enabled or disabled since, is left as it is.
+type ResumeEnvironmentAutomationResponse struct {
+	Environment  string   `json:"environment"`
+	CronsResumed int      `json:"crons_resumed"`
+	CronIDs      []string `json:"cron_ids"`
+	// EventSubscriptionsResumed and EventSubscriptionIDs are the event
+	// subscriptions the call enabled (ADR-20261104120000 amendment
+	// 2026-11-14).
+	EventSubscriptionsResumed int      `json:"event_subscriptions_resumed"`
+	EventSubscriptionIDs      []string `json:"event_subscription_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -4773,6 +4965,10 @@ type CreateCronRequest struct {
 	Enabled             *bool                      `json:"enabled,omitempty"`
 	Timezone            string                     `json:"timezone,omitempty"`
 	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
+	// Environment names the project environment the cron runs in; omitted
+	// or "production" is the app's production environment. A cron's
+	// environment never changes (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
@@ -5182,8 +5378,9 @@ type PasswordLoginResponse struct {
 // equivalence ("wrong password" vs "no account" vs "weak password") is
 // kept intact under the same JSON keys.
 type PasswordSignupRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
 }
 
 // ProgrammaticAuthResponse is the body for the JSON-only
@@ -5224,7 +5421,8 @@ type ProgrammaticAPIKey struct {
 // body regardless of whether the email is bound, so the surface
 // cannot be used to enumerate accounts.
 type MagicLinkSignupRequest struct {
-	Email string `json:"email"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
 }
 
 // PasswordResetRequest is the body of POST /login/forgot. The email
@@ -5293,7 +5491,7 @@ type ExecutionUsageSummaryResponse struct {
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
-// overage rate in the financial model ($0.01/GB-h). Cents are integer.
+// overage rate in the financial model (OverageMillicentsPerGBHour, $0.05/GB-h). Cents are integer.
 //
 // Issue #279 / PR-B: UsedCPUHours is informational and NOT billed.
 // The billing math is on UsedGBHours (plan RAM + 8 MB per running
@@ -5402,8 +5600,7 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *P
 // ValidateAppConfig keeps existing callers source-compatible while allowing
 // create-time callers to opt into the joint contract.
 func ValidateAppCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
-	shape, ok := PlanResourceShapeFor(l.Plan)
-	if !ok || guestVCPU != shape.VCPU || ramMB != shape.RAMMB {
+	if guestVCPU != SizeVCPUs(ramMB) {
 		return ErrInvalidCPURAMPair(l, ramMB, guestVCPU)
 	}
 	return nil
@@ -5917,6 +6114,40 @@ type QueueSendResponse struct {
 	TraceID        string `json:"trace_id,omitempty"`
 }
 
+// QueueSendBatchRequest is POST /v1/apps/{slug}/queues/send-batch: up to
+// QueueSendBatchMaxMessages messages for one queue, sent in order as one API
+// request (ADR-20261018101500 amendment 2026-10-31).
+type QueueSendBatchRequest struct {
+	Environment string                  `json:"environment,omitempty"`
+	QueueName   string                  `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO         `json:"retry_policy,omitempty"`
+	Messages    []QueueSendBatchMessage `json:"messages"`
+}
+
+// QueueSendBatchMessage is one message of a batch send.
+type QueueSendBatchMessage struct {
+	Payload json.RawMessage `json:"payload,omitempty"`
+	// GroupKey orders this message after earlier ones with the same key
+	// (ADR-20261112193306); see QueueSendRequest.GroupKey.
+	GroupKey string `json:"group_key,omitempty"`
+}
+
+// QueueSendBatchResult reports one message by its zero-based input index:
+// "accepted" with the message, "rejected" with the problem, or
+// "not_attempted" after an earlier message was rejected. Resend from the
+// first message that was not accepted.
+type QueueSendBatchResult struct {
+	Index   int                `json:"index"`
+	Status  string             `json:"status"`
+	Message *QueueSendResponse `json:"message,omitempty"`
+	Problem *Problem           `json:"problem,omitempty"`
+}
+
+// QueueSendBatchResponse lists every message of the batch in input order.
+type QueueSendBatchResponse struct {
+	Results []QueueSendBatchResult `json:"results"`
+}
+
 // QueueReceiveResponse is returned on POST /v1/apps/{slug}/queues/invocations:receive.
 // 200 with the dequeued row's payload + result; 204 on timeout.
 type QueueReceiveResponse struct {
@@ -5925,8 +6156,12 @@ type QueueReceiveResponse struct {
 	ID             string          `json:"id"`
 	Payload        json.RawMessage `json:"payload"`
 	Result         json.RawMessage `json:"result,omitempty"`
-	TraceID        string          `json:"trace_id,omitempty"`
-	Traceparent    string          `json:"traceparent,omitempty"`
+	// State is how the message settled: completed, failed or cancelled.
+	// Receive returned all three alike, so a failure looked processed
+	// (ADR-20261113180000, R6-5).
+	State       string `json:"state,omitempty"`
+	TraceID     string `json:"trace_id,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
 }
 
 // LogQueryEvent is the stable, source-neutral shape emitted by database-backed
@@ -5948,9 +6183,12 @@ type LogQueryEvent struct {
 	Level        string    `json:"level,omitempty"`
 	Stream       string    `json:"stream,omitempty"`
 	Message      string    `json:"message"`
-	LatencyMS    int       `json:"latency_ms,omitempty"`
-	Count        int       `json:"count,omitempty"`
-	ColdBoot     bool      `json:"cold_boot,omitempty"`
+	// LatencyMS is set on every HTTP row, 0 ms included, and absent on rows
+	// with no latency (runtime and build lines). A plain omitempty int dropped
+	// the field from 0 ms requests (ADR-20261110090000).
+	LatencyMS *int `json:"latency_ms,omitempty"`
+	Count     int  `json:"count,omitempty"`
+	ColdBoot  bool `json:"cold_boot,omitempty"`
 }
 
 // AccountTraceLookupResponse is the tenant-scoped correlation envelope used
@@ -6185,6 +6423,11 @@ type QueueSendRequest struct {
 	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	Work        *InvokeWork     `json:"work,omitempty"`
+	// GroupKey delivers messages with the same key one at a time, in send
+	// order; a message waiting to retry holds later ones of its key
+	// (ADR-20261112193306). It is the work key of the built-in
+	// gregale-ordered policy, so it cannot be combined with Work.
+	GroupKey string `json:"group_key,omitempty"`
 }
 
 // DelayedTaskRequest is the body for POST /v1/apps/{slug}/delayed-tasks.
@@ -6400,6 +6643,11 @@ type QueueStateResponse struct {
 	OldestPendingAt         *time.Time `json:"oldest_pending_at,omitempty"`
 	OldestPendingAgeSeconds *int64     `json:"oldest_pending_age_seconds,omitempty"`
 	GeneratedAt             time.Time  `json:"generated_at"`
+	// BacklogBySource is every pending or in-delivery invocation of the app
+	// per source (async_invoke, inbound_webhook, queue, ...), so async work
+	// waiting for the scheduler is visible beside the queue's depth. Omitted
+	// when nothing waits or the server cannot read it.
+	BacklogBySource map[string]int64 `json:"backlog_by_source,omitempty"`
 }
 
 // QueuePeekMessage is one pending row returned by GET .../queues/peek.
@@ -7552,8 +7800,11 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	AppSlug          string              `json:"app_slug,omitempty"`
-	PublicURL        string              `json:"public_url,omitempty"`
+	AppSlug   string `json:"app_slug,omitempty"`
+	PublicURL string `json:"public_url,omitempty"`
+	// PublicAuthMode is the public URL's auth after apply ("bearer",
+	// "basic", ...); omitted when the URL is open to anonymous requests.
+	PublicAuthMode   string              `json:"public_auth_mode,omitempty"`
 	Name             string              `json:"name"`
 	RootDir          string              `json:"root_dir"`
 	Dockerfile       string              `json:"dockerfile,omitempty"`
@@ -7586,6 +7837,13 @@ type PlanWorkload struct {
 	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
+	// AppProtocol, Streaming and WakeAhead are the Compose
+	// x-gregale-app-protocol, x-gregale-streaming and x-gregale-wake-ahead
+	// settings the deploy applies; empty or nil when the file sets none, so
+	// a dry run shows them before apply.
+	AppProtocol string `json:"app_protocol,omitempty"`
+	Streaming   *bool  `json:"streaming,omitempty"`
+	WakeAhead   *bool  `json:"wake_ahead,omitempty"`
 	// Visibility is "internal" when the app is or will be hidden from the
 	// public edge: an existing internal app, or a new Compose service without
 	// `ports:` (ADR-20261022131852). Omitted means public.
@@ -7600,6 +7858,10 @@ type PlanWorkload struct {
 	// have no value in the selected environment: not configured on the app
 	// and not provided by the platform. Names only, never values.
 	UnsetEnvKeys []string `json:"unset_env_keys,omitempty"`
+	// SourceHosts are string literals in the workload's source that dial
+	// another service by its Compose name, which does not resolve on Gregale
+	// (ADR-20261112223000). At most a few per workload.
+	SourceHosts []PlanSourceHost `json:"source_hosts,omitempty"`
 	// UnsetEnvKeyReasons says why a Compose value for an UnsetEnvKeys name
 	// is not imported (ADR-20261023085230): not_opted_in, secret,
 	// service_address, local_address, interpolated, host_value, empty or
@@ -7778,28 +8040,50 @@ type QuotaBlock struct {
 // account (Unaffected = noop or skipped) plus the scan's proposed
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
+// FeatureHint is one Gregale behavior or feature that applies to the scanned
+// source: what the plan will do, how to change it, and the exact commands
+// (ADR-20261112223000 §1). IDs are stable.
+// PlanSourceHost is one place source code dials a service by its Compose
+// name: the name, and the file and line that spell it.
+type PlanSourceHost struct {
+	Host string `json:"host"`
+	File string `json:"file"`
+	Line int    `json:"line"`
+}
+
+type FeatureHint struct {
+	ID        string   `json:"id"`
+	Workloads []string `json:"workloads,omitempty"`
+	Applied   string   `json:"applied"`
+	Change    string   `json:"change,omitempty"`
+	Commands  []string `json:"commands,omitempty"`
+}
+
 type PlanResponse struct {
-	SafeRelease           *ProjectSafeRelease    `json:"safe_release,omitempty"`
-	ProjectSlug           string                 `json:"project_slug"`
-	RepoFullName          string                 `json:"repo_full_name,omitempty"`
-	Environment           string                 `json:"environment,omitempty"`
-	EnvironmentProtected  bool                   `json:"environment_protected,omitempty"`
-	EnvironmentConfigHash string                 `json:"environment_config_hash,omitempty"`
-	ScanSource            string                 `json:"scan_source"`
-	Tier                  string                 `json:"tier"`
-	Workloads             []PlanWorkload         `json:"workloads"`
-	Managed               []PlanManaged          `json:"managed"`
-	Crons                 []PlanCron             `json:"crons"`
-	AsyncRoutes           []PlanAsyncRoute       `json:"async_routes,omitempty"`
-	Warnings              []string               `json:"warnings,omitempty"`
-	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
-	ObservedApps          int                    `json:"observed_apps"`
-	ObservedCrons         int                    `json:"observed_crons"`
-	LimitApps             int                    `json:"limit_apps"`
-	LimitCrons            int                    `json:"limit_crons"`
-	CanApply              bool                   `json:"can_apply"`
-	CronsNotAllowed       bool                   `json:"crons_not_allowed,omitempty"`
-	PlanToken             string                 `json:"plan_token"`
+	SafeRelease           *ProjectSafeRelease `json:"safe_release,omitempty"`
+	ProjectSlug           string              `json:"project_slug"`
+	RepoFullName          string              `json:"repo_full_name,omitempty"`
+	Environment           string              `json:"environment,omitempty"`
+	EnvironmentProtected  bool                `json:"environment_protected,omitempty"`
+	EnvironmentConfigHash string              `json:"environment_config_hash,omitempty"`
+	ScanSource            string              `json:"scan_source"`
+	Tier                  string              `json:"tier"`
+	Workloads             []PlanWorkload      `json:"workloads"`
+	Managed               []PlanManaged       `json:"managed"`
+	Crons                 []PlanCron          `json:"crons"`
+	AsyncRoutes           []PlanAsyncRoute    `json:"async_routes,omitempty"`
+	Warnings              []string            `json:"warnings,omitempty"`
+	// FeatureHints says which Gregale behaviors and features apply to the
+	// scanned source and the commands that change them (ADR-20261112223000).
+	FeatureHints      []FeatureHint          `json:"feature_hints,omitempty"`
+	DetectionWarnings []PlanDetectionWarning `json:"detection_warnings,omitempty"`
+	ObservedApps      int                    `json:"observed_apps"`
+	ObservedCrons     int                    `json:"observed_crons"`
+	LimitApps         int                    `json:"limit_apps"`
+	LimitCrons        int                    `json:"limit_crons"`
+	CanApply          bool                   `json:"can_apply"`
+	CronsNotAllowed   bool                   `json:"crons_not_allowed,omitempty"`
+	PlanToken         string                 `json:"plan_token"`
 	// ADR-124 can_apply rescue signal. PreExclude is the gate
 	// evaluated on the full scan (pre-`--only`/pre-`--exclude`).
 	// Rescued is true when --exclude flipped a blocked gate to
@@ -8021,9 +8305,10 @@ type AppStaticEgressIPResponse struct {
 // /v1/apps/{slug}/static-egress-ip. IP is the canonical
 // customer-supplied IPv4 (dotted-quad string). The handler
 // validates the family=4 + non-RFC1918 + non-link-local +
-// non-multicast before the column write. Set=false means
-// "clear" — the same wire body covers the DELETE /keep-IP
-// promotion path without a third endpoint.
+// non-multicast before the column write. Set=false with no IP
+// means "clear" — the same wire body covers the DELETE /keep-IP
+// promotion path without a third endpoint. Set=false with an IP
+// is refused as ambiguous.
 type SetAppStaticEgressIPRequest struct {
 	IP  string `json:"ip"`
 	Set bool   `json:"set"`
@@ -9041,6 +9326,16 @@ type EdgeRuleHeaderOp struct {
 	Action string `json:"action"`
 	// Template (ADR-968) expands ${name} request values in Value.
 	Template bool `json:"template,omitempty"`
+	// Secret seals Value (ADR-20261108110000): apid stores it encrypted to
+	// the edge seal domain and never returns it. Credential-named request
+	// headers (EdgeRuleHeaderNameIsCredential) are sealed without it.
+	Secret bool `json:"secret,omitempty"`
+	// SecretID names the sealed value of a secret op. Responses carry it;
+	// sending it back with no Value keeps that value.
+	SecretID string `json:"secret_id,omitempty"`
+	// Redacted marks a credential-named value stored before sealing, which
+	// responses leave out. Sending the op back with no Value seals it.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // edgeRuleHeaderForbidden is the hard-coded blacklist of header
@@ -9140,9 +9435,18 @@ func (a *EdgeRuleHeadersAction) Validate() *Problem {
 		if p := a.RequestHeaders[i].Validate(); p != nil {
 			return p
 		}
+		if p := a.RequestHeaders[i].validateSecretFields(true); p != nil {
+			return p
+		}
+		if EdgeRuleHeaderOpSealed(a.RequestHeaders[i]) && len(a.RequestHeaders[i].Value) > EdgeRuleHeaderSecretMaxBytes {
+			return ErrValidation(fmt.Sprintf("header %q is sealed and its value must be at most %d bytes", a.RequestHeaders[i].Name, EdgeRuleHeaderSecretMaxBytes))
+		}
 	}
 	for i := range a.ResponseHeaders {
 		if p := a.ResponseHeaders[i].Validate(); p != nil {
+			return p
+		}
+		if p := a.ResponseHeaders[i].validateSecretFields(false); p != nil {
 			return p
 		}
 	}
@@ -9427,32 +9731,6 @@ func (a *EdgeRuleIPAction) Validate() *Problem {
 	return nil
 }
 
-// edgeRuleValidateRefURLPattern matches external `$ref` / `$id` values
-// that we refuse to compile against. The capture group is the URL
-// substring (so the 422 detail can name it); an external reference is
-// any non-empty URL that does NOT resolve to a JSON Pointer (the
-// `#/foo/bar` form). The JWKS-URL defence-in-depth at ADR-091 D10
-// uses the same posture but a different regex shape; this is the
-// JSON Schema analogue.
-//
-// Conservative on purpose: we strip / refuse anything that looks
-// URL-shaped on the right-hand side of `$ref` / `$id`. Internal
-// pointers (`#/definitions/Foo`) pass through. Same posture as the
-// §11 egress firewall — a customer cannot smuggle a request to
-// RFC1918 / metadata ranges through `$ref` resolution at hot-path
-// compile time. pkg/edgevalidate re-strips at compile time as
-// defence-in-depth.
-//
-// PR-C: anchored the key. The previous `\$ref|id` alternation
-// matched the substring `id` anywhere in the schema — including
-// inside `definitions` (so `{"$ref": "#/definitions/Foo"}` was
-// wrongly rejected as if it were an external URL). The new regex
-// requires the key to be a top-level JSON property name ("$ref"
-// or "$id"), followed by an optional-whitespace colon, followed by
-// a URL-shaped value. Verified against 10 cases in this PR-C
-// harness (see plan-file regression-proof walkthrough).
-var edgeRuleValidateRefURLPattern = lazyregexp.New(`"\s*(\$ref|\$id)\s*"\s*:\s*"(https?://|//)[^"]+"`)
-
 // EdgeRuleValidateAction is the wire shape for a kind=validate edge
 // rule. Schema is a JSON Schema 2020-12 document (Draft 2020-12;
 // sanity-bounded to a closed keyword set so a customer cannot ship
@@ -9464,7 +9742,7 @@ var edgeRuleValidateRefURLPattern = lazyregexp.New(`"\s*(\$ref|\$id)\s*"\s*:\s*"
 //
 //   - Schema: required JSON Schema document. Capped at
 //     MaxEdgeRuleValidateSchemaBytes (64 KiB). External `$ref` /
-//     `$id` URLs are rejected — see edgeRuleValidateRefURLPattern.
+//     `$id` URLs are rejected by the shared inline-schema compiler.
 //   - ContentTypes: optional media-type allowlist (e.g.
 //     ["application/json"]). Closed set application/* (the
 //     spec runtime is JSON; non-JSON schemas are out of scope
@@ -9732,7 +10010,7 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("validate action is required")
 	}
-	if len(a.Schema) == 0 {
+	if len(a.Schema) == 0 || bytes.Equal(bytes.TrimSpace(a.Schema), []byte("null")) {
 		if a.Parameters.Empty() {
 			return ErrValidation("validate action: schema or parameters is required")
 		}
@@ -9745,24 +10023,16 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 			"validate action: schema exceeds %d bytes (got %d)",
 			MaxEdgeRuleValidateSchemaBytes, len(a.Schema)))
 	}
-	// JSON well-formedness check. The json/v6 compile path runs
-	// this again at gateway compile time, but a fast-fail here keeps
-	// a malformed schema out of the apid create path and out of the
-	// 64 KiB-ish jsonb blob (Postgres jsonb rejects malformed JSON
-	// at insert with a 22P02 — same shape, but earlier).
-	var probe any
-	if err := json.Unmarshal(a.Schema, &probe); err != nil {
-		return ErrValidation(fmt.Sprintf("validate action: schema is not valid JSON: %v", err))
+	// Use the serving compiler before persistence: valid JSON can still be
+	// an invalid schema or exceed the runtime's reference/complexity bounds.
+	if !json.Valid(a.Schema) {
+		return ErrValidation("validate action: schema is not valid JSON")
 	}
-	// External-$ref/$id strip. The JWKS-URL guard at ADR-091 D10
-	// uses the same posture: refuse any URL-shaped value rather
-	// than try to enumerate safe hosts (a regex strip is cheaper
-	// to audit). The gateway side re-strips at compile time as
-	// defence-in-depth.
-	if match := edgeRuleValidateRefURLPattern.FindStringIndex(string(a.Schema)); match != nil {
-		return ErrValidation(fmt.Sprintf(
-			"validate action: schema contains an external $ref or $id URL (around byte %d); inline schemas only",
-			match[0]))
+	if _, err := edgevalidate.Compile(a.Schema, a.RejectOnUnknownFields); err != nil {
+		if errors.Is(err, edgevalidate.ErrSchemaExternalRef) {
+			return ErrValidation("validate action: schema contains an external $ref or $id URL or another external reference; inline schemas only")
+		}
+		return ErrValidation(fmt.Sprintf("validate action: schema cannot be compiled: %v", err))
 	}
 	// ContentTypes: optional; closed set application/* (the spec
 	// runtime is JSON for v1). Empty == match any; non-empty must
@@ -11726,6 +11996,12 @@ type DebugTelemetryExportOptions struct {
 	Route  string
 	Format string
 	Limit  int
+	// The request list's filters, with the same meaning.
+	DeploymentID string
+	Status       int
+	ColdBoot     *bool
+	ConsumerID   string
+	MinLatencyMS int
 }
 
 // DebugTelemetryListResponse is the wire envelope for the debug
@@ -11778,6 +12054,11 @@ type DebugCoverageResponse struct {
 	GuestEvidence       DebugCoverageSignal `json:"guest_evidence"`
 	OldestTelemetryAt   string              `json:"oldest_telemetry_at,omitempty"`
 	LatestTelemetryAt   string              `json:"latest_telemetry_at,omitempty"`
+	// RequestsNotRetained is how many requests the app's request analytics
+	// counted in the window's whole minutes but the debugger did not keep,
+	// because the plan's per-minute debugger row limit turned them away. It
+	// is a lower bound, and absent when analytics do not cover the window.
+	RequestsNotRetained *int64 `json:"requests_not_retained,omitempty"`
 }
 
 // DebugRunningRequestAttribution links request activity to the nearest
@@ -12476,6 +12757,8 @@ type RequestAnalyticsGroup struct {
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
+	// Omitted names optional enrichments unavailable within their query budget.
+	Omitted               []string                                 `json:"omitted,omitempty"`
 	Slug                  string                                   `json:"slug"`
 	Since                 string                                   `json:"since"`
 	From                  string                                   `json:"from"`
@@ -12505,7 +12788,20 @@ type RequestAnalyticsResponse struct {
 	// TelemetryGaps names each reason requests may be missing.
 	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
 	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
+	// SampledMeasures says whether the detail only raw sampled rows carry
+	// (group CPU and latency of sampled rows, per-deployment costs and
+	// per-route deployment splits) is in this response: "included", or
+	// "omitted" when reading it failed or ran past its time budget. Counts
+	// and percentiles never depend on it.
+	SampledMeasures string `json:"sampled_measures,omitempty"`
 }
+
+// RequestAnalyticsSampledMeasures* are the RequestAnalyticsResponse
+// sampled_measures values.
+const (
+	RequestAnalyticsSampledMeasuresIncluded = "included"
+	RequestAnalyticsSampledMeasuresOmitted  = "omitted"
+)
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
 // by GET /v1/apps/{slug}/analytics/timeseries. Counts include collapsed
@@ -13403,6 +13699,20 @@ type CustomMetricResponse struct {
 	// Kind is "gauge" (pushed, a scaling signal) or "counter" (an ADR-745
 	// OTLP cumulative sum, charted as a rate and never a scaling signal).
 	Kind string `json:"kind,omitempty"`
+	// Series lists a labelled metric's series (ADR-20261108160000 slice C);
+	// Value is then their aggregate: the sum for counters, the maximum of
+	// fresh series for gauges. Empty for an unlabelled metric.
+	Series []CustomMetricSeriesValue `json:"series,omitempty"`
+}
+
+// CustomMetricSeriesValue is one labelled series' latest value. Key is the
+// canonical "k=v,..." form accepted by the history endpoint's labels query.
+type CustomMetricSeriesValue struct {
+	Key        string            `json:"key"`
+	Labels     map[string]string `json:"labels"`
+	Value      float64           `json:"value"`
+	ObservedAt time.Time         `json:"observed_at"`
+	Stale      bool              `json:"stale"`
 }
 
 // CustomMetricListResponse carries the rows plus the two limits an operator
@@ -13412,6 +13722,8 @@ type CustomMetricListResponse struct {
 	Metrics    []CustomMetricResponse `json:"metrics"`
 	FreshnessS int                    `json:"freshness_seconds"`
 	MaxMetrics int                    `json:"max_metrics"`
+	// MaxSeries is the app's cap on labelled series (slice C).
+	MaxSeries int `json:"max_series,omitempty"`
 }
 
 // EgressFlowLogEntry is one ADR-371 egress flow log row: a destination
@@ -13431,6 +13743,83 @@ type EgressFlowLogEntry struct {
 type EgressFlowLogResponse struct {
 	Flows     []EgressFlowLogEntry `json:"flows"`
 	Truncated bool                 `json:"truncated"`
+}
+
+// AccountRiskResponse is GET /v1/admin/accounts/{id}/risk
+// (ADR-20261115090000): what an operator needs to judge an account's abuse
+// risk. Email, sign-up address and user agent are present only with
+// ?include_pii=1, which is audited.
+type AccountRiskResponse struct {
+	AccountID       string              `json:"account_id"`
+	Email           string              `json:"email,omitempty"`
+	Status          string              `json:"status"`
+	Plan            string              `json:"plan"`
+	CreatedAt       time.Time           `json:"created_at"`
+	AbuseHoldAt     *time.Time          `json:"abuse_hold_at,omitempty"`
+	AbuseHoldReason string              `json:"abuse_hold_reason,omitempty"`
+	Signup          *AccountRiskSignup  `json:"signup,omitempty"`
+	LinksToHeld     []AccountRiskLink   `json:"links_to_held"`
+	LinkedAccounts  []AccountRiskLink   `json:"linked_accounts"`
+	Strikes         []AccountRiskStrike `json:"strikes"`
+	AbuseEvents     []AccountRiskEvent  `json:"abuse_events"`
+}
+
+// AccountRiskSignup is the account's sign-up record (ADR-20261113160000).
+type AccountRiskSignup struct {
+	Method          string     `json:"method"`
+	SignupIP        string     `json:"signup_ip,omitempty"`
+	UserAgent       string     `json:"user_agent,omitempty"`
+	Country         string     `json:"country,omitempty"`
+	ASN             uint32     `json:"asn,omitempty"`
+	ASNOrg          string     `json:"asn_org,omitempty"`
+	EmailDomain     string     `json:"email_domain"`
+	DisposableEmail bool       `json:"disposable_email"`
+	CreatedAt       time.Time  `json:"created_at"`
+	ReducedAt       *time.Time `json:"reduced_at,omitempty"`
+}
+
+// AccountRiskLink is a link between a new account and an abuse-held one
+// (ADR-20261114174600).
+type AccountRiskLink struct {
+	AccountID     string    `json:"account_id"`
+	HeldAccountID string    `json:"held_account_id"`
+	HeldOrgID     string    `json:"held_org_id,omitempty"`
+	HeldReason    string    `json:"held_reason"`
+	Signal        string    `json:"signal"`
+	DetectedAt    time.Time `json:"detected_at"`
+}
+
+// AccountRiskStrike is an abuse recycle inside the hold window.
+type AccountRiskStrike struct {
+	Reason   string    `json:"reason"`
+	AppID    string    `json:"app_id,omitempty"`
+	StruckAt time.Time `json:"struck_at"`
+}
+
+// AccountRiskEvent is an abuse event about the account, one of its apps,
+// deployments or instances.
+type AccountRiskEvent struct {
+	At      time.Time       `json:"at"`
+	Kind    string          `json:"kind"`
+	Actor   string          `json:"actor"`
+	Subject string          `json:"subject"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// HeldLinksResponse is GET /v1/admin/held-links: links detected since a
+// time, newest first, for the daily review.
+type HeldLinksResponse struct {
+	Links     []HeldLinkReview `json:"links"`
+	Truncated bool             `json:"truncated"`
+}
+
+// HeldLinkReview is a link with the new account's sign-up country and email
+// domain.
+type HeldLinkReview struct {
+	AccountRiskLink
+	Country         string `json:"country,omitempty"`
+	EmailDomain     string `json:"email_domain,omitempty"`
+	DisposableEmail bool   `json:"disposable_email"`
 }
 
 // EventReceiptPageMax bounds recipient pages on the event receipt read surface.
@@ -13717,6 +14106,9 @@ type AppPublishEventRequest struct {
 	Data          json.RawMessage `json:"data"`
 	Time          *time.Time      `json:"time,omitempty"`
 	SchemaVersion string          `json:"schemaversion,omitempty"`
+	// Environment is the slug of the app's project environment the event
+	// belongs to (ADR-20261104120000); omitted is production.
+	Environment string `json:"environment,omitempty"`
 }
 
 type AppPublishEventResponse struct {
@@ -13980,6 +14372,9 @@ type DeploymentCronStagingSnapshot struct {
 	Revision           int64                  `json:"revision"`
 	LatestDeploymentID string                 `json:"latest_deployment_id"`
 	Crons              []DeploymentCronConfig `json:"crons"`
+	// Environment is the non-production environment the snapshot reads;
+	// omitted for production (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 }
 
 type DeploymentCronStagingRequest struct {
@@ -13991,6 +14386,10 @@ type DeploymentCronStagingRequest struct {
 	ExpectedRevision     int64                  `json:"expected_revision"`
 	Before               []DeploymentCronConfig `json:"before"`
 	Desired              []DeploymentCronConfig `json:"desired"`
+	// Environment stages the manifest's HTTP crons into a non-production
+	// environment; omitted for production. Only the deferred operations
+	// (prepare, cancel, track_upload) take one (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 }
 
 // EventRoutingRecoveryExpectation pins a reviewed automation routing attempt.

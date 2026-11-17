@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,12 +11,15 @@ import (
 )
 
 type declaredRouteDocStoreStub struct {
+	mu    sync.Mutex
 	doc   []byte
 	reads int
 	err   error
 }
 
 func (s *declaredRouteDocStoreStub) GetAppOpenAPIDoc(context.Context, string, string) ([]byte, state.AppOpenAPIDocMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.reads++
 	return s.doc, state.AppOpenAPIDocMeta{}, s.err
 }
@@ -108,6 +112,8 @@ func TestDeclaredRoutesMatcher_TTL(t *testing.T) {
 	if _, err := m.MatchDeclaredRoute(context.Background(), app, "/health", "GET"); err != nil {
 		t.Fatal(err)
 	}
+	// The expired entry served the request; one background read renews it.
+	m.refreshes.Wait()
 	if store.reads != 2 {
 		t.Fatalf("reads after TTL expiry = %d, want 2", store.reads)
 	}

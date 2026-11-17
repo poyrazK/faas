@@ -84,12 +84,8 @@ func (m *publishedLayerDigests) take(be storage.StorageBackend, key string) (str
 }
 
 func localStorageFile(be storage.StorageBackend, key string) (os.FileInfo, bool) {
-	resolver, ok := be.(storage.LocalPathResolver)
+	path, ok := localStoragePath(be, key)
 	if !ok {
-		return nil, false
-	}
-	path, local, err := resolver.LocalPath(key)
-	if err != nil || !local {
 		return nil, false
 	}
 	info, err := os.Stat(path)
@@ -102,8 +98,19 @@ func localStorageFile(be storage.StorageBackend, key string) (os.FileInfo, bool)
 // buildAppLayer runs the layer build and remembers the digest it computed for
 // the published layer (publishedLayerDigests).
 func (h *Handler) buildAppLayer(ctx context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
+	start := time.Now()
+	if len(in.Layers) > 0 {
+		imageProgressf(ctx, "unpacking %d layers and building the filesystem", len(in.Layers))
+	} else {
+		imageProgressf(ctx, "building the filesystem")
+	}
 	result, err := h.builder.Build(ctx, in)
-	if err == nil && result.ImageKey != "" {
+	if err != nil {
+		imageProgressf(ctx, "failed after %s", progressElapsed(start))
+		return result, err
+	}
+	imageProgressf(ctx, "filesystem built in %s: %s of content in a %d MB filesystem", progressElapsed(start), progressMB(result.ContentBytes), result.SizeMB)
+	if result.ImageKey != "" {
 		h.layerDigests.record(in.Storage, result.ImageKey, result.ArtifactDigest)
 	}
 	return result, err

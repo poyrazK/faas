@@ -813,10 +813,13 @@ test('drain deadline aborts handlers and suppresses late terminal writes', async
   const store = new MemoryTaskStore();
   let finish;
   let signal;
+  let began;
+  const started = new Promise(resolve => { began = resolve; });
   const completion = new Promise(resolve => { finish = resolve; });
   const task = await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
-  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 1000, handlers: { build_report: { version: '1', async execute(_, context) { signal = context.signal; return completion; } } } });
+  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 1000, handlers: { build_report: { version: '1', async execute(_, context) { signal = context.signal; began(); return completion; } } } });
   await runtime.start();
+  await started;
   assert.deepEqual(await runtime.stop(), { timedOut: true });
   assert.equal(signal.aborted, true);
   finish({ content: [] });
@@ -828,13 +831,16 @@ test('active handlers keep renewing their lease while draining', async () => {
   const store = new MemoryTaskStore();
   let finish;
   let renewed;
+  let began;
+  const started = new Promise(resolve => { began = resolve; });
   const completion = new Promise(resolve => { finish = resolve; });
   const renewal = new Promise(resolve => { renewed = resolve; });
   const originalHeartbeat = store.heartbeat.bind(store);
   store.heartbeat = async (...args) => { const state = await originalHeartbeat(...args); renewed(); return state; };
   await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
-  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 10000, handlers: { build_report: { version: '1', async execute() { return completion; } } } });
+  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 10000, handlers: { build_report: { version: '1', async execute() { began(); return completion; } } } });
   await runtime.start();
+  await started;
   const stopping = runtime.stop();
   try { await renewal; } finally { finish({ content: [] }); }
   assert.deepEqual(await stopping, { timedOut: false });

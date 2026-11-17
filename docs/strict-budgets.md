@@ -9,6 +9,14 @@ required. Strict budgets are released per account through the `strict_budgets`
 platform flag. Until it includes your account, creating or enabling one returns
 422 `financial_budget_activation_unavailable` ("Strict budgets not released").
 
+A strict budget covers only what its owner pays for
+([ADR 20261107160000](adr/20261107160000-budgets-ga-and-strict-billing-subject.md)).
+An app that an organization owning its resources pays for is outside every
+strict budget of the member who created it: it is never funded, held or
+stopped by one, its capacity floor stays billed to the organization, and it
+does not need to be idle for that member's account cap to start.
+Organizations cannot have strict budgets yet.
+
 A project can be capped the same way with `scope={kind:project,id:PROJECT_ID}`:
 one limit shared by every app in the project, and when it is reached every app
 in the project is held. Jobs are not part of a project, so they need their own

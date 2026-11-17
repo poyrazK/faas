@@ -40,7 +40,7 @@ test('workflow guards preserve nested literals and false inspection decisions', 
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'fixture-token', retry: { maxAttempts: 1, backoffMs: 0 } });
-  const saved = await WorkflowsService.saveAutomationDraft({ slug: 'billing', name: 'invoice', requestBody: { expected_version: 0, definition } });
+  const saved = await WorkflowsService.saveStoredWorkflowDraft({ slug: 'billing', name: 'invoice', requestBody: { expected_version: 0, definition } });
   assert.deepEqual(posted, { expected_version: 0, definition });
   assert.deepEqual(saved.draft.steps[0]?.when, definition.steps[0]?.when);
   const inspected = await WorkflowsService.listWorkflowSteps({ id: 'run' });

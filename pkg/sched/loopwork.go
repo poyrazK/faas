@@ -121,6 +121,12 @@ const (
 	// disk-pressure and egress-abuse recycles (app lock plus a destroy) and
 	// CPU saturation captures (ADR 20261104143005).
 	workInstanceEnforcement workKind = "instance_enforcement"
+	// workReservationAudit releases ledger reservations whose instance a peer
+	// scheduler moved out of the resident states.
+	workReservationAudit workKind = "reservation_audit"
+	// workLayerVerify verifies a just-published layer before its prime
+	// (ADR-038 amendment 2026-11-17).
+	workLayerVerify workKind = "layer_verify"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -134,7 +140,7 @@ var workKinds = []workKind{
 	workAppPark, workAppDelete,
 	workInstanceFailure, workJobsReaper, workCronFireNow,
 	workCronSweep, workRecentLoad, workOperatorIntents, workHeartbeat,
-	workInstanceEnforcement,
+	workInstanceEnforcement, workReservationAudit, workLayerVerify,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -270,6 +276,11 @@ var workSpecs = map[workKind]workSpec{
 	// it succeeds, so a dropped one is submitted again by the next 200 ms
 	// tick that still sees the condition.
 	workInstanceEnforcement: {slots: 4, overflow: overflowDrop},
+	workReservationAudit:    {slots: 1, overflow: overflowDrop},
+	// Keyed by deployment. Each verification reads and hashes a whole
+	// layer, so the slots match the attestation warm's workers. A dropped
+	// one leaves the hash to the deployment's prime, as before.
+	workLayerVerify: {slots: api.AttestationWarmWorkers, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

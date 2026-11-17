@@ -10,6 +10,7 @@ import type { DevBridgeActivity } from '../models/DevBridgeActivity.js';
 import type { DevBridgeSession } from '../models/DevBridgeSession.js';
 import type { DevBridgeWebhookReplay } from '../models/DevBridgeWebhookReplay.js';
 import type { DevPatchStatusResponse } from '../models/DevPatchStatusResponse.js';
+import type { DevSessionListResponse } from '../models/DevSessionListResponse.js';
 import type { DevSessionResponse } from '../models/DevSessionResponse.js';
 import type { DevSyncHistoryItem } from '../models/DevSyncHistoryItem.js';
 import type { DevSyncHistoryResponse } from '../models/DevSyncHistoryResponse.js';
@@ -29,11 +30,14 @@ import type { ScenarioSuspendResumeEvidence } from '../models/ScenarioSuspendRes
 import type { ScenarioTestChaosMatchesResponse } from '../models/ScenarioTestChaosMatchesResponse.js';
 import type { SealScenarioObjectsRequest } from '../models/SealScenarioObjectsRequest.js';
 import type { SealScenarioPostgresRequest } from '../models/SealScenarioPostgresRequest.js';
+import type { SeedDevSessionFromEnvironmentBranchRequest } from '../models/SeedDevSessionFromEnvironmentBranchRequest.js';
+import type { SeedDevSessionFromEnvironmentBranchResponse } from '../models/SeedDevSessionFromEnvironmentBranchResponse.js';
 import type { UpsertDevSessionRequest } from '../models/UpsertDevSessionRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DevService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List active development sessions owned by the account.
    * Bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is informational and unknown after observer restart or eviction. No credentials are returned.
@@ -41,7 +45,7 @@ export class DevService {
    * @throws ApiError
    */
   public static listDevBridges(): CancelablePromise<ListDevBridgesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/bridges',
       errors: {
@@ -62,7 +66,7 @@ export class DevService {
   }: {
     requestBody: CreateDevBridgeRequest,
   }): CancelablePromise<CreateDevBridgeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/bridges',
       body: requestBody,
@@ -93,7 +97,7 @@ export class DevService {
      */
     id: string,
   }): CancelablePromise<DevBridgeSession> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/bridges/{id}',
       path: {
@@ -118,7 +122,7 @@ export class DevService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/bridges/{id}',
       path: {
@@ -144,7 +148,7 @@ export class DevService {
      */
     id: string,
   }): CancelablePromise<DevBridgeActivity> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/bridges/{id}/activity',
       path: {
@@ -174,7 +178,7 @@ export class DevService {
     id: string,
     requestBody: ReplayDevBridgeWebhookRequest,
   }): CancelablePromise<DevBridgeWebhookReplay> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/bridges/{id}/webhook-replays',
       path: {
@@ -209,7 +213,7 @@ export class DevService {
      */
     replay: string,
   }): CancelablePromise<DevBridgeWebhookReplay> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/bridges/{id}/webhook-replays/{replay}',
       path: {
@@ -246,7 +250,7 @@ export class DevService {
      */
     workspaceId?: string,
   }): CancelablePromise<DevPatchStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/sessions/{project}/patches/{generation}',
       path: {
@@ -269,6 +273,30 @@ export class DevService {
     });
   }
   /**
+   * List the account's remote developer environments.
+   * Every developer environment of the account, wherever it was started, with its project, backing app, URL, teardown state and lease expiry. Never renews a lease.
+   * @returns DevSessionListResponse Developer environments.
+   * @throws ApiError
+   */
+  public static listDevSessions(): CancelablePromise<DevSessionListResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/sessions',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Create or refresh a remote developer environment.
    * Creates one stable preview app per account, project, and developer workspace, or renews its 24-hour lease. Omitting workspace_id retains the legacy account-and-project identity.
    * @returns DevSessionResponse Existing developer environment refreshed.
@@ -284,7 +312,7 @@ export class DevService {
     project: string,
     requestBody: UpsertDevSessionRequest,
   }): CancelablePromise<DevSessionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/dev/sessions/{project}',
       path: {
@@ -328,7 +356,7 @@ export class DevService {
      */
     workspaceId?: string,
   }): CancelablePromise<DevSessionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/sessions/{project}',
       path: {
@@ -361,17 +389,22 @@ export class DevService {
   public static destroyDevSession({
     project,
     workspaceId,
+    app,
   }: {
     /**
      * Stable local project label used to derive the developer URL.
      */
     project: string,
     /**
-     * Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session.
+     * Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session or when app is given.
      */
     workspaceId?: string,
+    /**
+     * The environment's backing dev-* app slug, as listed by GET /v1/dev/sessions. Selects the environment instead of workspace_id, so one whose checkout moved can be stopped from anywhere.
+     */
+    app?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/sessions/{project}',
       path: {
@@ -379,6 +412,7 @@ export class DevService {
       },
       query: {
         'workspace_id': workspaceId,
+        'app': app,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -412,7 +446,7 @@ export class DevService {
     runId: string,
     requestBody: RegisterScenarioTestRequest,
   }): CancelablePromise<RegisterScenarioTestResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/dev/test-runs/{run_id}',
       path: {
@@ -442,7 +476,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/test-runs/{run_id}',
       path: {
@@ -469,7 +503,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<ScenarioSuspendResumeEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/suspend-resume',
       path: {
@@ -501,7 +535,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<ScenarioSuspendResumeEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/test-runs/{run_id}/suspend-resume',
       path: {
@@ -533,7 +567,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<ScenarioActionSnapshot> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/actions/seal',
       path: {
@@ -571,7 +605,7 @@ export class DevService {
     runId: string,
     requestBody: CreateScenarioObjectsRequest,
   }): CancelablePromise<ScenarioObjectsReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/objects',
       path: {
@@ -605,7 +639,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/test-runs/{run_id}/objects',
       path: {
@@ -636,7 +670,7 @@ export class DevService {
     runId: string,
     requestBody: SealScenarioObjectsRequest,
   }): CancelablePromise<ScenarioObjectsEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/objects/seal',
       path: {
@@ -671,7 +705,7 @@ export class DevService {
     runId: string,
     requestBody: CreateScenarioPostgresRequest,
   }): CancelablePromise<ScenarioPostgresReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/postgres',
       path: {
@@ -705,7 +739,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/test-runs/{run_id}/postgres',
       path: {
@@ -736,7 +770,7 @@ export class DevService {
     runId: string,
     requestBody: SealScenarioPostgresRequest,
   }): CancelablePromise<ScenarioPostgresEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/postgres/seal',
       path: {
@@ -771,7 +805,7 @@ export class DevService {
     runId: string,
     requestBody: InjectScenarioTestChaosRequest,
   }): CancelablePromise<InjectScenarioTestChaosResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/dev/test-runs/{run_id}/chaos',
       path: {
@@ -800,7 +834,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/test-runs/{run_id}/chaos',
       path: {
@@ -827,7 +861,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<ScenarioTestChaosMatchesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/test-runs/{run_id}/chaos/matches',
       path: {
@@ -856,7 +890,7 @@ export class DevService {
     project: string,
     requestBody: RecordDevSyncRequest,
   }): CancelablePromise<DevSyncHistoryItem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/sessions/{project}/syncs',
       path: {
@@ -868,6 +902,43 @@ export class DevService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Seed a rehearsal member from a simulated environment branch.
+   * Deploys one workload of a simulated environment branch into the developer session of a rehearsal run. The member reuses the branch deployment's build and gets the branch's variables and secrets; managed PostgreSQL and object-storage bindings are not copied, so the rehearsal declares isolated fixtures. The deployment goes live after one boot. Repeating the request returns the deployment already seeded.
+   * @returns SeedDevSessionFromEnvironmentBranchResponse The member's deployment, priming or already live.
+   * @throws ApiError
+   */
+  public static seedDevSessionFromEnvironmentBranch({
+    project,
+    requestBody,
+  }: {
+    /**
+     * Local project label of the developer session to seed, as for PUT /v1/dev/sessions/{project}.
+     */
+    project: string,
+    requestBody: SeedDevSessionFromEnvironmentBranchRequest,
+  }): CancelablePromise<SeedDevSessionFromEnvironmentBranchResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/sessions/{project}/seed',
+      path: {
+        'project': project,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -899,7 +970,7 @@ export class DevService {
      */
     limit?: number,
   }): CancelablePromise<DevSyncHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/sessions/{project}/history',
       path: {

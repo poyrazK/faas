@@ -1,0 +1,28 @@
+=== RUN   TestInvestigationCronUpdateLostResponse
+--- PASS: TestInvestigationCronUpdateLostResponse (0.19s)
+=== RUN   TestInvestigationInlineSourceFitsAdvertisedLimit
+--- PASS: TestInvestigationInlineSourceFitsAdvertisedLimit (0.35s)
+=== RUN   TestInvestigationReviewedSourceContentChange
+--- PASS: TestInvestigationReviewedSourceContentChange (0.10s)
+=== RUN   TestInvestigationUploadRecoveryRouting
+--- PASS: TestInvestigationUploadRecoveryRouting (0.10s)
+=== RUN   TestInvestigationDurableProgressStreaming
+--- PASS: TestInvestigationDurableProgressStreaming (1.06s)
+=== RUN   TestInvestigationDurableUploadReadDeadline
+=== RUN   TestInvestigationDurableUploadReadDeadline/without_state
+=== RUN   TestInvestigationDurableUploadReadDeadline/with_state
+--- PASS: TestInvestigationDurableUploadReadDeadline (0.24s)
+    --- PASS: TestInvestigationDurableUploadReadDeadline/without_state (0.12s)
+    --- PASS: TestInvestigationDurableUploadReadDeadline/with_state (0.12s)
+=== RUN   TestInvestigationLongHTTPApplyReceipt
+--- PASS: TestInvestigationLongHTTPApplyReceipt (0.29s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/mcpmanagement	2.388s
+=== RUN   TestInvestigationReadRejectsMissingRequiredResultFields
+=== RUN   TestInvestigationReadRejectsMissingRequiredResultFields/resource
+=== RUN   TestInvestigationReadRejectsMissingRequiredResultFields/prompt
+--- PASS: TestInvestigationReadRejectsMissingRequiredResultFields (0.00s)
+    --- PASS: TestInvestigationReadRejectsMissingRequiredResultFields/resource (0.00s)
+    --- PASS: TestInvestigationReadRejectsMissingRequiredResultFields/prompt (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/mcphosting	0.054s

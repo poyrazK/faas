@@ -66,7 +66,7 @@ func TestMetalRepairCgroupFencesAfterControllerReset(t *testing.T) {
 	withCgroupRootAt(t, root)
 
 	// jailer sets cpu.weight at scope creation; vmmd writes the rest.
-	writeCgroupFile(t, scope, "cpu.weight", itoa(vmCPUWeight(l.Plan, false)))
+	writeCgroupFile(t, scope, "cpu.weight", itoa(vmCPUWeight(false)))
 	v := &JailerVMM{}
 	if err := v.applyPreBootCgroupFence(l, nil); err != nil {
 		t.Fatalf("applyPreBootCgroupFence: %v", err)
@@ -76,8 +76,8 @@ func TestMetalRepairCgroupFencesAfterControllerReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"memory.max": memoryMaxValue(api.BillableRAMMB(l.MemoryMaxMiB)),
-		"cpu.weight": itoa(api.PlanScale.CPUWeight()),
+		"memory.max": memoryMaxValue(api.AppVMMemoryMaxMB(l.MemoryMaxMiB)),
+		"cpu.weight": itoa(vmCPUWeight(false)),
 		"cpu.max":    wantCPU,
 	}
 

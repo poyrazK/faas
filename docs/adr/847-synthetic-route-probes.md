@@ -83,3 +83,25 @@ included.
   app subdomain) was never tested. Exact-deployment routing, the challenge
   tokens and the response proof are unchanged, and a gateway that has not
   received a challenge still refuses the probe, which then does not count.
+
+## Amendment 2 (2026-11-09): probes pass the platform's auth gates
+
+In production, every probe to an app with `require_authn` or a bearer
+`public_auth` mode (33 of 91 apps) was refused 401 by the gateway before the
+deployment answered. The proof header is set only on an answered response, so
+none counted: such a canary sent about 260 probes a stage, recorded no
+evidence, and advanced after `CanaryLowTrafficMaxHold` on no samples (all nine
+protected-app rollouts in two weeks).
+
+- A validated probe (a live challenge for this app and deployment, GET or HEAD)
+  passes the platform's own gates, `require_authn` and `public_auth`, as the
+  deployment smoke challenge already does. It carries no customer credential,
+  and every auth check the app performs itself still applies; those routes
+  answer 401/403 and count as unauthenticated probe responses.
+- The probe paths are `/` or the app's `release_probe_paths` (ADR-1449). An
+  app whose GET handler behind its platform gate has side effects should name
+  a safe probe path.
+
+This replaces "Probes reach only routes the customer's own auth gates allow
+anonymously" for the platform's gates.
+

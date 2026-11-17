@@ -198,7 +198,16 @@ func runMigrationSourceTests(t *testing.T, create func(*testing.T) migrationAdmi
 				if _, err := f.s.UpsertComputeNodeFromOperator(t.Context(), n); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := f.s.CreateInstance(t.Context(), f.instance.AppID, f.instance.DeploymentID, "running", 128, f.source.ID, uuid.NewString()); !errors.Is(err, state.ErrNodeCapacity) {
+				// The source keeps its memory reserved; CPU and vCPUs are
+				// measured, never refused (ADR-20261109172421).
+				_, err := f.s.CreateInstance(t.Context(), f.instance.AppID, f.instance.DeploymentID, "running", 128, f.source.ID, uuid.NewString())
+				if resource != "ram" {
+					if err != nil {
+						t.Fatalf("CPU refused an admission memory fits: %v", err)
+					}
+					return
+				}
+				if !errors.Is(err, state.ErrNodeCapacity) {
 					t.Fatalf("ordinary admission stole %s: %v", resource, err)
 				}
 			})

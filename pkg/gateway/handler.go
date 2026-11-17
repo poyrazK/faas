@@ -612,6 +612,22 @@ type RequireAuthnKey struct {
 	// personal key), so a key_changed notification that names the
 	// organization drops only its keys from the gateway cache (H93).
 	OrgID string
+	// AppID is set for a credential bound to one app; it unlocks only that
+	// app.
+	AppID string
+	// ProjectLimited and ProjectIDs: a key limited to projects unlocks only
+	// their apps (ADR-20261104085712).
+	ProjectLimited bool
+	ProjectIDs     []string
+}
+
+// keyOutsideApp reports whether key is bound to another app or limited to
+// projects app is not in, so it may not unlock app.
+func keyOutsideApp(key RequireAuthnKey, app App) bool {
+	if key.AppID != "" && key.AppID != app.ID {
+		return true
+	}
+	return key.ProjectLimited && (app.ProjectID == "" || !slices.Contains(key.ProjectIDs, app.ProjectID))
 }
 
 // RequireAuthnAuditor is the narrow slice of cmd/gatewayd-internal/audit.go's
@@ -976,6 +992,8 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
+	// appPlan names a service call target's plan (WithAppPlanResolver).
+	appPlan               AppPlanResolver
 	publicRoutingPolicy   PublicRoutingPinner
 	publicRoutingStride   publicRoutingStride
 	publicRoutingFreezes  publicRoutingFreezes
@@ -1126,6 +1144,9 @@ type Handler struct {
 	MirrorMaxConcurrentPerRule int64
 	// log may be nil (defaults to slog.Default()).
 	log *slog.Logger
+	// requestLogBudget bounds the Info-level gateway_request lines
+	// (api.GatewayRequestLogLinesPerSecond); nil writes every line.
+	requestLogBudget *requestLogBudget
 	// appsSuffix is the configured public suffix (e.g. ".gregale.dev").
 	// Non-empty enables a pre-Lookup host suffix check that 404s anything
 	// outside it (spec §4.1 noise filter). Custom domains (Pro+) bypass this
@@ -1360,6 +1381,9 @@ type Handler struct {
 	// (cmd/gatewayd-internal/main.go → secretbox.MultiOpen
 	// → publicAuthUnsealer closure).
 	publicAuthUnsealer PublicAuthUnsealer
+	// basicAuthVerifiers checks basic auth against verify-only verifiers
+	// (ADR-20261110210000 slice 3h); nil keeps the sealed path alone.
+	basicAuthVerifiers *BasicAuthVerifiers
 
 	// edgeRules (ADR-089 / issue #561 PR 3) is the
 	// per-host LRU-backed matcher consulted between the
@@ -1567,6 +1591,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		headHeaders:        newEdgeHeadHeaderCache(),
 		appFreezes:         newAppFreezes(),
 		log:                log,
+		requestLogBudget:   newRequestLogBudget(),
 		wakePageCycles:     make(map[string]*wakePageCycle),
 		consumerKeyTouches: newConsumerKeyToucher(),
 		// mirrorSlots is sync.Map (zero value ready); the cap is
@@ -2134,6 +2159,13 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	if !app.OnlyAllowDeclaredRoutes {
 		return false
 	}
+	// The gateway answers the app's health path itself without a VM, so it
+	// is not app surface the gate protects; refusing it broke uptime
+	// monitors on apps that turned the gate on (Hunt 32 H32-48, ADR-091
+	// amendment 2026-11-10). A health path that wakes the app stays gated.
+	if h.answersHealthAtEdge(r, app, requestPath) {
+		return false
+	}
 	if h.declaredRoutes == nil {
 		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
@@ -2317,7 +2349,7 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	// The deployment verifier presents a short-lived, random challenge that is
 	// bound to this app and candidate deployment. It must reach the guest health
 	// endpoint even when the customer enables the ordinary API-key gate.
-	if h.authorizedDeploymentSmoke(r, app) {
+	if h.authorizedDeploymentSmoke(r, app) || routeProbePassesPlatformAuth(r) {
 		return true
 	}
 	if !app.RequireAuthn {
@@ -2347,7 +2379,7 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		// RFC 9110 §15.5.2: a 401 carries the challenge (production-us
 		// hunt #9, H9-82).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			"Unauthorized", missingBearerDetail(tok)).
 			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
@@ -2427,6 +2459,22 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 // usage:read for billing tooling opened every private app of the account.
 // It writes the 403 and returns true when the key is refused.
 func (h *Handler) rejectKeyWithoutAppScope(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, accountID string, key RequireAuthnKey, auditKind string) bool {
+	if keyOutsideApp(key, app) {
+		// An app-bound credential or a project-limited key reaches only
+		// its app or its projects' apps, as on the API.
+		h.emitAuthnAudit(r, app, &accountID, auditKind, map[string]any{
+			"app_id":          app.ID,
+			"slug":            r.Host,
+			"key_id":          key.ID,
+			"key_app_id":      key.AppID,
+			"project_limited": key.ProjectLimited,
+		})
+		rec.status = http.StatusForbidden
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Insufficient scope", "this API key is limited to other apps or projects"))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return true
+	}
 	if keyHasAnyScope(key.Scopes, api.ScopesReadSurface) {
 		return false
 	}
@@ -2864,8 +2912,13 @@ func (h *Handler) applyEdgeRuleHeaders(w http.ResponseWriter, r *http.Request, a
 	// any request-side op runs (ADR-968).
 	requestOps := expandHeaderOps(rule.RequestHeaders, r)
 	responseOps := expandHeaderOps(rule.ResponseHeaders, r)
-	// Request-side ops: apply directly to r.Header.
+	// Request-side ops: apply directly to r.Header. A sealed value is added
+	// by the instance's vmmd (ADR-20261110210000 slice 3i).
 	for _, op := range requestOps {
+		if op.SecretID != "" {
+			recordEdgeSecretHeader(r, op)
+			continue
+		}
 		applyHeaderOp(r.Header, op)
 	}
 	// Response-side ops: wrap w with a headerRecorder that
@@ -5254,8 +5307,10 @@ func (h *Handler) enforcePublicAuth(w http.ResponseWriter, r *http.Request, rec 
 	}
 	// Platform deployment smoke is independently authenticated by the cached,
 	// app-and-deployment-bound challenge. Requiring customer bearer/basic auth
-	// here would make every protected app impossible to deploy.
-	if h.authorizedDeploymentSmoke(r, app) {
+	// here would make every protected app impossible to deploy. A validated
+	// route probe passes for the same reason: the canary of a protected app
+	// would otherwise roll out without evidence (ADR-847 amendment 2).
+	if h.authorizedDeploymentSmoke(r, app) || routeProbePassesPlatformAuth(r) {
 		return true
 	}
 	// Open → pass-through. The mode validator above keeps this switch
@@ -5347,7 +5402,7 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 		})
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			"Unauthorized", missingBearerDetail(tok)).
 			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
@@ -5421,11 +5476,27 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 // every other credential compare in the platform
 // (api.HashAPIKey / cmd/apid webhook signing).
 func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
-	if h.publicAuthCache == nil || h.publicAuthUnsealer == nil {
+	if (h.publicAuthCache == nil || h.publicAuthUnsealer == nil) && h.basicAuthVerifiers == nil {
 		rec.status = http.StatusInternalServerError
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Auth chain not wired",
 			"this app requires basic auth but the credential cache is not configured"))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
+	// A browser resends cached Basic credentials with any request to the
+	// app's origin, including one another site starts: a WebSocket it can
+	// read (CORS does not cover WebSockets) or a form post that changes
+	// state (ADR-20261104221012).
+	if h.crossOriginBasicAuthRequest(r, app) {
+		h.emitAuthnAudit(r, app, nil, "instances.public_auth_cross_origin", map[string]any{
+			"app_id": app.ID,
+			"slug":   r.Host,
+			"mode":   publicAuthModeBasic,
+		})
+		rec.status = http.StatusForbidden
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Cross-origin request refused", "this app uses basic auth; a browser request that changes state or opens a WebSocket must come from the app's own origin or one its CORS rule allows with credentials"))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -5460,13 +5531,11 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 	// PublicAuthUnsealer.UnsealBasicAuth on the
 	// secretbox-sealed BasicSealed blob stored on the apps
 	// row.
-	expectedUser, expectedPass, ok := h.publicAuthCache.Get(app.ID, app.PublicAuth.BasicSealed, func() (string, string, bool) {
-		u, p, err := h.publicAuthUnsealer.UnsealBasicAuth(r.Context(), app.PublicAuth.BasicSealed)
-		if err != nil {
-			return "", "", false
-		}
-		return u, p, true
-	})
+	//
+	// ADR-20261110210000 slice 3h: with verifiers, the credential is
+	// checked against its argon2id verifier and never opened; the sealed
+	// path stays as the fallback for a blob that has none yet.
+	matched, ok := h.basicAuthMatches(r, app, user, pass)
 	if !ok {
 		// Unseal failure is treated as a credential mismatch
 		// (401) so a brute-forcer can't tell the difference
@@ -5484,11 +5553,8 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	// (3) Constant-time compare of fixed-length digests, both
-	// evaluated. ConstantTimeCompare returns early on unequal
-	// lengths and || skipped the password compare on a wrong
-	// username, so timing revealed the username and both lengths.
-	if !basicCredentialsMatch(user, pass, expectedUser, expectedPass) {
+	// (3) The credential did not match.
+	if !matched {
 		// One audit row per app and client prefix a minute: a guessing
 		// flood wrote one per guess and filled the bounded audit queue.
 		if h.publicAuthGuesses.fail(guessKey) {
@@ -5507,6 +5573,45 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	return true
+}
+
+// crossOriginBasicAuthRequest reports a browser request, from an origin other
+// than the app's own, that would ride the browser's cached Basic credentials:
+// a WebSocket handshake or a method other than GET, HEAD and OPTIONS. A
+// request without Origin is not a browser's cross-origin request and passes;
+// so does an origin a CORS rule of the app's owner allows with credentials,
+// which is how an app opts a separate front end in. "null" and malformed
+// origins are refused.
+func (h *Handler) crossOriginBasicAuthRequest(r *http.Request, app App) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		if !isWebSocketHandshake(r) {
+			return false
+		}
+	}
+	origins := r.Header.Values("Origin")
+	if len(origins) == 0 {
+		return false
+	}
+	if len(origins) != 1 {
+		return true
+	}
+	parsed, err := url.Parse(strings.TrimSpace(origins[0]))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return true
+	}
+	if hostname(parsed.Host) == hostname(r.Host) {
+		return false
+	}
+	if h.edgeRules == nil {
+		return true
+	}
+	rule := h.edgeRules.MatchCORS(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	if rule == nil || rule.AccountID != app.AccountID || !rule.AllowCredentials {
+		return true
+	}
+	allowed := matchOrigin(rule.AllowOrigins, origins[0])
+	return allowed == "" || allowed == "*"
 }
 
 // basicCredsFromHeader parses an `Authorization: Basic
@@ -5882,8 +5987,12 @@ func (c *capWriter) Write(b []byte) (int, error) {
 		// Fire once; idempotent under concurrent writes thanks
 		// to disabled CAS. A committed response cannot become a
 		// problem document any more (see committed).
-		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil && !c.committed {
-			c.onCap()
+		if c.disabled.CompareAndSwap(false, true) {
+			if !c.committed && c.onCap != nil {
+				c.onCap()
+			} else if c.committed {
+				markResponseTruncated(c.ResponseWriter)
+			}
 		}
 		if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
 			c.onWarn("exceeded")
@@ -6207,6 +6316,11 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Outermost: a gRPC caller gets the platform's errors as gRPC statuses;
+	// the recorders below still see the HTTP status (grpc_platform_error.go).
+	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
+	defer finishGRPC()
+	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
 	// detachable response and escape its deadline.
@@ -6219,6 +6333,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The compute edge's request for the instance's node, likewise
 	// (ADR-20261031105055).
 	r = takeEdgePlacement(r)
+	// Edge rules, routing and the app all see one path: dot segments
+	// resolved and duplicate slashes collapsed (ADR-20261108100000).
+	normalizeRequestPath(r)
 	if h.devBridgeAuthorize != nil {
 		if problem := h.devBridgeAuthorize(r); problem != nil {
 			api.WriteProblem(w, problem)
@@ -6265,6 +6382,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			(code >= http.StatusOK && code < http.StatusBadRequest && isLongLivedForward(r))
 	}
 	defer rec.stopTrafficResponse()
+	r = r.WithContext(withResponseRecorder(r.Context(), rec))
 	w = rec
 	// ADR-1505: the commit is armed once a monetized request is about to be
 	// forwarded; at exit it completes or aborts the response.
@@ -6339,9 +6457,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the response and gateway-private context, leaving cold-wake timelines
 	// without the customer-visible correlation handle.
 	r.Header.Set(api.RequestIDHeader, rid)
+	matchCtx.requestID = rid
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") {
+			if isPlatformDeliveryHeader(name) {
 				delete(r.Header, name)
 			}
 		}
@@ -6543,8 +6662,9 @@ haveApp:
 		return
 	}
 
-	// ADR-847: a route probe pins one live deployment and keeps every customer
-	// auth gate; it is never combined with the smoke bypass.
+	// ADR-847: a route probe pins one live deployment and passes only the
+	// platform's own auth gates (amendment 2); it is never combined with the
+	// smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
 	if deploymentSmoke {
 		probeDeploymentID, probeToken, routeProbe = "", "", false
@@ -7301,7 +7421,7 @@ haveApp:
 		// check is the single chokepoint: an authed request
 		// cannot reach the tee even if applyEdgeRuleCache
 		// itself short-circuited to a miss.
-		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
+		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes, responseCacheFillFrom(r.Context(), h.responseCache))
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
@@ -7500,6 +7620,9 @@ haveApp:
 		(clientRevisionID != "" || app.PinnedDeploymentID != "" && app.PublicEnvironmentID == "") {
 		recordTrafficDeploymentPinned(r.Context())
 	}
+	if !deploymentSmoke && !routeProbe {
+		recordTrafficSelectedDeployment(r.Context(), exactDeploymentID)
+	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
 	if exactDeployment {
@@ -7690,6 +7813,9 @@ haveApp:
 			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
 		}
 		if err != nil {
+			if h.clientLeftDuringWake(r, app) {
+				return
+			}
 			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
 				// still alive. Record the visit and let the page's fetch/meta
@@ -7991,6 +8117,7 @@ haveApp:
 	// the HTTP bytes to this exact instance. A retry restamps for its own
 	// target inside the forward closures below.
 	var identity api.PlatformIdentity
+	r = h.withFlagRequestAttributes(r)
 	r, identity = stampTargetIdentity(r, app, target)
 	requestAttrs.addIdentity(identity)
 
@@ -8404,6 +8531,13 @@ haveApp:
 		capped := h.setupBufferedCapWriter(w, r.Method, app, planCap)
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				// Only vmmd adds sealed edge-rule headers
+				// (ADR-20261110210000 slice 3i); without it the
+				// request would reach the app without its credential.
+				if len(edgeSecretHeadersFrom(req.Context())) > 0 {
+					writeForwarderProblem(w, http.StatusServiceUnavailable)
+					return
+				}
 				req, _ = stampTargetIdentity(req, app, tgt)
 				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
 				defer endTracking()
@@ -8558,6 +8692,7 @@ haveApp:
 // routeLabelSet; the empty-string sentinels mirror the
 // `gateway_requests_total{app="-"}` pattern.
 func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold bool, target Target) {
+	status = observedStatus(r, status)
 	code := statusClass(status)
 	requestID := requestIDFrom(r)
 	// Read the stashed route label BEFORE the sentinel-coercion
@@ -8575,9 +8710,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// ServeHTTP (issue #273 / ADR-042 fixed the WithStartTime dead-code
 	// bug so this is now request-received → handler-return, not
 	// "now() — now()").
-	elapsed := time.Since(startTime(r))
+	elapsed := observedLatency(r, status, time.Since(startTime(r)))
 	h.observeMCPRequest(r, status, appID, elapsed)
-	if h.metrics != nil {
+	// A route probe (ADR-847) writes no customer telemetry, and the app's
+	// request series are customer telemetry too: a rollout's probes (twenty a
+	// minute) inflated an app's request count tenfold and diluted its error
+	// rate, SLOs and error-rate alerts (ADR-20261110090000). The canary
+	// counts probe results from its own record.
+	if h.metrics != nil && !isRouteProbe(r.Context()) {
 		// Use placeholder labels for the unknown-host path so 404s show up on
 		// the dashboard under a sentinel app_id (e.g. "-" or "").
 		if appID == "" {
@@ -8644,10 +8784,19 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// but recomputes; `elapsed` was already measured above.
 	// A warm 2xx is logged at Debug, which production does not write: build
 	// the line's attributes only when the handler will take it.
+	// An Info line also spends the request-log budget: past it the line is
+	// not built (see requestLogBudget).
 	decision := trafficDecisionEvidence(r.Context(), status, false)
-	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), requestLogLevel(code, cold)) {
+	level := requestLogLevel(code, cold)
+	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), level) && h.requestLogBudget.admit(level, h.metrics) {
+		if suppressed := h.requestLogBudget.takeSuppressed(); suppressed > 0 {
+			requestLog = requestLog.With("suppressed_before", suppressed)
+		}
 		if decision.path != "" {
 			requestLog = requestLog.With(decision.logAttribute())
+		}
+		if truncated := truncatedResponse(r); truncated != nil {
+			requestLog = requestLog.With("response_truncated", true, "sent_status", truncated.status, "response_bytes", truncated.Bytes)
 		}
 		if revision := TrafficPolicyRevision(r.Context()); revision != "" {
 			requestLog = requestLog.With("traffic_policy_revision", revision)
@@ -8691,8 +8840,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		appUUID := appIDFromContext(r.Context())
 		if acctUUID != uuid.Nil && appUUID != uuid.Nil {
 			var deploymentUUID uuid.UUID
-			if target.DeploymentID != "" {
-				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
+			if deploymentID := decision.telemetryDeployment(target, status); deploymentID != "" {
+				deploymentUUID, _ = uuid.Parse(deploymentID)
 			}
 			telemetryRoute := requestTelemetryRouteFrom(r)
 			if telemetryRoute == "" {
@@ -8730,7 +8879,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				AppID:                                appUUID,
 				DeploymentID:                         deploymentUUID,
 				Route:                                telemetryRoute,
-				Method:                               r.Method,
+				Method:                               api.NormalizeRequestAnalyticsMethod(r.Method),
 				Status:                               status,
 				LatencyMS:                            int(elapsed / time.Millisecond),
 				ColdBoot:                             cold,
@@ -8762,10 +8911,10 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 				PlatformRefusal:                      decision.platformRefusal(status),
 				DeploymentPinned:                     decision.deploymentPinned,
-				LongLived:                            decision.streamDetached,
+				LongLived:                            decision.longLived(requestOutlivedBudget(r.Context())),
 				exactSample:                          status >= http.StatusInternalServerError || exactRequestTelemetryFrom(r.Context()),
 			}
-			platformFailure := platformFailureUnbillable(r, status)
+			unbillable := usageUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {
 				// ADR-1505: the response's completion already waited for (or
 				// is aborted by) this event; never append it twice.
@@ -8791,14 +8940,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
 					// The debugger fallback bills every row it writes, so a
-					// platform failure must not reach it.
-					row.UsageOutboxed = platformFailure
+					// response the guest never answered must not reach it.
+					row.UsageOutboxed = unbillable
 				} else {
 					row.UsageOutboxed = true
 				}
-			} else if platformFailure {
+			} else if unbillable {
 				// Without an outbox the debugger fallback is the only ledger
-				// writer and bills every row; keep platform failures out of it.
+				// writer and bills every row; keep unanswered responses out of it.
 				row.UsageOutboxed = true
 			}
 			if h.requestTelemetry != nil {
@@ -9238,8 +9387,11 @@ func (h *Handler) RoutesFor(appID string) (routes []string, overflowed bool) {
 // streaming path).
 type statusRecorder struct {
 	http.ResponseWriter
-	status                   int
-	wroteHeader              bool
+	status      int
+	wroteHeader bool
+	// headerAt is when the response headers were committed: a long-lived
+	// response's latency (ADR-20261109153000).
+	headerAt                 time.Time
 	request                  *http.Request
 	Bytes                    int64
 	ContentType              string
@@ -9253,6 +9405,10 @@ type statusRecorder struct {
 	// Retain the origin's privacy veto before response-header rules can
 	// remove it. The parked HEAD cache is shared with anonymous callers.
 	headCachePrivate bool
+
+	// responseTruncated is set when the body passed the plan's cap after
+	// the status went out (truncated_response_telemetry.go).
+	responseTruncated bool
 
 	// Capture the final rebound request context when the response commits.
 	trafficResponseCommittedContext context.Context
@@ -9352,6 +9508,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	if !s.wroteHeader {
 		s.status = code
 		s.wroteHeader = true
+		s.headerAt = time.Now()
 		s.mirrorSourceCapture.writeHeader(code)
 		// Issue #471: capture the upstream Content-Type at header
 		// commit time so the post-proxy site can detect a buffered
@@ -10073,7 +10230,7 @@ func writeWakeError(w http.ResponseWriter, err error) {
 // 502: Cloudflare replaces 502 bodies.
 func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
 	switch p.Code {
-	case api.CodeAppStartupCrash, api.CodeAppNotListening, api.CodeAppStartupTimeout,
+	case api.CodeAppStartupCrash, api.CodeFunctionInitFailed, api.CodeAppNotListening, api.CodeAppStartupTimeout,
 		api.CodeAppLoopbackBound, api.CodeAppRuntimeOOM, api.CodeAppArchMismatch, api.CodeDeployFailed:
 		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App failed to start",
 			"the app's process did not become ready; its owner can find the cause in the app's logs and deployment status"), true

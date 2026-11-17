@@ -1,0 +1,14 @@
+go: downloading github.com/nats-io/nats.go v1.55.0
+go: downloading github.com/rabbitmq/amqp091-go v1.16.0
+go: downloading github.com/redis/go-redis/v9 v9.23.0
+go: downloading golang.org/x/mod v0.42.0
+go: downloading github.com/klauspost/compress v1.20.3
+go: downloading go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0
+go: downloading go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0
+go: downloading go.uber.org/atomic v1.12.0
+go: downloading github.com/pierrec/lz4/v4 v4.1.33
+ok  	github.com/onebox-faas/faas/pkg/mcpmanagement	90.017s
+ok  	github.com/onebox-faas/faas/pkg/mcphosting	3.276s
+ok  	github.com/onebox-faas/faas/cmd/mcp-bridged	0.054s
+ok  	github.com/onebox-faas/faas/pkg/daemonunitspec	12.531s
+ok  	github.com/onebox-faas/faas/cmd/gregale/templates/mcp-go	49.921s

@@ -129,10 +129,14 @@ func TestRecordRuntimeLogEventsReplayConverges(t *testing.T) {
 	}
 }
 
+// adr: 20261104142830 — lines past the account's budget are dropped, and
+// the drop leaves one system line per app and minute, as vmmd's per-app
+// budget does, so a search or log alert can tell the minute is incomplete.
 func TestRecordRuntimeLogEventsCapsTheAccount(t *testing.T) {
-	r, _, app := newRuntimeLogFixture(t)
+	r, store, app := newRuntimeLogFixture(t)
 	frozen := time.Now()
 	r.limiter.SetClock(func() time.Time { return frozen }) // no refill mid-test
+	r.now = func() time.Time { return frozen }
 	var inserted, limited int32
 	for batch := 0; batch*api.RuntimeLogEventsBatchMax <= api.RuntimeLogEventsPerAccountMinute; batch++ {
 		events := make([]*apidpb.RuntimeLogEvent, api.RuntimeLogEventsBatchMax)
@@ -148,6 +152,16 @@ func TestRecordRuntimeLogEventsCapsTheAccount(t *testing.T) {
 	}
 	if inserted != api.RuntimeLogEventsPerAccountMinute || limited == 0 {
 		t.Fatalf("inserted %d limited %d, want the %d-line account cap", inserted, limited, api.RuntimeLogEventsPerAccountMinute)
+	}
+	marks, _, err := store.ledger.ListLogEvents(context.Background(), state.LogEventFilter{
+		AccountID: app.AccountID, AppID: app.ID, Source: state.LogEventSourceRuntime, Levels: []string{"warn"},
+		Since: frozen.Add(-time.Hour), Until: frozen.Add(2 * time.Minute), Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(marks) != 1 || marks[0].Stream != "system" || !strings.Contains(marks[0].Message, "search index budget") {
+		t.Fatalf("budget lines = %+v; want exactly one system line for the minute", marks)
 	}
 }
 

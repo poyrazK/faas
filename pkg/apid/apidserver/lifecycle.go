@@ -101,6 +101,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		RestartPolicy:                req.RestartPolicy,
 		AfterRestore:                 req.AfterRestore,
 		BeforeCheckpoint:             req.BeforeCheckpoint,
+		Warmup:                       req.Warmup,
 		Pause:                        req.Pause,
 		Profiling:                    req.Profiling,
 		Tracing:                      req.Tracing,
@@ -154,6 +155,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		RestartPolicy:                manifest.RestartPolicy,
 		AfterRestore:                 manifest.AfterRestore,
 		BeforeCheckpoint:             manifest.BeforeCheckpoint,
+		Warmup:                       manifest.Warmup,
 		Pause:                        manifest.Pause,
 		Profiling:                    manifest.Profiling,
 		Tracing:                      manifest.Tracing,
@@ -207,6 +209,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		RestartPolicy:                manifest.RestartPolicy,
 		AfterRestore:                 manifest.AfterRestore,
 		BeforeCheckpoint:             manifest.BeforeCheckpoint,
+		Warmup:                       manifest.Warmup,
 		Pause:                        manifest.Pause,
 		Profiling:                    manifest.Profiling,
 		Tracing:                      manifest.Tracing,
@@ -239,7 +242,7 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.FunctionConcurrency != nil || req.ServiceReplicas != nil ||
 		req.AfterRestore != nil || req.Pause != nil ||
-		req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil ||
+		req.BeforeCheckpoint != nil || req.Warmup != nil || req.Profiling != nil || req.Tracing != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil || req.PreAuthRateLimit != nil ||
 		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil ||
@@ -274,6 +277,13 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 			manifest.BeforeCheckpoint = nil
 		} else {
 			manifest.BeforeCheckpoint = req.BeforeCheckpoint
+		}
+	}
+	if req.Warmup != nil {
+		if req.Warmup.Path == "" {
+			manifest.Warmup = nil
+		} else {
+			manifest.Warmup = req.Warmup
 		}
 	}
 	if req.Pause != nil {
@@ -365,6 +375,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.RestartPolicy = manifest.RestartPolicy
 	updated.AfterRestore = manifest.AfterRestore
 	updated.BeforeCheckpoint = manifest.BeforeCheckpoint
+	updated.Warmup = manifest.Warmup
 	updated.Pause = manifest.Pause
 	updated.Profiling = manifest.Profiling
 	updated.Tracing = manifest.Tracing

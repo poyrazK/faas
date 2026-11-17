@@ -43,7 +43,20 @@ The same comparison is available for the whole app under dependency latency
 Database dependencies are also broken down by query. Each statement is
 normalized into a pattern: literal values, placeholders, `IN` lists and
 multi-row `VALUES` are folded, so `WHERE id = 42` and `WHERE id = 43` count as
-one query. When a dependency regresses, the evidence and the regression alert
+one query. Normalization also folds dollar-quoted and hex literals, quoted
+strings compared or listed as values, and every value in a JSON-shaped
+statement (MongoDB and similar); cache commands (Redis, Valkey, KeyDB,
+Dragonfly, memcached) keep only the verb, `GET ?`, never the key.
+
+Only the attributes the debugger needs are stored with a span: the dependency
+classification keys (`db.system`, `server.address`, `rpc.service`, …),
+failure classes (`error.type`, `exception.type`) and status codes. Every other
+attribute your instrumentation records, such as user ids or request headers,
+is dropped at ingestion, and `url.full` / `http.url` keep only the origin
+(`https://api.stripe.com`), never the path or query. `gregale debug bundle`
+leaves log messages and SQL statements out of the bundle it writes.
+
+When a dependency regresses, the evidence and the regression alert
 name the query that changed:
 
 > postgresql "SELECT orders" p95 rose from 82ms to 191ms (2.3x) compared with the previous deployment (v80). The slower query is `SELECT * FROM orders WHERE customer_id = ?` (p95 40ms to 210ms).
@@ -138,7 +151,7 @@ SDK's `tracing` package gives the same request, HTTP client and database
 spans without an OpenTelemetry dependency:
 
 ```go
-import "github.com/poyrazK/faas/sdk/go/preview/tracing"
+import "github.com/gregale-dev/gregale-go/preview/tracing"
 
 func main() {
 	shutdown := tracing.Start()
@@ -185,6 +198,10 @@ OTLP/HTTP endpoint `http://127.0.0.1:4318/v1/traces` accepts them; Gregale
 sets the standard `OTEL_EXPORTER_OTLP_TRACES_*` variables so most SDKs need no
 configuration.
 
+SDKs and collectors that export over gRPC (the default for .NET and many
+OpenTelemetry Collector setups) can use `127.0.0.1:4317` instead, without TLS.
+It accepts the same trace and log exports, uncompressed or gzip-compressed.
+
 ## Sampling
 
 By default every request's spans are exported. To reduce volume, set a ratio:
@@ -201,6 +218,76 @@ need. Spans that exceed it are dropped and the app keeps serving. An app in an
 organization that owns its resources is limited by the organization's plan,
 not the plan of whoever created the app.
 
+## Sending traces to your own backend as well
+
+To keep the debugger and also see every span and log line in your own
+OpenTelemetry backend (Grafana, Honeycomb, Datadog, a collector you run), set
+`tracing.forward`:
+
+```yaml
+tracing:
+  enabled: true
+  forward:
+    endpoint: https://otlp.example.com
+    headers_secret: OTLP_HEADERS
+```
+
+```sh
+gregale env set --app my-api OTLP_HEADERS='Authorization=Bearer%20<token>'
+```
+
+- Each trace and log export your app makes (and metric export, with
+  `tracing.metrics`) is sent unchanged to `<endpoint>/v1/traces`,
+  `<endpoint>/v1/logs` or `<endpoint>/v1/metrics` over OTLP/HTTP, from inside
+  the app's instance, in addition to Gregale. Spans keep everything the SDK
+  recorded, including the attributes, events and links the debugger does not
+  keep.
+- `endpoint` is the base URL, as in `OTEL_EXPORTER_OTLP_ENDPOINT`: `http://`
+  or `https://`, without credentials, query string or fragment. An `http://`
+  endpoint on your private network (for example a collector app) works too.
+- `headers_secret` is optional and names an app secret holding the request
+  headers in the `OTEL_EXPORTER_OTLP_HEADERS` form: comma-separated
+  `key=value` pairs, with values percent-encoded. The secret is read when an
+  export is sent, so a changed value applies from the instance's next wake. If
+  the secret is missing or malformed, nothing is forwarded and the reason is
+  logged.
+- Forwarding never slows down or fails your app's exports. Exports wait in a
+  4 MiB queue inside the instance and are retried up to three times on
+  network errors, `429` and `5xx`; what does not fit or keeps failing is
+  dropped. When your SDK retries an export that Gregale refused for its rate
+  limit, the retry is not forwarded a second time.
+- Forwarded traffic leaves from your app's instance and counts as its
+  outbound traffic. Gregale's own rate limit and span caps do not apply to the
+  forwarded copy.
+- Forwarding needs `tracing.enabled`. Apps that configure their own exporter
+  (below) are not forwarded, since their exports do not pass through Gregale.
+
+## Sending metrics without an API key
+
+Set `tracing.metrics` to have your app's OpenTelemetry metrics stored as its
+custom metrics, with no API key or exporter configuration:
+
+```yaml
+tracing:
+  enabled: true
+  metrics: true
+```
+
+- Gregale points the metrics exporter at the in-instance receiver
+  (`http://127.0.0.1:4318/v1/metrics`; gRPC on `127.0.0.1:4317` works too) and
+  sets `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` unless your
+  app sets it, so the counters of several instances add up.
+- Metrics are stored with the same rules and per-app name limit as the
+  [OTLP metrics endpoint](scaling-policy.md#send-metrics-with-opentelemetry):
+  you can chart them, alert on them and scale on gauges.
+- The managed Node and Python auto-instrumentation also records metrics of
+  its own (HTTP server and client durations, for example); each histogram
+  uses five of the app's metric names. Points beyond the limit are dropped.
+- Needs `tracing.enabled` and a plan with custom metrics. Without
+  `tracing.metrics`, Gregale turns the SDK's metrics exporter off. An app that
+  sets `OTEL_METRICS_EXPORTER` or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` keeps
+  its own choice.
+
 ## Using your own collector
 
 If your app already sets `OTEL_EXPORTER_OTLP_ENDPOINT`,
@@ -209,6 +296,12 @@ your OpenTelemetry configuration alone, and a Python app that ships its own
 `opentelemetry-sdk` is never instrumented a second time. Your existing exporter
 keeps working; to send spans to the debugger as well, export to the public
 `/v1/otel/v1/traces` endpoint with an API key.
+
+Set `tracing.enabled: true` as well. It leaves your exporter alone, as above,
+and it tells the debugger to keep a record of each traced request instead of
+folding busy requests into one summary row: spans can only attach to a request
+that has its own record, so without the setting most spans of a busy route
+find no request and are dropped.
 
 The key needs the `admin`, `deploy:write` or `metrics:write` scope; a
 read-only key gets `403`. Spans attach to requests of the trace in apps the

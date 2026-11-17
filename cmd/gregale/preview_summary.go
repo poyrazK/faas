@@ -12,11 +12,14 @@ import (
 // Shared, additive CLI metadata. The underlying plans retain their own
 // schemas and validation guarantees, including saved scale-plan checks.
 type cliPreviewSummary struct {
-	Verification      string `json:"verification"`
-	Profile           string `json:"profile"`
-	ProfileSource     string `json:"profile_source"`
-	App               string `json:"app"`
-	AppSource         string `json:"app_source,omitempty"`
+	Verification  string `json:"verification"`
+	Profile       string `json:"profile"`
+	ProfileSource string `json:"profile_source"`
+	App           string `json:"app"`
+	AppSource     string `json:"app_source,omitempty"`
+	// Target says whether the deploy creates the app or replaces the release
+	// of an existing one, and whether this directory is linked to it.
+	Target            string `json:"target,omitempty"`
 	Environment       string `json:"environment"`
 	EnvironmentSource string `json:"environment_source,omitempty"`
 	Source            string `json:"source,omitempty"`
@@ -43,7 +46,7 @@ func deploymentPreviewTargetSources(preview *cliPreviewSummary, source string, n
 	if nameExplicit && environmentExplicit {
 		return
 	}
-	link, _, err := findProjectContext(source)
+	link, _, err := targetProjectContext(source)
 	if err == nil {
 		if !nameExplicit && link.App != "" {
 			preview.AppSource = "saved source context"
@@ -69,6 +72,9 @@ func renderCLIPreview(w io.Writer, preview *cliPreviewSummary) {
 		environment = withPreviewSource(environment, preview.EnvironmentSource)
 	}
 	_, _ = fmt.Fprintf(w, "Preview: %s\n  Connection: %s\n  App: %s\n  Environment: %s\n", preview.Verification, connection, withPreviewSource(preview.App, preview.AppSource), environment)
+	if preview.Target != "" {
+		_, _ = fmt.Fprintf(w, "  Target: %s\n", preview.Target)
+	}
 	if preview.Source != "" {
 		_, _ = fmt.Fprintf(w, "  Source: %s\n", preview.Source)
 	}

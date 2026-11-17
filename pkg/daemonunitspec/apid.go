@@ -137,6 +137,9 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 			// Realtime fair use (ADR-1323), set on every realtime node too.
 			{Key: "FAAS_REALTIME_FAIR_USE_ENABLED", Value: "1"},
+			// ADR-20261104132753: realtime delivered bytes count as the app's
+			// egress; meterd reads them from the usage apid records.
+			{Key: "FAAS_REALTIME_USAGE_ENABLED", Value: "1"},
 			{Key: "FAAS_APP_TASK_API_ENABLED", Value: "0"},
 			{Key: "FAAS_EXECUTION_API_ENABLED", Value: "0"},
 			{Key: "FAAS_CI_INTERNAL_ENABLED", Value: "0"},

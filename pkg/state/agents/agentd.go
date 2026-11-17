@@ -186,6 +186,21 @@ func (s *Store) Usage(ctx context.Context, accountID, runID string) (u Usage, fo
 		ColdBoot: row.ColdBoot}, true, nil
 }
 
+// VersionPeak is the p95 private peak (MB) of a version's last
+// api.AgentSizeHistoryWindowRuns measured runs of one input class (with or
+// without a checkout), and how many runs it read (ADR-20261027090015 §3).
+// Runs missing more than api.AgentSizeHistoryMaxGapPercent of their samples
+// are left out.
+func (s *Store) VersionPeak(ctx context.Context, accountID, agentID string, version int, checkout bool) (peakMB, runs int, err error) {
+	row, err := s.q.AgentVersionPrivatePeak(ctx, s.pool, sqlc.AgentVersionPrivatePeakParams{AccountID: accountID, AgentID: agentID,
+		AgentVersion: int32(version), Checkout: checkout, MaxGapPercent: api.AgentSizeHistoryMaxGapPercent,
+		WindowRuns: api.AgentSizeHistoryWindowRuns})
+	if err != nil {
+		return 0, 0, fmt.Errorf("version peak: %w", err)
+	}
+	return int(row.PeakMb), int(row.Runs), nil
+}
+
 // Renew extends the lease and reports whether a cancel was requested.
 func (s *Store) Renew(ctx context.Context, runID, token string, ttl time.Duration) (cancelRequested bool, err error) {
 	cancelRequested, err = s.q.RenewAgentRunLease(ctx, s.pool, sqlc.RenewAgentRunLeaseParams{TtlSeconds: ttl.Seconds(), RunID: runID, LeaseToken: token})

@@ -8,7 +8,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+)
+
+var (
+	// errRuntimeRefreshIdle reports an app with no live deployment and no
+	// resident instance: nothing runs the previous configuration.
+	errRuntimeRefreshIdle = errors.New("sched: runtime config restart: no live deployment and no resident instance")
+	// errRuntimeRefreshAwaitingLive reports resident instances of a
+	// deployment that is not live yet.
+	errRuntimeRefreshAwaitingLive = errors.New("sched: runtime config restart: resident instances await a live deployment")
 )
 
 // refreshRuntimeConfigRolling is the durable apply-now path for env and secret
@@ -79,7 +89,17 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		}
 	}
 	if len(live) == 0 {
-		return CoordOutcome{}, errors.New("sched: runtime config restart: no resident live deployment in selected environment")
+		// No live deployment (ADR-20261110120000). With nothing resident, no
+		// runtime holds a previous credential and the refresh is complete.
+		// Instances of a deployment that is not live yet (a first deploy
+		// still snapshotting) keep the old value until it goes live, so the
+		// refresh waits for it instead of failing on every delivery.
+		for _, instance := range instances {
+			if runtimeConfigResident(instance) {
+				return CoordOutcome{}, errors.Join(db.ErrNotificationDeferred, errRuntimeRefreshAwaitingLive)
+			}
+		}
+		return CoordOutcome{}, errRuntimeRefreshIdle
 	}
 	// A live deployment staged at 0% traffic (deploy --no-traffic) serves no
 	// production requests. Replacing it boots a VM nothing routes to and, under
@@ -291,6 +311,19 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 			}
 			result, wakeErr := e.admitAndDispatchWithOptions(candidateCtx, appID, deployment.ID,
 				instanceModeForApp(deployedApp), TriggerRuntimeConfigRestart, false, true)
+			if wakeErr != nil && len(staleServing) > 0 && isConcurrencyRefusal(wakeErr) {
+				// The replacement takes the one-slot grant, so a refusal here
+				// means the ledger counts a slot no serving instance holds.
+				// Waiting for it to clear held a restart (and the credential
+				// rotation behind it) until an instance idled out (production
+				// 2026-11-15). Retire one predecessor instead: the gateway
+				// holds requests through the replacement's boot.
+				e.logRuntimeConfigCapRefusal(appID, deployment.ID, instances, wakeErr)
+				if err := e.retireRuntimeConfigInstance(ctx, appID, deployment.ID, staleServing[0]); err != nil {
+					return CoordOutcome{}, err
+				}
+				continue
+			}
 			if wakeErr != nil {
 				return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: boot replacement for deployment %s: %w", deployment.ID, wakeErr)
 			}
@@ -657,4 +690,32 @@ func (e *Engine) waitForRuntimeConfigInstanceDrain(ctx context.Context, appID, i
 		case <-ticker.C:
 		}
 	}
+}
+
+// isConcurrencyRefusal reports an admission refused at the app's concurrency
+// ceiling.
+func isConcurrencyRefusal(err error) bool {
+	var problem *api.Problem
+	return errors.As(err, &problem) && problem.Code == api.CodePlanLimitConcur
+}
+
+// logRuntimeConfigCapRefusal records what the ledger counted against an app
+// whose restart replacement was refused at the cap, beside the instance rows
+// the restart saw, so a leaked reservation can be named.
+func (e *Engine) logRuntimeConfigCapRefusal(appID, deploymentID string, instances []state.Instance, refusal error) {
+	if e.log == nil {
+		return
+	}
+	rows := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		rows = append(rows, instance.ID+"="+instance.State)
+	}
+	held := e.ledger.AppReservations(appID)
+	reservations := make([]string, 0, len(held))
+	for _, r := range held {
+		reservations = append(reservations, fmt.Sprintf("%s deployment=%s env=%q node=%s counts=%t frozen=%t admitted=%s",
+			r.Instance, r.DeploymentID, r.EnvironmentKey, r.NodeID, r.CountsConcurrency, r.Frozen, r.AdmittedAt.UTC().Format(time.RFC3339)))
+	}
+	e.log.Warn("sched: runtime config restart refused at the concurrency cap; retiring a predecessor first",
+		"app", appID, "deployment", deploymentID, "err", refusal, "instances", rows, "ledger", reservations)
 }

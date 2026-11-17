@@ -37,6 +37,15 @@ var liveLogStates = map[string]bool{"running": true, "waking": true, "cold_booti
 // It returns the newest parkedWindowInstanceLimit of them, oldest first, each
 // with the UTC days its activity in the window spans.
 func parkedWindowInstances(instances []api.InstanceResponse, since, now time.Time) []parkedWindowInstance {
+	out := allParkedWindowInstances(instances, since, now)
+	if len(out) > parkedWindowInstanceLimit {
+		out = out[len(out)-parkedWindowInstanceLimit:]
+	}
+	return out
+}
+
+// allParkedWindowInstances is parkedWindowInstances without the limit.
+func allParkedWindowInstances(instances []api.InstanceResponse, since, now time.Time) []parkedWindowInstance {
 	var out []parkedWindowInstance
 	for _, ins := range instances {
 		if liveLogStates[ins.State] {
@@ -46,11 +55,20 @@ func parkedWindowInstances(instances []api.InstanceResponse, since, now time.Tim
 		if err != nil {
 			continue
 		}
-		end := start
+		end, known := start, false
 		for _, raw := range []string{ins.LastRequestAt, ins.ParkedAt} {
 			if at, err := time.Parse(time.RFC3339, raw); err == nil && at.After(end) {
-				end = at
+				end, known = at, true
 			}
+		}
+		if !known {
+			// A stopped or failed instance (replaced by a deploy, crashed)
+			// or one that served no tracked request records no end here, so
+			// it may have run up to now. Its lines are filtered by write time
+			// below, so reading its window days only costs a fetch; dropping it
+			// hid a long-running instance's logs from --since (prod findings
+			// 2026-11-15 #11).
+			end = now
 		}
 		if end.Before(since) || start.After(now) {
 			continue
@@ -66,9 +84,6 @@ func parkedWindowInstances(instances []api.InstanceResponse, since, now time.Tim
 		out = append(out, parkedWindowInstance{ID: ins.ID, Start: start, Days: days})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
-	if len(out) > parkedWindowInstanceLimit {
-		out = out[len(out)-parkedWindowInstanceLimit:]
-	}
 	return out
 }
 
@@ -82,7 +97,15 @@ func printParkedWindowLogs(ctx context.Context, client parkedWindowLogsClient, s
 		return 0
 	}
 	printed := 0
-	for _, ins := range parkedWindowInstances(instances, since, time.Now().UTC()) {
+	now := time.Now().UTC()
+	all := allParkedWindowInstances(instances, since, now)
+	if skipped := len(all) - parkedWindowInstanceLimit; skipped > 0 {
+		// Say so instead of silently reading only the newest few.
+		oldest := all[0]
+		_, _ = fmt.Fprintf(errOut, "(%d earlier instances also ran in this window; read one with `gregale logs %s --archive --instance %s --date %s`, or narrow --since)\n",
+			skipped, slug, oldest.ID, oldest.Days[0])
+	}
+	for _, ins := range parkedWindowInstances(instances, since, now) {
 		header := false
 		for _, day := range ins.Days {
 			body, err := client.StreamAppArchivedLogs(ctx, slug, api.ArchiveLogSelector{InstanceID: ins.ID, Date: day})
@@ -96,15 +119,11 @@ func printParkedWindowLogs(ctx context.Context, client parkedWindowLogsClient, s
 				if e.Event == "end" {
 					return true, 0
 				}
-				if e.Data == "" || !retainedLineMatches(e.Data, filter.Grep) || !writtenAtOrAfter(e.Data, since) {
+				if e.Data == "" || !retainedLineMatches(e.Data, filter.Grep) || !retainedLineLevelMatches(e.Data, filter.Level) || !writtenAtOrAfter(e.Data, since) {
 					return false, 0
 				}
 				if !header {
-					note := ""
-					if filter.Level != "" {
-						note = " --level is not applied to retained logs."
-					}
-					_, _ = fmt.Fprintf(errOut, "Retained logs of parked instance %s (started %s).%s\n", ins.ID, ins.Start.UTC().Format(time.RFC3339), note)
+					_, _ = fmt.Fprintf(errOut, "Retained logs of parked instance %s (started %s).\n", ins.ID, ins.Start.UTC().Format(time.RFC3339))
 					header = true
 				}
 				_, _ = fmt.Fprintln(out, formatRuntimeLogLine(e.Data))

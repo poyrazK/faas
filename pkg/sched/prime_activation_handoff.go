@@ -186,6 +186,12 @@ func (e *Engine) completePrimeHandoff(ctx context.Context, ins state.Instance, n
 	kind, reason := "state_transition", ""
 	if next == state.StateStopped {
 		kind, reason = "park_ephemeral_secret", "ephemeral_secret"
+		var ready struct {
+			NoSnapshotReason string `json:"no_snapshot_reason"`
+		}
+		if json.Unmarshal(payload, &ready) == nil && ready.NoSnapshotReason == state.SnapshotPrimeCaptureFailedReason {
+			kind, reason = "park_snapshot_error", state.SnapshotPrimeCaptureFailedReason
+		}
 	}
 	e.recordCommittedInstanceTransition(ctx, ins, state.State(ins.State), next, ins.AppID, kind, reason)
 	return nil

@@ -101,6 +101,10 @@ def sync_detailed(
     ids are monotonically increasing control-plane cursors; reconnect with
     `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
     stderr, and terminal events and closes after the terminal event.
+    When the cursor predates retained events, a gap event with
+    `execution_id` and `through_sequence` precedes the retained events.
+    Complete bounded stdout/stderr remain available in the terminal receipt;
+    `output_truncated` describes the output byte limit, not replay retention.
     Source, input, host paths, and VM internals are never included.
     Runs-only keys can stream only receipts created by their own key family.
     Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
@@ -147,6 +151,10 @@ def sync(
     ids are monotonically increasing control-plane cursors; reconnect with
     `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
     stderr, and terminal events and closes after the terminal event.
+    When the cursor predates retained events, a gap event with
+    `execution_id` and `through_sequence` precedes the retained events.
+    Complete bounded stdout/stderr remain available in the terminal receipt;
+    `output_truncated` describes the output byte limit, not replay retention.
     Source, input, host paths, and VM internals are never included.
     Runs-only keys can stream only receipts created by their own key family.
     Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
@@ -188,6 +196,10 @@ async def asyncio_detailed(
     ids are monotonically increasing control-plane cursors; reconnect with
     `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
     stderr, and terminal events and closes after the terminal event.
+    When the cursor predates retained events, a gap event with
+    `execution_id` and `through_sequence` precedes the retained events.
+    Complete bounded stdout/stderr remain available in the terminal receipt;
+    `output_truncated` describes the output byte limit, not replay retention.
     Source, input, host paths, and VM internals are never included.
     Runs-only keys can stream only receipts created by their own key family.
     Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
@@ -232,6 +244,10 @@ async def asyncio(
     ids are monotonically increasing control-plane cursors; reconnect with
     `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
     stderr, and terminal events and closes after the terminal event.
+    When the cursor predates retained events, a gap event with
+    `execution_id` and `through_sequence` precedes the retained events.
+    Complete bounded stdout/stderr remain available in the terminal receipt;
+    `output_truncated` describes the output byte limit, not replay retention.
     Source, input, host paths, and VM internals are never included.
     Runs-only keys can stream only receipts created by their own key family.
     Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.

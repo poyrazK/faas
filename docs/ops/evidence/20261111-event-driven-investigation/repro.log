@@ -1,0 +1,19 @@
+=== RUN   TestAuditNATSConsumerSurvivesIdleSchedulingGap
+    zz_event_audit_repro_test.go:57: actual server config: Name="audit-consumer" Durable="" InactiveThreshold=5s
+    zz_event_audit_repro_test.go:63: consumer deleted after 5.208s without another pull between scheduler lanes: info error=nats: API error: code=404 err_code=10014 description=consumer not found next poll={Records:[] Error:nats_poller: batch: nats: no responders available for request}
+--- FAIL: TestAuditNATSConsumerSurvivesIdleSchedulingGap (5.22s)
+=== RUN   TestAuditNATSConsumerIsDurable
+    zz_event_audit_repro_test.go:71: configured consumer is ephemeral: Name="gregale-orders", Durable=""
+--- FAIL: TestAuditNATSConsumerIsDurable (0.00s)
+=== RUN   TestAuditNATSPoolPreservesRetryScheduling
+    zz_event_audit_repro_test.go:87: production wrapper hides Defer/NackUntil; a one-minute retry becomes Nack delays=[2s]
+--- FAIL: TestAuditNATSPoolPreservesRetryScheduling (0.00s)
+=== RUN   TestAuditKafkaPoisonRecordBoundsRetainedPayloads
+    zz_event_audit_repro_test.go:123: one poison record retained 2000 settled payloads (16384000 bytes) while continuing to drain the partition; commits=[]
+--- FAIL: TestAuditKafkaPoisonRecordBoundsRetainedPayloads (0.04s)
+=== RUN   TestAuditRedisReplacementConsumerRecoversPending
+    zz_event_audit_repro_test.go:155: replacement got 0 records with one-day-old pending work still assigned to map[old-trigger:1]
+--- FAIL: TestAuditRedisReplacementConsumerRecoversPending (0.26s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/sched	5.590s
+FAIL

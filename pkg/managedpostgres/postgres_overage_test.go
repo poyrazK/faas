@@ -14,6 +14,9 @@ func TestPostgresStoreOverageAndUsageSubjects(t *testing.T) {
 	if enabled, err := store.OverageEnabled(ctx, accountID); err != nil || enabled {
 		t.Fatalf("default overage = %v, %v; want off", enabled, err)
 	}
+	if enabled, chosen, err := store.OverageSetting(ctx, accountID); err != nil || enabled || chosen {
+		t.Fatalf("setting before any choice = %v, %v, %v; want never chosen", enabled, chosen, err)
+	}
 	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	for _, want := range []bool{true, false, true} {
 		if err := store.SetOverage(ctx, accountID, want, now); err != nil {
@@ -38,5 +41,33 @@ func TestPostgresStoreOverageAndUsageSubjects(t *testing.T) {
 	// A personal account's database pools under the account itself.
 	if len(subjects) != 1 || subjects[database.ID] != accountID {
 		t.Fatalf("usage subjects = %v; want %s for %s only", subjects, accountID, database.ID)
+	}
+}
+
+// ADR-20261025094915 amendment 2026-11-11: a subject that never chose, on a
+// plan whose overage is on by default, is listed for overage billing; an
+// explicit off removes it.
+func TestPostgresStoreOverageSubjectsIncludeTheScaleDefault(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	postgresReadyDatabase(t, store, accountID, "orders", month.Add(time.Hour))
+	if subjects, err := store.OverageSubjects(ctx, month); err != nil || len(subjects) != 0 {
+		t.Fatalf("Pro subjects = %+v, %v; want none", subjects, err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE accounts SET plan='scale' WHERE id=$1", accountID); err != nil {
+		t.Fatal(err)
+	}
+	subjects, err := store.OverageSubjects(ctx, month)
+	if err != nil || len(subjects) != 1 || subjects[0].SubjectID != accountID || !subjects[0].Overage {
+		t.Fatalf("Scale subjects = %+v, %v; want the account with overage on", subjects, err)
+	}
+	if err := store.SetOverage(ctx, accountID, false, month.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, chosen, err := store.OverageSetting(ctx, accountID); err != nil || enabled || !chosen {
+		t.Fatalf("setting after turning off = %v, %v, %v", enabled, chosen, err)
+	}
+	if subjects, err := store.OverageSubjects(ctx, month); err != nil || len(subjects) != 0 {
+		t.Fatalf("Scale subjects after turning off = %+v, %v; want none", subjects, err)
 	}
 }

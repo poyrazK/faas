@@ -5,6 +5,8 @@ package managedpostgres
 import (
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 20261101143527 — one reserved step per provider, subject and month;
@@ -140,5 +142,45 @@ func TestPostgresStoreOverageSubjectsIncludeStorage(t *testing.T) {
 	subjects, err = store.OverageSubjects(ctx, month)
 	if err != nil || len(subjects) != 1 || subjects[0].SubjectID != accountID || subjects[0].Overage {
 		t.Fatalf("subjects already charged = %+v, %v", subjects, err)
+	}
+}
+
+// adr: 20261110160000 — slice 3: a subject with databases whose egress
+// overage election covered the month is listed, and a step's egress terms
+// round-trip through the reservation and the delivery.
+func TestPostgresStoreOverageEgress(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	postgresReadyDatabase(t, store, accountID, "orders", month.Add(time.Hour))
+	if subjects, err := store.OverageSubjects(ctx, month); err != nil || len(subjects) != 0 {
+		t.Fatalf("subjects without an election = %+v, %v", subjects, err)
+	}
+	if _, err := state.NewPgStore(pool).SetEgressOverage(ctx, accountID, true, month.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	subjects, err := store.OverageSubjects(ctx, month)
+	if err != nil || len(subjects) != 1 || subjects[0].SubjectID != accountID || subjects[0].Overage {
+		t.Fatalf("subjects with egress overage elected = %+v, %v", subjects, err)
+	}
+	// An election made after the month is not listed for it.
+	if subjects, err := store.OverageSubjects(ctx, month.AddDate(0, -1, 0)); err != nil || len(subjects) != 0 {
+		t.Fatalf("October subjects = %+v, %v", subjects, err)
+	}
+
+	pending := OveragePendingStep{Provider: "polar", Live: true, Step: OverageChargeStep{SubjectID: accountID, PeriodStart: month,
+		At: month.Add(3 * time.Hour), TargetMillicents: 31_500, UsedEgressBytes: 6e9, AppEgressBytes: 7e9,
+		EgressAllowanceBytes: 10e9, BilledEgressBytes: 3e9},
+		Previous: OverageDelivery{Provider: "polar", SubjectID: accountID, PeriodStart: month}}
+	if reserved, err := store.ReserveOverage(ctx, pending); err != nil || !reserved {
+		t.Fatalf("reserve: %v, %v", reserved, err)
+	}
+	if got, found, err := store.OveragePending(ctx, "polar", accountID, month); err != nil || !found || got != pending {
+		t.Fatalf("pending = %+v, %v, %v; want %+v", got, found, err, pending)
+	}
+	if recorded, err := store.CompleteOverage(ctx, pending); err != nil || !recorded {
+		t.Fatalf("complete: %v, %v", recorded, err)
+	}
+	if delivered, err := store.OverageDelivered(ctx, "polar", accountID, month); err != nil || delivered.BilledEgressBytes != 3e9 || delivered.Millicents != 31_500 {
+		t.Fatalf("delivered = %+v, %v", delivered, err)
 	}
 }

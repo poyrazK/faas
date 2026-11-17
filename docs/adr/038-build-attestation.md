@@ -281,3 +281,61 @@ whose identity matches a record younger than
 - **Not covered:** a write into the cached file in place, with its size kept.
   That needs write access to the node cache, which the startup re-hash
   detected only at the next restart.
+
+## Amendment 2026-11-11: sign the digest computed at publish
+
+`publishExt4`, the full-rootfs publish and `publishBaseFile` already hash
+every byte they stream to storage (`rootfs.ArtifactIdentity`). The signer
+then read the stored layer back and hashed it again: on a production deploy
+the two SHA-256 passes over a sparse 1 GiB ext4 were ~14 s, about 80% of
+imaged's CPU for the deploy (2026-11-11 profile; no SHA extensions on the n2
+nodes). A signer that implements `SignDigest` (`cosign.LocalSigner`,
+`signd.Client`) now signs that digest; any other signer still reads back.
+
+The signature therefore covers the bytes imaged sent, not a read-back of the
+store. A store that kept different bytes fails the verify at boot, which is
+the fail-closed direction, and nothing can change the layer between publish
+and sign to have the change signed. signd already signed the digest the node
+sends without reading layers (ADR-20261109170000 §4); the client now sends
+the publish-time digest as that ADR's §3 describes.
+
+## Amendment 2026-11-17: verify a layer when it is published
+
+The prime verified a new deployment's layer as its first step before the
+cold boot, holding the app lock: it read and hashed the whole 2 GiB ext4.
+In production, over the 116 deploys of 2026-11-16 12:00Z to 2026-11-17 whose
+verification record schedd kept, the verify finished 7.7 s (p50; 10 s p90)
+after `snapshot_prepare` began, and vmmd started the boot 10 ms after it. The
+whole stage was 20 s p50. Nothing told schedd about the layer before
+`snapshot_prime`, although imaged stores, signs and replicates it before the
+runtime-base step and the security scan, which together take 6–20 s.
+
+imaged now sends `layer_published` (`{"app_id","deployment_id"}`) once the
+layer and its signature are stored and replicated, before the runtime base
+and the scan. The schedd that owns the app runs the prime's verification
+then, on its own work-pool kind (`layer_verify`, two slots), for a deployment
+that has a layer and is not yet live or terminal. The verifier caches a
+success and shares a hash already running, so the prime finds the layer
+verified or joins the hash.
+
+- **The check is the prime's own.** Same verifier, same layer and signature
+  keys, same bytes. The prime still calls it before every boot; a verification
+  that failed or never ran makes the prime verify again, and a refusal fails
+  the deployment as before. Nothing trusts the early call's result beyond the
+  verifier's existing success cache.
+- **Advisory delivery.** `layer_published` is a plain `pg_notify`, not a
+  durable outbox channel. A lost notice, a full pool or a schedd restart costs
+  only the time saved. An older schedd ignores it; an older imaged never sends
+  it.
+- **One node hashes.** Only the schedd that owns the app verifies, the same
+  `OwnsApp` decision the prime and the attestation warm use. The control-plane
+  schedd, which runs without a node name, owns only apps homed on the
+  `default-local` node. An app with no home node is owned by every schedd
+  and would be hashed by each; production had none on 2026-11-17.
+- **The work moves; it does not grow.** A deployment whose scan fails after
+  the notice has its layer hashed for nothing. The hash now overlaps the scan
+  on the node.
+- **Expected effect:** `snapshot_prepare` drops by up to the verify time
+  (about 6–8 s at p50), and the prime holds the app lock that much shorter.
+  Where the scan is reused and short, the prime joins a hash already under
+  way and saves less.

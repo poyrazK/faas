@@ -49,6 +49,13 @@ func retryTriggerReceiptTx(ctx context.Context, tx pgx.Tx, recordID, accountID, 
 	}); err != nil {
 		return fmt.Errorf("state: trigger replay lane lock: %w", err)
 	}
+	record, err := q.ExternalTriggerReplayRecord(ctx, tx, sqlc.ExternalTriggerReplayRecordParams{ID: id, ExpectedAccountID: account, ExpectedAppID: app})
+	if err != nil {
+		return mapErr(err)
+	}
+	if err := validateExternalTriggerReplay(record); err != nil {
+		return err
+	}
 	n, err := q.RetryExternalTriggerRecordByOperator(ctx, tx, sqlc.RetryExternalTriggerRecordByOperatorParams{ID: id, ExpectedAccountID: account, ExpectedAppID: app})
 	if err != nil {
 		return fmt.Errorf("state: trigger receipt replay: %w", err)
@@ -124,6 +131,8 @@ func (m *MemStore) retryQueueDeadLetterLocked(accountID, invocationID string, no
 	inv.ReplayGeneration++
 	inv.LastError, inv.InstanceID = "", ""
 	inv.Outcome, inv.Result, inv.LeaseExpiresAt, inv.CompletedAt = nil, nil, nil, nil
+	// ADR-20261113180000 (R6-1, R8-2): mirrors RetryQueueDeadLetterInvocation.
+	inv.OutcomeCode, inv.WorkDecision, inv.ResultRetentionUntil = "", nil, nil
 	inv.DueAt, inv.LastReplayedAt = now, &now
 	m.setInvocationLocked(invocationID, inv)
 	if inv.Source != InvocationQueue && inv.Source != InvocationDelayedTask {
@@ -163,7 +172,11 @@ func (m *MemStore) retryTriggerReceiptLocked(id string, now time.Time) error {
 		_, err := m.retryQueueDeadLetterLocked(inv.AccountID, inv.ID, now)
 		return err
 	}
+	if err := validateExternalTriggerReplay(r); err != nil {
+		return err
+	}
 	r.State, r.Attempts, r.LastError = "pending", 0, pgtype.Text{}
+	r.OperatorReplay = true
 	r.NextFireAt, r.ClaimExpiresAt = pgtypeFromTime(now), pgtype.Timestamptz{}
 	r.ClaimGeneration++
 	m.records[id] = r

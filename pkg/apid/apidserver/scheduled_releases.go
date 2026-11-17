@@ -87,7 +87,7 @@ func (s *server) releaseFreezeOrSchedule(r *http.Request, acct state.Account, ap
 	if nowProblem != nil {
 		if nowProblem.Code == api.CodeReleaseFrozen {
 			nowProblem = nowProblem.WithHint("A scheduled release is built and runs its release command now; only its traffic waits for release_at. " +
-				"Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy with --override-freeze REASON; the override is audited.")
+				"Wait for the freeze to end, lift it with `gregale release freeze lift`, or deploy with --override-freeze REASON; the override is audited.")
 		}
 		return nil, nowProblem
 	}
@@ -179,6 +179,7 @@ func (s *server) recordReleaseSchedule(r *http.Request, acct state.Account, app 
 		AccountID: app.AccountID, AppID: app.ID, DeploymentID: d.ID, ReleaseAt: sched.at,
 		Canary: schedule.Encode(sched.canary), NotifyChannelIDs: sched.notifyIDs, OverrideFreeze: sched.override,
 		OverrideFreezeIDs: sched.overrideIDs, ScheduledBy: releaseApprovalActorLabel(r, acct),
+		ScheduledByAccountID: schedulerAccountID(r, acct), ScheduledByKeyID: schedulerKeyID(r),
 	}, schedule.CodeReplaced, "a newer schedule replaced it", time.Now())
 	if err != nil {
 		logCustomerFailure(s.log, "record scheduled release", err)
@@ -329,8 +330,27 @@ func (s *server) prepareDeploymentSchedule(r *http.Request, acct state.Account, 
 	return state.ScheduledRelease{
 		AccountID: app.AccountID, AppID: app.ID, DeploymentID: d.ID, ReleaseAt: at, Canary: schedule.Encode(spec),
 		NotifyChannelIDs: ids, OverrideFreeze: override, OverrideFreezeIDs: overrideIDs,
-		ScheduledBy: releaseApprovalActorLabel(r, acct),
+		ScheduledBy:          releaseApprovalActorLabel(r, acct),
+		ScheduledByAccountID: schedulerAccountID(r, acct), ScheduledByKeyID: schedulerKeyID(r),
 	}, nil
+}
+
+// schedulerAccountID is the account the release worker checks at release
+// time (schedule.SchedulerStanding): an API key's holder, or the signed-in
+// person.
+func schedulerAccountID(r *http.Request, acct state.Account) string {
+	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AccountID != "" {
+		return p.Key.AccountID
+	}
+	return actorAccount(r, acct).ID
+}
+
+// schedulerKeyID is the API key a schedule was made with, or "".
+func schedulerKeyID(r *http.Request) string {
+	if p, ok := principalFrom(r); ok && p.Key != nil {
+		return p.Key.ID
+	}
+	return ""
 }
 
 // notSchedulable says why d cannot be scheduled, or "" when it can: it is

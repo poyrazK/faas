@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -14,19 +15,24 @@ import (
 // <check-id>` (ADR-748): uptime, latency, and the most recent runs.
 func cmdSyntheticsStatus(args []string) int {
 	fs := newFlagSet("synthetics status", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert check status --app <slug> <check-id>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check status [--app <slug>] <check-id|name>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	check, err := client.GetSyntheticCheck(context.Background(), *slug, fs.Arg(0))
+	id, err := resolveSyntheticCheckRef(context.Background(), client, *slug, fs.Arg(0))
+	if err != nil {
+		return printErr("Could not fetch synthetic check", err)
+	}
+	check, err := client.GetSyntheticCheck(context.Background(), *slug, id)
 	if err != nil {
 		return printErr("Could not fetch synthetic check", err)
 	}
@@ -41,6 +47,9 @@ func renderSyntheticStatus(w io.Writer, c api.SyntheticCheckResponse) {
 	_, _ = fmt.Fprintf(w, "%s — %s %s every %d minutes, expecting %s\n", c.Name, c.Method, c.URL, c.IntervalSeconds/60, describeExpected(c.ExpectedStatus))
 	if !c.Enabled {
 		_, _ = fmt.Fprintln(w, "  Paused.")
+	}
+	if c.Warning != "" {
+		_, _ = fmt.Fprintf(w, "  Warning:  %s\n", c.Warning)
 	}
 	res := c.Results
 	if res == nil || len(res.Recent) == 0 {
@@ -74,4 +83,22 @@ func fmtUptime(v *float64) string {
 		return "—"
 	}
 	return fmt.Sprintf("%.2f%%", *v)
+}
+
+// resolveSyntheticCheckRef accepts a check's id or its name: `check list`
+// shows names first and status refused them (production, 2026-11-09).
+func resolveSyntheticCheckRef(ctx context.Context, client *api.Client, slug, ref string) (string, error) {
+	if uuid.Validate(ref) == nil {
+		return ref, nil
+	}
+	checks, err := client.ListSyntheticChecks(ctx, slug)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range checks {
+		if c.Name == ref {
+			return c.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no check named %q on %s; see gregale alert check list --app %s", ref, slug, slug)
 }

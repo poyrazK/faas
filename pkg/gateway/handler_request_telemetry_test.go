@@ -202,6 +202,12 @@ func TestHandlerObserveDoesNotBillPlatformFailures(t *testing.T) {
 		{"gateway capacity failure", http.StatusServiceUnavailable, false, 0, 1},
 		{"gateway upstream failure", http.StatusBadGateway, false, 0, 1},
 		{"gateway response without guest", http.StatusOK, false, 1, 0},
+		// ADR-20261107170000: a refusal the gateway authored after the
+		// consumer or tenant was identified is not billed.
+		{"gateway auth refusal", http.StatusUnauthorized, false, 0, 1},
+		{"gateway edge rule refusal", http.StatusForbidden, false, 0, 1},
+		{"gateway rate limit refusal", http.StatusTooManyRequests, false, 0, 1},
+		{"guest auth refusal", http.StatusUnauthorized, true, 1, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

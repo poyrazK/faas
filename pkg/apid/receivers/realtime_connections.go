@@ -18,6 +18,8 @@ const realtimeConnectionSyncMaxBytes = 1 << 20
 type realtimeConnectionSyncMessage struct {
 	NodeName string                             `json:"node_name,omitempty"`
 	Accounts []state.RealtimeAccountConnections `json:"accounts"`
+	// Endpoints carries capped endpoints' counts; nodes before it omit it.
+	Endpoints []state.RealtimeEndpointConnections `json:"endpoints,omitempty"`
 }
 
 // SyncConnections stores a registered node's per-account connection counts
@@ -43,7 +45,18 @@ func (r *realtimeFleetReceiver) SyncConnections(ctx context.Context, envelope *w
 	case err != nil:
 		return nil, status.Error(codes.Unavailable, "realtime connection counts unavailable")
 	}
-	data, err := json.Marshal(realtimeConnectionSyncMessage{Accounts: remote})
+	response := realtimeConnectionSyncMessage{Accounts: remote}
+	if len(req.Endpoints) > 0 && r.endpointConnections != nil {
+		endpoints, err := r.endpointConnections.SyncRealtimeNodeEndpointConnections(ctx, req.NodeName, req.Endpoints)
+		switch {
+		case errors.Is(err, state.ErrRealtimeConnectionSyncInvalid):
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		case err != nil:
+			return nil, status.Error(codes.Unavailable, "realtime connection counts unavailable")
+		}
+		response.Endpoints = endpoints
+	}
+	data, err := json.Marshal(response)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "encode realtime connection counts")
 	}

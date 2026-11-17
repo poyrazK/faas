@@ -20,7 +20,7 @@ func (s *server) prepareEnvironmentGitArchive(ctx context.Context, lease state.E
 	if !isCanonicalCommitSHA(lease.Revision.CommitSHA) || request.RevisionID != lease.Revision.ID || request.CommitSHA != lease.Revision.CommitSHA || request.DefinitionDigest != lease.Revision.Digest {
 		return artifact, state.ErrInvalidArgument
 	}
-	account, err := s.store.AccountByID(ctx, lease.Source.AccountID)
+	account, err := state.ProjectResourceAccountByID(ctx, s.store, lease.Source.ProjectID)
 	if err != nil {
 		return artifact, err
 	}

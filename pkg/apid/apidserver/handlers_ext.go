@@ -197,6 +197,35 @@ func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
 	return nil
 }
 
+// validateWorkerPlan refuses a worker the plan cannot run
+// (ADR-20261018101500 amendment 2026-10-31): a request that makes the app a
+// worker on a plan without workers, or whose worker bounds pass the plan's
+// running-worker cap. The pool would otherwise cap it silently, or on Free
+// never start it.
+func validateWorkerPlan(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
+	mode := app.Manifest.ExecutionMode
+	if req.ExecutionMode != nil {
+		mode = *req.ExecutionMode
+	}
+	if mode != api.ExecutionModeWorker || (req.ExecutionMode == nil && req.WorkerReplicas == nil) {
+		return nil
+	}
+	want := 1
+	if req.WorkerReplicas != nil {
+		// The package declares a float64 max (handlers_dashboard.go), so the
+		// builtin is not reachable here.
+		for _, n := range []int{req.WorkerReplicas.Min, req.WorkerReplicas.Max} {
+			if n > want {
+				want = n
+			}
+		}
+	}
+	if want > limits.WorkerReplicasMax {
+		return api.ErrPlanWorkerReplicas(acct.Plan, limits.WorkerReplicasMax, want)
+	}
+	return nil
+}
+
 // validatePerInstanceConcurrency gates and bounds
 // scaling_policy.per_instance_concurrency (ADR-20261022203523). Until the
 // account is listed in FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS the field is
@@ -241,6 +270,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if prob := validateIdleTimeout(*req.IdleTimeoutS, limits); prob != nil {
 			return prob
 		}
+	}
+	if prob := validateWorkerPlan(req, acct, limits, app); prob != nil {
+		return prob
 	}
 	// The app-wide edge bucket is a tightening-only runtime policy. Zero
 	// restores the plan default; a positive override cannot exceed the plan
@@ -1116,6 +1148,26 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Service bindings are source-managed", "edit depends_on or an x-gregale-service-* extension in the project source; preview bindings inherit from their source app"))
 		return
 	}
+	if req.FunctionCallables != nil {
+		if app.Type != state.AppTypeFunction {
+			api.WriteProblem(w, api.ErrValidation("function_callables applies to function apps"))
+			return
+		}
+		if err := api.ValidateFunctionCallables(*req.FunctionCallables, app.Slug); err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	}
+	if req.FunctionInputSchema != nil {
+		if app.Type != state.AppTypeFunction {
+			api.WriteProblem(w, api.ErrValidation("function_input_schema applies to function apps"))
+			return
+		}
+		if err := api.ValidateFunctionInputSchema(*req.FunctionInputSchema); err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	}
 	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, app.Slug)
 	if bindingsProblem != nil {
 		api.WriteProblem(w, bindingsProblem)
@@ -1187,6 +1239,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.afterRestoreBudgetProblem(r.Context(), acct.ID, app.ID, req.AfterRestore); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -1317,6 +1373,14 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			api.WriteProblem(w, api.ErrCapacity("could not seal public_auth credentials"))
 			return
 		}
+		// ADR-20261110210000 slice 3h: the edge checks the credential
+		// against a verifier keyed by this blob, never opening it. Written
+		// before the app row, so no edge ever sees a blob without one.
+		if err := s.putBasicAuthVerifier(r.Context(), sealed, req.PublicAuth.BasicUser, req.PublicAuth.BasicPass); err != nil {
+			s.log.Error("apid: basic auth verifier", "app_id", app.ID, "err", err)
+			api.WriteProblem(w, api.ErrCapacity("could not record public_auth credentials"))
+			return
+		}
 		publicAuthSealed = sealed
 	}
 	// ADR-118: parse the canonicalised CIDR list into []netip.Prefix
@@ -1359,6 +1423,22 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		lifecycleManifest.AllowedServiceCallScopes = allowedCallScopes
 		lifecycleChanged = true
 	}
+	if req.FunctionCallables != nil {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.FunctionCallables = nonEmptyCallables(*req.FunctionCallables)
+		lifecycleChanged = true
+	}
+	if req.FunctionInputSchema != nil {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.FunctionInputSchema = nonEmptySchema(*req.FunctionInputSchema)
+		lifecycleChanged = true
+	}
 	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil || len(req.ServiceReliability) > 0 {
 		if lifecycleManifest == nil {
 			copyOfManifest := app.Manifest
@@ -1396,6 +1476,12 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var retryPolicyPtr *[]byte
 	if req.RetryPolicy != nil {
 		retryPolicyPtr = &retryPolicyJSON
+	}
+	// ADR-20261111114059: an agent's added standing cost is charged to its
+	// budget, after validation and before the write.
+	commitBudget, answered := s.chargeAppUpdate(w, r, acct, app, req, ram)
+	if answered {
+		return
 	}
 	params := state.UpdateAppParams{
 		Visibility:         visibilityPtr(req.Visibility),
@@ -1653,7 +1739,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		fallback := api.ErrCapacity("could not update app")
+		fallback := appUpdateUnavailable(err)
 		if problem := deploySettingsUpdateProblem(err); problem != nil {
 			fallback = problem
 		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
@@ -1670,6 +1756,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, trafficproblem.Policy(err, fallback))
 		return
 	}
+	commitBudget()
 	if req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil {
 		// Existing process snapshots were created with the previous hook
 		// setting. The runtime-config stamp also retires live guests whose
@@ -2101,11 +2188,12 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// (spec §9: row goes to AppDeleted, snapshot GC follows on
 	// the grace sweeper). data carries the slug so the
 	// audit row is searchable even after the row soft-deletes.
-	s.audit.Emit(r.Context(), "app.deleted", &acct.ID, map[string]any{
+	deleted := map[string]any{
 		"app_id":             parked.ID,
 		"slug":               parked.Slug,
 		"delete_grace_until": parked.DeleteGraceUntil,
-	})
+	}
+	s.audit.EmitAs(r.Context(), requestAuditActor(r, acct.ID, deleted), "app.deleted", &acct.ID, deleted)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2124,10 +2212,21 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
+	if app.Status == state.AppDeleted {
+		// The configuration read below excludes deleted apps; answer the
+		// final state instead of a 503 that a deploy wait retries forever.
+		api.WriteProblem(w, api.ErrAppDeleted(app.Slug))
+		return
+	}
 	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
 	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
 		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such deployment")
+			return
+		}
 		if err != nil {
+			s.log.Error("read deployment configuration status", "deployment_id", d.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
 			return
 		}
@@ -2208,7 +2307,16 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 		return
 	}
 	prev := d.MinInstances
+	// ADR-20261111114059: an agent's raise of a deployment's floor is
+	// charged to its budget before the write.
+	commitBudget, answered := s.chargeDeploymentFloor(w, r, acct, app, d, v)
+	if answered {
+		return
+	}
 	updated, err := s.store.UpdateDeploymentMinInstances(r.Context(), id, v)
+	if err == nil {
+		commitBudget()
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such deployment")
@@ -2304,6 +2412,10 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	if err := req.ValidateExpectedTraffic(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2346,6 +2458,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
 		ctx = state.WithTrafficSplitReleaseLimit(ctx, releaseLimit)
+		ctx = state.WithExpectedTrafficWeights(ctx, req.ExpectedTraffic)
 		var writeErr error
 		if req.ExpectedReview != nil {
 			store, ok := s.store.(state.ReviewedTrafficStore)
@@ -2396,6 +2509,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, trafficguard.PromotionProblem(err))
 		case promotionAttemptProblem(err) != nil:
 			api.WriteProblem(w, promotionAttemptProblem(err))
+		case errors.Is(err, state.ErrTrafficServingChanged) && req.ExpectedTraffic != nil:
+			api.WriteProblem(w, api.ErrTrafficSplitChanged())
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -3538,6 +3653,11 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			"Invalid domain", err.Error()))
 		return
 	}
+	if s.platformOwnedDomain(domain) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid domain", domain+" belongs to Gregale; attach a domain you own"))
+		return
+	}
 	// The public CLI documents --app as an app slug. Keep accepting IDs
 	// for existing API clients, but resolve the documented slug form too.
 	app, acct, prob := s.namedAppAs(r, acct, req.AppID, true)
@@ -4501,6 +4621,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if path == "" {
 		path = "/"
 	}
+	scope, scopeProblem := s.cronEnvironmentScope(r.Context(), app, req.Environment)
+	if scopeProblem != nil {
+		api.WriteProblem(w, scopeProblem)
+		return
+	}
 	skipIfRunning := false
 	if req.SkipIfRunning != nil {
 		skipIfRunning = *req.SkipIfRunning
@@ -4510,7 +4635,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
 		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
-		RetryBackoffSeconds: req.RetryBackoffSeconds,
+		RetryBackoffSeconds: req.RetryBackoffSeconds, DeploymentScope: scope,
 	})
 	if err != nil {
 		var qe *state.CronQuotaError
@@ -5025,21 +5150,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
 		return
 	}
-	// IAM-5: expiry policy. Non-admin scopes get a 365-day
-	// expires_at (spec: "set-and-forget" CI rotation, plus a
-	// bounded exposure window for exfiltrated keys). Admin keys
-	// default to nil expiry (legacy admin semantics — never
-	// expire, must be explicitly revoked). The customer can
-	// rotate an admin key with grace=0 to opt into finite expiry.
-	var expiresAt *time.Time
-	if !slices.Contains(scopes, api.ScopeAdmin) {
-		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
-		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
-		if slices.Contains(scopes, api.ScopeAgent) {
-			t = time.Now().UTC().Add(api.AgentKeyLifetime)
-		}
-		expiresAt = &t
-	}
+	expiresAt := api.NewAPIKeyExpiry(scopes, time.Now())
 	// PR 6 (issue #190 / IAM-6) dual-write: the legacy /v1/keys
 	// POST persists the key against the caller's personal org
 	// so api_keys.org_id is populated (the 00127 NOT NULL flip).
@@ -5060,6 +5171,11 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	bindUA := logsanitize.Field(r.UserAgent())
 	org, perr := s.store.OrgByPersonalAccount(r.Context(), acct.ID)
 	projects, prob := s.keyProjects(r.Context(), acct, org.ID, scopes, req.Projects)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	approvals, approvalsSet, prob := keyApprovalCategories(scopes, req.ApprovalCategories)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -5090,6 +5206,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if prob := s.limitKeyToProjects(r.Context(), acct, k, projects); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.setKeyApprovalCategories(r.Context(), acct, k, approvals, approvalsSet); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -5128,6 +5248,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		s.audit.Emit(r.Context(), "api_key.created", &acct.ID, newPayload)
 	}
+	s.noticeCredentialCreated(r, acct, credentialAPIKey, k.Label)
 	resp := api.APIKeyResponse{
 		ID:        k.ID,
 		OrgID:     k.OrgID,
@@ -5143,6 +5264,9 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	resp.Plaintext = plaintext
 	if len(projects) > 0 {
 		resp.Projects = projectSlugs(projects)
+	}
+	if approvalsSet {
+		resp.ApprovalCategories = &approvals
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -5275,20 +5399,12 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// cache keeps the per-rotation handler off a hot PG path;
 	// admin updates invalidate the cache and propagate on the
 	// next rotation.
-	var graceWindow time.Duration
-	gw, err := s.resolveGraceWindow(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve grace window"))
+	var req api.RotateKeyRequest
+	_ = decodeJSON(r, &req)
+	graceWindow, graceWindowDays, prob := s.rotationGraceWindow(r.Context(), acct.ID, req.GraceWindowDays)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
-	}
-	if gw == nil {
-		graceWindow = time.Duration(api.DefaultAPIKeyGraceWindowDays) * 24 * time.Hour
-	} else {
-		graceWindow = time.Duration(*gw) * 24 * time.Hour
-	}
-	var graceWindowDays int
-	if graceWindow > 0 {
-		graceWindowDays = int(graceWindow / (24 * time.Hour))
 	}
 
 	// Mint the new plaintext + hash BEFORE the rotation so the
@@ -5344,6 +5460,10 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 			s.notFound(w, "key already revoked")
 			return
 		}
+		if errors.Is(err, state.ErrAPIKeyExpired) {
+			api.WriteProblem(w, api.ErrAPIKeyExpired())
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))
 		return
 	}
@@ -5373,6 +5493,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"created_ua":         bindUA,
 		"parent_key_id":      oldKey.ID,
 	})
+	s.noticeCredentialCreated(r, acct, credentialRotatedKey, newKey.Label)
 	s.log.Info("key rotated",
 		"old_key", oldKey.ID, "new_key", newKey.ID,
 		"account", acct.ID, "grace_window_days", graceWindowDays)
@@ -5401,11 +5522,43 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // in-process cache, falling back to the store on a miss. The
 // handler is the only caller; nil-safe when the cache is nil
 // (legacy tests that pre-date the cache field).
-func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
-	if s.graceWindowCache == nil {
-		return s.store.GetAccountKeyGraceWindow(ctx, accountID)
+// rotationGraceWindow is how long a rotated key keeps working: override when
+// the caller set one for this rotation (0 revokes the old key at once), else
+// the account's setting, else the plan default.
+func (s *server) rotationGraceWindow(ctx context.Context, accountID string, override *int) (time.Duration, int, *api.Problem) {
+	days := override
+	if days != nil && (*days < 0 || *days > api.APIKeyGraceWindowMaxDays) {
+		return 0, 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid grace window",
+			fmt.Sprintf("grace_window_days must be between 0 and %d; got %d", api.APIKeyGraceWindowMaxDays, *days))
 	}
-	return s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
+	if days == nil {
+		gw, err := s.resolveGraceWindow(ctx, accountID)
+		if err != nil {
+			return 0, 0, api.ErrCapacity("could not resolve grace window")
+		}
+		days = gw
+	}
+	n := api.DefaultAPIKeyGraceWindowDays
+	if days != nil {
+		n = *days
+	}
+	return time.Duration(n) * 24 * time.Hour, n, nil
+}
+
+func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
+	var days *int
+	var err error
+	if s.graceWindowCache == nil {
+		days, err = s.store.GetAccountKeyGraceWindow(ctx, accountID)
+	} else {
+		days, err = s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
+	}
+	// A value saved before the cap existed is held to it (ADR 20261109120000).
+	if err == nil && days != nil && *days > api.APIKeyGraceWindowMaxDays {
+		capped := api.APIKeyGraceWindowMaxDays
+		days = &capped
+	}
+	return days, err
 }
 
 // --- usage -----------------------------------------------------------------
@@ -5476,7 +5629,8 @@ func (s *server) getUsage(w http.ResponseWriter, r *http.Request, acct state.Acc
 // only legitimate path to land on a paid plan locally.
 func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req struct {
-		Plan string `json:"plan"`
+		Plan            string `json:"plan"`
+		SalespersonCode string `json:"salesperson_code"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -5486,6 +5640,9 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	if !plan.Valid() {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad plan", "plan must be free|hobby|pro|scale"))
+		return
+	}
+	if !s.prepareSalesCheckout(w, r, acct, plan, req.SalespersonCode) {
 		return
 	}
 	// Any paid tier increase must be confirmed by the billing provider. A
@@ -5655,9 +5812,14 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 			"Bad request", err.Error()))
 		return
 	}
-	if req.OverageCapCents != nil && *req.OverageCapCents < 0 {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"overage_cap_cents must be >= 0 or null", "negative values are rejected"))
+	if problem := s.complimentaryRefusal(r.Context(), acct.ID); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	// ADR-20261105120000: a paid subject keeps a cap, at most its plan's
+	// self-service ceiling.
+	if problem := api.OverageCapProblem(acct.Plan, req.OverageCapCents); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	updated, err := s.raiseOverageCapSvc(r.Context(), acct, req.OverageCapCents)
@@ -6233,6 +6395,11 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// (provider redelivery) and rows in suspended/deleted_pending
 		// (no business flipping state backwards), both of which we
 		// swallow as no-ops.
+		if acct.MovedToFreeForNonpayment() {
+			// Already moved to Free for this unpaid balance (R9-1): the
+			// old subscription's retries must not restart the ladder.
+			return nil
+		}
 		if err := s.store.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				s.log.Debug("apid: payment_failed on already-advanced account",
@@ -6269,6 +6436,9 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// exactly once on the first delivery (EventPaymentFailed
 		// or this branch, whichever lands first). Emitting twice
 		// would double-mail customers.
+		if acct.MovedToFreeForNonpayment() {
+			return nil // already on Free for this unpaid balance (R9-1)
+		}
 		if err := s.store.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				s.log.Debug("apid: subscription_past_due on already-advanced account",
@@ -6282,6 +6452,12 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 	case billing.EventPaymentSucceeded:
 		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested() && !orgBillingSubject(acct))
 	case billing.EventSubscriptionUpdated:
+		if acct.MovedToFreeForNonpayment() && ev.SubscriptionID == acct.StripeSubscriptionItem {
+			// On Free for non-payment (R9-1): an update to the unpaid
+			// subscription does not re-bind its paid plan; its payment
+			// (EventPaymentSucceeded) restores the account.
+			return nil
+		}
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
 				return fmt.Errorf("store updated subscription id: %w", err)
@@ -7020,6 +7196,8 @@ func cronResponse(c state.Cron) api.CronResponse {
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
 	}
+	resp.Environment = c.DeploymentScope
+	resp.ClonePaused = c.ClonePaused
 	return resp
 }
 
@@ -7963,6 +8141,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	// `current` field maps straight through without a string copy.
 	announced := make(map[state.StageName]string)
 	var lastStageStateRaw []byte
+	lastLogSeq := initialDeploymentLogSeq(ctx, s.store, id, page, beforeSeq)
 
 	// A deployment that already finished has nothing to tail. End now
 	// rather than at the first status poll: the dashboard's release
@@ -8043,8 +8222,12 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// superseded rows used to keep it open until the 10-min
 			// backstop, so a waiting `gregale deploy` sat on a
 			// cancelled build for minutes (H10-48).
+			lastLogSeq = tailDeploymentLogs(ctx, w, flusher, s.store, id, lastLogSeq)
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
 				if deploymentLogTailDone(d2.Status) {
+					// Rows written between the tail above and the
+					// terminal flip.
+					_ = tailDeploymentLogs(ctx, w, flusher, s.store, id, lastLogSeq)
 					endDeploymentLogStream(w, flusher, d2, announced, &lastStageStateRaw)
 					return
 				}
@@ -8435,6 +8618,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 			Metric: sp.Target.Metric,
 			Value:  sp.Target.Value,
 			Name:   sp.Target.Name,
+			Labels: sp.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules. These were absent here for the
@@ -8448,7 +8632,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 	// fails if a field is added to either type without being copied here.
 	for _, t := range sp.Targets {
 		out.Targets = append(out.Targets, state.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = sp.Timezone
@@ -8498,4 +8682,17 @@ func (s *server) notifyAppRenamed(ctx context.Context, acct state.Account, updat
 	// both so a future relax of validSlug (or a hostile migration)
 	// cannot smuggle CR/LF into the audit line.
 	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(newSlug), "account", acct.ID)
+}
+
+// appUpdateUnavailable is the fallback refusal of an app update that failed
+// for a reason the customer cannot fix. A control-plane database that did
+// not answer in time gets its own detail and a Retry-After: Hunt 32 H32-56
+// saw "Briefly at capacity — could not update app" for a deadline exceeded
+// while the CP database was slow, which read like a quota.
+func appUpdateUnavailable(err error) *api.Problem {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return api.ErrCapacity("the control plane did not answer in time; the app was not changed, retry shortly").
+			WithHeader("Retry-After", "5")
+	}
+	return api.ErrCapacity("could not update app")
 }

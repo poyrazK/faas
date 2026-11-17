@@ -124,6 +124,9 @@ func (c Contract) Validate() error {
 		}
 	}
 	for _, resource := range c.Resources {
+		if err := validateAnnotations("resource metadata", resource.Meta); err != nil {
+			return err
+		}
 		if resource.URI == "" || seen["resource:"+resource.URI] {
 			return fmt.Errorf("MCP contract contains an empty or duplicate resource URI")
 		}
@@ -139,6 +142,9 @@ func (c Contract) Validate() error {
 		}
 	}
 	for _, template := range c.ResourceTemplates {
+		if err := validateAnnotations("resource template metadata", template.Meta); err != nil {
+			return err
+		}
 		if template.URITemplate == "" || seen["template:"+template.URITemplate] {
 			return fmt.Errorf("MCP contract contains an empty or duplicate resource template")
 		}
@@ -154,6 +160,9 @@ func (c Contract) Validate() error {
 		}
 	}
 	for _, prompt := range c.Prompts {
+		if err := validateAnnotations("prompt metadata", prompt.Meta); err != nil {
+			return err
+		}
 		if prompt.Name == "" || seen["prompt:"+prompt.Name] {
 			return fmt.Errorf("MCP contract contains an empty or duplicate prompt name")
 		}
@@ -487,7 +496,7 @@ func compareCatalogMetadata(kind, id string, before, after any, add func(string,
 		switch field {
 		case "title", "description", "size":
 			severity = "informational"
-		case "name", "mimeType", "annotations", "icons":
+		case "name", "mimeType", "annotations", "icons", "_meta":
 			severity = "needs_review"
 		}
 		add(kind, id, "/"+contractPointer(field), kind+"_"+change, severity)

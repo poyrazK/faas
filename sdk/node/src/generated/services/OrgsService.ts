@@ -3,8 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
+import type { AgentActivityResponse } from '../models/AgentActivityResponse.js';
 import type { AgentConnectionsResponse } from '../models/AgentConnectionsResponse.js';
 import type { AgentConnectionsRevokeAllResponse } from '../models/AgentConnectionsRevokeAllResponse.js';
+import type { AgentUndoPlan } from '../models/AgentUndoPlan.js';
+import type { AgentUndoRequest } from '../models/AgentUndoRequest.js';
+import type { AgentUndoResult } from '../models/AgentUndoResult.js';
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
 import type { ApplicationStandardAssignment } from '../models/ApplicationStandardAssignment.js';
 import type { ApplicationStandardAssignmentList } from '../models/ApplicationStandardAssignmentList.js';
@@ -37,6 +41,8 @@ import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js
 import type { CreateOrgRequest } from '../models/CreateOrgRequest.js';
 import type { CreateReleaseFreezeRequest } from '../models/CreateReleaseFreezeRequest.js';
 import type { DeleteFinancialBudgetRequest } from '../models/DeleteFinancialBudgetRequest.js';
+import type { EgressOverageRequest } from '../models/EgressOverageRequest.js';
+import type { EgressOverageResponse } from '../models/EgressOverageResponse.js';
 import type { FinancialBudgetHistoryResponse } from '../models/FinancialBudgetHistoryResponse.js';
 import type { FinancialBudgetListResponse } from '../models/FinancialBudgetListResponse.js';
 import type { FinancialBudgetPreviewRequest } from '../models/FinancialBudgetPreviewRequest.js';
@@ -61,6 +67,7 @@ import type { OrgListResponse } from '../models/OrgListResponse.js';
 import type { OrgMemberResponse } from '../models/OrgMemberResponse.js';
 import type { OrgPlanResponse } from '../models/OrgPlanResponse.js';
 import type { OrgResponse } from '../models/OrgResponse.js';
+import type { OrgSecurityPolicy } from '../models/OrgSecurityPolicy.js';
 import type { PatchOrgRequest } from '../models/PatchOrgRequest.js';
 import type { Preview } from '../models/Preview.js';
 import type { PreviewList } from '../models/PreviewList.js';
@@ -78,6 +85,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OrgsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List a company organization's deploy freezes.
    * The organization's unlifted freezes that have not ended, on all of its apps and on single apps. Requires `org.read_app`. A personal organization's apps use `/v1/freezes` (409).
@@ -95,7 +103,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<ListReleaseFreezesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/freezes',
       path: {
@@ -133,7 +141,7 @@ export class OrgsService {
     slug: string,
     requestBody: CreateReleaseFreezeRequest,
   }): CancelablePromise<ReleaseFreeze> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/freezes',
       path: {
@@ -177,7 +185,7 @@ export class OrgsService {
      */
     id: string,
   }): CancelablePromise<ReleaseFreeze> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/freezes/{id}',
       path: {
@@ -214,7 +222,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<AgentConnectionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/agent-connections',
       path: {
@@ -248,7 +256,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<AgentConnectionsRevokeAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/agent-connections/revoke_all',
       path: {
@@ -257,6 +265,155 @@ export class OrgsService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Plan undoing the changes of an agent acting in an organization.
+   * The organization's variant of planning an undo, for its owners and
+   * admins.
+   *
+   * @returns AgentUndoPlan The undo plan for the organization agent.
+   * @throws ApiError
+   */
+  public static planOrgAgentUndo({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose changes to undo.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoPlan> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/undo/plan',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo the changes of an agent acting in an organization.
+   * The organization's variant of applying a reviewed undo plan, for its
+   * owners and admins.
+   *
+   * @returns AgentUndoResult What the undo did to each of the organization agent's changes.
+   * @throws ApiError
+   */
+  public static applyOrgAgentUndo({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose changes are undone.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoResult> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/undo',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the activity of an agent acting in an organization.
+   * The write requests an agent acting in the organization made in the
+   * last 7 days, newest first. Owners and admins only; an id that is not
+   * one of the organization's agents is 404.
+   *
+   * @returns AgentActivityResponse One page of the organization agent's write requests, newest first.
+   * @throws ApiError
+   */
+  public static orgAgentConnectionActivity({
+    slug,
+    id,
+    before,
+    limit,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose activity to read.
+     */
+    id: string,
+    /**
+     * The `next_before` value of an earlier activity page; omit it for the newest rows.
+     */
+    before?: string,
+    /**
+     * Activity rows per page, 1 to 200. Default 50.
+     */
+    limit?: number,
+  }): CancelablePromise<AgentActivityResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/activity',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -287,7 +444,7 @@ export class OrgsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/agent-connections/{id}',
       path: {
@@ -322,7 +479,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<OrgAgentPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/agent-policy',
       path: {
@@ -359,7 +516,7 @@ export class OrgsService {
     slug: string,
     requestBody: OrgAgentPolicyRequest,
   }): CancelablePromise<OrgAgentPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/agent-policy',
       path: {
@@ -397,7 +554,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<ListOrgAPIKeysResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/keys',
       path: {
@@ -435,7 +592,7 @@ export class OrgsService {
     slug: string,
     requestBody: CreateOrgAPIKeyRequest,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/keys',
       path: {
@@ -474,7 +631,7 @@ export class OrgsService {
      */
     id: string,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/keys/{id}',
       path: {
@@ -515,7 +672,7 @@ export class OrgsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/keys/{id}',
       path: {
@@ -560,7 +717,7 @@ export class OrgsService {
     id: string,
     requestBody?: RotateOrgAPIKeyRequest,
   }): CancelablePromise<RotateOrgAPIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/keys/{id}/rotate',
       path: {
@@ -591,7 +748,7 @@ export class OrgsService {
    * @throws ApiError
    */
   public static listOrgs(): CancelablePromise<OrgListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs',
       errors: {
@@ -629,7 +786,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<OrgResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs',
       headers: {
@@ -681,7 +838,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<OrgResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}',
       path: {
@@ -727,7 +884,7 @@ export class OrgsService {
     slug: string,
     requestBody: PatchOrgRequest,
   }): CancelablePromise<OrgResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/orgs/{slug}',
       path: {
@@ -765,7 +922,9 @@ export class OrgsService {
    * Soft-delete the org.
    * Marks the company organization as deleted_pending. Live managed
    * PostgreSQL databases must complete deletion first. Owner-only
-   * (`org.delete`); personal organizations are immutable.
+   * (`org.delete`); personal organizations are immutable. Needs a
+   * signed-in browser session with a fresh step-up; an API key cannot
+   * delete an organization. Owners and admins are emailed.
    *
    * @returns void
    * @throws ApiError
@@ -781,7 +940,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}',
       path: {
@@ -791,7 +950,9 @@ export class OrgsService {
         401: `code: unauthorized`,
         403: `\`403 Forbidden\` — caller is authenticated but lacks the
         \`org.delete\` action. Owner-only. Stable code
-        \`org_role_forbidden\`.
+        \`org_role_forbidden\`. An API key gets
+        \`browser_session_required\`; a stale sign-in gets
+        \`step_up_required\`.
         `,
         404: `code: not_found`,
         409: `Personal organizations cannot be deleted (\`org_personal_immutable\`).
@@ -857,7 +1018,7 @@ export class OrgsService {
      */
     appId?: string,
   }): CancelablePromise<ListOrgActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/activity',
       path: {
@@ -910,7 +1071,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<ApplicationStandardAssignmentList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-assignments',
       path: {
@@ -956,7 +1117,7 @@ export class OrgsService {
      */
     assignment: string,
   }): CancelablePromise<ApplicationStandardAssignment> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-assignments/{assignment}',
       path: {
@@ -1002,7 +1163,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standard-reviews',
       path: {
@@ -1059,7 +1220,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardOperation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standard-reviews/{review}/approve',
       path: {
@@ -1117,7 +1278,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardOperation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standard-operations/{operation}/pause',
       path: {
@@ -1175,7 +1336,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardOperation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standard-operations/{operation}/resume',
       path: {
@@ -1233,7 +1394,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardOperation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standard-operations/{operation}/abort',
       path: {
@@ -1281,7 +1442,7 @@ export class OrgsService {
      */
     review: string,
   }): CancelablePromise<ApplicationStandardReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-reviews/{review}',
       path: {
@@ -1323,7 +1484,7 @@ export class OrgsService {
      */
     operation: string,
   }): CancelablePromise<ApplicationStandardOperation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-operations/{operation}',
       path: {
@@ -1376,7 +1537,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<ApplicationStandardExceptionList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions',
       path: {
@@ -1435,7 +1596,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardException> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions',
       path: {
@@ -1488,7 +1649,7 @@ export class OrgsService {
      */
     app: string,
   }): CancelablePromise<ApplicationStandardEnrollment> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-enrollments/{app}',
       path: {
@@ -1543,7 +1704,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardEnrollment> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent',
       path: {
@@ -1609,7 +1770,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardException> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke',
       path: {
@@ -1664,7 +1825,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<ApplicationStandardList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standards',
       path: {
@@ -1714,7 +1875,7 @@ export class OrgsService {
      */
     version?: number,
   }): CancelablePromise<ApplicationStandardVersion> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standards/{standard}',
       path: {
@@ -1772,7 +1933,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardVersion> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standards/{standard}/versions',
       path: {
@@ -1825,7 +1986,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<ApplicationStandardLogDestinationList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-log-destinations',
       path: {
@@ -1878,7 +2039,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardLogDestination> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standard-log-destinations',
       path: {
@@ -1924,7 +2085,7 @@ export class OrgsService {
      */
     resource: string,
   }): CancelablePromise<ApplicationStandardLogDestination> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-log-destinations/{resource}',
       path: {
@@ -1971,7 +2132,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<ApplicationStandardPublisherList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-publishers',
       path: {
@@ -2024,7 +2185,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplicationStandardPublisher> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/application-standard-publishers',
       path: {
@@ -2070,7 +2231,7 @@ export class OrgsService {
      */
     resource: string,
   }): CancelablePromise<ApplicationStandardPublisher> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/application-standard-publishers/{resource}',
       path: {
@@ -2112,7 +2273,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<OrgAppListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/apps',
       path: {
@@ -2165,7 +2326,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/apps',
       path: {
@@ -2214,7 +2375,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<MemberListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/members',
       path: {
@@ -2267,7 +2428,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<InvitationWithTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/members',
       path: {
@@ -2320,7 +2481,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<PreviewList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/previews',
       path: {
@@ -2363,7 +2524,7 @@ export class OrgsService {
      */
     key: string,
   }): CancelablePromise<Preview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/previews/{key}',
       path: {
@@ -2405,7 +2566,7 @@ export class OrgsService {
      */
     key: string,
   }): CancelablePromise<Preview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/previews/{key}',
       path: {
@@ -2457,7 +2618,7 @@ export class OrgsService {
     userId: string,
     requestBody: ChangeMemberRoleRequest,
   }): CancelablePromise<OrgMemberResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/orgs/{slug}/members/{user_id}',
       path: {
@@ -2527,7 +2688,7 @@ export class OrgsService {
      */
     userId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/members/{user_id}',
       path: {
@@ -2565,15 +2726,55 @@ export class OrgsService {
     });
   }
   /**
+   * Leave an org.
+   * Ends the caller's own membership. Any role except owner may leave;
+   * the owner transfers ownership first. A personal org cannot be left,
+   * and the org's billing contact must be replaced first
+   * (`billing_contact_member`).
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static leaveOrg({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/leave',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `The caller is not an active member.`,
+        409: `The caller is the owner (\`org_last_owner\`), the org is personal, or the caller is the billing contact.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Transfer ownership to another active member.
    * Atomically promotes `new_owner_account_id` to owner and
    * demotes the caller to admin via `Store.TransferOrgOwnership`
    * (a single PostgreSQL tx with `FOR UPDATE` locks on both
    * rows). The exactly-one-owner invariant is enforced by the
    * partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-   * member of the org. For a Free organization, the recipient must have
+   * member of the org whose account is active. For a Free organization, the recipient must have
    * available Free-organization ownership capacity; admission is serialized
-   * with organization creation and other incoming transfers.
+   * with organization creation and other incoming transfers. Needs a
+   * signed-in browser session; an API key gets `browser_session_required`.
    *
    * @returns OrgResponse The org (post-transfer).
    * @throws ApiError
@@ -2591,7 +2792,7 @@ export class OrgsService {
     slug: string,
     requestBody: TransferOwnershipRequest,
   }): CancelablePromise<OrgResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/transfer_ownership',
       path: {
@@ -2608,7 +2809,91 @@ export class OrgsService {
         (\`org_free_limit_exceeded\`, with limit and observed count).
         `,
         404: `code: NotFound (new owner is not a member)`,
-        409: `code: org_last_owner (caller not the active owner OR new owner already owner)`,
+        409: `code: org_last_owner (caller not the active owner OR new owner already owner), or conflict (new owner's account is suspended or pending deletion)`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the organization's security policy.
+   * Any member can read whether the organization requires two-factor
+   * authentication.
+   *
+   * @returns OrgSecurityPolicy The organization's security policy.
+   * @throws ApiError
+   */
+  public static getOrgSecurityPolicy({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<OrgSecurityPolicy> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/security-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`org_mfa_required\` when the organization requires two-factor authentication and the caller has none.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Require or stop requiring two-factor authentication for members.
+   * Owner-only (`org.manage_security`) and needs a fresh step-up. While
+   * `require_mfa` is on, a member without two-factor authentication is
+   * refused on the organization's routes with `org_mfa_required`, by
+   * sessions and API keys alike, until they enrol. Turning it on needs
+   * the caller to have two-factor authentication. Owners and admins
+   * are emailed when the policy changes.
+   *
+   * @returns OrgSecurityPolicy The organization's security policy with the requested two-factor requirement applied.
+   * @throws ApiError
+   */
+  public static putOrgSecurityPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: OrgSecurityPolicy,
+  }): CancelablePromise<OrgSecurityPolicy> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/security-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `\`org_role_forbidden\` for a non-owner; \`step_up_required\` for a stale sign-in.`,
+        404: `code: not_found`,
+        409: `\`conflict\` when the caller turning the requirement on has no two-factor authentication.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -2640,7 +2925,7 @@ export class OrgsService {
      */
     token: string,
   }): CancelablePromise<OrgInvitationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/invitations/{token}',
       path: {
@@ -2688,7 +2973,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<OrgMemberResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invitations/{token}/accept',
       path: {
@@ -2755,7 +3040,7 @@ export class OrgsService {
      */
     invitationId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/invitations/{invitation_id}',
       path: {
@@ -2802,7 +3087,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<SeatUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/seat_usage',
       path: {
@@ -2869,7 +3154,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<InvitationListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/invitations',
       path: {
@@ -2913,7 +3198,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<BillingStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/status',
       path: {
@@ -2953,7 +3238,7 @@ export class OrgsService {
      */
     month?: string,
   }): CancelablePromise<Array<UsageResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/usage',
       path: {
@@ -3006,7 +3291,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<InvoiceListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/invoices',
       path: {
@@ -3046,7 +3331,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<BillingPortalResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/portal',
       path: {
@@ -3103,7 +3388,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<OrgPlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/orgs/{slug}/plan',
       path: {
@@ -3146,7 +3431,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<AccountOverageCapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/overage-cap',
       path: {
@@ -3196,7 +3481,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AccountOverageCapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/overage-cap',
       path: {
@@ -3210,6 +3495,95 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the organization's egress overage election.
+   * Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members.
+   * @returns EgressOverageResponse The organization's election.
+   * @throws ApiError
+   */
+  public static getOrgEgressOverage({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<EgressOverageResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/egress-overage',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Turn the organization's egress overage election on or off.
+   * Requires the organization owner, admin credential scope, verified email,
+   * MFA and recent step-up. `{"enabled": true|false}`; turning it on needs a
+   * paid plan (HTTP 402 `plan_egress_overage_not_allowed`).
+   *
+   * @returns EgressOverageResponse The organization's election after the change.
+   * @throws ApiError
+   */
+  public static setOrgEgressOverage({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: EgressOverageRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EgressOverageResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/egress-overage',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_egress_overage_not_allowed — the organization's plan stops at its egress allowance; move the organization to a paid plan.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -3246,7 +3620,7 @@ export class OrgsService {
      */
     month?: string,
   }): CancelablePromise<FinancialCostsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/costs',
       path: {
@@ -3285,7 +3659,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<FinancialBudgetListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/budgets',
       path: {
@@ -3334,7 +3708,7 @@ export class OrgsService {
     idempotencyKey: string,
     requestBody: CreateFinancialBudgetRequest,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/billing/budgets',
       path: {
@@ -3378,7 +3752,7 @@ export class OrgsService {
     slug: string,
     requestBody: FinancialBudgetPreviewRequest,
   }): CancelablePromise<FinancialBudgetPreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/billing/budgets/preview',
       path: {
@@ -3421,7 +3795,7 @@ export class OrgsService {
      */
     id: string,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/budgets/{id}',
       path: {
@@ -3469,7 +3843,7 @@ export class OrgsService {
     idempotencyKey: string,
     requestBody: UpdateFinancialBudgetRequest,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/billing/budgets/{id}',
       path: {
@@ -3524,7 +3898,7 @@ export class OrgsService {
     idempotencyKey: string,
     requestBody: DeleteFinancialBudgetRequest,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/billing/budgets/{id}',
       path: {
@@ -3581,7 +3955,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<FinancialBudgetHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/budgets/{id}/revisions',
       path: {
@@ -3642,7 +4016,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<OrgBillingEmailResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/billing/email',
       path: {

@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventcontract"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -41,7 +42,7 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 	}
 	producer, problem := s.accountProducer(r.Context(), acct)
 	if problem == nil {
-		problem = s.PublishRateProblem(acct, len(wire.Events))
+		problem = s.PublishRateProblem(r.Context(), acct, len(wire.Events))
 	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -49,69 +50,142 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.EventPublishBatchTimeout)
 	defer cancel()
-	response := api.PublishEventBatchResponse{Results: make([]api.PublishEventBatchResult, 0, len(wire.Events))}
+	response := api.PublishEventBatchResponse{Results: make([]api.PublishEventBatchResult, len(wire.Events))}
+	// Validate every event first, then accept the valid ones together: one
+	// transaction for the batch when the store can, not one per event
+	// (2026-11-12 throughput test: ~15–30 events/s per account).
+	pending := make([]preparedBatchEvent, 0, len(wire.Events))
 	for index, raw := range wire.Events {
-		result := s.publishEventBatchItem(ctx, store, acct, producer, raw)
-		result.Index = index
-		response.Results = append(response.Results, result)
+		prepared, result := s.prepareEventBatchItem(ctx, acct, producer, raw)
+		if prepared.payload == nil {
+			result.Index = index
+			response.Results[index] = result
+			continue
+		}
+		prepared.index = index
+		pending = append(pending, prepared)
 	}
+	s.acceptEventBatchItems(ctx, store, acct, pending, response.Results)
 	_ = s.Host.Notify(r.Context(), db.NotifyEventPublished, "1")
 	w.Header().Set("Cache-Control", "no-store")
 	httpkit.WriteJSON(w, http.StatusOK, response)
 }
 
-func (s *Service) publishEventBatchItem(ctx context.Context, store state.PublishedEventAcceptanceStore, acct state.Account, producer string, raw json.RawMessage) api.PublishEventBatchResult {
+// preparedBatchEvent is a batch event that passed validation and still needs
+// acceptance.
+type preparedBatchEvent struct {
+	index    int
+	envelope events.Envelope
+	payload  []byte
+}
+
+func eventNotAttempted() api.PublishEventBatchResult {
+	return batchPublishFailure("rejected", true, api.NewProblem(http.StatusServiceUnavailable, "event_publish_not_attempted", "Event not attempted", "retry the same source and id"))
+}
+
+// acceptEventBatchItems accepts the prepared events in one store call when
+// the store accepts batches, else one at a time, and fills their results.
+// An event the batch deadline reached before acceptance began is reported
+// not attempted; one whose acceptance may have committed is reported unknown.
+func (s *Service) acceptEventBatchItems(ctx context.Context, store state.PublishedEventAcceptanceStore, acct state.Account, pending []preparedBatchEvent, results []api.PublishEventBatchResult) {
+	settle := func(p preparedBatchEvent, result api.PublishEventBatchResult) {
+		result.Index = p.index
+		results[p.index] = result
+	}
+	if batch, ok := store.(state.PublishedEventBatchAcceptanceStore); ok && len(pending) > 0 {
+		if ctx.Err() != nil {
+			for _, p := range pending {
+				settle(p, eventNotAttempted())
+			}
+			return
+		}
+		payloads := make([][]byte, len(pending))
+		for i, p := range pending {
+			payloads[i] = p.payload
+		}
+		accepted, err := batch.AcceptPublishedEventBatch(ctx, "apid", acct.ID, payloads)
+		for i, p := range pending {
+			outcome := state.PublishedEventBatchAcceptance{Err: err}
+			if err == nil {
+				outcome = accepted[i]
+			}
+			settle(p, batchEventAcceptanceResult(acct.ID, p.envelope, outcome))
+		}
+		return
+	}
+	for _, p := range pending {
+		if ctx.Err() != nil {
+			settle(p, eventNotAttempted())
+			continue
+		}
+		accepted, err := store.AcceptPublishedEvent(ctx, "apid", acct.ID, p.payload)
+		settle(p, batchEventAcceptanceResult(acct.ID, p.envelope, state.PublishedEventBatchAcceptance{Acceptance: accepted, Err: err}))
+	}
+}
+
+func batchEventAcceptanceResult(accountID string, envelope events.Envelope, outcome state.PublishedEventBatchAcceptance) api.PublishEventBatchResult {
+	if outcome.Err != nil {
+		return batchEventAcceptanceFailure(outcome.Err)
+	}
+	status := "accepted"
+	if outcome.Acceptance.Duplicate {
+		status = "duplicate"
+	}
+	return api.PublishEventBatchResult{Status: status, Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: accountID, AcceptedAt: outcome.Acceptance.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
+}
+
+// prepareEventBatchItem validates one batch event. A prepared event with a
+// payload is ready for acceptance; without one, the result is final
+// (rejected, or a duplicate already accepted).
+func (s *Service) prepareEventBatchItem(ctx context.Context, acct state.Account, producer string, raw json.RawMessage) (preparedBatchEvent, api.PublishEventBatchResult) {
 	if ctx.Err() != nil {
-		return batchPublishFailure("rejected", true, api.NewProblem(http.StatusServiceUnavailable, "event_publish_not_attempted", "Event not attempted", "retry the same source and id"))
+		return preparedBatchEvent{}, eventNotAttempted()
 	}
 	var req api.PublishEventRequest
 	if json.Unmarshal(raw, &req) != nil {
-		return batchPublishFailure("rejected", false, api.ErrValidation("invalid event JSON"))
+		return preparedBatchEvent{}, batchPublishFailure("rejected", false, api.ErrValidation("invalid event JSON"))
 	}
 	if req.AccountID != "" && req.AccountID != acct.ID {
-		return batchPublishFailure("rejected", false, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Forbidden", "account_id must match the authenticated account"))
+		return preparedBatchEvent{}, batchPublishFailure("rejected", false, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Forbidden", "account_id must match the authenticated account"))
 	}
 	envelope, err := NormalizePublishRequest(req, acct.ID)
 	if err != nil {
-		return batchPublishFailure("rejected", false, api.ErrValidation(err.Error()))
+		return preparedBatchEvent{}, batchPublishFailure("rejected", false, api.ErrValidation(err.Error()))
 	}
 	if strings.HasPrefix(envelope.Source, "gregale.") {
-		return batchPublishFailure("rejected", false, api.ErrValidation("gregale.* sources are reserved for platform events"))
+		return preparedBatchEvent{}, batchPublishFailure("rejected", false, api.ErrValidation("gregale.* sources are reserved for platform events"))
 	}
 	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
-		return batchPublishFailure("rejected", false, AppSourceReservedProblem())
+		return preparedBatchEvent{}, batchPublishFailure("rejected", false, AppSourceReservedProblem())
 	}
-	if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, req); problem != nil {
-		return batchPublishFailure("rejected", retryable, problem)
+	environment, problem := s.PublishEnvironment(ctx, acct.ID, req.EnvironmentID)
+	if problem != nil {
+		return preparedBatchEvent{}, batchPublishFailure("rejected", problem.Status >= http.StatusInternalServerError, problem)
 	}
+	envelope.EnvironmentID = environment
 	envelope.Producer = producer
 	trace := pkgtrace.InjectHeaders(ctx)
 	envelope.Traceparent, envelope.Tracestate, envelope.Baggage = trace["traceparent"], trace["tracestate"], trace["baggage"]
 	payload, err := json.Marshal(envelope)
 	if err != nil {
-		return batchPublishFailure("rejected", false, api.ErrValidation("invalid event data"))
+		return preparedBatchEvent{}, batchPublishFailure("rejected", false, api.ErrValidation("invalid event data"))
+	}
+	if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
+		accepted, lookupErr := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
+		if lookupErr == nil {
+			return preparedBatchEvent{}, api.PublishEventBatchResult{Status: "duplicate", Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
+		}
+		if !errors.Is(lookupErr, state.ErrNotFound) {
+			return preparedBatchEvent{}, batchEventAcceptanceFailure(lookupErr)
+		}
+	}
+	if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, req); problem != nil {
+		return preparedBatchEvent{}, batchPublishFailure("rejected", retryable, problem)
 	}
 	if !api.WorkflowEventEnvelopeFits(payload) {
-		if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
-			accepted, lookupErr := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
-			if lookupErr == nil {
-				return api.PublishEventBatchResult{Status: "duplicate", Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
-			}
-			if errors.Is(lookupErr, state.ErrConflict) {
-				return batchEventAcceptanceFailure(lookupErr)
-			}
-		}
-		return batchPublishFailure("rejected", false, api.ErrWorkflowEventEnvelopeTooLarge())
+		return preparedBatchEvent{}, batchPublishFailure("rejected", false, api.ErrWorkflowEventEnvelopeTooLarge())
 	}
-	accepted, err := store.AcceptPublishedEvent(ctx, "apid", acct.ID, payload)
-	if err != nil {
-		return batchEventAcceptanceFailure(err)
-	}
-	status := "accepted"
-	if accepted.Duplicate {
-		status = "duplicate"
-	}
-	return api.PublishEventBatchResult{Status: status, Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
+	return preparedBatchEvent{envelope: envelope, payload: payload}, api.PublishEventBatchResult{}
 }
 
 func (s *Service) batchEventSchemaProblem(ctx context.Context, accountID string, req api.PublishEventRequest) (*api.Problem, bool) {

@@ -14,7 +14,8 @@ import (
 // responses pushed every other app's entries out. An app now holds at most a
 // quarter of the cache and evicts its own oldest entries first.
 func TestResponseCacheOneAppOverItsShareEvictsItsOwnEntries(t *testing.T) {
-	const entry = 512 * 1024
+	// Leave room for retained keys and metadata within each 512 KiB slot.
+	const entry = 512*1024 - 4096
 	c := NewResponseCacheWithClock(8*1024*1024, time.Now)
 	now := time.Now()
 	ruleAct := &state.EdgeRuleCacheAction{MaxAgeSeconds: 60}
@@ -48,8 +49,8 @@ func TestResponseCacheOneAppOverItsShareEvictsItsOwnEntries(t *testing.T) {
 			t.Errorf("noisy app entry %d = %q, want fresh", i, st)
 		}
 	}
-	if got, want := c.Bytes(), 6*entry; got != want {
-		t.Errorf("Bytes = %d, want %d", got, want)
+	if got := c.Bytes(); c.Len() != 6 || got <= 6*entry || got > 6*512*1024 {
+		t.Errorf("Len = %d, Bytes = %d; want six entries with body and metadata within six slots", c.Len(), got)
 	}
 
 	c.InvalidateByApp("noisy")

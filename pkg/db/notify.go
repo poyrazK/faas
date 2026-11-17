@@ -600,7 +600,7 @@ func (p PoolNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wak
 //	                         "at":rfc3339nano}
 //	                         meterd → dashboard: paid-tier overage crossed
 //	                         100 %; apps keep running, overage accrues at
-//	                         $0.01/GB-h (spec §1, §10).
+//	                         $0.05/GB-h (spec §1, §10; ADR-20261107192333).
 //	NotifyMigrationsApplied {"version_id":int64}
 //	                         the leader's goose-up landed an applied migration
 //	                         ledger row (migration 20260904000000001 trigger).
@@ -708,6 +708,10 @@ const (
 	// fabric teardown can converge after the network row is gone.
 	NotifyPrivateNetworkChanged = "private_network_changed"
 	NotifyDeploymentChanged     = "deployment_changed"
+	// NotifyFeatureFlagsChanged fires on every published flag configuration
+	// (trigger on feature_flag_versions, payload: environment id). gatewayd
+	// empties its X-Faas-Flag-Kills cache (ADR 20261114150000 §3).
+	NotifyFeatureFlagsChanged = "feature_flags_changed"
 	// NotifyEnvironmentWorkloadImage is a durable apid-to-imaged handoff
 	// for a held GitOps candidate. The deployment row carries its authority;
 	// receiving this event never authorizes priming or live activation.
@@ -723,7 +727,8 @@ const (
 	NotifyDeploymentSmokeChallenge = "deployment_smoke_challenge"
 	// NotifyRouteProbeChallenge carries an ADR-847 route probe token from apid
 	// to every gateway. It is a separate kind from the smoke challenge: it
-	// pins one live deployment but never bypasses customer auth gates.
+	// pins one live deployment; it passes the platform auth gates but never an
+	// auth check the app runs itself (ADR-847 amendment 2).
 	// Payload: {"app_id":uuid,"deployment_id":uuid,"token":string,
 	//           "expires_at":RFC3339}
 	NotifyRouteProbeChallenge = "route_probe_challenge"
@@ -810,9 +815,15 @@ const (
 	// changing schedd-owned instances.state.
 	NotifyInstanceReadinessChanged = "instance_readiness_changed"
 	NotifySnapshotPrime            = "snapshot_prime"
-	NotifySnapshotBoot             = "snapshot_boot"
-	NotifySnapshotWritten          = "snapshot_written"
-	NotifyDeploymentReady          = "deployment_ready"
+	// NotifyLayerPublished is imaged's advisory notice that a deployment's
+	// layer and signature are stored and replicated, sent before the scan
+	// (ADR-038 amendment 2026-11-17). Payload {"app_id","deployment_id"}.
+	// The owning schedd verifies the layer then, so the prime that follows
+	// does not hash it; a missed notice only leaves the hash to the prime.
+	NotifyLayerPublished  = "layer_published"
+	NotifySnapshotBoot    = "snapshot_boot"
+	NotifySnapshotWritten = "snapshot_written"
+	NotifyDeploymentReady = "deployment_ready"
 	// NotifySnapshotFanout is sent by the snapshots trigger when a snapshot
 	// gains a fan-out event. Its payload is empty: vmmd's replica worker
 	// wakes and rereads its cursor, and keeps a slow tick for retries.

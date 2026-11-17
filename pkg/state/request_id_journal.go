@@ -49,6 +49,19 @@ type RequestTelemetryTraceResolver interface {
 	GetRequestTelemetryByAppTraceNearest(context.Context, sqlc.GetRequestTelemetryByAppTraceNearestParams) (sqlc.GetRequestTelemetryByAppTraceNearestRow, error)
 }
 
+// EventKindLister reads one kind of a subject's events since a time, newest
+// first. A store without it falls back to a bounded read of every kind.
+type EventKindLister interface {
+	ListEventsBySubjectKind(ctx context.Context, subject, kind string, since time.Time, limit int) ([]Event, error)
+}
+
+// RequestAnalyticsCounter compares the requests the analytics rollups
+// counted for an app over whole minutes with those the debugger kept, and
+// says whether the rollups cover the range.
+type RequestAnalyticsCounter interface {
+	RequestsNotRetained(ctx context.Context, appID string, bucketFrom, bucketUntil time.Time) (int64, bool, error)
+}
+
 type RequestIDJournalStore interface {
 	RequestIDJournalWriter
 	RequestIDJournalReader

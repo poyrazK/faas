@@ -38,3 +38,17 @@ func TestAlertPresetOperatorOnlyNameCannotBeEnabled(t *testing.T) {
 		t.Fatalf("loadAndGateAlertPreset operator row = %#v, want 404", prob)
 	}
 }
+
+// adr: 20261109153000 — the operator signals the catalog hides cannot be
+// reached by naming them on a rule either: such a rule would stay degraded
+// for good and take a slot of the plan's rule limit.
+func TestAlertRuleCannotUseAnOperatorOnlyMetric(t *testing.T) {
+	e := apidserver.SetupAlerts(t, api.PlanScale)
+	apidserver.CreateApp(t, e, "shop")
+	req := apidserver.AlertRuleReq()
+	req.Metric, req.Comparison, req.Threshold = "canary_fleet_in_flight_high", "gt", 50
+	rec := e.Do(t, http.MethodPost, "/v1/apps/shop/alerts", req, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create = %d %s; want 400", rec.Code, rec.Body)
+	}
+}

@@ -36,8 +36,8 @@ at the gateway in the warm queue.
   `max_queue_wait_ms` changes that wait, and `concurrency_overflow: drop`
   refuses the request at once. The request's own time budget (its request
   timeout) starts when it reaches an instance, not while it waits. A function
-  with the 3-second default budget can therefore wait up to 30 seconds and
-  then run for 3 seconds. Set `max_queue_wait_ms` if your callers need a
+  with the 30-second default budget can therefore wait up to 30 seconds and
+  then run for 30 seconds. Set `max_queue_wait_ms` if your callers need a
   shorter end-to-end bound.
 - **Several gateways.** Requests reach your app through more than one gateway,
   and each gateway counts its own requests. For a moment an instance can

@@ -1,11 +1,12 @@
 package preview
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 type DataConnection = api.DataConnection
 type DataConnectionList = api.DataConnectionList
 type CreateDataConnectionRequest = api.CreateDataConnectionRequest
 type RotateDataConnectionRequest = api.RotateDataConnectionRequest
+type DataPipelineWALRetention = api.DataPipelineWALRetention
 type DataPipeline = api.DataPipeline
 type DataPipelineList = api.DataPipelineList
 type CreateDataPipelineRequest = api.CreateDataPipelineRequest

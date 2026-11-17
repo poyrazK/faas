@@ -49,6 +49,11 @@ var (
 	_ PreviewTombstoneStore = (*MemStore)(nil)
 )
 
+// ErrPreviewOwnsBuckets refuses to retire a PR preview that still owns object
+// storage buckets: retiring it in the set transaction would leave them behind
+// (ADR-20261105090226). It is an ErrConflict.
+var ErrPreviewOwnsBuckets = fmt.Errorf("%w: a retired PR preview still owns object storage buckets", ErrConflict)
+
 // retiredPreviewSetRoot reports whether a preview set's root app is deleted
 // or torn down, so another owner may take the set's (installation,
 // repository, PR) key.
@@ -336,7 +341,8 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 		values ($1, $2, $3, $4, $5, $6)
 		on conflict (account_id, installation_id, repo_full_name, pr_number)
 		do update set commit_sha = excluded.commit_sha, root_app_id = excluded.root_app_id,
-		member_app_ids = excluded.member_app_ids, closed_at = null, setup_error = null, updated_at = now()`,
+		member_app_ids = excluded.member_app_ids, closed_at = null, setup_error = null,
+		member_pins = null, member_pins_head = null, updated_at = now()`,
 		set.InstallationID, set.RepoFullName, set.PRNumber, set.CommitSHA, set.RootAppID, set.MemberAppIDs); err != nil {
 		return nil, fmt.Errorf("state: replace PR preview set: %w", err)
 	}
@@ -559,7 +565,7 @@ func retireReplacedPreviewMembersTx(ctx context.Context, tx pgx.Tx, head PRPrevi
 		return fmt.Errorf("state: check replaceable preview buckets: %w", err)
 	}
 	if activeBuckets {
-		return ErrConflict
+		return ErrPreviewOwnsBuckets
 	}
 	now := time.Now().UTC()
 	// Slugs are globally unique even on deleted rows. Move only these retired
@@ -629,7 +635,7 @@ func (m *MemStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, 
 		}
 		for _, bucket := range m.objectBuckets {
 			if bucket.AppID == id && bucket.State != "deleted" {
-				return nil, ErrConflict
+				return nil, ErrPreviewOwnsBuckets
 			}
 		}
 		now := time.Now().UTC()

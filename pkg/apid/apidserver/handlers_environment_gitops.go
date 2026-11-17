@@ -120,8 +120,12 @@ func (s *server) readEnvironmentGitRevision(ctx context.Context, acct state.Acco
 	if !isCanonicalCommitSHA(commitSHA) {
 		return environmentsync.DesiredState{}, api.ErrValidation("commit_sha must be an immutable lowercase Git commit SHA.")
 	}
+	owner, err := state.ProjectResourceAccountByID(ctx, s.store, source.ProjectID)
+	if err != nil {
+		return environmentsync.DesiredState{}, api.ErrCapacity("Resource owner policy is unavailable.")
+	}
 	if source.Spec.Provider == "gitlab" {
-		desired, _, err := s.readVerifiedGitLabSource(ctx, acct, source, commitSHA)
+		desired, _, err := s.readVerifiedGitLabSource(ctx, owner, source, commitSHA)
 		if err != nil {
 			if errors.Is(err, errGitLabDefinitionInvalid) || errors.Is(err, errGitLabScopeMismatch) {
 				return environmentsync.DesiredState{}, api.ErrValidation("The GitLab revision has an invalid definition or target scope.")
@@ -133,7 +137,7 @@ func (s *server) readEnvironmentGitRevision(ctx context.Context, acct state.Acco
 	if _, err := s.verifyEnvironmentGitRepository(ctx, acct.ID, source.Spec.InstallationID, source.Spec.Repository, source.Spec.RepositoryID); err != nil {
 		return environmentsync.DesiredState{}, api.ErrSourceRefUnavailable("Could not verify the bound repository identity.")
 	}
-	limits, ok := api.LimitsFor(acct.Plan)
+	limits, ok := api.LimitsFor(owner.Plan)
 	if !ok {
 		return environmentsync.DesiredState{}, api.ErrCapacity("Plan limits are unavailable.")
 	}
@@ -188,6 +192,10 @@ func (s *server) approveEnvironmentGitRevision(w http.ResponseWriter, r *http.Re
 	}
 	if source.Spec.ApprovalPolicy != "manual" {
 		api.WriteProblem(w, api.ErrValidation("This source requires verified protected-branch merge approval."))
+		return
+	}
+	if problem := s.protectedEnvironmentChangeProblem(r, acct, source.ProjectID, source.EnvironmentSlug, "approve a revision into a protected project environment"); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	var request api.ApproveEnvironmentGitRevisionRequest
@@ -345,6 +353,10 @@ func (s *server) createEnvironmentGitOpsOverride(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.protectedEnvironmentChangeProblem(r, acct, source.ProjectID, source.EnvironmentSlug, "override a protected project environment"); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	var request state.EnvironmentGitOpsOverrideRequest
 	if err := decodeJSON(r, &request); err != nil {
 		api.WriteProblem(w, api.ErrValidation("Invalid temporary override."))
@@ -365,6 +377,10 @@ func (s *server) createEnvironmentGitOpsOverride(w http.ResponseWriter, r *http.
 func (s *server) removeEnvironmentGitOpsOverride(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	source, problem := s.environmentGitSourceForRequest(r, acct)
 	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if problem := s.protectedEnvironmentChangeProblem(r, acct, source.ProjectID, source.EnvironmentSlug, "override a protected project environment"); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

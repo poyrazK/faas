@@ -50,6 +50,28 @@ func TestServeAndObserve(t *testing.T) {
 			return strings.Contains(string(res.stdout), marker), "marker not in output: " + tail(string(res.stdout), 300)
 		})
 	})
+	s.check("deployment_log_explanation", func(t *testing.T) {
+		if r := get(base + "/healthz"); r.status != http.StatusOK {
+			t.Fatalf("GET /healthz: %s", r)
+		}
+		res := tg.run(t, time.Minute, "logs", slug, "--deployment", tg.sharedDeployID, "--explain", "--json")
+		var report struct {
+			Type          string `json:"type"`
+			App           string `json:"app_slug"`
+			Deployment    string `json:"deployment_id"`
+			Complete      bool   `json:"complete"`
+			ReadErrorCode string `json:"read_error_code"`
+		}
+		if err := json.Unmarshal(res.stdout, &report); err != nil {
+			t.Fatal(err)
+		}
+		if report.ReadErrorCode == "plan_deployment_filter_not_allowed" {
+			t.Skip("deployment-filtered runtime logs require Hobby or above")
+		}
+		if (res.exit != 0 && res.exit != 3) || report.Type != "explanation" || report.App != slug || report.Deployment != tg.sharedDeployID || report.Complete != (res.exit == 0) {
+			t.Fatalf("deployment explanation has inconsistent coverage: %s", res.problem())
+		}
+	})
 	s.check("http_request_logs", func(t *testing.T) {
 		eventually(t, "request in `gregale logs --source http`", 3*time.Minute, 5*time.Second, func() (bool, string) {
 			res := tg.run(t, time.Minute, "logs", slug, "--source", "http", "--since", "15m", "--limit", "50")

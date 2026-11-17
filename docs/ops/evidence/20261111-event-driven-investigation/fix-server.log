@@ -1,0 +1,90 @@
+=== RUN   TestAccountUnifiedDeadLetter_HidesCompanyAppsAfterOffboarding
+--- PASS: TestAccountUnifiedDeadLetter_HidesCompanyAppsAfterOffboarding (0.08s)
+=== RUN   TestEventRouteDeadLetterRefusesReplay
+--- PASS: TestEventRouteDeadLetterRefusesReplay (0.09s)
+=== RUN   TestAccountDeadLetterReplayAllPagesPastExpiredKeyedWork
+--- PASS: TestAccountDeadLetterReplayAllPagesPastExpiredKeyedWork (2.08s)
+=== RUN   TestDeadLetterReplayIntoFullQueueIsRefused
+--- PASS: TestDeadLetterReplayIntoFullQueueIsRefused (0.17s)
+=== RUN   TestAccountUnifiedDeadLetter_AccountScopeReplayAndPurge
+--- PASS: TestAccountUnifiedDeadLetter_AccountScopeReplayAndPurge (0.07s)
+=== RUN   TestAccountUnifiedDeadLetter_PreventsCrossAccountRead
+--- PASS: TestAccountUnifiedDeadLetter_PreventsCrossAccountRead (0.15s)
+=== RUN   TestTriggerWorkBindingAPIRequiresFreshDisabledTrigger
+--- PASS: TestTriggerWorkBindingAPIRequiresFreshDisabledTrigger (0.06s)
+=== RUN   TestTriggerAgentTargetFollowsAgentsCapability
+--- PASS: TestTriggerAgentTargetFollowsAgentsCapability (0.12s)
+=== RUN   TestBatchCreateTriggerAppliesEventTriggers
+--- PASS: TestBatchCreateTriggerAppliesEventTriggers (0.23s)
+=== RUN   TestBatchCreateTriggerEventTriggersNeedTriggerPlan
+--- PASS: TestBatchCreateTriggerEventTriggersNeedTriggerPlan (0.35s)
+=== RUN   TestBatchCreateTriggerEventTriggersHoldToThePlanCap
+--- PASS: TestBatchCreateTriggerEventTriggersHoldToThePlanCap (0.11s)
+=== RUN   TestErrTriggerBatchWindowTooLarge_WireShape
+--- PASS: TestErrTriggerBatchWindowTooLarge_WireShape (0.00s)
+=== RUN   TestErrTriggerTLSSkipVerifyNotAllowed_WireShape
+--- PASS: TestErrTriggerTLSSkipVerifyNotAllowed_WireShape (0.00s)
+=== RUN   TestErrTriggerKindNotAllowedWireShape
+--- PASS: TestErrTriggerKindNotAllowedWireShape (0.00s)
+=== RUN   TestCreateTriggerRejectsKindOutsidePlan
+--- PASS: TestCreateTriggerRejectsKindOutsidePlan (0.08s)
+=== RUN   TestCreateTriggerAcceptsAllowedKafkaConfig
+--- PASS: TestCreateTriggerAcceptsAllowedKafkaConfig (0.08s)
+=== RUN   TestTriggerRetryPolicyRoundTripsAndUpdates
+--- PASS: TestTriggerRetryPolicyRoundTripsAndUpdates (0.07s)
+=== RUN   TestCreateTriggerRejectsInvalidRetryPolicy
+--- PASS: TestCreateTriggerRejectsInvalidRetryPolicy (0.06s)
+=== RUN   TestBatchCreateTriggerUsesPlanSafeDefaults
+--- PASS: TestBatchCreateTriggerUsesPlanSafeDefaults (0.06s)
+=== RUN   TestBatchCreateTriggerRejectsKindOutsidePlan
+--- PASS: TestBatchCreateTriggerRejectsKindOutsidePlan (0.09s)
+=== RUN   TestUpdateTriggerRejectsExplicitOverCaps
+=== RUN   TestUpdateTriggerRejectsExplicitOverCaps/batch_size
+=== RUN   TestUpdateTriggerRejectsExplicitOverCaps/batch_window
+=== RUN   TestUpdateTriggerRejectsExplicitOverCaps/attempts
+=== RUN   TestUpdateTriggerRejectsExplicitOverCaps/payload
+--- PASS: TestUpdateTriggerRejectsExplicitOverCaps (0.44s)
+    --- PASS: TestUpdateTriggerRejectsExplicitOverCaps/batch_size (0.10s)
+    --- PASS: TestUpdateTriggerRejectsExplicitOverCaps/batch_window (0.16s)
+    --- PASS: TestUpdateTriggerRejectsExplicitOverCaps/attempts (0.08s)
+    --- PASS: TestUpdateTriggerRejectsExplicitOverCaps/payload (0.09s)
+=== RUN   TestTriggerBatchDelivery
+--- PASS: TestTriggerBatchDelivery (0.13s)
+=== RUN   TestTriggerRecordVerbsAreScopedToTheTrigger
+=== RUN   TestTriggerRecordVerbsAreScopedToTheTrigger/retry
+=== RUN   TestTriggerRecordVerbsAreScopedToTheTrigger/drop
+--- PASS: TestTriggerRecordVerbsAreScopedToTheTrigger (0.17s)
+    --- PASS: TestTriggerRecordVerbsAreScopedToTheTrigger/retry (0.00s)
+    --- PASS: TestTriggerRecordVerbsAreScopedToTheTrigger/drop (0.00s)
+=== RUN   TestTriggerRecordVerbsNeedWriteScope
+--- PASS: TestTriggerRecordVerbsNeedWriteScope (0.15s)
+=== RUN   TestTriggerResponseRedactsKafkaSecrets
+--- PASS: TestTriggerResponseRedactsKafkaSecrets (0.00s)
+=== RUN   TestCreateTriggerSealsStoredCredentialsAndRedactsResponse
+--- PASS: TestCreateTriggerSealsStoredCredentialsAndRedactsResponse (0.17s)
+=== RUN   TestCreateTriggerFailsClosedWithoutSecretRecipient
+--- PASS: TestCreateTriggerFailsClosedWithoutSecretRecipient (0.10s)
+=== RUN   TestBatchCreateTriggerSealsCredentialsAndRedactsResponse
+--- PASS: TestBatchCreateTriggerSealsCredentialsAndRedactsResponse (0.10s)
+=== RUN   TestUpdateTriggerPreservesRotatesAndRemovesKafkaPassword
+--- PASS: TestUpdateTriggerPreservesRotatesAndRemovesKafkaPassword (0.23s)
+=== RUN   TestUpdateTriggerKeepsAStoredSecretItCannotOpen
+--- PASS: TestUpdateTriggerKeepsAStoredSecretItCannotOpen (0.24s)
+=== RUN   TestUpdateTriggerRetryPolicyKeepsKafkaPassword
+--- PASS: TestUpdateTriggerRetryPolicyKeepsKafkaPassword (0.19s)
+=== RUN   TestTriggerConfigs_FollowTheDeliveryDomain
+=== RUN   TestTriggerConfigs_FollowTheDeliveryDomain/before_the_domain_is_staged
+=== RUN   TestTriggerConfigs_FollowTheDeliveryDomain/staged:_dual_by_default
+=== RUN   TestTriggerConfigs_FollowTheDeliveryDomain/staged,_opted_out
+=== RUN   TestTriggerConfigs_FollowTheDeliveryDomain/domain_only
+=== RUN   TestTriggerConfigs_FollowTheDeliveryDomain/domain_only_without_the_recipient
+--- PASS: TestTriggerConfigs_FollowTheDeliveryDomain (0.58s)
+    --- PASS: TestTriggerConfigs_FollowTheDeliveryDomain/before_the_domain_is_staged (0.16s)
+    --- PASS: TestTriggerConfigs_FollowTheDeliveryDomain/staged:_dual_by_default (0.09s)
+    --- PASS: TestTriggerConfigs_FollowTheDeliveryDomain/staged,_opted_out (0.11s)
+    --- PASS: TestTriggerConfigs_FollowTheDeliveryDomain/domain_only (0.08s)
+    --- PASS: TestTriggerConfigs_FollowTheDeliveryDomain/domain_only_without_the_recipient (0.14s)
+=== RUN   TestTriggerInventoryKeepsCronsOut
+--- PASS: TestTriggerInventoryKeepsCronsOut (0.19s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/apid/apidserver	6.759s

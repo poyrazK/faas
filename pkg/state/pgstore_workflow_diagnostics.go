@@ -76,7 +76,7 @@ func workflowRunDiagnosticsRead(ctx context.Context, q *sqlc.Queries, db sqlc.DB
 	var outboundErr error
 	if json.Unmarshal(run.DefinitionSnapshot, &spec) == nil {
 		outboundErr = validateWorkflowOutboundTx(ctx, db, run.AppID, opts.AccountID, spec)
-		if outboundErr != nil && !errors.Is(outboundErr, ErrAutomationInvalid) {
+		if outboundErr != nil && !errors.Is(outboundErr, ErrStoredWorkflowInvalid) {
 			return api.WorkflowRunDiagnosticsResponse{}, outboundErr
 		}
 	}

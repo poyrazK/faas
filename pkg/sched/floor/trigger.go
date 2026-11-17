@@ -698,6 +698,10 @@ func (t *Trigger) tickPerApp(ctx context.Context) error {
 			t.observe(app.ID, OutcomeDisabled)
 			continue
 		}
+		// A floor saved under a larger plan holds no more than the current
+		// plan allows (ADR-20261105120000); meterd bills the same cap
+		// (planFloorCap).
+		floor = min(floor, plan.MaxMinInstances())
 		if app.WorkloadClass == state.WorkloadClassWorker {
 			t.observe(app.ID, OutcomeDisabled)
 			continue

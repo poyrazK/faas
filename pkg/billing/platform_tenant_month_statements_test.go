@@ -72,9 +72,52 @@ func TestBuildPlatformTenantMonthStatementAllowanceAdjustment(t *testing.T) {
 	if len(rev2.Coverage) != 1 || rev2.Coverage[0].BillableUnits != 3 {
 		t.Fatalf("adjustment coverage = %+v, want only the late minute", rev2.Coverage)
 	}
+
+	// Only finalized statements for exactly this period are netted out: a
+	// superseded copy, or a finalized statement for another period that
+	// shares the start, must not be credited again.
+	superseded := finalized
+	superseded.Status = state.APIConsumerUsageStatementSuperseded
+	otherPeriod := finalized
+	otherPeriod.PeriodEnd = end.AddDate(0, 0, 1)
+	noisy, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 2, state.APIConsumerUsageStatementFinalized,
+		[]state.APIConsumerUsageBucket{late}, month, nil, []state.PlatformTenantRateCard{card},
+		[]state.PlatformTenantStatement{finalized, superseded, otherPeriod}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noisy.BillableUnits != rev2.BillableUnits || noisy.AmountMillicents != rev2.AmountMillicents || len(noisy.Lines) != len(rev2.Lines) {
+		t.Fatalf("with superseded/other-period statements = %+v, want the same as %+v", noisy, rev2)
+	}
 }
 
 // adr: 975
+// adr: 1312 — a volume card's step is locked by what the month's finalized
+// revisions billed, and only those: superseded revisions, other periods and
+// graduated cards never lock a step.
+func TestLockedTenantVolumeStepsUsesOnlyThisPeriodsFinalizedVolumeLines(t *testing.T) {
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	hundred := int64(100)
+	ladder := []state.APIConsumerRateCardTier{{UpTo: &hundred, PriceMillicentsPerUnit: 10}, {PriceMillicentsPerUnit: 5}}
+	volume := state.PlatformTenantRateCard{ID: "volume", Tiers: ladder, TierMode: state.RateCardTierModeVolume}
+	graduated := state.PlatformTenantRateCard{ID: "graduated", Tiers: ladder, TierMode: state.RateCardTierModeGraduated}
+	statement := func(status state.APIConsumerUsageStatementStatus, periodEnd time.Time, card string, price, units int64) state.PlatformTenantStatement {
+		return state.PlatformTenantStatement{Status: status, PeriodStart: start, PeriodEnd: periodEnd,
+			Lines: []state.PlatformTenantStatementLine{{PlatformTenantRateCardID: card, PriceMillicentsPerUnit: price, BillableUnits: units}}}
+	}
+	previous := []state.PlatformTenantStatement{
+		statement(state.APIConsumerUsageStatementFinalized, end, "volume", 10, 50),
+		statement(state.APIConsumerUsageStatementSuperseded, end, "volume", 5, 200),
+		statement(state.APIConsumerUsageStatementFinalized, end.AddDate(0, 0, 1), "volume", 5, 200),
+		statement(state.APIConsumerUsageStatementFinalized, end, "graduated", 5, 200),
+	}
+	got := LockedTenantVolumeSteps([]state.PlatformTenantRateCard{volume, graduated}, previous, start, end)
+	if len(got) != 1 || got["volume"] != 0 {
+		t.Fatalf("locked steps = %v, want only volume at step 0", got)
+	}
+}
+
 func TestBuildPlatformTenantMonthStatementTiersAndRules(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)

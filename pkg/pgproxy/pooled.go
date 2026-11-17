@@ -81,10 +81,9 @@ type pooledSession struct {
 	statements map[string]*pgproto3.Parse // client name -> Parse with its backend name
 	// canceler is the client's cancel key's view of the server it holds.
 	canceler *pooledCanceler
-	events   chan serverEvent
-	resume   chan bool
-	stop     chan struct{}
-	egress   func(int)
+	// events is the held server's reader output.
+	events chan serverEvent
+	egress func(int)
 }
 
 type serverEvent struct {
@@ -161,7 +160,7 @@ func needsFlush(msg pgproto3.FrontendMessage) bool {
 	return false
 }
 
-// link borrows a server and starts reading its answers.
+// link borrows a server and takes over its answers.
 func (s *pooledSession) link(ctx context.Context) error {
 	srv, err := s.pl.acquire(ctx)
 	if err != nil {
@@ -169,50 +168,54 @@ func (s *pooledSession) link(ctx context.Context) error {
 	}
 	s.server = srv
 	s.canceler.hold(srv)
-	s.events = make(chan serverEvent, 64)
-	s.resume = make(chan bool)
-	s.stop = make(chan struct{})
-	go readServer(srv, s.events, s.resume, s.stop)
+	s.events = srv.events
 	return nil
 }
 
-// readServer copies a server's messages out; after each ReadyForQuery it
-// waits to be told whether to read on. stop ends it at once.
-func readServer(srv *serverConn, events chan<- serverEvent, resume <-chan bool, stop <-chan struct{}) {
-	defer close(events)
+// readServer copies a server's messages out for the server's whole life,
+// borrowed or idle. What arrives while it is idle waits for its next
+// borrower, as it would on the socket. A failed read, or a FATAL (the
+// backend is ending the session), marks the server ended, so an idle server
+// whose database stopped is never lent. Closing the server ends it.
+func readServer(srv *serverConn) {
+	defer close(srv.events)
 	send := func(ev serverEvent) bool {
 		select {
-		case events <- ev:
+		case srv.events <- ev:
 			return true
-		case <-stop:
+		case <-srv.stop:
 			return false
 		}
 	}
 	for {
 		msg, err := srv.fe.Receive()
 		if err != nil {
+			srv.ended.Store(true)
 			send(serverEvent{err: err})
 			return
 		}
+		if e, ok := msg.(*pgproto3.ErrorResponse); ok && endsSession(e) {
+			srv.ended.Store(true)
+		}
 		buf, err := msg.Encode(nil)
 		if err != nil {
+			srv.ended.Store(true)
 			send(serverEvent{err: err})
 			return
 		}
 		if !send(serverEvent{msg: buf}) {
 			return
 		}
-		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {
-			select {
-			case next := <-resume:
-				if !next {
-					return
-				}
-			case <-stop:
-				return
-			}
-		}
 	}
+}
+
+// endsSession reports an error after which PostgreSQL closes the session.
+func endsSession(e *pgproto3.ErrorResponse) bool {
+	severity := e.SeverityUnlocalized
+	if severity == "" {
+		severity = e.Severity
+	}
+	return severity == "FATAL" || severity == "PANIC"
 }
 
 // unlink returns the server: clean only between transactions with every
@@ -229,15 +232,13 @@ func (s *pooledSession) unlink(clean bool) {
 	s.expect, s.copyIn = nil, false
 	if !clean {
 		srv.close()
-		close(s.stop)
 		for range s.events {
 		}
 		s.pl.put(srv, false)
 		return
 	}
-	s.resume <- false
-	for range s.events {
-	}
+	// Every answer was relayed, so the reader waits on the socket; it keeps
+	// watching the server in the pool.
 	s.pl.put(srv, true)
 }
 
@@ -324,7 +325,6 @@ func (s *pooledSession) answer(buf []byte) (bool, error) {
 			s.unlink(true)
 			return true, nil
 		}
-		s.resume <- true
 		return false, nil
 	}
 	if pass {

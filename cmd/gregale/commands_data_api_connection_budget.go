@@ -64,13 +64,13 @@ func validDataAPIConnectionBudget(b api.ManagedPostgresConnectionBudget, now tim
 		}
 	}
 	i, d := b.Inventory, b.Demand
-	for _, count := range []int64{i.Bindings, i.DataAPIConsumers, i.AuthConsumers, i.MigrationBindings, i.OtherBindings, i.ResidentInstances, i.ParkedInstances, i.AuxiliaryInstances, i.ActiveTasks, i.RotationPending, i.OverlapConsumers, i.StaleNodeInstances,
-		d.DataAPIResidentEstimate, d.DataAPIWakeEstimate, d.AuthWakeEstimate, d.ControlHeadroom, d.MigrationHeadroom, d.ModeledPeakConnections} {
+	for _, count := range []int64{i.Bindings, i.DataAPIConsumers, i.AuthConsumers, i.MigrationBindings, i.OtherBindings, i.SessionBindings, i.ResidentInstances, i.ParkedInstances, i.AuxiliaryInstances, i.ActiveTasks, i.RotationPending, i.OverlapConsumers, i.StaleNodeInstances,
+		d.DataAPIResidentEstimate, d.DataAPIWakeEstimate, d.AuthWakeEstimate, d.SessionConnectionCeiling, d.ControlHeadroom, d.MigrationHeadroom, d.ModeledPeakConnections} {
 		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*max(api.AuthMaxPoolConnections, api.DataAPIMaxPoolConnections) {
 			return false
 		}
 	}
-	if !bounded && d.ModeledPeakConnections != d.DataAPIWakeEstimate+d.AuthWakeEstimate+d.ControlHeadroom+d.MigrationHeadroom {
+	if !bounded && d.ModeledPeakConnections != d.DataAPIWakeEstimate+d.AuthWakeEstimate+d.SessionConnectionCeiling+d.ControlHeadroom+d.MigrationHeadroom {
 		return false
 	}
 	if !validRuntimeConnectionCoverage(b, now) {

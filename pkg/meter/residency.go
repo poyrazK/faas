@@ -14,13 +14,11 @@ import (
 // Residency computes month-to-date average resident GB per paying customer
 // and emits the §12 dashboard panel (ADR-031, PR #141).
 //
-// Why a per-plan average: the spec line 417 names the row "resident GB
-// per paying customer" with a single threshold (> 0.45 warn). The
-// number is meaningful per plan because the Hobby plan's 256 MB RAM
-// is ~half the Scale plan's 1 GB; a fleet-wide average hides plan
-// skew. Splitting by plan lets ops see which segment is migrating
-// toward the §12 page threshold (0.45) — the alert rule
-// FaasResidentGbPerCustomerHigh fans out via {{ $labels.plan }}.
+// Why a per-plan average: plans differ in RAM and in how many instances
+// the financial model expects a customer to keep resident, so a
+// fleet-wide average hides plan skew. FaasResidentGbPerCustomerHigh
+// compares each plan with its own model, exported beside it as
+// <daemon>_resident_gb_per_customer_planned (ADR-20261117070932).
 //
 // Definition: Σ(month-to-date GB-RAM-hours across paying accounts of plan P)
 //
@@ -163,6 +161,7 @@ func (r *Residency) RunOnce(ctx context.Context) (map[api.Plan]int, error) {
 			avg = totalGB[plan] / elapsedHours / float64(n)
 		}
 		r.ops.SetResidentGBPerCustomer(string(plan), avg)
+		r.ops.SetResidentPayingCustomers(string(plan), count[plan])
 	}
 	return count, nil
 }

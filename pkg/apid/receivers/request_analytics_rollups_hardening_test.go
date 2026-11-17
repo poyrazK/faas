@@ -21,7 +21,7 @@ func TestRequestAnalyticsRollupsStoreLongUnicodeReferrers(t *testing.T) {
 	host := strings.Repeat("日", 253)
 	rollups.Add(RequestAnalyticsRollupRow{EventID: uuid.New(), AccountID: uuid.New(), AppID: uuid.New(), DeploymentID: uuid.New(),
 		ReceivedAt: time.Now(), Route: "GET /" + strings.Repeat("é", 300), Method: "GÉTÉTÉTÉTÉTÉTÉ", Status: 200, Count: 1, ReferrerHost: host})
-	if err := rollups.Flush(t.Context()); err != nil {
+	if err := flushClosed(t, rollups); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
 	if got := rollupStore.requests(RollupKindReferrerHost, ""); got != 1 || len(rollupStore.gaps) != 0 {
@@ -47,7 +47,7 @@ func TestRequestAnalyticsRollupsDropRefusedRowsAndRecordTheirMinutes(t *testing.
 	}
 	add(bad)
 	add(good)
-	if err := rollups.Flush(t.Context()); err != nil {
+	if err := flushClosed(t, rollups); err != nil {
 		t.Fatalf("flush with one refused row failed the flush: %v", err)
 	}
 	if rollupStore.requests(RollupKindRoute, "") != 4 || rollupStore.requests(RollupKindCountry, "") != 2 {
@@ -60,7 +60,7 @@ func TestRequestAnalyticsRollupsDropRefusedRowsAndRecordTheirMinutes(t *testing.
 	// The refused row is gone, not retried forever.
 	rollupStore.rows = nil
 	add(good)
-	if err := rollups.Flush(t.Context()); err != nil || rollupStore.requests(RollupKindRoute, "") != 2 {
+	if err := flushClosed(t, rollups); err != nil || rollupStore.requests(RollupKindRoute, "") != 2 {
 		t.Fatalf("next flush err %v, %d route requests; want only the new row", err, rollupStore.requests(RollupKindRoute, ""))
 	}
 }
@@ -77,7 +77,7 @@ func TestRequestAnalyticsRollupsKeepTheBusiestValuesNotTheFirst(t *testing.T) {
 	busy := "late-but-busy"
 	rollups.Add(RequestAnalyticsRollupRow{EventID: uuid.New(), AccountID: account, AppID: app, DeploymentID: deployment,
 		ReceivedAt: now, Route: "GET /", Method: "GET", Status: 200, Count: 500, ConsumerID: busy})
-	if err := rollups.Flush(t.Context()); err != nil {
+	if err := flushClosed(t, rollups); err != nil {
 		t.Fatal(err)
 	}
 	if got := rollupStore.requests(RollupKindConsumerID, busy); got != 500 {

@@ -73,6 +73,9 @@ type TrafficRuntimeStatus struct {
 	SecurityRevocation TrafficRuntimeFeatureStatus `json:"security_revocation"`
 	ManagedHTTP        TrafficRuntimeFeatureStatus `json:"managed_http"`
 	ManagedCircuit     TrafficRuntimeFeatureStatus `json:"managed_circuit"`
+	// EdgeHeaderSecrets: gateways open sealed edge-rule request header
+	// values (ADR-20261108110000). Absent from apid releases before it.
+	EdgeHeaderSecrets *TrafficRuntimeFeatureStatus `json:"edge_header_secrets,omitempty"`
 }
 
 // Mode describes wiring: enabled/disabled, central/local, shared/redis/local,

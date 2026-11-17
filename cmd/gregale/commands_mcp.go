@@ -24,16 +24,30 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp serve|connections|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp serve|connect|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
+	case "tool-connection":
+		return cmdMCPToolConnection(args[1:])
+	case "tool-grant":
+		return cmdMCPToolGrant(args[1:])
+	case "tool-publication":
+		return cmdMCPToolPublication(args[1:])
+	case "invocation-run":
+		return cmdMCPInvocationRun(args[1:])
+	case "connect":
+		return cmdMCPConnect(args[1:])
 	case "connections":
 		return cmdMCPConnections(args[1:])
+	case "approval-channels":
+		return cmdMCPApprovalChannels(args[1:])
 	case "serve":
 		return cmdMCPServe(args[1:])
 	case "init":
 		return cmdMCPInit(args[1:])
+	case "import":
+		return cmdMCPImportOpenAPI(args[1:])
 	case "capabilities":
 		return cmdMCPCapabilities(args[1:])
 	case "test":
@@ -664,6 +678,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 }
 
 type mcpDeployOptions struct {
+	publicationID                              string
 	smokeFixtures                              string
 	allowToolExecution                         bool
 	path, slug, profile, tokenEnv, secretsFile string
@@ -672,6 +687,10 @@ type mcpDeployOptions struct {
 	accessAudit, accessAuditAlgorithms         string
 	mcpTaskMigrationOverride                   bool
 	timeout                                    int
+	expectedServing                            *string
+	expectedAppID                              string
+	requireCatalogPin                          bool
+	requireReviewedTools                       bool
 }
 
 func cmdMCPDeploy(args []string) int {
@@ -681,6 +700,7 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.slug, "name", "", "app slug")
 	resourceSizeFlag(fs, &o.profile, "app resource size")
 	fs.StringVar(&o.tokenEnv, "token-env", "", "MCP client token for post-deployment verification")
+	fs.StringVar(&o.publicationID, "publication-id", "", "native private publication whose candidate tests require owner approval")
 	fs.StringVar(&o.secretsFile, "secrets-file", "", "sealed app secrets configured before deployment")
 	fs.StringVar(&o.smokeFixtures, "fixtures", "", "run reviewed MCP smoke fixtures against the candidate before promotion")
 	fs.BoolVar(&o.allowToolExecution, "allow-tool-execution", false, "execute reviewed tool fixtures once; requires --fixtures")
@@ -694,6 +714,10 @@ func cmdMCPDeploy(args []string) int {
 	// flag; without it the documented retry was an unknown-flag error
 	// (hunt #9 H9-63).
 	fs.StringVar(&o.idempotencyKey, "idempotency-key", "", "retry identity printed by a failed submission")
+	fs.Func("expected-serving-deployment", "require this reviewed serving deployment before promotion; empty requires no serving release", func(value string) error { o.expectedServing = &value; return nil })
+	fs.StringVar(&o.expectedAppID, "expected-app-id", "", "require this reviewed immutable app identity before promotion")
+	fs.BoolVar(&o.requireCatalogPin, "require-catalog-pin", false, "refuse promotion when the candidate cannot provide a catalog integrity pin")
+	fs.BoolVar(&o.requireReviewedTools, "require-reviewed-tools", false, "require discovered tools to exactly match configured tool_scopes before fixtures and promotion")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -716,14 +740,20 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if err != nil {
 		return printErr("MCP configuration", err)
 	}
+	if o.requireReviewedTools && len(cfg.Auth.ToolScopes) == 0 {
+		return printErr("MCP review", errors.New("--require-reviewed-tools requires an explicit tool_scopes allowlist"))
+	}
 	if err := validateMCPDeploySecretsFile(o.secretsFile); err != nil {
 		return printErr("MCP catalog pin", err)
+	}
+	if err := validatePrivatePublicationOptions(o, cfg, smoke); err != nil {
+		return printErr("MCP private publication", err)
 	}
 	token, err := mcpToken(o.tokenEnv)
 	if err != nil {
 		return printErr("MCP client token", err)
 	}
-	if cfg.Auth.Mode == "external-oauth" && token == "" {
+	if cfg.Auth.Mode == "external-oauth" && token == "" && o.publicationID == "" {
 		return printErr("MCP verification", errors.New("external-oauth deploy requires --token-env with a client access token for verification"))
 	}
 	if o.validateEndpoint != "" {
@@ -778,8 +808,21 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if pinnedDigest != "" {
 		pinReceipt = &mcpCatalogPinReceipt{DiscoveryDeploymentID: discoveryID, SHA256: pinnedDigest}
 	}
+	if o.requireCatalogPin && pinReceipt == nil {
+		return printErr("MCP catalog pin", errors.New("candidate does not support the required catalog integrity pin; no promotion performed"))
+	}
+	if pinReceipt == nil && (o.expectedServing != nil || o.expectedAppID != "" || o.requireReviewedTools) {
+		pinReceipt = &mcpCatalogPinReceipt{}
+	}
+	if pinReceipt != nil {
+		pinReceipt.expectedServing, pinReceipt.expectedAppID = o.expectedServing, o.expectedAppID
+		pinReceipt.requireReviewedTools = o.requireReviewedTools
+	}
 	verificationCtx, cancel := context.WithTimeout(ctx, time.Duration(o.timeout)*time.Second)
 	defer cancel()
+	if o.publicationID != "" {
+		return finishPrivateMCPDeploy(verificationCtx, c, o, cfg, candidate.ID, pinReceipt)
+	}
 	return finishMCPDeployWithSmoke(verificationCtx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
 }
 

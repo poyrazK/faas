@@ -1,0 +1,124 @@
+{
+  "date": "2026-11-11",
+  "branch": "fix/mcp-investigation-backlog",
+  "base_commit": "46aad2a12e4d1be39d0948b6942cb18d8e71d0b2",
+  "findings": [
+    "MCP001",
+    "MCP002",
+    "MCP003",
+    "MCP004",
+    "MCP005",
+    "MCP006",
+    "MCP007",
+    "MCP008",
+    "MCP009",
+    "MCP010",
+    "MCP011",
+    "MCP012",
+    "MCP013",
+    "MCP014",
+    "MCP015",
+    "MCP016",
+    "MCP017",
+    "MCP018",
+    "MCP019",
+    "MCP020",
+    "MCP021"
+  ],
+  "scope": "local verification; no deployment or live provider calls",
+  "postgresql_cleanup": {
+    "remaining_test_schemas": 0,
+    "private_server_stopped": true
+  },
+  "checks": [
+    {
+      "check": "retained probes",
+      "exit_code": 0,
+      "log": "probe_results.json"
+    },
+    {
+      "check": "affected Go packages and Go starter with PostgreSQL",
+      "exit_code": 0,
+      "log": "go_packages.log"
+    },
+    {
+      "check": "Go authorization and retry controls",
+      "exit_code": 0,
+      "log": "go_authorization_recovery.log"
+    },
+    {
+      "check": "Go commit-failure controls",
+      "exit_code": 0,
+      "log": "go_commit_failure.log"
+    },
+    {
+      "check": "Go final cron recovery and receipt controls",
+      "exit_code": 0,
+      "log": "go_final_recovery.log"
+    },
+    {
+      "check": "MCP CLI",
+      "exit_code": 0,
+      "log": "go_cli.log"
+    },
+    {
+      "check": "Node starter with PostgreSQL",
+      "exit_code": 0,
+      "passed": 155,
+      "skipped": 0,
+      "log": "node_suite.log"
+    },
+    {
+      "check": "Python starter with PostgreSQL",
+      "exit_code": 0,
+      "passed": 52,
+      "skipped": 0,
+      "log": "python_suite.log"
+    },
+    {
+      "check": "Go vet",
+      "exit_code": 0,
+      "log": "go_vet.log"
+    },
+    {
+      "check": "teststorecheck",
+      "exit_code": 0,
+      "log": "teststorecheck.log"
+    },
+    {
+      "check": "sealdomaincheck",
+      "exit_code": 0,
+      "log": "sealdomaincheck.log"
+    },
+    {
+      "check": "problemdetailcheck",
+      "exit_code": 0,
+      "log": "problemdetailcheck.log"
+    },
+    {
+      "check": "trimpath_check",
+      "exit_code": 0,
+      "log": "trimpath_check.log"
+    },
+    {
+      "check": "CLI resource/catalog watchers, fleet pins and plugin references",
+      "exit_code": 0,
+      "log": "go_cli_consumers.log"
+    },
+    {
+      "check": "Go source guards and subscriptions after static-check cleanup",
+      "exit_code": 0,
+      "log": "go_final_source_subscriptions.log"
+    },
+    {
+      "check": "Go final recovery vet",
+      "exit_code": 0,
+      "log": "go_final_vet.log"
+    },
+    {
+      "check": "golangci-lint affected Go packages",
+      "exit_code": 0,
+      "log": "golangci_lint.log"
+    }
+  ]
+}

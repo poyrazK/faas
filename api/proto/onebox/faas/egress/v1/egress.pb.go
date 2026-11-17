@@ -63,7 +63,13 @@ const (
 // empty, room to grow without a wire version bump) so the
 // surface can stay stable across the next ADR-046 slice.
 type StreamBytesRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// edge_frames asks for frames that carry app_id: bytes the gateway served
+	// for an app without an instance, such as response-cache hits and log drain
+	// deliveries (ADR-20261104132753). A client that leaves it false receives
+	// only instance frames; the gateway keeps edge frames for a client that
+	// asks, so an older meterd never sees a frame it cannot persist.
+	EdgeFrames    bool `protobuf:"varint,1,opt,name=edge_frames,json=edgeFrames,proto3" json:"edge_frames,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -98,6 +104,13 @@ func (*StreamBytesRequest) Descriptor() ([]byte, []int) {
 	return file_onebox_faas_egress_v1_egress_proto_rawDescGZIP(), []int{0}
 }
 
+func (x *StreamBytesRequest) GetEdgeFrames() bool {
+	if x != nil {
+		return x.EdgeFrames
+	}
+	return false
+}
+
 // BytesFrame is one (instance, minute, bytes) row. instance_id
 // is the compute_node-relative instances.id UUID
 // (commands.com/drivers agree on this shape — see vmmd.Logs
@@ -108,15 +121,24 @@ func (*StreamBytesRequest) Descriptor() ([]byte, []int) {
 // lex order; the client MUST NOT depend on it being strict
 // because future drain-eviction changes could reorder.
 type BytesFrame struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	Minute        *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=minute,proto3" json:"minute,omitempty"`
-	Bytes         uint64                 `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
-	Requests      uint64                 `protobuf:"varint,4,opt,name=requests,proto3" json:"requests,omitempty"`
-	ColdBoots     uint64                 `protobuf:"varint,5,opt,name=cold_boots,json=coldBoots,proto3" json:"cold_boots,omitempty"`
-	EventId       string                 `protobuf:"bytes,6,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	Minute     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=minute,proto3" json:"minute,omitempty"`
+	Bytes      uint64                 `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	Requests   uint64                 `protobuf:"varint,4,opt,name=requests,proto3" json:"requests,omitempty"`
+	ColdBoots  uint64                 `protobuf:"varint,5,opt,name=cold_boots,json=coldBoots,proto3" json:"cold_boots,omitempty"`
+	EventId    string                 `protobuf:"bytes,6,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	// app_id is set on an edge frame (ADR-20261104132753). instance_id then
+	// holds the app's edge usage ID, not an instances row.
+	AppId string `protobuf:"bytes,7,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	// service_reply_bytes is deprecated and never set: service calls never
+	// cross the veth that bills egress (ADR-1749, billing review R12). Remove
+	// after a release.
+	//
+	// Deprecated: Marked as deprecated in onebox/faas/egress/v1/egress.proto.
+	ServiceReplyBytes uint64 `protobuf:"varint,8,opt,name=service_reply_bytes,json=serviceReplyBytes,proto3" json:"service_reply_bytes,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *BytesFrame) Reset() {
@@ -189,6 +211,21 @@ func (x *BytesFrame) GetEventId() string {
 		return x.EventId
 	}
 	return ""
+}
+
+func (x *BytesFrame) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+// Deprecated: Marked as deprecated in onebox/faas/egress/v1/egress.proto.
+func (x *BytesFrame) GetServiceReplyBytes() uint64 {
+	if x != nil {
+		return x.ServiceReplyBytes
+	}
+	return 0
 }
 
 type AckBytesRequest struct {
@@ -283,8 +320,10 @@ var File_onebox_faas_egress_v1_egress_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_egress_v1_egress_proto_rawDesc = "" +
 	"\n" +
-	"\"onebox/faas/egress/v1/egress.proto\x12\x15onebox.faas.egress.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x14\n" +
-	"\x12StreamBytesRequest\"\xcd\x01\n" +
+	"\"onebox/faas/egress/v1/egress.proto\x12\x15onebox.faas.egress.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"5\n" +
+	"\x12StreamBytesRequest\x12\x1f\n" +
+	"\vedge_frames\x18\x01 \x01(\bR\n" +
+	"edgeFrames\"\x98\x02\n" +
 	"\n" +
 	"BytesFrame\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
@@ -294,7 +333,9 @@ const file_onebox_faas_egress_v1_egress_proto_rawDesc = "" +
 	"\brequests\x18\x04 \x01(\x04R\brequests\x12\x1d\n" +
 	"\n" +
 	"cold_boots\x18\x05 \x01(\x04R\tcoldBoots\x12\x19\n" +
-	"\bevent_id\x18\x06 \x01(\tR\aeventId\".\n" +
+	"\bevent_id\x18\x06 \x01(\tR\aeventId\x12\x15\n" +
+	"\x06app_id\x18\a \x01(\tR\x05appId\x122\n" +
+	"\x13service_reply_bytes\x18\b \x01(\x04B\x02\x18\x01R\x11serviceReplyBytes\".\n" +
 	"\x0fAckBytesRequest\x12\x1b\n" +
 	"\tevent_ids\x18\x01 \x03(\tR\beventIds\"6\n" +
 	"\x10AckBytesResponse\x12\"\n" +

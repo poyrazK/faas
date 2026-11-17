@@ -27,7 +27,9 @@ type devSecretClient interface {
 }
 
 type devEnvSyncReport struct {
-	Changed      bool
+	Changed bool
+	// Written counts the keys actually stored; unchanged values are skipped.
+	Written      int
 	Keys         int
 	Existing     int
 	Added        int
@@ -56,6 +58,11 @@ type devEnvSyncState struct {
 	path        string
 	fingerprint [sha256.Size]byte
 	synced      bool
+	// sent holds, per key, a digest of the value this session last stored.
+	// Every secret write invalidates the app's snapshots and signals a
+	// runtime reload, so unchanged values are not written again. The digests
+	// live only in memory; a new session writes each key once.
+	sent map[string][sha256.Size]byte
 }
 
 func resolveDevEnvFilePath(cwd, raw string) (string, error) {
@@ -115,6 +122,16 @@ func devEnvFileFingerprint(path string) ([sha256.Size]byte, error) {
 }
 
 func readDevEnvFile(path string) ([]secretsPair, [sha256.Size]byte, error) {
+	pairs, fingerprint, err := readDevEnvFileEntries(path)
+	if err == nil && len(pairs) == 0 {
+		return nil, [sha256.Size]byte{}, fmt.Errorf("env file contains no KEY=VALUE entries")
+	}
+	return pairs, fingerprint, err
+}
+
+// Local processes may intentionally clear the entire file. Remote secret sync
+// keeps its nonempty-file guard in readDevEnvFile.
+func readDevEnvFileEntries(path string) ([]secretsPair, [sha256.Size]byte, error) {
 	data, err := readDevEnvBytes(path)
 	if err != nil {
 		return nil, [sha256.Size]byte{}, err
@@ -138,9 +155,6 @@ func readDevEnvFile(path string) ([]secretsPair, [sha256.Size]byte, error) {
 		}
 		seen[pair.Key] = struct{}{}
 		pairs = append(pairs, pair)
-	}
-	if len(pairs) == 0 {
-		return nil, [sha256.Size]byte{}, fmt.Errorf("env file contains no KEY=VALUE entries")
 	}
 	fingerprint, err := devEnvFileFingerprint(path)
 	if err != nil {
@@ -259,11 +273,26 @@ func (s *devEnvSyncState) syncPairs(ctx context.Context, client devSecretClient,
 			report.AddedKeys = append(report.AddedKeys, pair.Key)
 		}
 	}
+	if s.sent == nil || s.path != path {
+		s.sent = make(map[string][sha256.Size]byte, len(pairs))
+	}
+	written := 0
 	for _, pair := range pairs {
+		digest := sha256.Sum256([]byte(pair.Value))
+		if previous, ok := s.sent[pair.Key]; ok && previous == digest {
+			if _, stillThere := existing[pair.Key]; stillThere {
+				continue
+			}
+		}
 		if err := client.SetSecretWithScope(ctx, app, pair.Key, pair.Value, ""); err != nil {
+			// Keys written so far stay recorded, so the retry after the next
+			// save resumes instead of rewriting them.
 			return devEnvSyncReport{}, fmt.Errorf("set %s key %q: %w", label, pair.Key, err)
 		}
+		s.sent[pair.Key] = digest
+		written++
 	}
+	report.Written = written
 	s.path = path
 	s.fingerprint = fingerprint
 	s.synced = true

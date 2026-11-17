@@ -26,7 +26,11 @@ type fakeHost struct {
 	window  *[2]time.Time
 	// hidden names apps the caller may no longer read.
 	hidden map[string]bool
+	// team is what TeamApps answers: teammates' organization apps.
+	team []state.App
 }
+
+func (h fakeHost) TeamApps(context.Context, state.Account) []state.App { return h.team }
 
 func (h fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, acct state.Account, slug string) (state.App, bool) {
 	app, err := h.store.AppBySlug(context.Background(), slug)
@@ -248,10 +252,10 @@ func TestPlatformDetailAndGate(t *testing.T) {
 		t.Fatalf("platform detail = %+v", detail)
 	}
 	f.svc.Enabled = false
-	if code := get(t, f.svc.List, f.acct, "/v1/incidents", "", nil); code != http.StatusServiceUnavailable {
-		t.Fatalf("gated list = %d, want 503", code)
+	if code := get(t, f.svc.List, f.acct, "/v1/incidents", "", nil); code != http.StatusForbidden {
+		t.Fatalf("gated list = %d, want 403", code)
 	}
-	if code := get(t, f.svc.Get, f.acct, "/v1/incidents/x", "platform-"+ev.PublicID, nil); code != http.StatusServiceUnavailable {
-		t.Fatalf("gated detail = %d, want 503", code)
+	if code := get(t, f.svc.Get, f.acct, "/v1/incidents/x", "platform-"+ev.PublicID, nil); code != http.StatusForbidden {
+		t.Fatalf("gated detail = %d, want 403", code)
 	}
 }

@@ -18,6 +18,10 @@ type Deps struct {
 	Before   func(*http.Request, state.Account, state.App, api.UpdateAppRequest) *api.Problem
 	Validate func(state.Account, state.App, api.UpdateAppRequest) *api.Problem
 	After    func(*http.Request, state.Account, state.App, api.AppScalingReceipt)
+	// Charge prices the change against an agent key's budget
+	// (ADR-20261111114059); answered means it wrote a response. Its commit
+	// runs once the change is applied.
+	Charge func(http.ResponseWriter, *http.Request, state.Account, state.App, api.UpdateAppRequest) (commit func(), answered bool)
 }
 
 type validationError struct{ problem *api.Problem }
@@ -74,6 +78,13 @@ func Handler(d Deps) httpkit.AccountHandler {
 				return
 			}
 		}
+		commit := func() {}
+		if d.Charge != nil {
+			var answered bool
+			if commit, answered = d.Charge(w, r, account, app, req.UpdateAppRequest()); answered {
+				return
+			}
+		}
 		out, err := d.Store.ApplyAppScaling(r.Context(), state.AppScalingChange{AccountID: account.ID, AppID: app.ID, Scope: scope, Request: req, Validate: func(current state.App) error {
 			if p := validateSettings(account, current, req.UpdateAppRequest()); p != nil {
 				return &validationError{p}
@@ -87,6 +98,7 @@ func Handler(d Deps) httpkit.AccountHandler {
 			writeError(w, err)
 			return
 		}
+		commit()
 		if d.After != nil {
 			d.After(r, account, app, out)
 		}

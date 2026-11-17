@@ -64,6 +64,14 @@ func requestObjectVersioning(j ObjectBucketVersioning, status string, now time.T
 	return j, nil
 }
 
+// ObjectVersioningBaseline reports whether status is the provider's answer for
+// a bucket whose versioning Gregale never observed or changed: Suspended with
+// no recorded observation, intent or revision. GCS reports every
+// never-versioned bucket that way.
+func ObjectVersioningBaseline(j ObjectBucketVersioning, status string) bool {
+	return status == "Suspended" && j.ObservedStatus == "" && j.DesiredStatus == "" && j.Revision == 0
+}
+
 // observeObjectVersioning records the provider's versioning status. Any
 // status may leave noncurrent versions, so capacity inventories every version
 // from then on, behind the 15-minute propagation fence. The one exception is
@@ -73,7 +81,7 @@ func requestObjectVersioning(j ObjectBucketVersioning, status string, now time.T
 // read-only status call or the first delete (H9-S135/S158,
 // ADR-20261023223000).
 func observeObjectVersioning(j ObjectBucketVersioning, status string, now time.Time) ObjectBucketVersioning {
-	baseline := status == "Suspended" && j.ObservedStatus == "" && j.DesiredStatus == "" && j.Revision == 0
+	baseline := ObjectVersioningBaseline(j, status)
 	j.ObservedStatus = status
 	j.UpdatedAt = now
 	if status != "" && !j.VersionsRequired {

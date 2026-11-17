@@ -51,6 +51,14 @@ func (h *Handler) deleteObjectIntent(ctx context.Context, req requestContext, ke
 		}
 		return nil
 	}
+	// Deleting a branch bucket's current object also hides its parent's
+	// (ADR-20261031193635): the tombstone lands before the delete, so the
+	// parent's object never shows through in between.
+	if selector == "" {
+		if e := h.tombstoneOverlayKey(ctx, req, key); e != nil {
+			return state.ObjectDeletion{}, objectstorage.ErrUnavailable
+		}
+	}
 	svc := objectstorage.DeletionService{Store: st, Provider: req.provider, BeforeRequest: before}
 	// Admission and original recovery share one durable deletion journal;
 	// generic request completion supplies no authority to settle that journal.

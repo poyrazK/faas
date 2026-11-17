@@ -65,4 +65,10 @@ func TestFinancialCLI(t *testing.T) {
 	if got := main.FinancialMoney(12345); got != "USD 0.12345" {
 		t.Fatalf("money rendering lost precision: %s", got)
 	}
+	// Hunt 33 H33-11: whole cents print as cents.
+	for millicents, want := range map[int64]string{100000000: "USD 1000.00", 421000: "USD 4.21", 50: "USD 0.0005", 0: "USD 0.00", -12340: "USD -0.1234"} {
+		if got := main.FinancialMoney(millicents); got != want {
+			t.Errorf("FinancialMoney(%d) = %q, want %q", millicents, got, want)
+		}
+	}
 }

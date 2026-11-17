@@ -398,10 +398,17 @@ type VMInstanceStat struct {
 	// the vmmd side; today the field stays nil end-to-end
 	// (the poller stamps RX=Unknown, the meterd sampler
 	// writes 0 to net_rx_bytes — safe under additive-merge).
-	NetRxBytes       *int64
+	NetRxBytes *int64
+	// InternalTxBytes (billing review R8-2) is the cumulative part of
+	// NetTxBytes the guest sent to internal destinations; nil until vmmd's
+	// per-namespace poll has read the instance.
+	InternalTxBytes  *int64
 	InflightRequests int64
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
+	// IdleLadderLevel (ADR-20261107122928): the idle ladder level vmmd holds
+	// a quiet-paused instance at (1 quiet pause, 2 freeze); 0 otherwise.
+	IdleLadderLevel int32
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
 	Frozen bool
 	// QuietPause is the quiet pause record for the pause ledger
@@ -444,6 +451,9 @@ type VMInstanceStat struct {
 // (current behaviour preserved).
 type AppSpec struct {
 	RehearsalRunID string
+	// EnvironmentBranchContained asks for the contained environment branch
+	// profile (ADR-20261031193635); the runtime must acknowledge it.
+	EnvironmentBranchContained bool
 	// Migration evidence stays in schedd; no receipt values enter the protobuf
 	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
 	migrationRuntime     *migrationRuntimeInputs
@@ -457,6 +467,12 @@ type AppSpec struct {
 	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
 	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
 	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// CPUWeight and CPUUncapped carry CPU that follows instance size
+	// (ADR-20261109172421, Engine.appCPUWeight): the instance's cpu.weight,
+	// and no quota while CPUMillicores is the app default. Zero and false
+	// keep the plan's weight and quota.
+	CPUWeight   int32
+	CPUUncapped bool
 	// RequestConcurrency is vmmd's HTTP admission limit for the instance
 	// (ADR-20261101215228, vmmRequestConcurrency); 0 keeps the plan bound.
 	RequestConcurrency int32
@@ -490,10 +506,18 @@ type AppSpec struct {
 	APIEnv          []fcvm.APIEnvEntry // issue #395 / ADR-045: plaintext per-app env
 	EgressAllowlist []string           // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
 	EgressPorts     []int              // ADR-361; the app's declared extra TCP egress ports on top of 80/443.
+	// EgressRevision is apps.egress_allowlist_revision for EgressAllowlist and
+	// EgressPorts (read in the same row). vmmd prefers this request's policy
+	// over its cached app policy when the revision is newer; 0 = unknown.
+	EgressRevision int64
 	// Quarantine (ADR-732) asks vmmd for a production-fork network: no
 	// guest-originated flow, inbound only from the platform veth. Only
 	// the fork coordinator sets it.
 	Quarantine bool
+	// IdentityReload (ADR-20261031193635) restores an environment branch
+	// from its parent's credential-free capture: vmmd has the guest reload
+	// the branch's identity through after_restore and checks its digest.
+	IdentityReload bool
 	// PrivateNetworkCIDRs are provider-verified VPC destinations. They are
 	// additive to EgressAllowlist and only reach vmmd when the attachment is
 	// ready; vmmd validates them again before programming the netns.
@@ -533,6 +557,10 @@ type AppSpec struct {
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// RoutedPortRawTCP marks TCP readiness on a declared raw TCP listener;
+	// vmmd then runs no plan-default HTTP liveness probe (ADR-079
+	// amendment 1).
+	RoutedPortRawTCP bool
 	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
 	ImageHealthcheckRequired bool
 	// ReadinessProbeJSON carries the optional continuous primary-app
@@ -545,6 +573,14 @@ type AppSpec struct {
 	// QuietPauseAfterMS asks vmmd to pause the instance's vCPUs between
 	// requests (ADR-1151); 0 keeps it running. See quietPauseAfterMS.
 	QuietPauseAfterMS int64
+	// IdleLadderEligible marks a request-serving workload the pause tiers
+	// may pause, whatever its declared pause (pauseTierWorkload). vmmd's
+	// idle_ladder observe mode measures it (ADR-20261107122928).
+	IdleLadderEligible bool
+	// IdleLadderGuardedPause lets vmmd quiet-pause a request-serving app that
+	// declared no pause behind the idle ladder's activity guard
+	// (idleLadderGuardedPause, ADR-20261107122928 §6).
+	IdleLadderGuardedPause bool
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -616,6 +652,10 @@ type SnapshotRef struct {
 	// is held as a string so SnapshotRef stays comparable.
 	CaptureID string
 	SealedKey string
+	// SealedCache marks a sealed park or warm snapshot (ADR-20261110210000
+	// slice 3d-3): unlike a crash capture it is cache, so vmmd cold boots
+	// when it cannot restore it.
+	SealedCache bool
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -626,6 +666,11 @@ type SnapshotBytes struct {
 	StoredBytes  int64
 	Capture      runtimeadmission.SnapshotCapture
 	CaptureToken string
+	// SealedKey is the capture key of a snapshot vmmd sealed at the source
+	// (ADR-20261110210000 slice 3d-3), sealed to the capture recipient and
+	// bound to SealCaptureID. Both are empty for a plaintext capture.
+	SealedKey     []byte
+	SealCaptureID string
 }
 
 // WakeOutcome is the decoded result of a vmmd wake. Method reports what vmmd
@@ -642,6 +687,13 @@ type SnapshotBytes struct {
 // proto side stays narrow.
 type WakeOutcome struct {
 	RehearsalRunID string
+	// EnvironmentBranchContained: the runtime installed the contained
+	// environment branch profile (ADR-20261031193635).
+	EnvironmentBranchContained bool
+	// BaseScanGrace: vmmd booted this instance only inside the grace that
+	// keeps apps already serving on a base waking after a scan found a
+	// fixable CRITICAL in it (api.BaseScanCriticalBootGrace).
+	BaseScanGrace bool
 	// Populated only by CreateAdmittedRuntime after exact receipt validation.
 	RuntimeAdmissionReceipt *runtimeadmission.Receipt
 
@@ -776,6 +828,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
 		return nil, err
 	}
+	if err := c.confirmEnvironmentBranchContainment(ctx, app, instance, resp); err != nil {
+		return nil, err
+	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
 		return nil, err
 	}
@@ -851,7 +906,7 @@ func sealedSecretsToProto(entries []fcvm.SealedEnvEntry) []*vmmdpb.SealedSecret 
 	}
 	out := make([]*vmmdpb.SealedSecret, 0, len(entries))
 	for _, entry := range entries {
-		out = append(out, &vmmdpb.SealedSecret{Key: entry.Key, Ciphertext: entry.Ciphertext, SourceKey: entry.SourceKey})
+		out = append(out, &vmmdpb.SealedSecret{Key: entry.Key, Ciphertext: entry.Ciphertext, SourceKey: entry.SourceKey, SecretScope: entry.Scope})
 	}
 	return out
 }
@@ -1165,6 +1220,7 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 			MemBytes:          snap.MemBytes,
 			CaptureId:         snap.CaptureID,
 			SealedKey:         []byte(snap.SealedKey),
+			SealedCache:       snap.SealedCache,
 		},
 		WakeId:     fields.WakeID,
 		KeepPaused: keepPaused,
@@ -1173,6 +1229,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 		return nil, liftErr(err)
 	}
 	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
+		return nil, err
+	}
+	if err := c.confirmEnvironmentBranchContainment(ctx, app, instance, resp); err != nil {
 		return nil, err
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
@@ -1199,6 +1258,36 @@ func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath,
 		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
 	}
 	return snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
+}
+
+// PauseAndSnapshotSealed is PauseAndSnapshot for a snapshot sealed at the
+// source (ADR-20261110210000 slice 3d-3): vmmd publishes only encrypted twins
+// and returns the capture key sealed to the capture recipient. captureID is
+// the capture token of storageKey.
+func (c *VMMClient) PauseAndSnapshotSealed(ctx context.Context, instance, storageKey, vmstateStorageKey string, beforeCheckpoint bool, captureID string) (SnapshotBytes, error) {
+	resp, err := c.cli.PauseAndSnapshot(ctx, &vmmdpb.PauseAndSnapshotRequest{
+		Instance:          instance,
+		StorageKey:        storageKey,
+		VmstateStorageKey: vmstateStorageKey,
+		BeforeCheckpoint:  beforeCheckpoint,
+		SealCaptureId:     captureID,
+	})
+	if err != nil {
+		return SnapshotBytes{}, liftErr(err)
+	}
+	if beforeCheckpoint && !resp.GetBeforeCheckpointCompleted() {
+		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
+	}
+	if len(resp.GetSealedKey()) == 0 {
+		// An older vmmd ignored seal_capture_id and published plaintext.
+		return SnapshotBytes{}, errors.New("sched: vmmd did not seal the snapshot")
+	}
+	b, err := snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
+	if err != nil {
+		return SnapshotBytes{}, err
+	}
+	b.SealedKey, b.SealCaptureID = resp.GetSealedKey(), captureID
+	return b, nil
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) wraps the new
@@ -1821,6 +1910,7 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		HostIP:           in.GetHostIp(),
 		InflightRequests: in.GetInflightRequests(),
 		QuietPaused:      in.GetQuietPaused(),
+		IdleLadderLevel:  in.GetIdleLadderLevel(),
 		Frozen:           in.GetFrozen(),
 		QuietPause: QuietPauseRecordFromProto(in.GetQuietPausedSince(),
 			in.GetQuietLastPauseStartedAt(), in.GetQuietLastPauseEndedAt(), in.GetQuietPausedNsTotal()),
@@ -1867,6 +1957,10 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		b := v.GetValue()
 		row.NetRxBytes = &b
 	}
+	if v := in.GetInternalTxBytes(); v != nil {
+		b := v.GetValue()
+		row.InternalTxBytes = &b
+	}
 	if v := in.GetRequestCountTotal(); v != nil {
 		c := v.GetValue()
 		row.RequestCountTotal = &c
@@ -1881,9 +1975,10 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 	sealed := make([]*vmmdpb.SealedSecret, 0, len(a.SealedEnv))
 	for _, e := range a.SealedEnv {
 		sealed = append(sealed, &vmmdpb.SealedSecret{
-			Key:        e.Key,
-			Ciphertext: e.Ciphertext,
-			SourceKey:  e.SourceKey,
+			Key:         e.Key,
+			Ciphertext:  e.Ciphertext,
+			SourceKey:   e.SourceKey,
+			SecretScope: e.Scope,
 		})
 	}
 	// Issue #395 / ADR-045: plaintext api_env mirror.
@@ -1913,9 +2008,10 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		sealedSidecarSecrets := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedSecrets))
 		for _, entry := range sc.SealedSecrets {
 			sealedSidecarSecrets = append(sealedSidecarSecrets, &vmmdpb.SealedSecret{
-				Key:        entry.Key,
-				Ciphertext: entry.Ciphertext,
-				SourceKey:  entry.SourceKey,
+				Key:         entry.Key,
+				Ciphertext:  entry.Ciphertext,
+				SourceKey:   entry.SourceKey,
+				SecretScope: entry.Scope,
 			})
 		}
 		dependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(sc.DependsOn))
@@ -1965,32 +2061,40 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		})
 	}
 	out := &vmmdpb.AppSpec{
-		RehearsalRunId:     a.RehearsalRunID,
-		BaseKey:            a.BaseKey,
-		LayerKey:           a.LayerKey,
-		VcpuCount:          a.VCPUCount,
-		MemSizeMib:         a.MemSizeMiB,
-		CpuMillicores:      a.CPUMillicores,
-		RequestConcurrency: a.RequestConcurrency,
-		EgressMbit:         a.EgressMbit,
-		AppId:              a.AppID,
-		SealedEnv:          sealed,
-		ApiEnv:             apiEnv,
-		Sidecars:           sidecars,
-		MainDependsOn:      mainDependsOn,
-		EgressAllowlist:    a.EgressAllowlist,
-		EgressPorts:        egressPortsToWire(a.EgressPorts),
-		Quarantine:         a.Quarantine,
-		Port:               uint32(a.Port),
+		RehearsalRunId:             a.RehearsalRunID,
+		BaseKey:                    a.BaseKey,
+		LayerKey:                   a.LayerKey,
+		VcpuCount:                  a.VCPUCount,
+		MemSizeMib:                 a.MemSizeMiB,
+		CpuMillicores:              a.CPUMillicores,
+		CpuWeight:                  a.CPUWeight,
+		CpuUncapped:                a.CPUUncapped,
+		RequestConcurrency:         a.RequestConcurrency,
+		EgressMbit:                 a.EgressMbit,
+		AppId:                      a.AppID,
+		SealedEnv:                  sealed,
+		ApiEnv:                     apiEnv,
+		Sidecars:                   sidecars,
+		MainDependsOn:              mainDependsOn,
+		EgressAllowlist:            a.EgressAllowlist,
+		EgressPorts:                egressPortsToWire(a.EgressPorts),
+		EgressRevision:             a.EgressRevision,
+		Quarantine:                 a.Quarantine,
+		IdentityReload:             a.IdentityReload,
+		EnvironmentBranchContained: a.EnvironmentBranchContained,
+		Port:                       uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.
 		HealthcheckPath:          a.HealthcheckPath,
 		HealthcheckGrpc:          a.HealthcheckGRPC,
 		HealthcheckGrpcService:   a.HealthcheckGRPCService,
+		RoutedPortRawTcp:         a.RoutedPortRawTCP,
 		ImageHealthcheckRequired: a.ImageHealthcheckRequired,
 		ReadinessProbeJson:       a.ReadinessProbeJSON,
 		LivenessProbeJson:        a.LivenessProbeJSON,
 		QuietPauseAfterMs:        a.QuietPauseAfterMS,
+		IdleLadderEligible:       a.IdleLadderEligible,
+		IdleLadderGuardedPause:   a.IdleLadderGuardedPause,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label
@@ -2068,16 +2172,18 @@ func sidecarProbeToProto(in *api.SidecarProbe) *vmmdpb.SidecarProbeSpec {
 
 func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 	o := &WakeOutcome{
-		RehearsalRunID:        r.GetRehearsalRunId(),
-		Instance:              r.GetInstance(),
-		LeaseUID:              r.GetLeaseUid(),
-		HostIP:                r.GetHostIp(),
-		Netns:                 r.GetNetns(),
-		VethHost:              r.GetVethHost(),
-		VethPeer:              r.GetVethPeer(),
-		Method:                r.GetMethod(),
-		RequestedMethod:       r.GetRequestedMethod(),
-		RestoreFallbackReason: r.GetRestoreFallbackReason(),
+		RehearsalRunID:             r.GetRehearsalRunId(),
+		EnvironmentBranchContained: r.GetEnvironmentBranchContained(),
+		Instance:                   r.GetInstance(),
+		LeaseUID:                   r.GetLeaseUid(),
+		HostIP:                     r.GetHostIp(),
+		Netns:                      r.GetNetns(),
+		VethHost:                   r.GetVethHost(),
+		VethPeer:                   r.GetVethPeer(),
+		Method:                     r.GetMethod(),
+		RequestedMethod:            r.GetRequestedMethod(),
+		RestoreFallbackReason:      r.GetRestoreFallbackReason(),
+		BaseScanGrace:              r.GetBaseScanGrace(),
 	}
 	// ADR-051 PR-D: decode the optional characterization struct
 	// back into pkg/api.CharacterizationReport. Empty struct =

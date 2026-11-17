@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"filippo.io/age"
@@ -184,6 +185,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	handler, err := s3gateway.New(s3gateway.Config{
 		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: serving, Fenced: func() bool { return !fence.Open() }, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
+		RelayHosts:   environmentBranchObjectRelayHosts(),
 		ReadAdmitter: readAdmitter, OrgAccess: orgAccess, AccountLimiter: objectstorage.NewAccountRequestLimiter(), Credentials: credentials, Transfers: transfers,
 		OpenSecret: func(sealed []byte) (string, error) {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(readers, sealed)
@@ -288,4 +290,12 @@ func envOr(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// environmentBranchObjectRelayHosts are the Host values the bridge object
+// relay forwards for contained environment branch guests (ADR-20261031193635
+// slice 6c): with and without the port, as SDKs sign either.
+func environmentBranchObjectRelayHosts() []string {
+	host := api.EnvironmentBranchObjectRelayHost
+	return []string{host, net.JoinHostPort(host, strconv.Itoa(api.EnvironmentBranchObjectRelayPort))}
 }

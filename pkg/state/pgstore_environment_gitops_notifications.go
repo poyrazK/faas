@@ -19,7 +19,7 @@ func pgEnvironmentGitNotification(ctx context.Context, tx pgx.Tx, sourceID, axis
 	if err != nil {
 		return mapErr(err)
 	}
-	if axis == "drift" && plan.Hash != "" && row.IntentVersion != plan.ObservedVersion {
+	if axis == "drift" && row.IntentVersion != plan.ObservedVersion {
 		return nil // historical observations must not change the current alert baseline
 	}
 	scope, err := q.GetEnvironmentGitOpsScope(ctx, tx, row.ID)

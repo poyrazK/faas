@@ -71,6 +71,19 @@ func newPostReleaseFixture(t *testing.T, slug string, optIn bool, completedAgo t
 	return postReleaseFixture{e: e, previous: previous, release: release, telemetry: telemetry}
 }
 
+// sharedRouteTelemetry adds the shared-route latency reader Postgres
+// telemetry has, per release deployment.
+type sharedRouteTelemetry struct {
+	*postReleaseTelemetry
+	shared      map[string]state.SharedRouteLatency
+	sharedReads int
+}
+
+func (f *sharedRouteTelemetry) RequestTelemetrySharedRouteLatency(_ context.Context, _, releaseID string, _, _ time.Time, _ string, _, _ time.Time) (state.SharedRouteLatency, error) {
+	f.sharedReads++
+	return f.shared[releaseID], nil
+}
+
 func (f postReleaseFixture) sweep(t *testing.T) {
 	t.Helper()
 	if err := (*f.e.S()).PostReleaseWatchSweep(context.Background(), time.Now().UTC()); err != nil {
@@ -196,5 +209,83 @@ func TestPostReleaseWatchRecordsARegressionItCannotRollBack(t *testing.T) {
 	if !kinds[api.ReleaseEventWatchRegressed] || kinds[api.ReleaseEventWatchPassed] ||
 		timeline.Phase != api.ReleasePhaseReleased || !strings.Contains(timeline.Summary, "did not roll back") {
 		t.Fatalf("timeline = %s %q %v, want the regression and no passed watch", timeline.Phase, timeline.Summary, kinds)
+	}
+}
+
+// Hunt 32 H32-33: h32-node v3 was rolled back on 34 requests because three
+// hit /egress (3 s by design), a route v1 never served. A whole-app p95
+// regression now rolls back only when the routes both releases served
+// regressed too.
+func TestPostReleaseWatchJudgesLatencyOnSharedRoutes(t *testing.T) {
+	f := newPostReleaseFixture(t, "prw-routes", true, time.Minute)
+	shared := &sharedRouteTelemetry{postReleaseTelemetry: f.telemetry, shared: map[string]state.SharedRouteLatency{
+		f.release.ID: {ReleaseRequests: 31, ReleaseP95LatencyMS: 45, BaselineRequests: 400, BaselineP95LatencyMS: 40},
+	}}
+	(*f.e.S()).SetPostReleaseTelemetry(shared)
+	f.telemetry.windows[f.release.ID] = canary.HealthWindow{Requests: 34, ServerErrors: 0, P95LatencyMS: 3000}
+	f.sweep(t)
+	if got := f.read(t, f.release.ID); got.Status != state.DeployLive || got.LastAutoRollbackReason != "" {
+		t.Fatalf("release slow only on a new route = %s %q, want it left live", got.Status, got.LastAutoRollbackReason)
+	}
+	if shared.sharedReads != 1 {
+		t.Fatalf("shared-route reads = %d, want 1 after the whole-app p95 regressed", shared.sharedReads)
+	}
+
+	shared.shared[f.release.ID] = state.SharedRouteLatency{ReleaseRequests: 31, ReleaseP95LatencyMS: 800, BaselineRequests: 400, BaselineP95LatencyMS: 40}
+	f.sweep(t)
+	got := f.read(t, f.release.ID)
+	if got.LastAutoRollbackReason != string(state.AutoRollbackReasonPostReleaseRegression) {
+		t.Fatalf("release slow on shared routes = %q, want %q", got.LastAutoRollbackReason, state.AutoRollbackReasonPostReleaseRegression)
+	}
+	var decision api.RolloutDecision
+	if err := json.Unmarshal(got.RolloutDecision, &decision); err != nil {
+		t.Fatalf("decode decision %s: %v", got.RolloutDecision, err)
+	}
+	if decision.Rule != api.RolloutRuleAbortPostReleaseP95 || !strings.Contains(decision.Summary, "routes both releases served") {
+		t.Fatalf("decision = %+v, want a shared-route p95 abort", decision)
+	}
+}
+
+// knownErrorTelemetry adds the known-5xx reader Postgres telemetry has.
+type knownErrorTelemetry struct {
+	*postReleaseTelemetry
+	known      int64
+	knownReads int
+}
+
+func (f *knownErrorTelemetry) RequestTelemetryKnownServerErrors(context.Context, string, string, time.Time, time.Time, string, time.Time, time.Time) (int64, error) {
+	f.knownReads++
+	return f.known, nil
+}
+
+// Hunt 34 H34-17b: with a quiet predecessor the watch applies the absolute 5xx
+// bar, and eight deliberate 5xx rolled a config-only release back. 5xx the
+// predecessor also returned on the same method, route and status do not count.
+func TestPostReleaseWatchLeavesOutKnown5xxOfAQuietPredecessor(t *testing.T) {
+	f := newPostReleaseFixture(t, "prw-known", true, time.Minute)
+	known := &knownErrorTelemetry{postReleaseTelemetry: f.telemetry, known: 8}
+	(*f.e.S()).SetPostReleaseTelemetry(known)
+	f.telemetry.windows[f.previous.ID] = canary.HealthWindow{Requests: 3}
+	f.telemetry.windows[f.release.ID] = canary.HealthWindow{Requests: 10, ServerErrors: 8}
+	f.sweep(t)
+	if got := f.read(t, f.release.ID); got.Status != state.DeployLive || got.LastAutoRollbackReason != "" {
+		t.Fatalf("release failing only where its predecessor failed = %s %q, want it left live", got.Status, got.LastAutoRollbackReason)
+	}
+	if known.knownReads != 1 {
+		t.Fatalf("known-5xx reads = %d, want 1 after the quiet-predecessor bar tripped", known.knownReads)
+	}
+
+	known.known = 2
+	f.sweep(t)
+	got := f.read(t, f.release.ID)
+	if got.LastAutoRollbackReason != string(state.AutoRollbackReasonPostReleaseRegression) {
+		t.Fatalf("release with new 5xx = %q, want %q", got.LastAutoRollbackReason, state.AutoRollbackReasonPostReleaseRegression)
+	}
+	var decision api.RolloutDecision
+	if err := json.Unmarshal(got.RolloutDecision, &decision); err != nil {
+		t.Fatalf("decode decision %s: %v", got.RolloutDecision, err)
+	}
+	if decision.Rule != api.RolloutRuleAbortPostRelease5xx || !strings.Contains(decision.Summary, "2 5xx the previous release also returned") {
+		t.Fatalf("decision = %+v, want a 5xx abort naming the 2 left out", decision)
 	}
 }

@@ -1318,3 +1318,78 @@ $plan_excess_validate$;
 
 RESET lock_timeout;
 
+
+-- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE managed_postgres_plan_excess_notices
+    ADD COLUMN IF NOT EXISTS delete_at timestamptz;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $check$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'managed_postgres_plan_excess_notices'::regclass
+      AND conname = 'managed_postgres_plan_excess_notices_delete_at_check'
+  ) THEN
+    ALTER TABLE managed_postgres_plan_excess_notices
+      ADD CONSTRAINT managed_postgres_plan_excess_notices_delete_at_check
+      CHECK (delete_at IS NULL OR (isfinite(delete_at) AND mail_intent_id IS NOT NULL)) NOT VALID;
+  END IF;
+END
+$check$;
+-- +goose StatementEnd
+
+
+-- +goose StatementBegin
+SET lock_timeout = '5s';
+DO $widen$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'managed_postgres_cap_events'::regclass
+      AND conname = 'managed_postgres_cap_events_threshold_v2_check'
+  ) THEN
+    ALTER TABLE managed_postgres_cap_events
+      ADD CONSTRAINT managed_postgres_cap_events_threshold_v2_check
+      CHECK (threshold IN ('warning', 'allowance', 'ceiling_warning', 'suspended', 'egress_held')) NOT VALID;
+  END IF;
+END
+$widen$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+SET lock_timeout = '5s';
+ALTER TABLE managed_postgres_cap_events VALIDATE CONSTRAINT managed_postgres_cap_events_threshold_v2_check;
+-- +goose StatementEnd
+-- +goose StatementBegin
+SET lock_timeout = '5s';
+ALTER TABLE managed_postgres_cap_events DROP CONSTRAINT IF EXISTS managed_postgres_cap_events_threshold_check;
+-- +goose StatementEnd
+
+
+-- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE managed_postgres_plan_excess_notices
+    ADD COLUMN IF NOT EXISTS reminder_mail_intent_id uuid;
+-- +goose StatementEnd
+
+
+SET LOCAL lock_timeout = '5s';
+
+CREATE TABLE IF NOT EXISTS managed_postgres_egress_hold_notices (
+    database_id uuid NOT NULL REFERENCES managed_postgres_databases(id) ON DELETE CASCADE,
+    period_start timestamptz NOT NULL
+        CHECK (period_start = (date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),
+    subject_id uuid NOT NULL REFERENCES resource_namespaces(id) ON DELETE CASCADE,
+    reached_at timestamptz NOT NULL CHECK (isfinite(reached_at) AND reached_at >= period_start),
+    used_bytes bigint NOT NULL CHECK (used_bytes >= 0),
+    allowance_bytes bigint NOT NULL CHECK (allowance_bytes > 0),
+    ceiling_bytes bigint NOT NULL CHECK (ceiling_bytes >= allowance_bytes),
+    overage_billed boolean NOT NULL,
+    mail_intent_id uuid,
+    PRIMARY KEY (database_id, period_start)
+);
+CREATE INDEX IF NOT EXISTS managed_postgres_egress_hold_notices_subject_idx
+    ON managed_postgres_egress_hold_notices (subject_id);
+COMMENT ON TABLE managed_postgres_egress_hold_notices IS 'Managed PostgreSQL databases held for sending their own monthly egress allowance, one row per database and UTC month; written only by apid (ADR-20261110160000).';
+

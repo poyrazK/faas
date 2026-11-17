@@ -24,10 +24,18 @@ Sections, each independent; a failing section is reported and skipped:
   DML text is exported as a label; utility statements, which can carry
   literals such as passwords, are never exported.
 
+Reading pg_stat_statements with its query text loads the whole shared text
+file (4 MB on production, ~400 ms of a 2-vCPU control plane every 30 s); the
+counters alone cost ~85 ms. Each run reads only the counters and labels
+statements from a cache keyed by queryid; the text is read only when a top
+statement has no cached label, at most once every LABEL_REFRESH_SECONDS.
+
 Configuration (environment): FAAS_PG_METRICS_DB (default faas),
-FAAS_PG_METRICS_STATEMENTS_DB (default postgres), FAAS_PG_METRICS_TEXTFILE.
+FAAS_PG_METRICS_STATEMENTS_DB (default postgres), FAAS_PG_METRICS_TEXTFILE,
+FAAS_PG_METRICS_LABEL_CACHE (default under the unit's state directory).
 """
 
+import json
 import os
 import re
 import subprocess
@@ -36,6 +44,9 @@ import time
 from pathlib import Path
 
 DEFAULT_TEXTFILE = "/var/lib/node_exporter/textfile_collector/faas_postgres_activity.prom"
+DEFAULT_LABEL_CACHE = "/var/lib/faas-postgres-activity-metrics/statement-labels.json"
+LABEL_REFRESH_SECONDS = 900
+LABEL_CACHE_MAX = 1000
 SEP = "\x1f"
 TOP_STATEMENTS = 20
 TOP_TABLES = 10
@@ -207,21 +218,58 @@ def statement_label(text):
     return text[:QUERY_LABEL_CHARS]
 
 
-def collect_statements(q, statements_db, db):
+def load_label_cache(path):
+    """Returns ({queryid: label, "" when not exported}, last text read)."""
+    try:
+        data = json.loads(Path(path).read_text())
+        labels = {str(k): str(v) for k, v in data.get("labels", {}).items()}
+        return labels, float(data.get("fetched_at", 0))
+    except (OSError, ValueError, AttributeError, TypeError):
+        return {}, 0.0
+
+
+def save_label_cache(path, labels, fetched_at):
+    try:
+        if len(labels) > LABEL_CACHE_MAX:
+            labels = dict(list(labels.items())[-LABEL_CACHE_MAX:])
+        tmp = Path(path).with_name(Path(path).name + ".tmp")
+        tmp.write_text(json.dumps({"labels": labels, "fetched_at": fetched_at}))
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        return False
+
+
+def collect_statements(q, statements_db, db, cache_path=None, now=time.time):
     rows = q(statements_db, f"""
-SELECT queryid, calls, total_exec_time, rows, shared_blks_read,
-       left(regexp_replace(query, '\\s+', ' ', 'g'), 400)
-FROM pg_stat_statements
+SELECT queryid, calls, total_exec_time, rows, shared_blks_read
+FROM pg_stat_statements(false)
 WHERE dbid = (SELECT oid FROM pg_database WHERE datname = '{db}') AND toplevel
 ORDER BY total_exec_time DESC LIMIT {TOP_STATEMENTS * 3}""")
+    rows = [r for r in rows if re.match(r"^-?\d+$", r[0])]
+    labels, fetched_at = load_label_cache(cache_path) if cache_path else ({}, 0.0)
+    missing = [r[0] for r in rows if r[0] not in labels]
+    # Without a usable cache every run reads the text, as before the cache.
+    if missing and (cache_path is None or now() - fetched_at >= LABEL_REFRESH_SECONDS or not labels):
+        texts = q(statements_db, f"""
+SELECT queryid, left(regexp_replace(query, '\\s+', ' ', 'g'), 400)
+FROM pg_stat_statements
+WHERE queryid IN ({",".join(missing)})""")
+        for queryid, text in texts:
+            labels[queryid] = statement_label(text) or ""
+        for queryid in missing:
+            labels.setdefault(queryid, "")
+        fetched_at = now()
+        if cache_path and not save_label_cache(cache_path, labels, fetched_at):
+            cache_path = None
     out = {name: [] for name in (
         "faas_postgres_statement_calls_total", "faas_postgres_statement_exec_seconds_total",
         "faas_postgres_statement_rows_total", "faas_postgres_statement_blocks_read_total",
         "faas_postgres_statement_info")}
     kept = 0
-    for queryid, calls, total_ms, nrows, blks_read, text in rows:
-        label = statement_label(text)
-        if label is None or not re.match(r"^-?\d+$", queryid):
+    for queryid, calls, total_ms, nrows, blks_read in rows:
+        label = labels.get(queryid)
+        if not label:
             continue
         qid = {"queryid": queryid}
         out["faas_postgres_statement_calls_total"].append((qid, _num(calls)))
@@ -262,7 +310,7 @@ def render(samples, errors, now):
     return "\n".join(lines) + "\n"
 
 
-def collect(q=run_psql, env=None):
+def collect(q=run_psql, env=None, now=time.time):
     env = os.environ if env is None else env
     db = env.get("FAAS_PG_METRICS_DB", "faas")
     statements_db = env.get("FAAS_PG_METRICS_STATEMENTS_DB", "postgres")
@@ -274,7 +322,7 @@ def collect(q=run_psql, env=None):
         ("activity", lambda: collect_activity(q, db)),
         ("checkpoints", lambda: collect_checkpoints(q, db)),
         ("tables", lambda: collect_tables(q, db)),
-        ("statements", lambda: collect_statements(q, statements_db, db)),
+        ("statements", lambda: collect_statements(q, statements_db, db, env.get("FAAS_PG_METRICS_LABEL_CACHE", DEFAULT_LABEL_CACHE), now)),
     ):
         try:
             samples.update(fn())
@@ -286,7 +334,7 @@ def collect(q=run_psql, env=None):
 
 def main(q=run_psql, env=None, now=time.time):
     env = os.environ if env is None else env
-    samples, errors = collect(q, env)
+    samples, errors = collect(q, env, now)
     path = Path(env.get("FAAS_PG_METRICS_TEXTFILE", DEFAULT_TEXTFILE))
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(render(samples, errors, now()))

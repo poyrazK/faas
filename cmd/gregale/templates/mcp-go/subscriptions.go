@@ -223,7 +223,7 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 			resourceURIsByTaskID[taskID] = append(resourceURIsByTaskID[taskID], uri)
 			continue
 		}
-		if !configuredResourceURI(uri) {
+		if !resourceAccessAllowed(r.Context(), uri, auth, identity, true) {
 			continue
 		}
 		genericResourceURIs[uri] = struct{}{}
@@ -320,10 +320,11 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 			unsubscribe()
 		}
 	}()
+	ctx := r.Context()
 	for _, uri := range acceptedResourceURIs {
 		uri := uri
 		unsubscribe := subscribeResourceUpdate(uri, func() {
-			if !strings.HasPrefix(uri, "task://tasks/") && (auth.resourceAllowed(uri, identity) != nil || !configuredResourceURI(uri)) {
+			if !strings.HasPrefix(uri, "task://tasks/") && !resourceAccessAllowed(ctx, uri, auth, identity, true) {
 				return
 			}
 			pendingResourceUpdatesMu.Lock()
@@ -523,6 +524,9 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 			pendingResourceUpdatesMu.Lock()
 			delete(pendingResourceUpdates, uri)
 			pendingResourceUpdatesMu.Unlock()
+			if !strings.HasPrefix(uri, "task://tasks/") && !resourceAccessAllowed(r.Context(), uri, auth, identity, true) {
+				continue
+			}
 			if err := flushSSE(subscriptionChangeNotification(id, "notifications/resources/updated", map[string]any{"uri": uri})); err != nil {
 				return
 			}

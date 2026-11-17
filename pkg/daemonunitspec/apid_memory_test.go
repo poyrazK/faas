@@ -73,3 +73,23 @@ func TestAPIDMemoryFitsTwoGenerations(t *testing.T) {
 		t.Errorf("hand-off threshold %d MB leaves no room above the measured %d MB steady state", threshold, measuredSteadyMaxMB)
 	}
 }
+
+// The rc.344 deploy (2026-11-15) found apid's cgroup at 244 MB after the
+// memory wait, above the 230 MB threshold of a 512 MB cap: the hand-off was
+// refused and apid restarted, a ~9 s API gap that failed the rollout gate.
+// The threshold must clear that reading with room for a successor spiking
+// like the largest observed run, and the cap must still hold both
+// (ADR-20261116090000).
+func TestAPIDHandoffThresholdClearsObservedWorkingSet(t *testing.T) {
+	const (
+		observedAtDeployMB = 244 // rc.344, deployctl's refusal
+		largestSpikeMB     = 257 // ADR 20261018132058
+	)
+	threshold := api.APIDMemoryMaxMB * api.HandoffMaxMemoryPercent / 100
+	if threshold < observedAtDeployMB*3/2 {
+		t.Errorf("hand-off threshold %d MB is within 1.5x of the %d MB apid used at the rc.344 deploy", threshold, observedAtDeployMB)
+	}
+	if threshold+largestSpikeMB > api.APIDMemoryMaxMB {
+		t.Errorf("a predecessor at the %d MB threshold plus a %d MB successor spike exceed MemoryMax %d MB", threshold, largestSpikeMB, api.APIDMemoryMaxMB)
+	}
+}

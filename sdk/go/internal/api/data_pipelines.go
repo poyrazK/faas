@@ -23,28 +23,37 @@ type RotateDataConnectionRequest struct {
 // DataPipeline is an eventually reconciled intent. State is an observation;
 // desired_state records the requested action and observed_at bounds freshness.
 type DataPipeline struct {
-	AppliedThroughAt   string                `json:"applied_through_at,omitempty"`
-	Health             *DataPipelineHealth   `json:"health,omitempty"`
-	Capacity           *DataPipelineCapacity `json:"capacity,omitempty"`
-	ObservedRevision   int64                 `json:"observed_revision"`
-	ObservationFresh   bool                  `json:"observation_fresh"`
-	ID                 string                `json:"id"`
-	Name               string                `json:"name"`
-	SourceConnectionID string                `json:"source_connection_id"`
-	DatabaseID         string                `json:"database_id"`
-	Tables             []string              `json:"tables"`
-	ReadSubjects       []string              `json:"read_subjects"`
-	DesiredState       string                `json:"desired_state"`
-	State              string                `json:"state"`
-	Revision           int64                 `json:"revision"`
-	Generation         int64                 `json:"generation"`
-	Reason             string                `json:"reason,omitempty"`
-	TablesReady        int                   `json:"tables_ready"`
-	RetainedWALBytes   *int64                `json:"retained_wal_bytes,omitempty"`
-	ObservedAt         string                `json:"observed_at,omitempty"`
-	Verification       string                `json:"verification"`
-	VerifiedAt         string                `json:"verified_at,omitempty"`
-	CreatedAt          string                `json:"created_at"`
+	WALRetention       *DataPipelineWALRetention `json:"wal_retention,omitempty"`
+	AppliedThroughAt   string                    `json:"applied_through_at,omitempty"`
+	Health             *DataPipelineHealth       `json:"health,omitempty"`
+	Capacity           *DataPipelineCapacity     `json:"capacity,omitempty"`
+	ObservedRevision   int64                     `json:"observed_revision"`
+	ObservationFresh   bool                      `json:"observation_fresh"`
+	ID                 string                    `json:"id"`
+	Name               string                    `json:"name"`
+	SourceConnectionID string                    `json:"source_connection_id"`
+	DatabaseID         string                    `json:"database_id"`
+	Tables             []string                  `json:"tables"`
+	ReadSubjects       []string                  `json:"read_subjects"`
+	DesiredState       string                    `json:"desired_state"`
+	State              string                    `json:"state"`
+	Revision           int64                     `json:"revision"`
+	Generation         int64                     `json:"generation"`
+	Reason             string                    `json:"reason,omitempty"`
+	TablesReady        int                       `json:"tables_ready"`
+	RetainedWALBytes   *int64                    `json:"retained_wal_bytes,omitempty"`
+	ObservedAt         string                    `json:"observed_at,omitempty"`
+	Verification       string                    `json:"verification"`
+	VerifiedAt         string                    `json:"verified_at,omitempty"`
+	CreatedAt          string                    `json:"created_at"`
+}
+
+// DataPipelineWALRetention reports source-specific headroom. The estimate uses
+// observed cluster WAL generation and is not a guaranteed time until slot loss.
+type DataPipelineWALRetention struct {
+	LimitBytes                int64  `json:"limit_bytes"`
+	RemainingBytes            int64  `json:"remaining_bytes"`
+	EstimatedSecondsRemaining *int64 `json:"estimated_seconds_remaining,omitempty"`
 }
 type DataPipelineList struct {
 	Items []DataPipeline `json:"items"`

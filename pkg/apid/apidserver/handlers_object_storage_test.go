@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -400,6 +401,55 @@ func TestObjectStorageComputeBindingRotationWithoutLiveDeployment(t *testing.T) 
 	}
 }
 
+// Resident instances of a superseded deployment with nothing live used to make
+// every rotation retry fail 503; they now get the rolling refresh a live app
+// gets, and the previous key stays valid until that refresh completes.
+func TestObjectStorageComputeBindingRotationResidentWithoutLiveDeployment(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
+	e := setupSecrets(t, api.PlanHobby)
+	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+	app := createApp(t, e, "resident-binding-app")
+	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+	ctx := context.Background()
+	old, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeploySuperseded, ImageDigest: appTaskTestDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateInstance(ctx, app.ID, old.ID, "running", 512, state.DefaultLocalNodeName, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	bucketPath := "/v1/apps/resident-binding-app/buckets"
+	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
+	bindingPath := bucketPath + "/" + bucket.ID + "/compute-bindings"
+	createdResponse := e.do(t, "POST", bindingPath, api.CreateObjectStorageComputeBindingRequest{Permission: api.ObjectBucketPermissionReadWrite}, nil)
+	if createdResponse.Code != 201 {
+		t.Fatalf("create binding = %d %s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created api.ObjectStorageComputeBinding
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		rotatedResponse := e.do(t, "POST", bindingPath+"/"+created.ID+"/rotate", struct{}{}, nil)
+		if rotatedResponse.Code != 200 {
+			t.Fatalf("rotate attempt %d = %d %s", attempt, rotatedResponse.Code, rotatedResponse.Body.String())
+		}
+		var rotated api.ObjectStorageComputeBinding
+		if err := json.Unmarshal(rotatedResponse.Body.Bytes(), &rotated); err != nil {
+			t.Fatal(err)
+		}
+		if !rotated.RotationPending {
+			t.Fatalf("resident rotation must wait for the runtime refresh: %+v", rotated)
+		}
+	}
+	if _, _, err := e.store.ResolveObjectS3Credential(ctx, created.Credential.AccessKeyID); err != nil {
+		t.Fatalf("previous key must keep resolving until the refresh completes: %v", err)
+	}
+}
+
 func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 	_, teardown := withTestIdentities(t)
 	defer teardown()
@@ -415,8 +465,10 @@ func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 	}
 	a, b := &fakeObjectProvider{createErr: objectstorage.ErrUnavailable}, &fakeObjectProvider{}
 	e.s.WithObjectStorage(objectRegistry(t, a, b, "external"))
-	if r := e.do(t, "POST", path, map[string]any{"name": "assets"}, nil); r.Code != 503 {
-		t.Fatal(r.Code)
+	// A temporary provider failure is retried, so the bucket is accepted as
+	// provisioning and the client waits for it (Hunt 33 H33-22).
+	if accepted := bucketResponse(t, e.do(t, "POST", path, map[string]any{"name": "assets"}, nil), 202); accepted.State != "provisioning" {
+		t.Fatalf("accepted bucket state = %q, want provisioning", accepted.State)
 	}
 	a.createErr = nil
 	if r := e.do(t, "POST", path, map[string]any{"name": "assets"}, nil); r.Code != 409 {

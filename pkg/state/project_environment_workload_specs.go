@@ -349,6 +349,7 @@ var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
 	"WarmSnapshotMinMs":         WorkloadFieldCopy,
 	"WarmPoolSize":              WorkloadFieldCopy,
 	"EvictionPriority":          WorkloadFieldCopy,
+	"SandboxTemplate":           WorkloadFieldIdentity,
 	"PreviewOfSlug":             WorkloadFieldIdentity,
 	"PreviewPrNumber":           WorkloadFieldIdentity,
 	"PreviewPrState":            WorkloadFieldOperational,
@@ -357,6 +358,10 @@ var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
 	"CORSDefaultEnabled":        WorkloadFieldCopy,
 	"CORSDefaultOrigins":        WorkloadFieldCopy,
 	"CreatedAt":                 WorkloadFieldOperational,
+
+	// The database's own counter for EgressAllowlist and EgressPorts
+	// (#6742); a clone's row starts its own.
+	"EgressAllowlistRevision": WorkloadFieldOperational,
 }
 
 func WorkloadAppFieldPolicies() map[string]WorkloadFieldPolicy {

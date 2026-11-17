@@ -367,6 +367,11 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 // Kind returns the trigger kind this poller handles.
 func (k *kafkaPoller) Kind() string { return "kafka" }
 
+// kafkaSettledBacklogBatches bounds settled-but-uncommitted records, in
+// batches: 100 batches of 100 is 10,000 offsets (well under 1 MiB) per
+// trigger, and at most that many records run again after a restart.
+const kafkaSettledBacklogBatches = 100
+
 // Poll fetches up to batchMax messages. We use FetchMessage
 // (non-committing) so we can hold the messages across the
 // dispatch tick and only commit them after the function returns
@@ -384,6 +389,31 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	out := make([]SourceRecord, 0, limit)
 	// Records a retryable Nack or Defer kept come back first, once due.
 	k.mu.Lock()
+	// Bound fetched-but-uncommitted work to one natural poll batch. A poison
+	// offset or failed commit must exert backpressure instead of retaining an
+	// unbounded read-ahead queue. Settlements need no message bodies.
+	if err := k.commitSettledLocked(ctx); err != nil {
+		k.mu.Unlock()
+		return k.pollHealth(PollResult{Error: err})
+	}
+	// Open records carry payloads (in flight or waiting to retry), so they
+	// stay within one batch. Settled records waiting for a lower offset of
+	// their partition to settle keep only topic/partition/offset; they get a
+	// separate, larger bound, so one record cooling in retry (or held by
+	// seek-to-offset) does not stop every other partition after one batch
+	// (ADR-20261101093512 amendment 2026-11-13). kafka-go's group reader
+	// cannot pause a single partition, so the settled bound is the backstop.
+	open, settled := 0, 0
+	for _, offsets := range k.open {
+		open += len(offsets)
+	}
+	for _, done := range k.settled {
+		settled += len(done)
+	}
+	fetchBudget := max(0, limit-open)
+	if settled >= limit*kafkaSettledBacklogBatches {
+		fetchBudget = 0
+	}
 	now := time.Now()
 	held := k.retry[:0]
 	for _, msg := range k.retry {
@@ -398,7 +428,7 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	}
 	k.retry = held
 	k.mu.Unlock()
-	for len(out) < limit {
+	for len(out) < limit && fetchBudget > 0 {
 		// Per-fetch context: short enough that an idle trigger
 		// doesn't block the dispatcher, long enough to coalesce.
 		fetchCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
@@ -425,6 +455,7 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			}
 			return PollResult{Error: fmt.Errorf("kafka_poller: fetch: %w", err)}
 		}
+		fetchBudget--
 		out = append(out, kafkaSourceRecord(msg))
 		k.mu.Lock()
 		k.inFlight[kafkaRecordID(msg)] = msg
@@ -556,7 +587,9 @@ func (k *kafkaPoller) settleLocked(msg kafka.Message) {
 	if k.settled == nil {
 		k.settled = map[int][]kafka.Message{}
 	}
-	k.settled[msg.Partition] = append(k.settled[msg.Partition], msg)
+	k.settled[msg.Partition] = append(k.settled[msg.Partition], kafka.Message{
+		Topic: msg.Topic, Partition: msg.Partition, Offset: msg.Offset,
+	})
 }
 
 // commitSettledLocked commits, per partition, the settled records below

@@ -21,6 +21,17 @@ func quietPauseAfterMS(app state.App, mode string, privateNetworkID string) int6
 	return api.QuietPauseAfterMillis
 }
 
+// idleLadderGuardedPause reports whether vmmd may quiet-pause an instance
+// between requests behind the idle ladder's activity guard
+// (ADR-20261107122928 §6): a request-serving app that declared no pause and
+// is not a function (functions quiet-pause already). An app that declared
+// when_idle or never keeps what it declared. vmmd applies it only where its
+// idle_ladder_apps switch is on.
+func idleLadderGuardedPause(app state.App, mode, privateNetworkID string) bool {
+	return pauseTierWorkload(app, mode, privateNetworkID) &&
+		app.Type != state.AppTypeFunction && app.Manifest.Pause == ""
+}
+
 // pauseTierWorkload reports whether the pause tiers may pause an instance
 // at all (ADR-1151): a request-serving workload woken as an ordinary
 // instance. Workers, services, jobs and mirror instances keep running, and

@@ -1,0 +1,11 @@
+---
+- name: signd_service — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-signd
+
+- name: signd_service — try-restart faas-signd
+  ansible.builtin.command: systemctl try-restart faas-signd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-signd
+  when: faas_signd_listen | length > 0

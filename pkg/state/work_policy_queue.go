@@ -36,6 +36,10 @@ func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID
 		return Invocation{}, fmt.Errorf("state: queue trigger claim begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	// Lock order: app, then binding, as capped enqueues take them (H33-27).
+	if _, err := sqlc.New().LockQueueClaimApp(ctx, tx, appUUID); err != nil {
+		return Invocation{}, mapErr(err)
+	}
 	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}

@@ -245,7 +245,9 @@ func (s *PgStore) PrepareProjectEnvironmentClonePostgresBinding(ctx context.Cont
 	if err != nil {
 		return prepared, mapErr(err)
 	}
-	if count >= int64(request.MaxSecretsPerApp) {
+	// The managed value does not count toward the customer-secret cap; like
+	// a direct bind, only an app already over it is refused (ADR-20261110120000).
+	if count > int64(request.MaxSecretsPerApp) {
 		return prepared, ErrQuotaExceeded
 	}
 	secret := prepared.Secret

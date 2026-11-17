@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,7 +20,13 @@ import (
 const (
 	devWatchPollInterval   = 250 * time.Millisecond
 	devWatchSettleInterval = 500 * time.Millisecond
-	devSessionFunction     = "function"
+	// devWatchErrorGrace is how long scans may keep failing before the
+	// watcher gives up; transient editor renames clear within one poll.
+	devWatchErrorGrace = 10 * time.Second
+	// devLeaseHeartbeat renews an idle watcher's lease well before any
+	// lease (at least one hour) can end.
+	devLeaseHeartbeat  = 15 * time.Minute
+	devSessionFunction = "function"
 )
 
 type devSourceConfig struct {
@@ -29,6 +36,9 @@ type devSourceConfig struct {
 }
 
 func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
+	if err := refuseDevFunctionSet(sourceDir); err != nil {
+		return devSourceConfig{}, err
+	}
 	resolvedShape, runtime, handler, err := resolveDeployShape(sourceDir, false, false, jsonOutput)
 	if err != nil {
 		return devSourceConfig{}, err
@@ -310,11 +320,18 @@ func cmdDev(args []string) int {
 	if len(args) > 0 && args[0] == "history" {
 		return cmdDevHistory(args[1:])
 	}
+	if len(args) > 0 && args[0] == "list" {
+		return cmdDevList(args[1:])
+	}
 	if len(args) > 0 && args[0] == "info" {
 		return cmdDevInfo(args[1:])
 	}
 	if len(args) > 0 && args[0] == "trigger" {
 		return cmdDevTrigger(args[1:])
+	}
+	// ADR-20261107210000: run the functions on this machine instead.
+	if rest, isLocal := hasLocalFlag(args); isLocal {
+		return cmdDevLocal(rest)
 	}
 	fs := newFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
@@ -323,6 +340,8 @@ func cmdDev(args []string) int {
 	serviceOverrideFile := fs.String("service-override-file", "", "sync validated service URLs as developer secrets (explicit opt-in)")
 	once := fs.Bool("once", false, "deploy once and exit instead of watching for changes")
 	stop := fs.Bool("stop", false, "tear down this project's developer environment")
+	stopApp := fs.String("app", "", "with --stop, the dev-* app of the environment to stop, as listed by gregale dev list (for an environment started from another directory)")
+	yes := fs.Bool("yes", false, "with --stop, skip the confirmation before deleting the environment's database and buckets")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream")
 	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
 	var bucketNames devBucketNames
@@ -334,8 +353,10 @@ func cmdDev(args []string) int {
 	reseed := fs.Bool("reseed", false, "run the --postgres-seed command again even if this database was already seeded")
 	debug := fs.Bool("debug", false, "start the Node.js inspector and expose it on a local port (ADR-741)")
 	debugPort := fs.Int("debug-port", api.DevDebugNodePort, "local port for --debug")
+	proxyPort := fs.Int("proxy-port", devAuthProxyDefaultPort, "local browser address port for an authenticated developer environment")
+	noProxy := fs.Bool("no-proxy", false, "do not serve an authenticated developer environment on localhost")
 	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
-	watch := fs.Bool("watch", false, "run the app's development server with hot reload instead of the production build (ADR-1170)")
+	watch := fs.Bool("watch", false, "use hot reload (automatic for supported apps); --watch=false uses the production build")
 	watchCommand := fs.String("watch-command", "", "development server command for --watch (default: the dev script or the detected framework's server)")
 	goCommand := fs.String("go-command", "", "build cmd/NAME of the Go module at --path, for a module with several commands")
 	if err := fs.Parse(args); err != nil {
@@ -350,8 +371,20 @@ func cmdDev(args []string) int {
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
+	if explicitFlags["watch"] && !*watch && explicitFlags["watch-command"] {
+		return printErr("Invalid flags", errors.New("--watch=false cannot be combined with --watch-command"))
+	}
 	if *stop && explicitFlags["bucket"] {
 		return printErr("Invalid flags", fmt.Errorf("--bucket cannot be combined with --stop"))
+	}
+	if *stopApp != "" && !*stop {
+		return printErr("Invalid flags", errors.New("--app selects the environment --stop removes; add --stop"))
+	}
+	if *stopApp != "" && *name == "" {
+		return printErr("Invalid flags", errors.New("--stop --app also needs --name PROJECT, as shown by gregale dev list"))
+	}
+	if *yes && !*stop {
+		return printErr("Invalid flags", errors.New("--yes only confirms --stop"))
 	}
 	if *once && *stop {
 		return printErr("Invalid flags", fmt.Errorf("--once and --stop are mutually exclusive"))
@@ -394,7 +427,7 @@ func cmdDev(args []string) int {
 	if *all {
 		return cmdDevAllFromFlags(cwd, *sourcePath, explicitFlags, devAllOptions{
 			once: *once, stop: *stop, noLogs: *noLogs, open: *open, postgres: *withPostgres, postgresRegion: *postgresRegion,
-			ttl: *ttl, buckets: bucketNames, watch: *watch,
+			ttl: *ttl, buckets: bucketNames, watch: *watch, yes: *yes,
 		})
 	}
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
@@ -404,7 +437,7 @@ func cmdDev(args []string) int {
 	var linkedContext localProjectContext
 	linkedErr := errProjectContextNotFound
 	if *name == "" {
-		linkedContext, _, linkedErr = linkedProjectContext(sourceDir)
+		linkedContext, _, linkedErr = targetProjectContext(sourceDir)
 		if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
 			return printErr("Could not read local project context", linkedErr)
 		}
@@ -418,17 +451,28 @@ func cmdDev(args []string) int {
 	}
 	// --stop only tears the environment down, so team defaults for files that
 	// would be synced on start must not turn it into a flag conflict.
+	debugFromManifest := false
 	if !*stop {
 		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 		applyDevSeedManifestDefault(manifest, explicitFlags, postgresSeed)
-		applyDevDebugManifestDefault(manifest, explicitFlags, debug)
-		applyDevWatchManifestDefault(manifest, explicitFlags, watch, watchCommand)
+		debugFromManifest = applyDevDebugManifestDefault(manifest, explicitFlags, debug, debugPort)
 	}
 	var buckets []api.DevBucketRequest
 	if !*stop {
 		buckets, err = resolveDevBuckets(manifest, bucketNames, explicitFlags["bucket"])
 		if err != nil {
 			return printErr("Invalid developer buckets", err)
+		}
+	}
+	if *debugPort < 1 || *debugPort > 65535 {
+		return printErr("Invalid debug port", fmt.Errorf("dev.debug_port must be between 1 and 65535"))
+	}
+	if *debug && *once && debugFromManifest {
+		// gregale.yaml's dev.debug is a team default for interactive loops; a
+		// one-shot sync (CI, scripts) just skips the debugger.
+		*debug = false
+		if !jsonOutput {
+			PrintProgress(osStdout, "dev.debug skipped: --once exits after one sync")
 		}
 	}
 	if *debug && *once {
@@ -491,6 +535,13 @@ func cmdDev(args []string) int {
 	if *withPostgres && serviceOverrideContainsKey(serviceOverridePairs, "DATABASE_URL") {
 		return printErr("Invalid flags", fmt.Errorf("--postgres cannot be combined with DATABASE_URL in --service-override-file"))
 	}
+	if *withPostgres && envFilePath != "" {
+		// The env file is synced as a secret of the same name as the managed
+		// binding, so the two would race for DATABASE_URL.
+		if envPairs, _, readErr := readDevEnvFileEntries(envFilePath); readErr == nil && serviceOverrideContainsKey(envPairs, "DATABASE_URL") {
+			return printErr("Invalid flags", fmt.Errorf("--postgres provides DATABASE_URL; remove it from --env-file %s, or drop --postgres to use your own database", filepath.Base(envFilePath)))
+		}
+	}
 	project, targetErr := selectDevProject(*name, sourceDir, linkedContext, linkedErr)
 	if targetErr != nil {
 		return targetErr.print()
@@ -510,14 +561,25 @@ func cmdDev(args []string) int {
 		workspaceID = group
 	}
 
-	client, err := authedClient()
+	// Source syncs are uploads the server accepts synchronously; a cold first
+	// sync can take longer than the 30s JSON wait (as `gregale deploy` allows).
+	client, err := authedClientWithDeployTimeout(5 * time.Minute)
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	if *stop {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if err := client.DestroyDevSession(ctx, project, workspaceID); err != nil {
+		if code := confirmDevStop(ctx, client, project, workspaceID, *stopApp, *yes); code != 0 {
+			return code
+		}
+		var err error
+		if *stopApp != "" {
+			err = client.DestroyDevSessionByApp(ctx, project, *stopApp)
+		} else {
+			err = client.DestroyDevSession(ctx, project, workspaceID)
+		}
+		if err != nil {
 			return printErr("Could not stop developer environment", err)
 		}
 		if jsonOutput {
@@ -531,7 +593,11 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
-	if code := checkDevSource(sourceDir, config); code != 0 {
+	configuration, err := loadDevConfiguration(sourceDir, envFilePath, serviceOverrideFilePath, *withPostgres, buckets)
+	if err != nil {
+		return printErr("Invalid developer configuration", err)
+	}
+	if code := checkDevSource(sourceDir, config, configuration.evaluate(nil)); code != 0 {
 		return code
 	}
 	if err := checkDevGoCommand(sourceDir, config, *goCommand); err != nil {
@@ -541,24 +607,35 @@ func cmdDev(args []string) int {
 		PrintProgress(osStdout, "Source: %s; connection: %s; isolated developer session: %s", sourceDir, currentProfile(), project)
 	}
 
-	if *debug && !devDebugSupported(sourceDir, config) {
-		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
+	if *debug && !devDebugSupported(sourceDir, config) && debugFromManifest {
+		*debug = false
+		if !jsonOutput {
+			PrintProgress(osStdout, "dev.debug skipped: the debugger supports Node.js workloads only (not Bun or Deno)")
+		}
 	}
-	devWatch, err := resolveDevWatch(sourceDir, config, *watch, *watchCommand)
+	if *debug && !devDebugSupported(sourceDir, config) {
+		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only (not Bun or Deno)"))
+	}
+	devMode, err := resolveDevMode(sourceDir, config, manifest, explicitFlags, *watch, *watchCommand)
 	if err != nil {
 		return printErr("Invalid --watch", err)
 	}
-	var devWatchNotes []string
-	if devWatch != nil {
-		// Before the first sync, so a config edit ships with it.
-		devWatchNotes = prepareDevWatchSource(sourceDir, !jsonOutput && !nonInteractive && stdinIsTTY() && stdoutIsTTY(), osStdin, osStdout)
-	}
-	session, err := upsertDevSession(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...), *goCommand))
+	session, devMode, err := upsertDevSessionWithMode(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devMode.watch(), buckets...), *goCommand), devMode)
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
 	if session.GoCommand != *goCommand {
 		return printErr("Could not select the Go command", errDevGoCommandUnsupported(*goCommand))
+	}
+	devWatch := devMode.watch()
+	if err := reportDevMode(devMode); err != nil {
+		return jsonOut(err)
+	}
+	var devWatchNotes []string
+	if devWatch != nil {
+		// Prepare only an accepted watch session, before the first sync, so
+		// an automatic fallback never asks to edit framework configuration.
+		devWatchNotes = prepareDevWatchSource(sourceDir, !jsonOutput && !nonInteractive && stdinIsTTY() && stdoutIsTTY(), osStdin, osStdout)
 	}
 	if group != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -577,7 +654,7 @@ func cmdDev(args []string) int {
 	}
 	if !jsonOutput {
 		PrintOK(osStdout, "Developer environment: %s", canonicalAppURL(session.App))
-		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.Local().Format(time.RFC822))
+		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"))
 		if session.Postgres != nil {
 			PrintProgress(osStdout, "PostgreSQL: %s (%s); %s is injected when the binding is ready", session.Postgres.Name, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
 		}
@@ -585,7 +662,6 @@ func cmdDev(args []string) int {
 			PrintProgress(osStdout, "Bucket: %s (%s); binding %s under %s", bucket.Bucket.Name, bucket.Bucket.State, bucket.Binding.Credential.Permission, bucket.Binding.Prefix)
 		}
 		if session.Watch != nil {
-			PrintProgress(osStdout, "watch mode: runs %q with hot reload; this environment does not run your production build", session.Watch.Command)
 			for _, note := range devWatchNotes {
 				PrintProgress(osStdout, "watch mode: %s", note)
 			}
@@ -594,8 +670,19 @@ func cmdDev(args []string) int {
 
 	ctx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
-	runtimeLogCtx, cancelRuntimeLogs := context.WithCancel(ctx)
-	defer cancelRuntimeLogs()
+	// A `gregale dev --all` child stops like Ctrl-C when its supervisor dies.
+	watchDevAllParent(stopSignal)
+	if !*once {
+		// A watcher that is open but idle still owns its environment: renew
+		// the lease so the janitor never tears it (and its database) down
+		// under a running `gregale dev`. Ctrl-C stops the renewals.
+		go renewDevSessionWhileWatching(ctx, devLeaseHeartbeat, func() error {
+			_, err := upsertDevSession(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...), *goCommand))
+			return err
+		})
+	}
+	stopRuntimeLogs := func() {}
+	defer func() { stopRuntimeLogs() }()
 	runtimeLogsStarted := false
 	debugProxyStarted := false
 	devBrowserOpened := false
@@ -605,21 +692,34 @@ func cmdDev(args []string) int {
 	if devWatch == nil && config.shape != shapeFunction {
 		patchExplainer.watchCommand = devWatchSuggestion(sourceDir)
 	}
-	seedPending := *postgresSeed != ""
-	forceReseed := *reseed
-	reportDevDiagnostic := func(d devDiagnostic) {
-		d.SourceDir = sourceDir
-		if jsonOutput {
-			_ = writeJSON(d)
-			return
+	seeds := newDevSeedRunner(*postgresSeed != "", *reseed)
+	reportDevDiagnostic := newDevDiagnosticReporter(sourceDir, session.App.Slug)
+	// An authenticated environment answers browsers only through the local
+	// proxy, which adds the CLI's credential (owner decision 2026-11-15).
+	var browserProxy *devAuthProxy
+	if !*once && !*noProxy && devNeedsAuthProxy(session.App) {
+		proxy, proxyErr := startDevAuthProxy(ctx, canonicalAppURL(session.App), client.Token(), *proxyPort)
+		if proxyErr != nil {
+			PrintWarn(osStderr, "browser address unavailable: %v; the environment still requires an API key", proxyErr)
+		} else {
+			browserProxy = proxy
+			defer browserProxy.close()
+			if jsonOutput {
+				_ = writeJSON(map[string]string{"event": "developer_browser_proxy", "url": proxy.URL, "target": canonicalAppURL(session.App)})
+			} else {
+				PrintOK(osStdout, "Open in a browser: %s (signed in as you; forwards to %s)", proxy.URL, canonicalAppURL(session.App))
+			}
 		}
-		renderDevDiagnostic(osStderr, d)
 	}
 	openDevBrowser := func() {
 		if !*open || jsonOutput || devBrowserOpened {
 			return
 		}
 		devBrowserOpened = true
+		if browserProxy != nil {
+			openDeveloperEnvironment(browserProxy.URL)
+			return
+		}
 		openDeveloperEnvironment(canonicalAppURL(session.App))
 	}
 	lastSynced, err := devSourceFingerprint(sourceDir, envFilePath, serviceOverrideFilePath)
@@ -627,6 +727,7 @@ func cmdDev(args []string) int {
 		return printErr("Could not watch developer source", err)
 	}
 	syncState := &devSourceSyncState{}
+	envExcludeNoted := false
 	envSyncState := &devEnvSyncState{}
 	serviceOverrideSyncState := &devEnvSyncState{}
 	waitForChange := func(waitCtx context.Context, dir string, previous [sha256.Size]byte) ([sha256.Size]byte, error) {
@@ -638,8 +739,14 @@ func cmdDev(args []string) int {
 	return runDevWatchLoop(ctx, sourceDir, lastSynced, config, *once, devLoopOps{
 		deploy: func(deployCtx context.Context, config devSourceConfig, queued func(string)) int {
 			diagnosticReported.Store(false)
+			validated, configurationCode := checkDevConfiguration(deployCtx, client, session, sourceDir, envFilePath, serviceOverrideFilePath)
+			if configurationCode != 0 {
+				diagnosticReported.Store(true)
+				return configurationCode
+			}
 			if envFilePath != "" {
-				report, syncErr := envSyncState.sync(deployCtx, client, session.App.Slug, envFilePath)
+				file := validated.files[0]
+				report, syncErr := envSyncState.syncPairs(deployCtx, client, session.App.Slug, envFilePath, file.pairs, file.fingerprint, "developer config")
 				if syncErr != nil {
 					_ = printErr("Could not sync developer config", syncErr)
 					diagnosticReported.Store(true)
@@ -651,7 +758,8 @@ func cmdDev(args []string) int {
 				}
 			}
 			if serviceOverrideFilePath != "" {
-				report, syncErr := serviceOverrideSyncState.syncServiceOverrides(deployCtx, client, session.App.Slug, serviceOverrideFilePath)
+				file := validated.files[1]
+				report, syncErr := serviceOverrideSyncState.syncPairs(deployCtx, client, session.App.Slug, serviceOverrideFilePath, file.pairs, file.fingerprint, "developer service overrides")
 				if syncErr != nil {
 					_ = printErr("Could not sync developer service overrides", syncErr)
 					diagnosticReported.Store(true)
@@ -670,6 +778,13 @@ func cmdDev(args []string) int {
 				prefixBuildLogs:  true,
 				streamLogsOnJSON: true,
 				developerSource:  syncState,
+				// --once wants a converged deploy, not a patch (ADR-20261021221906).
+				devBuildNow: *once,
+				untilDevPatched: func(waitCtx context.Context, dep api.DeploymentResponse) (int, bool) {
+					return finishDeferredDevSync(waitCtx, dep, func(ctx context.Context, generation int64) (api.DevPatchStatusResponse, error) {
+						return client.GetDevPatchStatus(ctx, project, workspaceID, generation)
+					}, devPatchWatchInterval, devPatchWatchTimeout, devTelemetry.patchDelivered)
+				},
 				extraSourceExcludes: func() []string {
 					excludes := make([]string, 0, 2)
 					if envFilePath != "" {
@@ -678,6 +793,14 @@ func cmdDev(args []string) int {
 					if serviceOverrideFilePath != "" {
 						excludes = append(excludes, serviceOverrideFilePath)
 					}
+					// Local .env files stay on this machine (owner decision
+					// 2026-11-15); --env-file syncs values as sealed secrets.
+					localEnv := devLocalEnvExcludes(sourceDir, dockerfileSource(sourceDir), excludes...)
+					if len(localEnv) > 0 && !jsonOutput && !envExcludeNoted {
+						envExcludeNoted = true
+						PrintProgress(osStdout, "%s", devLocalEnvNote(sourceDir, localEnv))
+					}
+					excludes = append(excludes, localEnv...)
 					if len(excludes) == 0 {
 						return nil
 					}
@@ -689,7 +812,7 @@ func cmdDev(args []string) int {
 					if line := patchExplainer.explain(dep.DevPatch); line != "" && !jsonOutput {
 						PrintProgress(osStdout, "%s", line)
 					}
-					if dep.DevPatch != nil && dep.DevPatch.Generation > 0 {
+					if dep.DevPatch != nil && dep.DevPatch.Generation > 0 && dep.DevPatch.BuildDeferredUntil == nil {
 						go watchDevPatch(deployCtx, dep.DevPatch.Generation,
 							func(ctx context.Context, generation int64) (api.DevPatchStatusResponse, error) {
 								return client.GetDevPatchStatus(ctx, project, workspaceID, generation)
@@ -751,14 +874,20 @@ func cmdDev(args []string) int {
 					devTelemetry.render(osStdout)
 				}
 			}
-			if code == 0 && seedPending {
-				switch runDevSeedAfterLiveSync(deployCtx, client, session, *postgresSeed, forceReseed, reportDevDiagnostic) {
-				case devSeedOutcomeDone:
-					seedPending, forceReseed = false, false
-				case devSeedOutcomeFailed:
-					if *once {
+			if code == 0 {
+				if *once {
+					if force, ok := seeds.start(); ok && seeds.finish(runDevSeedAfterLiveSync(deployCtx, client, session, *postgresSeed, force, reportDevDiagnostic)) == devSeedOutcomeFailed {
 						code = 1
 					}
+				} else if force, ok := seeds.start(); ok {
+					// The seed runs beside the watcher, under the session's
+					// context: a newer edit superseding this deploy must not
+					// abandon a seed that keeps running remotely, and at most
+					// one seed runs at a time.
+					seedSession := session
+					go func() {
+						seeds.finish(runDevSeedAfterLiveSync(ctx, client, seedSession, *postgresSeed, force, reportDevDiagnostic))
+					}()
 				}
 			}
 			if code == 0 {
@@ -771,12 +900,11 @@ func cmdDev(args []string) int {
 				debugProxyStarted = true
 				startDevDebugSession(ctx, session.App.Slug, *debugPort)
 			}
-			if *once || *noLogs || jsonOutput || runtimeLogsStarted {
+			if runtimeLogsStarted {
 				return
 			}
 			runtimeLogsStarted = true
-			PrintProgress(osStdout, "runtime logs attached (Ctrl-C to stop watching)")
-			go followDevRuntimeLogsWithDiagnostics(runtimeLogCtx, client, session.App.Slug, reportDevDiagnostic)
+			stopRuntimeLogs = startDevRuntimeLogs(ctx, client, session.App.Slug, *once, *noLogs, reportDevDiagnostic)
 		},
 		cancelDeploy: func(cancelCtx context.Context, deploymentID string) error {
 			cancelCtx, cancel := context.WithTimeout(cancelCtx, 15*time.Second)
@@ -949,7 +1077,7 @@ func cmdDevHistory(args []string) int {
 		if !item.WithinSLO {
 			mark = "slow"
 		}
-		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
+		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.UTC().Format("2006-01-02 15:04Z"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
 	}
 	return 0
 }
@@ -984,9 +1112,19 @@ func upsertDevSession(client *Client, project string, req api.UpsertDevSessionRe
 // still detecting normal editor writes, renames, creates, and deletes.
 func devSourceFingerprint(sourceDir string, extraFiles ...string) ([sha256.Size]byte, error) {
 	h := sha256.New()
-	patterns := loadGregaleignore(sourceDir)
+	// The same selection the developer upload uses: .dockerignore and the
+	// Dockerfile build-output and Go vendoring rules included, and local env
+	// files left out unless re-included. Otherwise a write the upload ignores
+	// starts a full build of identical source, and a shipped file is never
+	// watched.
+	rules := loadPackRules(sourceDir, dockerfileSource(sourceDir))
 	err := filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			if path != sourceDir && errors.Is(walkErr, fs.ErrNotExist) {
+				// Editors and tools create and remove files while we scan;
+				// the next poll sees the settled tree.
+				return nil
+			}
 			return walkErr
 		}
 		if path == sourceDir {
@@ -997,7 +1135,8 @@ func devSourceFingerprint(sourceDir string, extraFiles ...string) ([sha256.Size]
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if shouldExclude(rel, entry.IsDir(), patterns) {
+		decision := rules.selection(rel, entry.IsDir())
+		if decision.excluded {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -1006,7 +1145,13 @@ func devSourceFingerprint(sourceDir string, extraFiles ...string) ([sha256.Size]
 		if entry.IsDir() {
 			return nil
 		}
+		if localEnvFileName(rel) && decision.reason != "negated ignore rule" {
+			return nil
+		}
 		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil // removed between listing and stat
+		}
 		if err != nil {
 			return err
 		}
@@ -1034,6 +1179,32 @@ func devSourceFingerprint(sourceDir string, extraFiles ...string) ([sha256.Size]
 	return sum, nil
 }
 
+// renewDevSessionWhileWatching calls renew every interval until ctx ends. A
+// failed renewal is reported once per failure streak; the next sync renews
+// again in any case.
+func renewDevSessionWhileWatching(ctx context.Context, interval time.Duration, renew func() error) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	warned := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			err := renew()
+			switch {
+			case err == nil:
+				warned = false
+			case ctx.Err() != nil:
+				return
+			case !warned && !jsonOutput:
+				warned = true
+				PrintWarn(osStderr, "could not renew the developer environment lease while idle: %v", err)
+			}
+		}
+	}
+}
+
 func waitForDevSourceChange(ctx context.Context, sourceDir string, previous [sha256.Size]byte, extraFiles ...string) ([sha256.Size]byte, error) {
 	return waitForDevSourceChangeWithIntervals(ctx, sourceDir, previous, devWatchPollInterval, devWatchSettleInterval, extraFiles...)
 }
@@ -1043,6 +1214,7 @@ func waitForDevSourceChangeWithIntervals(ctx context.Context, sourceDir string, 
 	defer ticker.Stop()
 	candidate := previous
 	var stableSince time.Time
+	var failingSince time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -1050,8 +1222,18 @@ func waitForDevSourceChangeWithIntervals(ctx context.Context, sourceDir string, 
 		case <-ticker.C:
 			current, err := devSourceFingerprint(sourceDir, extraFiles...)
 			if err != nil {
+				// An atomic save (write a temporary, rename over the file)
+				// can fail one scan. Only a failure that persists ends the
+				// watcher.
+				if failingSince.IsZero() {
+					failingSince = time.Now()
+				}
+				if time.Since(failingSince) < devWatchErrorGrace {
+					continue
+				}
 				return previous, err
 			}
+			failingSince = time.Time{}
 			if current != candidate {
 				candidate = current
 				if current == previous {

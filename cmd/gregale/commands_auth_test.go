@@ -532,6 +532,9 @@ func TestRealtimeCreateWithAuthWiresCallbackAndOIDC(t *testing.T) {
 			}
 			_ = json.NewDecoder(r.Body).Decode(&endpoint)
 			main.WriteJSONTest(w, map[string]any{"id": "ep1", "app_slug": "shop", "enabled": true})
+		case r.Method == "GET" && r.URL.Path == "/v1/apps/shop":
+			// The created endpoint's client URL is read from the app.
+			main.WriteJSONTest(w, map[string]any{"id": "shop-app", "slug": "shop", "url": "https://shop.gregale.app"})
 		case r.Method == "POST" && r.URL.Path == "/v1/apps/shop-auth/restart":
 			restarted++
 			main.WriteJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})

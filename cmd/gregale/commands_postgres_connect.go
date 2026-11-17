@@ -29,12 +29,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const postgresConnectUsage = "usage: gregale postgres connect <database> [--app SLUG] [--env KEY] [--access read_write|migration|read_only] [--port N] [--address A] [--proxy] [--wait-timeout D] [-- psql-args...]"
+const postgresConnectUsage = "usage: gregale postgres connect <database> [--app SLUG] [--env KEY] [--access read_write|migration|session|read_only] [--port N] [--address A] [--proxy] [--wait-timeout D] [-- psql-args...]"
 
 // postgresConnectAccessOrder is the default binding preference. Ad-hoc
-// schema work (indexes, migrations) needs write access; a read-only binding
-// is used only when it is the one the database has.
-var postgresConnectAccessOrder = []string{"read_write", "migration", "read_only"}
+// schema work (indexes, migrations) needs write access; a session binding
+// has read_write privileges on the direct endpoint; a read-only binding is
+// used only when it is the one the database has.
+var postgresConnectAccessOrder = []string{"read_write", "migration", "session", "read_only"}
 
 // postgresConnectDSNLimit bounds what the env read may return.
 const postgresConnectDSNLimit = 8 << 10
@@ -210,7 +211,7 @@ func choosePostgresConnectBinding(bindings []api.ManagedPostgresBinding, apps []
 		candidates = append(candidates, candidate{binding, slug})
 	}
 	if len(candidates) == 0 {
-		return api.ManagedPostgresBinding{}, "", errors.New("no ready read_write, migration or read_only binding matches")
+		return api.ManagedPostgresBinding{}, "", errors.New("no ready read_write, migration, session or read_only binding matches")
 	}
 	slices.SortStableFunc(candidates, func(a, b candidate) int {
 		return slices.Index(postgresConnectAccessOrder, a.binding.Access) - slices.Index(postgresConnectAccessOrder, b.binding.Access)

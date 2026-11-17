@@ -18,20 +18,25 @@ type queueMetrics struct {
 	bindingDeadLetter   *prometheus.GaugeVec
 	bindingWorkerDemand *prometheus.GaugeVec
 	bindingThrottled    *prometheus.CounterVec
+	// Ordered work (ADR-20261112193306).
+	bindingBlockedLanes      *prometheus.GaugeVec
+	bindingBlockedAgeSeconds *prometheus.GaugeVec
 }
 
 func newQueueMetrics(prefix string) *queueMetrics {
 	return &queueMetrics{
-		depth:               prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_depth", Help: "Current durable queue depth, labelled by admitted app."}, []string{"app"}),
-		inFlight:            prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_in_flight", Help: "Current durable queue invocations with a live worker lease, labelled by admitted app."}, []string{"app"}),
-		oldestAge:           prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_oldest_age_seconds", Help: "Age in seconds of the oldest pending durable queue invocation, labelled by admitted app; zero means no pending work."}, []string{"app"}),
-		deadLetter:          prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_dead_letter", Help: "Current durable queue dead-letter count, labelled by admitted app."}, []string{"app"}),
-		bindingDepth:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_depth", Help: "Current durable queue depth, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
-		bindingInFlight:     prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_in_flight", Help: "Current durable queue invocations with a live worker lease, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
-		bindingLagSeconds:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_lag_seconds", Help: "Age in seconds of the oldest pending invocation for a queue binding; zero means no pending work."}, []string{"app", "binding"}),
-		bindingDeadLetter:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_dead_letter", Help: "Current durable queue dead-letter count, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
-		bindingWorkerDemand: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_worker_demand", Help: "Uncapped worker demand derived from backlog for a queue binding, before app and account caps."}, []string{"app", "binding"}),
-		bindingThrottled:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_queue_binding_concurrency_throttled_total", Help: "Count of queue polls throttled because a queue binding reached its max concurrency."}, []string{"app", "binding"}),
+		depth:                    prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_depth", Help: "Current durable queue depth, labelled by admitted app."}, []string{"app"}),
+		inFlight:                 prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_in_flight", Help: "Current durable queue invocations with a live worker lease, labelled by admitted app."}, []string{"app"}),
+		oldestAge:                prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_oldest_age_seconds", Help: "Age in seconds of the oldest pending durable queue invocation, labelled by admitted app; zero means no pending work."}, []string{"app"}),
+		deadLetter:               prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_dead_letter", Help: "Current durable queue dead-letter count, labelled by admitted app."}, []string{"app"}),
+		bindingDepth:             prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_depth", Help: "Current durable queue depth, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
+		bindingInFlight:          prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_in_flight", Help: "Current durable queue invocations with a live worker lease, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
+		bindingLagSeconds:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_lag_seconds", Help: "Age in seconds of the oldest pending invocation for a queue binding; zero means no pending work."}, []string{"app", "binding"}),
+		bindingDeadLetter:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_dead_letter", Help: "Current durable queue dead-letter count, labelled by admitted app and queue binding."}, []string{"app", "binding"}),
+		bindingWorkerDemand:      prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_worker_demand", Help: "Uncapped worker demand derived from backlog for a queue binding, before app and account caps."}, []string{"app", "binding"}),
+		bindingThrottled:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_queue_binding_concurrency_throttled_total", Help: "Count of queue polls throttled because a queue binding reached its max concurrency."}, []string{"app", "binding"}),
+		bindingBlockedLanes:      prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_blocked_lanes", Help: "Ordered-message keys of a queue binding whose head message has failed and holds later messages of its key."}, []string{"app", "binding"}),
+		bindingBlockedAgeSeconds: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_queue_binding_blocked_age_seconds", Help: "Age in seconds of the oldest head message blocking its key on a queue binding; zero means no blocked key."}, []string{"app", "binding"}),
 	}
 }
 
@@ -116,6 +121,27 @@ func (m *OpsMetrics) SetQueueBindingState(app, binding string, depth, inFlight, 
 	m.queue.setBinding(m.appLabel(app), m.queueLabels.admit(binding), depth, inFlight, deadLetter, oldestPendingAt, now)
 }
 
+// SetQueueBindingBlocked records a binding's blocked ordered-message keys
+// and the age of the oldest blocking head (ADR-20261112193306).
+func (m *OpsMetrics) SetQueueBindingBlocked(app, binding string, lanes int, oldestBlockedAt, now time.Time) {
+	if m == nil || m.queue == nil {
+		return
+	}
+	age := 0.0
+	if !oldestBlockedAt.IsZero() {
+		age = now.Sub(oldestBlockedAt).Seconds()
+		if age < 0 || math.IsNaN(age) || math.IsInf(age, 0) {
+			age = 0
+		}
+	}
+	appLabel := m.appLabel(app)
+	if m.queueLabels != nil {
+		binding = m.queueLabels.admit(binding)
+	}
+	m.queue.bindingBlockedLanes.WithLabelValues(appLabel, binding).Set(float64(max(lanes, 0)))
+	m.queue.bindingBlockedAgeSeconds.WithLabelValues(appLabel, binding).Set(age)
+}
+
 // SetQueueBindingWorkerDemand records the uncapped worker demand derived from
 // a binding's backlog. The app/account worker cap is applied by the scheduler;
 // this gauge preserves the per-binding pressure signal for observability.
@@ -147,4 +173,23 @@ func (m *OpsMetrics) ObserveQueueBindingConcurrencyThrottled(app, binding string
 		return
 	}
 	m.queue.observeBindingThrottled(appLabel, m.queueLabels.admit(binding))
+}
+
+// ForgetQueueApp deletes app's durable queue gauges. The schedd that sampled
+// them no longer manages the app, and a value frozen here would keep a
+// backlog alert firing after the queue drained under the app's new owner
+// (ADR-20261018101500 amendment 2026-10-31). An app that overflowed into the
+// shared label has no series of its own and keeps the shared one.
+func (m *OpsMetrics) ForgetQueueApp(app string) {
+	if m == nil || m.queue == nil || m.appLabels == nil || !m.appLabels.has(app) {
+		return
+	}
+	q := m.queue
+	for _, vec := range []*prometheus.GaugeVec{q.depth, q.inFlight, q.oldestAge, q.deadLetter} {
+		vec.DeleteLabelValues(app)
+	}
+	for _, vec := range []*prometheus.GaugeVec{q.bindingDepth, q.bindingInFlight, q.bindingLagSeconds, q.bindingDeadLetter, q.bindingWorkerDemand,
+		q.bindingBlockedLanes, q.bindingBlockedAgeSeconds} {
+		vec.DeletePartialMatch(prometheus.Labels{"app": app})
+	}
 }

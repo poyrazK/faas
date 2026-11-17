@@ -44,7 +44,12 @@ func open(t *testing.T) *pgxpool.Pool {
 		CREATE TABLE platform_mail_agent_run_observations (delivery_id uuid PRIMARY KEY, account_id uuid NOT NULL, disposition text NOT NULL);
 		CREATE TABLE workflow_runs (id uuid PRIMARY KEY, status text NOT NULL);
 		CREATE TABLE workflow_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL, event_name text NOT NULL);
-		CREATE TABLE managed_realtime_endpoints (id uuid PRIMARY KEY);`); err != nil {
+		CREATE TABLE managed_realtime_endpoints (id uuid PRIMARY KEY);
+		CREATE TABLE jobs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid NOT NULL, status text NOT NULL DEFAULT 'active',
+			image_storage_key text, image_materialization_status text NOT NULL DEFAULT 'pending', image_materialization_error text);
+		CREATE TABLE apps (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid NOT NULL, slug text NOT NULL, status text NOT NULL DEFAULT 'active');
+		CREATE TABLE deployments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), app_id uuid NOT NULL, status text NOT NULL,
+			error text, rootfs_key text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now());`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range agentMigrations {
@@ -72,7 +77,13 @@ var agentMigrations = []string{"20261029093503390_agent_runs.sql", "202610290935
 	"20261029093517736_agent_run_model_access.sql", "20261029093524909_agent_run_checkout.sql", "20261029093538256_agent_deliveries.sql", "20261029093545429_agent_delivery_destinations.sql", "20261029093606948_agent_run_workflow_steps.sql",
 	"20261030205907043_agent_version_pause_during_model_calls.sql",
 	"20261031122245453_agent_run_usage.sql", "20261031215544747_agent_callback_revocations.sql",
-	"20261102075456168_agent_run_callbacks.sql"}
+	"20261102075456168_agent_run_callbacks.sql", "20261110153935524_sandbox_sessions.sql",
+	"20261110153935557_sandbox_workspace_snapshots.sql", "20261110153935586_sandbox_ports.sql",
+	"20261110153935627_sandbox_session_images.sql", "20261110153935666_sandbox_templates.sql",
+	"20261110153935695_sandbox_session_templates.sql", "20261110153935721_sandbox_session_usage.sql",
+	"20261112074016981_agent_github_subscriptions.sql", "20261117075028100_sandbox_sessions_browser.sql",
+	"20261117075028200_sandbox_tasks.sql", "20261117075028300_sandbox_actions.sql",
+	"20261117084816832_sandbox_action_screenshots.sql"}
 
 func spec() agents.VersionSpec {
 	return agents.VersionSpec{Harness: agents.Harness{Preset: "codex"}, PromptTemplate: "Triage {{event.title}}", TimeoutSec: 300}
@@ -143,6 +154,12 @@ func TestAgentsAndVersions(t *testing.T) {
 	}
 	if _, err := s.Version(ctx, other, "triage", 2); !errors.Is(err, agents.ErrNotFound) {
 		t.Fatalf("another account's version: %v", err)
+	}
+	// Versions are int4: a number past it used to wrap, so 1<<32+1 read version 1.
+	for _, n := range []int{1<<32 + 1, 1 << 31, 0, -1} {
+		if got, err := s.Version(ctx, account, "triage", n); !errors.Is(err, agents.ErrNotFound) {
+			t.Fatalf("version %d: got %+v, %v; want not found", n, got, err)
+		}
 	}
 	list, err := s.Agents(ctx, account, "", 10)
 	if err != nil || len(list) != 2 || list[0].Name != "review" || list[1].Name != "triage" {

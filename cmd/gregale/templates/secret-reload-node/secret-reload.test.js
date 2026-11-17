@@ -197,7 +197,9 @@ test("loopback lifecycle hooks drain the pool before capture and rebuild it on r
   assert.equal((await hook("before-checkpoint", "X-Faas-Before-Checkpoint")).status, 204);
   const acks = starter.acks.length;
   assert.equal((await hook("after-restore", "X-Faas-After-Restore")).status, 204);
-  assert.ok(starter.events.some((event) => event.type === "query" && event.id === 2));
+  // ADR-20261109180000: restore rebuilds the pool but runs no SQL on it; the
+  // first request connects (covered by rest-api-postgres's adapter tests).
+  assert.equal(starter.events.some((event) => event.type === "query" && event.id === 2), false);
   assert.equal(starter.acks.length, acks + 1);
   assert.deepEqual(starter.acks.at(-1), {revision: revision("a"), status: "applied", generation});
   starter.child.kill("SIGTERM");

@@ -282,6 +282,14 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	if !ok {
 		return status.Errorf(codes.NotFound, "instance %q not live", reqInit.GetInstance())
 	}
+	// ADR-20261110210000 slice 3i: sealed edge-rule request headers open
+	// here, on the instance's node, after every hook above saw the request.
+	added, err := s.openEdgeSecretHeaders(ctx, reqInit.GetInstance(), reqInit.GetEdgeSecretHeaders())
+	if err != nil {
+		return err
+	}
+	reqInit.Headers = withEdgeSecretHeaders(reqInit.GetHeaders(), added)
+	reqInit.EdgeSecretHeaders = nil
 
 	// Inner-leg bridge selection (issue #686 / ADR-028 draft).
 	//   v1 (default): shell-bridge script, hard-coded HTTP/1.1.
@@ -621,25 +629,18 @@ const vmmdRawBridgePath = "/opt/faas/current/bin/vmmd-raw-bridge"
 // $PATH lookup, absolute path only, the env-var override (if used in
 // tests) must also be absolute.
 //
-// The default FAAS_STREAM_BRIDGE_VERSION is "v2" (PR #750, issue #686)
-// — the H2C inner-leg bridge wired through `cmd/vmmd-stream-bridge`.
-// The v1 codepath (the shell-bridge script that hard-codes HTTP/1.1)
-// remains available as the live rollback via
-// FAAS_STREAM_BRIDGE_VERSION=v1 on vmmd. The flip was gated by
-// `make metal-lima` + TestE2E_Streaming_Metal_H2CInnerLeg.
+// The bridge is always "v2" (PR #750, issue #686) — the H2C inner-leg
+// bridge wired through `cmd/vmmd-stream-bridge`. The v1 shell bridge is no
+// longer selectable (bug hunt 2026-10-28 B23; see currentStreamBridgeVersion);
+// roll back by installing the previous bridge binary
+// (docs/ops/h2c-rollback.md).
 const vmmdStreamBridgePath = "/opt/faas/current/bin/vmmd-stream-bridge"
 
-// streamBridgeVersion is the active codepath selector. Set to "v2"
-// (or override via FAAS_STREAM_BRIDGE_VERSION env var in tests) to
-// route the inner leg through the H2C bridge. Default "v2" (issue #686)
-// commits to H2C on the inner leg end-to-end. Override via
-// FAAS_STREAM_BRIDGE_VERSION=v1 for the live rollback to the
-// shell-bridge path while v2 is being validated on the wire.
-//
-// The lookup is per-request, NOT captured at package init: ADR-028's
-// amendment promises a no-deploy rollback (set env var → next RPC
-// flips to v1). Package-init capture would silently ignore a
-// post-start env mutation and break that promise; see
+// streamBridgeVersion is the active codepath selector. Default "v2"
+// (issue #686) commits to H2C on the inner leg end-to-end.
+// FAAS_STREAM_BRIDGE_VERSION=v1 is ignored since bug hunt B23: the shell
+// bridge could smuggle a second request past the edge rules. The lookup
+// stays per-request so a future version can still be flipped live; see
 // currentStreamBridgeVersion below.
 //
 // The package-level var is kept for two reasons: (1) unit tests
@@ -808,6 +809,15 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	netnsName, ok := s.vmm.NetnsFor(reqInit.GetInstance())
 	if !ok {
 		return status.Errorf(codes.NotFound, "instance %q not live", reqInit.GetInstance())
+	}
+	// ADR-20261110210000 slice 3i: sealed edge-rule request headers go into
+	// the request head, the first frame the bridge pump receives.
+	added, err := s.openEdgeSecretHeaders(ctx, reqInit.GetInstance(), reqInit.GetEdgeSecretHeaders())
+	if err != nil {
+		return err
+	}
+	if len(added) > 0 {
+		stream = &edgeSecretHeadStream{BidiStreamingServer: stream, add: added}
 	}
 	instancePID, ok := s.vmm.InstancePID(reqInit.GetInstance())
 	if !ok || instancePID <= 0 {
@@ -1535,6 +1545,12 @@ type quietReporter interface {
 	QuietPauseReport(instance string) fcvm.QuietPauseReport
 }
 
+// idleLadderReporter reports the idle ladder level vmmd holds an instance
+// at (ADR-20261107122928).
+type idleLadderReporter interface {
+	IdleLadderLevel(instance string, now time.Time) fcvm.IdleLevel
+}
+
 // addQuietPauseState fills InstanceStats' quiet pause fields: the current
 // pause, so schedd can leave a quiet-paused instance's vCPUs out of the
 // node's active vCPU (ADR-1151), and the last completed pause with the
@@ -1555,6 +1571,13 @@ func (s *Server) addQuietPauseState(row *vmmdpb.InstanceStats) {
 		row.QuietLastPauseStartedAt = timestamppb.New(r.LastStarted)
 		row.QuietLastPauseEndedAt = timestamppb.New(r.LastEnded)
 		row.QuietPausedNsTotal = wrapperspb.Int64(r.PausedTotal.Nanoseconds())
+	}
+	// The ladder level is only meaningful for a guest the row reports
+	// paused: measured admission charges level 2 with the frozen floor.
+	if l, ok := s.vmm.(idleLadderReporter); ok && row.QuietPaused {
+		if level := l.IdleLadderLevel(row.GetInstance(), time.Now()); level > fcvm.IdleRunning {
+			row.IdleLadderLevel = int32(level)
+		}
 	}
 }
 
@@ -1856,6 +1879,25 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 			"instance", reqInit.GetInstance(), "limit", api.TrafficBridgeCompletionMaxEntries)
 		return instanceBusy(api.TrafficBridgeCompletionMaxEntries, api.TrafficBridgeCompletionMaxEntries+1)
 	}
+	if persistent {
+		guestErr := slices.Contains(httpResp.Header.Values(bridgecompletion.GuestErrorHeader), exchange)
+		if v := s.streamBridges.noteGuestTransport(bridgeLease, guestErr); guestErr {
+			// The bridge, not the guest, answered this 502: its connection to
+			// the guest failed. Nothing else records it.
+			s.log.Warn("vmmd: stream bridge could not reach the guest",
+				"instance", reqInit.GetInstance(), "guest_port", dialPort,
+				"protocol", requestBridgeProtocol, "streak", v.streak)
+			if v.fenceBridge {
+				s.log.Warn("vmmd: replacing stream bridge after repeated guest connection failures",
+					"instance", reqInit.GetInstance(), "failures", v.streak)
+				// After the 502 is relayed; this exchange then needs no completion wait.
+				defer s.streamBridges.invalidate(context.WithoutCancel(ctx), bridgeLease)
+			}
+			if v.reportInstance {
+				s.reportTrafficUnreachable(ctx, reqInit.GetInstance())
+			}
+		}
+	}
 
 	// 8. Mirror guest response headers into the gRPC init frame.
 	initHeaders := make([]*vmmdpb.Header, 0, len(httpResp.Header))
@@ -1865,7 +1907,8 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		// can compute match/mismatch for vmmd_bridge_framing_total.
 		// Stripped from the gRPC init frame — this is a vmmd↔bridge
 		// signal, not a guest response header.
-		if strings.EqualFold(k, "X-Faas-Bridge-Framing") || strings.EqualFold(k, bridgecompletion.RetainedHeader) || strings.EqualFold(k, bridgecompletion.RefusedHeader) {
+		if strings.EqualFold(k, "X-Faas-Bridge-Framing") || strings.EqualFold(k, bridgecompletion.RetainedHeader) || strings.EqualFold(k, bridgecompletion.RefusedHeader) ||
+			strings.EqualFold(k, bridgecompletion.GuestErrorHeader) {
 			continue
 		}
 		if strings.EqualFold(k, "Transfer-Encoding") {

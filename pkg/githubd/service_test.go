@@ -1266,6 +1266,16 @@ func TestFilterByPath_Unit(t *testing.T) {
 			wantSkips: []string{"auth", "billing"},
 		},
 		{
+			// The root gregale.yaml declares every function of a
+			// functions project (ADR-20261108160000 §3): it rebuilds
+			// every member, a root-dir workload included.
+			name:    "paths mode + root gregale.yaml rebuilds every member",
+			apps:    appsWithRoot,
+			files:   []string{"gregale.yaml"},
+			mode:    "paths",
+			wantIDs: []string{"auth", "billing", "root"},
+		},
+		{
 			// Lockfile fallback (no member touched, no root-dir
 			// workload present): rebuild everything.
 			name:    "paths mode + lockfile fallback (no root-dir workload)",

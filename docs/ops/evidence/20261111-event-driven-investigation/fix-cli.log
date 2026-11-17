@@ -1,0 +1,10 @@
+=== RUN   TestDataAPIHooksSQLRendersTheSchema
+--- PASS: TestDataAPIHooksSQLRendersTheSchema (0.00s)
+=== RUN   TestDataAPIHooksEnableStoresTheOriginAndReportsTheSource
+--- PASS: TestDataAPIHooksEnableStoresTheOriginAndReportsTheSource (0.04s)
+=== RUN   TestDataAPIHooksNeedAnHTTPSPlatform
+--- PASS: TestDataAPIHooksNeedAnHTTPSPlatform (0.00s)
+=== RUN   TestDataAPIHooksUsage
+--- PASS: TestDataAPIHooksUsage (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/gregale	0.151s

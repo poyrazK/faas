@@ -60,13 +60,13 @@ func (l *Loop) workflowSchedulePolicyAllowed(ctx context.Context, appID, name st
 	if prior, ok := checks[key]; ok && time.Since(prior.checked) < workflowFailurePolicyCacheTTL {
 		return prior.allowed, prior.err
 	}
-	store, ok := l.engine.Store().(state.AutomationFailurePolicyStore)
+	store, ok := l.engine.Store().(state.StoredWorkflowFailurePolicyStore)
 	if !ok {
 		return false, errors.New("workflow failure policy unavailable")
 	}
 	readCtx, cancel := context.WithTimeout(ctx, workflowFailurePolicyReadTimeout)
 	defer cancel()
-	policy, err := store.GetAutomationFailurePolicy(readCtx, appID, name)
+	policy, err := store.GetStoredWorkflowFailurePolicy(readCtx, appID, name)
 	if err != nil {
 		checks[key] = workflowSchedulePolicyCheck{err: err, checked: time.Now()}
 		return false, err
@@ -78,7 +78,7 @@ func (l *Loop) workflowSchedulePolicyAllowed(ctx context.Context, appID, name st
 }
 
 func (l *Loop) runWorkflowFailurePoliciesTick(ctx context.Context) error {
-	store, ok := l.engine.Store().(state.AutomationFailurePolicyStore)
+	store, ok := l.engine.Store().(state.StoredWorkflowFailurePolicyStore)
 	if !ok {
 		return nil
 	}
@@ -88,11 +88,11 @@ func (l *Loop) runWorkflowFailurePoliciesTick(ctx context.Context) error {
 	}
 	passCtx, cancel := context.WithTimeout(ctx, workflowFailurePolicyPassTimeout)
 	defer cancel()
-	next, err := store.EvaluateAutomationFailurePolicies(passCtx, l.engine.OwnerNodeID(), l.workflowFailurePolicyAfter, api.AutomationFailurePolicyBatch, now)
+	next, err := store.EvaluateStoredWorkflowFailurePolicies(passCtx, l.engine.OwnerNodeID(), l.workflowFailurePolicyAfter, api.StoredWorkflowFailurePolicyBatch, now)
 	if err != nil {
 		l.workflowFailurePolicyUncertain = true
 		l.workflowFailurePolicyPassFailed = true
-		var batchErr *state.AutomationFailurePolicyBatchError
+		var batchErr *state.StoredWorkflowFailurePolicyBatchError
 		if !errors.As(err, &batchErr) {
 			return fmt.Errorf("workflow failure policies: %w", err)
 		}

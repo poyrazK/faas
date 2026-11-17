@@ -108,15 +108,22 @@ func aiLeaseRenewalSpan(requestTimeout time.Duration) time.Duration {
 }
 
 // renewAILease renews a call's lease every third of its renewal span until
-// the returned stop is called. A failed renewal is retried on the next tick;
-// the lease then expires as it did before renewals existed.
+// the returned stop is called. The first renewal comes within a third of the
+// request timeout, which is the lease's first span: a lease shorter than the
+// renewal minimum would otherwise lapse before it, and a lapsed lease is not
+// renewed (ADR 20261027132936 amendment 1). A failed renewal is retried on
+// the next tick; the lease then expires as it did before renewals existed.
 func (h *Handler) renewAILease(integrationID, leaseID string, requestTimeout time.Duration) (stop func()) {
 	renewer, ok := h.Backend.(LeaseRenewer)
 	if !ok || leaseID == "" {
 		return func() {}
 	}
 	span := aiLeaseRenewalSpan(requestTimeout)
-	ticker := time.NewTicker(span / 3)
+	first := span / 3
+	if requestTimeout > 0 && requestTimeout/3 < first {
+		first = requestTimeout / 3
+	}
+	timer := time.NewTimer(first)
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -126,17 +133,18 @@ func (h *Handler) renewAILease(integrationID, leaseID string, requestTimeout tim
 			select {
 			case <-done:
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				renewCtx, cancel := context.WithTimeout(context.Background(), span/3)
 				_ = renewer.RenewLease(renewCtx, integrationID, leaseID, span)
 				cancel()
+				timer.Reset(span / 3)
 			}
 		}
 	}()
 	return func() {
-		ticker.Stop()
 		close(done)
 		wg.Wait()
+		timer.Stop()
 	}
 }
 

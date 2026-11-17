@@ -18,6 +18,11 @@ import "time"
 // has no LimitsFor / MustLimitsFor / BillableRAMMB helpers because the
 // values are server-side constants, not wire data.
 
+// SSEMaxLineBytes bounds one line of a server-sent event stream. A runtime
+// log line may be up to 1 MiB and JSON escaping can grow it up to six times,
+// so 8 MiB carries the largest log frame the API sends.
+const SSEMaxLineBytes = 8 << 20
+
 // Plan is a customer subscription tier. The zero value is intentionally invalid
 // so an unset plan never silently reads as Free.
 type Plan string

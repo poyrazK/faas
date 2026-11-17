@@ -136,7 +136,7 @@ func moderationFlags(fs *flag.FlagSet) moderationFlagValues {
 		model:       fs.String("moderation-model", "", "the check's model (required for classifier)"),
 		categories: fs.String("moderation-categories", "",
 			"comma-separated: prompt_injection, harassment, hate, self_harm, sexual, violence, illicit"),
-		onError: fs.String("moderation-on-error", "", "when the check fails: allow or block"),
+		onError: fs.String("moderation-on-error", "", "when the check fails: allow or block (default: block for --moderation block, allow for flag)"),
 	}
 }
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -10,6 +10,10 @@ from attrs import field as _attrs_field
 from ..models.release_gate_comparison import ReleaseGateComparison, check_release_gate_comparison
 from ..models.release_gate_kind import ReleaseGateKind, check_release_gate_kind
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.release_gate_labels import ReleaseGateLabels
+
 
 T = TypeVar("T", bound="ReleaseGate")
 
@@ -48,6 +52,9 @@ class ReleaseGate:
     """synthetic gates: the share of the candidate's probes that may fail."""
     max_change_percent: int | Unset = UNSET
     """metric_change gates: how far the metric may move from its average before the rollout, in percent."""
+    labels: ReleaseGateLabels | Unset = UNSET
+    """custom_metric and metric_change gates: the labelled series judged. Absent when the gate judges the
+    aggregate."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +92,10 @@ class ReleaseGate:
 
         max_change_percent = self.max_change_percent
 
+        labels: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.labels, Unset):
+            labels = self.labels.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -118,11 +129,15 @@ class ReleaseGate:
             field_dict["max_failure_percent"] = max_failure_percent
         if max_change_percent is not UNSET:
             field_dict["max_change_percent"] = max_change_percent
+        if labels is not UNSET:
+            field_dict["labels"] = labels
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.release_gate_labels import ReleaseGateLabels
+
         d = dict(src_dict)
         name = d.pop("name")
 
@@ -161,6 +176,13 @@ class ReleaseGate:
 
         max_change_percent = d.pop("max_change_percent", UNSET)
 
+        _labels = d.pop("labels", UNSET)
+        labels: ReleaseGateLabels | Unset
+        if isinstance(_labels, Unset):
+            labels = UNSET
+        else:
+            labels = ReleaseGateLabels.from_dict(_labels)
+
         release_gate = cls(
             name=name,
             kind=kind,
@@ -178,6 +200,7 @@ class ReleaseGate:
             check=check,
             max_failure_percent=max_failure_percent,
             max_change_percent=max_change_percent,
+            labels=labels,
         )
 
         release_gate.additional_properties = d

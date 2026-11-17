@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 
@@ -98,7 +99,22 @@ func (h *Handler) workloadAdmissionOpen(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return true
 	}
-	if err := admission.CheckWorkloadAdmission(r.Context(), appID, scope); err != nil {
+	// The check can read storage after a route change invalidated its cache.
+	// Measure it as policy time and name the refusal: logged as an unmeasured
+	// "body_response", the 5-14 s refusals during a database stall pointed at
+	// the request body (prod 2026-11-09).
+	stop := measureTrafficPhase(r.Context(), trafficPolicy)
+	err := admission.CheckWorkloadAdmission(r.Context(), appID, scope)
+	stop()
+	if err != nil {
+		recordTrafficRefusal(r.Context(), "policy_unavailable")
+		if errors.Is(err, state.ErrEnvironmentWorkloadRetired) {
+			recordTrafficPolicyStage(r.Context(), "workload_retired")
+		} else {
+			recordTrafficPolicyStage(r.Context(), "workload_admission_unavailable")
+			// Storage, not the workload, is unavailable: invite a retry.
+			w.Header().Set("Retry-After", "2")
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		http.Error(w, "Workload unavailable in this environment", http.StatusServiceUnavailable)
 		return false

@@ -28,6 +28,11 @@ type ReleaseGate struct {
 	Comparison         string   `json:"comparison,omitempty"`
 	Threshold          *float64 `json:"threshold,omitempty"`
 	MaxIncreasePercent int      `json:"max_increase_percent,omitempty"`
+	// Labels selects one labelled series of a custom_metric or
+	// metric_change gate's metric: the series with exactly these labels
+	// (ADR-20261108160000 slice C2). Without it the gate reads the
+	// metric's aggregate.
+	Labels map[string]string `json:"labels,omitempty"`
 	// Check and MaxFailurePercent configure a synthetic gate: the synthetic
 	// check probed on the canary and the share of failed probes it allows
 	// (ADR-20261022082305).
@@ -63,6 +68,9 @@ type CreateReleaseGateRequest struct {
 	Check             string `json:"check,omitempty"`
 	MaxFailurePercent *int   `json:"max_failure_percent,omitempty"`
 	MaxChangePercent  int    `json:"max_change_percent,omitempty"`
+	// Labels selects one labelled series of a custom_metric or
+	// metric_change gate's metric (ADR-20261108160000 slice C2).
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ListReleaseGatesResponse lists an app's release gates.
@@ -131,7 +139,7 @@ func validReleaseGateResults(results []ReleaseGateResult) error {
 func ErrReleaseGateLimit(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseGateLimit, "Too many release gates",
 		fmt.Sprintf("An app can have %d release gates; this one has %d.", ReleaseGatesPerAppMax, observed)).
-		WithHint("Delete a gate you no longer need with `gregale release-gates rm`.").
+		WithHint("Delete a gate you no longer need with `gregale release gate rm`.").
 		WithDocs(docsBase + "/deploys#release-gates")
 }
 
@@ -139,7 +147,7 @@ func ErrReleaseGateLimit(observed int) *Problem {
 func ErrReleaseGateNotFound(name string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeReleaseGateNotFound, "Release gate not found",
 		fmt.Sprintf("The app has no release gate named %q.", name)).
-		WithHint("List gates with `gregale release-gates list`.")
+		WithHint("List gates with `gregale release gate list`.")
 }
 
 // ListReleaseGates lists an app's release gates.

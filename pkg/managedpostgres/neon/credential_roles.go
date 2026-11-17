@@ -11,7 +11,9 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/pipelineread"
 )
 
 const ownerLogin = "gregale_owner"
@@ -21,6 +23,12 @@ type credentialRole struct {
 	name, schemaOwner, authOwner, marker, scope, database, legacy, bindingID string
 	access                                                                   managedpostgres.CredentialAccess
 	liveLegacyScope                                                          string
+	// session marks a session login, whose connection limit is enforced on
+	// an existing role too (ADR-20261110120000).
+	session bool
+	// customRoles are the declared custom roles the login receives
+	// (ADR-20261116213000).
+	customRoles []string
 }
 
 type credentialRoleManager interface {
@@ -50,11 +58,18 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 	case managedpostgres.CredentialAuth:
 		prefix = "gregale_auth_"
 	}
+	connectionLimit := request.ConnectionLimit
+	if request.Access == managedpostgres.CredentialSession && connectionLimit == 0 {
+		// Session logins hold server connections directly; the role limit
+		// keeps one binding from exhausting the compute (ADR-20261110120000).
+		connectionLimit = api.SessionBindingConnectionLimit
+	}
 	return credentialRole{name: prefix + hex.EncodeToString(identity[:20]), schemaOwner: "gregale_schema_" + hex.EncodeToString(owner[:16]),
-		connectionLimit: request.ConnectionLimit,
-		authOwner:       "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
+		connectionLimit: connectionLimit, session: request.Access == managedpostgres.CredentialSession,
+		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
-		database: p.databaseName, access: request.Access, legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
+		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID,
+		customRoles: request.CustomRoles.Names()}
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
@@ -195,6 +210,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	if !info.matches(role) {
 		return managedpostgres.ErrConflict
 	}
+	if role.session {
+		if _, err := tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(role.name)+" CONNECTION LIMIT "+strconv.FormatInt(role.connectionLimit, 10)); err != nil {
+			return err
+		}
+	}
 	if role.connectionLimit > 0 {
 		var limit int64
 		if err := tx.QueryRow(ctx, `SELECT rolconnlimit::bigint FROM pg_roles WHERE rolname=$1`, role.name).Scan(&limit); err != nil {
@@ -242,18 +262,26 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 				return err
 			}
 		}
+		if err := revokeCaptureTables(ctx, tx, role.name); err != nil {
+			return err
+		}
 		// GRANT may emit only a warning when an older object's owner differs.
 		// Never deliver a credential that silently lacks its promised data access.
 		var missingPrivileges bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname='public' AND
+ WHERE n.nspname='public' AND NOT (c.relname = ANY($3)) AND
  ((c.relkind IN ('r','p','v','m','f') AND (NOT has_table_privilege($1,c.oid,'SELECT') OR
  (NOT $2 AND (NOT has_table_privilege($1,c.oid,'INSERT') OR NOT has_table_privilege($1,c.oid,'UPDATE') OR NOT has_table_privilege($1,c.oid,'DELETE')))))
- OR (c.relkind='S' AND (NOT has_sequence_privilege($1,c.oid,'SELECT') OR (NOT $2 AND NOT has_sequence_privilege($1,c.oid,'USAGE'))))))`, role.name, role.access == managedpostgres.CredentialReadOnly).Scan(&missingPrivileges); err != nil {
+ OR (c.relkind='S' AND (NOT has_sequence_privilege($1,c.oid,'SELECT') OR (NOT $2 AND NOT has_sequence_privilege($1,c.oid,'USAGE'))))))`, role.name, role.access == managedpostgres.CredentialReadOnly, captureTables).Scan(&missingPrivileges); err != nil {
 			return err
 		}
 		if missingPrivileges {
 			return managedpostgres.ErrConflict
+		}
+		if role.access == managedpostgres.CredentialReadOnly {
+			if err := pipelineread.Grant(ctx, tx, role.name); err != nil {
+				return managedpostgres.ErrConflict
+			}
 		}
 	}
 	if role.access == managedpostgres.CredentialDataAPI {
@@ -276,6 +304,9 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	if err := grantLiveMembership(ctx, tx, role); err != nil {
 		return err
 	}
+	if err := ensureLoginCustomRoles(ctx, tx, role); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -295,11 +326,11 @@ func verifyReadOnlyRole(ctx context.Context, tx pgx.Tx, name string) error {
  OR (c.relkind='S' AND has_sequence_privilege($1,c.oid,'USAGE,UPDATE'))))
  OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND p.prosecdef AND has_function_privilege($1,p.oid,'EXECUTE')
- AND NOT `+authHelperSQL+`)
+ AND NOT (`+authHelperSQL+` OR `+pipelineread.TrustedReaderSQL+`))
  OR EXISTS (SELECT 1 FROM pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
  WHERE a.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=$1))
  AND ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
- OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name).Scan(&unsafe)
+ OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name, pipelineread.ReaderBodySHA256).Scan(&unsafe)
 	if err != nil {
 		return err
 	}
@@ -314,22 +345,35 @@ type sqlRoleInfo struct {
 	inherit, inheritedMembership                                   bool
 	marker                                                         string
 	memberships, configuration                                     []string
+	// customMarkers are the markers of the custom roles (ADR-20261116213000)
+	// the role is a member of; memberships leaves those roles out.
+	customMarkers []string
 }
 
 func credentialRoleInfo(ctx context.Context, tx pgx.Tx, name string) (sqlRoleInfo, error) {
 	var info sqlRoleInfo
 	err := tx.QueryRow(ctx, `SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit,
  COALESCE(shobj_description(r.oid, 'pg_authid'), ''), COALESCE(rolconfig, ARRAY[]::text[]),
- ARRAY(SELECT parent.rolname::text FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid ORDER BY parent.rolname),
- EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid AND COALESCE((to_jsonb(m)->>'inherit_option')::boolean, false))
+ ARRAY(SELECT parent.rolname::text FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid
+   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') NOT LIKE 'gregale:custom-role:v1:%' ORDER BY parent.rolname),
+ EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid AND COALESCE((to_jsonb(m)->>'inherit_option')::boolean, false)),
+ ARRAY(SELECT COALESCE(shobj_description(parent.oid, 'pg_authid'), '') FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid
+   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') LIKE 'gregale:custom-role:v1:%')
  FROM pg_roles r WHERE rolname = $1`, name).Scan(&info.login, &info.superuser, &info.createDB, &info.createRole, &info.replication, &info.bypassRLS,
-		&info.inherit, &info.marker, &info.configuration, &info.memberships, &info.inheritedMembership)
+		&info.inherit, &info.marker, &info.configuration, &info.memberships, &info.inheritedMembership, &info.customMarkers)
 	return info, err
 }
 
 func (i sqlRoleInfo) matches(role credentialRole) bool {
 	if !i.login || i.superuser || i.createDB || i.createRole || i.replication || i.bypassRLS || i.inherit || i.inheritedMembership || i.marker != role.marker {
 		return false
+	}
+	// Custom roles are SET-only memberships of this database's own roles,
+	// and only for the access modes they can be granted to.
+	for _, marker := range i.customMarkers {
+		if marker != customRoleMarker(role.scope) || (role.access != managedpostgres.CredentialMigration && role.access != managedpostgres.CredentialReadWrite && role.access != managedpostgres.CredentialReadOnly) {
+			return false
+		}
 	}
 	if role.access == managedpostgres.CredentialMigration {
 		return len(i.memberships) == 1 && i.memberships[0] == role.schemaOwner && len(i.configuration) == 1 && i.configuration[0] == "role="+role.schemaOwner
@@ -341,6 +385,27 @@ func (i sqlRoleInfo) matches(role credentialRole) bool {
 		return len(i.memberships) == 1 && i.memberships[0] == role.authOwner && sameSettings(i.configuration, authLoginSettings(role))
 	}
 	return len(i.memberships) == 0 && len(i.configuration) == 0
+}
+
+// captureTables mirrors commit.CaptureTables: the Postgres change outbox
+// (ADR-20261112140000) is readable and writable only by its owner and its
+// relay, so an app login's "every public table" grant leaves it out.
+var captureTables = []string{"gregale_outbox", "gregale_commit_binding"}
+
+func revokeCaptureTables(ctx context.Context, tx pgx.Tx, name string) error {
+	for _, table := range captureTables {
+		var present bool
+		if err := tx.QueryRow(ctx, `SELECT to_regclass('public.' || quote_ident($1)) IS NOT NULL`, table).Scan(&present); err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
+		if _, err := tx.Exec(ctx, "REVOKE ALL ON public."+roleIdentifier(table)+" FROM "+roleIdentifier(name)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func initializeCredentialSchema(ctx context.Context, tx pgx.Tx, role credentialRole) error {

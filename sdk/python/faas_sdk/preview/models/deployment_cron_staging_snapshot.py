@@ -7,6 +7,8 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.deployment_cron_config import DeploymentCronConfig
 
@@ -22,6 +24,8 @@ class DeploymentCronStagingSnapshot:
     revision: int
     latest_deployment_id: str
     crons: list[DeploymentCronConfig]
+    environment: str | Unset = UNSET
+    """The non-production environment read; omitted for production."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,6 +40,8 @@ class DeploymentCronStagingSnapshot:
             crons_item = crons_item_data.to_dict()
             crons.append(crons_item)
 
+        environment = self.environment
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -46,6 +52,8 @@ class DeploymentCronStagingSnapshot:
                 "crons": crons,
             }
         )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
 
         return field_dict
 
@@ -67,11 +75,14 @@ class DeploymentCronStagingSnapshot:
 
             crons.append(crons_item)
 
+        environment = d.pop("environment", UNSET)
+
         deployment_cron_staging_snapshot = cls(
             app_id=app_id,
             revision=revision,
             latest_deployment_id=latest_deployment_id,
             crons=crons,
+            environment=environment,
         )
 
         deployment_cron_staging_snapshot.additional_properties = d

@@ -19,3 +19,9 @@ const (
 
 func ValidatePattern(pattern string) error        { return eventcontract.ValidatePattern(pattern) }
 func ValidateFilter(filter json.RawMessage) error { return eventcontract.ValidateFilter(filter) }
+
+// ValidateSubscriptionFilter adds the persisted-subscription size and depth
+// caps to ValidateFilter; see eventcontract.ValidateSubscriptionFilter.
+func ValidateSubscriptionFilter(filter json.RawMessage) error {
+	return eventcontract.ValidateSubscriptionFilter(filter)
+}

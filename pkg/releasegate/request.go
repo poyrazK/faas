@@ -32,6 +32,9 @@ type Spec struct {
 	CheckName         string
 	MaxFailurePercent int
 	MaxChangePercent  int
+	// MetricLabels selects one labelled series of a custom_metric or
+	// metric_change gate's metric (ADR-20261108160000 slice C2).
+	MetricLabels map[string]string
 }
 
 // FromRequest validates a create request and fills defaults.
@@ -55,6 +58,15 @@ func FromRequest(req api.CreateReleaseGateRequest) (Spec, *api.Problem) {
 	aiFields := req.MaxIncreasePercent != 0
 	syntheticFields := req.Check != "" || req.MaxFailurePercent != nil
 	changeFields := req.MaxChangePercent != 0
+	if len(req.Labels) > 0 {
+		if req.Kind != KindCustomMetric && req.Kind != KindMetricChange {
+			return Spec{}, api.ErrValidation("labels are for custom_metric and metric_change gates")
+		}
+		if msg := api.ValidateCustomMetricLabels(req.Labels); msg != "" {
+			return Spec{}, api.ErrValidation("labels: " + msg)
+		}
+		s.MetricLabels = req.Labels
+	}
 	if (syntheticFields && req.Kind != KindSynthetic) || (changeFields && req.Kind != KindMetricChange) {
 		return Spec{}, api.ErrValidation("check and max_failure_percent are for synthetic gates; max_change_percent is for metric_change gates")
 	}

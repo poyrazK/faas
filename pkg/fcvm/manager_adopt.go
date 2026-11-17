@@ -44,6 +44,7 @@ const (
 	adoptionRefusedPrivateNetwork  = "private_network"
 	adoptionRefusedPrepared        = "prepared_network"
 	adoptionRefusedRehearsal       = "rehearsal"
+	adoptionRefusedBranchContained = "environment_branch_contained"
 	adoptionRefusedEgressCircuit   = "egress_circuit"
 	adoptionRefusedProductionFork  = "production_fork"
 	adoptionRefusedFunction        = "function_resources"
@@ -63,6 +64,23 @@ type guestAdopter interface {
 	adoptJobExitListener(l Lease) error
 	chrootRoot(instance string) string
 	ResumeVM(ctx context.Context, l Lease) error
+}
+
+// WithFlatTenantCgroups launches every new tenant VM directly under
+// faas-tenant.slice instead of its plan's sub-slice (vmmd.toml
+// flat_tenant_cgroups, ADR-20261109172421 step 6.5), so a busy host shares
+// CPU between all instances by their cpu.weight. VMs already running in a
+// sub-slice stay there until they park. Startup only.
+func (m *Manager) WithFlatTenantCgroups(on bool) *Manager {
+	m.flatTenantCgroups = on
+	return m
+}
+
+// stampCgroupParent records the parent cgroup a new lease's VM launches under.
+func (m *Manager) stampCgroupParent(l *Lease) {
+	if m.flatTenantCgroups && !l.IsBuilder {
+		l.cgroupParent = CgroupMountRoot
+	}
 }
 
 // WithAdoptAdmittedRuntimes lets adoption keep guests booted under an ADR-595
@@ -134,6 +152,9 @@ func (m *Manager) adoptClassified(ctx context.Context, adopter guestAdopter, c a
 			recorded := v
 			v = m.adoptOne(ctx, adopter, c, v)
 			v.AppID, v.DevPatched = recorded.AppID, recorded.DevPatched
+			if !v.Adoptable && v.Reason != "" {
+				v = m.killRefusedSurvivor(v)
+			}
 		}
 		rep.Verdicts = append(rep.Verdicts, v)
 		if AdoptionEnds(v.Resolved) && !v.Adoptable && v.Reason == "" {
@@ -161,6 +182,38 @@ func (m *Manager) adoptClassified(ctx context.Context, adopter guestAdopter, c a
 	return rep, ctx.Err()
 }
 
+// killRefusedSurvivor ends a guest that passed the adoption proof but that
+// adoption then refused before registering it. Nothing can reach such a
+// guest: schedd fails its row (vmmd_adoption_refused) and the app wakes a
+// new instance, while the old one kept its memory, its slot and its own
+// background work, and failed every later rollout's adoption check until
+// someone killed it by PID (production fsn-2, 2026-11-12). The proof holds
+// its identity, so it is killed through a pidfd that still names it. The
+// refusal stays in the report: a candidate that refuses guests must still
+// fail the rollout. The record stays quarantined; with its process gone,
+// the next restart counts it gone. A guest adoption registered
+// (adopt_incomplete, teardown_failed) is the Manager's to destroy instead.
+func (m *Manager) killRefusedSurvivor(v AdoptionVerdict) AdoptionVerdict {
+	switch v.Reason {
+	case adoptionRefusedAdoptIncomplete, adoptionRefusedTeardownFailed:
+		return v
+	}
+	r, ok, err := m.resourceJournal.lookup(v.Instance)
+	if err != nil || !ok || r.Process == nil {
+		return v
+	}
+	kill := m.killRefused
+	if kill == nil {
+		kill = killProvenGuest
+	}
+	if err := kill(*r.Process); err != nil {
+		slog.Warn("vmmd: refused guest left running", "instance", v.Instance, "reason", v.Reason, "err", err)
+		return v
+	}
+	v.Detail += "; the guest was killed through its pidfd"
+	return v
+}
+
 // adoptionScope names why a proven record is outside what adoption rebuilds,
 // or returns "". chrootRoot is the jail root this vmmd's Firecracker uses for
 // an instance; a candidate binary passes its own.
@@ -177,6 +230,8 @@ func adoptionScope(chrootRoot func(string) string, adoptAdmitted bool, r resourc
 		return adoptionRefusedStaticEgress, "static egress SNAT is not rebuilt yet"
 	case a.Network.RehearsalRunID != "":
 		return adoptionRefusedRehearsal, "rehearsal containment and recorder are not rebuilt"
+	case a.Network.EnvironmentBranchContained:
+		return adoptionRefusedBranchContained, "environment branch containment is not rebuilt"
 	case a.Network.EgressCircuits:
 		return adoptionRefusedEgressCircuit, "egress circuit registration is not rebuilt"
 	case r.Lease.Quarantine:
@@ -324,6 +379,11 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 		}
 	}
 	lease := m.beginProcessAttempt(r.Lease)
+	if !lease.IsBuilder {
+		// The record has no parent; pin the one the process was found in
+		// (checkCgroup), flat or the plan's sub-slice.
+		lease.cgroupParent = tenantCgroupParent(lease)
+	}
 	inst := m.adoptedInstance(lease, r.Adoption)
 	if restoreEgress {
 		if err := m.restoreAdoptedEgress(ctx, inst); err != nil {
@@ -406,16 +466,20 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 		Lease: l, Net: nc, Method: method, Plan: l.Plan,
 		AppID: in.AppID, AccountID: in.AccountID, DeploymentID: in.DeploymentID, WakeID: in.WakeID, NodeID: in.NodeID,
 		Port: in.Port, HealthcheckPath: in.HealthcheckPath, HealthcheckGRPC: in.HealthcheckGRPC, ImageHealthcheckRequired: in.ImageHealthcheckRequired,
+		HealthcheckGRPCService: in.HealthcheckGRPCService, RoutedPortRawTCP: in.RoutedPortRawTCP,
 		StartupDeadlineS: in.StartupDeadlineS, RequestConcurrency: in.RequestConcurrency, ExecutionMode: in.ExecutionMode, Runtime: in.Runtime,
 		WorkloadNames:          append([]string(nil), in.WorkloadNames...),
 		LivenessProbe:          append([]byte(nil), in.LivenessProbe...),
 		ReadinessProbe:         append([]byte(nil), in.ReadinessProbe...),
 		QuietPauseAfter:        durationMillis(in.QuietPauseAfterMs),
+		IdleLadderEligible:     in.IdleLadderEligible,
+		IdleLadderGuardedPause: in.IdleLadderGuarded,
 		AllowlistHandleV4:      a.Network.AllowlistHandleV4,
 		AllowlistHandleV6:      a.Network.AllowlistHandleV6,
 		PrivateNetworkHandleV4: a.Network.PrivateNetworkHandleV4,
 		PrivateNetworkHandleV6: a.Network.PrivateNetworkHandleV6,
 		StaticEgressExcluded:   a.Network.StaticEgressExcluded,
+		PrivateNetworkExcluded: a.Network.PrivateNetworkExcluded,
 		adoptionVCPUs:          a.Firecracker.VCPUs,
 		adoptionMemSizeMiB:     a.Firecracker.MemoryMiB,
 		devPatched:             in.DevPatched,
@@ -518,7 +582,7 @@ func (m *Manager) resumeAdoptedGuest(ctx context.Context, adopter guestAdopter, 
 		// says thawed so the scheduler can settle a FROZEN row.
 		m.setFrozenSwap(inst.Lease, false)
 		m.mu.Lock()
-		inst.Frozen, inst.FrozenSince = false, time.Time{}
+		endFrozenLocked(inst, time.Now())
 		m.mu.Unlock()
 	}
 	if inst.Frozen {

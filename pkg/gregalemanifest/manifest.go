@@ -53,6 +53,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/labels"
+	"github.com/onebox-faas/faas/pkg/projectconfig"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -681,7 +682,7 @@ func (t EventTrigger) Validate(idx int) error {
 	if err := events.ValidatePattern(t.Type); err != nil {
 		return fmt.Errorf("triggers.event[%d].type: %w", idx, err)
 	}
-	if err := events.ValidateFilter(json.RawMessage(t.Filter)); err != nil {
+	if err := events.ValidateSubscriptionFilter(json.RawMessage(t.Filter)); err != nil {
 		return fmt.Errorf("triggers.event[%d].filter: %w", idx, err)
 	}
 	return nil
@@ -1058,6 +1059,9 @@ type ScalingTarget struct {
 	// Name selects WHICH custom metric to watch (ADR-202). Required with
 	// `metric: custom`, rejected with any other metric.
 	Name string `yaml:"name,omitempty"`
+	// Labels selects one labelled series of the custom metric
+	// (ADR-20261108160000 slice C2); omitted, the metric's aggregate.
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // ScalingConfig declares the app-level autoscaling policy. Pointers preserve
@@ -1266,7 +1270,7 @@ func (s *ScalingConfig) Validate() error {
 	if len(s.Targets) > 0 {
 		converted := make([]api.ScalingTarget, 0, len(s.Targets))
 		for _, t := range s.Targets {
-			converted = append(converted, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name})
+			converted = append(converted, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels})
 		}
 		if problem := api.ValidateScalingTargets("targets", converted); problem != nil {
 			return fmt.Errorf("scaling: %s", problem.Detail)
@@ -1338,10 +1342,10 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		out.ScaleInCooldownS = *s.ScaleInCooldownS
 	}
 	if s.Target != nil {
-		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value, Name: s.Target.Name}
+		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value, Name: s.Target.Name, Labels: s.Target.Labels}
 	}
 	for _, t := range s.Targets {
-		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name})
+		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels})
 	}
 	out.Timezone = s.Timezone
 	// Validate() already rejected an unparseable duration, so a failure
@@ -1590,6 +1594,9 @@ type Manifest struct {
 	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
+	// PostgresChanges captures Postgres row changes into one of the app's
+	// queue bindings (ADR-20261112140000).
+	PostgresChanges *PostgresChangesSpec `yaml:"postgres_changes,omitempty"`
 	// Realtime declares managed realtime endpoints by slug
 	// (ADR-20261019102657).
 	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
@@ -1597,6 +1604,16 @@ type Manifest struct {
 	// sets these keys and removes none: a key dropped from the manifest stays
 	// until `gregale app label unset` removes it. Labels are not secret.
 	Labels map[string]string `yaml:"labels,omitempty"`
+	// Project holds the repository's project-wide service settings
+	// (ADR-20261107180000). It is meaningful in the repository's root
+	// gregale.yaml, where the scanner applies it; it replaces the
+	// deprecated .gregale/project.yaml. Not part of any app's deployment.
+	Project *projectconfig.Config `yaml:"project,omitempty" json:"-"`
+
+	// FunctionSettings is set on a FunctionAppManifest view: the function's
+	// app settings (RAM, idle timeout, concurrency, env) that a repository
+	// push applies to its function app (ADR-20261108160000 §4). Never parsed.
+	FunctionSettings *FunctionSpec `yaml:"-"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate
@@ -1646,6 +1663,9 @@ type DevConfig struct {
 	// Debug starts the Node.js inspector in the developer environment and
 	// exposes it on a local port (`gregale dev --debug`, ADR-741).
 	Debug *bool `yaml:"debug,omitempty"`
+	// DebugPort is the local debugger port (`--debug-port`). Each app of a
+	// `gregale dev --all` workspace that sets debug needs its own.
+	DebugPort *int `yaml:"debug_port,omitempty"`
 	// Watch runs a development server instead of the production build
 	// (`gregale dev --watch`, ADR-1170).
 	Watch *DevWatchConfig `yaml:"watch,omitempty"`
@@ -1746,6 +1766,9 @@ type LifecycleConfig struct {
 	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `yaml:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs (ADR-20261114153000);
+	// an empty path clears it.
+	Warmup *api.WarmupHook `yaml:"warmup,omitempty"`
 	// Pause declares when the platform may pause the VM (ADR-1151):
 	// between_requests, when_idle or never.
 	Pause            *string              `yaml:"pause,omitempty"`
@@ -1767,6 +1790,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		RestartPolicy:    c.RestartPolicy,
 		AfterRestore:     c.AfterRestore,
 		BeforeCheckpoint: c.BeforeCheckpoint,
+		Warmup:           c.Warmup,
 		Pause:            c.Pause,
 		Profiling:        c.Profiling,
 		Tracing:          c.Tracing,
@@ -1807,7 +1831,7 @@ func (m *Manifest) LifecycleRequest() (req api.UpdateAppRequest, ok bool) {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Warmup == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1830,6 +1854,9 @@ func (c *LifecycleConfig) Validate() error {
 	}
 	if c.BeforeCheckpoint != nil && (c.BeforeCheckpoint.Path != "" || c.BeforeCheckpoint.TimeoutMS != 0) {
 		m.BeforeCheckpoint = c.BeforeCheckpoint
+	}
+	if c.Warmup != nil && c.Warmup.Path != "" {
+		m.Warmup = c.Warmup
 	}
 	if c.Pause != nil {
 		m.Pause = *c.Pause
@@ -2297,6 +2324,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if err := m.validateRealtime(); err != nil {
 		return err
 	}
+	if m.Project != nil {
+		if err := m.Project.Validate(); err != nil {
+			return fmt.Errorf("project: %w", err)
+		}
+	}
 	if m.Profiling != nil {
 		if err := m.Profiling.Validate(plan); err != nil {
 			return err
@@ -2378,6 +2410,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := declaration.ToPolicy().Validate(); err != nil {
 			return fmt.Errorf("work_policies[%d]: %w", i, err)
 		}
+		if err := workpolicy.ValidateDeclaredName(declaration.Name); err != nil {
+			return fmt.Errorf("work_policies[%d]: %w", i, err)
+		}
 		key := declaration.App + "\x00" + declaration.Name
 		if _, duplicate := seenWorkPolicies[key]; duplicate {
 			return fmt.Errorf("work_policies[%d]: duplicate (app, name)", i)
@@ -2420,6 +2455,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m.Worker != nil {
 		if err := m.Worker.Validate(); err != nil {
 			return err
+		}
+	}
+	if m.PostgresChanges != nil {
+		if err := m.PostgresChanges.Validate(m.QueueBindings); err != nil {
+			return fmt.Errorf("postgres_changes: %w", err)
 		}
 	}
 	sidecars, err := m.ToSidecars()
@@ -2630,9 +2670,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("database[%d]: env: %w", i, problem)
 		}
 		access := dependency.EffectiveAccess()
-		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" && access != "auth" {
+		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" && access != "auth" && access != "session" {
 			// auth (application Auth, ADR-1190) is accepted but not yet listed.
-			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access)
+			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api, session}", i, access)
 		}
 		// A database dependency targets one environment variable on one
 		// workload. Different databases must not silently compete for the

@@ -196,12 +196,9 @@ func workflowRetryPlan(run *WorkflowRun, stepName string, steps []*WorkflowStep)
 	return reopen, nil
 }
 
-// workflowManualRetryBase grants one dispatch after an exhausted resumed
+// workflowManualRetryBase grants one dispatch after an exhausted
 // generation without resetting the automatic retry budget or attempt history.
 func workflowManualRetryBase(run *WorkflowRun, stepName string, attempt, base int) int {
-	if run.ResumeCount == 0 {
-		return base
-	}
 	var spec api.WorkflowSpec
 	if json.Unmarshal(run.DefinitionSnapshot, &spec) != nil {
 		return base
@@ -479,7 +476,7 @@ type WorkflowStore interface {
 	// GetWorkflowRunByIdempotencyKey returns the original run for a matching
 	// request fingerprint. A missing key returns ErrWorkflowRunNotFound and a
 	// different fingerprint returns ErrWorkflowRunIdempotencyConflict.
-	GetWorkflowRunByIdempotencyKey(ctx context.Context, appID, workflowName, key string, requestFingerprint []byte) (*WorkflowRun, error)
+	GetWorkflowRunByIdempotencyKey(ctx context.Context, appID, workflowName, key string, requestFingerprint []byte, tenantIDs ...string) (*WorkflowRun, error)
 	// CreateWorkflowRunAdmittedWithIdempotencyKey atomically records a run and
 	// its request key with quota admission. A replay replaces r with the
 	// original run and returns replayed=true without consuming another slot.

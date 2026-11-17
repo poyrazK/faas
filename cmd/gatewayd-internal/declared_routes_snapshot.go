@@ -91,13 +91,3 @@ func (m *declaredRoutesMatcher) finishDeclaredRouteLoad(load *declaredRouteLoad)
 	defer m.mu.Unlock()
 	delete(m.pending, load)
 }
-
-func (m *declaredRoutesMatcher) publishDeclaredRoutePolicy(load *declaredRouteLoad, policy declaredRoutePolicy) (declaredRoutePolicy, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if load.invalidated {
-		return declaredRoutePolicy{}, fmt.Errorf("declared route contract changed during snapshot load")
-	}
-	m.entries[load.key] = policy
-	return policy, nil
-}

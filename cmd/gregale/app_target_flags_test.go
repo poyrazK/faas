@@ -27,6 +27,8 @@ func TestAppAndOrgTargetsTakeEitherSpelling(t *testing.T) {
 		{"two apps", []string{"bucket", "list", "a", "--app", "b"}, nil, true},
 		{"orgs members list --org", []string{"orgs", "members", "list", "--org", "acme"}, []string{"orgs", "members", "list", "acme"}, false},
 		{"orgs keys list ORG", []string{"orgs", "keys", "list", "acme"}, []string{"orgs", "keys", "list", "--org", "acme"}, false},
+		// Hunt 32 H32-22: a UUID is the event id, not a second app.
+		{"dlq inspect EVENT --app", []string{"dlq", "inspect", "eca7e025-362c-4c47-973e-74bc5494fcb2", "--app", "h32-qw"}, []string{"dlq", "inspect", "h32-qw", "eca7e025-362c-4c47-973e-74bc5494fcb2"}, false},
 		// A preview slug is not an app: --app is left for the parser.
 		{"previews show keeps --app", []string{"previews", "show", "pr-1", "--app", "my-api"}, []string{"previews", "show", "pr-1", "--app", "my-api"}, false},
 	}

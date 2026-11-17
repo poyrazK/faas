@@ -199,9 +199,10 @@ traffic during a canary. Give a concrete path matching the selector:
 
 While a canary is in flight and the route's organic evidence stays sparse,
 Gregale sends 10 bodyless requests per minute to the candidate and to the
-stable deployment. Probes keep your auth gates: a route that rejects anonymous
-requests with 401/403 stays unknown (`probe_unauthenticated`), so probe public
-or read-only routes. Probe requests never appear in request telemetry,
+stable deployment. Probes pass Gregale's own gates (`require_authn` and a
+`public_auth` mode) the way deployment verification does, but carry no
+credential: a route your app itself rejects with 401/403 stays unknown
+(`probe_unauthenticated`), so probe read-only routes. Probe requests never appear in request telemetry,
 analytics, customer reach or usage, but they wake the app like any request.
 At most 5 selectors can probe.
 

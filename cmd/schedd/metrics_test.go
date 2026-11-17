@@ -4,6 +4,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -26,6 +27,11 @@ func TestSchedulerMetricsCombinedScrapeDoesNotDuplicateInstrumentation(t *testin
 		}
 		if path == metricsPath && !strings.Contains(rec.Body.String(), "ops_probe") {
 			t.Fatal("ops metric missing")
+		}
+		// FaasSnapshotDriftAuditStale joins on the process start time; the
+		// process collector reports it on Linux, where schedd runs.
+		if path == metricsPath && runtime.GOOS == "linux" && !strings.Contains(rec.Body.String(), "process_start_time_seconds") {
+			t.Fatal("process_start_time_seconds missing from the schedd scrape")
 		}
 	}
 }

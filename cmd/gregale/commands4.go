@@ -27,7 +27,7 @@ import (
 func cmdAccount(args []string) int {
 	parent, _ := lookupCliCommand("account")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, releasedUsage("account", "usage: gregale account {export|delete|restore|status|dpa|slo|billing-connection|billing-run|invoices}"), "account")
+		PrintUsage(os.Stderr, releasedUsage("account", "usage: gregale account {export|delete|restore|status|health|update|sessions|email|password|provider|dpa|slo|billing-connection|billing-run|invoices}"), "account")
 		return 1
 	}
 	if hiddenMonetizationVerb("account", args[0]) {
@@ -42,6 +42,9 @@ func cmdAccount(args []string) int {
 		return cmdAccountRestore(args[1:])
 	case statusLiteral:
 		return cmdAccountStatus(args[1:])
+	case "health":
+		// ADR-20261114090000: CLI twin of GET /v1/account/health.
+		return cmdAccountHealth(args[1:])
 	case "dpa":
 		// Tier B audit gap: the Data-Processing-Addendum text (spec
 		// §17 G6) is published at GET /v1/account/dpa (markdown;
@@ -63,6 +66,18 @@ func cmdAccount(args []string) int {
 		// Move 2 PR-A: CLI twin for GET /v1/account/slo
 		// (issue #696 / ADR-082). Account-wide SLO rollup.
 		return cmdAccountSLO(args[1:])
+	case "sessions":
+		return cmdAccountSessions(args[1:])
+	case "email":
+		return cmdAccountEmail(args[1:])
+	case "password":
+		return cmdAccountPassword(args[1:])
+	case subUpdate:
+		return cmdAccountUpdate(args[1:])
+	case "provider":
+		return cmdAccountProvider(args[1:])
+	case "activity":
+		return cmdAccountActivity(args[1:])
 	default:
 		return unknownAccountSubcommand(parent, args[0])
 	}
@@ -250,8 +265,15 @@ func cmdAccountDPA(args []string) int {
 			return printErr("Write failed", err)
 		}
 		abs, _ := filepath.Abs(*out)
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"path": abs, "bytes": len(body), "template": true}))
+		}
 		PrintOK(osStdout, "Wrote %d bytes of DPA text to %s", len(body), abs)
 		return 0
+	}
+	if jsonOutput {
+		// --json printed the plain-text template (Hunt 33 H33-2).
+		return jsonOut(writeJSON(map[string]any{"text": string(body), "template": true}))
 	}
 	if _, err := osStdout.Write(body); err != nil {
 		return printErr("Write failed", err)

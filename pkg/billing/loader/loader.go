@@ -60,10 +60,12 @@ package loader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -121,6 +123,23 @@ func resolveSandbox(envVal string, tomlVal bool) bool {
 	default:
 		return tomlVal
 	}
+}
+
+// ErrPolarSandboxInProduction refuses a production deployment configured for
+// Polar's sandbox: a sandbox checkout pays with a test card and still grants a
+// paid plan, so a flag left over from the launch checklist's sandbox walk would
+// give paid plans away.
+var ErrPolarSandboxInProduction = errors.New("billing/loader: Polar sandbox is refused when FAAS_ENVIRONMENT=production; unset FAAS_POLAR_SANDBOX and use production credentials")
+
+// productionSafePolarConfig resolves the Polar config and refuses the sandbox
+// in a production deployment (FAAS_ENVIRONMENT=production).
+func productionSafePolarConfig(cfg *RootBillingConfig, env func(string) string) (polar.Config, error) {
+	out := resolvedPolarConfig(cfg, env)
+	if strings.EqualFold(strings.TrimSpace(env("FAAS_ENVIRONMENT")), "production") &&
+		(out.Sandbox || strings.Contains(strings.ToLower(out.BaseURL), "sandbox")) {
+		return polar.Config{}, ErrPolarSandboxInProduction
+	}
+	return out, nil
 }
 
 func resolvedPolarConfig(cfg *RootBillingConfig, env func(string) string) polar.Config {
@@ -404,14 +423,22 @@ func Providers() []ProviderMeta {
 				"FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME", "FAAS_POLAR_MANAGED_POSTGRES_METER_ID",
 			},
 			BuildAPID: func(cfg *RootBillingConfig, env func(string) string, log *slog.Logger) (any, error) {
-				p, err := polar.NewProvider(resolvedPolarConfig(cfg, env), log)
+				pc, err := productionSafePolarConfig(cfg, env)
+				if err != nil {
+					return nil, err
+				}
+				p, err := polar.NewProvider(pc, log)
 				if err != nil {
 					return nil, fmt.Errorf("billing/loader: build Polar provider for apid: %w", err)
 				}
 				return p, nil
 			},
 			BuildMeterd: func(cfg *RootBillingConfig, env func(string) string, store state.Store, log *slog.Logger) (any, error) {
-				p, err := polar.NewProviderWithDedupe(resolvedPolarConfig(cfg, env), log, store)
+				pc, err := productionSafePolarConfig(cfg, env)
+				if err != nil {
+					return nil, err
+				}
+				p, err := polar.NewProviderWithDedupe(pc, log, store)
 				if err != nil {
 					return nil, fmt.Errorf("billing/loader: build Polar provider for meterd: %w", err)
 				}

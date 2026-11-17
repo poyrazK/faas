@@ -17,12 +17,17 @@ type ComputeHoldProvider interface {
 }
 
 // capHoldable keeps the databases the sweep holds and releases. A database
-// being created or changed is left to its lifecycle worker, which connects to
-// it; the next sweep after it settles decides. One in its delete grace period
-// is not in the sweep. The lifecycle claim rechecks this before provider I/O,
-// so a stale sweep cannot release a deletion hold.
+// being created is left to its lifecycle worker, which connects to it; the
+// next sweep after it settles decides. A database being changed (a resize, a
+// compute policy or storage change) is held too, so a change that waits for
+// a retry cannot keep it running past its cap or egress allowance: the hold
+// takes the lifecycle lease, so it only lands between attempts, never while
+// the worker runs one, and a change that then meets the held compute is
+// refused as compute_held, as one requested while held is. One in its delete
+// grace period is not in the sweep. The lifecycle claim rechecks this before
+// provider I/O, so a stale sweep cannot release a deletion hold.
 func capHoldable(database Database) bool {
-	return database.State == StateReady || database.State == StateFailed
+	return database.State == StateReady || database.State == StateFailed || database.State == StateUpdating
 }
 
 // Why the sweep holds every database of a subject.
@@ -30,15 +35,47 @@ const (
 	capHoldNone     = ""
 	capHoldCeiling  = "ceiling"
 	capHoldInactive = "inactive"
+	// capHoldEgress holds a subject whose databases and apps together sent
+	// its plan's monthly egress allowance (ADR-20261110160000).
+	capHoldEgress = "egress"
 )
+
+// Why the sweep holds one database of a subject.
+const (
+	capHoldPlanExcess = "plan_excess"
+	// capHoldPreview holds a PR preview database once its subject reaches
+	// 80% of its ceiling, so production keeps the last fifth
+	// (ADR-20261102123523 decision 6). A copy shares its source's provider
+	// object, and so its quota, which cannot hold it alone.
+	capHoldPreview = "preview"
+)
+
+// capHeldDatabases is the databases the sweep holds on their own, by reason:
+// each one suspended past its plan, and every PR preview database once the
+// subject has used 80% of its ceiling.
+func capHeldDatabases(databases []Database, plan computeCapPlan, excess map[string]string) map[string]string {
+	held := make(map[string]string, len(excess))
+	for id := range excess {
+		held[id] = capHoldPlanExcess
+	}
+	if plan.used < previewComputeCeiling(plan.ceiling) {
+		return held
+	}
+	for _, database := range databases {
+		if _, ok := held[database.ID]; !ok && !database.Preview.IsZero() {
+			held[database.ID] = capHoldPreview
+		}
+	}
+	return held
+}
 
 // holdDatabases holds every database of a subject when all names a reason
 // (nothing left of its ceiling, or an inactive subject), and each database
-// the sweep suspended past its plan (excess, empty unless that is enforced);
-// it releases the rest. Quotas are written first, so a released database
+// reasons names (capHeldDatabases: past its plan, a PR preview past 80%); it
+// releases the rest. Quotas are written first, so a released database
 // already has room. Mode shadow logs what it would change; a failure is the
 // subject's failure, and the next sweep tries again.
-func (e *CapEnforcer) holdDatabases(ctx context.Context, subjectID string, databases []Database, all string, excess map[string]string, summary *CapSweepSummary) error {
+func (e *CapEnforcer) holdDatabases(ctx context.Context, subjectID string, databases []Database, all string, reasons map[string]string, summary *CapSweepSummary) error {
 	var failures []error
 	for _, database := range databases {
 		if !capHoldable(database) {
@@ -54,7 +91,7 @@ func (e *CapEnforcer) holdDatabases(ctx context.Context, subjectID string, datab
 			continue
 		}
 		if err := e.withComputeHold(ctx, database, func(providerCtx context.Context, claimed Database) error {
-			return e.holdDatabase(providerCtx, subjectID, claimed, provider, all, excess, summary)
+			return e.holdDatabase(providerCtx, subjectID, claimed, provider, all, reasons, summary)
 		}); err != nil {
 			failures = append(failures, err)
 		}
@@ -63,10 +100,10 @@ func (e *CapEnforcer) holdDatabases(ctx context.Context, subjectID string, datab
 }
 
 // holdDatabase observes and changes one hold while its lifecycle lease is held.
-func (e *CapEnforcer) holdDatabase(ctx context.Context, subjectID string, database Database, provider ComputeHoldProvider, all string, excess map[string]string, summary *CapSweepSummary) error {
+func (e *CapEnforcer) holdDatabase(ctx context.Context, subjectID string, database Database, provider ComputeHoldProvider, all string, reasons map[string]string, summary *CapSweepSummary) error {
 	reason := all
-	if _, past := excess[database.ID]; past && reason == capHoldNone {
-		reason = "plan_excess"
+	if own, ok := reasons[database.ID]; ok && reason == capHoldNone {
+		reason = own
 	}
 	hold := reason != capHoldNone
 	resourceID := databaseDataResource(database)

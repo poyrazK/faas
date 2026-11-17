@@ -9,7 +9,7 @@ import (
 )
 
 func TestManagedPostgresSecretDeliveryPolicy(t *testing.T) {
-	for _, access := range []string{"read_write", "data_api", "auth"} {
+	for _, access := range []string{"read_write", "data_api", "auth", "session"} {
 		t.Run(access, func(t *testing.T) { testManagedPostgresSecretDeliveryPolicy(t, access) })
 	}
 }

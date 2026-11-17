@@ -43,6 +43,14 @@ func (s BucketVersioningService) Read(ctx context.Context, b state.ObjectBucket)
 	if v.Status != "" && !state.ValidObjectBucketVersioningStatus(v.Status) {
 		return state.ObjectBucketVersioning{}, v, ErrUnavailable
 	}
+	// A status read of a never-versioned bucket stays read-only. Recording
+	// that baseline started a revision and a capacity inventory, fencing
+	// writes with 409 object_storage_conflict for a "status" call
+	// (ChronoLake finding 12). The first real transition records it.
+	if current, err := s.Store.GetObjectBucketVersioning(ctx, b.AccountID, b.AppID, b.ID); err == nil && current.State == "ready" && state.ObjectVersioningBaseline(current, v.Status) {
+		current.ObservedStatus = v.Status
+		return current, v, nil
+	}
 	j, err := s.Store.ObserveObjectBucketVersioning(ctx, b.AccountID, b.AppID, b.ID, v.Status)
 	return j, v, err
 }

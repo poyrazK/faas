@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -29,6 +30,11 @@ func (o *WorkflowOrchestrator) executeForEach(ctx context.Context, run *state.Wo
 	if len(items) == 0 {
 		return false, nil
 	}
+	// A preceding independent wait may have parked the run during this pass.
+	// Keep dispatch custody while ready item actions are being executed.
+	if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusRunning, nil, nil); err != nil {
+		return false, err
+	}
 	stepRows, err := o.store.GetWorkflowSteps(ctx, run.ID)
 	if err != nil {
 		return false, err
@@ -43,6 +49,7 @@ func (o *WorkflowOrchestrator) executeForEach(ctx context.Context, run *state.Wo
 	}
 
 	var wg sync.WaitGroup
+	var advanced atomic.Bool
 	errCh := make(chan error, len(items))
 	// Each item runs with its own dispatch DB-phase token; this goroutine
 	// gives its own back while it waits for them.
@@ -53,7 +60,11 @@ func (o *WorkflowOrchestrator) executeForEach(ctx context.Context, run *state.Wo
 				itemCtx, leave := o.childDBPhase(ctx)
 				defer leave()
 				action := spec.ForEach.Action.Step(item.StepName)
-				if _, err := o.executeStep(itemCtx, run, item, action, stepMap, workflowSpecs); err != nil &&
+				progress, err := o.executeStep(itemCtx, run, item, action, stepMap, workflowSpecs)
+				if progress {
+					advanced.Store(true)
+				}
+				if err != nil &&
 					!errors.Is(err, state.ErrWorkflowGuardNotReady) &&
 					!errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 					errCh <- err
@@ -68,7 +79,7 @@ func (o *WorkflowOrchestrator) executeForEach(ctx context.Context, run *state.Wo
 	}
 	// Re-read the batch after all admitted actions have finished. This fills
 	// newly opened slots and finalizes failures only after in-flight items drain.
-	return true, nil
+	return advanced.Load(), nil
 }
 
 // App item actions use the same current-attempt check as outbound calls. A

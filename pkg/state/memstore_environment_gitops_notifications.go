@@ -8,7 +8,7 @@ import (
 )
 
 func (m *MemStore) environmentGitNotificationLocked(memory *environmentGitOpsMemory, axis, status, runID, code string, plan api.EnvironmentGitOpsPlan, now time.Time) error {
-	if axis == "drift" && plan.Hash != "" && memory.source.IntentVersion != plan.ObservedVersion {
+	if axis == "drift" && memory.source.IntentVersion != plan.ObservedVersion {
 		return nil
 	}
 	project := m.projects[memory.source.ProjectID]

@@ -16,6 +16,33 @@ Environment="FAAS_HOST_BRIDGE_CIDR={{ masquerade_cidr | default('10.100.0.0/16',
 {% endif %}
 Environment="FAAS_PRIVATE_INGRESS_CIDRS={{ faas_control_plane_allowed_cidrs | default([]) | join(',') }}"
 Environment="FAAS_PRIVATE_INGRESS_TCP_PORTS={{ faas_private_ingress_ports | join(',') }}"
+{# ADR-20261110120000: the same exact sources as the boot policy. A vmmd
+   that predates these variables keeps FAAS_PRIVATE_INGRESS_CIDRS above.
+   Keep faas_exact_cidrs identical to the nftables role's copy. #}
+{% macro faas_exact_cidrs(exact, fallback) -%}
+{%- set ns = namespace(out=[], ok=(exact is mapping)) -%}
+{%- if ns.ok -%}
+{%- set ns.out = exact.cidrs | default([]) | list -%}
+{%- for h in exact.hosts | default([]) -%}
+{%- set hv = hostvars[h] if (hostvars is defined and h in hostvars) else {} -%}
+{%- set addr = (hv.faas_private_dns_address | default(hv.faas_private_address | default(((hv.ansible_facts | default({})).default_ipv4 | default({})).address | default(''), true), true)) | string -%}
+{%- if addr.split('.') | length == 4 and addr.replace('.', '').isdigit() -%}
+{%- set ns.out = ns.out + [addr ~ '/32'] -%}
+{%- else -%}
+{%- set ns.ok = false -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{{- (ns.out | unique | join(',')) if ns.ok else (fallback | default([]) | join(',')) -}}
+{%- endmacro %}
+{% if faas_control_plane_allowed_exact is defined and faas_control_plane_allowed_cidrs | default([]) %}
+Environment="FAAS_PRIVATE_CONTROL_INGRESS_CIDRS={{ faas_exact_cidrs(faas_control_plane_allowed_exact, faas_control_plane_allowed_cidrs) | trim }}"
+{% endif %}
+{% set faas_peer_ingress_cidrs = (faas_exact_cidrs(faas_compute_peer_exact, faas_control_plane_allowed_cidrs | default([])) | trim) if faas_compute_peer_exact is defined else '' %}
+{% if faas_peer_ingress_cidrs %}
+Environment="FAAS_PRIVATE_PEER_INGRESS_CIDRS={{ faas_peer_ingress_cidrs }}"
+Environment="FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS={{ faas_compute_peer_ports | default([50051, 9091]) | join(',') }}"
+{% endif %}
 {% if faas_public_entry_addrs | default([]) %}
 # ADR-20261103163954: no proxy in front; keep 443 open to every source on the
 # entry addresses only across runtime rebuilds, as the boot policy does. vmmd

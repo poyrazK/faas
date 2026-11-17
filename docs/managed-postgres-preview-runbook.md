@@ -240,14 +240,22 @@ follow the fleet ceilings; see
   usage API and the usage collector logs, then wait for a complete window. Do
   not bypass the gate by raising a plan limit. Deleting a database also holds
   the gate for its account until the final usage correction lands (the final
-  window end plus three collection windows); `gregale postgres diagnostics`
+  window end plus three collection windows); `gregalectl billing postgres diagnostics`
   shows the deleted database's `final_correction` time. Requests for a region
   without a backend or an unsupported major fail as
   `managed_postgres_unsupported` before this gate.
-- `managed_postgres_quota_exceeded`: inspect the account's plan allowance and
-  the operator usage policy. A plan storage ceiling is an entitlement; the
-  monthly compute, history, egress, and spend ceilings are COGS safeguards.
-  Upgrade or reduce the workload rather than disabling metering.
+- `managed_postgres_quota_exceeded`: the plan's database count or another
+  reservation limit. Delete an unused database or upgrade the plan.
+- `managed_postgres_usage_limit_reached`: this month's usage crossed a
+  ceiling — the plan's, intersected with the operator usage policy
+  (`usage.max_monthly_*`). `gregale postgres usage` and `postgres overage`
+  report the effective `compute_ceiling`. A plan storage ceiling is an
+  entitlement; the monthly compute, history, egress, and spend ceilings are
+  COGS safeguards. An operator compute cap below a plan's allowance blocks
+  that plan's restores and new databases long before its allowance (ChronoLake
+  finding 18: 36,000 s against Scale's 720,000 s); size it to the largest
+  plan ceiling it should allow, or reduce the workload, rather than
+  disabling metering.
 - `managed_postgres_provisioning_not_enabled`: the rollout gate is closed for
   the account (provisioning flag, qualification or canary window, or the
   canary account allowlist). Nothing is down; existing databases and
@@ -360,9 +368,9 @@ that gap before enabling further reservations.
 
 For `legacy_identity_unknown` diagnostics on deleted rows, retain and verify
 resource ownership, the exact backend fingerprint, branch lineage, and actual
-provider shutdown evidence. Preview with `gregale postgres reconcile ACCOUNT_ID
+provider shutdown evidence. Preview with `gregalectl billing postgres reconcile --account-id ACCOUNT_ID
 --file retained-shutdown.json --json`, review the boundary, then apply with its
-`expected_revision` and a recently stepped-up operator session file. See the
+`expected_revision`, `--apply` and a recently stepped-up `gregalectl auth` session. See the
 [input format and evidence requirements](managed-postgres.md). Missing lookup
 results and old logical deletion timestamps are insufficient.
 

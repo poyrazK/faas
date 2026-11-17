@@ -136,10 +136,12 @@ func EdgeRuleMethodOverride(method string, header http.Header, rawQuery string) 
 	for _, name := range edgeRuleMethodOverrideHeaders {
 		candidates = append(candidates, header.Values(name)...)
 	}
-	if strings.Contains(rawQuery, "_method") {
-		if q, err := url.ParseQuery(rawQuery); err == nil {
-			candidates = append(candidates, q["_method"]...)
-		}
+	// ParseQuery returns the valid parameters even when another parameter is
+	// malformed. Inspect decoded names so encoded underscores/letters cannot
+	// hide an override that the application will honor.
+	if rawQuery != "" {
+		q, _ := url.ParseQuery(rawQuery)
+		candidates = append(candidates, q["_method"]...)
 	}
 	for _, c := range candidates {
 		if m := strings.ToUpper(strings.TrimSpace(c)); m != method && slices.Contains(edgeRuleMatchMethods, m) {
@@ -193,6 +195,51 @@ func MatchProtectiveEdgeRulePath(glob, requestPath string) (bool, error) {
 		return MatchEdgeRulePath(foldedGlob, folded)
 	}
 	return false, nil
+}
+
+// NormalizeEdgeRequestPath resolves "." and ".." segments and collapses
+// duplicate slashes in a request path, keeping a trailing slash. The gateway
+// forwards this form to the app and every edge rule sees it
+// (ADR-20261108100000), so a rule picked for /public/../upload, which most
+// frameworks serve as /upload, is a rule for /upload: a higher-priority
+// exception on /public/** can no longer be selected by a form the app never
+// routes. A path that does not start with "/" (OPTIONS *) is returned as
+// given. Backslashes, ";" parameters and case are left alone; gates still
+// match those forms protectively (MatchProtectiveEdgeRulePath).
+func NormalizeEdgeRequestPath(p string) string {
+	if !strings.HasPrefix(p, "/") {
+		return p
+	}
+	if !strings.Contains(p, "//") && !strings.Contains(p, "/.") {
+		return p
+	}
+	cleaned := path.Clean(p)
+	if cleaned != "/" && (strings.HasSuffix(p, "/") || strings.HasSuffix(p, "/.") || strings.HasSuffix(p, "/..")) {
+		cleaned += "/"
+	}
+	return cleaned
+}
+
+// ProtectiveEdgeRulePaths returns the path forms a rule that denies or
+// constrains matches requestPath under (MatchProtectiveEdgeRulePath): the raw
+// path, its dot-segment/duplicate-slash normalized form, that form with each
+// segment's ";" parameters dropped, and the case-folded forms, each once and
+// raw first. Match conditions on such rules hold when they hold for any form
+// (ADR-20261107190000), as the match_path selector already does.
+func ProtectiveEdgeRulePaths(requestPath string) []string {
+	out := []string{requestPath}
+	add := func(p string) {
+		if !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	cleaned := path.Clean("/" + strings.ReplaceAll(requestPath, "\\", "/"))
+	bare := stripPathParameters(cleaned)
+	add(cleaned)
+	add(bare)
+	add(strings.ToLower(cleaned))
+	add(strings.ToLower(bare))
+	return out
 }
 
 // stripPathParameters drops each segment's ";" parameters (RFC 3986 section
@@ -250,20 +297,43 @@ func MatchEdgeRuleKindPath(kind, glob, requestPath string) (bool, error) {
 	return MatchEdgeRulePath(glob, requestPath)
 }
 
+// ValidateEdgeRuleMatchPath checks glob syntax before a rule is persisted.
+// Probe the entire pattern even when its prefix cannot match the empty path.
+func ValidateEdgeRuleMatchPath(glob string) *Problem {
+	if _, err := path.Match(glob, ""); err != nil {
+		return ErrValidation(fmt.Sprintf("match_path is not a valid glob: %v", err))
+	}
+	return nil
+}
+
 // EdgeRuleAppHosts is the reserved match_host that covers every hostname
 // the rule's own app serves: its platform host and its custom domains,
 // including ones added later (ADR-1191). It is not a host pattern; the
 // gateway attaches such rules to whichever hosts resolve to the rule's app.
 const EdgeRuleAppHosts = "@app"
 
-// ValidateEdgeRuleMatchHost checks a match_host: 1..253 bytes, and the "@"
-// prefix is reserved for EdgeRuleAppHosts.
+// edgeRuleMatchHostReserved are the characters a match_host may not use.
+// The store serves a host's rules with `host LIKE replace(match_host, '*',
+// '%')`, where "%" and "_" are wildcards and "[", "]" and "\" are literal,
+// while the gateway's cache invalidation, convergence fences and the trace
+// simulator match with path.Match, which reads them the other way round. A
+// rule using them was served to hosts its edits never refreshed, or shown
+// as covering hosts it never applied to (ADR-091 amendment 2026-11-07,
+// later). "*" and "?" mean the same in both.
+const edgeRuleMatchHostReserved = `%_[]\`
+
+// ValidateEdgeRuleMatchHost checks a match_host: 1..253 bytes, none of the
+// characters the two host matchers disagree on, and the "@" prefix is
+// reserved for EdgeRuleAppHosts.
 func ValidateEdgeRuleMatchHost(host string) *Problem {
 	if host == "" || len(host) > 253 {
 		return ErrValidation("match_host must be 1..253 chars")
 	}
 	if strings.HasPrefix(host, "@") && !IsEdgeRuleAppHosts(host) {
 		return ErrValidation(`match_host may not start with "@" except "@app" (every host the app serves)`)
+	}
+	if i := strings.IndexAny(host, edgeRuleMatchHostReserved); i >= 0 {
+		return ErrValidation(fmt.Sprintf(`match_host may not contain %q; use "*" for any run of characters and "?" for one`, host[i:i+1]))
 	}
 	return nil
 }
@@ -274,8 +344,8 @@ func IsEdgeRuleAppHosts(pattern string) bool {
 }
 
 // EdgeRuleHostMatches reports whether a rule's match_host pattern ("*",
-// "*.example.com", an exact host, or another path.Match glob) covers host,
-// case-insensitively. It mirrors the store's LIKE translation; the gateway
+// "*.example.com", an exact host, or a store-compatible wildcard) covers host,
+// case-insensitively. It mirrors the store's exact-or-LIKE translation; the gateway
 // cache invalidation and the trace simulator share it. The app-wide pattern
 // (EdgeRuleAppHosts) reports true for every host: callers that see one have
 // already scoped the rule to the request's app (the gateway merges only the
@@ -290,6 +360,5 @@ func EdgeRuleHostMatches(pattern, host string) bool {
 	if pattern == EdgeRuleAppHosts {
 		return true
 	}
-	ok, err := path.Match(pattern, host)
-	return err == nil && ok
+	return pattern == host || matchEdgeRuleHostLike(pattern, host)
 }

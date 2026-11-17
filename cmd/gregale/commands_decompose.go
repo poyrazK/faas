@@ -173,7 +173,7 @@ func cmdScan(args []string) int {
 		return printErr("Scan failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(plan))
+		return jsonOut(writeJSON(withFeatureHints(plan)))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
 }
@@ -241,7 +241,7 @@ func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
 		return printErr("Scan failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(plan))
+		return jsonOut(writeJSON(withFeatureHints(plan)))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
 }
@@ -258,7 +258,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		return code
 	}
 	if emitJSON {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		if strict && !plan.CanApply {
@@ -380,7 +380,7 @@ func runProjectDeployPreviewWithMode(
 		return printErr("Scan failed", err)
 	}
 	if emitJSON {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		if strict && !plan.CanApply {
@@ -765,7 +765,22 @@ func printPublicURLs(w io.Writer, workloads []api.PlanWorkload) {
 	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
 	fmt.Fprintln(w, "\nPublic on the internet:")
 	for _, wl := range ws {
-		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, wl.PublicURL)
+		fmt.Fprintf(w, "  - %-20s %s%s\n", wl.Name, wl.PublicURL, publicAuthNote(wl.PublicAuthMode))
+	}
+}
+
+// publicAuthNote says when a public URL refuses anonymous requests, so the
+// list does not promise access the app's auth will refuse (Hunt 32 H32-30).
+func publicAuthNote(mode string) string {
+	switch mode {
+	case "":
+		return ""
+	case api.AppPublicAuthModeBearer:
+		return " (needs an API key)"
+	case api.AppPublicAuthModeBasic:
+		return " (needs HTTP basic auth)"
+	default:
+		return " (" + mode + " access only)"
 	}
 }
 
@@ -895,6 +910,7 @@ func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanRes
 //
 //nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
+	plan = withFeatureHints(plan)
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	if plan.Environment != "" {
 		fmt.Fprintf(w, "Environment: %s\n", plan.Environment)
@@ -954,6 +970,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		printPublicURLs(w, plan.Workloads)
 		printUnsetEnvKeys(w, plan.Workloads)
 		printDefaultMemoryServices(w, plan)
+		printFeatureHints(w, plan.FeatureHints)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
 			printPlanDetectionWarnings(w, plan.DetectionWarnings)
@@ -1009,7 +1026,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, imageSuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, planWorkloadProtocolSuffix(wl), imageSuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
@@ -1025,6 +1042,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			fmt.Fprintln(w, "  - "+wn)
 		}
 	}
+	printFeatureHints(w, plan.FeatureHints)
 	if explain && len(plan.Workloads) == 0 {
 		printPlanDetectionTrace(w, nil)
 	}
@@ -1338,26 +1356,18 @@ func planProblem(plan api.PlanResponse) api.Problem {
 			Detail: fmt.Sprintf("plan caps apps at %d; you have %d.", plan.LimitApps, plan.ObservedApps),
 		}
 	}
-	if !plan.CanApplyPreExclude {
-		// The OLD test invariant: when ObservedCrons > LimitCrons
-		// (the implicit cron-quota case that fell through to the
-		// CronQuota fallback), the wire code stays plan_cron_quota.
-		// The GateBlocked path catches every other gate-block
-		// case — typically a future gate type that doesn't have a
-		// specific wire code yet, or a multi-reason block where
-		// cron-quota is not the primary reason. Without the
-		// ObservedCrons <= LimitCrons guard we would re-route the
-		// `cron-limit` case (TestPlanProblem_Mapping/cron-limit in
-		// commands_decompose_test.go) onto CodePlanGateBlocked,
-		// breaking the wire-shape parity test that ADRs pin.
-		if plan.ObservedCrons <= plan.LimitCrons {
-			return api.Problem{
-				Status: 403,
-				Code:   api.CodePlanGateBlocked,
-				Title:  "Plan gate blocked",
-				Detail: fmt.Sprintf("gate was blocked pre-exclude; reasons: %s",
-					strings.Join(plan.CanApplyReasons, "; ")),
-			}
+	// Only an account over its cron cap keeps plan_cron_quota
+	// (TestPlanProblem_Mapping/cron-limit). Every other block — a
+	// pre-exclude gate, or an admission reason found after --only /
+	// --exclude such as a dependency or slug-ownership problem — carries
+	// its own reasons. Reporting those as "plan caps crons at 500; you
+	// have 10" hid the real cause (ChronoLake finding 11).
+	if plan.ObservedCrons <= plan.LimitCrons {
+		return api.Problem{
+			Status: 403,
+			Code:   api.CodePlanGateBlocked,
+			Title:  "Plan gate blocked",
+			Detail: "project plan cannot be applied: " + planBlockedError(plan).Error(),
 		}
 	}
 	return api.Problem{
@@ -1366,4 +1376,22 @@ func planProblem(plan api.PlanResponse) api.Problem {
 		Title:  "Cron limit reached",
 		Detail: fmt.Sprintf("plan caps crons at %d; you have %d.", plan.LimitCrons, plan.ObservedCrons),
 	}
+}
+
+// planWorkloadProtocolSuffix shows the Compose x-gregale-app-protocol,
+// -streaming and -wake-ahead settings the deploy applies, so a dry run
+// confirms the extensions took effect (microservices-demo feedback,
+// 2026-11-16).
+func planWorkloadProtocolSuffix(wl api.PlanWorkload) string {
+	var out string
+	if wl.AppProtocol != "" {
+		out += "  protocol=" + wl.AppProtocol
+	}
+	if wl.Streaming != nil {
+		out += fmt.Sprintf("  streaming=%t", *wl.Streaming)
+	}
+	if wl.WakeAhead != nil {
+		out += fmt.Sprintf("  wake_ahead=%t", *wl.WakeAhead)
+	}
+	return out
 }

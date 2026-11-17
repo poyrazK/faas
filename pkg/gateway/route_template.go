@@ -18,9 +18,7 @@ func inferredObservedPath(path string) string {
 	// A single numeric top-level route may be a static API version or year;
 	// require a preceding resource segment before inferring an identifier.
 	for i := 2; i < len(parts); i++ {
-		if observedIdentifier(parts[i]) {
-			parts[i] = "{id}"
-		}
+		parts[i] = inferredSegment(parts[i])
 	}
 	path = strings.Join(parts, "/")
 	// The telemetry schema caps the method+path label at 256 bytes. Keep
@@ -42,7 +40,70 @@ func observedRouteLabel(method, path string) string {
 	return method + " " + path
 }
 
+// inferredSegment templates one path segment: an identifier becomes {id},
+// a calendar date {date}, and a file named by an identifier keeps its
+// extension ({id}.json.gz), so one-off export and object downloads share a
+// label (ADR-20261028110044 amendment 7).
+func inferredSegment(segment string) string {
+	if observedIdentifier(segment) {
+		return "{id}"
+	}
+	if observedDate(segment) {
+		return "{date}"
+	}
+	if stem, ext, ok := strings.Cut(segment, "."); ok && stem != "" && ext != "" && observedIdentifier(stem) {
+		return "{id}." + ext
+	}
+	return segment
+}
+
+// observedDate matches an ISO calendar date segment (2026-11-07).
+func observedDate(segment string) bool {
+	if len(segment) != 10 || segment[4] != '-' || segment[7] != '-' {
+		return false
+	}
+	for i, ch := range segment {
+		if i != 4 && i != 7 && (ch < '0' || ch > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// observedPrefixedIdentifier matches a typed identifier such as qry_<hex>,
+// cus_<base62> or evt-<ulid>: a short lowercase type prefix, then a token of
+// at least 10 letters and digits that contains a digit.
+func observedPrefixedIdentifier(segment string) bool {
+	cut := strings.IndexAny(segment, "_-")
+	if cut < 1 || cut > 8 {
+		return false
+	}
+	for _, ch := range segment[:cut] {
+		if ch < 'a' || ch > 'z' {
+			return false
+		}
+	}
+	token := segment[cut+1:]
+	if len(token) < 10 {
+		return false
+	}
+	digit := false
+	for _, ch := range token {
+		switch {
+		case ch >= '0' && ch <= '9':
+			digit = true
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z':
+		default:
+			return false
+		}
+	}
+	return digit
+}
+
 func observedIdentifier(segment string) bool {
+	if observedPrefixedIdentifier(segment) {
+		return true
+	}
 	if segment == "" {
 		return false
 	}

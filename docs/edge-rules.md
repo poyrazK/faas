@@ -83,8 +83,16 @@ of your apps to another over the internal service network goes straight to the
 target and skips the target's edge rules, `jwt`, `ip`, `waf`, `challenge` and
 `throttle` included. Which apps may make such calls is set by the service
 policy and `x-gregale-allow-callers` (see
-[Internal services](networking.md#internal-services)); check credentials in the
+[Internal services](internal-services.md#internal-services)); check credentials in the
 app itself when a caller must prove more than which app it is.
+
+Work the platform delivers on your account's behalf also skips edge rules:
+`gregale invocation run` and other synchronous or asynchronous invocations
+(`POST /v1/apps/{slug}/invoke`), queue messages, delayed tasks, crons and
+exclusive operations. These requests are authorized by your account's
+credentials and scopes when they are created, not by the public edge, so an
+`ip`, `geo`, `jwt` or `throttle` rule does not stop them. An app that must
+reject them checks in its own code.
 
 ### Path globs
 
@@ -101,6 +109,13 @@ Other characters follow Go's `path.Match`: `*` matches within one segment,
 `?` matches one character, `[...]` a character class. OpenAPI templates such
 as `/users/{id}` are not globs; the API rejects them and suggests the glob
 (`/users/?*`).
+
+Before any rule runs, the gateway resolves `.` and `..` segments (also when
+percent-encoded) and collapses repeated slashes, keeping a trailing slash,
+and forwards that path to your app: `/public/../upload` and `//upload` are
+`/upload` to every rule and to the app. A path already in that form is
+forwarded unchanged. Backslashes, `;` parameters and letter case are left
+as sent.
 
 Rules that refuse or limit requests (`ip`, `geo`, `jwt`, `limit`, `throttle`,
 `validate`, `maintenance`, `waf`, `challenge`) also match the path's
@@ -119,6 +134,13 @@ the edge: if your app honours one, leave `match_methods` off the rule. An app
 that only allows its declared routes (`only_allow_declared_routes`) gets the
 same treatment: a POST that asks to run as `DELETE` needs both `POST` and
 `DELETE` declared for its path.
+
+A `match` condition on these rules reads the same forms: it holds when it
+holds for the raw path or any normalized form above, and on a `HEAD` request
+also when it holds for `GET`. A `jwt` rule on `/**` with
+`{"not": {"field": "path", "op": "prefix", "value": "/public"}}` therefore
+still checks `/public/../admin`, and a `path prefix /admin` condition covers
+`//admin` and `/ADMIN`. Other kinds compare conditions exactly.
 
 A gate scoped by `match_headers`, or by a `header:`, `cookie:` or `query:`
 field in `match`, applies only when the client sends that value, and the
@@ -148,7 +170,7 @@ A tree is at most 4 levels deep with 32 nodes; a leaf has at most 64 values;
 values and regexes are at most 256 bytes. `asn` accepts `13335` or
 `AS13335`. A client IP the gateway cannot trust, and a country or ASN it
 cannot resolve, read as missing. `verified_bot` and the AI crawler fields are
-described under [AI crawlers](security#ai-crawlers).
+described under [AI crawlers](security.md#ai-crawlers).
 
 ### Lists
 
@@ -168,6 +190,10 @@ gregale edge rule-list create team-ips --app company-api --kind ip --item 203.0.
 ```
 
 Lists are available on Hobby and above; see [Limits](#limits).
+
+Edge rules do not apply to a public bucket mount's paths (`--serve-at`):
+those reads are answered before the rules run. See
+[object storage](object-storage.md#public-buckets).
 
 ## Which rule applies
 
@@ -197,7 +223,7 @@ The gateway applies the kinds in this order. A rule that answers the request
 ends it, and later kinds do not run.
 
 1. `route` picks the app that serves the request.
-2. The [penalty box](security#penalty-box) refuses clients a rule has boxed.
+2. The [penalty box](security.md#penalty-box) refuses clients a rule has boxed.
 3. App maintenance mode, then `maintenance`.
 4. `redirect`.
 5. `rewrite`, then `headers` (request headers now, response headers on the way out).
@@ -249,8 +275,8 @@ Each rule has one `kind` and an `action` object whose fields depend on it.
 | [`circuit_breaker`](#circuit_breaker) | Tunes when a failing instance is taken out | Hobby+, on request* |
 | [`async`](#async) | Accepts the request and runs it later | Hobby+, preview* |
 | [`respond`](#respond) | Answers with fixed JSON (preview apps only) | All |
-| `waf` | Checks requests against the OWASP Core Rule Set; see [Web application firewall](security#web-application-firewall) | Pro+ |
-| `challenge` | Asks browsers for a proof of work; see [Browser challenge](security#browser-challenge) | Hobby+ |
+| `waf` | Checks requests against the OWASP Core Rule Set; see [Web application firewall](security.md#web-application-firewall) | Pro+ |
+| `challenge` | Asks browsers for a proof of work; see [Browser challenge](security.md#browser-challenge) | Hobby+ |
 
 \* `retry` and `circuit_breaker` are not yet generally available, and `async`
 is in preview. Each is enabled per account: until it is enabled for yours,
@@ -259,7 +285,7 @@ to have one enabled.
 
 `ip`, `geo`, `throttle` and blocking `waf` rules can also put a client they
 keep refusing in a penalty box for the whole app; see
-[Penalty box](security#penalty-box).
+[Penalty box](security.md#penalty-box).
 
 ### route
 
@@ -340,8 +366,38 @@ apps or platform domain, as your app's own cookies do, so the cookie stays
 with the host that set it; your custom domain's `Domain` is kept. Request headers are changed before authentication. Use `set`, not
 `add`, for a header your app relies on, so a client cannot supply its own
 value alongside it. For common security headers,
-[Security headers on your app](security#security-headers-on-your-app) sets a
+[Security headers on your app](security.md#security-headers-on-your-app) sets a
 recommended rule.
+
+#### Credentials in request headers
+
+A request header that carries a credential, such as the token your origin
+expects, is stored encrypted and never shown again:
+
+```json
+{"name": "Authorization", "action": "set", "value": "Bearer <token>", "secret": true}
+```
+
+Only the gateway that applies the rule can read the value. Rules, versions,
+exports, the dashboard and agent tools show `"secret": true` and a
+`secret_id` instead of the value. `Authorization`, `Proxy-Authorization`,
+`Cookie` and any header whose name contains `token`, `secret`, `password`,
+`api-key`, `apikey`, `signature` or `credential` are kept this way without
+`secret`. To keep a stored value when you change a rule, send the op back with
+its `secret_id` and no `value`; to replace it, send a new `value`. Sealed
+values are at most 4096 bytes and work on request headers only, not with
+`template` or `remove`.
+
+A credential-named value saved before sealing arrived is shown with an empty
+`value` and `"redacted": true`. The platform seals such values in your rules
+and their saved versions on its own, which adds a rule version with the same
+headers; sending the op back unchanged seals the value right away. During a
+platform upgrade a new value can briefly be stored this way too, until every
+edge server can read sealed values.
+
+Environment edge policies seal credential values the same way. In an
+environment managed from Git, values stay as your repository defines them;
+responses still leave them out.
 
 ### cors
 
@@ -402,7 +458,7 @@ Rules saved before this default keep their saved value.
 
 `mcp` turns the rule into an MCP resource-server policy, and
 `platform_tenant_external_ref_claim` maps a claim to a
-[platform tenant](platform-tenants). If the gateway cannot load the JWKS, the
+[platform tenant](platform-tenants.md). If the gateway cannot load the JWKS, the
 request gets 503 rather than passing unchecked.
 
 ### ip
@@ -451,8 +507,11 @@ headers the client or a CDN sends.
 A request body over `max_body_bytes` (1 byte to 25 MiB) gets 413
 `request_too_large`. A request whose `Content-Length` is over the cap is
 refused before any of the body is read. `max_body_bytes_streaming`
-(optional, at least `max_body_bytes`, at most 100 MiB) sets the size cap for
-a streamed response on the route.
+(optional, at least `max_body_bytes`, at most 100 MiB) is the request body cap
+instead of `max_body_bytes` when your app has streaming turned on: every
+request to such an app streams except WebSocket upgrades, whatever its
+`Accept` header, so on a streaming app this is the cap that applies. Leave it
+unset to keep `max_body_bytes` there too. It also caps the streamed response.
 
 ### throttle
 
@@ -514,6 +573,14 @@ values, which are converted to the declared types before checking.
 `path_template` requires `match_path` to be the template with each
 placeholder as `?*`. A rule needs `schema`, `parameters` or both.
 
+Numeric checks preserve the exact JSON value, including integers above
+2^53. To bound validation arithmetic, each numeric token is at most 4096
+bytes and its decimal exponent is between -4096 and 4096. These limits
+apply to schemas and request values; values beyond them are validation failures.
+Documents containing many large-exponent numbers also have an aggregate numeric
+work allowance, so splitting a large expansion across many values cannot bypass
+the bound.
+
 `validate_mode` decides what a failure does: `block` (default) answers 422
 `request_validation_failed` with each error in `errors`; `observe` lets the
 request through and counts it; `warn` also adds `X-Validation-Warning: <rule
@@ -527,7 +594,13 @@ most four bodies, so other customers' uploads cannot use it up. A body sent
 without `Content-Length` is held as it arrives. When a bound is reached, a
 request gets 503 `capacity_unavailable` with `Retry-After`. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
-and `apply_while_streaming` to validate a WebSocket handshake too. Path,
+and `apply_while_streaming` to validate a WebSocket handshake too. A body that
+names a property twice in one object, or in two spellings that differ only in
+case (`role` and `ROLE`), fails with `expected: unique_properties`: Go and
+ASP.NET Core bind property names case-insensitively, so the second spelling
+would reach your app unchecked. Query parameters are read as apps read them,
+split on `&` only, so `?id=1;--` is checked as `id=1;--`; a query with a
+percent-escape that does not decode fails with `expected: query_string`. Path,
 query and header parameters are always checked, and so is any body sent with
 `Connection: Upgrade`: servers that do not speak the named protocol run such a
 request as usual.
@@ -663,6 +736,11 @@ served by the app the host belongs to. If the gateways cannot be reached,
 the change is refused with 503 and nothing changes; retry it. Changes to one account's rules are
 applied one at a time; other accounts' changes never wait for yours.
 
+A deploy token or a project-limited agent key manages only rules for its
+own apps' hosts. It cannot change, delete or roll back over a rule whose
+`match_host` covers other hosts (`*`, a wildcard, another app's host); use an
+account API key for those. See [deploy tokens](deploys.md#deploy-tokens).
+
 Two people editing the same app's rules at once cannot overwrite each other:
 send the `ETag` from `GET /v1/apps/{slug}/edge-rules` as `If-Match`, and a
 change made since answers 412.
@@ -692,7 +770,7 @@ the same time.
 
 - `gregale edge rule trace` shows which rules a request would match and
   what each would do, and can compare a proposed change; see
-  [Reusable edge-rule trace scenarios](edge-rule-trace). It includes the
+  [Reusable edge-rule trace scenarios](edge-rule-trace.md). It includes the
   `*` and host-pattern rules of your other apps with the same owner that
   cover the host, as the gateway applies them; `GET
   /v1/apps/{slug}/edge-rules?covering=true` lists them with each rule's
@@ -747,7 +825,7 @@ refused until the plan allows them again. Delete the ones you no longer need.
 | 401 `unauthorized` | `jwt`; `throttle` with `missing_key_policy: reject` |
 | 403 `ip_denied` | `ip` |
 | 403 `geo_denied` | `geo` |
-| 403 `forbidden` | blocking `waf` |
+| 403 `waf_blocked` | blocking `waf` |
 | 403 `penalty_box` | a client in a penalty box, with `Retry-After` |
 | 403 `challenge_required` | `challenge` on a request that is not a page load |
 | 413 `request_too_large` | `limit`, `validate` |
@@ -759,5 +837,5 @@ refused until the plan allows them again. Delete the ones you no longer need.
 | 503 `traffic_policy_unavailable` | a rule on the host the gateway cannot enforce; the detail names it, and `gregale edge rule list` warns about it |
 | 503 `request_budget_exceeded` | `budget` |
 
-Errors use the [problem format](errors); `gregale edge rule events
+Errors use the [problem format](errors.md); `gregale edge rule events
 --request-id <id>` finds the rule behind a refused request.

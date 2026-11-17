@@ -618,7 +618,7 @@ func (s *server) supersededRollbackTargetProblem(ctx context.Context, app state.
 	} else if len(active) > 0 {
 		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
 		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
-			WithHint("This release never served, so rolling back to it ships it as a new release. Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
+			WithHint("This release never served, so rolling back to it ships it as a new release. Wait for the freeze to end, lift it with `gregale release freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
 	}
 	if approval.Blocks(status) {
 		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "held")
@@ -762,6 +762,7 @@ func (s *server) abortForApproval(ctx context.Context, app state.App, d state.De
 	// and the rejected release would keep its canary traffic (approvals ADR
 	// amendment 11).
 	var err error
+	ctx = state.WithRolloutRecoveryActor(ctx, state.RolloutRecoveryActorReleaseApproval)
 	if predecessor, ok := s.rolloutPredecessor(ctx, d); ok {
 		_, _, err = decisions.RecoverRolloutForDeploymentWithDecision(ctx, app.ID, d.ID, predecessor.ID, "abort", reason, decision)
 	} else {
@@ -994,7 +995,7 @@ func (s *server) releaseGateWatchProblem(ctx context.Context, app state.App, req
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Release gates need a judged release",
 		fmt.Sprintf("%s has %d release gate(s). A production release without a canary and with rollback_on_5xx off would never be judged by them.", app.Slug, len(rows))).
-		WithHint("Deploy with a canary (--rollout safe), or leave --rollback-on-5xx on so the post-release watch judges the gates. An admin can remove a gate with `gregale release-gates rm`.")
+		WithHint("Deploy with a canary (--rollout safe), or leave --rollback-on-5xx on so the post-release watch judges the gates. An admin can remove a gate with `gregale release gate rm`.")
 }
 
 // releaseApprovalCanaryProblem refuses a production release that would take

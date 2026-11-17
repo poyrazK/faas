@@ -104,6 +104,10 @@ type S3StorageBackend struct {
 	store               s3ArtifactStore
 	snapshotCompression string
 	sparseExtents       bool
+	// deferDelete, when set, records deletes instead of performing them
+	// (ADR-20261115180000, DeferDeletes), so a node's S3 key needs no
+	// delete right.
+	deferDelete DeleteDeferrer
 }
 
 type s3Artifact struct {
@@ -224,6 +228,9 @@ func (b *S3StorageBackend) Delete(ctx context.Context, key string) error {
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("storage: s3 delete %q: %w", key, err)
+	}
+	if b.deferDelete != nil {
+		return b.deferDelete.DeferDelete(ctx, key)
 	}
 	if err := b.store.Delete(ctx, b.bucket, key); err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("storage: s3 delete %q: %w", key, err)

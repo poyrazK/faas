@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FeatureHint } from './FeatureHint.js';
 import type { PlanAffectedApp } from './PlanAffectedApp.js';
 import type { PlanAsyncRoute } from './PlanAsyncRoute.js';
 import type { PlanCron } from './PlanCron.js';
@@ -28,7 +29,7 @@ export type PlanResponse = {
    * Hash of the non-secret environment configuration bound into this plan
    */
   environment_config_hash?: string;
-  scan_source: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'workspace' | 'convention' | 'single' | 'unknown';
+  scan_source: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'workspace' | 'convention' | 'single' | 'unknown' | 'functions';
   tier: string;
   workloads: Array<PlanWorkload>;
   managed: Array<PlanManaged>;
@@ -38,6 +39,10 @@ export type PlanResponse = {
    */
   async_routes?: Array<PlanAsyncRoute>;
   warnings?: Array<string>;
+  /**
+   * Gregale behaviors and features that apply to the scanned source, with the commands that change them.
+   */
+  feature_hints?: Array<FeatureHint>;
   /**
    * Structured skipped/merged detector decisions available to explain-mode clients.
    */

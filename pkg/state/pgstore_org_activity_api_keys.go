@@ -131,6 +131,10 @@ func (s *PgStore) RotateOrgAPIKeyWithActivity(ctx context.Context, orgID, oldKey
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, 0, ErrAPIKeyRevoked
 	}
+	// Expiry is lazy (see RotateAPIKey): an expired key must not be reopened.
+	if old.ExpiresAt != nil && !old.ExpiresAt.After(time.Now()) {
+		return APIKey{}, APIKey{}, 0, ErrAPIKeyExpired
+	}
 	if newLabel == "" {
 		newLabel = old.Label
 	}
@@ -143,6 +147,9 @@ func (s *PgStore) RotateOrgAPIKeyWithActivity(ctx context.Context, orgID, oldKey
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID,
 		nullString(createdIP), nullString(createdUA), parent, old.ExpiresAt)
 	if err != nil {
+		return APIKey{}, APIKey{}, 0, err
+	}
+	if err := copyKeyProjectLimitTx(ctx, tx, oldKeyID, newKey.ID); err != nil {
 		return APIKey{}, APIKey{}, 0, err
 	}
 	if graceWindow == 0 {

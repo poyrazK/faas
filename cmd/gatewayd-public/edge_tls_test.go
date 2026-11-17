@@ -394,3 +394,25 @@ func TestEdgeServerErrorsLogOneHandshakeFailureAMinute(t *testing.T) {
 		t.Fatalf("another server error was not logged:\n%s", buf.String())
 	}
 }
+
+// Hunt 33 P-3: a client resetting during the HTTP/2 preface logged a Warn
+// every few minutes on every node.
+func TestEdgeServerErrorsLogClientResetsAtDebug(t *testing.T) {
+	var buf bytes.Buffer
+	failures := prometheus.NewCounter(prometheus.CounterOpts{Name: "failures"})
+	e := newEdgeServerErrors(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})), failures)
+	for _, line := range []string{
+		"http2: server: error reading preface from client 198.51.100.7:33936: read tcp 192.0.2.1:443->198.51.100.7:33936: read: connection reset by peer\n",
+		"http2: server: error reading preface from client 198.51.100.7:33937: EOF\n",
+		"http: response.Write on hijacked connection: write: broken pipe\n",
+	} {
+		_, _ = e.Write([]byte(line))
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("client resets were logged above Debug:\n%s", buf.String())
+	}
+	_, _ = e.Write([]byte("http2: server: error reading preface from client 198.51.100.7:1: bogus greeting \"GET / HTTP/1.1\"\n"))
+	if !strings.Contains(buf.String(), "bogus greeting") {
+		t.Fatalf("a malformed preface was not logged:\n%s", buf.String())
+	}
+}

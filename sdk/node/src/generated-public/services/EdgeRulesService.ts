@@ -22,6 +22,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class EdgeRulesService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read an app's attack mode.
    * @returns EdgeAttackModeStatus The app's attack mode.
@@ -35,7 +36,7 @@ export class EdgeRulesService {
      */
     slug: string,
   }): CancelablePromise<EdgeAttackModeStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-protection/attack-mode',
       path: {
@@ -73,7 +74,7 @@ export class EdgeRulesService {
     slug: string,
     requestBody?: EnableEdgeAttackModeRequest,
   }): CancelablePromise<EdgeAttackModeStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/edge-protection/attack-mode',
       path: {
@@ -107,7 +108,7 @@ export class EdgeRulesService {
      */
     slug: string,
   }): CancelablePromise<EdgeAttackModeStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/edge-protection/attack-mode',
       path: {
@@ -135,7 +136,7 @@ export class EdgeRulesService {
    * @throws ApiError
    */
   public static listEdgeRules(): CancelablePromise<Array<EdgeRuleResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/edge-rules',
       errors: {
@@ -157,7 +158,7 @@ export class EdgeRulesService {
    * @throws ApiError
    */
   public static listEdgeRuleLists(): CancelablePromise<ListEdgeRuleListsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/edge-rule-lists',
       errors: {
@@ -184,7 +185,7 @@ export class EdgeRulesService {
   }: {
     requestBody: CreateEdgeRuleListRequest,
   }): CancelablePromise<EdgeRuleListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/edge-rule-lists',
       body: requestBody,
@@ -215,7 +216,7 @@ export class EdgeRulesService {
      */
     name: string,
   }): CancelablePromise<EdgeRuleListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/edge-rule-lists/{name}',
       path: {
@@ -252,7 +253,7 @@ export class EdgeRulesService {
     name: string,
     requestBody: UpdateEdgeRuleListRequest,
   }): CancelablePromise<EdgeRuleListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/edge-rule-lists/{name}',
       path: {
@@ -286,7 +287,7 @@ export class EdgeRulesService {
      */
     name: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/edge-rule-lists/{name}',
       path: {
@@ -327,7 +328,7 @@ export class EdgeRulesService {
      */
     covering?: boolean,
   }): CancelablePromise<Array<EdgeRuleResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-rules',
       path: {
@@ -377,7 +378,7 @@ export class EdgeRulesService {
      */
     ifMatch?: string,
   }): CancelablePromise<EdgeRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/edge-rules',
       path: {
@@ -417,7 +418,7 @@ export class EdgeRulesService {
      */
     id: string,
   }): CancelablePromise<EdgeRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/edge-rules/{id}',
       path: {
@@ -461,7 +462,7 @@ export class EdgeRulesService {
      */
     ifMatch?: string,
   }): CancelablePromise<EdgeRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/edge-rules/{id}',
       path: {
@@ -505,7 +506,7 @@ export class EdgeRulesService {
      */
     ifMatch?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/edge-rules/{id}',
       path: {
@@ -551,7 +552,7 @@ export class EdgeRulesService {
      */
     ifMatch?: string,
   }): CancelablePromise<EdgeRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/edge-rules/{id}/waf-exclusions',
       path: {
@@ -594,7 +595,7 @@ export class EdgeRulesService {
      */
     slug: string,
   }): CancelablePromise<Array<EdgeRuleSetVersionResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-rules/versions',
       path: {
@@ -629,7 +630,7 @@ export class EdgeRulesService {
      */
     version: number,
   }): CancelablePromise<EdgeRuleSetVersionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-rules/versions/{version}',
       path: {
@@ -698,7 +699,7 @@ export class EdgeRulesService {
      */
     cursor?: string,
   }): CancelablePromise<EdgeRuleEventsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-rules/events',
       path: {
@@ -759,7 +760,7 @@ export class EdgeRulesService {
      */
     since?: string,
   }): CancelablePromise<EdgeWAFReviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-rules/waf-review',
       path: {
@@ -809,7 +810,7 @@ export class EdgeRulesService {
      */
     series?: boolean,
   }): CancelablePromise<EdgeRuleStatsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-rules/stats',
       path: {
@@ -854,7 +855,7 @@ export class EdgeRulesService {
      */
     slug: string,
   }): CancelablePromise<EdgeRuleRecipeSuggestionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-rules/suggestions',
       path: {
@@ -898,7 +899,7 @@ export class EdgeRulesService {
      */
     ifMatch?: string,
   }): CancelablePromise<Array<EdgeRuleResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/edge-rules/rollback',
       path: {

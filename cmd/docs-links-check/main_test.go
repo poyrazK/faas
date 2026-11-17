@@ -57,3 +57,97 @@ func TestUnpublishedRoutesOnlyForPreviewAndInternalPages(t *testing.T) {
 		t.Fatal("an external route marked unpublished was accepted")
 	}
 }
+
+// ADR-20261028200304: published pages say what a customer sees and can do,
+// never how an installation is configured.
+func TestPublishedPagesRefuseInternalMaterial(t *testing.T) {
+	cat := catalog{Version: 1, Routes: []route{
+		{Path: "a", Source: "a.md"},
+		{Path: "b", Source: "b.md", Unpublished: "preview capability"},
+	}}
+	page := map[string]string{"b.md": "operators can set FAAS_SECRET_FLAG (ADR-123)"}
+	read := func(name string) ([]byte, error) { return []byte(page[name]), nil }
+	for _, ok := range []string{
+		"Set `FAAS_TOKEN` in CI. The app reads `FAAS_APP_ID` and `FAAS_WORKLOAD_<NAME>_ADDR`.",
+		"A handler at `/internal/after-restore` and `go run ./cmd/api` are customer paths.",
+		"The DPA §7 notice window.",
+	} {
+		page["a.md"] = ok
+		if err := checkPublishedContent(cat, read); err != nil {
+			t.Errorf("customer text %q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{
+		"See [ADR-529](adr/529-binding-gated-promotion.md).",
+		"enabled with `FAAS_PROMOTION_HEALTH_ENABLED=1`",
+		"the vmmd HTTP bridge",
+		"`pkg/api/limits.go` holds the table",
+		"spec §11 requires it",
+		"pending [native qualification](ops/promotion.md)",
+		"until the operator enables it, ask your operator",
+		"check `journalctl -u faas-apid`",
+	} {
+		page["a.md"] = "intro\n" + bad
+		err := checkPublishedContent(cat, read)
+		if err == nil || !strings.Contains(err.Error(), "a.md:2") {
+			t.Errorf("internal text %q accepted: %v", bad, err)
+		}
+	}
+}
+
+// A GA or beta capability's page must be a registered route: cache,
+// container-compatibility and inbound-webhooks had none, so the site never
+// served them.
+func TestCapabilityPagesMustBeRoutes(t *testing.T) {
+	cat := catalog{Version: 1, Routes: []route{{Path: "", Source: "docs/quickstart.md"}, {Path: "postgres", Source: "docs/postgres.md"}}}
+	ok := []productcap.Capability{
+		{ID: "pg", Maturity: productcap.MaturityGA, DocsURL: "/docs/postgres#restore"},
+		{ID: "abs", Maturity: productcap.MaturityBeta, DocsURL: "https://gregale.dev/docs/postgres"},
+		{ID: "preview", Maturity: productcap.MaturityPreview, DocsURL: "/docs/nowhere"},
+	}
+	if err := checkCapabilityRoutes(cat, ok); err != nil {
+		t.Fatalf("registered pages refused: %v", err)
+	}
+	err := checkCapabilityRoutes(cat, []productcap.Capability{{ID: "cache", Maturity: productcap.MaturityBeta, DocsURL: "/docs/cache"}})
+	if err == nil || !strings.Contains(err.Error(), "cache") {
+		t.Fatalf("unregistered capability page accepted: %v", err)
+	}
+}
+
+// llms.txt audit 2026-11-17: `[Jobs](jobs)` and `[Penalty box](security#penalty-box)`
+// on published pages named no file, so the docs site linked them to GitHub
+// paths that answer 404.
+func TestPublishedPagesLinkExistingFiles(t *testing.T) {
+	cat := catalog{Version: 1, Routes: []route{
+		{Path: "crons", Source: "docs/crons.md"},
+		{Path: "hidden", Source: "docs/hidden.md", Unpublished: "preview"},
+	}}
+	pages := map[string]string{
+		"docs/crons.md": "See [jobs](jobs.md), [apps](apps.md#tasks), [site](/docs/x), [web](https://a.b/c), [here](#top).\n" +
+			"Broken: [jobs](jobs) and [box](security#penalty-box).\n" +
+			"Code: `[x](nope)`\n```md\n[y](nope)\n```\n",
+		"docs/hidden.md": "[gone](gone)\n",
+	}
+	files := map[string]bool{"docs/jobs.md": true, "docs/apps.md": true, "docs/security.md": true}
+	read := func(p string) ([]byte, error) { return []byte(pages[p]), nil }
+	err := checkRelativeLinks(cat, read, func(p string) bool { return files[p] })
+	if err == nil {
+		t.Fatal("links to missing files accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{`docs/crons.md:2: link "jobs"`, `docs/crons.md:2: link "security#penalty-box"`} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not name %s", msg, want)
+		}
+	}
+	for _, unwanted := range []string{"nope", "gone", "jobs.md", "apps.md", "/docs/x", "https://", "#top"} {
+		if strings.Contains(msg, `"`+unwanted) {
+			t.Fatalf("error %q flags %s", msg, unwanted)
+		}
+	}
+	files["docs/jobs"] = true
+	files["docs/security"] = true
+	if err := checkRelativeLinks(cat, read, func(p string) bool { return files[p] }); err != nil {
+		t.Fatalf("existing targets refused: %v", err)
+	}
+}

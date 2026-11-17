@@ -1,0 +1,21 @@
+---
+- name: Verify invalid serving-probe configuration is rejected
+  vars:
+    faas_serving_probe_expected_body: "{{ item.body | default('ok') }}"
+    faas_serving_probe_max_first_byte_seconds: "{{ item.budget | default(2) }}"
+    faas_serving_probe_timeout_seconds: "{{ item.timeout | default(20) }}"
+    faas_serving_probe_retry_delay_seconds: "{{ item.retry_delay | default(30) }}"
+  block:
+    - name: Validate the invalid case
+      ansible.builtin.include_role:
+        name: "{{ serving_probe_role }}"
+        tasks_from: validate
+
+    - name: Fail if the invalid case was accepted
+      ansible.builtin.fail:
+        msg: Invalid serving-probe configuration was accepted
+  rescue:
+    - name: Confirm validation failed before provisioning
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name == 'serving_probe — validate configuration'

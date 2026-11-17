@@ -105,7 +105,7 @@ done.
 
 The handler has 30 seconds to answer, or the app's request timeout when it is
 longer and your plan allows it. A run that takes longer is recorded as a
-timeout. Work that needs more time belongs in a [job](jobs).
+timeout. Work that needs more time belongs in a [job](jobs.md).
 
 ## Delivery
 
@@ -143,11 +143,13 @@ that moment. The cron next runs at the first scheduled time after the change.
 It never runs immediately because of the change, and it does not catch up on
 the times it passed while it was off.
 
-Disabling a cron stops future runs. It does not cancel a run that is already
-queued or in progress. Removing a cron, whether you delete it, a deploy's
+Disabling a cron stops it: its runs that have not started, including runs
+waiting to retry and manual runs still queued, are cancelled when they come
+due, and a run already in progress finishes. A suspended cron's queued runs
+are cancelled the same way. Removing a cron, whether you delete it, a deploy's
 `gregale.yaml` drops it or its app is deleted, also cancels its runs that have
-not started, including runs waiting to retry; a run already in progress
-finishes.
+not started. A run queued before you change the cron's path goes to the new
+path.
 
 ### Suspension
 
@@ -195,7 +197,7 @@ gregale cron runs CRON_ID --cursor CURSOR # older runs
 
 Each run shows when it started, how long it took, its outcome (`success`,
 `failed`, `timeout`) and the error. Runs are kept for the
-[invocation history retention](event-driven#invocation-history-retention)
+[invocation history retention](event-driven.md#invocation-history-retention)
 period.
 
 Schedule decisions (`gregale cron occurrences CRON_ID`) and manual-run
@@ -245,10 +247,34 @@ need more control:
 `clear_failure_rules` in the API). In Terraform, removing `schedule_policy` or
 `failure_rules_json` from a `gregale_cron` removes them from the cron.
 
+## Environments
+
+A cron belongs to one environment of its app. Without `--environment` it runs
+in production, which is where every existing cron runs. For an app in a
+project, `--environment` names one of the project's environments:
+
+```bash
+gregale cron create --app APP_ID --environment staging \
+  --schedule "0 2 * * *" --command bin/rebuild-index
+```
+
+A staging cron, HTTP or command, runs against the staging deployment and
+never against production; its requests are staging work, deleted with the
+environment. It can repeat a production cron's schedule and command. When the
+environment has no live deployment, only that environment's crons are
+suspended; the app's other environments keep firing. Deleting the
+environment deletes its crons. A cron's environment cannot be changed: create
+it again in the other environment.
+
+Manifest crons follow the deploy: `gregale deploy --env staging`
+stages the `gregale.yaml` crons into staging. They take effect when the
+staging deployment is live with all of staging's traffic, and they replace
+only staging's manifest crons; production's are untouched.
+
 ## Command crons (preview)
 
 A command cron runs a command from the app's live deployment instead of
-sending an HTTP request. Command crons are built on [app tasks](apps), which
+sending an HTTP request. Command crons are built on [app tasks](apps.md), which
 are in preview and not enabled on every host; where they are off, creating
 one returns `501 not_implemented`.
 

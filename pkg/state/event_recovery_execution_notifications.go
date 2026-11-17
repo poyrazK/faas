@@ -66,7 +66,7 @@ func (s *PgStore) ProcessNextEventRecoveryExecutionNotification(ctx context.Cont
 	}
 	var observations map[int64]api.EventRecoveryExecution
 	if job.Selection.Mode == "workflow" {
-		observations, err = observeWorkflowRecoveryExecutions(ctx, q, tx, uuidString(candidate.AccountID), job.ID, 0, api.AutomationRecoveryBatchMaxRuns, now)
+		observations, err = observeWorkflowRecoveryExecutions(ctx, q, tx, uuidString(candidate.AccountID), job.ID, 0, api.StoredWorkflowRecoveryBatchMaxRuns, now)
 	} else {
 		observations, err = observeRecoveryExecutions(ctx, q, tx, uuidString(candidate.AccountID), job.ID, 0, api.EventRecoveryRecipientsMax, now)
 	}

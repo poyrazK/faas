@@ -58,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
 	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
+	"github.com/onebox-faas/faas/pkg/featurehints"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -76,22 +77,25 @@ import (
 // source bytes (hex). TS is informational — the hash is the load-
 // bearing field.
 type planTokenWire struct {
-	Selection              *projectselection.Filters `json:"selection,omitempty"`
-	SafeReleaseID          string                    `json:"safe_release_id,omitempty"`
-	PublicAppsDomain       string                    `json:"public_apps_domain,omitempty"`
-	AppSlugs               map[string]string         `json:"app_slugs,omitempty"`
-	Migration              bool                      `json:"migration,omitempty"`
-	Hash                   string                    `json:"hash"`
-	AccountID              string                    `json:"account_id"`
-	Slug                   string                    `json:"slug"`
-	RepoFullName           string                    `json:"repo_full_name,omitempty"`
-	ProductionBranch       string                    `json:"production_branch,omitempty"`
-	InstallID              int64                     `json:"install_id,omitempty"`
-	NoTriggers             bool                      `json:"no_triggers,omitempty"`
-	PlatformTenantRequired *bool                     `json:"platform_tenant_required,omitempty"`
-	Environment            string                    `json:"environment,omitempty"`
-	ConfigHash             string                    `json:"config_hash,omitempty"`
-	TSUnix                 int64                     `json:"ts_unix"`
+	Selection        *projectselection.Filters `json:"selection,omitempty"`
+	SafeReleaseID    string                    `json:"safe_release_id,omitempty"`
+	PublicAppsDomain string                    `json:"public_apps_domain,omitempty"`
+	AppSlugs         map[string]string         `json:"app_slugs,omitempty"`
+	Migration        bool                      `json:"migration,omitempty"`
+	Hash             string                    `json:"hash"`
+	AccountID        string                    `json:"account_id"`
+	// OrgID binds a company-project scan to its organization, so a plan
+	// reviewed in one context never applies in another (ADR-20261113090000).
+	OrgID                  string `json:"org_id,omitempty"`
+	Slug                   string `json:"slug"`
+	RepoFullName           string `json:"repo_full_name,omitempty"`
+	ProductionBranch       string `json:"production_branch,omitempty"`
+	InstallID              int64  `json:"install_id,omitempty"`
+	NoTriggers             bool   `json:"no_triggers,omitempty"`
+	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	Environment            string `json:"environment,omitempty"`
+	ConfigHash             string `json:"config_hash,omitempty"`
+	TSUnix                 int64  `json:"ts_unix"`
 }
 
 // scanPlanRequest is the parsed multipart body for both /scan and
@@ -190,6 +194,7 @@ type scanPlanResponse struct {
 	// on /scan responses because the scan handler doesn't need it.
 	CronNames         []string                   `json:"-"`
 	Warnings          []string                   `json:"warnings,omitempty"`
+	FeatureHints      []api.FeatureHint          `json:"feature_hints,omitempty"`
 	DetectionWarnings []api.PlanDetectionWarning `json:"detection_warnings,omitempty"`
 	ObservedApps      int                        `json:"observed_apps"`
 	ObservedCrons     int                        `json:"observed_crons"`
@@ -854,6 +859,39 @@ type liveDeploymentForScopeStore interface {
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (state.Deployment, error)
 }
 
+type productionRedeployStore interface {
+	liveDeploymentForScopeStore
+	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
+}
+
+// productionAppsWithoutRelease returns selected production apps the reconcile
+// left unchanged that serve nothing and have nothing on the way: no live
+// release, and a latest deployment that ended (failed, cancelled) or never
+// existed. Re-running the deploy after a failed first boot otherwise reported
+// them "unchanged; its live release keeps serving" and queued nothing, and
+// without a source change nothing ever rebuilt them (2026-11-15 agent eval:
+// three retail services stayed down across retries). An app with a
+// deployment still in flight is left to it.
+func productionAppsWithoutRelease(ctx context.Context, store productionRedeployStore, selected []state.App, added, changed []state.App) ([]state.App, error) {
+	candidates, err := environmentAppsWithoutLiveDeployment(ctx, store, selected, state.DefaultEnvScope, added, changed)
+	if err != nil {
+		return nil, err
+	}
+	var out []state.App
+	for _, app := range candidates {
+		latest, err := store.LatestDeployment(ctx, app.ID)
+		switch {
+		case errors.Is(err, state.ErrNotFound) || errors.Is(err, pgx.ErrNoRows):
+		case err != nil:
+			return nil, fmt.Errorf("latest deployment for %s: %w", app.Slug, err)
+		case !latest.Status.IsTerminal():
+			continue
+		}
+		out = append(out, app)
+	}
+	return out, nil
+}
+
 // environmentAppsWithoutLiveDeployment returns selected apps that the
 // reconcile left unchanged but that have never been deployed to environment.
 // Builds were enqueued only for added or changed app rows, so a cloned
@@ -927,7 +965,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	selected, accepted := reconcile.ProjectDeploymentSelection(touched), make(map[string]bool, len(touched))
 	// The whole selection deploys or none of it: a budget that runs out
 	// part-way left the project on mixed releases.
-	rateShortfall := s.projectDeployRateShortfall(ctx, acct, len(touched), timeNow().UTC())
+	rateShortfall, rateReserved := s.reserveProjectDeployRate(ctx, acct, len(touched), timeNow().UTC())
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
 		if rateShortfall != "" {
@@ -1040,7 +1078,10 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
-		rate, rateErr := s.consumeAccountDeployRate(ctx, acct, timeNow().UTC())
+		rate, rateErr := state.AccountDeployRateSnapshot{Allowed: true}, error(nil)
+		if !rateReserved {
+			rate, rateErr = s.consumeAccountDeployRate(ctx, acct, timeNow().UTC())
+		}
 		if rateErr != nil {
 			_ = os.Remove(staged)
 			s.log.Warn("apid: apply deploy-rate admission failed", "app_id", app.ID, "account_id", acct.ID, "err", rateErr)
@@ -1240,7 +1281,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 				s.log.Warn("apid: roll back project service settings", "app_id", app.ID, "err", rbErr)
 			}
 			s.log.Warn("apid: apply enqueue build failed", "app_id", app.ID, "slug", app.Slug, "project_id", project.ID, "err", enqErr)
-			res.Error = "enqueue failed (server logs carry the detail)"
+			res.Error = projectApplyEnqueueError(r, enqErr)
 			out = append(out, res)
 			continue
 		}
@@ -1402,8 +1443,8 @@ func (s *server) scanService(
 	if prob := projectaccess.ValidateScan(r, s.store, acct, req.ProjectSlug); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
-	if _, shared := projectaccess.From(r.Context()); shared && (req.InstallID != 0 || req.RepoFullName != "") {
-		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Repository ownership migration required", "upload project source without a personal GitHub installation binding")
+	if prob := s.sharedScanInstallationProblem(r, req.InstallID); prob != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
 	if prob := s.prepareSafeProjectRelease(r, acct, req, apply); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
@@ -1498,7 +1539,7 @@ func (s *server) scanService(
 		if decErr == nil {
 			_ = json.Unmarshal(b, &pt)
 		}
-		if pt.AccountID != acct.ID || pt.Hash != req.SourceSHA256 {
+		if pt.AccountID != acct.ID || pt.OrgID != projectaccess.OrganizationID(r.Context()) || pt.Hash != req.SourceSHA256 {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale",
 				"plan_token does not match uploaded source",
@@ -1688,10 +1729,11 @@ func (s *server) scanService(
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 			"project_selection_empty", "No workloads selected", "all requested workloads are excluded; review the persisted exclusions before deploying")
 	}
-	var dependencyReferences []reposcan.Workload
-	if req.Migration {
-		dependencyReferences = projectsetup.DependencyReferences(result.Workloads, filteredW)
-	}
+	// Services left out by --only or --exclude stay valid dependency targets:
+	// a partial rollout of compactor,query must not report their store
+	// dependency as unknown (ChronoLake finding 10). They are references only,
+	// never reconciled, built or counted against quotas.
+	dependencyReferences := projectsetup.DependencyReferences(result.Workloads, filteredW)
 	// Post-scan exclude-validity check: every entry in req.Exclude
 	// must correspond to a real scan workload OR an existing app in
 	// the account. A typo would otherwise silently survive and
@@ -1856,8 +1898,13 @@ func (s *server) scanService(
 		if routeWarning := projectPathRoutePlanWarning(resolvedManifest.Routes, resolvedManifest.RoutesPresent, req.NoTriggers); routeWarning != "" {
 			warnings = append(warnings, routeWarning)
 		}
-	} else if resolvedManifest.AsyncRoutesPresent || resolvedManifest.RoutesPresent || len(crons) > 0 {
-		warnings = append(warnings, "environment deployment leaves production routes and triggers unchanged")
+	} else {
+		if resolvedManifest.AsyncRoutesPresent || resolvedManifest.RoutesPresent || len(crons) > 0 {
+			warnings = append(warnings, "environment deployment leaves production routes and triggers unchanged")
+		}
+		if releaseWarning := s.environmentReleaseSetWarning(r.Context(), acct.ID, req.ProjectSlug, req.Environment); releaseWarning != "" {
+			warnings = append(warnings, releaseWarning)
+		}
 	}
 	if noTriggers {
 		if len(crons) > 0 && req.NoTriggers {
@@ -2091,6 +2138,13 @@ func (s *server) scanService(
 	if composePostgresErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not plan the project's managed databases")
 	}
+	// A non-production deploy is served at the environment's own hosts, not
+	// at the production hostname (Hunt 33 H33-33).
+	nonProductionEnvironment := !reconcileProductionEnvironment(req.Environment)
+	planEnvironmentID := ""
+	if nonProductionEnvironment {
+		planEnvironmentID = s.projectEnvironmentID(r.Context(), acct, req.ProjectSlug, req.Environment)
+	}
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
@@ -2104,10 +2158,16 @@ func (s *server) scanService(
 			}
 		}
 		if existing != nil {
-			// Visibility is create-only; the plan shows what the app has.
+			// The plan shows what the app will have: a production deploy makes
+			// internal a service Compose no longer publishes; anything else
+			// keeps the app's visibility (ADR-20261107090000).
 			pw.Visibility = ""
-			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal {
+			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal ||
+				(req.Environment == "" && reposcan.NewWorkloadVisibility(w) == api.AppVisibilityInternal) {
 				pw.Visibility = api.AppVisibilityInternal
+			}
+			if note := projectVisibilityNote(w, *existing, req.Environment == ""); note != "" {
+				warnings = append(warnings, note)
 			}
 		}
 		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
@@ -2116,6 +2176,14 @@ func (s *server) scanService(
 				slug = w.Name
 			}
 			pw.PublicURL = "https://" + slug + "." + strings.TrimPrefix(s.domain, ".")
+			pw.PublicAuthMode = planWorkloadPublicAuthMode(existing, acct.Plan)
+			if nonProductionEnvironment {
+				// A new app's environment host is known only once it exists.
+				pw.PublicURL = ""
+				if planEnvironmentID != "" && existing != nil {
+					pw.PublicURL = projectEnvironmentWorkloadURL(planEnvironmentID, existing.ID)
+				}
+			}
 		}
 		required, err := projectsetup.RequiredNames(os.DirFS(req.ScanDir), w.RootDir)
 		if err != nil {
@@ -2143,6 +2211,8 @@ func (s *server) scanService(
 	if shortfall := s.projectDeployRateShortfall(r.Context(), acct, len(filteredW), timeNow().UTC()); shortfall != "" {
 		warnings = append(warnings, "deploy rate: "+strings.TrimPrefix(shortfall, "not deployed: "))
 	}
+	warnings = append(warnings, s.environmentDependencyNotes(r.Context(), req.Environment, filteredW, projectApps)...)
+	warnings = append(warnings, allowCallersNotes(filteredW, result.Workloads, projectApps, acctApps)...)
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {
 		respManaged[i] = toPlanManaged(m)
@@ -2176,13 +2246,17 @@ func (s *server) scanService(
 		Crons:                 crons,
 		AsyncRoutes:           asyncRoutePlan,
 		Warnings:              warnings,
-		DetectionWarnings:     toPlanDetectionWarnings(result.DetectionWarnings),
-		ObservedApps:          projectedApps,
-		ObservedCrons:         projectedCrons,
-		LimitApps:             limits.DeployedApps,
-		LimitCrons:            limits.CronLimitPerAccount,
-		CanApply:              canApply,
-		NotAllowed:            notAllowed,
+		// What applies to this source and how to change it, so an agent
+		// reading the plan need not search the CLI (ADR-20261112223000 §1).
+		FeatureHints: featurehints.For(featurehints.Input{ProjectSlug: req.ProjectSlug, Environment: req.Environment,
+			Workloads: respWorkloads, Managed: respManaged}),
+		DetectionWarnings: toPlanDetectionWarnings(result.DetectionWarnings),
+		ObservedApps:      projectedApps,
+		ObservedCrons:     projectedCrons,
+		LimitApps:         limits.DeployedApps,
+		LimitCrons:        limits.CronLimitPerAccount,
+		CanApply:          canApply,
+		NotAllowed:        notAllowed,
 		// ADR-124 can_apply rescue signal. PreExclude + Rescued
 		// are the operator-facing knobs the dashboard renders in
 		// the gate card; CanApplyReasons is the human-readable
@@ -2250,7 +2324,8 @@ func (s *server) scanService(
 				reviewedSlugs[workload.Name] = workload.AppSlug
 			}
 		}
-		names := planNameOptions{AppSlugs: reviewedSlugs, Migration: req.Migration, SafeReleaseID: safeProjectReleaseID(req.SafeRelease), Selection: selection}
+		names := planNameOptions{AppSlugs: reviewedSlugs, Migration: req.Migration, SafeReleaseID: safeProjectReleaseID(req.SafeRelease), Selection: selection,
+			OrgID: projectaccess.OrganizationID(r.Context())}
 		if req.Migration {
 			names.PublicAppsDomain = s.domain
 		}
@@ -2681,6 +2756,23 @@ func (s *server) scanService(
 			}
 		}
 	}
+	if reconcileProductionEnvironment(req.Environment) && len(req.RetryTargets) == 0 {
+		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if appsErr != nil {
+			prob := customerInternalProblem(s.log, "load workloads for production deployment",
+				"Gregale could not load this project's workloads to deploy.",
+				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		down, downErr := productionAppsWithoutRelease(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), rec.Added, buildChanged)
+		if downErr != nil {
+			prob := customerInternalProblem(s.log, "inspect production deployments",
+				"Gregale could not check which workloads still need a release.",
+				"Retry the deployment in a moment; if it continues, contact support.", downErr)
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		buildChanged = append(append([]state.App(nil), buildChanged...), down...)
+	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if appsErr != nil {
@@ -2700,7 +2792,7 @@ func (s *server) scanService(
 	}
 	if len(req.Secrets) > 0 {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
-		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, req.Environment, req.Secrets); prob != nil {
+		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, filteredW, req.Environment, req.Secrets); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 		// Secret-only redeploys also need a build, even if source reconciliation
@@ -2744,6 +2836,11 @@ func (s *server) scanService(
 	}
 	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
 		return resp, state.Project{}, nil, nil, nil, nil, problem
+	}
+	if req.Environment == "" {
+		if problem := s.applyComposeInternalVisibility(r, acct, project.ID, filteredW); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
 	}
 	if len(composePostgres) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
@@ -3115,6 +3212,8 @@ type planNameOptions struct {
 	Migration        bool
 	// SafeReleaseID binds an atomic project release's baseline and policy.
 	SafeReleaseID string
+	// OrgID is the organization of a company-project scan.
+	OrgID string
 }
 
 // mintPlanToken produces the base64-JSON blob. The hash is the
@@ -3140,6 +3239,7 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 		pt.Migration = names[0].Migration
 		pt.PublicAppsDomain = names[0].PublicAppsDomain
 		pt.SafeReleaseID = names[0].SafeReleaseID
+		pt.OrgID = names[0].OrgID
 		if names[0].Selection != nil {
 			pt.Selection = names[0].Selection
 		}
@@ -3219,6 +3319,7 @@ func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
 		KubernetesManifests:       s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
 		HTTPSTransportUnavailable: !s.privateServiceHTTPS(acct),
 		ResourceLabels:            s.capGate == nil || s.capGate.Enabled(resourcelabels.Capability, subject),
+		Functions:                 s.capGate == nil || s.capGate.Enabled(reposcan.RepositoryFunctionsCapability, subject),
 	}
 }
 
@@ -3227,4 +3328,40 @@ func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
 // gate (unit tests) it is on.
 func (s *server) privateServiceHTTPS(acct state.Account) bool {
 	return s.capGate == nil || s.capGate.Enabled(api.PrivateServiceHTTPSCapability, platformflags.Subject{AccountID: acct.ID})
+}
+
+// projectApplyEnqueueError is the customer-facing reason a workload of a
+// project apply was not queued. Hunt 32 H32-34: a control-plane stall showed
+// only "enqueue failed (server logs carry the detail)", with no cause, no
+// hint that a retry would work and no request id to quote. A Problem from
+// admission is customer-safe and is shown as is; anything else stays generic
+// (it can carry row ids and spool paths) but names the request.
+func projectApplyEnqueueError(r *http.Request, err error) string {
+	requestID := middleware.RequestIDFrom(r)
+	if problem := api.AsProblem(err); problem != nil && problem.Title != "" {
+		reason := problem.Title
+		if problem.Detail != "" {
+			reason += ": " + problem.Detail
+		}
+		return fmt.Sprintf("not queued: %s (request %s)", reason, requestID)
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return fmt.Sprintf("not queued: the control plane was busy; nothing was deployed for this workload, so retry the deploy (request %s)", requestID)
+	}
+	return fmt.Sprintf("enqueue failed; nothing was deployed for this workload. Retry, and quote request %s if it fails again", requestID)
+}
+
+// planWorkloadPublicAuthMode is the public URL auth an app will have after
+// apply: its own mode, or the plan default for a new app. Open is omitted.
+// The plan listed a Pro app as "Public on the internet" while its URL answered
+// 401 for want of an API key (Hunt 32 H32-30).
+func planWorkloadPublicAuthMode(existing *state.App, plan api.Plan) string {
+	mode := plan.PublicAuthModeDefault()
+	if existing != nil {
+		mode = existing.PublicAuthMode
+	}
+	if mode == "" || mode == api.AppPublicAuthModeOpen {
+		return ""
+	}
+	return mode
 }

@@ -95,7 +95,7 @@ func (s *server) createPlatformTenantAccessToken(w http.ResponseWriter, r *http.
 			scope != api.ScopePlatformTenantInvocationsRead && scope != api.ScopePlatformTenantInvocationsManage &&
 			scope != api.ScopePlatformTenantOperationsRead && scope != api.ScopePlatformTenantOperationsManage &&
 			scope != api.ScopePlatformTenantEventsRead && scope != api.ScopePlatformTenantEventsManage &&
-			scope != api.ScopePlatformTenantAutomationsRead && scope != api.ScopePlatformTenantAutomationsManage) || seen[scope] {
+			scope != api.ScopePlatformTenantStoredWorkflowsRead && scope != api.ScopePlatformTenantStoredWorkflowsManage) || seen[scope] {
 			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 				"Invalid platform tenant token scopes", "scopes may contain the supported platform_tenant:* self-service scopes"))
 			return

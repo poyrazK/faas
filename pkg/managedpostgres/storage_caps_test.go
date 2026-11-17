@@ -155,10 +155,13 @@ func TestCapEnforcerStoragePool(t *testing.T) {
 				"proj-a2":        {Scope: "a2", SizeBytes: 100 * mib, LimitBytes: 1024 * mib},
 				"proj-b":         {Scope: "b", SizeBytes: 700 * mib, LimitBytes: 512 * mib},
 				"proj-u":         {Scope: "u", SizeBytes: 1, LimitBytes: 512 * mib},
+				// A PR preview database is left out of the pool: counted, it
+				// would block acct-a's production writes.
+				"proj-a-pr": {Scope: "a-pr", SizeBytes: 900 * mib, LimitBytes: 1024 * mib},
 			},
 			storageSet: map[string]int64{}, storageSetErr: setErr,
 		}
-		for _, id := range []string{"proj-a", "proj-a/br-rest", "proj-a2", "proj-b", "proj-f", "proj-u"} {
+		for _, id := range []string{"proj-a", "proj-a/br-rest", "proj-a2", "proj-a-pr", "proj-b", "proj-f", "proj-u"} {
 			provider.observed[id] = ComputeCapObservation{Scope: id, PeriodStart: monthStart(now), UsedUnitSeconds: 10, QuotaUnitSeconds: 100}
 		}
 		registry := testRegistry(t, provider, nil)
@@ -172,7 +175,10 @@ func TestCapEnforcerStoragePool(t *testing.T) {
 			d.Spec.StorageLimitBytes = spec
 			return d
 		}
+		preview := database("db-a-pr", "acct-a", "proj-a-pr", 1024*mib)
+		preview.Preview = PreviewOwner{SourceDatabaseID: "db-a", EnvironmentID: "project-1", PRNumber: 7}
 		store := &capTestStore{databases: []Database{
+			preview,
 			database("db-a", "acct-a", "proj-a", 1024*mib),
 			database("db-a-restore", "acct-a", "proj-a/br-rest", 1024*mib),
 			database("db-a2", "acct-a", "proj-a2", 1024*mib),

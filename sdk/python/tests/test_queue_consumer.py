@@ -11,7 +11,8 @@ from faas_sdk.preview.queue_consumer import QueueConsumer
 class FakeQueue:
     """Serves the lease API from memory; an empty lease waits briefly like the server's long-poll."""
 
-    def __init__(self, payloads, extend_fails=False):
+    def __init__(self, payloads, extend_fails=False, ack_failures=0):
+        self.ack_failures = ack_failures
         self.calls = []
         self.pending = [
             {
@@ -39,6 +40,9 @@ class FakeQueue:
             if not taken:
                 await asyncio.sleep(0.03)
             return httpx.Response(200, json={"messages": taken})
+        if verb == "ack" and self.ack_failures > 0:
+            self.ack_failures -= 1
+            return httpx.Response(503, json={"title": "unavailable"})
         held = not (verb == "extend" and self.extend_fails)
         receipts = body["receipts"]
         failed = [] if held else [{"receipt": r, "reason": "lease_expired"} for r in receipts]
@@ -92,6 +96,23 @@ async def test_acks_handled_messages_and_nacks_failures():
 
 
 @pytest.mark.asyncio
+async def test_retries_a_failed_ack():
+    # adr: 20261113180000 — a transient ack failure no longer leaves a handled
+    # message to be redelivered after its timeout.
+    fake = FakeQueue([{"ok": True}], ack_failures=1)
+
+    async def handle(message):
+        return None
+
+    consumer = fake.consumer(handle)
+    run = asyncio.create_task(consumer.run())
+    await until(lambda: len(fake.verbs("ack")) == 2)
+    consumer.stop()
+    await run
+    assert [call[1] for call in fake.verbs("ack")] == [{"receipts": ["m0.r"]}] * 2
+
+
+@pytest.mark.asyncio
 async def test_uses_a_cached_workload_token():
     fake = FakeQueue([1, 2, 3])
 
@@ -100,11 +121,28 @@ async def test_uses_a_cached_workload_token():
 
     consumer = fake.consumer(handle, api_key=None, identity_endpoint="http://127.0.0.1:9/token")
     run = asyncio.create_task(consumer.run())
-    await until(lambda: len(fake.verbs("ack")) == 3)
+    await until(lambda: sum(len(call[1]["receipts"]) for call in fake.verbs("ack")) == 3)
     consumer.stop()
     await run
     assert [call[0] for call in fake.calls if call[0].startswith("identity")] == ["identity:gregale:queues"]
     assert all(call[2] == "Bearer eyJ.workload.token" for call in fake.calls if not call[0].startswith("identity"))
+
+
+@pytest.mark.asyncio
+async def test_acks_messages_that_finish_together_in_one_call():
+    fake = FakeQueue(list(range(5)))
+
+    async def handle(message):
+        return None
+
+    consumer = fake.consumer(handle, concurrency=5)
+    run = asyncio.create_task(consumer.run())
+    await until(lambda: sum(len(call[1]["receipts"]) for call in fake.verbs("ack")) == 5)
+    consumer.stop()
+    await run
+    acks = fake.verbs("ack")
+    assert len(acks) == 1
+    assert sorted(acks[0][1]["receipts"]) == ["m0.r", "m1.r", "m2.r", "m3.r", "m4.r"]
 
 
 @pytest.mark.asyncio
@@ -122,7 +160,7 @@ async def test_never_runs_more_handlers_than_concurrency():
 
     consumer = fake.consumer(handle, concurrency=2)
     run = asyncio.create_task(consumer.run())
-    await until(lambda: len(fake.verbs("ack")) == 7)
+    await until(lambda: sum(len(call[1]["receipts"]) for call in fake.verbs("ack")) == 7)
     consumer.stop()
     await run
     assert peak == 2

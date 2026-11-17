@@ -1336,7 +1336,17 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 				promoted, promoteErr = promoteProjectEnvironmentDeploymentDark(ctx, s.store, plan.Sources[workload.WorkloadSlug], promotion.ToEnvironment, promotion.ID)
 			}
 		} else {
-			promoted, promoteErr = promoteProjectEnvironmentDeployment(ctx, s.store, plan.Sources[workload.WorkloadSlug], promotion.ToEnvironment, promotion.ID)
+			// A direct promotion lands in the scope its environment's values
+			// and serving deployment use, so production keeps the lane it is
+			// served from (state.EnvironmentDeploymentScope). Release graphs
+			// keep "production": graph resolution requires it and their
+			// deployments carry their own environment snapshots.
+			scope, scopeErr := state.EnvironmentDeploymentScope(ctx, s.store, acct.ID, plan.Sources[workload.WorkloadSlug].AppID, promotion.ToEnvironment)
+			if scopeErr != nil {
+				promoteErr = scopeErr
+			} else {
+				promoted, promoteErr = promoteProjectEnvironmentDeployment(ctx, s.store, plan.Sources[workload.WorkloadSlug], scope, promotion.ID)
+			}
 		}
 		if promoteErr != nil {
 			if plan.HealthPolicy != nil {
@@ -1607,7 +1617,7 @@ func projectEnvironmentPromotionDeployment(ctx context.Context, store state.Stor
 	}
 	reason := projectEnvironmentPromotionDeploymentReason(promotionID)
 	for _, deployment := range deployments {
-		if deployment.Scope == targetEnvironment && deployment.Reason == reason && deployment.Status == state.DeployLive {
+		if state.EnvironmentOwnsScope(targetEnvironment, deployment.Scope) && deployment.Reason == reason && deployment.Status == state.DeployLive {
 			return deployment, true, nil
 		}
 	}
@@ -1702,6 +1712,9 @@ func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store s
 		return state.Deployment{}, err
 	}
 	if err := store.SetDeploymentRootfs(ctx, created.ID, rootfsPath, rootfsKey, rootfsBytes); err != nil {
+		return state.Deployment{}, err
+	}
+	if err := copyPromotedArtifactStamps(ctx, store, source, created.ID); err != nil {
 		return state.Deployment{}, err
 	}
 	layers, err := store.ListDeploymentSidecarLayers(ctx, source.ID)
@@ -1840,4 +1853,32 @@ func projectEnvironmentPromotionReleaseSetID(release *state.ProjectReleaseSet) s
 
 func decodeProjectEnvironmentPromotionToken(encoded string) (projectEnvironmentPromotionTokenWire, error) {
 	return promotionapi.DecodeToken(encoded)
+}
+
+// copyPromotedArtifactStamps carries what imaged recorded about the source's
+// built artifact onto the promoted copy, which shares that artifact but never
+// passes through imaged. Without runtime_base a source-built container app
+// boots on the plain base, where its runtime is missing (Hunt 33 H33-35:
+// `node server.js` exited 127 after every promote into production).
+func copyPromotedArtifactStamps(ctx context.Context, store state.Store, source state.Deployment, createdID string) error {
+	if source.RuntimeBase != "" {
+		stamper, ok := store.(state.DeploymentRuntimeBaseStore)
+		if !ok {
+			return errors.New("state: deployment runtime base stamping is unavailable")
+		}
+		if err := stamper.SetDeploymentRuntimeBase(ctx, createdID, source.RuntimeBase); err != nil {
+			return fmt.Errorf("copy runtime base to promoted deployment: %w", err)
+		}
+	}
+	if source.BeforeCheckpointHookKnown {
+		if err := store.SetDeploymentBeforeCheckpointHook(ctx, createdID, source.BeforeCheckpointHook); err != nil {
+			return fmt.Errorf("copy before_checkpoint hook to promoted deployment: %w", err)
+		}
+	}
+	if source.SecretReloadSignalKnown {
+		if err := store.SetDeploymentSecretReloadSignal(ctx, createdID, source.SecretReloadSignal); err != nil {
+			return fmt.Errorf("copy secret reload signal to promoted deployment: %w", err)
+		}
+	}
+	return nil
 }

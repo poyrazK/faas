@@ -37,7 +37,8 @@ mint a token for the wrong environment.
 
 Gregale's own APIs accept a token only for their own audience, so a token
 minted for one cannot be replayed to another: `gregale:queues` for queue
-leases, `gregale:operations` for operation runtimes, `gregale:flags` for Flags
+leases, `gregale:events` for deferred event acknowledgments
+(ADR-20261110200000), `gregale:operations` for operation runtimes, `gregale:flags` for Flags
 and `gregale:agents` for a stateless agent's callback URLs
 (ADR-20261030125501).
 

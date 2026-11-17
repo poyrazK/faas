@@ -27,7 +27,7 @@ func recoveryReviewCompletionID(id string) string {
 }
 func recoveryReviewCompletionPayload(r api.WorkflowRecoveryPolicyReview, n api.WorkflowRecoveryReviewCompletionNotification) api.WorkflowRecoveryReviewFinishedWebhookPayload {
 	path := "/v1/apps/" + url.PathEscape(r.Plan.App) + "/recovery-policy/reviews/" + r.ID
-	return api.WorkflowRecoveryReviewFinishedWebhookPayload{EventID: n.EventID, ReviewID: r.ID, AppID: r.AppID, App: r.Plan.App, JobID: r.JobID, PolicyVersion: r.PolicyVersion, CapturedAt: n.CapturedAt, Result: n.Result, ReviewURL: path, StatusURL: path + "/status", StatusCommand: "gregale automations recovery-policy-reviews --app " + strconv.Quote(r.Plan.App) + " --review " + r.ID + " --status"}
+	return api.WorkflowRecoveryReviewFinishedWebhookPayload{EventID: n.EventID, ReviewID: r.ID, AppID: r.AppID, App: r.Plan.App, JobID: r.JobID, PolicyVersion: r.PolicyVersion, CapturedAt: n.CapturedAt, Result: n.Result, ReviewURL: path, StatusURL: path + "/status", StatusCommand: "gregale workflow stored recovery-policy-reviews --app " + strconv.Quote(r.Plan.App) + " --review " + r.ID + " --status"}
 }
 func newRecoveryReviewCompletion(id string, result api.WorkflowRecoveryReviewStatus, receivers []string, now time.Time) *api.WorkflowRecoveryReviewCompletionNotification {
 	status := "queued"

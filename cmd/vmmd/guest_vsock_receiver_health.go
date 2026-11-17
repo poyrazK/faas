@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -14,9 +15,13 @@ const (
 	guestReceiverEvents   = "events"
 	guestReceiverIdentity = "workload_identity"
 	guestReceiverFunction = "function_execution"
+	// guestReceiverProfiles is metered but optional: profiling is opt-in per
+	// app, so a profile upload failure never takes vmmd out of readiness
+	// (profiling review round 4, R4-4).
+	guestReceiverProfiles = "profiles"
 )
 
-var guestReceiverFailureKinds = []string{"prepare", "accept", "read", "write", "protocol", "overload", "unknown"}
+var guestReceiverFailureKinds = []string{"prepare", "accept", "read", "write", "protocol", "overload", "identity", "forward", "unknown"}
 
 type guestVsockReceiverHealth struct {
 	mu      sync.Mutex
@@ -50,6 +55,9 @@ func newGuestVsockReceiverHealth(reg prometheus.Registerer) *guestVsockReceiverH
 			h.errors.WithLabelValues(receiver, kind)
 		}
 	}
+	for _, kind := range guestReceiverFailureKinds {
+		h.errors.WithLabelValues(guestReceiverProfiles, kind)
+	}
 	if reg != nil {
 		reg.MustRegister(h.up, h.errors)
 	}
@@ -75,6 +83,12 @@ func (h *guestVsockReceiverHealth) Observe(port uint32, failureKind string, err 
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if receiver == guestReceiverProfiles {
+		if err != nil {
+			h.errors.WithLabelValues(receiver, boundedGuestReceiverFailureKind(failureKind)).Inc()
+		}
+		return
+	}
 	if err == nil {
 		h.up.WithLabelValues(receiver).Set(1)
 		h.signals[receiver].Set(true, "")
@@ -95,6 +109,8 @@ func receiverForGuestVsockPort(port uint32) (string, bool) {
 		return guestReceiverEvents, true
 	case fcvm.VsockWorkloadIdentityHostPort:
 		return guestReceiverIdentity, true
+	case api.ProfileVsockPort:
+		return guestReceiverProfiles, true
 	case functionlifetime.HostPort:
 		return guestReceiverFunction, functionlifetime.NativeQualificationBuild
 	default:
@@ -113,7 +129,7 @@ func boundedGuestReceiverFailureKind(kind string) string {
 
 func guestReceiverFailureDegradesReadiness(kind string) bool {
 	switch kind {
-	case "read", "write", "protocol", "overload":
+	case "read", "write", "protocol", "overload", "identity", "forward":
 		return false
 	default:
 		return true

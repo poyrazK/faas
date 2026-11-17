@@ -46,7 +46,6 @@ package apidserver
 import (
 	"errors"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -172,25 +171,17 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	approvals, approvalsSet, prob := keyApprovalCategories(scopes, req.ApprovalCategories)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
 		return
 	}
-	// Expiry policy mirrors the legacy handler: non-admin scopes
-	// get a 365-day expires_at; admin keys default to nil
-	// expiry (the legacy admin contract). The customer can
-	// rotate an admin key with grace=0 to opt into finite
-	// expiry.
-	var expiresAt *time.Time
-	if !slices.Contains(scopes, api.ScopeAdmin) {
-		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
-		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
-		if slices.Contains(scopes, api.ScopeAgent) {
-			t = time.Now().UTC().Add(api.AgentKeyLifetime)
-		}
-		expiresAt = &t
-	}
+	expiresAt := api.NewAPIKeyExpiry(scopes, time.Now())
 	// IAM hardening mega-PR (logical change 2): stamp the
 	// provenance columns on the new row. parent_key_id is nil for
 	// first-mints (the FK is reserved for explicit lineage; rotation
@@ -211,6 +202,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.setKeyApprovalCategories(r.Context(), acct, k, approvals, approvalsSet); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"created","org":"`+mem.OrgID+`"}`)
 	s.log.Info("api key created", "key", k.ID, "account", acct.ID, "org", mem.OrgID)
@@ -225,11 +220,16 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		auditPayload["expires_at"] = k.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	s.audit.Emit(r.Context(), "api_key.created", &acct.ID, auditPayload)
+	s.noticeCredentialCreated(r, acct, credentialAPIKey, k.Label)
+	s.mailOrgCredentialCreated(r.Context(), k.OrgID, acct.ID, credentialAPIKey, k.Label)
 	resp := orgAPIKeyResponse(k)
 	resp.Prefix = keyPrefix(plaintext)
 	resp.Plaintext = plaintext
 	if len(projects) > 0 {
 		resp.Projects = projectSlugs(projects)
+	}
+	if approvalsSet {
+		resp.ApprovalCategories = &approvals
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -360,23 +360,17 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, p)
 		return
 	}
+	existing, ok := s.ownOrgAPIKey(w, r, acct, mem.OrgID, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	// Resolve grace window from the per-account override (the
 	// same helper the legacy rotateKey uses). nil = plan default
 	// (api.DefaultAPIKeyGraceWindowDays = 7).
-	var graceWindow time.Duration
-	gw, err := s.resolveGraceWindow(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve grace window"))
+	graceWindow, graceWindowDays, prob := s.rotationGraceWindow(r.Context(), acct.ID, req.GraceWindowDays)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
-	}
-	if gw == nil {
-		graceWindow = time.Duration(api.DefaultAPIKeyGraceWindowDays) * 24 * time.Hour
-	} else {
-		graceWindow = time.Duration(*gw) * 24 * time.Hour
-	}
-	var graceWindowDays int
-	if graceWindow > 0 {
-		graceWindowDays = int(graceWindow / (24 * time.Hour))
 	}
 	// Mint the new plaintext + hash BEFORE the rotation so the
 	// store op can persist the real hash. The handler is the
@@ -401,7 +395,7 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	// sign-in key cap and the password-change revocation find it, so a new
 	// label would let it escape both (bug hunt 2026-10-28 B25).
 	label := req.Label
-	if existing, err := s.store.GetAPIKey(r.Context(), acct.ID, id); err == nil && existing.Label == signInKeyLabel {
+	if existing.Label == signInKeyLabel {
 		label = ""
 	}
 	newKey, oldKey, err := s.rotateOrgAPIKeyWithActivity(r.Context(), mem.OrgID, id, hash, label, graceWindow, bindIP, bindUA, nil, activity)
@@ -412,6 +406,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		}
 		if errors.Is(err, state.ErrAPIKeyRevoked) {
 			s.notFound(w, "key already revoked")
+			return
+		}
+		if errors.Is(err, state.ErrAPIKeyExpired) {
+			api.WriteProblem(w, api.ErrAPIKeyExpired())
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))
@@ -439,6 +437,8 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	s.log.Info("api key rotated",
 		"old_key", oldKey.ID, "new_key", newKey.ID,
 		"account", acct.ID, "org", mem.OrgID, "grace_window_days", graceWindowDays)
+	s.noticeCredentialCreated(r, acct, credentialRotatedKey, newKey.Label)
+	s.mailOrgCredentialCreated(r.Context(), mem.OrgID, acct.ID, credentialRotatedKey, newKey.Label)
 
 	resp := api.RotateOrgAPIKeyResponse{
 		Key:          orgAPIKeyResponse(newKey),
@@ -489,4 +489,30 @@ func orgAPIKeyResponse(k state.APIKey) api.APIKeyResponse {
 		resp.RotatedFromID = *k.RotatedFromID
 	}
 	return resp
+}
+
+// ownOrgAPIKey loads the org key a rotation names and refuses one held by
+// another member. Rotation returns the new key's plaintext and the new key
+// keeps the old holder, so rotating someone else's key would hand the caller
+// a credential that acts as that member (account-flow audit 2026-11-10).
+// Admins can still revoke other members' keys.
+func (s *server) ownOrgAPIKey(w http.ResponseWriter, r *http.Request, acct state.Account, orgID, id string) (state.APIKey, bool) {
+	k, err := s.store.GetOrgAPIKey(r.Context(), orgID, id)
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no such key")
+		return state.APIKey{}, false
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load key"))
+		return state.APIKey{}, false
+	}
+	if k.AccountID != actorAccount(r, acct).ID {
+		s.audit.Emit(r.Context(), "api_key.rotate_refused", &acct.ID, map[string]any{
+			"key_id": k.ID, "org_id": orgID, "reason": "not_holder",
+		})
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Not your key",
+			"only the member who holds a key can rotate it; revoke it instead with DELETE /v1/orgs/{slug}/keys/{id}"))
+		return state.APIKey{}, false
+	}
+	return k, true
 }

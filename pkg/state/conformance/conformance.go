@@ -64,7 +64,9 @@ func Run(t *testing.T, open Open) {
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
 		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
 		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
+		{"deployment_before_checkpoint_hook_survives_read", testDeploymentBeforeCheckpointHookSurvivesRead},
 		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
+		{"reverted_release_is_not_a_rollback_target", testRevertedReleaseIsNotARollbackTarget},
 		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
 		{"config_restore_is_atomic_and_compares_observed_state", testAtomicConfigRestore},
 		{"config_restore_guard_commits_secrets_and_outcome", testAtomicGuardRestore},
@@ -83,6 +85,8 @@ func Run(t *testing.T, open Open) {
 		{"database_switch_cancel_hold_and_account_cap", testDatabaseSwitchCancelHoldAndAccountCap},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
+		{"custom_metric_deltas_accumulate", testCustomMetricDeltaContract},
+		{"custom_metric_series_aggregate", testCustomMetricSeriesContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
 		{"targeted_build_claim_fences_a_second_claimer", testTargetedBuildClaimFencesASecondClaimer},
@@ -92,6 +96,11 @@ func Run(t *testing.T, open Open) {
 		{"webhook_delivery_claim_fences_replays", testWebhookDeliveryClaimFencesReplays},
 		{"operator_intent_claim_is_exactly_once", testOperatorIntentClaimIsExactlyOnce},
 		{"cli_auth_code_claim_binds_one_account", testCliAuthCodeClaimBindsOneAccount},
+		{"failing_cron_pauses_and_queues_notice", testFailingCronPausesAndQueuesNotice},
+		{"platform_alert_notice_queue_dedupes", testPlatformAlertNoticeQueueDedupes},
+		{"cli_auth_loopback_claim_rebinds_device", testCliAuthLoopbackClaimRebindsDevice},
+		{"cli_auth_device_code_needs_its_verifier", testCliAuthDeviceCodeNeedsItsVerifier},
+		{"cli_auth_requester_is_recorded_until_approval", testCliAuthRequesterIsRecordedUntilApproval},
 		{"due_webhook_delivery_claim_respects_schedule_and_limit", testDueWebhookDeliveryClaimRespectsScheduleAndLimit},
 		{"webhook_delivery_attempts_health_retention_and_storage", testWebhookDeliveryAttemptsHealthRetentionAndStorage},
 		{"account_release_webhook_quota_and_cross_app_pagination", testAccountReleaseWebhookQuotaAndPagination},
@@ -139,6 +148,7 @@ func Run(t *testing.T, open Open) {
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
 		{"live_instance_list_follows_app_ownership", testLiveInstanceListOwnership},
 		{"live_instances_by_node_are_the_nodes_live_rows", testLiveInstancesByNode},
+		{"resident_instances_on_node_are_the_vms_it_holds", testResidentInstancesOnNode},
 		{"org_access_fences_and_org_projects", testOrgAccessAndOrgProjects},
 		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
@@ -148,6 +158,8 @@ func Run(t *testing.T, open Open) {
 		{"invoice_history_import_is_insert_only_and_atomic", testInvoiceHistoryImport},
 		{"invoice_detail_refresh_is_revision_fenced", testInvoiceDetailRefresh},
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
+		{"internal_egress_subtracts_once_and_carries", testInternalEgressSubtraction},
+		{"internal_egress_baselines_when_switched_on_midway", testInternalEgressBaselineMidway},
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"overage_cap_default_follows_the_plan", testOverageCapDefaultFollowsThePlan},
@@ -155,6 +167,8 @@ func Run(t *testing.T, open Open) {
 		{"pending_billing_skips_free_subjects", testPendingBillingSkipsFreeSubjects},
 		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
+		{"nonpayment_marker_survives_the_quota_stop", testNonpaymentMarkerSurvivesTheQuotaStop},
+		{"plan_fit_notice_round_trip", testPlanFitNoticeRoundTrip},
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
 		{"app_restore_honours_quota", testAppRestoreHonoursQuota},
 		{"app_restore_keeps_crons", testAppRestoreKeepsCrons},
@@ -183,6 +197,7 @@ func Run(t *testing.T, open Open) {
 		{"oidc_project_repository_bindings", testOIDCProjectRepositoryBindings},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
+		{"project_reconcile_adopts_cli_function_app", testProjectReconcileAdoptsFunctionApp},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"project_environment_route_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutePolicy},
@@ -213,6 +228,7 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"completed_queue_payloads_are_trimmed_after_their_retention", testQueuePayloadTrim},
 		{"trigger_record_states_by_items", testTriggerRecordStatesByItems},
 		{"trigger_record_claims_renew_while_dispatching", testTriggerRecordClaimRenewal},
 		{"trigger_record_operator_verbs_are_scoped", testTriggerRecordOperatorScope},
@@ -2013,6 +2029,28 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 		t.Fatalf("failed totals = (%+v, %v), want settled=350 pending=0", inv, err)
 	}
 
+	// A provider can fail a refund after reporting it succeeded: the settled
+	// amount is reversed, and a stale success afterwards does not restore it
+	// (implicit state machines audit 2026-11-08, finding 5).
+	returned := state.InvoiceRefund{
+		InvoiceID: inv.ID, ProviderRefundID: "refund-returned-" + uuid.NewString(),
+		IdempotencyKey: "refund-returned-key-" + uuid.NewString(),
+		AmountCents:    100, Source: "operator", Status: "succeeded",
+	}
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, returned); err != nil {
+		t.Fatalf("RecordInvoiceRefund(settled): %v", err)
+	}
+	for _, status := range []string{"failed", "succeeded"} {
+		returned.Status = status
+		if err := fx.Store.RecordInvoiceRefund(fx.Ctx, returned); err != nil {
+			t.Fatalf("RecordInvoiceRefund(settled->%s): %v", status, err)
+		}
+		inv, err = fx.Store.GetInvoiceByID(fx.Ctx, inv.ID)
+		if err != nil || inv.AmountRefundedCents != 350 || inv.AmountRefundPendingCents != 0 {
+			t.Fatalf("after settled->%s totals = (%+v, %v), want settled=350 pending=0", status, inv, err)
+		}
+	}
+
 	credit, err := fx.Store.CreateAccountCredit(fx.Ctx, state.AccountCredit{
 		AccountID: fx.Account.ID, CentsRemaining: 100, Reason: "async refund",
 	})
@@ -2134,6 +2172,101 @@ func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
 	}
 }
 
+// Billing review R8-2: a network observation that excludes internal egress
+// adds only public bytes, excludes each internal reading once, never goes
+// below zero, and carries what a minute could not absorb to the next one.
+func testInternalEgressSubtraction(t *testing.T, fx *Fixture) {
+	observer, ok := fx.Store.(state.InternalEgressObserver)
+	if !ok {
+		t.Skip("store does not implement state.InternalEgressObserver")
+	}
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	minute := time.Now().UTC().Truncate(time.Hour).Add(-50 * time.Minute)
+	next := minute.Add(time.Minute)
+	before := monthlyNetTx(t, fx, minute)
+	for _, at := range []time.Time{minute, next} {
+		if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, at, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
+			t.Fatalf("AppendUsage: %v", err)
+		}
+	}
+	steps := []struct {
+		at                   time.Time
+		netTx, internal      int64
+		wantBilled, wantExcl int64
+	}{
+		{minute, 1000, 400, 600, 400}, // first readings: all of both
+		{minute, 1000, 400, 0, 0},     // replay after commit: nothing twice
+		{minute, 1600, 1500, 0, 600},  // +600 veth, +1100 internal: 500 carries
+		{next, 3000, 100, 800, 600},   // +1400 veth; reset 100 plus the 500 carried
+	}
+	for i, step := range steps {
+		billed, _, excluded, err := observer.AppendNetworkUsageObservationExcludingInternal(fx.Ctx,
+			fx.Account.ID, fx.App.ID, instance.ID, step.at, step.netTx, true, 0, true, step.internal)
+		if err != nil || billed != step.wantBilled || excluded != step.wantExcl {
+			t.Fatalf("step %d = (billed %d, excluded %d, %v), want (%d, %d)", i, billed, excluded, err, step.wantBilled, step.wantExcl)
+		}
+	}
+	// 3000 veth bytes less 1600 internal.
+	if got := monthlyNetTx(t, fx, minute) - before; got != 1400 {
+		t.Fatalf("monthly net_tx_bytes grew by %d, want the 1400 public bytes", got)
+	}
+}
+
+// Billing review R12-3: an instance already metered before the switch turned
+// on had its internal bytes billed by earlier observations. The first
+// internal reading only sets the baseline; later ones subtract.
+func testInternalEgressBaselineMidway(t *testing.T, fx *Fixture) {
+	observer, ok := fx.Store.(state.InternalEgressObserver)
+	if !ok {
+		t.Skip("store does not implement state.InternalEgressObserver")
+	}
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	minute := time.Now().UTC().Truncate(time.Hour).Add(-40 * time.Minute)
+	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, minute, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	if billed, _, err := fx.Store.AppendNetworkUsageObservation(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, minute, 10_000, true, 0, true); err != nil || billed != 10_000 {
+		t.Fatalf("switch-off observation = (%d, %v), want 10000", billed, err)
+	}
+	steps := []struct {
+		netTx, internal      int64
+		wantBilled, wantExcl int64
+	}{
+		{12_000, 8_000, 2_000, 0}, // first internal reading: baseline only
+		{13_000, 8_300, 700, 300}, // +1000 veth, +300 internal
+	}
+	for i, step := range steps {
+		billed, _, excluded, err := observer.AppendNetworkUsageObservationExcludingInternal(fx.Ctx,
+			fx.Account.ID, fx.App.ID, instance.ID, minute, step.netTx, true, 0, true, step.internal)
+		if err != nil || billed != step.wantBilled || excluded != step.wantExcl {
+			t.Fatalf("step %d = (billed %d, excluded %d, %v), want (%d, %d)", i, billed, excluded, err, step.wantBilled, step.wantExcl)
+		}
+	}
+}
+
+func monthlyNetTx(t *testing.T, fx *Fixture, month time.Time) int64 {
+	t.Helper()
+	rows, err := fx.Store.UsageByMonth(fx.Ctx, fx.Account.ID, month)
+	if err != nil {
+		t.Fatalf("UsageByMonth: %v", err)
+	}
+	var total int64
+	for _, row := range rows {
+		if row.AppID == fx.App.ID {
+			total += row.NetTxBytes
+		}
+	}
+	return total
+}
+
 func testBillingUsageDelivery(t *testing.T, fx *Fixture) {
 	hour := time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Hour)
 	const mbSeconds = int64(321)
@@ -2249,13 +2382,13 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		t.Fatalf("GetWorkflowRun(recovered) = (%#v, %v), want pending", recovered, err)
 	}
 	steps, err := fx.Store.GetWorkflowSteps(fx.Ctx, run.ID)
-	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusPending || steps[0].Attempt != 1 {
-		t.Fatalf("GetWorkflowSteps(recovered) = (%#v, %v), want first pending at attempt 1", steps, err)
+	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusPending || steps[0].Attempt != 2 {
+		t.Fatalf("GetWorkflowSteps(recovered) = (%#v, %v), want first pending at preserved attempt 2", steps, err)
 	}
 
 	// production-us hunt #5 (H5-45): cancelling while a step's handler runs
 	// must close that step's attempt, not leave it running forever.
-	if _, err := fx.Store.StartWorkflowStep(fx.Ctx, run.ID, "first", 1, []byte(`{}`)); err != nil {
+	if _, err := fx.Store.StartWorkflowStep(fx.Ctx, run.ID, "first", 3, []byte(`{}`)); err != nil {
 		t.Fatalf("StartWorkflowStep: %v", err)
 	}
 	const reason = "cancelled by conformance"
@@ -4303,10 +4436,13 @@ func testAccountCredits(t *testing.T, fx *Fixture) {
 // into a Go zero would report "no overage allowed" for an account that
 // never set a cap, and stop billing that should happen.
 func testOverageCap(t *testing.T, fx *Fixture) {
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	// An unset cap reads as the plan's effective cap: none on Free, the
+	// plan's self-service ceiling on a paid plan (ADR-20261105120000).
+	unsetCents, unsetOK := state.EffectiveOverageCapCents(fx.Account.Plan, nil)
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(unset): %v", err)
-	} else if ok {
-		t.Error("a fresh account reported a cap; want ok=false (no cap)")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("a fresh account reported (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 
 	zero := int64(0)
@@ -4334,10 +4470,10 @@ func testOverageCap(t *testing.T, fx *Fixture) {
 	if err := fx.Store.UpdateAccountOverageCapCents(fx.Ctx, fx.Account.ID, nil); err != nil {
 		t.Fatalf("UpdateAccountOverageCapCents(nil): %v", err)
 	}
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(cleared): %v", err)
-	} else if ok {
-		t.Error("cap still reported after clearing with nil; want ok=false")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("cleared cap read back as (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 }
 
@@ -4560,6 +4696,172 @@ func testCustomMetricsContract(t *testing.T, fx *Fixture) {
 	// intent is "this metric is gone", which is already true.
 	if err := fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "never_existed"); err != nil {
 		t.Errorf("delete of a missing name = %v, want nil", err)
+	}
+}
+
+// testCustomMetricSeriesContract pins ADR-20261108160000 slice C on both
+// stores: series aggregate into the metric row (counters summed, gauges the
+// max of fresh series), deltas add per series, the caps refuse new series
+// and names, a kind change drops the old series, and deleting the metric
+// removes its series.
+func testCustomMetricSeriesContract(t *testing.T, fx *Fixture) {
+	t.Helper()
+	store, ok := fx.Store.(state.CustomMetricSeriesStore)
+	if !ok {
+		t.Fatal("store does not implement CustomMetricSeriesStore")
+	}
+	at := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	lim := state.CustomMetricSeriesLimits{Names: 2, SeriesPerMetric: 2, SeriesPerApp: 4, GaugeFreshness: 5 * time.Minute}
+	put := func(name, kind, key string, value float64, delta bool, when time.Time) error {
+		var labels map[string]string
+		if key != "" {
+			k, v, _ := strings.Cut(key, "=")
+			labels = map[string]string{k: v}
+		}
+		return store.PutCustomMetricSeries(fx.Ctx, fx.App.ID, state.CustomMetricSeriesWrite{
+			Name: name, SeriesKey: key, Labels: labels, Kind: kind, Value: value, Delta: delta, ObservedAt: when,
+		}, lim)
+	}
+	metric := func(name string) state.CustomMetric {
+		t.Helper()
+		rows, err := fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+		if err != nil {
+			t.Fatalf("ListCustomMetrics: %v", err)
+		}
+		for _, row := range rows {
+			if row.Name == name {
+				return row
+			}
+		}
+		t.Fatalf("%s not stored", name)
+		return state.CustomMetric{}
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Counter series sum; deltas add per series.
+	must(put("jobs_total", state.CustomMetricKindCounter, "queue=emails", 3, true, at))
+	must(put("jobs_total", state.CustomMetricKindCounter, "queue=emails", 4, true, at.Add(time.Second)))
+	must(put("jobs_total", state.CustomMetricKindCounter, "queue=billing", 10, false, at))
+	if got := metric("jobs_total"); got.Value != 17 || !got.Labelled || got.Kind != state.CustomMetricKindCounter || !got.ObservedAt.UTC().Equal(at.Add(time.Second)) {
+		t.Fatalf("counter aggregate = %+v, want 17 labelled at the newest series", got)
+	}
+	// Per-metric cap.
+	if err := put("jobs_total", state.CustomMetricKindCounter, "queue=other", 1, false, at); !errors.Is(err, state.ErrCustomMetricSeriesLimit) {
+		t.Fatalf("third series of a metric = %v, want ErrCustomMetricSeriesLimit", err)
+	}
+
+	// Gauge series: the max of fresh series; a stale one stops counting.
+	must(put("depth", state.CustomMetricKindGauge, "queue=a", 50, false, at))
+	must(put("depth", state.CustomMetricKindGauge, "queue=b", 8, false, at.Add(10*time.Minute)))
+	if got := metric("depth"); got.Value != 8 {
+		t.Fatalf("gauge aggregate = %v, want 8 (the 50 is stale)", got.Value)
+	}
+	// Per-app cap: a fifth series is refused even with room in the metric.
+	lim.SeriesPerMetric = 10
+	if err := put("depth", state.CustomMetricKindGauge, "queue=c", 1, false, at); !errors.Is(err, state.ErrCustomMetricSeriesLimit) {
+		t.Fatalf("series beyond the app cap = %v, want ErrCustomMetricSeriesLimit", err)
+	}
+	lim.SeriesPerMetric = 2
+	// Name cap applies to a labelled write too.
+	if err := put("third_name", state.CustomMetricKindGauge, "k=v", 1, false, at); !errors.Is(err, state.ErrCustomMetricLimit) {
+		t.Fatalf("third name = %v, want ErrCustomMetricLimit", err)
+	}
+
+	series, err := store.ListCustomMetricSeries(fx.Ctx, fx.App.ID)
+	if err != nil || len(series) != 4 || series[0].Name != "depth" || series[0].SeriesKey != "queue=a" || series[0].Labels["queue"] != "a" {
+		t.Fatalf("series = %+v, %v", series, err)
+	}
+	fresh, err := store.ListFreshCustomMetricSeries(fx.Ctx, at.Add(5*time.Minute), 10)
+	// The stale gauge series is left out; counter series always export.
+	if err != nil || len(fresh) != 3 || fresh[0].SeriesKey != "queue=b" || fresh[0].Value != 8 ||
+		fresh[1].Name != "jobs_total" || fresh[2].Name != "jobs_total" {
+		t.Fatalf("fresh series = %+v, %v", fresh, err)
+	}
+
+	// A kind change drops the old series.
+	must(put("depth", state.CustomMetricKindCounter, "queue=a", 2, false, at.Add(11*time.Minute)))
+	if got := metric("depth"); got.Value != 2 || got.Kind != state.CustomMetricKindCounter {
+		t.Fatalf("after kind change = %+v", got)
+	}
+
+	// Deleting the metric deletes its series.
+	must(fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "jobs_total"))
+	series, err = store.ListCustomMetricSeries(fx.Ctx, fx.App.ID)
+	if err != nil || len(series) != 1 || series[0].Name != "depth" {
+		t.Fatalf("after delete = %+v, %v", series, err)
+	}
+}
+
+// testCustomMetricDeltaContract pins ADR-20261108160000 on both stores: OTLP
+// deltas add to the stored value of the same kind, a kind change restarts
+// it, the total never goes below zero, the newest timestamp is kept, and the
+// distinct-name cap applies as for a plain push.
+func testCustomMetricDeltaContract(t *testing.T, fx *Fixture) {
+	t.Helper()
+	deltas, ok := fx.Store.(state.CustomMetricDeltaStore)
+	if !ok {
+		t.Fatal("store does not implement CustomMetricDeltaStore")
+	}
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	value := func(name string) state.CustomMetric {
+		t.Helper()
+		rows, err := fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+		if err != nil {
+			t.Fatalf("ListCustomMetrics: %v", err)
+		}
+		for _, row := range rows {
+			if row.Name == name {
+				return row
+			}
+		}
+		t.Fatalf("%s not stored", name)
+		return state.CustomMetric{}
+	}
+	add := func(name, kind string, delta float64, when time.Time) error {
+		return deltas.AddCustomMetricOfKind(fx.Ctx, fx.App.ID, name, kind, delta, when, 2)
+	}
+
+	if err := add("requests_total", state.CustomMetricKindCounter, 3, at); err != nil {
+		t.Fatalf("first delta: %v", err)
+	}
+	if err := add("requests_total", state.CustomMetricKindCounter, 4, at.Add(time.Minute)); err != nil {
+		t.Fatalf("second delta: %v", err)
+	}
+	// An older export arriving late still adds, but does not move time back.
+	if err := add("requests_total", state.CustomMetricKindCounter, 1, at); err != nil {
+		t.Fatalf("late delta: %v", err)
+	}
+	if got := value("requests_total"); got.Value != 8 || got.Kind != state.CustomMetricKindCounter || !got.ObservedAt.UTC().Equal(at.Add(time.Minute)) {
+		t.Fatalf("requests_total = %+v, want counter 8 observed at the newest delta", got)
+	}
+
+	// A delta up-down counter moves a gauge and stops at zero.
+	if err := add("connections", state.CustomMetricKindGauge, 2, at); err != nil {
+		t.Fatalf("gauge delta: %v", err)
+	}
+	if err := add("connections", state.CustomMetricKindGauge, -5, at.Add(time.Second)); err != nil {
+		t.Fatalf("negative gauge delta: %v", err)
+	}
+	if got := value("connections"); got.Value != 0 {
+		t.Fatalf("connections = %v, want floored at 0", got.Value)
+	}
+
+	// The cap counts names as a plain push does.
+	if err := add("third_name", state.CustomMetricKindCounter, 1, at); !errors.Is(err, state.ErrCustomMetricLimit) {
+		t.Fatalf("third name at cap 2 = %v, want ErrCustomMetricLimit", err)
+	}
+
+	// A kind change restarts the total from the delta.
+	if err := add("connections", state.CustomMetricKindCounter, 6, at.Add(2*time.Second)); err != nil {
+		t.Fatalf("kind change: %v", err)
+	}
+	if got := value("connections"); got.Value != 6 || got.Kind != state.CustomMetricKindCounter {
+		t.Fatalf("after kind change = %+v, want counter 6", got)
 	}
 }
 

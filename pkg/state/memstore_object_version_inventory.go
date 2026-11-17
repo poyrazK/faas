@@ -102,6 +102,7 @@ func (m *MemStore) StageObjectVersionInventoryPage(ctx context.Context, id, toke
 		j.RetryAt = now
 		j.UpdatedAt = now
 		m.objectCapacityJobs[id] = j
+		m.markObjectBucketMutatedLocked(j.BucketID)
 		return cloneObjectCapacityJob(j), nil
 	}
 	u := m.objectUsage[j.BucketID]
@@ -133,5 +134,6 @@ func (m *MemStore) StageObjectVersionInventoryPage(ctx context.Context, id, toke
 	j.InventoryCursors = nil
 	j = completeObjectCapacityJob(j, j.ScannedBytes, j.ScannedVersions, now)
 	m.objectCapacityJobs[id] = j
+	m.markObjectBucketMutatedLocked(j.BucketID)
 	return cloneObjectCapacityJob(j), nil
 }

@@ -1,3 +1,4 @@
+import { decodeJsonCell } from './csv-export.mjs'
 import {validateBulkHistory,retainBulkHistory,emptyHistory,historyLimits} from './bulk-history.mjs'
 import {validateGuidedAccess,runGuidedAccess} from './guided-access.mjs'
 import { validateViews } from './inspector-data.mjs'
@@ -59,7 +60,7 @@ export async function inspector(state, requestsPath, identities) {
               chunks.push(chunk)
             }
             req.setTimeout(0)
-            const value=JSON.parse(Buffer.concat(chunks).toString('utf8'));return activeStore.save(path===`${prefix}bulk-history`?retainBulkHistory(value):value, req.headers['if-match'])
+            const value=decodeJsonCell(Buffer.concat(chunks).toString('utf8'));return activeStore.save(path===`${prefix}bulk-history`?retainBulkHistory(value):value, req.headers['if-match'])
           }
           operation().then(value => send(200, JSON.stringify(value)), error => send(error.status ?? 400, JSON.stringify({ error: error.message === 'Saved requests changed; reload the collection before saving.' ? error.message : 'Cannot load or save requests; check the collection format, size and file type.' })))
         }

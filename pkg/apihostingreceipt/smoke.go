@@ -331,13 +331,13 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 			if proof == "" && resp.StatusCode >= http.StatusBadRequest {
 				code = SmokeErrorGatewayUnavailable
 			}
-			unavailable, err := unavailableSmoke(result, code, nil)
-			if problem := problemCode(resp.Header.Get("Content-Type"), body); code == SmokeErrorGatewayUnavailable && problem != "" {
+			problem := ""
+			if code == SmokeErrorGatewayUnavailable {
 				// A bounded problem identifier is diagnostic only. An app can
 				// imitate this body; only the proof establishes its origin.
-				unavailable.Error += " (" + problem + ")"
+				problem = problemCode(resp.Header.Get("Content-Type"), body)
 			}
-			return unavailable, err
+			return unavailableSmokeProblem(result, code, problem)
 		}
 	}
 	// Only authenticated candidate responses can establish an app verdict.
@@ -346,10 +346,12 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 	switch verification {
 	case VerificationRouteConnectivity:
 		// 415 is how a gRPC server answers a non-gRPC request (the gRPC
-		// HTTP/2 spec); like 401/403/404 it proves the candidate answered.
+		// HTTP/2 spec), and 405 how a Go workflow function's
+		// ServeWorkflows answers a GET (ADR-20261113120824 amendment 1);
+		// like 401/403/404 they prove the candidate answered.
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
-			resp.StatusCode == http.StatusUnsupportedMediaType
+			resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusUnsupportedMediaType
 	case VerificationAPIRouteContract:
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden

@@ -179,8 +179,16 @@ func TestPublishCachedUploadsOnlyAMissingGenerationKey(t *testing.T) {
 			if err := f.cache.Put(t.Context(), routedKey, strings.NewReader("verified bytes")); err != nil {
 				t.Fatal(err)
 			}
+			if err := f.cache.MarkGeneration(routedKey, "ref@g"); err != nil {
+				t.Fatal(err)
+			}
 			if ok, err := f.cache.RouteGeneration(routedKey, generationKey); err != nil || !ok {
 				t.Fatal(ok, err)
+			}
+			// ADR-20261116190000: the routed generation has its own cache
+			// file; the release's startup carries the logical one over.
+			if adopted, err := f.cache.AdoptCachedGeneration(routedKey, "ref@g"); err != nil || !adopted {
+				t.Fatal(adopted, err)
 			}
 			if tc.published != "" {
 				f.put(t, generationKey, tc.published)

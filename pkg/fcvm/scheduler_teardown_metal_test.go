@@ -77,11 +77,10 @@ func TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown(t *testing.T) {
 				}
 				leakcheck.AssertZero(t)
 			})
-			limits, _ := api.LimitsFor(api.PlanPro)
 			guest, err := m.Wake(ctx, fcvm.WakeRequest{
 				Instance: i.ID, AppID: app.ID, DeploymentID: dep.ID,
 				BaseKey: os.Getenv("FAAS_TEST_BASE_ROOTFS"), LayerKey: os.Getenv("FAAS_TEST_LAYER_ROOTFS"),
-				VcpuCount: limits.VCPU, MemSizeMiB: app.RAMMB, Plan: api.PlanPro,
+				VcpuCount: api.SizeVCPUs(app.RAMMB), MemSizeMiB: app.RAMMB, Plan: api.PlanPro,
 			})
 			mustSchedulerTeardown(t, err)
 			route := &schedulerTeardownRoute{manager: m}
@@ -122,12 +121,12 @@ func TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown(t *testing.T) {
 				if fresh.State != string(initial) || !e.Ledger().ResidentFor(i.ID) ||
 					e.Ledger().ResidentRAMForNode(i.NodeID) != app.RAMMB+api.PerVMOverheadMB ||
 					e.Ledger().Concurrency(app.ID) != 1 || e.Ledger().ConcurrencyForDeployment(app.ID, dep.ID) != 1 ||
-					e.Ledger().UsedVCPUForNode(i.NodeID) != limits.VCPU ||
+					e.Ledger().UsedVCPUForNode(i.NodeID) != api.SizeVCPUs(app.RAMMB) ||
 					e.Ledger().UsedCPUMillicoresForNode(i.NodeID) != api.DefaultAppCPUMillicores {
 					t.Fatal("unconfirmed stop or scheduler restart lost resident accounting")
 				}
 				if err := e.Ledger().Admit(sched.Request{Instance: "replacement", AppID: app.ID, Plan: api.PlanPro,
-					RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency, NodeID: i.NodeID}); err == nil {
+					RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB), MaxConcurrency: app.MaxConcurrency, NodeID: i.NodeID}); err == nil {
 					t.Fatal("admitted a replacement while the source guest remained alive")
 				}
 			}

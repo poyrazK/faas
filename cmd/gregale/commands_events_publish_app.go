@@ -19,7 +19,7 @@ func cmdEventsPublishApp(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 || *path == "" || rejectUnexpectedFlagArgs(fs) {
-		return printErr("Invalid arguments", fmt.Errorf("use events publish-app APP --file PATH"))
+		return printErr("Invalid arguments", fmt.Errorf("use event publish-app APP --file PATH"))
 	}
 	req, err := readAppPublishEventRequest(*path)
 	if err != nil {

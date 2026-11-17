@@ -190,6 +190,7 @@
         <div class="coverage">
           <p class="muted">Observed coverage of retained debugger telemetry. Rates are relative to represented requests; they are not a claim that requests dropped before persistence were captured.</p>
           <p><strong>{{.Data.Coverage.RepresentedRequests}}</strong> represented requests in <strong>{{.Data.Coverage.TelemetryRows}}</strong> aggregate rows · <strong>{{.Data.Coverage.ErrorRequests}}</strong> errors</p>
+          {{with .Data.Coverage.RequestsNotRetained}}<p class="notice" data-debug-not-retained>At least <strong>{{.}}</strong> requests in this window were counted by analytics but not kept by the debugger: your plan's per-minute debugger limit turned them away.</p>{{end}}
           <table class="coverage-table" aria-label="Debugger signal coverage">
             <thead><tr><th>Signal</th><th>Rows</th><th>Requests</th><th>Observed rate</th></tr></thead>
             <tbody>

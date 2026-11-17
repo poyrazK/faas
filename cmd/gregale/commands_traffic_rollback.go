@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -140,46 +141,35 @@ func cmdTrafficRollback(args []string) int {
 		PrintUsage(os.Stderr, usage, "traffic")
 		return 1
 	}
-	slug := strings.TrimSpace(positional[0])
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
+	return runTrafficRollback(context.Background(), client, strings.TrimSpace(positional[0]), strings.TrimSpace(*env), strings.TrimSpace(*to), strings.TrimSpace(*reason))
+}
+
+func runTrafficRollback(ctx context.Context, client *api.Client, slug, env, to, reason string) int {
 	live, err := liveDeployments(ctx, client, slug)
 	if err != nil {
 		return printErr("Traffic rollback failed", err)
 	}
-	plan, err := planTrafficRollback(live, strings.TrimSpace(*env), strings.TrimSpace(*to))
+	plan, err := planTrafficRollback(live, env, to)
 	if err != nil {
 		return printErr("Traffic rollback refused", err)
 	}
-	// The traffic API cannot fence "this split is unchanged", so read the
-	// weights again just before the write and refuse if another change
-	// landed since they were planned from.
-	again, err := liveDeployments(ctx, client, slug)
-	if err != nil {
-		return printErr("Traffic rollback failed", err)
-	}
-	if !sameTrafficWeights(live, again) {
-		return printErr("Traffic rollback refused", errors.New("traffic changed while planning the rollback; check gregale release traffic status and run it again"))
-	}
 	if plan.abort {
-		why := strings.TrimSpace(*reason)
-		if why == "" {
-			why = "traffic rollback"
-		}
-		resp, err := client.RecoverRollout(ctx, slug, "abort", why)
-		if err != nil {
-			return printErr("Traffic rollback failed", err)
-		}
-		if jsonOutput {
-			return jsonOut(writeJSON(resp))
-		}
-		_, _ = fmt.Fprintf(osStdout, "Aborted the canary rollout of %s; its traffic returns to the release it replaced.\n", slug)
-		return 0
+		return abortRolloutForTrafficRollback(ctx, client, slug, live, reason)
 	}
-	updated, err := client.PatchDeploymentsIdTraffic(ctx, plan.target.ID, 100)
+	// apid refuses the write if the split it was planned from changed in
+	// between (expected_traffic).
+	updated, err := client.PatchDeploymentTrafficIfSplit(ctx, plan.target.ID, 100, splitWeights(live, trafficScope(plan.target)))
+	if unknownExpectedTrafficField(err) {
+		// An apid released before expected_traffic: fall back to reading
+		// the split again just before an unconditional write.
+		if err = refuseChangedTraffic(ctx, client, slug, live); err == nil {
+			updated, err = client.PatchDeploymentsIdTraffic(ctx, plan.target.ID, 100)
+		}
+	}
 	if err != nil {
 		return printErr("Traffic rollback failed", err)
 	}
@@ -188,6 +178,56 @@ func cmdTrafficRollback(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "All traffic of %s is on %s again.\n", slug, deploymentLabel(updated))
 	return 0
+}
+
+// abortRolloutForTrafficRollback aborts the canary a rollback found rolling
+// out, if the rollout state is still what the plan was made from.
+func abortRolloutForTrafficRollback(ctx context.Context, client *api.Client, slug string, live []api.DeploymentResponse, reason string) int {
+	if err := refuseChangedTraffic(ctx, client, slug, live); err != nil {
+		return printErr("Traffic rollback refused", err)
+	}
+	if reason == "" {
+		reason = "traffic rollback"
+	}
+	resp, err := client.RecoverRollout(ctx, slug, "abort", reason)
+	if err != nil {
+		return printErr("Traffic rollback failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Aborted the canary rollout of %s; its traffic returns to the release it replaced.\n", slug)
+	return 0
+}
+
+// refuseChangedTraffic reads the live releases again and refuses when their
+// weights or rollout states moved since planned.
+func refuseChangedTraffic(ctx context.Context, client *api.Client, slug string, planned []api.DeploymentResponse) error {
+	again, err := liveDeployments(ctx, client, slug)
+	if err != nil {
+		return err
+	}
+	if !sameTrafficWeights(planned, again) {
+		return errors.New("traffic changed while planning the rollback; check gregale release traffic status and run it again")
+	}
+	return nil
+}
+
+// splitWeights is the expected_traffic fence: every live release in scope
+// with positive traffic and its percent.
+func splitWeights(live []api.DeploymentResponse, scope string) map[string]int {
+	out := map[string]int{}
+	for _, d := range live {
+		if trafficScope(d) == scope && d.TrafficPercent > 0 {
+			out[d.ID] = d.TrafficPercent
+		}
+	}
+	return out
+}
+
+func unknownExpectedTrafficField(err error) bool {
+	var apiErr *api.APIError
+	return errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusBadRequest && strings.Contains(apiErr.Problem.Detail, `unknown field "expected_traffic"`)
 }
 
 func liveDeployments(ctx context.Context, client *api.Client, slug string) ([]api.DeploymentResponse, error) {

@@ -75,7 +75,7 @@ func MatchProtectiveEdgeRule[T any](ctx context.Context, rules []T, account func
 		}
 		return best
 	}
-	return ObserveEdgeRuleMatch(ctx, first(ApplicableEdgeRules[T]), first(LoggedEdgeRules[T]))
+	return ObserveEdgeRuleMatch(ctx, first(ApplicableProtectiveEdgeRules[T]), first(LoggedProtectiveEdgeRules[T]))
 }
 
 func protectivePriority[T any](rule *T) int {

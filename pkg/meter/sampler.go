@@ -92,6 +92,12 @@ type UsageDeltas struct {
 	NetworkCumulative bool
 	NetTXValid        bool
 	NetRXValid        bool
+	// InternalTXBytes (billing review R8-2) is vmmd's cumulative count of
+	// the NetTXBytes the instance sent to internal destinations, valid only
+	// when InternalTXValid. The sampler subtracts it from billed egress
+	// when WithInternalEgressUnbilled is on.
+	InternalTXBytes uint64
+	InternalTXValid bool
 }
 
 type EgressSource interface {
@@ -245,6 +251,10 @@ type Sampler struct {
 	// quietRelease decides which accounts on mode applies to (the
 	// quiet_pause_unbilled platform flag); nil releases every account.
 	quietRelease func(platformflags.Subject) bool
+	// internalEgressUnbilled ([meter] internal_egress_unbilled, billing
+	// review R8-2) subtracts each instance's internal egress from
+	// usage_minutes.net_tx_bytes. Off by default.
+	internalEgressUnbilled bool
 }
 
 // cpuBaseline is the per-instance baseline the sampler retains
@@ -323,10 +333,8 @@ type RolledRow struct {
 	// execution_mode (normal / mirror / worker / service / job).
 	// The metered_mb_seconds_total{mode,plan} counter uses this
 	// as a label so dashboards can split worker idle-RAM from
-	// request-driven RAM. Mirror-mode rows are filtered out
-	// upstream via IsMeteredSkippableMode and never reach the
-	// row constructor — Mode stays "normal" / "worker" /
-	// "service" / "job".
+	// request-driven RAM. Mirror VMs bill too (ADR-20261104145353),
+	// so Mode may also be "mirror".
 	Mode string
 	// Plan (M-2 / ADR-137 §Decision 1) is the owning account's
 	// billing plan (free / hobby / pro / scale). Mirrored onto the
@@ -494,6 +502,15 @@ func (s *Sampler) WithRollSettle(settle time.Duration) *Sampler {
 	return s
 }
 
+// WithInternalEgressUnbilled makes billed egress leave out the bytes an
+// instance sent to internal destinations (ADR-20261114100000): after each
+// network checkpoint the sampler hands vmmd's cumulative internal reading to
+// a store implementing state.InternalEgressObserver.
+func (s *Sampler) WithInternalEgressUnbilled(on bool) *Sampler {
+	s.internalEgressUnbilled = on
+	return s
+}
+
 // newestClosedMinute is the newest minute closed at least s.settle ago.
 func (s *Sampler) newestClosedMinute(observedAt time.Time) time.Time {
 	return observedAt.Add(-s.settle).Truncate(time.Minute).Add(-time.Minute)
@@ -611,7 +628,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	for _, a := range accounts {
 		planByAccount[a.ID] = a.Plan
 	}
-	floorHeld := newFloorHolders(s.store)
+	floorHeld := newFloorHolders(s.store, minute)
 	instancesByApp, err := s.catchUpWindowInstances(ctx, minute, catchUp)
 	if err != nil {
 		return nil, err
@@ -684,19 +701,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			return mbs, nil
 		}
 		for _, ins := range ins {
-			// Issue #72 / ADR-125: skip mode='mirror' instances at
-			// the sampler. A mirror VM never serves the customer —
-			// the customer only saw the source deployment's
-			// response — so billing it would be a customer-trust
-			// bug, not a feature. The reaper also skips these rows
-			// (mirror VMs self-park on request completion, so
-			// there's no idle lifetime to reap), which keeps the
-			// sampler and reaper symmetric on the
-			// CountsForRAM-vs-mirror skip — both predicates are
-			// evaluated in the same order. The state-mode column is
-			// NOT NULL DEFAULT 'normal' (migration 00349), so
-			// pre-feature rows backfill to the default and skip
-			// this branch.
+			// ADR-20261104145353: a mirror VM bills plan RAM + 8 MB per
+			// running second like every other instance, as ADR-124 told
+			// customers. It is real capacity the customer chose to run.
+			// A platform snapshot refresh does not (ADR-20261106214916).
 			if state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
@@ -917,7 +925,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			// floor enrichment either. Skipping them keeps the floor
 			// math symmetric — a customer with a mirror rule sees
 			// their floor counted from production instances only.
-			if state.IsMeteredSkippableMode(ins.Mode) {
+			if ins.Mode == string(state.InstanceModeMirror) || state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
 			if ins.DeploymentID == "" {
@@ -981,14 +989,21 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			// that point schedd cannot fulfil the floor. Real CountsForRAM
 			// instances above remain billable because they consume memory
 			// regardless of deployment metadata.
-			floorAvailable, billableErr := s.billableFloorDeployment(ctx, app.ID)
+			floorDeployment, floorAvailable, billableErr := s.billableFloorDeployment(ctx, app.ID)
 			if billableErr != nil {
 				return out, billableErr
 			}
 			if !floorAvailable {
 				continue
 			}
-			billable := api.BillableRAMMB(app.RAMMB)
+			// A floor instance runs the deployment's sidecars too, so it is
+			// priced like a live instance of that deployment
+			// (ADR-20261103131742 amendment 2).
+			floorSidecars, sidecarErr := sidecarsFor(floorDeployment)
+			if sidecarErr != nil {
+				return out, sidecarErr
+			}
+			billable := api.BillableRAMMBWithSidecars(app.RAMMB, floorSidecars)
 			gap := floor - liveCount
 			floorTotal := int64(gap) * MBSecondsPerMinute(billable)
 			if exactResidency {
@@ -1040,19 +1055,23 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 // its latest deployment is still being provisioned. A terminal latest
 // deployment without a live fallback cannot satisfy a min-instances promise
 // and therefore cannot justify synthetic floor usage. Older abandoned pipeline
-// rows do not keep billing alive.
-func (s *Sampler) billableFloorDeployment(ctx context.Context, appID string) (bool, error) {
-	if _, err := s.store.LiveDeployment(ctx, appID); err == nil {
-		return true, nil
+// rows do not keep billing alive. It also names the deployment whose
+// instances fill the floor, for their sidecars.
+func (s *Sampler) billableFloorDeployment(ctx context.Context, appID string) (string, bool, error) {
+	if live, err := s.store.LiveDeployment(ctx, appID); err == nil {
+		return live.ID, true, nil
 	} else if !errors.Is(err, state.ErrNotFound) {
-		return false, fmt.Errorf("meter: resolve live deployment for floor %s: %w", appID, err)
+		return "", false, fmt.Errorf("meter: resolve live deployment for floor %s: %w", appID, err)
 	}
 
 	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 1, 0)
 	if err != nil {
-		return false, fmt.Errorf("meter: list deployments for floor %s: %w", appID, err)
+		return "", false, fmt.Errorf("meter: list deployments for floor %s: %w", appID, err)
 	}
-	return len(deployments) == 1 && !deployments[0].Status.IsTerminal(), nil
+	if len(deployments) != 1 || deployments[0].Status.IsTerminal() {
+		return "", false, nil
+	}
+	return deployments[0].ID, true, nil
 }
 
 // cpuDeltaForMinute computes the per-minute CPU-µs delta for the
@@ -1247,16 +1266,36 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 	if usage.NetTXBytes > math.MaxInt64 || usage.NetRXBytes > math.MaxInt64 {
 		return fmt.Errorf("meter: cumulative network counter exceeds int64 for instance %s", row.InstanceID)
 	}
-	deltaTx, deltaRx, err := s.store.AppendNetworkUsageObservation(ctx,
-		row.AccountID, row.AppID, row.InstanceID, row.Minute,
-		int64(usage.NetTXBytes), usage.NetTXValid,
-		int64(usage.NetRXBytes), usage.NetRXValid)
+	deltaTx, deltaRx, err := s.appendNetworkObservation(ctx, row, usage)
 	if err != nil {
 		return fmt.Errorf("meter: checkpoint network usage for instance %s: %w", row.InstanceID, err)
 	}
 	row.NetTxBytes = deltaTx
 	row.NetRxBytes = deltaRx
 	return nil
+}
+
+// appendNetworkObservation checkpoints vmmd's cumulative network counters.
+// When WithInternalEgressUnbilled is on and vmmd reported the internal
+// counter, the billed egress it adds leaves out the internal bytes (billing
+// review R8-2). Financial usage evidence is append-only, so this happens as
+// the bytes are written, never after.
+func (s *Sampler) appendNetworkObservation(ctx context.Context, row *RolledRow, usage UsageDeltas) (int64, int64, error) {
+	if observer, ok := s.store.(state.InternalEgressObserver); ok && s.internalEgressUnbilled && usage.InternalTXValid {
+		if usage.InternalTXBytes > math.MaxInt64 {
+			return 0, 0, fmt.Errorf("internal egress counter exceeds int64")
+		}
+		tx, rx, _, err := observer.AppendNetworkUsageObservationExcludingInternal(ctx,
+			row.AccountID, row.AppID, row.InstanceID, row.Minute,
+			int64(usage.NetTXBytes), usage.NetTXValid,
+			int64(usage.NetRXBytes), usage.NetRXValid,
+			int64(usage.InternalTXBytes))
+		return tx, rx, err
+	}
+	return s.store.AppendNetworkUsageObservation(ctx,
+		row.AccountID, row.AppID, row.InstanceID, row.Minute,
+		int64(usage.NetTXBytes), usage.NetTXValid,
+		int64(usage.NetRXBytes), usage.NetRXValid)
 }
 
 // tailSecondsFor returns the per-instance accumulated waitUntil

@@ -1,0 +1,10 @@
+# Managed by the seal_domains role (ADR 20261022111812): the contract step of
+# schedd's two domains, control and delivery. An empty LoadCredential= drops
+# what the base unit loads; host.age (per host, it opens no fleet-sealed
+# value) and the signing public key come back below, and the fleet identity
+# does not. This drop-in sorts before the optional credentials (40-*) and
+# the domain identities (60-*), which load after it.
+[Service]
+LoadCredential=
+LoadCredential=host.age:/etc/faas/secrets/host.age
+LoadCredential=faas_sign_pub:/etc/faas/secrets/sign-pub.pem

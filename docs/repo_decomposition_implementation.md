@@ -60,7 +60,7 @@ it, or a request-serving service lists it in `depends_on` and it declares
 `expose:` or runs its own listening image) and `worker` otherwise
 (ADR-20261029120000 and its amendment 1).
 
-`.gregale/project.yaml` at the repository root declares, for any detected
+The root `gregale.yaml` `project:` block (ADR-20261107180000; formerly the deprecated `.gregale/project.yaml`, which is still read with a warning) declares, for any detected
 workload, the service policy (`service_policy`, top level or per service),
 `visibility` (create-only) and `depends_on` (ADR-20261025093331). It is
 applied after the scan merges workloads: a Compose `x-gregale-service-policy`

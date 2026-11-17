@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // fairDrainGateway holds the slow app's invocations until released and
@@ -131,5 +132,52 @@ func TestDrainServesOtherAppsWhileOneAppIsSlow(t *testing.T) {
 	}
 	if calls, _ := gateway.snapshot(slow.ID); calls != 20 {
 		t.Fatalf("slow app calls after release = %d, want every row delivered", calls)
+	}
+}
+
+// The pool's occupancy is exported so a full pool, which holds every
+// tenant's async work, is visible (prod throughput test 2026-11-12: the
+// default 8 slots held delivery near 17/s with no signal).
+func TestDrainReportsDispatchSlotOccupancy(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	slow := fairDrainApp(t, store, "slots@example.test", "slots-app")
+	enqueueFairDrainRows(t, store, slow, 4, time.Now().Add(-time.Minute))
+	gateway := &fairDrainGateway{slowApp: slow.ID, release: make(chan struct{}),
+		calls: map[string]int{}, active: map[string]int{}, peak: map[string]int{}}
+	ops := wire.NewOpsMetrics("schedd")
+	engine := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	drain := sched.NewDrain(store, engine, sched.WithDrainGatewaySynth(gateway), sched.WithDrainDispatchConcurrency(8), sched.WithDrainOpsMetrics(ops))
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(gateway.release)
+		}
+		drain.XWaitDispatches()
+	})
+	gauge := func(name string) float64 {
+		t.Helper()
+		families, err := ops.Registry().Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, family := range families {
+			if family.GetName() == name && len(family.GetMetric()) == 1 {
+				return family.GetMetric()[0].GetGauge().GetValue()
+			}
+		}
+		t.Fatalf("%s not exported", name)
+		return 0
+	}
+
+	drain.Tick(ctx)
+	if size, used := gauge("schedd_invocation_dispatch_slots"), gauge("schedd_invocation_dispatch_slots_used"); size != 8 || used < 1 {
+		t.Fatalf("while the app's dispatches are held: slots = %v, used = %v; want 8 and at least 1", size, used)
+	}
+	close(gateway.release)
+	released = true
+	drain.XWaitDispatches()
+	if used := gauge("schedd_invocation_dispatch_slots_used"); used != 0 {
+		t.Fatalf("after every dispatch finished used = %v, want 0", used)
 	}
 }

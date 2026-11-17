@@ -13,7 +13,7 @@ import (
 
 // Resolve from the selected source, which can differ from the shell's cwd.
 func startSourceContext(source string) (localProjectContext, string, error) {
-	link, _, err := findProjectContext(source)
+	link, _, err := targetProjectContext(source)
 	if errors.Is(err, errProjectContextNotFound) {
 		return localProjectContext{}, "", nil
 	}

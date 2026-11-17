@@ -444,7 +444,7 @@ func TestGCTick_EvictsExpiredStaleSnapshotsWithoutAnFCSweep(t *testing.T) {
 	})
 	recent, _ := store.CreateSnapshot(ctx, state.Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, Stale: true, FCVersion: "1.7.0",
-		StorageKey: "snap/recent/mem", CreatedAt: time.Now().Add(-time.Hour),
+		StorageKey: "snap/recent/mem", CreatedAt: time.Now().Add(-api.SnapshotStaleRetention / 2),
 	})
 	be, _ := storage.NewLocalStorageBackend(t.TempDir())
 	loop := &Loop{
@@ -1105,7 +1105,10 @@ func TestRemoteDeleteRetryPreservesOrdinaryStaleRollbackSnapshot(t *testing.T) {
 	}
 	loop := &Loop{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	loop.retryRemoteDeleteBacklog(context.Background(), time.Now())
-	rows, err := store.ListSnapshotsStaleOlderThan(context.Background(), 0)
+	// A negative retention lists the row marked stale this instant too:
+	// with 0, a mark in the same clock tick as the cutoff is not "before" it
+	// and the list came back empty about 2 runs in 5.
+	rows, err := store.ListSnapshotsStaleOlderThan(context.Background(), -time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -242,15 +242,15 @@ func TestCmdAlertPresetEnable_CooldownOverride(t *testing.T) {
 	}
 }
 
-func TestCmdAutomationBacklogPresetEnableUsesNotificationDefaults(t *testing.T) {
+func TestCmdStoredWorkflowBacklogPresetEnableUsesNotificationDefaults(t *testing.T) {
 	main.ResetJSONOut(t)
 	(*main.JsonOutput) = true
-	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"Automation backlog exceeds five minutes","metric":"workflow_due_age_seconds","comparison":"gte","threshold":300,"window_spec":"5m","action":"webhook","enabled":true,"cooldown_minutes":30}`, 201)
-	output := main.CaptureAutomationStdout(t)
-	if code := main.CmdAlertPresetEnable([]string{"--app", "billing", "--webhook-url", "https://example.com/hooks", "--webhook-secret", "test-secret", "automation_backlog"}); code != 0 {
+	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"Stored workflow backlog exceeds five minutes","metric":"workflow_due_age_seconds","comparison":"gte","threshold":300,"window_spec":"5m","action":"webhook","enabled":true,"cooldown_minutes":30}`, 201)
+	output := main.CaptureStoredWorkflowStdout(t)
+	if code := main.CmdAlertPresetEnable([]string{"--app", "billing", "--webhook-url", "https://example.com/hooks", "--webhook-secret", "test-secret", "stored_workflow_backlog"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/apps/billing/alert-presets/automation_backlog/enable" {
+	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/apps/billing/alert-presets/stored_workflow_backlog/enable" {
 		t.Fatalf("request=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var request api.EnableAlertPresetRequest

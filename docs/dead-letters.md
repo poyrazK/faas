@@ -6,7 +6,7 @@ cause, or purge it.
 
 | Source | What lands there | Shown as |
 |---|---|---|
-| `invocation` | async invocations, queue messages, delayed tasks and event subscription deliveries whose handler failed on every attempt | `origin` is `event_subscription` for event deliveries |
+| `invocation` | async invocations (including async routes), inbound webhook deliveries, queue messages, delayed tasks and event subscription deliveries whose handler failed on every attempt, or refused its input with a 4xx | `origin` is `event_subscription` for event deliveries |
 | `trigger` | broker trigger records (Kafka, NATS, Redis Streams) that exhausted their attempts or had no stable identity | the trigger's id |
 | `webhook` | outbound webhook deliveries that exhausted their retries | the webhook's id |
 | `event_route` | published events that could not be routed to a subscription | not replayable; see [routing failures](events.md#routing-failures-in-the-dead-letter-queue) |

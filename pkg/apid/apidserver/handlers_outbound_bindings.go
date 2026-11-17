@@ -44,6 +44,7 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		AILogExport:                    offer.AILogExport,
 		AIAllowUnmetered:               offer.AIAllowUnmetered,
 		AIAutoPromptCache:              offer.AIAutoPromptCache,
+		AISemanticCache:                offer.AISemanticCache,
 		// ADR 20261020202035 per-trace limits.
 		AITraceMaxCalls:             copyOutboundDailyLimit(offer.AITraceMaxCalls),
 		AITraceMaxCostMillicents:    copyOutboundDailyLimit(offer.AITraceMaxCostMillicents),

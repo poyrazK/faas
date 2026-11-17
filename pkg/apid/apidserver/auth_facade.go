@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
+	"github.com/onebox-faas/faas/pkg/apid/taskexecution"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -55,8 +56,8 @@ import (
 // mfa_pending session legitimately needs are in the middleware's MFA
 // allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))
-	return s.authMw.RequireSession(pkgNext)
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))
+	return s.recordCredentialRefusals(s.authMw.RequireSession(pkgNext))
 }
 
 // authLimited wraps s.auth in pkg/middleware.AuthLimit with the
@@ -66,21 +67,21 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))))
-	return s.authMw.RequireLimited(pkgNext)
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))))
+	return s.recordCredentialRefusals(s.authMw.RequireLimited(pkgNext))
 }
 
 // Project publishing checks the human's verification before resolving the
 // project, so a missing resource cannot bypass the verification response.
 func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerifiedEmail(s.authorizeAppResource(next)))))))
-	return s.authMw.RequireLimited(pkgNext)
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.requireVerifiedEmail(s.authorizeAppResource(next)))))))))
+	return s.recordCredentialRefusals(s.authMw.RequireLimited(pkgNext))
 }
 
 // The handler account remains the storage/quota subject, while the request
 // principal remains the actor for scope, MFA, verification and audit checks.
 func (s *server) authorizeAppResource(next accountHandler) accountHandler {
-	return accountHandler(appaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), postgresaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func() *managedpostgres.Service { return s.managedPostgres }, objectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), queueaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), middleware.AccountHandler(s.monetizationAccount(next))))))))
+	return s.supportAccessGate(accountHandler(appaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), postgresaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func() *managedpostgres.Service { return s.managedPostgres }, objectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), queueaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), taskexecution.Wrap(s.store, middleware.AccountHandler(s.monetizationAccount(next))))))))))
 }
 
 func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
@@ -226,8 +227,8 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 	return err == nil && origin.Host != "" && (s.isTrustedAdminOrigin(origin, r) || s.isWebDashboardOrigin(origin))
 }
 
-// isWebDashboardOrigin reports whether origin is the apex domain. The web
-// dashboard is served there and proxies /v1, /login and /signup to the API
+// isWebDashboardOrigin reports whether origin is the apex or dedicated sales
+// domain. Their independently deployed frontends proxy requests to the API
 // host, so its requests reach apid with Host api.<domain> and Origin
 // https://<domain>. production-us 2026-10-06: every dashboard change
 // (creating an app, ...) was refused as cross-origin. The apex is a
@@ -237,7 +238,7 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 func (s *server) isWebDashboardOrigin(origin *url.URL) bool {
 	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.platformHost()), "."))
 	return base != "" && base != domainUnset && strings.EqualFold(origin.Scheme, "https") &&
-		strings.ToLower(origin.Hostname()) == base && origin.Port() == ""
+		(strings.ToLower(origin.Hostname()) == base || strings.ToLower(origin.Hostname()) == "sales."+base) && origin.Port() == ""
 }
 
 // requireMFA delegates to pkg/auth.Middleware.RequireMFA. Behaviour

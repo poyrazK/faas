@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/eventfilter"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -28,8 +29,24 @@ type EventSubscription struct {
 	Type                       string
 	Filter                     json.RawMessage
 	Enabled                    bool
-	CreatedAt                  time.Time
-	UpdatedAt                  time.Time
+	// DeploymentScope is the project environment the subscription receives
+	// events of; empty is the app's production scope. EnvironmentID is set
+	// for any other environment (ADR-20261104120000).
+	DeploymentScope string
+	EnvironmentID   string
+	// ClonePaused marks a copy a full environment clone made disabled from
+	// an enabled source subscription; resuming the stage's automation enables
+	// it, and any explicit enable or disable clears it.
+	ClonePaused bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// EventSubscriptionScopeStore installs a subscription into one environment
+// of its app (ADR-20261104120000). Production, by any of its names, is the
+// empty scope every existing subscription has.
+type EventSubscriptionScopeStore interface {
+	UpsertEventSubscriptionInScope(ctx context.Context, accountID, appID, scope, source, typ string, filter json.RawMessage) (EventSubscription, bool, error)
 }
 
 // EventSubscriptionStore is optional on Store implementations so existing
@@ -88,6 +105,17 @@ func normalizeEventSubscriptionFilter(filter json.RawMessage) ([]byte, error) {
 	return json.Marshal(value)
 }
 
+// normalizeNewEventSubscriptionFilter is the store backstop for the
+// subscription filter caps the manifest validator applies (events hunt #9):
+// every recipient snapshot copies the filter, so an unbounded one amplified
+// storage per event. A cap failure is an *eventfilter.BoundError.
+func normalizeNewEventSubscriptionFilter(filter json.RawMessage) ([]byte, error) {
+	if err := eventfilter.ValidateBoundedFilter(filter, api.EventSubscriptionFilterMaxBytes, api.EventSubscriptionFilterMaxDepth); err != nil {
+		return nil, err
+	}
+	return normalizeEventSubscriptionFilter(filter)
+}
+
 func eventSubscriptionFromSQL(row sqlc.EventSubscription) EventSubscription {
 	return EventSubscription{
 		AcknowledgmentLeaseSeconds: int(row.AcknowledgmentLeaseSeconds), SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy),
@@ -100,6 +128,10 @@ func eventSubscriptionFromSQL(row sqlc.EventSubscription) EventSubscription {
 		Enabled:   row.Enabled,
 		CreatedAt: timeFromPgtype(row.CreatedAt),
 		UpdatedAt: timeFromPgtype(row.UpdatedAt),
+
+		DeploymentScope: row.DeploymentScope,
+		EnvironmentID:   uuidString(row.EnvironmentID),
+		ClonePaused:     row.ClonePaused,
 	}
 }
 
@@ -115,6 +147,9 @@ func eventSubscriptionFromUpsert(row sqlc.UpsertEventSubscriptionRow) EventSubsc
 		Enabled:   row.Enabled,
 		CreatedAt: timeFromPgtype(row.CreatedAt),
 		UpdatedAt: timeFromPgtype(row.UpdatedAt),
+
+		DeploymentScope: row.DeploymentScope,
+		EnvironmentID:   uuidString(row.EnvironmentID),
 	}
 }
 
@@ -176,7 +211,18 @@ func (s *PgStore) ListMatchingEventSubscriptionsForAccount(ctx context.Context, 
 // true only when a new row was inserted, allowing deploy compensation to
 // remove only rows created by the current operation.
 func (s *PgStore) UpsertEventSubscription(ctx context.Context, accountID, appID, source, typ string, filter json.RawMessage) (EventSubscription, bool, error) {
-	canonical, err := normalizeEventSubscriptionFilter(filter)
+	return s.UpsertEventSubscriptionInScope(ctx, accountID, appID, "", source, typ, filter)
+}
+
+// UpsertEventSubscriptionInScope installs a declaration into one environment
+// of the app; guard_event_subscription_environment_scope resolves and pins
+// its environment.
+func (s *PgStore) UpsertEventSubscriptionInScope(ctx context.Context, accountID, appID, scope, source, typ string, filter json.RawMessage) (EventSubscription, bool, error) {
+	scope = NormalizeCronDeploymentScope(scope)
+	if !ValidCronDeploymentScope(scope) {
+		return EventSubscription{}, false, ErrInvalidArgument
+	}
+	canonical, err := normalizeNewEventSubscriptionFilter(filter)
 	if err != nil {
 		return EventSubscription{}, false, err
 	}
@@ -195,9 +241,11 @@ func (s *PgStore) UpsertEventSubscription(ctx context.Context, accountID, appID,
 		Source:    source,
 		Type:      typ,
 		Column5:   canonical,
+
+		DeploymentScope: scope,
 	})
 	if err != nil {
-		return EventSubscription{}, false, err
+		return EventSubscription{}, false, mapErr(err)
 	}
 	return eventSubscriptionFromUpsert(row), row.Inserted, nil
 }
@@ -329,8 +377,18 @@ func (m *MemStore) eventSubscriptionAppLocked(appID string) (App, bool) {
 	return app, ok
 }
 
-func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, source, typ string, filter json.RawMessage) (EventSubscription, bool, error) {
-	canonical, err := normalizeEventSubscriptionFilter(filter)
+func (m *MemStore) UpsertEventSubscription(ctx context.Context, accountID, appID, source, typ string, filter json.RawMessage) (EventSubscription, bool, error) {
+	return m.UpsertEventSubscriptionInScope(ctx, accountID, appID, "", source, typ, filter)
+}
+
+// UpsertEventSubscriptionInScope mirrors guard_event_subscription_environment_scope:
+// a named scope must be a project environment of the app.
+func (m *MemStore) UpsertEventSubscriptionInScope(_ context.Context, accountID, appID, scope, source, typ string, filter json.RawMessage) (EventSubscription, bool, error) {
+	scope = NormalizeCronDeploymentScope(scope)
+	if !ValidCronDeploymentScope(scope) {
+		return EventSubscription{}, false, ErrInvalidArgument
+	}
+	canonical, err := normalizeNewEventSubscriptionFilter(filter)
 	if err != nil {
 		return EventSubscription{}, false, err
 	}
@@ -347,13 +405,28 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	if !appExists || !sameMemUUID(app.AccountID, accountID) {
 		return EventSubscription{}, false, ErrNotFound
 	}
+	environmentID := ""
+	if scope != "" {
+		for _, env := range m.projectEnvironments {
+			if env.ProjectID == app.ProjectID && app.ProjectID != "" && env.Slug == scope {
+				environmentID = env.ID
+				break
+			}
+		}
+		if environmentID == "" {
+			return EventSubscription{}, false, ErrConflict
+		}
+	}
 	if m.eventSubscriptions == nil {
 		m.eventSubscriptions = make(map[string]EventSubscription)
 	}
 	mapKey := canonicalMemUUID(appID) + "\x00" + key
+	if scope != "" {
+		mapKey += "\x00" + scope
+	}
 	if existing, ok := m.eventSubscriptions[mapKey]; ok {
 		if !existing.Enabled {
-			existing.Enabled = true
+			existing.Enabled, existing.ClonePaused = true, false
 			existing.UpdatedAt = time.Now().UTC()
 			m.eventSubscriptions[mapKey] = existing
 		}
@@ -370,6 +443,9 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 		Enabled:   true,
 		CreatedAt: now,
 		UpdatedAt: now,
+
+		DeploymentScope: scope,
+		EnvironmentID:   environmentID,
 	}
 	// Include the app id in the map key so two apps can declare the same
 	// source/type/filter without colliding in the in-memory implementation.

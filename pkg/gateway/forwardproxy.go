@@ -56,11 +56,28 @@ type syntheticInvocationContextKey struct{}
 
 type trustedServiceCallerAssertionContextKey struct{}
 
+// trustedServiceCallerEnvContextKey marks a request whose preview markers
+// (X-Faas-Caller-Env, X-Faas-Caller-Preview-Of) ServiceProxy set after
+// resolving the caller. They are documented for the target to read, so they
+// must cross the guest boundary; customer-authored copies never carry the
+// mark and stay stripped (ADR-20261107090000).
+type trustedServiceCallerEnvContextKey struct{}
+
 // WithSyntheticInvocation marks an internal scheduler-to-runner request.
 // Platform-owned invocation metadata may cross the vmmd HTTP bridge only for
 // this context; ordinary customer requests keep the x-faas-* strip policy.
 func WithSyntheticInvocation(ctx context.Context) context.Context {
 	return context.WithValue(ctx, syntheticInvocationContextKey{}, true)
+}
+
+// isPlatformDeliveryHeader reports a header only the platform may set on a
+// request it delivers: operation headers, event delivery metadata
+// (x-gregale-event-*) and verified inbound webhook metadata
+// (x-gregale-webhook-*). A public request carrying one has it dropped. The
+// webhook prefix was not dropped, so any caller could send
+// `X-Gregale-Webhook-Provider: stripe` to an app (production-us 2026-11-07).
+func isPlatformDeliveryHeader(name string) bool {
+	return api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") || api.HasLowerPrefix(name, "x-gregale-webhook-")
 }
 
 func isSyntheticInvocation(ctx context.Context) bool {
@@ -75,7 +92,7 @@ func isSyntheticInvocation(ctx context.Context) bool {
 // remain internal. Dropping the workflow headers broke the documented
 // X-Faas-Workflow-Attempt contract (production-us hunt #5, H5-44).
 func guestReceivesFaasHeader(ctx context.Context, name string) bool {
-	return isTrustedServiceCallerAssertion(ctx, name) ||
+	return isTrustedServiceCallerAssertion(ctx, name) || isTrustedServiceCallerEnv(ctx, name) ||
 		strings.EqualFold(name, api.InvocationIDHeader) ||
 		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsInvocationAttemptHeader(name) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
@@ -106,6 +123,11 @@ func guestDeadlineHeader(ctx context.Context) (*vmmdpb.Header, bool) {
 // platform-authored assertion may cross it.
 func withTrustedServiceCallerAssertion(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), trustedServiceCallerAssertionContextKey{}, true))
+}
+
+func isTrustedServiceCallerEnv(ctx context.Context, header string) bool {
+	trusted, _ := ctx.Value(trustedServiceCallerEnvContextKey{}).(bool)
+	return trusted && (strings.EqualFold(header, ServiceCallerEnvHeader) || strings.EqualFold(header, ServiceCallerPreviewOfHeader))
 }
 
 func isTrustedServiceCallerAssertion(ctx context.Context, header string) bool {
@@ -436,6 +458,8 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		AppProtocol:        protocol,
 		ContentLength:      max(r.ContentLength, 0),
 		ContentLengthKnown: r.ContentLength >= 0 && len(r.TransferEncoding) == 0,
+		// ADR-20261110210000 slice 3i: sealed rule headers vmmd adds.
+		EdgeSecretHeaders: edgeSecretHeadersFrom(r.Context()),
 	}
 	// The gRPC client handler propagates the current span to vmmd, but
 	// the guest request is a new HTTP carrier assembled from this init
@@ -616,6 +640,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				responseHeaders.Add(h.GetName(), h.GetValue())
 			}
 			stripHopByHopInPlace(responseHeaders)
+			trailersOnly := takeGRPCTrailersOnlyStatus(responseHeaders)
 			for name, values := range responseHeaders {
 				for _, value := range values {
 					forwardedResponseHeader(r.Context(), w.Header(), name, value)
@@ -634,6 +659,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
+			for name, values := range trailersOnly {
+				for _, value := range values {
+					forwardedResponseTrailer(r.Context(), w.Header(), name, value)
+				}
+			}
 			// Only an explicit long-lived response may detach its handshake
 			// budget. Ordinary HTTP uses the same RPC framing but stays bounded.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
@@ -641,6 +671,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				budgetDetached = isLongLivedForward(r)
 				if budgetDetached {
 					recordTrafficStreamDetached(r.Context())
+					if isEventStream(w.Header()) || r.Header.Get("x-faas-protocol") == "grpc" {
+						recordTrafficLongLivedSession(r.Context())
+					}
 					if isEventStream(w.Header()) {
 						// An EventSource reconnects with Last-Event-ID, so a
 						// gateway restart ends it cleanly below rather than
@@ -747,6 +780,30 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// distinguish a clean bidi close from a client-disconnect
 	// (which surfaces as a Send error).
 	<-bodyErrCh
+}
+
+// grpcTrailersOnlyFields are the status fields a gRPC server sends in a
+// Trailers-Only response (one HEADERS frame with END_STREAM).
+var grpcTrailersOnlyFields = []string{"Grpc-Status", "Grpc-Message", "Grpc-Status-Details-Bin"}
+
+// takeGRPCTrailersOnlyStatus removes and returns the status fields of a gRPC
+// Trailers-Only answer. The guest's H2 frame carries them with the headers,
+// so the bridge reports them as headers; sent on as a header block followed
+// by a bare end of stream, a gRPC client reports "server closed the stream
+// without sending trailers" instead of the status. Moving them to trailers
+// keeps the status where every gRPC client reads it.
+func takeGRPCTrailersOnlyStatus(header http.Header) http.Header {
+	if !strings.HasPrefix(strings.ToLower(header.Get("Content-Type")), "application/grpc") || header.Get("Grpc-Status") == "" {
+		return nil
+	}
+	moved := make(http.Header, len(grpcTrailersOnlyFields))
+	for _, name := range grpcTrailersOnlyFields {
+		if values := header.Values(name); len(values) > 0 {
+			moved[name] = append([]string(nil), values...)
+			header.Del(name)
+		}
+	}
+	return moved
 }
 
 // H2 can reveal trailer names only after body EOF. Apply the normal guest
@@ -884,6 +941,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		Instance:        r.Header.Get("x-faas-instance"),
 		Port:            port,
 		MaxRequestBytes: api.RawStreamMaxRequestBytes,
+		// ADR-20261110210000 slice 3i: sealed rule headers vmmd adds to
+		// the request head below.
+		EdgeSecretHeaders: edgeSecretHeadersFrom(r.Context()),
 	}
 	if err := stream.Send(&vmmdpb.ForwardRawRequest{
 		Frame: &vmmdpb.ForwardRawRequest_Init{Init: init},
@@ -1084,6 +1144,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
 				recordTrafficStreamDetached(r.Context())
+				if upgraded {
+					recordTrafficLongLivedSession(r.Context())
+				}
 				upgradeEstablished = true
 			}
 			if upgraded {
@@ -1525,7 +1588,12 @@ type NodeClientCache struct {
 	dialing map[string]*nodeDialCall
 
 	dial func(ctx context.Context, target string) (*grpc.ClientConn, error)
-	log  *slog.Logger
+	// nodeName and dialNode, set by WithNodeBinding, replace dial so each
+	// connection accepts only the vmmd leaf of the node it was opened for
+	// (ADR-20261108124106).
+	nodeName func(ctx context.Context, nodeID string) (string, bool)
+	dialNode func(ctx context.Context, target, name string) (*grpc.ClientConn, error)
+	log      *slog.Logger
 	// restartNotices, when set, holds stream opens through a node's planned
 	// vmmd restart (vmmd_restart_hold.go).
 	restartNotices *restartNotices
@@ -1552,6 +1620,35 @@ func (c *NodeClientCache) WithRestartNotices(store RestartNoticeReader) *NodeCli
 		c.restartNotices = &restartNotices{store: store, now: time.Now}
 	}
 	return c
+}
+
+// WithNodeBinding makes every dial name the node it is for: name resolves a
+// compute_nodes.id to its compute_nodes.name, and dial must accept only a
+// vmmd leaf whose CN is that name (wire.ExpectPeerCN). The target_url
+// alone is a row compute nodes can write, so without the binding a
+// compromised node could take another node's forwards (ADR-20261108124106).
+// Startup only.
+func (c *NodeClientCache) WithNodeBinding(name func(ctx context.Context, nodeID string) (string, bool), dial func(ctx context.Context, target, name string) (*grpc.ClientConn, error)) *NodeClientCache {
+	if c != nil && name != nil && dial != nil {
+		c.nodeName, c.dialNode = name, dial
+	}
+	return c
+}
+
+// dialFor opens the connection for nodeID at target, bound to the node's
+// name when WithNodeBinding is set.
+func (c *NodeClientCache) dialFor(ctx context.Context, nodeID, target string) (*grpc.ClientConn, error) {
+	if c.dialNode != nil {
+		name, ok := c.nodeName(ctx, nodeID)
+		if !ok || name == "" {
+			return nil, fmt.Errorf("gateway: no compute_nodes.name for node %q to bind the dial to", nodeID)
+		}
+		return c.dialNode(ctx, target, name)
+	}
+	if c.dial == nil {
+		return nil, errors.New("gateway: node client cache has no dialer")
+	}
+	return c.dial(ctx, target)
 }
 
 // client is the VmmdClient a lease of conn hands out.
@@ -1641,11 +1738,11 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
-	if c.dial == nil {
+	if c.dial == nil && c.dialNode == nil {
 		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
-	conn, err := c.dial(ctx, target)
+	conn, err := c.dialFor(ctx, nodeID, target)
 	if err != nil {
 		if c.log != nil {
 			c.log.Warn("gateway: vmmd dial failed",

@@ -266,7 +266,12 @@ func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Da
 		work.from = database.CreatedAt.UTC().Truncate(c.policy.Window)
 	}
 	if !work.from.Before(to) && progress.CollectedUntil.IsZero() {
-		work.err = ErrUsageStale
+		// Created in the window that is still open: no complete window is due
+		// yet, so the database is current, as the admission snapshot already
+		// treats it. Reporting it stale deferred every sweep until the hour
+		// closed and fired FaasManagedPostgresUsageCollectionDeferred for each
+		// new database (production 2026-11-16).
+		work.from = to
 		return work
 	}
 	collectedFrom := progress.CollectedFrom
@@ -529,7 +534,7 @@ func (p UsagePolicy) AdmitWithCeilings(ctx context.Context, store UsageStore, ac
 		return ErrUsageStale
 	}
 	if snapshot.Exceeds(p) {
-		return ErrQuotaExceeded
+		return ErrUsageLimitReached
 	}
 	return nil
 }
@@ -566,6 +571,22 @@ func (s *Service) UsageSummary(ctx context.Context, accountID string, now time.T
 		summary.DatabaseLimit = limit
 	}
 	return summary, nil
+}
+
+// EffectiveComputeCeiling intersects a plan compute ceiling with the
+// operator's usage policy, the same intersection admission and `postgres
+// usage` apply. `postgres overage` reported the plan figure alone, so it
+// promised 1,440,000 unit-seconds while admission stopped at the operator's
+// 36,000 (ChronoLake finding 18).
+func (s *Service) EffectiveComputeCeiling(plan int64) int64 {
+	if s == nil || s.registry == nil {
+		return plan
+	}
+	policy := s.registry.UsagePolicy()
+	if !policy.Enabled {
+		return plan
+	}
+	return policy.WithCeilings(UsageCeilings{MaxMonthlyComputeUnitSeconds: plan}).MaxMonthlyComputeUnitSeconds
 }
 
 // EnforcedDatabaseLimit caps a plan's database maximum by the reservation

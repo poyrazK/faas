@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -141,6 +143,13 @@ func targetFlagAsArgument(args []string, flag string) ([]string, error) {
 		}
 		without := append(append([]string{}, rest[:i]...), rest[end:]...)
 		if len(without) > 0 && !strings.HasPrefix(without[0], "-") {
+			// A UUID is an id (an event, a rule), never an app slug:
+			// `dlq get <event-id> --app web` names the app by flag and the
+			// event positionally, so the app goes in front of it. It was
+			// read as a second app (Hunt 32 H32-22).
+			if without[0] != value && isUUIDArgument(without[0]) {
+				return append(append(append([]string{}, args[:at]...), value), without...), nil
+			}
 			if without[0] != value {
 				return nil, errAppFlagConflict
 			}
@@ -240,4 +249,10 @@ func targetFlagValue(rest []string, i int, target string) (string, bool) {
 		return rest[i+1], true
 	}
 	return "", true
+}
+
+// isUUIDArgument reports whether arg is a UUID, which no app slug is.
+func isUUIDArgument(arg string) bool {
+	_, err := uuid.Parse(arg)
+	return err == nil && len(arg) == 36
 }

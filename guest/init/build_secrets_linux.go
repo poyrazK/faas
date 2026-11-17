@@ -40,6 +40,8 @@ func buildSecretEnvAt(m api.BuildManifest, secretsPath, dockerDir string) ([]str
 		return nil, fmt.Errorf("read build secrets: %w", err)
 	}
 	var env []string
+	// The mirror plan was read before BuildKit started; it is not a secret.
+	delete(values, api.BuildRegistryMirrorsKey)
 	if config, ok := values[api.BuildRegistryAuthKey]; ok {
 		delete(values, api.BuildRegistryAuthKey)
 		if err := writeBuildDockerConfig(dockerDir, config); err != nil {

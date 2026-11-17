@@ -43,10 +43,40 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		case "github-deploys", "pr-previews":
 			// PR previews are built from the same GitHub push/PR pipeline.
 			available = s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())
+		case "crash-snapshots":
+			// Hunt 34 H34-16b: listed as available while FAAS_CRASH_SNAPSHOTS
+			// was unset and every request answered 501.
+			available = s.crashSnapshotsEnabled
+		case "production-forks":
+			available = s.appForksEnabled
+		case "profile-captures":
+			// Hunt 34 H34-16: `debug capture` answered "on-demand profiling
+			// is not enabled on this installation" while the list said
+			// available.
+			available = s.profileCaptures.Enabled
 		case "release-commands":
 			// imaged fails a release command while FAAS_RELEASE_PHASE_ENABLED
 			// is off, so it is advertised only when apid says it is on.
 			available = !s.releasePhaseOff
+		case "outbound-integrations", "workload-identity":
+			// The outbound relay authenticates the instance with a
+			// vmmd-signed workload-identity token. ADR-1141 provisioning
+			// installs apid's cluster JWKS with vmmd's key; without it every
+			// relay call is answered 503, so the feature is not advertised
+			// (found in production 2026-11-09). Pull leases are not gated
+			// here: they also accept API keys with queues:consume, which work
+			// without workload identity (ADR-20261110120000).
+			available = s.workloadVerifier != nil
+			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
+				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
+			}
+		case "app-tasks", "tcp-listeners", "udp-listeners", dataAPICapability:
+			// Prod findings 2026-11-15 #25: these were listed as available
+			// while their runtime was off and every request was refused.
+			available = s.capabilityRuntimeReady(capabilities.Capabilities[i].Key)
+			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
+				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
+			}
 		case "custom-domains":
 			// production-us hunt #8: with ADR-520 on-demand TLS off, a
 			// customer hostname can never obtain a certificate or reach
@@ -110,6 +140,24 @@ func (s *server) hiddenCapabilities(subject platformflags.Subject) []string {
 		}
 	}
 	return hidden
+}
+
+// capabilityRuntimeReady reports whether this control plane runs what a
+// capability's requests need: the app-task API gate, tcpd/udpd at the edge,
+// or the managed PostgreSQL bindings the Data API is set up from
+// (configurePipelineDataAPI).
+func (s *server) capabilityRuntimeReady(key string) bool {
+	switch key {
+	case "app-tasks":
+		return s.appTaskAPIEnabled
+	case "tcp-listeners":
+		return s.tcpListenersEnabled
+	case "udp-listeners":
+		return s.udpListenersEnabled
+	case dataAPICapability:
+		return s.managedPostgres != nil && s.managedPostgresBindings != nil && s.notif != nil
+	}
+	return true
 }
 
 // Plan restrictions take precedence when both gates deny access. Runtime

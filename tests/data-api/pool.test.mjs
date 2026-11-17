@@ -73,6 +73,8 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
   const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
   config.snapshot = await inspect(config.connection, config.schemas); config.fingerprint = fingerprint(config.snapshot)
+  // These checks observe each saturation, recovery and restart as it happens.
+  config.healthCacheMs = 0
   const upstreamPort = await port(), readyPort = await port(), engineAdmin = `http://127.0.0.1:${readyPort}`
   async function startEngine() {
     // Shorten this fixture's acquisition timeout so real counter increments can

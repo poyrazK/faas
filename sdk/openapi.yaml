@@ -42,6 +42,10 @@ servers:
         default: api.gregale.dev
         description: API hostname.
 tags:
+  - name: mcp-management
+    description: Preview management MCP source intents; no owner or execution authority.
+  - name: support
+    description: Gregale customer assistance, public conversations and resolution episodes.
   - name: operations
     description: Staged customer-owned HTTP work, scoped status and durable progress; production admission is disabled.
   - name: flags
@@ -344,6 +348,12 @@ paths:
         sealed before any deployment is enqueued. Failed configuration starts
         no builds; saved apps and any completed configuration remain available
         for correction. Values are never included in responses or scan plans.
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       requestBody:
         required: true
         content:
@@ -1212,6 +1222,130 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/ConflictDelete'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+    patch:
+      tags: [account]
+      operationId: updateAccountProfile
+      summary: Set the account display name.
+      description: |
+        Sets the optional display name shown to org members and in the
+        dashboard. Leading and trailing spaces are removed; an empty string
+        clears it. At most 80 characters, no control characters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccountProfileUpdate'}
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountProfileUpdate'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/email:
+    post:
+      tags: [account]
+      operationId: requestAccountEmailChange
+      summary: Start a sign-in email change.
+      description: |
+        Browser sessions only; an API key gets 403. Accounts with two-factor
+        authentication need a recent authenticator verification
+        (`step_up_required` otherwise); accounts with a password send
+        `current_password`. A single-use link valid for 1 hour is emailed to
+        the new address; opening it and confirming moves the account and
+        signs out every browser. The previous address gets a notice. A new
+        address that already belongs to an account gets the same response
+        and no email. CSRF: action `account_email_change`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccountEmailChangeRequest'}
+      responses:
+        '202':
+          description: Confirmation sent to the new address.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, email]
+                properties:
+                  status: {type: string, enum: [confirmation_sent]}
+                  email: {type: string, format: email}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: 'An API key was used, a recent authenticator verification is required (`step_up_required`), or, on an account with neither a password nor an authenticator, the browser session signed in more than 15 minutes ago (`recent_sign_in_required`): sign in again.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/sign-in-methods:
+    get:
+      tags: [account]
+      operationId: listAccountSignInMethods
+      summary: List the ways to sign in to the account.
+      description: Whether a password and two-factor authentication are set, and the linked Google or GitHub identities.
+      responses:
+        '200':
+          description: Sign-in methods.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SignInMethodsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/security-activity:
+    get:
+      tags: [account]
+      operationId: getAccountSecurityActivity
+      summary: List the account's sign-ins and security changes.
+      description: |
+        Sign-ins, API keys and CLI sign-ins, password, email, two-factor
+        and sign-in method changes of the last 90 days, newest first, at
+        most 100. Each event carries a fixed summary, and the client address
+        and sign-in method when they were recorded. Needs a full-access
+        credential.
+      responses:
+        '200':
+          description: Security events, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SecurityActivityResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/sign-in-methods/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: Linked sign-in provider to remove.
+        schema: {type: string, enum: [google, github]}
+    delete:
+      tags: [account]
+      operationId: unlinkAccountSignInMethod
+      summary: Remove a linked Google or GitHub sign-in.
+      description: |
+        Browser sessions need a recent authenticator verification when
+        two-factor authentication is on. Refused with 409 when it is the
+        last way to sign in; set a password or link another provider first.
+        The provider stays removed: signing in with it no longer links it by
+        matching email, until it is linked again from a browser signed in to
+        the account. CSRF: action `sign_in_method_unlink` (browser sessions
+        only; API keys need no token).
+      responses:
+        '204': {description: Sign-in method unlinked.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: 'A recent authenticator verification is required (`step_up_required`), or, without an authenticator, the browser session signed in more than 15 minutes ago (`recent_sign_in_required`): sign in again.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '404':
+          description: The provider is not linked to this account.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '409':
+          description: The provider is the last way to sign in.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/account/rate-limits:
     get:
       tags: [account]
@@ -1244,6 +1378,12 @@ paths:
         effect at the end of the billing period. A billing email that already
         pays for another account or organization answers 409
         `billing_email_in_use`.
+
+        The optional `salesperson_code` requires a verified browser session and
+        applies only before the first paid personal-account purchase. Invalid or
+        unavailable codes return 400; an existing different referral or prior
+        paid purchase returns 409. A saved referral survives checkout retries
+        and provider failures. Only a confirmed invoice payment earns credit.
 
         Asking for the plan the account already pays for keeps its
         subscription: a scheduled cancellation or downgrade is undone and the
@@ -1308,6 +1448,28 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/health:
+    get:
+      tags: [account]
+      operationId: getAccountHealth
+      summary: Account health.
+      description: |
+        Returns what may stop the calling account from working: restrictions
+        such as a suspension, failed payment or unverified email with the
+        next step, failed deployments from the last 7 days, custom domains
+        that are not serving, and API requests refused in the last 24 hours
+        with their problem codes and request ids. Internal review details are
+        never included. Available to suspended and past-due accounts.
+      responses:
+        '200':
+          description: The account health checks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountHealth'
+                example: {"generated_at": "2026-11-12T10:00:00Z", "attention": 1, "restrictions": [{"kind": "email_unverified", "title": "Verify your email address", "detail": "Some actions are refused until your email address is verified.", "action": "Resend verification email", "action_url": "/dashboard/account"}], "failed_deployments": [], "domain_issues": [], "refused_requests": {"window_hours": 24, "total": 2, "by_code": [{"code": "email_unverified", "count": 2, "last_at": "2026-11-12T09:58:00Z"}], "recent": [{"occurred_at": "2026-11-12T09:58:00Z", "route": "POST /v1/apps", "code": "email_unverified", "request_id": "req_01"}]}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/account/export:
     get:
       tags: [account]
@@ -1343,7 +1505,7 @@ paths:
       tags: [account]
       operationId: restoreAccount
       summary: Restore a `deleted_pending` account.
-      description: Cancels a staged deletion. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
+      description: Cancels a staged deletion and emails the account. Needs a full-access (`admin`) key or a browser session, and two-factor authentication when it is required. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
       responses:
         '200':
           description: Restored.
@@ -1383,6 +1545,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/MFAEnrollResponse'
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: 'An API key was used, or the account has no password and the browser session signed in more than 15 minutes ago (`recent_sign_in_required`): sign in again.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '409':
           description: Already enrolled. Call /v1/account/mfa/disable first.
           content:
@@ -1495,6 +1660,42 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/account/mfa/recovery-codes:
+    post:
+      tags: [mfa]
+      operationId: mfaRegenerateRecoveryCodes
+      summary: Replace the recovery codes.
+      description: |
+        Browser sessions with a recent authenticator verification only.
+        Creates a new set of recovery codes, shown once; the previous codes
+        stop working and the account gets an email notice. CSRF: action
+        `mfa_recovery_codes`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csrf_token]
+              properties:
+                csrf_token: {type: string}
+      responses:
+        '200':
+          description: New recovery codes.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecoveryCodesResponse'}
+        '400':
+          description: CSRF token missing or wrong for a browser session.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: 'Recovery codes need a browser session with a recent authenticator verification (`step_up_required`); API keys are refused.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '409':
+          description: Two-factor authentication is not set up.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/account/mfa/disable:
     post:
       tags: [mfa]
@@ -1550,6 +1751,31 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/MFADisableEmailResponse'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /v1/account/mfa/disable-email-cancel:
+    post:
+      tags: [mfa]
+      operationId: mfaDisableEmailCancel
+      summary: Cancel a pending email-assisted MFA disable.
+      description: |
+        Cancels every pending email-assisted MFA disable on the account,
+        so its emailed link stops working. A browser session must have
+        passed the second factor; a session from a password reset alone
+        is refused. Signing in with the authenticator app or a recovery
+        code cancels a pending disable too. The owner is emailed when a
+        request is cancelled.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableEmailCancelRequest'
+      responses:
+        '200':
+          description: Pending requests cancelled (`cancelled` is 0 when none was pending).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MFADisableEmailCancelResponse'}
         '403': {$ref: '#/components/responses/Forbidden'}
   /v1/account/mfa/disable-email/confirm:
     post:
@@ -2320,26 +2546,48 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/auth/verify-email/resend:
+    post:
+      tags: [auth]
+      operationId: resendEmailVerification
+      summary: Send a new email verification link.
+      description: |
+        Mails a new 24-hour verification link when the account's address is
+        unverified, at most once a minute and five times an hour. Returns
+        `already_verified` when there is nothing to send. Available after the
+        30-day verification period ends, when other routes answer
+        `email_verification_required`.
+      responses:
+        '200':
+          description: The address is already verified.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+        '202':
+          description: A link was sent, or held back by the per-account limit.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/auth/sessions/revoke_all:
     post:
       tags: [auth]
       operationId: postAccountSessionsRevokeAll
       summary: Revoke every session except the calling one.
       description: |
-        Revokes all `sessions` rows for the calling account
-        whose `id` is NOT the calling cookie's `sid`. The
-        caller's session stays active. Returns the count of
-        rows revoked so the dashboard can render "Signed out
-        N other devices".
+        From a browser session: revokes every other browser session of the
+        calling account and keeps the caller's. CSRF: action
+        `sessions_revoke_all`.
 
-        CSRF: action `sessions_revoke_all`.
+        With an API key: revokes every browser session. API keys keep
+        working, and no CSRF token is needed.
 
-        Emits `auth.sessions.revoke_all` with
-        `{revoked_count, retained_sid}`.
+        Returns the count of sessions revoked.
       parameters:
         - $ref: '#/components/parameters/CookieSession'
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
@@ -3603,6 +3851,26 @@ paths:
               schema: {$ref: '#/components/schemas/NotificationChannelResponse'}
         '402': {$ref: '#/components/responses/PaymentRequired'}
         '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      operationId: updateNotificationChannel
+      summary: Rename a notification channel or replace its destination
+      description: "Renames the channel or replaces its Slack webhook URL or PagerDuty routing key in place, so a leaked destination is rotated without unbinding the channel from its rules. The kind never changes; an email channel can only be renamed. A PagerDuty region changes only together with a new routing key. A new destination clears the channel's last error."
+      tags: [alert_rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateNotificationChannelRequest'}
+      responses:
+        '200':
+          description: The updated channel.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationChannelResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '402': {$ref: '#/components/responses/PaymentRequired'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
     delete:
       operationId: deleteNotificationChannel
       summary: Delete a notification channel
@@ -4068,7 +4336,7 @@ paths:
         Overage computation: `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)`. The included band is echoed from
         `acct.Plan.PlanIncludedGBHours`; the overage figure is the
-        integer-rounded float the Stripe pusher bills at $0.01/GB-h.
+        integer-rounded float the Stripe pusher bills at $0.05/GB-h.
 
         Source: `usage_minutes` today (after the 30d retention cap).
         `usage_daily` / `mixed` land with the trail-period reader
@@ -4322,7 +4590,7 @@ paths:
         - name: method
           in: query
           required: false
-          schema: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]}
+          schema: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
           description: "Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods."
         - name: group_by
           in: query
@@ -4945,6 +5213,9 @@ paths:
                 healthcheck:
                   type: string
                   description: "JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."
+                readiness_probe:
+                  type: string
+                  description: "JSON steady-state readiness probe with the CreateDeploymentOverrides.readiness_probe shape. Overrides gregale.yaml hosting.readiness_probe for this deployment."
                 override_env:
                   type: string
                   maxLength: 1048576
@@ -4953,7 +5224,7 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
-                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.' explicitly selects the archive root."
+                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; when the archive does not contain that directory and its own root holds a Dockerfile, package.json, requirements.txt, pyproject.toml, go.mod or gregale.yaml, the archive root is used. '.' explicitly selects the archive root."
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -5137,6 +5408,9 @@ paths:
                 dev_source_deleted:
                   type: string
                   description: "JSON string array of canonical archive paths removed since dev_source_base."
+                dev_source_build_now:
+                  type: string
+                  description: "Set to true to build this sync at once even when it reaches the running instance as a live patch. Without it, such a sync's build waits until the developer stops saving and a later sync replaces it."
                 dockerfile:
                   type: boolean
                 runtime:
@@ -5279,7 +5553,9 @@ paths:
         '503':
           description: |
             The GitHub integration unreachable or source-ref tarball fetch failed
-            (code: source_ref_unavailable). Retry in ~30s.
+            (code: source_ref_unavailable). Retry in ~30s. A PR preview whose
+            managed PostgreSQL database is still provisioning answers
+            code: preview_database_provisioning; retry after Retry-After.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -5754,6 +6030,100 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDatabaseSwitches
+      summary: List rollbacks that restore the database.
+      description: An app's database switches, newest first.
+      responses:
+        '200':
+          description: The app's switches.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitchList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+    post:
+      tags: [deployments]
+      operationId: createDatabaseSwitch
+      summary: Restore a database and move the app to the copy.
+      description: "Restores one of the app's managed PostgreSQL databases to point_in_time as a new database and moves the app's bindings in the scope to it, keeping the live release. The app stops serving from fencing until it resumes on the copy. Writes after point_in_time stay only in the source database, which keeps every write. Needs the postgres:manage scope and a verified email. Follow the returned switch with GET; cancel it before it starts switching."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDatabaseSwitchRequest'}
+            example: {"database_id": "0123456789abcdef0123456789abcdef", "name": "orders-0900", "point_in_time": "2026-10-30T09:00:00Z"}
+      responses:
+        '202':
+          description: The switch was recorded and runs in the background.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Database switch UUID.
+        schema: {type: string, format: uuid}
+    get:
+      tags: [deployments]
+      operationId: getDatabaseSwitch
+      summary: Read a rollback that restores the database.
+      description: The switch's phase, restore point, databases, drain counts and outcome.
+      responses:
+        '200':
+          description: The switch.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: UUID of the database switch to cancel.
+        schema: {type: string, format: uuid}
+    post:
+      tags: [deployments]
+      operationId: cancelDatabaseSwitch
+      summary: Cancel a rollback that restores the database.
+      description: "Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings."
+      responses:
+        '202':
+          description: Cancellation recorded; the worker unwinds the switch.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/rollouts/recover:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -6187,6 +6557,57 @@ paths:
               example: {"id": "0123456789abcdef0123456789abcdef", "email": "alice@example.com", "plan": "pro", "status": "active"}
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/account/egress-overage:
+    get:
+      tags: [account]
+      operationId: getEgressOverage
+      summary: Read the account's egress overage election.
+      description: |
+        Without the election every plan stops at its monthly egress allowance:
+        the account's apps are parked (`quota_exceeded_egress`) until the month
+        ends or the plan grows. With it, egress above the allowance is billed as
+        overage, within the spend cap, while egress billing is live
+        (`billing: live`); while `billing` is `off` the allowance still holds.
+      responses:
+        '200':
+          description: The account's election.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    put:
+      tags: [account]
+      operationId: setEgressOverage
+      summary: Turn the account's egress overage election on or off.
+      description: |
+        `{"enabled": true|false}`. Requires admin scope and MFA; a dashboard
+        session also needs a step-up within the last 5 minutes. Turning it on
+        needs a paid plan (HTTP 402 `plan_egress_overage_not_allowed`); turning
+        it off is always allowed. Egress already sent while the election was on
+        is still billed. Audit row `egress_overage.changed` records each change.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EgressOverageRequest'}
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The election after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402':
+          description: 'code: plan_egress_overage_not_allowed — the plan stops at its egress allowance; upgrade to a paid plan.'
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /v1/apps/{slug}/rename:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -6897,7 +7318,7 @@ paths:
           in: query
           schema: {type: string, enum: [info, warn, error]}
           description: >
-            Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
+            Severity floor: returns lines at this level or higher, so `warn` returns warn and error lines and `info` returns info, warn and error lines. A line's level comes from its structured `level` field (info, warn, or error) surfaced in each matching log event, or from common line markers when the line has no structured level; lines with no recognisable level are omitted whenever a level is set. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
 
         - name: archive
           in: query
@@ -9687,7 +10108,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/AutomationConflict', description: Tenant-required apps must use the tenant-self preview.}
+        '409': {$ref: '#/components/responses/StoredWorkflowConflict', description: Tenant-required apps must use the tenant-self preview.}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServerError'}
   /v1/apps/{slug}/workflows/{name}/runs:
@@ -11452,11 +11873,23 @@ paths:
       tags: [projects]
       operationId: deleteProject
       summary: Delete a project and detach its live workloads.
-      description: The apps remain live. Their project_id is cleared by the database foreign-key action.
+      description: |
+        The apps remain live. Their project_id is cleared by the database
+        foreign-key action. While the project's services call each other by
+        service name, deletion is refused with 409
+        project_services_call_each_other, because detached services no longer
+        resolve those names; pass detach_services=true once they do not.
+      parameters:
+        - name: detach_services
+          in: query
+          required: false
+          description: Confirms the project's services no longer call each other by service name.
+          schema: {type: boolean}
       responses:
         '204': {description: Project deleted.}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/projects/{slug}/environments/{environment}/config:
     parameters:
@@ -13517,7 +13950,7 @@ paths:
         durably instead of enqueuing an app invocation. Unmatched events keep
         the ordinary invocation path.
         Terminal callbacks are acknowledged as ignored after verification.
-        An automation-bound endpoint captures its published definition in durable
+        A stored-workflow-bound endpoint captures its published definition in durable
         fanout work. Paused, unpublished or type-unmatched events are durably ignored;
         content filters are evaluated by the scheduler. Provider retries return the
         original receipt; changed content for the same event ID returns 409.
@@ -13565,13 +13998,13 @@ paths:
             application/json:
               schema:
                 anyOf:
-                  - $ref: '#/components/schemas/WebhookAutomationReceiptResponse'
+                  - $ref: '#/components/schemas/WebhookWorkflowReceiptResponse'
                   - $ref: '#/components/schemas/WorkflowCallbackWebhookReceiptResponse'
                   - $ref: '#/components/schemas/InboundWebhookReceiptResponse'
         '400': {$ref: '#/components/responses/InboundWebhookInvalid'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
-          description: Changed content for a retained provider event ID (webhook_automation_conflict).
+          description: Changed content for a retained provider event ID (webhook_workflow_conflict).
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -15191,6 +15624,90 @@ paths:
               schema: {$ref: '#/components/schemas/AgentConnectionsResponse'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-approvals:
+    get:
+      tags: [keys]
+      operationId: listAgentApprovals
+      summary: List agent approval requests.
+      description: |
+        With an agent connection's key: that agent's requests that needed a
+        person's approval, newest first. With any other credential: the
+        pending requests the caller may decide, those of agents they
+        connected and of agents acting in organizations they own or
+        administer. A person decides only on the review page.
+      responses:
+        '200':
+          description: The approval requests.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-approvals/channels:
+    get:
+      tags: [keys]
+      operationId: getAgentApprovalChannels
+      summary: Show where the account's agents' approval requests also go.
+      description: |
+        The notification channels that get a message for each new approval
+        request of the account's agents, besides the email to the person
+        who connected the agent.
+      responses:
+        '200':
+          description: The account's approval channels.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalChannelsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [keys]
+      operationId: setAgentApprovalChannels
+      summary: Choose where the account's agents' approval requests also go.
+      description: |
+        Replaces the notification channels that get the account's agents'
+        approval requests. Name your own channels; an empty list leaves
+        email only. Needs an admin credential, so an agent cannot change
+        where its own requests go.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentApprovalChannelsRequest'}
+      responses:
+        '200':
+          description: The channels now bound.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalChannelsResponse'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-approvals/{id}:
+    get:
+      tags: [keys]
+      operationId: getAgentApproval
+      summary: Get an agent approval request.
+      description: |
+        An agent reads its own request to learn whether a person approved
+        it; a person reads one they may decide. Any other request answers
+        404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The approval request's id.
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The approval request.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/agent-connections/revoke_all:
     post:
       tags: [keys]
@@ -15245,6 +15762,250 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/self/activity:
+    get:
+      tags: [keys]
+      operationId: agentConnectionSelfActivity
+      summary: Read the calling agent's own activity.
+      description: |
+        The write requests (POST, PUT, PATCH, DELETE) the calling agent key
+        made in the last 7 days, newest first. Only an agent key can call it;
+        a person reads an agent's log by its connection id.
+      parameters:
+        - $ref: '#/components/parameters/AgentActivityBefore'
+        - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the calling agent's write requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentActivityResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/self/budget:
+    get:
+      tags: [keys]
+      operationId: agentConnectionSelfBudget
+      summary: Read the calling agent's own budget.
+      description: |
+        The monthly budget for always-on capacity that applies to the
+        calling agent key and what it committed this month. Only an agent key
+        can call it.
+      responses:
+        '200':
+          description: The calling agent's budget and spend.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentBudgetResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/{id}/budget:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose budget to read or set.
+        schema: {type: string}
+    get:
+      tags: [keys]
+      operationId: agentConnectionBudget
+      summary: Read a connected agent's budget.
+      description: |
+        The monthly budget for always-on capacity (warm instances, schedule
+        floors, prewarms) that applies to one of the account's agents, where
+        it comes from, and what the agent committed this month. Past the
+        budget, each change needs a person's approval. An agent key may read
+        only its own.
+      responses:
+        '200':
+          description: The agent's budget and spend.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentBudgetResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [keys]
+      operationId: setAgentConnectionBudget
+      summary: Set a connected agent's budget.
+      description: |
+        Sets the agent's monthly budget, makes it unlimited (an organization's
+        ceiling still applies) or returns it to the plan's default: half the
+        plan's default spend cap. Needs an admin credential; an agent cannot
+        change its own budget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentBudgetRequest'}
+      responses:
+        '200':
+          description: The agent's budget after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentBudgetResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/self/undo/plan:
+    post:
+      tags: [keys]
+      operationId: planSelfAgentUndo
+      summary: Plan undoing the calling agent's own changes.
+      description: |
+        An agent key plans an undo of its own changes, like a person's plan.
+        Applying it needs a person's approval.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentUndoRequest'}
+      responses:
+        '200':
+          description: The undo plan.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentUndoPlan'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/self/undo:
+    post:
+      tags: [keys]
+      operationId: applySelfAgentUndo
+      summary: Undo the calling agent's own changes, once a person approves.
+      description: |
+        An agent key applies a reviewed undo of its own changes. It always
+        waits for a person's approval: the first call answers 428
+        approval_required with the request to wait on (category undo, bound
+        to this body and so to the plan digest); after the approval, the same
+        call applies it once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentUndoRequest'}
+      responses:
+        '200':
+          description: What the undo did to each change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentUndoResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/{id}/undo/plan:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose changes to undo.
+        schema: {type: string}
+    post:
+      tags: [keys]
+      operationId: planAgentUndo
+      summary: Plan undoing a connected agent's changes.
+      description: |
+        Lists the agent's changes the request selects, newest first (by
+        default those of the last 24 hours; changes are kept 7 days), with
+        what undoing each will do: undo it, leave it because it cannot be
+        undone or because someone changed it again since, or nothing because
+        it was already undone. Apply the plan with its plan_digest. An agent
+        key cannot plan or apply an undo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentUndoRequest'}
+      responses:
+        '200':
+          description: The undo plan for the connected agent.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentUndoPlan'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/{id}/undo:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose changes are undone.
+        schema: {type: string}
+    post:
+      tags: [keys]
+      operationId: applyAgentUndo
+      summary: Undo a connected agent's changes.
+      description: |
+        Applies a reviewed plan: the same request with the plan's
+        plan_digest. Changes are undone newest first through the same API
+        the agent used, as the caller; a change that cannot be undone leaves
+        the older changes of its resource as they are. 409 when the changes
+        or their state differ from the plan. Needs an admin credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentUndoRequest'}
+      responses:
+        '200':
+          description: What the undo did to each of the connected agent's changes.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentUndoResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/{id}/activity:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose activity to read.
+        schema: {type: string}
+    get:
+      tags: [keys]
+      operationId: agentConnectionActivity
+      summary: Read a connected agent's activity.
+      description: |
+        The write requests one of the account's agents made in the last 7
+        days, newest first: when, method, path, response status and the
+        approval request it went through on. Reads and requests the approval
+        gate answered are not listed. An agent key may read only its own.
+      parameters:
+        - $ref: '#/components/parameters/AgentActivityBefore'
+        - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the connected agent's write requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentActivityResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/agent-connections/{id}:
     parameters:
       - name: id
@@ -15285,7 +16046,9 @@ paths:
         default). Status flips to 'grace' for the window, then to
         'revoked' at the deadline. Setting
         `accounts.key_grace_window_days = 0` makes rotation atomic
-        (old key revoked immediately).
+        (old key revoked immediately). The optional body's
+        `grace_window_days` overrides the window for this rotation
+        only; send `0` to revoke a leaked key at once.
 
         Returns the new plaintext exactly once — the old plaintext
         is not re-issued (we only store the SHA-256 hash). The
@@ -15295,6 +16058,14 @@ paths:
 
         Quota: rotation is quota-neutral (-1 +1 = 0 net). A
         customer AT the per-account cap can still rotate.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateKeyRequest'
+            example:
+              grace_window_days: 0
       responses:
         '200':
           description: New key minted, old key now in 'grace' (or 'revoked' if grace_window_days=0).
@@ -15365,6 +16136,101 @@ paths:
               schema: {$ref: '#/components/schemas/AgentConnectionsRevokeAllResponse'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/agent-connections/{id}/undo/plan:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose changes to undo.
+        schema: {type: string}
+    post:
+      tags: [orgs, keys]
+      operationId: planOrgAgentUndo
+      summary: Plan undoing the changes of an agent acting in an organization.
+      description: |
+        The organization's variant of planning an undo, for its owners and
+        admins.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentUndoRequest'}
+      responses:
+        '200':
+          description: The undo plan for the organization agent.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentUndoPlan'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/agent-connections/{id}/undo:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose changes are undone.
+        schema: {type: string}
+    post:
+      tags: [orgs, keys]
+      operationId: applyOrgAgentUndo
+      summary: Undo the changes of an agent acting in an organization.
+      description: |
+        The organization's variant of applying a reviewed undo plan, for its
+        owners and admins.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentUndoRequest'}
+      responses:
+        '200':
+          description: What the undo did to each of the organization agent's changes.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentUndoResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/agent-connections/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose activity to read.
+        schema: {type: string}
+    get:
+      tags: [orgs, keys]
+      operationId: orgAgentConnectionActivity
+      summary: Read the activity of an agent acting in an organization.
+      description: |
+        The write requests an agent acting in the organization made in the
+        last 7 days, newest first. Owners and admins only; an id that is not
+        one of the organization's agents is 404.
+      parameters:
+        - $ref: '#/components/parameters/AgentActivityBefore'
+        - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the organization agent's write requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentActivityResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{slug}/agent-connections/{id}:
     parameters:
@@ -15639,7 +16505,7 @@ paths:
                 $ref: '#/components/schemas/GraceWindowResponse'
               example: {days: 14, plan_default: 7}
         '400':
-          description: "Invalid body (e.g. negative days)."
+          description: "Invalid body (negative days, or more than 30)."
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -17202,7 +18068,9 @@ paths:
       description: |
         Marks the company organization as deleted_pending. Live managed
         PostgreSQL databases must complete deletion first. Owner-only
-        (`org.delete`); personal organizations are immutable.
+        (`org.delete`); personal organizations are immutable. Needs a
+        signed-in browser session with a fresh step-up; an API key cannot
+        delete an organization. Owners and admins are emailed.
       responses:
         '204': {description: Org soft-deleted.}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -17210,7 +18078,9 @@ paths:
           description: |
             `403 Forbidden` — caller is authenticated but lacks the
             `org.delete` action. Owner-only. Stable code
-            `org_role_forbidden`.
+            `org_role_forbidden`. An API key gets
+            `browser_session_required`; a stale sign-in gets
+            `step_up_required`.
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
@@ -17561,6 +18431,28 @@ paths:
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/orgs/{slug}/leave:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    post:
+      tags: [orgs]
+      operationId: leaveOrg
+      summary: Leave an org.
+      description: |
+        Ends the caller's own membership. Any role except owner may leave;
+        the owner transfers ownership first. A personal org cannot be left,
+        and the org's billing contact must be replaced first
+        (`billing_contact_member`).
+      responses:
+        '204': {description: Left the org.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404':
+          description: The caller is not an active member.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '409':
+          description: 'The caller is the owner (`org_last_owner`), the org is personal, or the caller is the billing contact.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{slug}/transfer_ownership:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -17574,9 +18466,10 @@ paths:
         (a single PostgreSQL tx with `FOR UPDATE` locks on both
         rows). The exactly-one-owner invariant is enforced by the
         partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-        member of the org. For a Free organization, the recipient must have
+        member of the org whose account is active. For a Free organization, the recipient must have
         available Free-organization ownership capacity; admission is serialized
-        with organization creation and other incoming transfers.
+        with organization creation and other incoming transfers. Needs a
+        signed-in browser session; an API key gets `browser_session_required`.
       requestBody:
         required: true
         content:
@@ -17599,7 +18492,58 @@ paths:
           description: 'code: NotFound (new owner is not a member)'
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '409':
-          description: 'code: org_last_owner (caller not the active owner OR new owner already owner)'
+          description: 'code: org_last_owner (caller not the active owner OR new owner already owner), or conflict (new owner''s account is suspended or pending deletion)'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/security-policy:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgSecurityPolicy
+      summary: Read the organization's security policy.
+      description: |
+        Any member can read whether the organization requires two-factor
+        authentication.
+      responses:
+        '200':
+          description: The organization's security policy.
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/OrgSecurityPolicy'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`org_mfa_required` when the organization requires two-factor authentication and the caller has none.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [orgs]
+      operationId: putOrgSecurityPolicy
+      summary: Require or stop requiring two-factor authentication for members.
+      description: |
+        Owner-only (`org.manage_security`) and needs a fresh step-up. While
+        `require_mfa` is on, a member without two-factor authentication is
+        refused on the organization's routes with `org_mfa_required`, by
+        sessions and API keys alike, until they enrol. Turning it on needs
+        the caller to have two-factor authentication. Owners and admins
+        are emailed when the policy changes.
+      requestBody:
+        required: true
+        content:
+          application/json: {schema: {$ref: '#/components/schemas/OrgSecurityPolicy'}}
+      responses:
+        '200':
+          description: The organization's security policy with the requested two-factor requirement applied.
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/OrgSecurityPolicy'}}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`org_role_forbidden` for a non-owner; `step_up_required` for a stale sign-in.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: '`conflict` when the caller turning the requirement on has no two-factor authentication.'
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/invitations/{token}:
@@ -19323,6 +20267,56 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/egress-overage:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgEgressOverage
+      summary: Read the organization's egress overage election.
+      description: "Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members."
+      responses:
+        '200':
+          description: The organization's election.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [orgs]
+      operationId: setOrgEgressOverage
+      summary: Turn the organization's egress overage election on or off.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. `{"enabled": true|false}`; turning it on needs a
+        paid plan (HTTP 402 `plan_egress_overage_not_allowed`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EgressOverageRequest'}
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The organization's election after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402':
+          description: 'code: plan_egress_overage_not_allowed — the organization''s plan stops at its egress allowance; move the organization to a paid plan.'
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{slug}/billing/costs:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -19599,6 +20593,26 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/orgs/{organization}/github/installations:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    get:
+      tags: [github]
+      operationId: listOrgGitHubInstallations
+      summary: "List the GitHub installations a company organization owns."
+      description: "Company projects link repositories only through these installations. An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned."
+      responses:
+        '200':
+          description: "The organization's installations; empty before one is connected or before billing adoption."
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/GitHubInstallationSummary'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{organization}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -19774,6 +20788,114 @@ paths:
                 # rotated_at only.
         '403': {$ref: '#/components/responses/Forbidden'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/projects/scan/source-ref:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: scanOrgProjectSourceRef
+      summary: "Preview a company project from a connected repository ref."
+      description: "Fetches the repository at the given ref through the organization's own GitHub installation and runs the same read-only scanner as the company source upload. A member's personal installation is never used; the organization must own its resources and have GitHub connected. Requires the deploy role."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectSourceRefScanRequest'
+      responses:
+        '200':
+          description: "Company repository scan, workload partitions and deployment plan."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ValidationFailed'}
+        '413': {$ref: '#/components/responses/SourceTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/orgs/{organization}/projects/apply-plan:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: applyCachedOrgProjectPlan
+      summary: "Deploy a company project's reviewed source without another upload."
+      description: "Applies the exact archive retained by a company project scan in the same organization. A plan reviewed for a personal project or another organization is refused. The normal scanner and apply admission gates run again; the reviewed source expires after one hour. Requires the deploy role."
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable organization project submission identity. Persist before applying this organization's reviewed plan; after an uncertain response inspect its submission receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApplyCachedProjectPlanRequest'}
+      responses:
+        '200':
+          description: "Company project applied with per-workload deployment receipts."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApplyResponse'}
+        '403':
+          description: "The member lacks the deploy role or secret write permission."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '409':
+          description: "The company plan is stale, blocked, or requires environment approval."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '410':
+          description: "The reviewed company source expired or belongs elsewhere; scan again."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/orgs/{organization}/projects/safe-deploy:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: safeApplyOrgProject
+      summary: "Build an existing company HTTP project and atomically publish its ready release."
+      description: "The company form of the safe project deploy: candidates receive zero traffic and publish only after every candidate completes readiness. Takes the same release headers, attempt ID and plan token as the personal form. Requires the deploy role."
+      parameters:
+        - name: Project-Release-Mode
+          in: header
+          description: "Safe release mode for the company project; defaults to atomic."
+          schema: {type: string, enum: [atomic, atomic-verify, atomic-config-verify, atomic-migrate-verify, atomic-config-migrate-verify, atomic-verify-workers, atomic-config-verify-workers, atomic-migrate-verify-workers, atomic-config-migrate-verify-workers]}
+        - name: Deployment-Attempt-ID
+          in: header
+          required: true
+          description: "Durable identity for this company safe project submission."
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
+        - name: plan_token
+          in: query
+          description: "Company scan token bound to the safe release baseline."
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: {$ref: '#/components/schemas/ProjectApplyRequest'}
+      responses:
+        '200':
+          description: "Accepted company candidate deployments and durable safe release state."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApplyResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/orgs/{organization}/projects/scan:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -20454,6 +21576,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
+    dataAPIBudgetWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A short-lived workload assertion with audience gregale:data-api:budget.
     dataAPIEventsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -20518,6 +21645,18 @@ components:
         type: string
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
   parameters:
+    AgentActivityBefore:
+      name: before
+      in: query
+      required: false
+      description: The `next_before` value of an earlier activity page; omit it for the newest rows.
+      schema: {type: string}
+    AgentActivityLimit:
+      name: limit
+      in: query
+      required: false
+      description: Activity rows per page, 1 to 200. Default 50.
+      schema: {type: integer, minimum: 1, maximum: 200}
     OrgProjectOrganization:
       name: organization
       in: path
@@ -20745,6 +21884,18 @@ components:
         until: {type: string, format: date-time, description: Exclusive first_at bound for the traversal.}
         limit: {type: integer, minimum: 1, maximum: 100, default: 100, description: Page size included in the cursor scope binding.}
         cursor: {type: string, maxLength: 2048, description: Previous page continuation retaining its initial cutoff.}
+    MCPReadinessExpectation:
+      type: object
+      description: Exact fresh role observations required in the traffic transaction, independently of emergency overrides. Mismatches return 409 without changing traffic.
+      required: [policy_revision, artifact_sha256, evidence_ids]
+      properties:
+        policy_revision: {type: string, format: uuid}
+        artifact_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        evidence_ids:
+          type: object
+          minProperties: 1
+          maxProperties: 32
+          additionalProperties: {type: string, format: uuid}
     MCPPolicyConvergenceSnapshot:
       description: "Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token enforcement is not attested. Correlates retained admission evidence when available."
       type: object
@@ -24210,7 +25361,7 @@ components:
         postgres_majors: {type: array, items: {type: integer, minimum: 12, maximum: 99}}
         service_classes: {type: array, items: {type: string, enum: [development, burstable, production]}}
         availability: {type: array, items: {type: string, enum: [single_zone, high_availability]}}
-        credential_access: {type: array, items: {type: string, enum: [read_write, read_only, migration, data_api, auth]}}
+        credential_access: {type: array, items: {type: string, enum: [read_write, read_only, migration, data_api, auth, session]}}
         scale_to_zero: {type: boolean}
         always_on: {type: boolean}
         pooled_connections: {type: boolean}
@@ -24295,10 +25446,18 @@ components:
           type: string
           format: date-time
           description: "Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time."
+        expires_at:
+          type: string
+          format: date-time
+          description: Set on a database restored with ttl_seconds. Its bindings are revoked and it is purged at this time.
         plan_excess:
           type: string
           enum: [database_limit, service_class]
           description: "Set while the plan no longer includes this database, for example after a subscription ended, and it is suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept), service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or resizing to an included class resumes it."
+        hold:
+          type: string
+          enum: [compute_ceiling, egress, inactive, plan_excess, preview]
+          description: "Set while the platform stops this database's compute and refuses its connections although its state is ready: compute_ceiling once the account used its monthly compute ceiling; egress once this database sent its own monthly egress allowance (500 GB); inactive while the account is suspended; plan_excess (see plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while nothing holds it; the platform applies a change within a few minutes."
         restore_range:
           $ref: '#/components/schemas/ManagedPostgresRestoreRange'
     ManagedPostgresRestoreRange:
@@ -24374,6 +25533,25 @@ components:
           description: When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
           type: string
           format: date-time
+        egress_allowance_bytes:
+          description: Each database's own monthly egress allowance, 500 GB (10^9 bytes) as Neon includes per project. Database egress does not count toward the plan's app egress allowance. Absent on a plan without databases.
+          type: integer
+          format: int64
+          minimum: 0
+        app_egress_bytes:
+          deprecated: true
+          description: Deprecated and always omitted. Apps no longer share the databases' egress allowance.
+          type: integer
+          format: int64
+          minimum: 0
+        egress_state:
+          description: "The state of the database that sent the most egress this month: healthy; warning at 80% of its hold; overage past its allowance while the account's egress overage election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once it reaches its allowance (twice it with overage billed) and the platform enforces caps, until the month ends. Only that database is held."
+          type: string
+          enum: [healthy, warning, overage, held]
+        hold:
+          description: Set while every database of the account is held, with the same reason each database reports. Egress holds one database at a time, so it is reported on that database, not here.
+          type: string
+          enum: [compute_ceiling, egress, inactive]
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
@@ -24383,20 +25561,29 @@ components:
         request_id: {type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name."}
         name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
         region: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
-        postgres_major: {type: integer, minimum: 12, maximum: 99, default: 16}
+        postgres_major: {type: integer, minimum: 12, maximum: 99, default: 17}
         service_class: {type: string, enum: [development, burstable, production], default: development}
         availability: {type: string, enum: [single_zone, high_availability], default: single_zone}
         scale_to_zero: {type: boolean, default: true}
         storage_limit_bytes: {type: integer, format: int64, minimum: 0}
         restore_window_seconds: {type: integer, format: int64, minimum: 0}
     RestoreManagedPostgresDatabaseRequest:
-      description: Point-in-time restore request that creates a new database.
+      description: Point-in-time restore request that creates a new database. A restore is a copy-on-write branch of the source where the backend supports it.
       type: object
       additionalProperties: false
-      required: [name, point_in_time]
+      required: [name]
       properties:
         name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
-        point_in_time: {type: string, format: date-time}
+        point_in_time:
+          type: string
+          format: date-time
+          description: A time inside the source's restore_range. Omit it to restore from the latest point, a couple of seconds before the request.
+        ttl_seconds:
+          type: integer
+          format: int64
+          minimum: 300
+          maximum: 2592000
+          description: Purge the new database this many seconds after it is created. Its bindings are revoked first; the source is never touched. The database shows expires_at.
     ManagedPostgresBinding:
       description: Workload binding metadata. Credentials are delivered through the app secret surface and never returned here.
       type: object
@@ -24407,7 +25594,7 @@ components:
         app_id: {type: string, minLength: 1, maxLength: 128}
         scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
         environment_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$'}
-        access: {type: string, enum: [read_write, read_only, migration, data_api, auth]}
+        access: {type: string, enum: [read_write, read_only, migration, data_api, auth, session]}
         credential_generation: {type: integer, format: int64, minimum: 1}
         rotation_pending: {type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes.}
         state: {type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted]}
@@ -24441,6 +25628,7 @@ components:
         auth_consumers: {type: integer, format: int64, minimum: 0}
         migration_bindings: {type: integer, format: int64, minimum: 0}
         other_bindings: {type: integer, format: int64, minimum: 0}
+        session_bindings: {type: integer, format: int64, minimum: 0, description: Session bindings are modeled at their role connection limit and are not counted in other_bindings.}
         resident_instances: {type: integer, format: int64, minimum: 0}
         parked_instances: {type: integer, format: int64, minimum: 0}
         auxiliary_instances: {type: integer, format: int64, minimum: 0}
@@ -24456,6 +25644,7 @@ components:
         data_api_resident_estimate: {type: integer, format: int64, minimum: 0}
         data_api_wake_estimate: {type: integer, format: int64, minimum: 0}
         auth_wake_estimate: {type: integer, format: int64, minimum: 0}
+        session_connection_ceiling: {type: integer, format: int64, minimum: 0, description: The session role connection limit per session binding; two roles while a binding rotates.}
         control_headroom: {type: integer, format: int64, minimum: 0}
         migration_headroom: {type: integer, format: int64, minimum: 0}
         modeled_peak_connections: {type: integer, format: int64, minimum: 0}
@@ -24516,7 +25705,7 @@ components:
         app_id: {type: string, minLength: 1, maxLength: 128}
         scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
         environment_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$'}
-        access: {type: string, enum: [read_write, read_only, migration, data_api, auth], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved.}
+        access: {type: string, enum: [read_write, read_only, migration, data_api, auth, session], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved.}
     ObjectStoragePolicy:
       description: Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other budgets remain positive and finite.
       type: object
@@ -24585,6 +25774,15 @@ components:
           type: string
           format: date-time
           description: UTC month boundary at which shadow/live handling starts. Periods before it are never charged.
+        over_ceiling: {$ref: '#/components/schemas/ObjectStorageOverCeilingDeletion'}
+    ObjectStorageOverCeilingDeletion:
+      description: Present while the account stores more than its object-storage ceiling. Unless the account gets back under the ceiling first, Gregale deletes the excess on deletion_scheduled_at.
+      type: object
+      required: [over_ceiling_since, deletion_scheduled_at, excess_bytes]
+      properties:
+        over_ceiling_since: {type: string, format: date-time}
+        deletion_scheduled_at: {type: string, format: date-time}
+        excess_bytes: {type: integer, format: int64, minimum: 1, description: Bytes stored above the ceiling at the last check.}
     ObjectSignedRequest:
       description: Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL dispatches at most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
       type: object
@@ -24681,10 +25879,14 @@ components:
       properties:
         enabled: {type: boolean}
     PasswordSignupRequest:
-      description: "Email + password for signup. Same shape as PasswordLoginRequest so the create-or-claim race detection reuses the verifier."
+      description: "Email + password for signup. Same shape as PasswordLoginRequest with an optional referral code."
       type: object
       required: [email, password]
       properties:
+        referral_code:
+          type: string
+          pattern: '^([A-Za-z0-9]{6})?$'
+          description: Optional six-character customer or salesperson referral code; case-insensitive. Requires the referral program to be enabled.
         email: {type: string, format: email}
         password: {type: string, minLength: 12, maxLength: 256}
     ProgrammaticAuthResponse:
@@ -24736,6 +25938,7 @@ components:
         accounts.
       type: object
       properties:
+        referral_code: {type: string, pattern: '^([A-Za-z0-9]{6})?$'}
         email: {type: string, format: email}
     PasswordResetRequest:
       description: "Email for a password-reset request. Optional — the form-page path submits no body; the SDK sends the email."
@@ -24844,6 +26047,16 @@ components:
           enum: [webhook, actions]
           default: webhook
           description: The single production deploy authority; GitHub App PR previews continue in either mode.
+        preview_mode:
+          type: string
+          enum: [app, branch]
+          default: app
+          description: |
+            How pull requests are previewed. `app` gives each previewed
+            workload its own preview app. `branch` makes environment branch
+            `pr-{N}` of production for each pull request and deploys the PR
+            head into it. Choosing `branch` needs the
+            platform to enable branch previews.
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
       type: object
@@ -24864,6 +26077,9 @@ components:
         production_trigger:
           type: string
           enum: [webhook, actions]
+        preview_mode:
+          type: string
+          enum: [app, branch]
     GitHubInstallMutationRequest:
       description: |
         Double-submit CSRF envelope for customer-facing GitHub connection
@@ -25059,7 +26275,7 @@ components:
           description: Stable reason when enabled is false. Plan restrictions take precedence when both gates deny access. Omitted when enabled; older servers may omit it.
         unavailable_detail:
           type: string
-          description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for automation. Omitted when enabled; older servers may omit it.
+          description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for stored workflow. Omitted when enabled; older servers may omit it.
     CapabilitiesResponse:
       description: Account-scoped capability registry with resolved entitlement and existing runtime availability gates.
       type: object
@@ -25078,6 +26294,118 @@ components:
           type: array
           items: {type: string}
           description: Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
+    AccountHealth:
+      description: "What may stop the calling account from working: restrictions with the next step, problems that keep recurring, failed deployments, custom-domain problems and refused API requests."
+      type: object
+      required: [generated_at, attention, restrictions, failed_deployments, domain_issues, refused_requests]
+      properties:
+        generated_at: {type: string, format: date-time, description: When the checks ran.}
+        attention: {type: integer, description: "Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action."}
+        restrictions:
+          type: array
+          description: Restrictions currently applied to the account, one per kind.
+          items: {$ref: '#/components/schemas/AccountHealthRestriction'}
+        signals:
+          type: array
+          description: "Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops, with the next step. Absent from older servers."
+          items: {$ref: '#/components/schemas/AccountHealthSignal'}
+        failed_deployments:
+          type: array
+          description: Failed deployments from the last 7 days, newest first, at most 10.
+          items: {$ref: '#/components/schemas/AccountHealthDeployment'}
+        domain_issues:
+          type: array
+          description: Custom domains that are unverified or whose certificate is not serving.
+          items: {$ref: '#/components/schemas/AccountHealthDomain'}
+        refused_requests: {$ref: '#/components/schemas/AccountHealthRequests'}
+        unavailable:
+          type: array
+          items: {type: string}
+          description: Checks that could not be loaded; their lists are empty and mean unknown, not none.
+    AccountHealthRestriction:
+      description: One account restriction in customer wording, with the next step when there is one.
+      type: object
+      required: [kind, title, detail]
+      properties:
+        kind:
+          type: string
+          enum: [account_suspended, account_past_due, deletion_pending, abuse_hold, email_unverified, overage_cap_reached, platform_release_pause]
+          description: Stable restriction identifier.
+        title: {type: string, description: Short headline for the restriction.}
+        detail: {type: string, description: What the restriction does to the account.}
+        action: {type: string, description: Label of the next step.}
+        action_url: {type: string, description: Dashboard path for the next step.}
+        since: {type: string, format: date-time, description: "When the restriction started, when known."}
+    AccountHealthSignal:
+      description: "A problem that keeps recurring, in customer wording, with the next step when there is one."
+      type: object
+      required: [kind, subject, title, detail, since]
+      properties:
+        kind:
+          type: string
+          enum: [deploy_failing, app_oom, jobs_failing, limit_pressure]
+          description: Stable signal identifier.
+        subject: {type: string, description: "What the signal is about: an app slug, a scheduled job name or a problem code."}
+        title: {type: string, description: Short headline for the signal.}
+        detail: {type: string, description: What keeps happening and how to fix it.}
+        action: {type: string, description: Label of the link that fixes the signal.}
+        action_url: {type: string, description: Dashboard path of the page that fixes the signal.}
+        since: {type: string, format: date-time, description: When Gregale first detected the problem.}
+    AccountHealthDeployment:
+      description: A failed deployment with the error and fix hint the build or rollout reported.
+      type: object
+      required: [deployment_id, app_id, created_at]
+      properties:
+        deployment_id: {type: string, description: Failed deployment identifier.}
+        app_id: {type: string, description: Identifier of the deployment's app.}
+        app_slug: {type: string, description: Slug of the deployment's app.}
+        error_code: {type: string, description: Stable failure code.}
+        error: {type: string, description: "Failure message, at most 500 bytes."}
+        hint: {type: string, description: "Suggested fix, at most 500 bytes."}
+        created_at: {type: string, format: date-time, description: When the deployment was created.}
+    AccountHealthDomain:
+      description: A custom domain that is not serving correctly.
+      type: object
+      required: [domain, problem]
+      properties:
+        domain: {type: string, description: The custom hostname.}
+        app_slug: {type: string, description: Slug of the app the hostname routes to.}
+        problem: {type: string, description: What is wrong with the hostname.}
+        cert_error: {type: string, description: "The certificate authority's last error, when issuance failed."}
+    AccountHealthRequests:
+      description: API requests Gregale refused for the account in the recent window.
+      type: object
+      required: [window_hours, total, by_code, recent]
+      properties:
+        window_hours: {type: integer, description: Length of the window in hours.}
+        total: {type: integer, format: int64, description: Refused requests in the window.}
+        by_code:
+          type: array
+          description: Counts by problem code, most frequent first, at most 10.
+          items: {$ref: '#/components/schemas/AccountHealthCode'}
+        recent:
+          type: array
+          description: Most recent refused requests, at most 20.
+          items: {$ref: '#/components/schemas/AccountHealthRequest'}
+    AccountHealthCode:
+      description: How often one problem code was returned in the window.
+      type: object
+      required: [code, count, last_at]
+      properties:
+        code: {type: string, description: Problem code from the response body and X-Faas-Error-Code.}
+        count: {type: integer, format: int64, description: Responses with this code.}
+        last_at: {type: string, format: date-time, description: Most recent response with this code.}
+    AccountHealthRequest:
+      description: "One refused request: the matched route pattern, the problem code and the ids to quote to support."
+      type: object
+      required: [occurred_at, route, code]
+      properties:
+        occurred_at: {type: string, format: date-time, description: When the request was refused.}
+        route: {type: string, description: "Matched route pattern, for example POST /v1/apps/{slug}/deployments; never the raw URL."}
+        code: {type: string, description: Problem code returned.}
+        app_slug: {type: string, description: "App slug from the request path, when the route has one."}
+        request_id: {type: string, description: X-Faas-Request-Id of the request.}
+        trace_id: {type: string, description: X-Gregale-Trace-Id of the request.}
     AccountResponse:
       description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."
       type: object
@@ -25086,6 +26414,7 @@ components:
         id: {type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef"}
         email: {type: string, format: email}
         email_verified: {type: boolean}
+        display_name: {type: string, maxLength: 80, description: "Optional display name; absent when unset."}
         email_verification_grace_ends_at:
           type: string
           format: date-time
@@ -25120,7 +26449,7 @@ components:
       type: object
       required: [reason, held_at]
       properties:
-        reason: {type: string, enum: [egress_fanout, egress_flood, operator]}
+        reason: {type: string, enum: [cpu_sustained, egress_fanout, egress_flood, operator]}
         held_at: {type: string, format: date-time}
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
@@ -25168,6 +26497,49 @@ components:
           type: [integer, 'null']
           format: int64
           minimum: 0
+    EgressOverageRequest:
+      description: Turns the egress overage election on or off.
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+    EgressOverageResponse:
+      description: |
+        The billing subject's election to pay for egress above its plan's monthly
+        allowance instead of stopping at it.
+      type: object
+      required: [enabled, electable, included_gib, billing]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the election is on.
+        electable:
+          type: boolean
+          description: Whether the plan allows the election; Free does not.
+        enabled_at:
+          type: string
+          format: date-time
+          description: When the election started; kept when it is turned off and on again.
+        disabled_at:
+          type: string
+          format: date-time
+          description: When the election was last turned off.
+        included_gib:
+          type: integer
+          format: int64
+          description: The plan's monthly egress allowance in GiB.
+        billing:
+          type: string
+          enum: [live, "off"]
+          description: live when egress above the allowance is billed while the election is on; off while egress is not billed, when the allowance still holds.
+        price_millicents_per_gib:
+          type: integer
+          format: int64
+          description: Price of a GiB above the allowance while billing is live, in millicents.
+        currency:
+          type: string
+          description: Currency of the price.
     OrgBillingEmailRequest:
       description: The email an organization bills to; invoices and the billing portal sign-in go to it.
       type: object
@@ -25197,6 +26569,16 @@ components:
       required: [plan]
       properties:
         plan: {type: string, enum: [free, hobby, pro, scale], example: "hobby"}
+        salesperson_code:
+          type: string
+          pattern: '^\s*([A-Za-z0-9]{6})?\s*$'
+          description: |
+            Optional salesperson code for a personal account's first paid purchase.
+            Letters are normalized to uppercase and surrounding spaces are removed.
+            Requires a live verified session. Only active sales codes are accepted;
+            existing referrals and prior payments cannot be reassigned. The choice
+            remains saved if checkout is retried or abandoned. Omit or leave empty
+            to keep ordinary billing behavior. Organization purchases are excluded.
     UpdateAccountBillingInfoRequest:
       description: "Partial legal billing identity update. Empty strings clear fields."
       type: object
@@ -25466,7 +26848,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
+          description: "Permission set attached to the exported key. github:manage controls customer GitHub connection stored workflow; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: {type: string, format: date-time}
         last_used_at: {type: [string, "null"], format: date-time}
@@ -25526,6 +26908,8 @@ components:
         request_budget_max_ms: {type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds."}
         response_write_timeout_s: {type: integer, format: int64, description: "Maximum response write window for the plan, in seconds."}
         request_body_max_bytes: {type: integer, format: int64, description: "Maximum inbound request body accepted for this app's plan, in bytes."}
+        idle_timeout_s: {type: integer, description: "Idle timeout the platform applies: the app's own setting or its type's default, within the plan bounds (seconds)."}
+        pause: {type: string, enum: [between_requests, when_idle, never], description: "When the platform may pause the VM: the declared value or the default for the app's type. Apps on a private network are never paused."}
     AppConfiguredResources:
       description: "The memory and sustained CPU shape selected for each instance of this app."
       type: object
@@ -25676,6 +27060,9 @@ components:
         security_revocation: {$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}
         managed_http: {$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}
         managed_circuit: {$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}
+        edge_header_secrets:
+          description: Gateways open sealed edge-rule request header values; until every serving gateway does, new credential values are stored as written. Omitted by older releases.
+          allOf: [{$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}]
     TrafficRuntimeFeatureStatus:
       description: Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified.
       type: object
@@ -25839,6 +27226,8 @@ components:
         idle_timeout_s: {type: [integer, "null"]}
         request_timeout_s: {type: integer, minimum: 0, maximum: 30, description: "Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."}
         function_concurrency: {type: integer, minimum: 0, maximum: 80, description: "Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy."}
+        function_callables: {type: object, additionalProperties: {type: string}, description: "Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy."}
+        function_input_schema: {type: object, additionalProperties: true, description: "JSON Schema an SDK functions client's calls to this function are checked against; a call whose body does not match is refused with 422 function_input_invalid. Set from the function's input in gregale.yaml by CLI deploys."}
         min_instances: {type: integer}
         status:
           type: string
@@ -26087,7 +27476,7 @@ components:
           type: boolean
           example: false
         # Issue #470 / ADR-055: per-app two-tier snapshot flag +
-        # thresholds. True on Pro/Scale by default; Free/Hobby
+        # thresholds. Off by default (opt-in on Pro/Scale); Free/Hobby
         # always false (the only legal state on those tiers —
         # apid rejects PATCH-true with 403
         # plan_warm_snapshot_not_allowed). Customer PATCH may
@@ -26095,7 +27484,7 @@ components:
         # out-of-range threshold values are rejected with 422
         # invalid_warm_snapshot_min_*.
         warm_snapshot_enabled:
-          description: "Per-app two-tier snapshot flag. True on Pro/Scale by default; Free/Hobby always false."
+          description: "Per-app two-tier snapshot flag. False by default; Pro/Scale may opt in, Free/Hobby always false."
           type: boolean
           example: true
         warm_snapshot_min_requests:
@@ -26613,6 +28002,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -26905,7 +28296,7 @@ components:
         metrics: {type: string}
         configuration: {type: string}
     DevPatchPreview:
-      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have been applied as a live source patch to the deployment that was live at upload time (phase 1). It is a measurement only; the normal developer build always runs.
+      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be applied as a live source patch to the deployment that was live at upload time and, when it was published as one, whether its build waits for the developer to stop saving.
       type: object
       required:
         - eligible
@@ -26944,6 +28335,10 @@ components:
           format: int64
           minimum: 1
           description: Set when this sync published a live patch; poll getDevPatchStatus with it.
+        build_deferred_until:
+          type: string
+          format: date-time
+          description: Set when this sync's build waits behind its live patch. The build starts at this time unless a later sync replaces it first; a patch that fails to apply starts it at once.
     AppDeploySettingsCondition:
       type: object
       additionalProperties: false
@@ -26964,7 +28359,7 @@ components:
           minProperties: 1
           maxProperties: 13
           propertyNames:
-            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, scaling_policy, retry_policy]
+            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, warmup, scaling_policy, retry_policy]
           additionalProperties: {}
           description: Observed values from the app read; null represents an unset optional policy. Must cover every mutated setting.
     UpdateAppRequest:
@@ -27039,6 +28434,9 @@ components:
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
           description: "Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it."
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
+          description: "Set the path a deployment's first init snapshot is primed with. Omit to preserve; an empty path clears it."
         pause:
           type: string
           enum: [between_requests, when_idle, never, ""]
@@ -27078,6 +28476,14 @@ components:
           minimum: 0
           maximum: 80
           description: "Changes how many requests one Node or Python function worker serves at once. 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."
+        function_callables:
+          type: [object, "null"]
+          additionalProperties: {type: string}
+          description: "Replaces the names a function's typed client may call and their app slugs; {} clears them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only."
+        function_input_schema:
+          type: [object, "null"]
+          additionalProperties: true
+          description: "Replaces the JSON Schema an SDK functions client's calls to this function are checked against; {} clears it. Takes effect on the next deploy. Function apps only."
         request_rate_limit_rps:
           type: [integer, "null"]
           minimum: 0
@@ -27633,6 +29039,26 @@ components:
           type: string
           format: email
           description: "The account's own email address (kind email)."
+    UpdateNotificationChannelRequest:
+      description: "Renames a channel or replaces its destination; set name, the channel's own destination, or both."
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'New name, unique per account.'
+        slack_webhook_url:
+          type: string
+          format: uri
+          description: 'New Slack incoming webhook (kind slack).'
+        pagerduty_routing_key:
+          type: string
+          pattern: '^[A-Za-z0-9]{32}$'
+          description: 'New Events API v2 integration key (kind pagerduty).'
+        pagerduty_region:
+          type: string
+          enum: [us, eu]
+          description: 'PagerDuty service region of the new key (kind pagerduty); default us.'
     NotificationChannelResponse:
       description: 'One alert notification channel.'
       type: object
@@ -27671,7 +29097,24 @@ components:
           type: string
           enum: [gauge, counter]
           description: "gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling."
+        series:
+          description: "A labelled metric's series. value is then their aggregate: the sum for counters, the maximum of fresh series for gauges. Absent for an unlabelled metric."
+          type: array
+          items: {$ref: '#/components/schemas/CustomMetricSeriesValue'}
       example: {name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false, kind: gauge}
+    CustomMetricSeriesValue:
+      description: "One labelled series of a custom metric (from OTLP data point attributes)."
+      type: object
+      required: [key, labels, value, observed_at, stale]
+      properties:
+        key: {type: string, description: "Canonical k=v,... form, keys sorted; pass it as labels to the history endpoint.", example: "queue=emails"}
+        labels:
+          type: object
+          additionalProperties: {type: string}
+          example: {queue: emails}
+        value: {type: number}
+        observed_at: {type: string, format: date-time}
+        stale: {type: boolean}
     CustomMetricListResponse:
       description: "The app's gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."
       type: object
@@ -27685,9 +29128,13 @@ components:
           type: integer
           example: 300
         max_metrics:
-          description: "Maximum distinct metric names this app may hold."
+          description: "Maximum distinct metric names this app may hold (per plan)."
           type: integer
-          example: 5
+          example: 50
+        max_series:
+          description: "Maximum labelled series this app may hold across its metrics (per plan); each metric also holds at most 50."
+          type: integer
+          example: 500
     ScalingTarget:
       description: "(metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed, and every member of it is backed by a live source and read by a scheduler trigger. `p99_latency_ms` was removed: it validated for releases with no latency source behind it, and is now rejected with 422 pointing at concurrent_requests. The unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path."
       type: object
@@ -27703,6 +29150,11 @@ components:
           type: string
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           example: orders_pending
+        labels:
+          description: "custom targets only: watch the one labelled gauge series of the metric with exactly these labels instead of its aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$."
+          type: object
+          maxProperties: 3
+          additionalProperties: {type: string, maxLength: 128}
         value:
           description: "Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100."
           type: number
@@ -27722,6 +29174,10 @@ components:
           maximum: 2000
           default: 500
           description: "Callback timeout in milliseconds; 0 uses the 500 ms default."
+        identity:
+          type: string
+          enum: [reload]
+          description: "reload lets an environment branch wake from the parent deployment's credential-free capture instead of a cold boot; the callback then re-reads config and reconnects under the branch's identity. Omit to cold-boot branches."
     BeforeCheckpointHook:
       description: "Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables warm snapshots; snapshot reuse skips the callback."
       type: object
@@ -27736,6 +29192,14 @@ components:
           maximum: 2000
           default: 500
           description: "Deadline for checkpoint response in milliseconds; 0 uses the 500 ms default."
+    WarmupHook:
+      description: "Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails a deploy."
+      type: object
+      properties:
+        path:
+          type: string
+          description: "Absolute path on the app's HTTP port. Should exercise the request code a wake needs warm and be safe to call repeatedly."
+          example: "/internal/warmup"
     AppManifest:
       description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag. The optional `env_secrets` field carries sealed-secret refs (\"secret:NAME\" strings) resolved by the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."
       type: object
@@ -27816,6 +29280,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -29072,6 +30538,14 @@ components:
         expected_serving_deployment_id:
           type: string
           description: "Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."
+        expected_traffic:
+          type: object
+          description: "Optional split the change was planned from: every live release in the deployment's environment with positive traffic, keyed by deployment id, mapped to its percent (1-100, summing to 100, at most 100 releases). If the split differs at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic. Cannot be combined with expected_serving_deployment_id or expected_review."
+          additionalProperties:
+            type: integer
+            minimum: 1
+            maximum: 100
+        expected_mcp_readiness: {$ref: '#/components/schemas/MCPReadinessExpectation'}
         expected_mcp_access_policy:
           type: object
           description: "Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership."
@@ -30461,7 +31935,7 @@ components:
     WorkflowRecoveryPollingWebhookPayload:
       type: object
       additionalProperties: false
-      description: Historical automation.recovery_polling_status event. Three consecutive deterministic polling failures trigger failed; unchanged code and policy version stay quiet. Recovered proves a successful poll, independently of workflow outcome. Recipients and payload are frozen at capture; use event_id for deduplication.
+      description: Historical stored_workflow.recovery_polling_status event. Three consecutive deterministic polling failures trigger failed; unchanged code and policy version stay quiet. Recovered proves a successful poll, independently of workflow outcome. Recipients and payload are frozen at capture; use event_id for deduplication.
       required: [event_id, app_id, app, scope, policy_version, sequence, state, code, attempts, observed_at, inspection_url, monitoring_only]
       properties:
         event_id: {type: string, format: uuid}
@@ -30539,7 +32013,7 @@ components:
         receiver_webhook_ids: {type: array, items: {type: string, format: uuid}}
     WorkflowRecoveryQueueBlockedWebhookPayload:
       type: object
-      description: Historical automation.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or child evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery identifies initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than successful execution. Capturing this event does not finalize a child, release its execution slot, or authorize another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
+      description: Historical stored_workflow.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or child evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery identifies initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than successful execution. Capturing this event does not finalize a child, release its execution slot, or authorize another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
       required: [event_id, app_id, app, review_id, action_id, policy_version, position, status, reason, observed_at, queue_url, review_status_url]
       properties:
         evidence_kind: {type: string, enum: [parent, child, initial]}
@@ -30598,7 +32072,7 @@ components:
         actions: {type: array, items: {$ref: '#/components/schemas/WorkflowRecoveryAutomaticAction'}}
     WorkflowRecoveryPolicyPausedWebhookPayload:
       type: object
-      description: Historical automation.recovery_policy_paused event emitted once per policy version after repeated proven automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
+      description: Historical stored_workflow.recovery_policy_paused event emitted once per policy version after repeated proven automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
       required: [event_id, app_id, app, policy_version, paused_at, consecutive_failures, reason, policy_url]
       properties:
         event_id: {type: string, format: uuid}
@@ -30653,7 +32127,7 @@ components:
         recovery_notification: {$ref: '#/components/schemas/WorkflowRecoveryHealthNotification'}
     WorkflowRecoveryHealthWebhookPayload:
       type: object
-      description: Historical automation.recovery_health_alert or automation.recovery_health_recovered transition with stable event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
+      description: Historical stored_workflow.recovery_health_alert or stored_workflow.recovery_health_recovered transition with stable event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
       required: [event_id, episode_id, app_id, app, policy_version, status, reason, opened_at, observed_at, pending, outstanding, queue_truncated, health_url]
       properties:
         event_id: {type: string, format: uuid}
@@ -31154,7 +32628,7 @@ components:
         receiver_webhook_ids: {type: array, items: {type: string, format: uuid}}
     WorkflowRecoveryReviewReadyWebhookPayload:
       type: object
-      description: Payload of automation.recovery_review_ready. Carries frozen prepared targets and review commands; approval and application remain explicit. Retries reuse the event identifier and delivery ledger.
+      description: Payload of stored_workflow.recovery_review_ready. Carries frozen prepared targets and review commands; approval and application remain explicit. Retries reuse the event identifier and delivery ledger.
       required: [event_id, review_id, app_id, app, policy_version, prepared_at, observed_at, targets, review_url, status_url, review_command, export_command]
       properties:
         initial_failure_id: {type: string, format: uuid, description: Captured initial failure for parentless reviews. Parent-job reviews carry job_id instead.}
@@ -31183,7 +32657,7 @@ components:
         result: {$ref: '#/components/schemas/WorkflowRecoveryReviewStatus'}
     WorkflowRecoveryReviewFinishedWebhookPayload:
       type: object
-      description: Payload of automation.recovery_review_finished. All actions have proven final outcomes for their frozen generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
+      description: Payload of stored_workflow.recovery_review_finished. All actions have proven final outcomes for their frozen generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
       required: [event_id, review_id, app_id, app, job_id, policy_version, captured_at, result, review_url, status_url, status_command]
       properties:
         event_id: {type: string, format: uuid}
@@ -32957,6 +34431,8 @@ components:
         skip_if_running: {type: boolean, description: "When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active."}
         created_at: {type: string, format: date-time}
         last_fired_at: {type: [string, "null"], format: date-time}
+        environment: {type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging"}
+        clone_paused: {type: boolean, description: "A full environment clone copied this cron disabled although the source ran it; resuming the environment's automation enables it."}
         schedule_policy: {$ref: '#/components/schemas/SchedulePolicy'}
         failure_rules: {$ref: '#/components/schemas/FailureRules'}
     CronRun:
@@ -33071,6 +34547,7 @@ components:
         skip_if_running: {type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running."}
         retry_max: {type: integer, minimum: 0, maximum: 5, description: "Additional command attempts after failure or timeout; command crons only."}
         retry_backoff_seconds: {type: integer, minimum: 1, maximum: 3600, description: "Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only."}
+        environment: {type: string, description: "Project environment the cron runs in; omitted or production is the app's production environment. Immutable once created.", example: "staging"}
         schedule_policy: {$ref: '#/components/schemas/SchedulePolicy'}
         failure_rules: {$ref: '#/components/schemas/FailureRules'}
     UpdateCronRequest:
@@ -34519,6 +35996,9 @@ components:
         public_url:
           type: string
           description: Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when wildcard app URLs are disabled.
+        public_auth_mode:
+          type: string
+          description: "Public URL auth the app will have after apply (bearer, basic, ...), from the existing app or the plan default for a new app. Omitted when the URL accepts anonymous requests."
         app_slug:
           type: string
           description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name."
@@ -34588,6 +36068,15 @@ components:
         preview_service_calls_policy:
           $ref: '#/components/schemas/PreviewServiceCallsPolicy'
           description: "Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`."
+        app_protocol:
+          type: string
+          description: "Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets none."
+        streaming:
+          type: boolean
+          description: "Compose `x-gregale-streaming`. Omitted when the file sets none."
+        wake_ahead:
+          type: boolean
+          description: "Compose `x-gregale-wake-ahead`. Omitted when the file sets none."
         allowed_service_callers:
           type: array
           items: {type: string}
@@ -34622,6 +36111,10 @@ components:
             type: string
             enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
           description: "For an unset_env_keys name with a Compose value, why that value is not imported. Never values."
+        source_hosts:
+          type: array
+          items: {$ref: '#/components/schemas/PlanSourceHost'}
+          description: "String literals in the workload's source that dial another service by its Compose name, which does not resolve on Gregale. At most a few per workload."
         imported_env_keys:
           type: array
           items: {type: string}
@@ -34657,7 +36150,7 @@ components:
         detector:
           type: string
           description: "closed vocabulary — the detector that won identity for this workload"
-          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
           example: compose
         marker:
           type: string
@@ -34680,7 +36173,7 @@ components:
             get its own workload?" — it merged into the compose `web`.
           items:
             type: string
-            enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+            enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
           example: [procfile]
     PlanDetectionWarning:
       description: |
@@ -34695,7 +36188,7 @@ components:
           description: "Workload affected by the decision; omitted for source-wide warnings."
         detector:
           type: string
-          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
         marker:
           type: string
           description: "Concrete source marker associated with the detector decision."
@@ -34824,6 +36317,24 @@ components:
         limit: {type: integer, format: int64}
         observed: {type: integer, format: int64}
         docs_url: {type: string}
+    PlanSourceHost:
+      type: object
+      description: "One place source code dials a service by its Compose name."
+      required: [host, file, line]
+      properties:
+        host: {type: string, description: "The Compose service name the code uses as a host."}
+        file: {type: string, description: "Repository-relative path of the file."}
+        line: {type: integer, description: "1-based line number."}
+    FeatureHint:
+      description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
+      type: object
+      required: [id, applied]
+      properties:
+        id: {type: string, description: "Stable hint ID, such as health-default-path or public-needs-api-key"}
+        workloads: {type: array, items: {type: string}, description: "Workloads the hint is about"}
+        applied: {type: string, description: "What Gregale will do with this source"}
+        change: {type: string, description: "How to change it"}
+        commands: {type: array, items: {type: string}, description: "Exact gregale commands; <placeholders> need a value"}
     PlanResponse:
       description: "Dry-run scan response."
       type: object
@@ -34849,7 +36360,7 @@ components:
         environment_config_hash: {type: string, pattern: '^[a-f0-9]{64}$', description: "Hash of the non-secret environment configuration bound into this plan"}
         scan_source:
           type: string
-          enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown]
+          enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown, functions]
         tier: {type: string}
         workloads:
           type: array
@@ -34867,6 +36378,10 @@ components:
         warnings:
           type: array
           items: {type: string}
+        feature_hints:
+          type: array
+          description: "Gregale behaviors and features that apply to the scanned source, with the commands that change them."
+          items: {$ref: '#/components/schemas/FeatureHint'}
         detection_warnings:
           type: array
           description: "Structured skipped/merged detector decisions available to explain-mode clients."
@@ -35477,6 +36992,7 @@ components:
             - route_insights_detected
             - route_monitor_incidents
             - route_health_holds
+            - ai_budget_alerts
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -35493,6 +37009,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'The pushed custom metric a custom_metric rule watches. Present only when metric is custom_metric.'
           example: orders_pending
+        custom_metric_labels:
+          type: object
+          additionalProperties: {type: string, maxLength: 128}
+          maxProperties: 3
+          description: 'The labelled series a custom_metric rule watches: the series with exactly these labels. Absent when the rule watches the aggregate.'
         log_query:
           type: string
           description: 'The canonical log search filters a log_search_matches rule counts. Present only when metric is log_search_matches.'
@@ -35577,7 +37098,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -35593,6 +37114,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h.'
           example: orders_pending
+        custom_metric_labels:
+          type: object
+          additionalProperties: {type: string, maxLength: 128}
+          maxProperties: 3
+          description: 'custom_metric rules only: watch the one labelled series with exactly these labels instead of the aggregate (counters summed, gauges max across series). Keys match ^[a-z_][a-z0-9_]{0,62}$.'
         log_query:
           type: string
           maxLength: 2048
@@ -35664,7 +37190,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts]
         comparison: {type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline]}
         threshold: {type: number, format: double}
         window_spec: {type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d']}
@@ -36392,6 +37918,25 @@ components:
             Expand ${name} request values in `value` (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>;
             $$ is a literal $). Control characters are dropped and each
             value is capped at 1 KiB. Not allowed with action=remove.
+        secret:
+          type: boolean
+          description: |
+            Seal `value` (request headers only): it is
+            stored encrypted to the edge seal domain and never returned.
+            Authorization, Proxy-Authorization, Cookie and names containing
+            token, secret, password, api-key, apikey, signature or credential
+            are sealed without it. Not allowed with template or action=remove.
+        secret_id:
+          type: string
+          description: |
+            The sealed value of a secret op, returned in place of `value`.
+            Send it back with no `value` to keep that value.
+        redacted:
+          type: boolean
+          description: |
+            Set in responses on a credential-named value stored before
+            sealing, which is left out. Send the op back with no `value` to
+            seal the stored value.
     EdgeRuleHeadersAction:
       description: 'Mutates request + response headers. The gateway enforces a hard-coded blacklist (Host, Content-Length, Transfer-Encoding, Connection, x-faas-*).'
       type: object
@@ -37563,6 +39108,7 @@ components:
         org_id: {type: string, format: uuid, description: The organization the agent acts in.}
         member: {type: string, description: "Email of the member who connected the agent, in an organization's list."}
         projects: {type: array, items: {type: string}, description: "Slugs of the projects the agent is limited to; absent when it reaches every project."}
+        approvals: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action the agent must have a person approve, including its organization's floor."}
       example: {id: "3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19", kind: hosted_mcp, client_name: Claude, client_site: claude.ai, label: mcp-login, prefix: "fp_live_ab12cd34", scopes: ["apps:read"], created_at: "2026-10-30T11:25:00Z", last_used_at: "2026-10-30T12:05:00Z", expires_at: "2026-11-06T12:05:00Z"}
     AgentConnectionsResponse:
       description: The agents connected to the account, newest first.
@@ -37586,6 +39132,76 @@ components:
       properties:
         client_name: {type: string, minLength: 1, maxLength: 80, description: "Printable client name, without control characters or surrounding spaces."}
         client_site: {type: string, maxLength: 253, description: Lower-case host name the client was verified at.}
+    AgentBudgetResponse:
+      description: "An agent connection's monthly budget for always-on capacity, and what it committed this month."
+      type: object
+      required: [source, spent_cents, month]
+      properties:
+        monthly_cents: {type: integer, format: int64, description: "The budget that applies, in cents a month; absent when unlimited."}
+        source: {type: string, enum: [key, plan_default, org_ceiling, unlimited], description: "Where the budget comes from."}
+        key_monthly_cents: {type: integer, format: int64, description: "The budget set for this agent, when one was."}
+        key_unlimited: {type: boolean, description: "The agent was set to have no budget of its own."}
+        org_max_cents: {type: integer, format: int64, description: "The organization's ceiling on agents' budgets, when it set one."}
+        spent_cents: {type: integer, format: int64, minimum: 0, description: "Always-on capacity the agent added this UTC month, priced at the overage rate and rounded up to the cent."}
+        month: {type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The UTC month spend counts in."}
+    AgentUndoRequest:
+      description: "Chooses an agent's changes to undo: those since a time (default the last 24 hours), or the activity entries named."
+      type: object
+      additionalProperties: false
+      properties:
+        since: {type: string, format: date-time, description: "Undo changes made at or after this time; at most 7 days ago."}
+        entries:
+          type: array
+          maxItems: 500
+          description: "Activity entry ids to undo; when given, only they are undone."
+          items: {type: string}
+        force: {type: boolean, description: "Also undo changes someone changed again since the agent did."}
+        plan_digest: {type: string, description: "On apply, the plan_digest of the reviewed plan."}
+    AgentUndoItem:
+      description: "One agent change in an undo plan or result."
+      type: object
+      required: [activity_id, method, path, kind, summary, created_at, status]
+      properties:
+        activity_id: {type: string, description: "The activity entry of the change."}
+        method: {type: string, description: "The HTTP method of the agent's request."}
+        path: {type: string, description: "The path of the agent's request."}
+        kind: {type: string, enum: [settings, deploy, create, delete, other], description: "What kind of change it was."}
+        summary: {type: string, description: "What the agent changed."}
+        created_at: {type: string, format: date-time, description: "When the agent made the change."}
+        status: {type: string, enum: [undoable, not_undoable, changed_since, undone], description: "What undoing it will do, or did."}
+        reason: {type: string, description: "Why it cannot be undone, or why it was left."}
+        result: {type: string, enum: [undone, changed_since, failed, skipped], description: "On apply, what happened to it."}
+        error_code: {type: string, description: "On a failed apply, the code of the refusal."}
+        error: {type: string, description: "On a failed apply, why it was refused."}
+    AgentUndoPlan:
+      description: "An agent's changes, newest first, and what undoing them will do."
+      type: object
+      required: [since, items, undoable, plan_digest]
+      properties:
+        since: {type: string, format: date-time, description: "The oldest change time the plan covers."}
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/AgentUndoItem'}
+        undoable: {type: integer, minimum: 0, description: "How many changes applying the plan will undo."}
+        plan_digest: {type: string, description: "Binds an apply to this plan."}
+    AgentUndoResult:
+      description: "What an applied undo did to each change, newest first."
+      type: object
+      required: [items, undone, failed]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/AgentUndoItem'}
+        undone: {type: integer, minimum: 0, description: "Changes undone."}
+        failed: {type: integer, minimum: 0, description: "Changes whose undo was refused."}
+    AgentBudgetRequest:
+      description: "Sets an agent connection's budget: exactly one of monthly_cents, unlimited or default."
+      type: object
+      additionalProperties: false
+      properties:
+        monthly_cents: {type: integer, format: int64, minimum: 0, maximum: 100000000, description: "A monthly budget in cents."}
+        unlimited: {type: boolean, description: "No budget of its own; the organization's ceiling still applies."}
+        default: {type: boolean, description: "Return to the plan's default budget."}
     OrgAgentPolicyRequest:
       description: Whether agents may act in the organization, and the capabilities they may get.
       type: object
@@ -37597,6 +39213,22 @@ components:
           type: array
           description: Capabilities agents may get beyond inspection; empty for read-only.
           items: {type: string, enum: ['deploy:write', 'secrets:request', 'storage:manage', 'postgres:manage']}
+        approval_categories:
+          type: array
+          description: Kinds of action every agent acting in the organization must have a person approve; omit to keep the current ones.
+          items: {type: string, enum: [delete, production, credentials, billing]}
+        approval_channels:
+          type: array
+          maxItems: 5
+          description: Names of your own notification channels that get approval requests of agents acting in the organization; omit to keep them, send an empty list to remove them.
+          items: {type: string}
+        max_agent_budget_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 100000000
+          description: "Ceiling, in cents a month, on the budget of every agent acting in the organization; omit to keep the current ceiling."
+        clear_max_agent_budget: {type: boolean, description: "Remove the ceiling on agents' budgets."}
     OrgAgentPolicyResponse:
       description: An organization's agent policy.
       type: object
@@ -37607,8 +39239,104 @@ components:
           type: array
           description: The capabilities agents may carry beyond inspection.
           items: {type: string}
+        approval_categories:
+          type: array
+          description: Kinds of action every agent acting in the organization must have a person approve.
+          items: {type: string}
+        approval_channels:
+          type: array
+          description: Your notification channels that get this organization's agents' approval requests.
+          items: {type: string}
+        max_agent_budget_cents: {type: integer, format: int64, description: "The ceiling on every agent's monthly budget in cents, when the organization set one."}
         updated_at: {type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one.}
         revoked: {type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them.}
+    AgentApprovalPendingInfo:
+      description: "The approval request behind an approval_required, approval_denied or approval_expired problem. On approval_required a person opens review_url to decide, then the agent repeats the same request once; on the other two the agent should stop repeating it."
+      type: object
+      required: [id, category, review_url, expires_at]
+      properties:
+        id: {type: string, format: uuid, description: The id of the approval request.}
+        category: {type: string, enum: [delete, production, credentials, billing, budget, undo], description: "The kind of action that needs approval; budget when the change would take the agent past its monthly budget, undo when the agent applies an undo of its own changes."}
+        review_url: {type: string, format: uri, description: "The page where a signed-in member who may decide approves or denies the request."}
+        expires_at: {type: string, format: date-time, description: When the request and any approval of it expire.}
+        status: {type: string, enum: [denied, expired], description: "Set on approval_denied and approval_expired: what became of the request."}
+        note: {type: string, maxLength: 280, description: "The person's reason for denying the request, when they gave one."}
+    AgentApprovalChannelsRequest:
+      description: The notification channels to send the account's agents' approval requests to.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          maxItems: 5
+          description: Names of your notification channels; an empty list leaves email only.
+          items: {type: string}
+    AgentApprovalChannelsResponse:
+      description: The notification channels that get the account's agents' approval requests.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          description: Channel names, in alphabetical order.
+          items: {type: string}
+    AgentActivityResponse:
+      type: object
+      description: One page of an agent's write requests, newest first.
+      required: [activity]
+      properties:
+        activity:
+          type: array
+          items: {$ref: '#/components/schemas/AgentActivityEntry'}
+        next_before:
+          type: string
+          description: Pass as `before` to read the next older page; absent on the last page.
+    AgentActivityEntry:
+      type: object
+      description: One write request an agent key made.
+      required: [id, method, path, status, created_at]
+      properties:
+        id: {type: string}
+        method: {type: string, enum: [POST, PUT, PATCH, DELETE]}
+        path:
+          type: string
+          description: The request path, without its query string.
+        status: {type: integer, description: The HTTP status the request was answered with.}
+        approval_id:
+          type: string
+          description: The approval request the write went through on, when it needed one.
+        reason:
+          type: string
+          maxLength: 280
+          description: "What the agent said this write was for (its Gregale-Agent-Reason header), if it said. Untrusted agent text."
+        created_at: {type: string, format: date-time}
+    AgentApprovalResponse:
+      description: "One request of an agent connection that needed a person's approval."
+      type: object
+      required: [id, category, method, path, body_bound, status, created_at, expires_at]
+      properties:
+        id: {type: string, format: uuid, description: The request's id.}
+        category: {type: string, enum: [delete, production, credentials, billing, budget, undo], description: "The kind of action; budget for a change past the agent's monthly budget, undo for an agent undoing its own changes."}
+        method: {type: string, description: The HTTP method of the request the approval allows.}
+        path: {type: string, description: The path and query of the request the approval allows.}
+        body_bound: {type: boolean, description: "Whether the approval is tied to the request body; large and multipart bodies are not."}
+        status: {type: string, enum: [pending, approved, denied, consumed, expired], description: "`consumed` once the approved request was made."}
+        review_url: {type: string, format: uri, description: The review page, while the request is pending.: null}
+        agent: {type: string, description: "The connection's client name or key label."}
+        connection_id: {type: string, description: "The id of the agent connection that asked, as GET /v1/agent-connections lists it."}
+        created_at: {type: string, format: date-time, description: When the agent first made the request.}
+        expires_at: {type: string, format: date-time, description: After this time the request can no longer be approved or used.}
+        decided_at: {type: string, format: date-time, description: When a person approved or denied it.}
+        note: {type: string, maxLength: 280, description: "Why the person denied this request, if they said; absent otherwise."}
+        reason: {type: string, maxLength: 280, description: "What the agent said the request is for (Gregale-Agent-Reason on the request that opened it), if it said. Untrusted agent text: it never changes what is approved."}
+    AgentApprovalsResponse:
+      description: "Approval requests, newest first: an agent's own, or those pending that the caller may decide."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/AgentApprovalResponse'}
     KeyOrg:
       description: The shared organization an API key acts in.
       type: object
@@ -37629,7 +39357,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
+          description: "Closed permission set attached to the key. github:manage controls customer GitHub connection stored workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: {type: [string, "null"], format: date-time}
         created_at: {type: string, format: date-time, example: "2026-07-25T13:25:00Z"}
@@ -37646,6 +39374,7 @@ components:
           type: [string, "null"]
           description: PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again.
         projects: {type: array, items: {type: string}, description: "Project slugs the key was limited to, on the create response of a limited agent key."}
+        approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action the agent key must have a person approve, on the create response when the request chose them."}
       example: {id: "0123456789abcdef0123456789abcdef", org_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c", prefix: "fp_live_ab12cd34", label: "ci-deploy", scopes: ['apps:read', 'deploy:write'], created_at: "2026-08-02T11:25:00Z", expires_at: "2027-08-02T11:25:00Z", status: "active", last_used_at: "2026-07-25T13:25:00Z"}
     DeployTokenResponse:
       description: "Metadata for a per-app deploy token. The fp_deploy_ plaintext is returned only on create and rotate responses."
@@ -37710,9 +39439,15 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
+          description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project."}
+        approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field."}
+    RotateKeyRequest:
+      description: "Optional body of POST /v1/keys/{id}/rotate. `grace_window_days` overrides, for this rotation only, how many days the old key keeps working; `0` revokes it at once (use it for a leaked key). Omitted uses the account's grace window or the plan default (7 days)."
+      type: object
+      properties:
+        grace_window_days: {type: integer, minimum: 0, maximum: 30, description: "Days the old key keeps working after this rotation. `0` revokes it at once."}
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
       type: object
@@ -37735,9 +39470,10 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
+          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."}
+        approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action the organization's agent key must have a person approve; the organization's floor applies on top. Omit for every kind, empty for none."}
     ListOrgAPIKeysResponse:
       description: "GET /v1/orgs/{slug}/keys body. Returns every key minted against the org (active + grace + revoked). Newest first; matches the legacy `GET /v1/keys` ordering."
       type: object
@@ -37765,7 +39501,7 @@ components:
       description: "Body of PATCH /v1/account/keys/grace_window_days. `days` is the per-account override for the rotation grace window. `days=0` is atomic rotation; `days=null` (or omitted) clears the override and falls back to the plan default (api.DefaultAPIKeyGraceWindowDays = 7)."
       type: object
       properties:
-        days: {type: [integer, "null"], minimum: 0, description: "Per-account override in days. 0 = atomic, null = use plan default."}
+        days: {type: [integer, "null"], minimum: 0, maximum: 30, description: "Per-account override in days, at most 30 (`api.APIKeyGraceWindowMaxDays`). 0 = atomic, null = use plan default. Changing it needs a recent step-up when the account uses two-factor authentication."}
     GraceWindowResponse:
       description: "Body of GET /v1/account/keys/grace_window_days. `days` is the customer's override (null = no override); `plan_default` is the platform default the rotation handler uses when the row is null."
       type: object
@@ -38479,6 +40215,7 @@ components:
           type: array
           items: {type: string, format: uuid}
           description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        keeps_release: {type: boolean, description: "True for a restore that moves the app to the copy without changing its code; the target deployment is the release that served when it was requested."}
         source_database_id: {type: string, format: uuid, description: "The database the app leaves. It keeps every write."}
         source_database_name: {type: string}
         target_database_id: {type: string, format: uuid, description: "The restored copy, once its restore has started."}
@@ -38498,6 +40235,16 @@ components:
         phase_started_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    CreateDatabaseSwitchRequest:
+      description: "Restore a managed database the app binds and move the app to the copy, keeping its code."
+      type: object
+      additionalProperties: false
+      required: [database_id, name, point_in_time]
+      properties:
+        database_id: {type: string, format: uuid, description: "The managed database the app's bindings point at."}
+        name: {type: string, minLength: 1, maxLength: 63, description: "Name of the restored copy; it becomes the app's database."}
+        point_in_time: {type: string, format: date-time, description: "A time inside the database's restore range. Writes after it stay only in the source database."}
+        scope: {type: string, description: "The environment whose bindings move; empty is the default scope."}
     DatabaseSwitchDrain:
       description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
       type: object
@@ -38507,6 +40254,14 @@ components:
         parked: {type: integer, minimum: 0}
         pending: {type: integer, minimum: 0}
         blocked: {type: integer, minimum: 0}
+    DatabaseSwitchList:
+      description: "A page of an app's database switches, newest first."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/DatabaseSwitch'}
     ScheduledRelease:
       description: "A release built ahead of time that starts its rollout at release_at."
       type: object
@@ -38996,7 +40751,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_all_failed, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string
@@ -39807,7 +41562,7 @@ components:
         rounding). `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)` — 0 when the customer is under
         their included band, the billable overage above the band
-        otherwise. The Stripe pusher bills overage at $0.01/GB-h
+        otherwise. The Stripe pusher bills overage at $0.05/GB-h
         (CLAUDE.md integer-cents-only rule).
       type: object
       required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, net_tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
@@ -39869,7 +41624,7 @@ components:
       required: [route, method, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
       properties:
         route: {type: string, description: "Route template, not an expanded URL."}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         requests: {type: integer, format: int64, minimum: 0}
         error_requests: {type: integer, format: int64, minimum: 0}
         error_rate_pct: {type: number, format: double, minimum: 0, maximum: 100}
@@ -40012,7 +41767,7 @@ components:
       required: [value, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
       properties:
         value: {type: string}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         requests: {type: integer, format: int64, minimum: 0}
         error_requests: {type: integer, format: int64, minimum: 0}
         error_rate_pct: {type: number, format: double, minimum: 0, maximum: 100}
@@ -40042,7 +41797,7 @@ components:
       required: [route, method, requests, identified_requests, anonymous_requests, unresolved_identity_requests, consumer_count, platform_tenant_count, last_observed_at, customers, customers_truncated, other_customer_requests]
       properties:
         route: {type: string, description: "Exact recorded route label; may include its HTTP method prefix."}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "HTTP method for this route observation."}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER], description: "HTTP method for this route observation."}
         requests: {type: integer, format: int64, minimum: 1, description: "All weighted retained requests for this route and deployment."}
         identified_requests: {type: integer, format: int64, minimum: 0, description: "Requests with at least one resolvable account-owned consumer or tenant identity."}
         anonymous_requests: {type: integer, format: int64, minimum: 0, description: "Requests with neither consumer nor tenant identity recorded."}
@@ -40085,6 +41840,10 @@ components:
         `[from, until)`, and the route list is capped at 50 rows.
       required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, group_by, groups, groups_limit, groups_truncated, routes, routes_limit, routes_truncated, dependencies_truncated, as_of]
       properties:
+        omitted:
+          type: array
+          description: "Optional enrichment sections unavailable within their query budgets; traffic totals remain available."
+          items: {type: string}
         slug: {type: string}
         since: {type: string, description: "Effective lookback duration after retention clamping."}
         from: {type: string, format: date-time, description: "Inclusive lower bound of the analytics window."}
@@ -40123,6 +41882,13 @@ components:
           type: array
           description: "Why requests in this window may be missing from the totals. Empty or absent when the window is complete."
           items: {$ref: '#/components/schemas/RequestAnalyticsTelemetryGap'}
+        sampled_measures:
+          type: string
+          enum: [included, omitted]
+          description: |
+            Whether the detail only sampled raw rows carry is in this response: group CPU and sampled latency,
+            `deployment_costs`, and per-route deployment splits. `omitted` when reading it failed or ran past its
+            time budget; request counts, error rates and percentiles never depend on it.
     RequestAnalyticsTelemetryGap:
       type: string
       description: |
@@ -40130,7 +41896,7 @@ components:
         (`telemetry_coverage_missing`, `telemetry_coverage_stale`), telemetry switched off or sampled
         (`telemetry_disabled`, `telemetry_sampled`), requests still waiting to be delivered
         (`telemetry_ingestion_pending`), or requests lost or a gateway restarted during the window (`telemetry_window_incomplete`).
-      enum: [telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
+      enum: [telemetry_coverage_unknown, telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
     RequestAnalyticsTimeseriesPoint:
       type: object
       description: "One UTC-aligned hourly request analytics bucket."
@@ -40150,7 +41916,7 @@ components:
       required: [value, points]
       properties:
         value: {type: string}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         points:
           type: array
           items: {$ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint'}
@@ -40164,7 +41930,7 @@ components:
       properties:
         slug: {type: string}
         route: {type: string, maxLength: 256, description: "Exact bounded route-label filter when a route-level series was requested."}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "Exact method filter when a route-level series was requested."}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER], description: "Exact method filter when a route-level series was requested."}
         since: {type: string, description: "Effective series lookback after retention clamping."}
         from: {type: string, format: date-time, description: "First instant represented by the hourly series."}
         until: {type: string, format: date-time, description: "Exclusive end instant represented by the hourly series."}
@@ -40231,7 +41997,7 @@ components:
         used_gb_hours: {type: number, example: 1.234}
         included_gb_hours: {type: integer, format: int64}
         overage_gb_hours: {type: number}
-        overage_cents: {type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.'}
+        overage_cents: {type: integer, format: int64, description: 'Integer cents. Includes compute at $0.05/GB-h and configured live egress overage; shadow egress is excluded.'}
         quiet_paused_gb_hours:
           type: number
           description: 'GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero.'
@@ -40902,6 +42668,71 @@ components:
           type: array
           description: "Active sessions, newest first. Revoked rows are not returned."
           items: {$ref: '#/components/schemas/SessionInfo'}
+    AccountProfileUpdate:
+      description: "Body for `PATCH /v1/account`."
+      type: object
+      required: [display_name]
+      properties:
+        display_name: {type: string, maxLength: 80, description: "Empty clears the display name."}
+    AccountEmailChangeRequest:
+      description: "Body for `POST /v1/account/email`."
+      type: object
+      required: [email]
+      properties:
+        email: {type: string, format: email, maxLength: 254}
+        current_password: {type: string, description: "Required when the account has a password and no two-factor authentication."}
+        csrf_token: {type: string}
+    EmailVerificationResendResponse:
+      description: "Result of `POST /v1/auth/verify-email/resend`."
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [sent, already_verified]}
+        email: {type: string, format: email}
+    SecurityActivityResponse:
+      description: "Body of `GET /v1/account/security-activity`."
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: {$ref: '#/components/schemas/SecurityActivityEvent'}
+    SecurityActivityEvent:
+      description: "One sign-in, credential or account-security change."
+      type: object
+      required: [at, summary, kind]
+      properties:
+        at: {type: string, format: date-time}
+        kind: {type: string, description: "Audit event kind, e.g. auth.session.created or api_key.created."}
+        summary: {type: string, description: "Fixed English phrase for the kind."}
+        ip: {type: string, description: "Client address recorded with the event."}
+        detail: {type: string, description: "Sign-in method, provider or key label, when recorded."}
+    SignInMethodsResponse:
+      description: "The ways the account can sign in."
+      type: object
+      required: [password, mfa, providers]
+      properties:
+        password: {type: boolean}
+        mfa: {type: boolean}
+        providers:
+          type: array
+          items: {$ref: '#/components/schemas/LinkedSignIn'}
+    LinkedSignIn:
+      description: "A Google or GitHub identity linked to the account."
+      type: object
+      required: [provider, email, linked_at]
+      properties:
+        provider: {type: string, enum: [google, github]}
+        email: {type: string, format: email}
+        linked_at: {type: string, format: date-time}
+    RecoveryCodesResponse:
+      description: "New MFA recovery codes, shown once."
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          items: {type: string}
     SessionsRevokeAllResponse:
       description: "Body for `POST /v1/auth/sessions/revoke_all`."
       type: object
@@ -41136,6 +42967,7 @@ components:
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
         current_sequence: {type: integer, format: int64, minimum: 0, description: 'Observed channel head on realtime_sequence_conflict.'}
+        agent_approval: {$ref: '#/components/schemas/AgentApprovalPendingInfo'}
         condition_field: {type: string}
         condition_index: {type: integer, minimum: 0}
         field_exists: {type: boolean}
@@ -41465,6 +43297,19 @@ components:
       description: Empty success body; the confirmation link is sent by email.
       type: object
       additionalProperties: false
+    MFADisableEmailCancelRequest:
+      description: Optional body; a browser session sends the CSRF token minted for `mfa_disable_email_cancel`.
+      type: object
+      additionalProperties: false
+      properties:
+        csrf_token: {type: string}
+    MFADisableEmailCancelResponse:
+      description: How many pending email-assisted MFA disables were cancelled.
+      type: object
+      required: [cancelled]
+      additionalProperties: false
+      properties:
+        cancelled: {type: integer, minimum: 0, example: 1}
     MFADisableEmailConfirmRequest:
       description: Body for consuming the emailed token after the cooldown.
       type: object
@@ -41693,6 +43538,10 @@ components:
         email:
           type: string
           format: email
+        display_name:
+          type: string
+          maxLength: 80
+          description: The member's display name; absent when unset.
           example: "bob@acme.com"
         role:
           type: string
@@ -41827,6 +43676,18 @@ components:
             `created_at DESC, id DESC` order exact under random UUIDs. The wire shape is
             opaque; clients MUST pass the value back unchanged.
           type: string
+    OrgSecurityPolicy:
+      description: An organization's security policy.
+      type: object
+      required: [require_mfa]
+      properties:
+        require_mfa:
+          type: boolean
+          description: Members without two-factor authentication are refused on the organization's routes.
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
     TransferOwnershipRequest:
       description: |
         POST /v1/orgs/{slug}/transfer_ownership body. The new owner
@@ -41885,6 +43746,24 @@ components:
         error_why: {type: string}
         error_fix: {type: string}
         relevant_logs: {type: array, items: {type: string}}
+      additionalProperties: true
+    AgentApprovalWebhookPayload:
+      type: object
+      description: "Delivered with agent.approval.requested, agent.approval.approved and agent.approval.denied: an agent key's request waits for a person, or a person decided it. It never carries the request body."
+      required: [approval_id, key_id, category, method, path, status, expires_at]
+      properties:
+        approval_id: {type: string, format: uuid, description: The approval request this event is about.}
+        key_id: {type: string, format: uuid, description: The agent key that made the request.}
+        org_id: {type: string, format: uuid, description: The organization the key acts in, when it acts in one.: null}
+        category: {type: string, enum: [delete, production, credentials, billing, budget, undo], description: "Which kind of risky action the agent asked to take; budget when it would go past its monthly budget, undo when it undoes its own changes."}
+        method: {type: string, description: HTTP method of the agent's request.}
+        path: {type: string, description: Path and query of the agent's request.}
+        status: {type: string, enum: [pending, approved, denied], description: The request's status when the event was recorded.}
+        expires_at: {type: string, format: date-time, description: When the request stops being approvable or usable.}
+        review_url: {type: string, format: uri, description: "On agent.approval.requested: the page where a member who may decide opens it."}
+        decided_at: {type: string, format: date-time, description: When the person approved or denied the request.}
+        note: {type: string, maxLength: 280, description: "On agent.approval.denied: the reason the person gave the agent, if any."}
+        reason: {type: string, maxLength: 280, description: "The agent's own account of what the request is for, if it gave one. Untrusted agent text."}
       additionalProperties: true
     RolloutCompletedWebhookPayload:
       type: object
@@ -42077,7 +43956,7 @@ components:
       additionalProperties: false
     CreateInboundWebhookEndpointRequest:
       type: object
-      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or automation starts when bound.
+      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or stored workflow starts when bound.
       required: [name, provider, signing_secret]
       properties:
         name:
@@ -42127,8 +44006,8 @@ components:
           description: One-time-disclosed public provider URL, present only on create.
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
-    WebhookAutomationReceiptResponse:
-      description: Durable provider event routing decision and automation admission progress.
+    WebhookWorkflowReceiptResponse:
+      description: Durable provider event routing decision and stored workflow admission progress.
       type: object
       required: [receipt_id, endpoint_id, provider_event_id, workflow_name, status, duplicate, accepted_at, event_source, routing_status]
       properties:
@@ -42137,7 +44016,7 @@ components:
         provider_event_id: {type: string}
         workflow_name: {type: string}
         status: {type: string, enum: [accepted, ignored]}
-        ignored_reason: {type: string, enum: [automation_paused, automation_failure_paused, event_filtered, automation_unpublished]}
+        ignored_reason: {type: string, enum: [stored_workflow_paused, stored_workflow_failure_paused, event_filtered, stored_workflow_unpublished]}
         duplicate: {type: boolean}
         accepted_at: {type: string, format: date-time}
         event_source: {type: string}
@@ -42237,7 +44116,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - app.health.changed
               - event_recovery.completed
               - event_recovery.cancelled
@@ -42249,13 +44128,13 @@ components:
               - event_recovery.execution_finished
               - realtime.channel.published
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -42356,6 +44235,10 @@ components:
       description: Bounded hourly, customer-safe delivery analytics for one runtime log destination.
       required: [log_drain_id, window, bucket_interval, from, to, buckets, summary]
       properties:
+        requested_from: {type: string, format: date-time, description: "Original requested lower bound before expanding to the recorded hourly observations."}
+        window_aligned: {type: boolean, description: "True when hourly observations changed the effective bounds; from/to match the counter observation times."}
+        complete: {type: boolean, description: "Whether every reported counter delta has a valid baseline without missing hourly samples."}
+        coverage_gaps: {type: array, items: {type: string}, description: "Missing baseline or hourly sample evidence; unknown deltas are omitted from totals."}
         log_drain_id: {type: string, pattern: '^[0-9a-f]{32}$'}
         window: {type: string, enum: [1h, 24h, 7d, 30d]}
         bucket_interval: {type: string, enum: [1h]}
@@ -42470,7 +44353,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - app.health.changed
               - event_recovery.completed
               - event_recovery.cancelled
@@ -42482,13 +44365,13 @@ components:
               - event_recovery.execution_finished
               - realtime.channel.published
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -42519,7 +44402,7 @@ components:
         enabled: true
     CreateAccountReleaseWebhookRequest:
       type: object
-      description: Subscribe to account release outcomes and environment GitOps status transitions.
+      description: "Subscribe to account release outcomes, environment GitOps status transitions, and agent approval requests and decisions."
       required: [target_url, webhook_secret, event_filter]
       properties:
         target_url: {type: string, format: uri, minLength: 8, maxLength: 2048}
@@ -42527,9 +44410,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
         retry_policy: {type: string, enum: [default, aggressive, none], default: default}
         delivery_format: {type: string, enum: [json, cloudevents], default: json}
         enabled: {type: boolean, default: true}
@@ -42597,7 +44480,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - app.health.changed
               - event_recovery.completed
               - event_recovery.cancelled
@@ -42609,13 +44492,13 @@ components:
               - event_recovery.execution_finished
               - realtime.channel.published
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -42645,9 +44528,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
         retry_policy: {type: string, enum: [default, aggressive, none]}
         delivery_format: {type: string, enum: [json, cloudevents]}
         enabled: {type: boolean}
@@ -42981,6 +44864,14 @@ components:
       properties:
         enabled: {type: boolean}
         sample_ratio: {type: number, exclusiveMinimum: 0, maximum: 1, default: 1, description: "Fraction of requests whose spans the app exports."}
+        forward: {$ref: '#/components/schemas/TracingForward'}
+        metrics: {type: boolean, default: false, description: "Sends the app's OpenTelemetry metrics to Gregale from inside its instance, stored as its custom metrics (no API key needed). Requires tracing to be enabled and a plan with custom metrics. The managed auto-instrumentation's own metrics count toward the app's metric limit."}
+    TracingForward:
+      description: "Sends a copy of every OpenTelemetry trace and log export the app makes to your own OTLP/HTTP endpoint, from inside the app's instance. Requires tracing to be enabled."
+      type: object
+      properties:
+        endpoint: {type: string, maxLength: 2048, description: "Base OTLP/HTTP URL (http or https, no credentials, query or fragment); /v1/traces and /v1/logs are appended."}
+        headers_secret: {type: string, maxLength: 128, description: "Name of an app secret holding request headers as comma-separated key=value pairs, in the OTEL_EXPORTER_OTLP_HEADERS format."}
     ProfileQuery:
       description: Authorized deployment CPU capture window.
       type: object
@@ -43050,6 +44941,15 @@ components:
         guest_evidence: {$ref: '#/components/schemas/DebugCoverageSignal'}
         oldest_telemetry_at: {type: string, format: date-time}
         latest_telemetry_at: {type: string, format: date-time}
+        requests_not_retained:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Requests the app's request analytics counted in the window's whole
+            minutes that the debugger did not keep, because the plan's
+            per-minute debugger row limit turned them away. A lower bound;
+            absent when request analytics do not cover the window.
     DebugRunningRequestAttribution:
       type: object
       description: |
@@ -50580,8 +52480,8 @@ components:
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
-    AutomationConflict:
-      description: "code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership."
+    StoredWorkflowConflict:
+      description: "code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership."
       content:
         application/problem+json:
           schema:

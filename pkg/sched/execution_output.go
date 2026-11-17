@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/internal/utf8chunk"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -22,6 +23,7 @@ type executionOutputEventSink struct {
 
 	mu        sync.Mutex
 	persisted bool
+	pending   map[string][]byte
 }
 
 func newExecutionOutputEventSink(store state.ExecutionEventStore, accountID, executionID string, now func() time.Time) *executionOutputEventSink {
@@ -35,6 +37,17 @@ func (s *executionOutputEventSink) Receive(ctx context.Context, stream string, c
 	if s == nil || s.store == nil {
 		return errors.New("sched: live execution output sink is unavailable")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pending == nil {
+		s.pending = make(map[string][]byte)
+	}
+	data := append(s.pending[stream], chunk...)
+	s.pending[stream] = nil
+	return s.persist(ctx, stream, data, false)
+}
+
+func (s *executionOutputEventSink) persist(ctx context.Context, stream string, data []byte, final bool) error {
 	var eventType state.ExecutionEventType
 	switch stream {
 	case "stdout":
@@ -44,24 +57,37 @@ func (s *executionOutputEventSink) Receive(ctx context.Context, stream string, c
 	default:
 		return errors.New("sched: live execution output stream is invalid")
 	}
-	for start := 0; start < len(chunk); {
-		end := start + state.ExecutionEventMaxBytes/8
-		if end > len(chunk) {
-			end = len(chunk)
+	for len(data) > 0 {
+		end := utf8chunk.Prefix(data, state.ExecutionEventMaxBytes/8, final)
+		if end == 0 {
+			s.pending[stream] = append([]byte(nil), data...)
+			return nil
 		}
 		payload, err := json.Marshal(struct {
 			Chunk string `json:"chunk"`
-		}{Chunk: string(chunk[start:end])})
+		}{Chunk: string(data[:end])})
 		if err != nil {
 			return errors.New("sched: live execution output could not be encoded")
 		}
 		if _, err := s.store.AppendExecutionEvent(ctx, s.accountID, s.executionID, eventType, payload, s.now().UTC()); err != nil {
 			return errors.New("sched: live execution output could not be persisted")
 		}
-		start = end
-		s.mu.Lock()
+		data = data[end:]
 		s.persisted = true
-		s.mu.Unlock()
+	}
+	return nil
+}
+
+// Flush preserves a final incomplete (invalid) rune using the same JSON text
+// conversion as the receipt. Each stream has independent decoder state.
+func (s *executionOutputEventSink) Flush(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, stream := range []string{"stdout", "stderr"} {
+		if err := s.persist(ctx, stream, s.pending[stream], true); err != nil {
+			return err
+		}
+		delete(s.pending, stream)
 	}
 	return nil
 }

@@ -28,9 +28,141 @@ make e2e-journeys TIER=full RUN=TestTemplateDeploys
 - **Account**: by default the CLI's own `gregale login` (kept in the OS
   keychain; the suite never reads it). `GREGALE_E2E_TOKEN` or `--token-file`
   use an API key instead, with the CLI isolated in a private `HOME`.
+- **Session** (optional): steps only a person may take, such as approving an
+  agent's request, need a signed-in dashboard session. Set
+  `GREGALE_E2E_SESSION` to the value of the browser's `__Host-faas_sid`
+  cookie for the same account; without it those steps skip.
 - **Output**: live PASS/FAIL/SKIP lines, then a summary, every failure with
   its log, and `metric` lines (e.g. cold-wake time). The raw `go test -json`
   stream and `report.md` land in `.e2e-journeys/<timestamp>/` (gitignored).
+
+### Published-tool lifecycle preview
+
+`TestMCPToolLifecycle` is excluded unless explicitly enabled. Run it against a
+dedicated staging account whose native API, trusted CLI worker and hosted bridge
+carry the tool-publication, grant and invocation changes. The bridge must offer
+`registry,invoke`, accept personal agent keys, and enable
+`--allow-tool-invocation`. Use an unscoped personal owner token; CLI-login mode
+cannot supply the owner credential needed for native evidence reads.
+
+```sh
+scripts/e2e-journeys.sh --tier full --mcp-tool-lifecycle \
+  --api https://api.staging.example \
+  --mcp-url https://api.staging.example/mcp \
+  --cli /absolute/path/to/matching/gregale \
+  --token-file /private/path/to/staging-owner-token \
+  --run '^TestMCPToolLifecycle$' --max-apps 1 --max-deploys 1 \
+  --sweep-hours 0 --out /tmp/gregale-tool-lifecycle
+```
+
+The opt-in requires full tier and an explicitly selected API. The owner token
+travels only to the native API/local CLI. The hosted bridge receives a newly
+minted `agent,apps:read` key with no deployment scope. A missing preview route,
+permission or offered tool fails this enabled journey rather than reporting a
+successful acceptance run through a skip.
+
+The journey retrieves the agent-visible Node starter, materializes and edits it
+locally, reviews publication through management MCP, and applies once. Gregale's
+normal builder, pinning, behavioral-fixture and promotion workflow performs the
+deployment. A fresh owner CLI process must recover the same native publication.
+It then grants two exact tools and checks single-tool catalog projections.
+Both MCP protocol versions lose a successful invoke reply at the client boundary,
+recover through a fresh session, and repeat the same UUID. A runtime observer
+must still report one call, the retained result must match its digest, and native
+dispatch must refuse a second permission. It also starts a waiting tool, observes
+the call before cancelling, and checks that cancellation preserves the recorded
+effect. Grant revocation must hide results and prevent a new call; key revocation
+must also block a separate still-granted tool.
+
+One ephemeral app uses an explicit effective `max_instances: 1`. Its bounded,
+synthetic nonce counter detects replay and runtime replacement during each proof;
+it is not a general durable effect ledger. Publication fixtures and live calls
+can incur normal build/runtime charges. There is no automatic publication or
+invocation retry. Cleanup revokes both grants and the agent key and deletes the
+app. Native retained publication, grant and invocation identities still consume
+their existing account quotas after cleanup.
+
+To exercise hosted source publication, replace `--mcp-tool-lifecycle` with
+`--mcp-hosted-tool-lifecycle` in the command above. The bridge must additionally
+enable `--allow-tool-publishing` and offer `build-tools` (normally
+`core,build-tools,registry,invoke`). This variant retrieves every Node starter file
+through hosted MCP, edits only the local test workspace, uploads the reviewed
+archive and publishes using a separately minted `agent,deploy:write` key. The
+owner credential never goes to the bridge. A fresh hosted session reads the
+native durable publication receipt; the separate invocation-only agent receives
+exact grants and runs the same lost-reply, cancellation and revocation checks.
+Cleanup also revokes the publishing key. Unstarted reviews are ephemeral; this
+session-recovery check does not restart the deployed bridge or resume a worker.
+
+An ordinary `go test ./tests/journeys` proves harness contracts only. The fixture
+can also be checked with
+`node --test tests/journeys/testdata/mcp-tool-lifecycle/journey-tools.test.mjs`.
+With a matching local CLI,
+`GREGALE_JOURNEY_TEST_CLI=/absolute/path/to/gregale go test ./tests/journeys -run '^TestHarnessMCP'`
+also checks real stdio and hosted template retrieval, source adaptation and
+archive preparation against local credential fixtures, without a platform request. None of these local checks is evidence that staging acceptance ran.
+
+### Private tool lifecycle preview
+
+`TestMCPPrivateToolLifecycle` is separately opt-in. It requires the matching
+native API with `FAAS_MCP_PRIVATE_TOOL_INVOCATION=1`, a hosted bridge offering
+`registry,invoke` with `--allow-tool-invocation --allow-private-tool-invocation`,
+and the matching local CLI. Use a dedicated staging account and an unscoped
+personal owner token. Private and open lifecycle selections cannot be combined.
+
+```sh
+scripts/e2e-journeys.sh --tier full --mcp-private-tool-lifecycle \
+  --api https://api.staging.example \
+  --mcp-url https://api.staging.example/mcp \
+  --cli /absolute/path/to/matching/gregale \
+  --token-file /private/path/to/staging-owner-token \
+  --run '^TestMCPPrivateToolLifecycle$' --max-apps 1 --max-deploys 1 \
+  --sweep-hours 0 --out /tmp/gregale-private-tool-lifecycle
+```
+
+The owner publishes one authenticated Node tool through the existing local
+verified workflow. A fresh ES256 signing key stays on the journey host; only
+its public JWKS enters the reviewed source. The app's normal JWT middleware
+verifies signature, issuer, audience, expiry and scopes against that pinned
+public key set. This synthetic issuer does not exercise external provider
+discovery, login, key retrieval or refresh. The owner supplies the synthetic
+application token to the local publisher environment and saves it through the
+normal secret entry flow using stdin. Tokens are never placed in command-line
+arguments, source archives or hosted MCP arguments. The bridge receives only a
+separate `agent,apps:read` key. A separate owner-only JWT scope protects the
+fixture's catalog-mutation endpoint.
+
+The journey verifies exact opaque credential bindings and single-tool discovery,
+then loses an invoke reply and recovers without another app call through both
+MCP protocol versions. Selected synthetic tool calls reflect the application
+token so native result redaction is checked before journal and MCP receipt
+release. Native public dispatch/outcome routes must refuse private transitions.
+It also checks cancellation without rollback, grant expiry, changed bindings,
+credential rotation hiding old receipts and preventing new starts, and successful
+execution after a newly reviewed grant. Finally, a real catalog mutation must
+produce `not_started` without native dispatch; grant and key revocation must
+prevent new execution while preserving owner history. Both bridge and native
+execute paths are checked for refused grants.
+
+The normal one-app/single-instance bounds, runtime nonce counter limitations,
+costs and cleanup rules above apply. All created grants (including expired and
+rotated bindings) and the agent key are revoked; deleting the app removes its
+sealed test credential. The normal `--keep` failure-debugging option can retain
+the app. Transport loss is injected at the client boundary; this journey does
+not restart API or bridge processes or certify real-provider behavior.
+
+Local checks can validate preparation and the generated fixture without a
+deployed target:
+
+```sh
+GREGALE_JOURNEY_TEST_CLI=/absolute/path/to/gregale \
+  go test ./tests/journeys -run '^TestHarnessMCPPrivate'
+```
+
+To also exercise the materialized fixture's authenticated HTTP behavior locally,
+set `GREGALE_JOURNEY_NODE_MODULES` to an absolute directory containing the Node
+starter's pinned dependencies. These checks use a fake native API and the real
+CLI; they are not evidence that deployed staging acceptance ran.
 
 ### Parallelism
 
@@ -64,8 +196,13 @@ bound by the safe-rollout journey.
 `COVERAGE.md` maps every GA capability in `docs/ga-capability-inventory.md`
 to the journeys and steps that test it, and lists what is not covered.
 `scripts/e2e-journeys.sh --list` prints the journeys; `--github-repo`
-enables `TestGitHubDeploys` against a fixture repository the account's
-GitHub App installation can see (e.g. `poyrazK/gregale-e2e-fixture`).
+enables `TestGitHubDeploys` and `TestPreviewDatabases` against a fixture
+repository the account's GitHub App installation can see (e.g.
+`poyrazK/gregale-e2e-fixture`).
+`--github-functions-repo` enables `TestFunctionsProjectFromGitHub`, which
+deploys a functions project from a second, dedicated fixture repository and
+rewrites its `gregale.yaml` and `functions/` on `main`; it also skips until
+the account has the `repository-functions` capability.
 
 To run `TestGitHubDeploysSharedInstallation`, independently connect that same
 GitHub installation in a second Gregale fixture account and set
@@ -73,6 +210,30 @@ GitHub installation in a second Gregale fixture account and set
 app in each account and verifies that one fixture push deploys both. It skips
 when the second credential is absent. Use disposable fixture accounts and a
 dedicated repository; the journey changes its `version.txt` on `main`.
+
+### Payment journeys
+
+`TestBillingCheckout` and `TestBillingSubscription` change a subscription,
+so they never use the suite's main account, and they run only where
+billing is live (the Polar sandbox before public billing); while a
+target's billing is off they skip. Each uses a fixture account on that
+target, named by a full-access API key:
+
+- `GREGALE_E2E_BILLING_FREE_TOKEN`: a Free account. The checkout journey
+  asks for Hobby and checks that the CLI hands off to the provider's
+  hosted checkout and that nothing changes before payment. Set
+  `GREGALE_E2E_BILLING_CHECKOUT_WAIT=15m` to pay it: the journey logs the
+  checkout URL, a person pays with a test card (a 3DS card exercises the
+  bank challenge), and the journey checks that the webhooks move the
+  account to Hobby and invoice the order. The account is then paid, so the
+  next checkout needs a fresh Free account.
+- `GREGALE_E2E_BILLING_TOKEN`: an account with a paid subscription, such
+  as the one a paid checkout run leaves. The subscription journey reads
+  status, invoices and the card or portal; sets the spend cap and restores
+  it; cancels the subscription and keeps it; and on Pro or Scale schedules
+  a downgrade and undoes it. It charges nothing new and leaves the
+  subscription renewing on its plan; a run that stops halfway keeps the
+  subscription in its cleanup.
 
 ## Known bugs, history and trends
 
@@ -158,3 +319,17 @@ before the next run. Supply only a dedicated staging session, never a live
 customer's session. Without live fixtures, the journey skips; local HTTP and
 PostgreSQL acceptance tests cover CSRF, verification, account-only disconnect,
 unchanged credentials in the other account, and exclusive GitHub login.
+
+The SDK project journey additionally needs `GREGALE_E2E_NODE_SDK` pointing to a
+built Node SDK `dist/index.js` and an explicit `GREGALE_E2E_TOKEN`. Run
+`--run TestSDKReviewedProject --tier full` against an installation that supports
+managed PostgreSQL and cached-plan submission receipts. It creates two apps and
+a database, resumes a hard-stopped apply in another process, checks a public API
+read, and cleans up its resources. CLI-login-only runs skip this SDK journey.
+
+## First-hour acceptance
+
+The opt-in `TestFirstHourCLI` uses one new private app for response verification,
+a source edit, interruption/resume, startup-failure recovery and checked cleanup.
+Run it with `scripts/first-hour/acceptance.py`; it is not selected by ordinary
+smoke/full runs. See [the acceptance and baseline guide](../../docs/first-hour-acceptance.md).

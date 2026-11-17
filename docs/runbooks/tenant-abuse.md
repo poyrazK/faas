@@ -193,7 +193,7 @@ journalctl -u faas-gatewayd-internal | grep 'guest DNS lookup blocked'
 
 A `miner` hit is a mining pool: the app is trying to mine. An operator-feed hit
 carries the feed's category. Review the app and, for mining or C2, hold the
-account (`gregale admin abuse-hold place`).
+account (`gregalectl accounts abuse-hold place`).
 
 ## Unresolved-address drops (DNS-gated egress)
 
@@ -217,10 +217,10 @@ The egress flow log (ADR-371) keeps 30 days of every destination and TCP port ea
 tenant instance opened a flow to:
 
 ```
-gregale admin egress-flows --remote <B> --from <T-15m> --to <T+15m>
+gregalectl accounts egress-flows --remote <B> --from <T-15m> --to <T+15m>
 ```
 
 Each row names the node, account, app and instance. Pick the rows whose node owns
 address A. Widen `--remote` to the reported CIDR if the report names a range.
-Then hold the account (`gregale admin abuse-hold place`) and reply to the report
+Then hold the account (`gregalectl accounts abuse-hold place`) and reply to the report
 with the action taken.

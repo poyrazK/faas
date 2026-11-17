@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -52,28 +51,24 @@ func routeAnalyticsReadWithin[T any](ctx context.Context, s *PgStore, timeout ti
 	return out, mapErr(tx.Commit(ctx))
 }
 
-// RequestTelemetryCompleteness lists why retained request telemetry for an
-// app may be missing requests in [from, until). It reads the coverage
-// heartbeats route removal relies on: an active node with no or a stale
-// heartbeat, telemetry off or sampled, rows still in a gateway backlog, or a
-// loss or restart during the window. An empty list means every active node
-// delivered the window.
+// RequestTelemetryCompleteness checks retained gateway delivery intervals,
+// historical app gaps, and apid pending/lost rollup windows in [from, until).
+// Current node state cannot overwrite historical evidence. Missing proof is
+// reported as telemetry_coverage_unknown; an empty list proves full delivery.
 func (s *PgStore) RequestTelemetryCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error) {
+	return s.requestAnalyticsCoverageGaps(ctx, appID, from, until, false)
+}
+
+func (s *PgStore) requestAnalyticsCoverageGaps(ctx context.Context, appID string, from, until time.Time, rollups bool) ([]string, error) {
 	id, err := uuid.Parse(appID)
 	if err != nil {
 		return nil, fmt.Errorf("request telemetry completeness: app id: %w", err)
 	}
-	body, err := sqlc.New().RouteRemovalCoverageBlockers(ctx, s.pool, sqlc.RouteRemovalCoverageBlockersParams{
-		AppID:       NewPgtypeUUID(id),
-		WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
-		WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
+	rows, err := sqlc.New().RequestAnalyticsCoverageGaps(ctx, s.pool, sqlc.RequestAnalyticsCoverageGapsParams{
+		Rollups: rollups, AppID: NewPgtypeUUID(id), WindowFrom: pgtype.Timestamptz{Time: from, Valid: true}, WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
 	})
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	gaps := []string{}
-	if err := json.Unmarshal(body, &gaps); err != nil {
-		return nil, fmt.Errorf("request telemetry completeness: decode: %w", err)
-	}
-	return gaps, nil
+	return rows, nil
 }

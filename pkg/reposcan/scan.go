@@ -153,6 +153,9 @@ type Workload struct {
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
 	SourceSHA256 string
+	// SourceHosts are literals in this workload's source that dial another
+	// service by its Compose name (detectSourceHosts).
+	SourceHosts []api.PlanSourceHost
 	// DependsOn contains service names declared by Compose's depends_on or by
 	// .gregale/project.yaml (ADR-20261025093331). The graph orders admission;
 	// explicit conditions also gate release.
@@ -184,6 +187,11 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// Streaming (x-gregale-streaming) and WakeAhead (x-gregale-wake-ahead)
+	// are explicit app settings from Compose. Nil keeps an existing app's
+	// setting and the platform default for a new one.
+	Streaming *bool `json:",omitempty"`
+	WakeAhead *bool `json:",omitempty"`
 	// RenamedFrom is the service's previous name (Compose
 	// x-gregale-renamed-from). A deploy updates that name's app in place
 	// instead of removing it and creating a new one (ADR-20261029090000).
@@ -225,6 +233,10 @@ type Workload struct {
 	// this is the STRUCTURED form a client can branch on without
 	// parsing that string. Populated by mergeByKey.
 	DetectedBy Detection
+
+	// Function is set when the workload deploys as a function app: one
+	// entry of a functions project (ADR-20261108160000).
+	Function *FunctionWorkload `json:",omitempty"`
 }
 
 // ServiceBindingPolicy is the repository declaration consumed by reconcile.
@@ -395,6 +407,15 @@ type ScanOptions struct {
 	// metadata.labels to its workload (ADR-20261031100025 §7, the
 	// resource-labels capability). The zero value drops them, as before.
 	ResourceLabels bool
+	// Functions reads a functions project (gregale.yaml functions: or
+	// functions/<name>/ handlers with config in code) as one function
+	// workload per function, and nothing else (ADR-20261108160000, the
+	// repository-functions capability). The zero value scans as before.
+	Functions bool
+	// withoutProjectConfig leaves the project block (or the legacy
+	// .gregale/project.yaml) off the workloads, so ExplainProjectSetting can
+	// show what detection alone declares.
+	withoutProjectConfig bool
 }
 
 // ScanWithOptions is Scan with opts. Every caller that scans a project for
@@ -408,6 +429,11 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		detectionWarnings []DetectionWarning
 		highestTier       Tier
 	)
+	if opts.Functions {
+		if result, ok, err := scanFunctionsProject(fsys); err != nil || ok {
+			return result, err
+		}
+	}
 
 	// Tier 1 — explicit sources. Each detector is paired with its
 	// detector tag so the merge rule can break ties on detector
@@ -499,8 +525,12 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
 		return Result{}, err
 	}
-	if err := applyProjectConfig(fsys, workloads); err != nil {
-		return Result{}, err
+	if !opts.withoutProjectConfig {
+		projectWarnings, err := applyProjectConfig(fsys, workloads)
+		if err != nil {
+			return Result{}, err
+		}
+		warnings = append(warnings, projectWarnings...)
 	}
 	if opts.HTTPSTransportUnavailable {
 		for _, w := range workloads {
@@ -520,6 +550,7 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		}
 		workloads[i].SourceSHA256 = digest
 	}
+	detectSourceHosts(fsys, workloads, managed)
 	sortStableByName(workloads)
 	sortManagedByName(managed)
 

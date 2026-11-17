@@ -147,7 +147,7 @@ func assertNativeSchemaBackfill(t *testing.T, ctx context.Context, store *Postgr
 	}
 	fresh := startNativeDataAPI(t, ctx, targetURL, reader)
 	defer fresh.close()
-	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,status", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,status", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 		t.Fatalf("required field exposed before refresh completion: %d %s", status, body)
 	}
 	ready = true

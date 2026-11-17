@@ -145,7 +145,8 @@ SELECT * FROM app_config_guard_secrets WHERE guard_id = sqlc.arg(guard_id)::uuid
 
 -- name: AppConfigGuardTelemetry :one
 -- New config: requests from the minute of the latest change on, served by an
--- instance started after it or failing before any instance served them.
+-- instance started after it or failing before any instance served them
+-- (those carry no deployment; see the WHERE clause).
 -- Old config: requests in the baseline window before the guard opened.
 -- Telemetry is minute-bucketed, so instance start time attributes the change
 -- minute. Only deployments that existed when the guard opened count: a
@@ -169,7 +170,15 @@ WITH scoped AS (
     FROM request_telemetry t
     LEFT JOIN instances i ON i.id = CASE WHEN t.instance_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         THEN t.instance_id::uuid END
-    WHERE t.app_id = sqlc.arg(app_id)::uuid AND t.deployment_id IN (SELECT id FROM scoped)
+    WHERE t.app_id = sqlc.arg(app_id)::uuid
+      AND (t.deployment_id IN (SELECT id FROM scoped)
+           -- A wake that failed before any instance served (the app crashed on
+           -- startup) is recorded without a deployment. It is the failure the
+           -- guard exists for; a platform refusal (capacity) is not the
+           -- config's fault. Without a deployment it cannot name a lane, so
+           -- only the default scope's guard counts it.
+           OR (t.deployment_id = '00000000-0000-0000-0000-000000000000'::uuid
+               AND NOT t.platform_refusal AND sqlc.arg(scope)::text = 'default'))
       AND t.received_at >= sqlc.arg(baseline_from)::timestamptz AND t.received_at < sqlc.arg(until)::timestamptz
 )
 SELECT

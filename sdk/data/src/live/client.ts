@@ -1,4 +1,6 @@
 import { LIVE_TYPES, LiveProtocolError, LiveResult, parseLiveServerFrame, type LiveColumn, type LiveErrorFrame, type LiveServerFrame } from './protocol.js'
+import { ExactNumber, parseExactJSON } from '../exact-numeric.js'
+import { parseLosslessJSON, usesLosslessNumbers, usesExactNumbers } from '../numeric.js'
 
 /** The socket a live connection runs over: an app's realtime endpoint. */
 export interface LiveSocket {
@@ -108,7 +110,7 @@ export function liveRead<Query>(query: Query): {
   schema?: string
   parse: (values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>) => LiveReadRow<Query>
 } {
-  const q = query as { url?: unknown; method?: unknown; headers?: unknown; schema?: unknown }
+  const q = query as { url?: unknown; method?: unknown; headers?: unknown; schema?: unknown; fetch?: unknown }
   if (!(q?.url instanceof URL)) throw new TypeError('liveRead takes a query built with createDataClient')
   if (q.method !== undefined && q.method !== 'GET') throw new TypeError('a live query reads: build it with select()')
   const path = q.url.pathname
@@ -117,7 +119,8 @@ export function liveRead<Query>(query: Query): {
   const headers = q.headers instanceof Headers ? q.headers : new Headers((q.headers ?? {}) as Record<string, string>)
   // postgrest-js keeps .schema() on the builder and sets the header when it runs.
   const schema = typeof q.schema === 'string' ? q.schema : headers.get('Accept-Profile')
-  const parse = parseDataAPIRow as (values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>) => LiveReadRow<Query>
+  const lossless = usesExactNumbers(q) ? 'exact' : usesLosslessNumbers(q)
+  const parse = (lossless ? (values, columns) => parseDataAPIRow(values, columns, lossless) : parseDataAPIRow) as (values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>) => LiveReadRow<Query>
   return { read: relation + q.url.search, ...(schema ? { schema } : {}), parse }
 }
 
@@ -168,9 +171,9 @@ export function parseLiveValue(value: string | null, type: string): unknown {
 }
 
 /** Decodes a live row as the Data API (PostgREST) returns it in JSON. */
-export function parseDataAPIRow(values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>): Record<string, unknown> {
+export function parseDataAPIRow(values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>, lossless: boolean | 'exact' = false): Record<string, unknown> {
   const row: Record<string, unknown> = {}
-  columns.forEach((c, i) => { row[c.name] = parseDataAPIValue(values[i] ?? null, c.type) })
+  columns.forEach((c, i) => { row[c.name] = parseDataAPIValue(values[i] ?? null, c.type, lossless) })
   return row
 }
 
@@ -182,16 +185,18 @@ const offsetHours = /([+-]\d{2})$/
  * JSON has none), ISO 8601 timestamps, arrays element by element, and JSON.
  * Embedded resources already arrive as JSON. Composite columns stay text.
  */
-export function parseDataAPIValue(value: string | null, type: string): unknown {
+export function parseDataAPIValue(value: string | null, type: string, lossless: boolean | 'exact' = false): unknown {
   if (value === null) return null
-  if (type.startsWith('_')) return parsePostgresArray(value, type.slice(1))
+  if (type.startsWith('_')) return parsePostgresArray(value, type.slice(1), lossless)
   switch (type) {
     case 'bool': return value === 't' || value === 'true'
     case 'int2': case 'int4': case 'int8': case 'oid': case 'numeric': case 'float4': case 'float8': {
+      if (lossless === 'exact') return ['NaN','Infinity','-Infinity'].includes(value) ? value : new ExactNumber(value)
+      if (lossless) return value
       const n = Number(value)
       return Number.isFinite(n) ? n : value
     }
-    case 'json': case 'jsonb': return JSON.parse(value)
+    case 'json': case 'jsonb': return lossless === 'exact' ? parseExactJSON(value) : lossless ? parseLosslessJSON(value) : JSON.parse(value)
     case 'timestamptz': return /^\d/.test(value) ? value.replace(' ', 'T').replace(offsetHours, '$1:00') : value
     case 'timestamp': return /^\d/.test(value) ? value.replace(' ', 'T') : value
     default: return value
@@ -199,7 +204,7 @@ export function parseDataAPIValue(value: string | null, type: string): unknown {
 }
 
 /** Parses a PostgreSQL array literal ({a,"b c",NULL} or nested), decoding each element. */
-function parsePostgresArray(text: string, elementType: string): unknown {
+function parsePostgresArray(text: string, elementType: string, lossless: boolean | 'exact' = false): unknown {
   let i = text.startsWith('[') ? text.indexOf('=') + 1 : 0 // optional dimension decoration
   const parseLevel = (): unknown[] => {
     if (text[i] !== '{') throw new SyntaxError('malformed PostgreSQL array')
@@ -216,12 +221,12 @@ function parsePostgresArray(text: string, elementType: string): unknown {
           element += text[i]
         }
         i++
-        items.push(parseDataAPIValue(element, elementType))
+        items.push(parseDataAPIValue(element, elementType, lossless))
       } else {
         const start = i
         while (i < text.length && text[i] !== ',' && text[i] !== '}') i++
         const element = text.slice(start, i).trim()
-        items.push(element.toUpperCase() === 'NULL' ? null : parseDataAPIValue(element, elementType))
+        items.push(element.toUpperCase() === 'NULL' ? null : parseDataAPIValue(element, elementType, lossless))
       }
       if (text[i] === ',') { i++; continue }
       if (text[i] === '}') { i++; return items }
@@ -390,11 +395,15 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
   private renewTimer: unknown
   private attached = false
   private finished = false
+  private generation = 0
+  private credentialAttempt = 0
+  private retryAttempt = 0
 
   constructor(conn: LiveConnection, id: string, options: LiveQueryOptions<Row>) {
     this.conn = conn
     this.id = id
-    this.options = options
+    const { initialRows: _initialRows, ...configuration } = options
+    this.options = configuration
     this.sealed = isRead(options) ? undefined : options.sealed
     this.state = Object.freeze({
       status: 'connecting', rows: options.initialRows ?? [], keys: [], columns: [], snapshot: null, error: undefined,
@@ -415,27 +424,41 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
     const again = this.attached
     if (again) this.result.resubscribe()
     this.attached = true
-    // A held seal may have expired while the socket was down.
-    void this.credential(again).then((credential) => {
-      if (this.finished || !this.conn.isOpen || !credential) return
-      const query = isRead(this.options)
-        ? { database: this.options.database, rest: this.options.read, ...(this.options.schema ? { schema: this.options.schema } : {}) }
-        : {}
-      this.conn.send({ type: LIVE_TYPES.subscribe, subscription: this.id, ...query, ...credential, ...(resume > 0 ? { version: resume } : {}) })
-    })
+    const generation = ++this.generation
+    this.conn.timers.clearTimeout(this.renewTimer)
+    this.retryAttempt = 0
+    void this.sendSubscription(generation, again, resume)
+  }
+
+  private async sendSubscription(generation: number, fresh: boolean, resume: number): Promise<void> {
+    const attempt = ++this.credentialAttempt
+    const credential = await this.credential(fresh, generation, attempt)
+    if (!this.current(generation, attempt)) return
+    if (!credential) {
+      this.retryCredential(() => { void this.sendSubscription(generation, fresh, resume) })
+      return
+    }
+    this.retryAttempt = 0
+    const query = isRead(this.options)
+      ? { database: this.options.database, rest: this.options.read, ...(this.options.schema ? { schema: this.options.schema } : {}) }
+      : {}
+    this.conn.send({ type: LIVE_TYPES.subscribe, subscription: this.id, ...query, ...credential, ...(resume > 0 ? { version: resume } : {}) })
   }
 
   awaitTxId(xid: bigint | number | string, options: { signal?: AbortSignal } = {}): Promise<void> {
     const target = BigInt(xid)
-    if (this.result.sees(target)) return Promise.resolve()
     if (this.finished) return Promise.reject(new LiveQueryClosedError(this.result.error))
+    if (options.signal?.aborted) return Promise.reject(options.signal.reason)
+    if (this.result.sees(target)) return Promise.resolve()
     return new Promise((resolve, reject) => {
-      const waiter = { xid: target, resolve, reject }
-      this.waiters.push(waiter)
-      options.signal?.addEventListener('abort', () => {
+      const cleanup = () => options.signal?.removeEventListener('abort', aborted)
+      const waiter = { xid: target, resolve: () => { cleanup(); resolve() }, reject: (error: unknown) => { cleanup(); reject(error) } }
+      const aborted = () => {
         this.waiters = this.waiters.filter((w) => w !== waiter)
-        reject(options.signal?.reason)
-      }, { once: true })
+        waiter.reject(options.signal?.reason)
+      }
+      this.waiters.push(waiter)
+      options.signal?.addEventListener('abort', aborted, { once: true })
     })
   }
 
@@ -474,6 +497,7 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
 
   /** @internal */
   disconnected(): void {
+    this.generation++
     this.conn.timers.clearTimeout(this.renewTimer)
     if (this.state.status !== 'closed') this.setState({ ...this.state, status: 'connecting' })
   }
@@ -482,31 +506,50 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
   finish(frame: LiveErrorFrame | undefined): void {
     if (this.finished) return
     this.finished = true
+    this.generation++
     this.conn.timers.clearTimeout(this.renewTimer)
     for (const w of this.waiters) w.reject(new LiveQueryClosedError(frame))
     this.waiters = []
-    this.setState({ ...this.state, status: 'closed', error: frame })
+    this.result = new LiveResult()
+    this.rowCache.clear()
+    this.setState({ status: 'closed', rows: [], keys: [], columns: [], snapshot: null, error: frame })
   }
 
   /**
    * The frame fields that authorize: a seal (fresh when asked), the user's
    * current token, anonymous access or a server key.
    */
-  private async credential(fresh: boolean): Promise<Record<string, string | boolean> | undefined> {
+  private async credential(fresh: boolean, generation: number, attempt: number): Promise<Record<string, string | boolean> | undefined> {
     const o = this.options
     if (isRead(o)) {
       if (o.anonymous === true) return { anonymous: true }
       if (typeof o.serverKey === 'string') return { server_key: o.serverKey, ...(o.subject ? { subject: o.subject } : {}) }
-      try { return { token: await o.token!() } } catch { return undefined /* retried at the next reconnect */ }
+      try { return { token: await o.token!() } } catch { return undefined }
     }
     if (fresh && o.refresh) {
-      try { this.sealed = await o.refresh() } catch { /* the held seal may still be valid */ }
+      try {
+        const sealed = await o.refresh()
+        if (this.current(generation, attempt)) this.sealed = sealed
+      } catch { return undefined }
     }
     return this.sealed === undefined ? undefined : { sealed: this.sealed }
   }
 
   private renewable(): boolean {
     return isRead(this.options) || this.options.refresh !== undefined
+  }
+
+  private current(generation: number, attempt: number): boolean {
+    return !this.finished && this.conn.isOpen && generation === this.generation && attempt === this.credentialAttempt
+  }
+
+  private retryCredential(work: () => void): void {
+    this.conn.timers.clearTimeout(this.renewTimer)
+    const generation = this.generation
+    const delay = Math.min(30_000, 1000 * 2 ** Math.min(this.retryAttempt++, 5))
+    this.renewTimer = this.conn.timers.setTimeout(() => {
+      if (!this.finished && this.conn.isOpen && generation === this.generation) work()
+    }, delay)
   }
 
   private scheduleRenewal(): void {
@@ -518,10 +561,13 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
   }
 
   private async renew(): Promise<void> {
-    if (!this.renewable() || this.finished) return
-    const credential = await this.credential(true)
-    // Without one it stays live until expiry, then stale; the next renewal retries.
-    if (!credential || this.finished) return
+    if (!this.renewable() || this.finished || !this.conn.isOpen) return
+    const generation = this.generation, attempt = ++this.credentialAttempt
+    const credential = await this.credential(true, generation, attempt)
+    if (!this.current(generation, attempt)) return
+    if (!credential) { this.retryCredential(() => { void this.renew() }); return }
+    this.conn.timers.clearTimeout(this.renewTimer)
+    this.retryAttempt = 0
     this.conn.send({ type: LIVE_TYPES.renew, subscription: this.id, ...credential })
   }
 

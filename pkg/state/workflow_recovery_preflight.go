@@ -96,11 +96,11 @@ func appendWorkflowRecoveryPreflight(out *api.EventRecoveryPreflight, row api.Ev
 }
 func workflowRecoveryPreflightRead(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account string, job api.EventRecoveryJob, now time.Time, retry bool, out *api.EventRecoveryPreflight) error {
 	out.AppID, out.WorkflowName = job.AppID, job.Selection.WorkflowRuns.Name
-	rows, err := q.EventRecoveryItems(ctx, db, sqlc.EventRecoveryItemsParams{JobID: mustPgUUID(job.ID), PageLimit: api.AutomationRecoveryBatchMaxRuns + 1})
+	rows, err := q.EventRecoveryItems(ctx, db, sqlc.EventRecoveryItemsParams{JobID: mustPgUUID(job.ID), PageLimit: api.StoredWorkflowRecoveryBatchMaxRuns + 1})
 	if err != nil {
 		return err
 	}
-	if len(rows) > api.AutomationRecoveryBatchMaxRuns || int64(len(rows)) != job.SelectedCount {
+	if len(rows) > api.StoredWorkflowRecoveryBatchMaxRuns || int64(len(rows)) != job.SelectedCount {
 		return ErrEventRecoveryQuery
 	}
 	var observations map[int64]api.EventRecoveryExecution
@@ -246,7 +246,7 @@ func (m *MemStore) GetWorkflowRecoveryRetryPreflight(ctx context.Context, accoun
 	if job.Job.Selection.WorkflowRuns == nil || !workflowRecoveryRetryParentTerminal(job.Job.State) {
 		return api.EventRecoveryPreflight{}, ErrEventRecoveryRetryParent
 	}
-	if len(job.Items) > api.AutomationRecoveryBatchMaxRuns {
+	if len(job.Items) > api.StoredWorkflowRecoveryBatchMaxRuns {
 		return api.EventRecoveryPreflight{}, ErrEventRecoveryQuery
 	}
 	out := newRecoveryPreflight(job.Job, now, now, now, 0)

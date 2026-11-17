@@ -13,6 +13,10 @@
 // prefix ascending; v6 entries the same; SMTP ports sort
 // numerically. Never iterate over a map without sorting first.
 //
+// With -customer it renders docs/egress-denylist.md instead: the same
+// catalog for the public docs page, without source ADRs, test pins or
+// enforcement internals.
+//
 // Two renderers in one:
 //
 //   - Platform-wide catalog (NewDefaultDenySet): every entry
@@ -28,10 +32,13 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/oci"
 )
@@ -50,9 +57,14 @@ func main() {
 }
 
 func run() error {
+	customer := flag.Bool("customer", false, "render the customer docs page (docs/egress-denylist.md)")
+	flag.Parse()
 	ds := netns.NewDefaultDenySet()
 	ociOnly := oci.OCIOnlyDenyCIDRsV4()
 	out := render(ds, ociOnly)
+	if *customer {
+		out = renderCustomer(ds, ociOnly, api.TenantEgressAllowlistBlockedPorts(), portReason)
+	}
 	if _, err := os.Stdout.WriteString(out); err != nil {
 		return fmt.Errorf("write stdout: %w", err)
 	}
@@ -155,4 +167,116 @@ type denyEntryView struct {
 	Prefix    string
 	SourceADR string
 	Comment   string
+}
+
+func portReason(port int) string {
+	reason, _ := api.TenantEgressForbiddenPort(port)
+	return reason
+}
+
+// customerPortReasons rewords pkg/api's forbidden-port reasons for
+// customers. A reason missing here is printed as it is.
+var customerPortReasons = map[string]string{
+	"SMTP":                                   "Outbound mail (SMTP). Send mail through your provider's HTTPS API instead.",
+	"remote administration":                  "Remote administration (SSH, Telnet, RDP, VNC)",
+	"Windows RPC/SMB":                        "Windows RPC and file sharing (SMB)",
+	"IRC":                                    "IRC",
+	"cryptocurrency mining":                  "Cryptocurrency mining pools",
+	"DNS is pinned to the platform resolver": "DNS and DNS over TLS. Name lookups always go to Gregale's resolver.",
+}
+
+// customerRangeNote returns a deny entry's comment for customers: the part
+// before the first ";" (the rest is threat-model detail), capitalized.
+func customerRangeNote(e netns.DenyEntry) string {
+	if e.Prefix.String() == "169.254.0.0/16" {
+		return "Link-local, including the cloud metadata address `169.254.169.254`"
+	}
+	note, _, _ := strings.Cut(e.Comment, ";")
+	note = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(note), "(defence-in-depth)"))
+	if note == "" {
+		return note
+	}
+	return strings.ToUpper(note[:1]) + note[1:]
+}
+
+// renderCustomer emits docs/egress-denylist.md. Pure and deterministic, like
+// render. blockedPorts are the ports closed even to allowlisted destinations;
+// reason names each one's category.
+func renderCustomer(ds netns.DenySet, ociOnly []netns.DenyEntry, blockedPorts []int, reason func(int) string) string {
+	var b strings.Builder
+	b.WriteString("# Blocked outbound destinations\n\n")
+	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make denylist-md`. -->\n\n")
+	b.WriteString("Apps can't open connections to the addresses and ports on this page. The\n")
+	b.WriteString("rules apply to every app on every plan, and an egress allowlist entry does not\n")
+	b.WriteString("open them. See [Networking](networking.md#outbound-connections) for what an app\n")
+	b.WriteString("can reach.\n\n")
+
+	b.WriteString("## Blocked address ranges\n\n")
+	for _, family := range []struct {
+		name string
+		f    netns.Family
+	}{{"IPv4", netns.FamilyV4}, {"IPv6", netns.FamilyV6}} {
+		var rows []netns.DenyEntry
+		for _, e := range ds.Entries {
+			if e.Family == family.f {
+				rows = append(rows, e)
+			}
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Prefix.String() < rows[j].Prefix.String() })
+		fmt.Fprintf(&b, "### %s\n\n| Range | What it is |\n|---|---|\n", family.name)
+		for _, e := range rows {
+			fmt.Fprintf(&b, "| `%s` | %s |\n", e.Prefix, customerRangeNote(e))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("## Blocked ports\n\n")
+	b.WriteString("These TCP ports stay closed, also to destinations on an app's egress\n")
+	b.WriteString("allowlist, and `gregale app egress-ports add` refuses them.\n\n")
+	b.WriteString("| Ports | What they are |\n|---|---|\n")
+	var order []string
+	groups := map[string][]string{}
+	ports := append([]int{}, blockedPorts...)
+	sort.Ints(ports)
+	for _, p := range ports {
+		r := reason(p)
+		if _, ok := groups[r]; !ok {
+			order = append(order, r)
+		}
+		groups[r] = append(groups[r], fmt.Sprintf("`%d`", p))
+	}
+	for _, r := range order {
+		text := r
+		if c, ok := customerPortReasons[r]; ok {
+			text = c
+		}
+		fmt.Fprintf(&b, "| %s | %s |\n", strings.Join(groups[r], ", "), text)
+	}
+	smtp := append([]uint16{}, ds.SMTPPorts...)
+	sort.Slice(smtp, func(i, j int) bool { return smtp[i] < smtp[j] })
+	var submission []string
+	blocked := map[int]bool{}
+	for _, p := range ports {
+		blocked[p] = true
+	}
+	for _, p := range smtp {
+		if !blocked[int(p)] {
+			submission = append(submission, fmt.Sprintf("`%d`", p))
+		}
+	}
+	if len(submission) > 0 {
+		fmt.Fprintf(&b, "\nMail submission ports %s are open only to destinations on the app's egress\nallowlist, so an app can send through a mail provider it lists explicitly.\n", strings.Join(submission, " and "))
+	}
+	b.WriteString("\n")
+
+	b.WriteString("## Image pulls\n\n")
+	b.WriteString("When Gregale pulls a container image for a deployment, it also refuses a\n")
+	b.WriteString("registry that resolves to one of these ranges:\n\n")
+	b.WriteString("| Range | What it is |\n|---|---|\n")
+	oci := append([]netns.DenyEntry{}, ociOnly...)
+	sort.Slice(oci, func(i, j int) bool { return oci[i].Prefix.String() < oci[j].Prefix.String() })
+	for _, e := range oci {
+		fmt.Fprintf(&b, "| `%s` | %s |\n", e.Prefix, customerRangeNote(e))
+	}
+	return b.String()
 }

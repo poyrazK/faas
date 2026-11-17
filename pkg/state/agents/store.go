@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -610,20 +611,8 @@ func (s *Store) insertRun(ctx context.Context, tx pgx.Tx, a Admission, agentID s
 // The plan may have changed since the version was written, so its size and
 // timeout are checked again here.
 func (s *Store) checkAdmission(ctx context.Context, tx pgx.Tx, a Admission, v Version) error {
-	if a.TenantID != "" {
-		if !isUUID(a.TenantID) {
-			return ErrTenantNotFound
-		}
-		status, err := s.q.GetTenantStatus(ctx, tx, sqlc.GetTenantStatusParams{TenantID: a.TenantID, AccountID: a.AccountID})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTenantNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("read tenant: %w", err)
-		}
-		if status != "active" {
-			return ErrTenantInactive
-		}
+	if err := s.checkTenant(ctx, tx, a.AccountID, a.TenantID); err != nil {
+		return err
 	}
 	if v.TimeoutSec > a.Limits.TimeoutMaxSec {
 		return &LimitError{Limit: "AgentRunTimeoutMaxSec", Max: a.Limits.TimeoutMaxSec, Observed: v.TimeoutSec}
@@ -746,6 +735,11 @@ func (s *Store) activeAgent(ctx context.Context, db sqlc.DBTX, accountID, name s
 }
 
 func (s *Store) version(ctx context.Context, db sqlc.DBTX, accountID, agentID string, version int) (Version, error) {
+	// Versions are int4. Converting a larger number wrapped it, so version
+	// 4294967297 read (and ran) version 1 (CodeQL go/incorrect-integer-conversion).
+	if version < 1 || version > math.MaxInt32 {
+		return Version{}, ErrNotFound
+	}
 	row, err := s.q.GetAgentVersion(ctx, db, sqlc.GetAgentVersionParams{AgentID: agentID, AccountID: accountID, Version: int32(version)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Version{}, ErrNotFound

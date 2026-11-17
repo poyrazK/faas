@@ -45,7 +45,8 @@ var cliTreeNouns = []cliTreeNoun{
 	{"test", "Run scenario suites, lifecycle checks, load tests and chaos", "Ship"},
 	{"app", "Inspect, change, scale and operate apps", "Run"},
 	{"sandbox", "Run code in disposable sandboxes and inspect past runs", "Run"},
-	{"invocation", "List, inspect, wait on and watch invocations", "Run"},
+	{"invocation", "Run apps and functions, inspect calls and wait for results", "Run"},
+	{"function", "Generate typed clients for calls between a project's functions", "Run"},
 	{"env", "Set, list and sync an app's sealed variables", "Configure"},
 	{"domain", "Manage custom domains", "Configure"},
 	{"edge", "Manage edge rules, rule lists, caching and CORS", "Configure"},
@@ -53,6 +54,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
 	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
+	{"export", "Verify and compare saved JSON Lines exports offline", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
 	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
 	{"ai", "Configure the AI gateway", "Data"},
@@ -63,7 +65,6 @@ var cliTreeNouns = []cliTreeNoun{
 	{"worker", "Inspect and scale background worker pools", "Work"},
 	{"workflow", "Manage durable workflows", "Work"},
 	{"operation", "Inspect your customers' operations and their deliveries", "Work"},
-	{"automation", "Build, monitor and recover automations", "Work"},
 	{"event", "Publish and send events, manage subscriptions and replays", "Work"},
 	{"webhook", "Register webhooks and deliver events to them", "Work"},
 	{"queue", "Inspect and feed an app's queues", "Work"},
@@ -101,6 +102,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release attempt retry", "deploy retry"},
 	{"release logs", "deploys logs"},
 	{"release wait", "deployment wait"},
+	{"release verify", "deployment verify"},
 	{"release status", "deployment status"},
 	{"release cancel", "deploys cancel"},
 	{"release retry", "deploys retry"},
@@ -157,9 +159,13 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
 	{"sandbox run", "run"},
+	{"sandbox template publish", "sandbox-templates build"},
+	{"sandbox template", "sandbox-templates"},
 	{"sandbox", "runs"},
+	{"invocation run", "invoke"},
 	{"invocation watch", "tail"},
 	{"invocation", "invocations"},
+	{"function", "functions"},
 
 	// Configure.
 	{"env set", "secrets set"},
@@ -187,11 +193,29 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api spec", "openapi"},
 	{"api consumer", "consumers"},
 	{"api tenant", "platform-tenants"},
+	// ADR 20261114150000: tree names for the short flag commands.
+	{"flag enable", "flags on"},
+	{"flag disable", "flags off"},
+	{"flag rollout set", "flags percent"},
+	{"flag rule create", "flags rule-add"},
+	{"flag rule delete", "flags rule-rm"},
+	{"flag kill set", "flags kill"},
+	{"flag kill unset", "flags unkill"},
+	{"flag stale list", "flags stale"},
+	{"flag experiment list", "flags experiments list"},
+	{"flag experiment create", "flags experiments create"},
+	{"flag experiment get", "flags experiments get"},
+	{"flag experiment start", "flags experiments start"},
+	{"flag experiment stop", "flags experiments stop"},
+	{"flag experiment promote", "flags experiments ship"},
+	{"flag experiment delete", "flags experiments delete"},
+	{"flag experiment result get", "flags experiments results"},
 	{"flag", "flags"},
 
 	// Data.
 	{"postgres", "postgres"},
 	{"bucket multipart get", "bucket uploads status"},
+	{"bucket multipart cancel", "bucket uploads abort"},
 	{"bucket multipart", "bucket uploads"},
 	{"bucket version delete", "bucket version-delete"},
 	{"bucket version", "bucket versions"},
@@ -203,6 +227,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"bucket inventory get", "bucket reconcile status"},
 	{"bucket inventory", "bucket reconcile"},
 	{"bucket", "bucket"},
+	{"pipeline connection explain", "pipeline connection guide"},
+	{"pipeline index review", "pipeline indexes"},
+	{"pipeline access review", "pipeline access"},
+	{"pipeline evolution review", "pipeline evolve"},
+	{"pipeline work update", "pipeline operations"},
+	{"export", "export"},
 	{"pipeline", "pipeline"},
 	{"data-api", "data-api"},
 	{"ai", "ai"},
@@ -228,16 +258,16 @@ var cliTreeAliases = []cliTreeAlias{
 	{"operation outcome summary", "customer-operations outcome-summary"},
 	{"operation binding generate", "customer-operations bindings"},
 	{"operation", "customer-operations"},
-	{"automation recovery health", "automations recovery-health"},
-	{"automation recovery suppress", "automations recovery-suppress"},
-	{"automation recovery create", "automations recovery-start"},
-	{"automation recovery cancel", "automations recovery-cancel"},
-	{"automation recovery run", "automations recovery-plan"},
-	{"automation failure list", "automations failures"},
-	{"automation failure policy", "automations failure-policy"},
-	{"automation failure resume", "automations failure-resume"},
-	{"automation policy publish", "automations publish-policy"},
-	{"automation", "automations"},
+	{"workflow stored recovery health", "stored-workflows recovery-health"},
+	{"workflow stored recovery suppress", "stored-workflows recovery-suppress"},
+	{"workflow stored recovery create", "stored-workflows recovery-start"},
+	{"workflow stored recovery cancel", "stored-workflows recovery-cancel"},
+	{"workflow stored recovery run", "stored-workflows recovery-plan"},
+	{"workflow stored failure list", "stored-workflows failures"},
+	{"workflow stored failure policy", "stored-workflows failure-policy"},
+	{"workflow stored failure resume", "stored-workflows failure-resume"},
+	{"workflow stored policy publish", "stored-workflows publish-policy"},
+	{"workflow stored", "stored-workflows"},
 	{"event send", "send"},
 	{"event subscription list", "events subscriptions"},
 	{"event subscription get", "events subscription-status"},
@@ -309,7 +339,9 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Agents. Hosting verbs and client verbs sit directly under `mcp` today.
 	{"mcp serve", "mcp serve"},
+	{"mcp connect", "mcp connect"},
 	{"mcp connection", "mcp connections"},
+	{"mcp server invocation run", "mcp invocation-run"},
 	{"mcp server", "mcp"},
 	{"mcp client tools", "mcp tools"},
 	{"mcp client call", "mcp call"},
@@ -327,6 +359,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"account mfa", "mfa"},
 	{"account", "account"},
 	{"org agent policy", "orgs agent-policy"},
+	{"org support", "orgs support-access"},
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},
@@ -402,12 +435,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api tenant trial get", "platform-tenants trial"},
 	{"api tenant trial end", "platform-tenants trial-end"},
 	{"api tenant trial set", "platform-tenants trial-set"},
-	{"automation event recover", "automations event-recover"},
-	{"automation event-recovery start", "automations event-recovery-start"},
-	{"automation failure-recovery review", "automations failure-recovery-review"},
-	{"automation recovery-policy evaluate", "automations recovery-policy-evaluate"},
-	{"automation recovery-response apply", "automations recovery-response-apply"},
-	{"automation recovery-response status", "automations recovery-response-status"},
+	{"workflow stored event recover", "stored-workflows event-recover"},
+	{"workflow stored event-recovery start", "stored-workflows event-recovery-start"},
+	{"workflow stored failure-recovery review", "stored-workflows failure-recovery-review"},
+	{"workflow stored recovery-policy evaluate", "stored-workflows recovery-policy-evaluate"},
+	{"workflow stored recovery-response apply", "stored-workflows recovery-response-apply"},
+	{"workflow stored recovery-response status", "stored-workflows recovery-response-status"},
 	{"debug issue releases compare", "issues compare-releases"},
 	{"debug issue token create", "issues create-token"},
 	{"debug issue token revoke", "issues revoke-token"},
@@ -464,9 +497,18 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp readiness notification", "mcp readiness notifications"},
 	{"mcp readiness reminder", "mcp readiness reminder-defaults"},
 	{"mcp server export", "mcp config"},
+	{"mcp server approval channels", "mcp approval-channels"},
 	{"mcp server monitor check", "mcp monitor provider-check"},
 	{"mcp server retirements ack", "mcp retirements acknowledge-manual"},
 	{"mcp server tasks deploy", "mcp tasks release"},
+	// #7335's Task release intent (prepare/get/approve/reject/revoke a
+	// pinned review) and guarded execution take their action as an argument.
+	{"mcp server tasks review", "mcp tasks intent"},
+	{"mcp server tasks run", "mcp tasks execution"},
+	// Retained hosted Task source review takes its action as an argument too.
+	{"mcp server tasks audit", "mcp tasks source-review"},
+	{"mcp server approvals get", "mcp approval-channels"},
+	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},
 	{"environment check", "projects environments preflight"},
 	{"environment cancel", "projects environments abort"},
@@ -486,6 +528,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Proposed 2026-10-29 for review (round 9: one-off verbs).
 	{"account dpa get", "account dpa"},
+	{"account health get", "account health"},
 	{"account billing-run schedule get", "account billing-run schedule"},
 	{"ai quality-alert list", "ai quality-alerts"},
 	{"api consumer plan history", "consumers plan-history"},
@@ -499,13 +542,17 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app binding call", "bindings smoke"},
 	{"app binding probe-policy set", "bindings probe-policy"},
 	{"app binding verification", "bindings verification-runs"},
-	{"automation failure-recovery evidence", "automations failure-recovery-evidence"},
-	{"automation failure-recovery list", "automations failure-recovery-reviews"},
-	{"automation recovery evidence", "automations recovery-retry-evidence"},
-	{"automation recovery-policy history", "automations recovery-policy-reviews"},
-	{"automation recovery-response check", "automations recovery-response-preview"},
-	{"automation live check", "automations live gate"},
-	{"automation live run", "automations live suite"},
+	{"workflow stored failure-recovery evidence", "stored-workflows failure-recovery-evidence"},
+	{"workflow stored failure-recovery list", "stored-workflows failure-recovery-reviews"},
+	{"workflow stored recovery evidence", "stored-workflows recovery-retry-evidence"},
+	{"workflow stored recovery-policy history", "stored-workflows recovery-policy-reviews"},
+	{"workflow stored recovery-response check", "stored-workflows recovery-response-preview"},
+	{"workflow stored live check", "stored-workflows live gate"},
+	{"workflow stored live run", "stored-workflows live suite"},
+	// `live baseline <verb>` would be five words under `workflow stored`.
+	{"workflow stored baseline", "stored-workflows live baseline"},
+	{"billing egress-overage get", "billing egress-overage"},
+	{"billing egress-overage set", "billing egress-overage"},
 	{"billing payment-method get", "billing payment-method"},
 	{"bucket copy-source", "bucket copy-sources"},
 	{"bucket encryption keys", "bucket encryption-keys"},
@@ -561,8 +608,17 @@ var cliTreeAliases = []cliTreeAlias{
 	{"ai request-policy set", "ai request-policy"},
 	{"api tenant activation get", "platform-tenants activation"},
 	{"api tenant activation wait", "platform-tenants activation"},
-	{"automation recovery-policy get", "automations recovery-policy"},
-	{"automation recovery-policy set", "automations recovery-policy"},
+	{"workflow stored recovery-policy get", "stored-workflows recovery-policy"},
+	{"workflow stored recovery-policy set", "stored-workflows recovery-policy"},
+	// Pipeline verbs from #7219 and #7239: freshness shows or sets the
+	// target; indexes and access preview a change, then approve it.
+	{"pipeline freshness get", "pipeline freshness"},
+	{"pipeline freshness set", "pipeline freshness"},
+	{"pipeline index check", "pipeline indexes"},
+	{"pipeline index approve", "pipeline indexes"},
+	{"pipeline access check", "pipeline access"},
+	{"pipeline access approve", "pipeline access"},
+	{"pipeline connection guide get", "pipeline connection guide"},
 	{"bucket protection legal-hold get", "bucket protection legal-hold"},
 	{"bucket protection legal-hold set", "bucket protection legal-hold"},
 	{"bucket protection event-hold set", "bucket protection event-hold"},
@@ -598,6 +654,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"postgres compute-policy set", "postgres compute-policy"},
 	{"postgres compute-policy status", "postgres compute-policy-status"},
 	{"postgres resize status", "postgres resize-status"},
+	// ADR-20261102123523: what a database gives PR previews is a setting.
+	{"postgres previews set", "postgres previews"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
@@ -608,11 +666,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin product", "product"},
 	{"admin tenant-surfaces", "tenant-surfaces"},
 	{"admin rollouts", "rollouts"},
-	{"admin github-webhook-secret", "github-webhook-secret"},
 	{"admin mail", "mail"},
-	{"admin postgres reconcile", "postgres reconcile"},
-	{"admin postgres usage-import", "postgres usage-import"},
-	{"admin postgres diagnostics", "postgres diagnostics"},
 	// Sealed live queries stay an operator preview (ADR-20261016151947);
 	// customers read live through `data-api live`.
 	{"admin postgres live", "postgres live"},
@@ -623,7 +677,9 @@ var cliTreeAliases = []cliTreeAlias{
 // cliTreeShorts summarize tree paths whose command today does more than
 // the path names.
 var cliTreeShorts = map[string]string{
-	"mcp server": "Scaffold, deploy and check the MCP servers you host",
+	"mcp server":                  "Scaffold, deploy and check the MCP servers you host",
+	"event backfill":              "Deliver retained events to a subscription again, and track the jobs",
+	"event subscription-capacity": "Set, list and read a subscription's live-delivery limit commands",
 }
 
 // cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a
@@ -648,14 +704,31 @@ func cliTreeStandardVerb(verb string) string {
 }
 
 // cliTreeVerbFor spells a verb of siblings in its standard form. A synonym
-// whose standard verb is also a sibling (`rm` beside `delete`) is not
-// listed: the standard verb runs the sibling.
+// whose standard verb is also a sibling alias of it (`rm` beside `delete`)
+// is not listed: the standard verb runs the sibling. A synonym that is a
+// command of its own (`flags inspect` beside `flags get`) keeps its name;
+// folding it hid the command from help (Hunt 32 H32-72).
 func cliTreeVerbFor(verb string, siblings []cliSub) (string, bool) {
 	standard := cliTreeStandardVerb(verb)
-	if standard != verb && slices.ContainsFunc(siblings, func(sub cliSub) bool { return sub.Name == standard }) {
+	if standard == verb {
+		return verb, true
+	}
+	i := slices.IndexFunc(siblings, func(sub cliSub) bool { return sub.Name == standard })
+	if i < 0 {
+		return standard, true
+	}
+	j := slices.IndexFunc(siblings, func(sub cliSub) bool { return sub.Name == verb })
+	if j < 0 || cliSubsAreOneCommand(siblings[j], siblings[i]) {
 		return "", false
 	}
-	return standard, true
+	return verb, true
+}
+
+// cliSubsAreOneCommand reports whether two sibling verbs run one command:
+// one names the other as an alias, or both carry the same description.
+func cliSubsAreOneCommand(a, b cliSub) bool {
+	return a.Short == b.Short || a.Short == "Alias for "+b.Name || b.Short == "Alias for "+a.Name ||
+		slices.Contains(a.Aliases, b.Name) || slices.Contains(b.Aliases, a.Name)
 }
 
 func lookupCliTreeNoun(name string) (cliTreeNoun, bool) {
@@ -851,6 +924,10 @@ func rewriteAppPath(args []string) ([]string, error) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
+	if isAppProjectCommand(args[1:]) {
+		// `app restart|health|update --project P` runs per project app.
+		return args, nil
+	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}
@@ -1108,10 +1185,20 @@ type cliTreeEntry struct {
 // cliTreeDiscovery is the discoverable manifest, read once per help screen.
 type cliTreeDiscovery struct {
 	commands map[string]cliCommand
+	// named answers help for a path the user typed when a logged-in CLI
+	// could not read its account view and the hidden set is only the
+	// tier-default guess: listings stay filtered, but `gregale app exec
+	// --help` shows exec's page rather than the parent's (retail-store
+	// GREG-06).
+	named map[string]cliCommand
 }
 
 func newCliTreeDiscovery() cliTreeDiscovery {
-	return cliTreeDiscoveryOf(discoverableCliCommands())
+	d := cliTreeDiscoveryOf(discoverableCliCommands())
+	if discoveryCapabilityView().unconfirmed {
+		d.named = cliTreeDiscoveryOf(visibleCliCommands()).commands
+	}
+	return d
 }
 
 // cliTreeDiscoveryOf indexes manifest, for a surface that documents more
@@ -1131,7 +1218,16 @@ func cliTreeDiscoveryOf(manifest []cliCommand) cliTreeDiscovery {
 // (ADR-20261023115741), and an operator command stays out of the tree.
 func (d cliTreeDiscovery) node(path string) (cliTreeNode, bool) {
 	words := strings.Fields(path)
+	if len(words) == 0 {
+		return cliTreeNode{}, false
+	}
 	command, ok := d.commands[words[0]]
+	if ok && command.Audience == cliAudienceCustomer {
+		if node, found := walkCliTreeNode(command, words[1:]); found {
+			return node, true
+		}
+	}
+	command, ok = d.named[words[0]]
 	if !ok || command.Audience != cliAudienceCustomer {
 		return cliTreeNode{}, false
 	}
@@ -1250,10 +1346,18 @@ func treeHelpWords(typed []string) ([]string, bool) {
 	if len(words) == 0 {
 		return nil, false
 	}
+	// A fold flag names another command (`realtime send --principal P`
+	// runs `realtime send-principal`); its help is that command's, which
+	// lists the flags the fold adds. The tree's help for the path has only
+	// the path's own flags.
+	if _, folded := rewriteFlagFold(words); folded {
+		return nil, false
+	}
 	// `--help --all` on one of today's commands (`github`, `deploy`, `app`)
 	// asks for that command's full manifest help, every option grouped; a
 	// tree-only noun (`release`) has no such help, so the tree's answers.
-	if path := leadingTreeWords(words); slices.Contains(words, "--all") && (words[0] == appSlugFallback || oldPathDepth(path) == len(path)) {
+	if path := leadingTreeWords(words); slices.Contains(words, "--all") && (words[0] == appSlugFallback || oldPathDepth(path) == len(path)) &&
+		!appTreeOnlyVerb(path) {
 		return nil, false
 	}
 	if _, ok := lookupCliTreeNoun(words[0]); ok || slices.Contains(cliTreeShortcutCommands, words[0]) {
@@ -1270,6 +1374,10 @@ func treeHelpWords(typed []string) ([]string, bool) {
 // run() then prints today's help under the typed name.
 func printTreeManifestHelp(w io.Writer, words []string) bool {
 	d := newCliTreeDiscovery()
+	if len(leadingTreeWords(words)) > 1 && d.named != nil {
+		// Help for a verb the user named; see cliTreeDiscovery.named.
+		d.commands = d.named
+	}
 	var command cliCommand
 	if noun, ok := lookupCliTreeNoun(words[0]); ok {
 		// An operator command (postgres) stays out of the tree.
@@ -1535,6 +1643,22 @@ func cliTreeVerbsSharing(old string) int {
 }
 
 // cliTreeAppVerb reports a word the tree's `app` takes as its verb.
+// appTreeOnlyVerb reports `app <verb>` where the verb exists only in the
+// tree (`app listener`): today's `app` help would read the verb as a slug and
+// its words as positionals, so `--help --all` must take the tree's help
+// (agent eval 2026-11-13, ADR-20261112223000).
+func appTreeOnlyVerb(path []string) bool {
+	if len(path) < 2 || path[0] != appSlugFallback || !cliTreeAppVerb(path[1]) {
+		return false
+	}
+	command, ok := lookupCliCommand(appSlugFallback)
+	if !ok {
+		return false
+	}
+	_, today := findCliSubcommand(command.Subcommands, path[1])
+	return !today && path[1] != "get" && path[1] != "update"
+}
+
 func cliTreeAppVerb(word string) bool {
 	if _, _, ok := matchCliTreeAlias([]string{appSlugFallback, word}); ok {
 		return true

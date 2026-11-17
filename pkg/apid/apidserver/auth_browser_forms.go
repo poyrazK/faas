@@ -21,7 +21,7 @@ import (
 
 const (
 	forgotPasswordPath = "/login/forgot"
-	resetRequestSent   = "If that address belongs to a verified account, a reset link is on its way. It expires in 15 minutes."
+	resetRequestSent   = "If that address has a Gregale account, a link is on its way. It expires in 15 minutes."
 )
 
 // browserFormPost reports whether r is an HTML form submission from a browser:
@@ -102,6 +102,21 @@ func (a *authHandlers) finishBrowserLogin(w http.ResponseWriter, r *http.Request
 		return
 	}
 	a.renderLogin(w, r, captured.status, captured.problemMessage(), true, next)
+}
+
+// magicLinkRequestSent answers every sign-in link request the same way, so
+// the form does not tell which addresses have accounts. An address without
+// one gets a link that creates it.
+const magicLinkRequestSent = "Check your email: a sign-in link is on its way. It works once, for 15 minutes."
+
+// finishBrowserMagicLink is the sign-in page's "Email me a sign-in link"
+// form (POST /login/magic-link).
+func (a *authHandlers) finishBrowserMagicLink(w http.ResponseWriter, r *http.Request, captured *capturedResponse) {
+	if captured.status < http.StatusBadRequest {
+		a.renderLogin(w, r, http.StatusOK, magicLinkRequestSent, false, "")
+		return
+	}
+	a.renderLogin(w, r, captured.status, captured.problemMessage(), true, "")
 }
 
 // renderForgotPasswordForm is GET /login/forgot: the page the sign-in form's

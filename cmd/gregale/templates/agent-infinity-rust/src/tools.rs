@@ -6,8 +6,9 @@
 // it, the call is held in Postgres: GET /threads/:id shows it with its
 // callback URL, and your backend posts the RAP tool_result there.
 //
-// Gregale's own tools, such as gregale_sleep, come from its RAP toolset
-// (PlatformTool). Gregale answers them through the same callback URLs.
+// Gregale's own tools, gregale_sleep and gregale_run, come from its RAP
+// toolset (PlatformTool). Gregale answers them through the same callback
+// URLs.
 
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use infinity_agent_core::tools::{Tool, ToolContext};
 use rap_client::http::SimpleHttpClient;
 use rap_protocol::{ProviderCallId, ToolCallId, ToolsetManifest};
 
-use crate::platform::{GregaleSender, Platform};
+use crate::platform::{GregaleHttp, GregaleSender, Platform};
 use crate::store::Db;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -90,13 +91,14 @@ impl Tool<GregaleSender> for LookupTool {
 }
 
 /// One tool of Gregale's RAP toolset. The toolset's invoke endpoint checks
-/// the callback URL the call carries, so the call needs no key either.
+/// the callback URL the call carries, and the app's workload token for
+/// gregale_run, so the call needs no API key.
 pub struct PlatformTool {
     pub descriptor: RapToolDescriptor,
     pub endpoint: String,
     pub platform: Arc<Platform>,
     pub endpoint_id: String,
-    pub http: SimpleHttpClient,
+    pub http: GregaleHttp,
 }
 
 /// The toolset's tools, ready for the agent system.
@@ -115,7 +117,9 @@ pub fn platform_tools(
                 endpoint: endpoint.clone(),
                 platform: platform.clone(),
                 endpoint_id: endpoint_id.to_owned(),
-                http: SimpleHttpClient::new(),
+                http: GregaleHttp {
+                    platform: platform.clone(),
+                },
             }) as Box<dyn Tool<GregaleSender>>
         })
         .collect()

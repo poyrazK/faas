@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/preview"
+	"github.com/gregale-dev/gregale-go/preview"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 // Opt-in acceptance against the deployed example; no fixture substitution.

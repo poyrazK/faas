@@ -524,6 +524,7 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	resp, err := transport.RoundTrip(outboundReq)
 	headerTimer.Stop()
 	if err != nil {
+		markGuestTransportError(w, r, roundTripCtx)
 		http.Error(w, fmt.Sprintf("guest h1 roundtrip: %v", err), http.StatusBadGateway)
 		return
 	}

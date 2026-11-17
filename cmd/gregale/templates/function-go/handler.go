@@ -1,4 +1,4 @@
-// Function template for gregale (go124 runtime contract; built with Go 1.26.10).
+// Function template for gregale (go124 runtime contract; built with Go 1.26.11).
 //
 // The go124 runner is a static binary that lives at
 // /usr/local/bin/gregale-runner in the layer. It listens on :8080 and talks
@@ -12,7 +12,7 @@
 // pools, caches) is reused across requests. Older runners that start the handler once per
 // request still work: they send one envelope and close stdin.
 //
-// Once the Go SDK is published, github.com/poyrazK/faas/sdk/go/function.Serve
+// Once the Go SDK is published, github.com/gregale-dev/gregale-go/function.Serve
 // runs a standard net/http handler instead of envelopes.
 //
 // No go.mod is shipped on purpose: Go's //go:embed refuses to descend

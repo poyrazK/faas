@@ -167,7 +167,10 @@ func validateJWTPolicy(policy AuthPolicy) error {
 			return fmt.Errorf("realtime: oidc_jwt jwks_url must not point to a private or loopback address")
 		}
 	}
-	if len(policy.Audience) > 16 || len(policy.Algorithms) == 0 || len(policy.Algorithms) > 16 {
+	if len(policy.Algorithms) == 0 {
+		return fmt.Errorf("realtime: oidc_jwt requires at least one signing algorithm")
+	}
+	if len(policy.Audience) > 16 || len(policy.Algorithms) > 16 {
 		return fmt.Errorf("realtime: oidc_jwt audience and algorithms are bounded to 16 entries")
 	}
 	allowed := map[string]struct{}{

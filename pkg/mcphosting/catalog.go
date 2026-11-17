@@ -75,6 +75,7 @@ type Icon struct {
 // Resource is definition metadata only. Resource contents can contain private
 // application data and are never part of a contract snapshot.
 type Resource struct {
+	Meta        json.RawMessage `json:"_meta,omitempty"`
 	URI         string          `json:"uri"`
 	Name        string          `json:"name"`
 	Title       string          `json:"title,omitempty"`
@@ -86,6 +87,7 @@ type Resource struct {
 }
 
 type ResourceTemplate struct {
+	Meta        json.RawMessage `json:"_meta,omitempty"`
 	URITemplate string          `json:"uriTemplate"`
 	Name        string          `json:"name"`
 	Title       string          `json:"title,omitempty"`
@@ -103,6 +105,7 @@ type PromptArgument struct {
 }
 
 type Prompt struct {
+	Meta        json.RawMessage  `json:"_meta,omitempty"`
 	Name        string           `json:"name"`
 	Title       string           `json:"title,omitempty"`
 	Description string           `json:"description,omitempty"`
@@ -291,6 +294,9 @@ func (c *Client) ReadResource(ctx context.Context, uri string) (Exchange, error)
 		x.Result = nil
 		return x, fmt.Errorf("resource read requires %s handling; use an MCP SDK client for Tasks and input requests", result.ResultType)
 	}
+	if err := validateReadResult(x.Result, "contents"); err != nil {
+		return x, err
+	}
 	return x, nil
 }
 
@@ -318,7 +324,46 @@ func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[strin
 		x.Result = nil
 		return x, fmt.Errorf("prompt requires %s handling; use an MCP SDK client for Tasks and input requests", result.ResultType)
 	}
+	if err := validateReadResult(x.Result, "messages"); err != nil {
+		return x, err
+	}
 	return x, nil
+}
+
+func validateReadResult(data json.RawMessage, field string) error {
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(data, &result); err != nil {
+		return err
+	}
+	var entries []json.RawMessage
+	raw := bytes.TrimSpace(result[field])
+	if len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &entries) != nil {
+		return fmt.Errorf("MCP result must contain a %s array", field)
+	}
+	for _, raw := range entries {
+		var entry map[string]json.RawMessage
+		if json.Unmarshal(raw, &entry) != nil || entry == nil {
+			return fmt.Errorf("MCP %s entries must be objects", field)
+		}
+		if field == "contents" {
+			var uri string
+			if json.Unmarshal(entry["uri"], &uri) != nil || uri == "" {
+				return fmt.Errorf("MCP resource content must identify its URI")
+			}
+			var text, blob string
+			textErr, blobErr := json.Unmarshal(entry["text"], &text), json.Unmarshal(entry["blob"], &blob)
+			if (textErr != nil || !bytes.HasPrefix(bytes.TrimSpace(entry["text"]), []byte(`"`))) && (blobErr != nil || !bytes.HasPrefix(bytes.TrimSpace(entry["blob"]), []byte(`"`))) {
+				return fmt.Errorf("MCP resource content must contain text or blob")
+			}
+		} else {
+			var role string
+			var content map[string]json.RawMessage
+			if json.Unmarshal(entry["role"], &role) != nil || (role != "user" && role != "assistant") || json.Unmarshal(entry["content"], &content) != nil || content == nil {
+				return fmt.Errorf("MCP prompt message must contain a role and content object")
+			}
+		}
+	}
+	return nil
 }
 
 func (c *Client) Resource(ctx context.Context, uri string) (Exchange, error) {

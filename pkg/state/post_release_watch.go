@@ -116,7 +116,7 @@ func (m *MemStore) ListPostReleaseWatchCandidatesPage(_ context.Context, window 
 			}
 			// The release a plain rollback returns to: the most recently
 			// serving, never a canary aborted before it completed.
-			if other.Status == DeploySuperseded && other.CreatedAt.Before(d.CreatedAt) && !abortedCanaryCandidate(other) &&
+			if other.Status == DeploySuperseded && other.CreatedAt.Before(d.CreatedAt) && !implicitRollbackExcluded(other) &&
 				(predecessor == nil || m.rollbackMoreRecentLocked(other, *predecessor)) {
 				p := other
 				predecessor = &p

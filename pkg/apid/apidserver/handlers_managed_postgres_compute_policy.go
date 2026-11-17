@@ -56,12 +56,17 @@ func (s *server) changeManagedPostgresComputePolicy(w http.ResponseWriter, r *ht
 		managedPostgresProblem(w, err)
 		return
 	}
+	commitBudget, answered := s.chargePostgresComputePolicy(w, r, account, database, request.RequestID, *request.ScaleToZero)
+	if answered {
+		return
+	}
 	operation, err := s.managedPostgres.ChangeComputePolicy(r.Context(), managedpostgres.ChangeComputePolicyRequest{
 		AccountID: account.ID, DatabaseID: database, RequestID: request.RequestID, ScaleToZero: *request.ScaleToZero})
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
+	commitBudget()
 	s.audit.Emit(r.Context(), "managed_postgres.database.compute_policy_requested", &account.ID,
 		map[string]any{"database_id": database, "request_id": operation.ID, "scale_to_zero": operation.TargetScaleToZero, "generation": operation.Generation})
 	w.Header().Set("Location", "/v1/postgres/databases/"+url.PathEscape(database)+"/compute-policy-changes/"+url.PathEscape(operation.ID))

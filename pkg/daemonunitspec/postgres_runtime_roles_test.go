@@ -48,6 +48,11 @@ func peerRuntimeRoles(t *testing.T) (map[string]string, map[string]bool) {
 	for _, m := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(array[1], -1) {
 		created[m[1]] = true
 	}
+	// Peer logins outside faas_runtime (neond's faas_neond) are created one
+	// by one, each with its own narrow grants.
+	for _, m := range regexp.MustCompile(`(?m)^\s*CREATE ROLE (faas_[a-z_]+) LOGIN;`).FindAllStringSubmatch(runtimeRolesSQL(t), -1) {
+		created[m[1]] = true
+	}
 	return mapped, created
 }
 
@@ -81,8 +86,9 @@ func TestRuntimeRolesCoverEveryMappedDaemonUser(t *testing.T) {
 			t.Errorf("runtime-roles.sql creates %s but faas_map maps no daemon user to it", role)
 		}
 	}
-	if !strings.Contains(runtimeRolesSQL(t), "GRANT faas_runtime TO faas_compute") {
-		t.Error("runtime-roles.sql does not add faas_compute to faas_runtime")
+	compute := regexp.MustCompile(`(?s)FOREACH r IN ARRAY ARRAY\[('faas_compute'.*?)\] LOOP(.*?)END LOOP`).FindStringSubmatch(runtimeRolesSQL(t))
+	if compute == nil || !strings.Contains(compute[2], "GRANT faas_runtime TO %I") {
+		t.Error("runtime-roles.sql does not add faas_compute (and the per-daemon compute roles) to faas_runtime")
 	}
 }
 
@@ -195,6 +201,44 @@ func TestPgHbaAdmitsTheRuntimeGroup(t *testing.T) {
 	}
 }
 
+// adr: 20261110210000 — slices 1c-2 and 1c-3: with certificate logins both
+// pg_hba renderers admit faas_node_logins by client certificate only, ahead
+// of the faas_runtime password lines; once the shared compute passwords are
+// retired the compute networks lose those password lines (loopback keeps
+// them) and only the certificate path remains.
+func TestPgHbaComputeCertLoginsAndPasswordRetirement(t *testing.T) {
+	requireJinja(t)
+	cert := "hostssl faas            +faas_node_logins                       10.42.0.2/32                cert"
+	computePassword := "host    faas            +faas_runtime                           10.42.0.2/32                scram-sha-256"
+	loopback := "host    faas            +faas_runtime                           127.0.0.1/32            scram-sha-256"
+	for role, taskName := range map[string]string{
+		"postgres":                  "postgres — narrow pg_hba.conf to peer/local auth (spec §11)",
+		"control_plane_peer_access": "control-plane peer access — render manifest-derived pg_hba entries",
+	} {
+		_, byName := roleTasksByName(t, role)
+		copyArgs, _ := byName[taskName].body["ansible.builtin.copy"].(map[string]any)
+		content, _ := copyArgs["content"].(string)
+		for _, retired := range []bool{false, true} {
+			vars := fmt.Sprintf(`{"faas_postgres_allowed_cidrs": ["10.42.0.2/32"], "faas_postgres_owner_contracted": true,
+				"control_plane_postgres_owner_contracted": {"stat": {"exists": true}},
+				"faas_postgres_compute_cert_logins": true, "faas_compute_db_password_logins_retired": %t,
+				"control_plane_compute_passwords_retired": {"stat": {"exists": %t}}}`, retired, retired)
+			hba := renderJinja(t, content, vars)
+			reject := strings.Index(hba, "host    all             all             127.0.0.1/32            reject")
+			certAt := strings.Index(hba, cert)
+			if certAt < 0 || certAt > reject {
+				t.Errorf("%s (retired=%t): no certificate line before the reject lines:\n%s", role, retired, hba)
+			}
+			if at := strings.Index(hba, computePassword); (at >= 0) == retired || (at >= 0 && at < certAt) {
+				t.Errorf("%s (retired=%t): compute password line at %d (cert at %d):\n%s", role, retired, at, certAt, hba)
+			}
+			if !strings.Contains(hba, loopback) {
+				t.Errorf("%s (retired=%t): loopback password line gone:\n%s", role, retired, hba)
+			}
+		}
+	}
+}
+
 // After the contract only root maps to the owner, and every daemon user keeps
 // its runtime role, so the converge that removes the owner lines leaves each
 // opted-in daemon able to log in. The live check runs before anything changes.
@@ -214,8 +258,17 @@ func TestOwnerContractLeavesOnlyRoot(t *testing.T) {
 		if contracted && strings.Join(users, ",") != "root" {
 			t.Errorf("contracted faas_map maps %v to the owner, want only root", users)
 		}
-		if !contracted && len(users) != len(runtime)+1 {
-			t.Errorf("faas_map maps %v to the owner before the contract, want root and the %d daemon users", users, len(runtime))
+		// Daemons born after the owner contract began never logged in as the
+		// owner, so they never map to it (ADR-20261109170000: signd;
+		// ADR-20261110210000: secretd; ADR-20261112160000: neond).
+		ownerless := map[string]bool{"faas-signd": true, "faas-secretd": true, "faas-neond": true}
+		for _, u := range users {
+			if ownerless[u] {
+				t.Errorf("contracted=%t: faas_map maps %s to the owner; it never needed it", contracted, u)
+			}
+		}
+		if !contracted && len(users) != len(runtime)+1-len(ownerless) {
+			t.Errorf("faas_map maps %v to the owner before the contract, want root and the %d daemon users that predate the contract", users, len(runtime)-len(ownerless))
 		}
 		for user, role := range runtime {
 			if !regexp.MustCompile(`(?m)^faas_map\s+` + regexp.QuoteMeta(user) + `\s+` + role + `\s*$`).MatchString(rendered) {
@@ -242,6 +295,12 @@ func TestOwnerContractLeavesOnlyRoot(t *testing.T) {
 		if position[refuse] >= position[later] {
 			t.Errorf("%q runs before the contract's live check", later)
 		}
+	}
+	stray := byName["postgres — remove owner mappings outside the managed block when contracted — ADR-20261023104734"]
+	strayArgs, _ := stray.body["ansible.builtin.lineinfile"].(map[string]any)
+	if strayArgs["state"] != "absent" || !strings.Contains(fmt.Sprint(strayArgs["regexp"]), "(?!root\\s)") ||
+		!strings.Contains(whenClauses(stray), "faas_postgres_owner_contracted") {
+		t.Errorf("the contract no longer removes owner mappings written outside the managed block (keeping root's): %v", stray.body)
 	}
 	probe, _ := byName["postgres — read the logins that still use the owner — ADR-20261023104734"].body["ansible.builtin.command"].(map[string]any)
 	if !strings.Contains(fmt.Sprint(probe["argv"]), "usename = 'faas'") {

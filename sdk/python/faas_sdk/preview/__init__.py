@@ -28,7 +28,6 @@ from .. import (
     ErrNotFound,
     ErrRateLimited,
     ErrUnauthorized,
-    FaaSClient,
     FaaSClientOptions,
     FaasError,
     FaasProblemError,
@@ -36,7 +35,12 @@ from .. import (
     GregaleReleaseTransport,
     IdempotencyKey,
     Problem,
+    RequestOptions,
+    RequestTimeoutError,
+    ResponseInfo,
+    ResponseObserver,
     RetryOptions,
+    RetryPolicy,
     SseEvent,
     VerifiedWebhook,
     WebhookVerificationError,
@@ -47,6 +51,7 @@ from .. import (
     current_gregale_release,
     current_gregale_request_deadline,
     current_idempotency_key,
+    function,
     gregale_request_time_remaining_ms,
     install_chain,
     is_faas_error,
@@ -60,7 +65,331 @@ from .. import (
     with_gregale_request_context,
     with_idempotency_key,
 )
+from .. import (
+    AsyncPagination as AsyncPagination,
+)
+from .. import (
+    BuildWaitOptions as BuildWaitOptions,
+)
+from .. import (
+    DeploymentWaitOptions as DeploymentWaitOptions,
+)
+from .. import (
+    PaginationError as PaginationError,
+)
+from .. import (
+    PaginationOptions as PaginationOptions,
+)
+from .. import (
+    PaginationPage as PaginationPage,
+)
+from .. import (
+    SourceUploadCheckpoint as SourceUploadCheckpoint,
+)
+from .. import (
+    SourceUploadCode as SourceUploadCode,
+)
+from .. import (
+    SourceUploadError as SourceUploadError,
+)
+from .. import (
+    SourceUploadOptions as SourceUploadOptions,
+)
+from .. import (
+    SourceUploadProgress as SourceUploadProgress,
+)
+from .. import (
+    SourceUploadStage as SourceUploadStage,
+)
+from .. import (
+    SourceUploadTimeoutError as SourceUploadTimeoutError,
+)
+from .. import (
+    WaiterError as WaiterError,
+)
+from .. import (
+    WaiterFailureCode as WaiterFailureCode,
+)
+from .. import (
+    WaiterOptions as WaiterOptions,
+)
+from .. import (
+    WaiterProgress as WaiterProgress,
+)
+from .. import (
+    WaiterTimeoutError as WaiterTimeoutError,
+)
 from .. import __all__ as _PACKAGE_ALL
+from .. import (
+    load_source_upload_checkpoint as load_source_upload_checkpoint,
+)
+from .. import (
+    save_source_upload_checkpoint as save_source_upload_checkpoint,
+)
+from .._project_inspection import (
+    ProjectBuild as ProjectBuild,
+)
+from .._project_inspection import (
+    ProjectCandidate as ProjectCandidate,
+)
+from .._project_inspection import (
+    ProjectFramework as ProjectFramework,
+)
+from .._project_inspection import (
+    ProjectGeneratedFile as ProjectGeneratedFile,
+)
+from .._project_inspection import (
+    ProjectInput as ProjectInput,
+)
+from .._project_inspection import (
+    ProjectInspectionError as ProjectInspectionError,
+)
+from .._project_inspection import (
+    ProjectInspectionOptions as ProjectInspectionOptions,
+)
+from .._project_inspection import (
+    ProjectIssue as ProjectIssue,
+)
+from .._project_inspection import (
+    ProjectIssueCode as ProjectIssueCode,
+)
+from .._project_inspection import (
+    ProjectPlan as ProjectPlan,
+)
+from .._project_inspection import (
+    ProjectSetting as ProjectSetting,
+)
+from .._project_inspection import (
+    ProjectShape as ProjectShape,
+)
+from .._project_inspection import (
+    inspect_project as inspect_project,
+)
+from .._project_inspection import (
+    validate_project_plan as validate_project_plan,
+)
+from .._project_verification import (
+    ProjectVerificationOptions as ProjectVerificationOptions,
+)
+from .._project_verification import (
+    ProjectVerificationReport as ProjectVerificationReport,
+)
+from .._project_verification import (
+    ProjectVerificationTarget as ProjectVerificationTarget,
+)
+from .._project_verification import (
+    VerificationCheck as VerificationCheck,
+)
+from .._project_verification import (
+    VerificationCheckContext as VerificationCheckContext,
+)
+from .._project_verification import (
+    VerificationCheckEvidence as VerificationCheckEvidence,
+)
+from .._project_verification import (
+    VerificationCheckResult as VerificationCheckResult,
+)
+from .._project_verification import (
+    VerificationCode as VerificationCode,
+)
+from .._project_verification import (
+    VerificationHealth as VerificationHealth,
+)
+from .._project_verification import (
+    VerificationOutcome as VerificationOutcome,
+)
+from .._project_verification import (
+    VerificationTimeline as VerificationTimeline,
+)
+from .._project_verification import (
+    VerificationTimelineEvent as VerificationTimelineEvent,
+)
+from .._project_verification import (
+    VerificationWorkload as VerificationWorkload,
+)
+from .._project_verification import (
+    VerificationWorkloadReport as VerificationWorkloadReport,
+)
+from .._project_verification import (
+    project_verification_target as project_verification_target,
+)
+from .._project_workflows import (
+    ProjectApplicationResult as ProjectApplicationResult,
+)
+from .._project_workflows import (
+    ProjectApplicationState as ProjectApplicationState,
+)
+from .._project_workflows import (
+    ProjectApplyOptions as ProjectApplyOptions,
+)
+from .._project_workflows import (
+    ProjectArchive as ProjectArchive,
+)
+from .._project_workflows import (
+    ProjectPreviewOptions as ProjectPreviewOptions,
+)
+from .._project_workflows import (
+    ProjectWorkflowCode as ProjectWorkflowCode,
+)
+from .._project_workflows import (
+    ProjectWorkflowError as ProjectWorkflowError,
+)
+from .._project_workflows import (
+    ProjectWorkflowOptions as ProjectWorkflowOptions,
+)
+from .._project_workflows import (
+    ProjectWorkflowPhase as ProjectWorkflowPhase,
+)
+from .._project_workflows import (
+    ProjectWorkflowProgress as ProjectWorkflowProgress,
+)
+from .._project_workflows import (
+    ProjectWorkloadOutcome as ProjectWorkloadOutcome,
+)
+from .._project_workflows import (
+    ProjectWorkloadStatus as ProjectWorkloadStatus,
+)
+from .._project_workflows import (
+    ReviewedProjectPlan as ReviewedProjectPlan,
+)
+from .._project_workflows import (
+    load_project_application_state as load_project_application_state,
+)
+from .._source_deployment import (
+    SourceDeploymentArchive as SourceDeploymentArchive,
+)
+from .._source_deployment import (
+    SourceDeploymentCancelledError as SourceDeploymentCancelledError,
+)
+from .._source_deployment import (
+    SourceDeploymentCode as SourceDeploymentCode,
+)
+from .._source_deployment import (
+    SourceDeploymentError as SourceDeploymentError,
+)
+from .._source_deployment import (
+    SourceDeploymentOptions as SourceDeploymentOptions,
+)
+from .._source_deployment import (
+    SourceDeploymentPhase as SourceDeploymentPhase,
+)
+from .._source_deployment import (
+    SourceDeploymentPreparationOptions as SourceDeploymentPreparationOptions,
+)
+from .._source_deployment import (
+    SourceDeploymentProgress as SourceDeploymentProgress,
+)
+from .._source_deployment import (
+    SourceDeploymentReleaseProgress as SourceDeploymentReleaseProgress,
+)
+from .._source_deployment import (
+    SourceDeploymentResult as SourceDeploymentResult,
+)
+from .._source_deployment import (
+    SourceDeploymentState as SourceDeploymentState,
+)
+from .._source_deployment import (
+    SourceDeploymentWaitOptions as SourceDeploymentWaitOptions,
+)
+from .._source_deployment import (
+    load_source_deployment_state as load_source_deployment_state,
+)
+from .._source_preparation import (
+    PreparedSource as PreparedSource,
+)
+from .._source_preparation import (
+    SourceEntry as SourceEntry,
+)
+from .._source_preparation import (
+    SourceIssue as SourceIssue,
+)
+from .._source_preparation import (
+    SourcePlan as SourcePlan,
+)
+from .._source_preparation import (
+    SourcePreparationCode as SourcePreparationCode,
+)
+from .._source_preparation import (
+    SourcePreparationError as SourcePreparationError,
+)
+from .._source_preparation import (
+    SourcePreparationOptions as SourcePreparationOptions,
+)
+from .._source_preparation import (
+    SourcePreparationProgress as SourcePreparationProgress,
+)
+from .._source_preparation import (
+    inspect_source as inspect_source,
+)
+from .._source_preparation import (
+    prepare_source as prepare_source,
+)
+from .._typed_jobs import (
+    JobCheckpoint as JobCheckpoint,
+)
+from .._typed_jobs import (
+    JobCheckpointInput as JobCheckpointInput,
+)
+from .._typed_jobs import (
+    JobItemOutcome as JobItemOutcome,
+)
+from .._typed_jobs import (
+    JobProgress as JobProgress,
+)
+from .._typed_jobs import (
+    JobRunOptions as JobRunOptions,
+)
+from .._typed_jobs import (
+    JobSubmitOptions as JobSubmitOptions,
+)
+from .._typed_jobs import (
+    TypedJob as TypedJob,
+)
+from .._typed_jobs import (
+    TypedJobRun as TypedJobRun,
+)
+from ..job_runtime import (
+    JobCode as JobCode,
+)
+from ..job_runtime import (
+    JobContext as JobContext,
+)
+from ..job_runtime import (
+    JobContract as JobContract,
+)
+from ..job_runtime import (
+    JobError as JobError,
+)
+from ..job_runtime import (
+    JobInput as JobInput,
+)
+from ..job_runtime import (
+    JobInputBinding as JobInputBinding,
+)
+from ..job_runtime import (
+    JobStore as JobStore,
+)
+from ..job_runtime import (
+    LocalJobOutcome as LocalJobOutcome,
+)
+from ..job_runtime import (
+    LocalJobStore as LocalJobStore,
+)
+from ..job_runtime import (
+    decode_job_output as decode_job_output,
+)
+from ..job_runtime import (
+    prepare_job_input as prepare_job_input,
+)
+from ..job_runtime import (
+    read_job_input as read_job_input,
+)
+from ..job_runtime import (
+    run_job_task as run_job_task,
+)
+from ..job_runtime import (
+    run_local_job_batch as run_local_job_batch,
+)
 from ._binding_creation import (
     BindingVerificationCreationError,
     acreate_binding_verification_from_review,
@@ -95,17 +424,25 @@ from ._event_deadline_policy import (
     EventDeadlineRatioOptions,
     EventDeadlineTarget,
 )
-from ._wrapper import FaaSClient
+from ._event_outbox_protocol import EVENT_OUTBOX_SCHEMA
+from ._pipeline_compensation_protocol import PIPELINE_COMPENSATION_SCHEMA
+from ._pipeline_tool_protocol import PIPELINE_TOOL_SCHEMA
+from ._stripe_webhook_protocol import STRIPE_WEBHOOK_SCHEMA
+from ._wrapper import FaaSClient as FaaSClient
 from .ai_gateway import (
     AI_CALL_HEADER,
+    AI_PROMPT_VERSION_HEADER,
     AI_SESSION_HEADER,
     AI_TAGS_HEADER,
     AI_TRACE_HEADER,
     AI_USER_HEADER,
     AIGatewayError,
+    AIPrompt,
+    AIPromptResult,
     ai_gateway_feedback,
     ai_gateway_headers,
     ai_gateway_url,
+    ai_prompt,
     is_valid_ai_user_id,
     opaque_ai_user_id,
 )
@@ -277,6 +614,7 @@ from .event_consumer_transactions import (
     new_event_consumer_request,
     with_event_consumer_transaction,
 )
+from .event_contract import EventContract
 from .event_deadline_checkpoint import acknowledge_event_deadline_alerts, validate_event_deadline_checkpoint
 from .event_deadline_investigation import (
     EventDeadlineInvestigationOptions,
@@ -289,10 +627,82 @@ from .event_deadline_watch import (
     EventDeadlineWatchOptions,
     awatch_event_subscription_deadlines,
 )
+from .event_outbox import EventOutbox, EventOutboxReconciliation, EventOutboxRecoveryOptions, EventPublisher
+from .event_outbox_state import (
+    EventOutboxError,
+    EventOutboxOutcome,
+    EventOutboxRetryPolicy,
+    EventOutboxStatus,
+    EventPublicationOptions,
+    EventPublicationOutcome,
+    EventPublicationReceipt,
+)
+from .event_outbox_transaction import (
+    EventOutboxConnection,
+    EventOutboxPool,
+    EventOutboxTransaction,
+    PsycopgEventOutboxPool,
+    with_event_outbox_transaction,
+)
+from .event_pipeline_state import (
+    EVENT_PIPELINE_SCHEMA,
+    EventPipelineError,
+    EventPipelineReceipt,
+    EventPipelineStore,
+    PostgresEventPipelineStore,
+    event_pipeline_identity,
+)
+from .event_pipelines import (
+    EventPipeline,
+    EventPipelineAction,
+    EventPipelineDelivery,
+    EventPipelineOutcome,
+    PipelineEvent,
+)
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
+from .file_pipelines import (
+    FILE_PIPELINE_SCHEMA,
+    FileCreatedEvent,
+    FileDelivery,
+    FilePipeline,
+    FilePipelineError,
+    FilePipelineInput,
+    FilePipelineIntent,
+    FilePipelineOptions,
+    FilePipelineOutcome,
+    FilePipelineOwner,
+    FilePipelineReceipt,
+    FilePipelineScope,
+    FilePipelineStore,
+    NativeFileVerifier,
+    PostgresFilePipelineStore,
+    file_event_invocation_id,
+    file_pipeline_identity,
+    parse_file_created_event,
+)
+from .files import (
+    BytesFileSource,
+    FileBucket,
+    FileCheckpoint,
+    FileCode,
+    FileError,
+    FileMetadata,
+    FileObject,
+    FileOptions,
+    FilePage,
+    FilePart,
+    FileProgress,
+    FileSource,
+    FileUploadResult,
+    PathFileSource,
+    file_source_digest,
+)
 from .flags import (
+    GREGALE_CLIENT_COUNTRY_HEADER,
+    GREGALE_CLIENT_UA_FAMILY_HEADER,
     GREGALE_FLAG_CONTEXT_HEADER,
     GREGALE_FLAG_EVIDENCE_HEADER,
+    GREGALE_FLAG_KILLS_HEADER,
     GREGALE_FLAG_PROPAGATION_HEADER,
     AsyncGregaleFlagsTransport,
     FlagDecision,
@@ -304,9 +714,38 @@ from .flags import (
     flag_subject_bucket,
     flag_subject_variant_bucket,
     flag_variant_bucket,
+    match_conditions,
+    parse_kills,
     validate_bundle,
 )
 from .issues import IssueReporter
+from .job_pipeline_client import (
+    JobPipelineClient,
+    PipelineCheckpoint,
+    PipelineInspection,
+    PipelineStepInspection,
+    TypedPipelineRun,
+    job_pipeline_live_snapshot,
+)
+from .job_pipelines import (
+    JobPipeline,
+    JobPipelineContext,
+    JobPipelineOptions,
+    PipelineItem,
+    PipelineJob,
+    PipelineJobResult,
+)
+from .live_jobs import (
+    LiveJob,
+    LiveJobError,
+    LiveJobFailure,
+    LiveJobSink,
+    LiveJobSnapshot,
+    LiveJobSource,
+    LiveJobStatus,
+    LiveJobWaiting,
+    realtime_live_job_source,
+)
 from .operations import (
     CustomerOperationRequest,
     OperationCommitUnknownError,
@@ -327,6 +766,104 @@ from .operations import (
     with_operation_transaction,
 )
 from .operations_runtime import GregaleOperations, OperationExecutionContext, OperationHTTPError
+from .pipeline_children import (
+    NativePipelineChildrenTransport,
+    PipelineBatchResult,
+    PipelineChild,
+    PipelineChildOptions,
+    PipelineChildren,
+    PipelineChildrenTransport,
+    PipelineChildView,
+    pipeline_children_live_snapshot,
+)
+from .pipeline_children_state import (
+    PIPELINE_CHILDREN_SCHEMA,
+    PipelineChildrenError,
+    PipelineChildrenReceipt,
+    PipelineChildrenStore,
+    PostgresPipelineChildrenStore,
+    pipeline_children_identity,
+    pipeline_children_intent,
+)
+from .pipeline_compensation_mcp import CompensationMCP
+from .pipeline_compensation_state import (
+    CompensationAction,
+    CompensationActor,
+    CompensationCommand,
+    CompensationEffect,
+    CompensationError,
+    CompensationInput,
+    CompensationOutcome,
+    CompensationPlan,
+    CompensationResult,
+    CompensationStore,
+    CompensationTask,
+    PostgresCompensationStore,
+    compensation_contracts,
+)
+from .pipeline_compensations import (
+    CompensationContext,
+    CompensationSource,
+    CompensationSourceStage,
+    PipelineCompensation,
+)
+from .pipeline_gates import (
+    PIPELINE_GATE_SCHEMA,
+    NativePipelineGateTransport,
+    PipelineGateActor,
+    PipelineGateError,
+    PipelineGateOptions,
+    PipelineGateOutcome,
+    PipelineGateRecord,
+    PipelineGateService,
+    PipelineGateStore,
+    PipelineGateTransport,
+    PipelineGateView,
+    PostgresPipelineGateStore,
+    pipeline_gate_intent,
+)
+from .pipeline_schedule_state import (
+    PipelineSchedule,
+    PipelineScheduleCatchUp,
+    PipelineScheduleDST,
+    PipelineScheduleError,
+    PipelineScheduleFire,
+    PipelineScheduleHistory,
+    PipelineScheduleInfo,
+    PipelineScheduleInspection,
+    PipelineScheduleOccurrence,
+    PipelineSchedulePreview,
+    PipelineScheduleReplayOutcome,
+)
+from .pipeline_schedules import PipelineScheduleAction, PipelineScheduleClient, ScheduledPipelineRun
+from .pipeline_state import (
+    PIPELINE_JOB_SCHEMA,
+    PipelineError,
+    PipelineFailure,
+    PipelineJobReceipt,
+    PipelineJobStore,
+    PipelineScope,
+    PostgresPipelineJobStore,
+    pipeline_failure,
+    pipeline_job_identity,
+    read_pipeline_artifact,
+)
+from .pipeline_tool_mcp import PipelineToolMCP, PipelineToolMCPError
+from .pipeline_tool_state import (
+    PipelineToolAction,
+    PipelineToolActor,
+    PipelineToolError,
+    PipelineToolReceipt,
+    PipelineToolStore,
+    PostgresPipelineToolStore,
+)
+from .pipeline_tools import (
+    PipelineTool,
+    PipelineToolApproval,
+    PipelineToolRequest,
+    PipelineToolStart,
+    PipelineToolStatus,
+)
 from .realtime_activity import RealtimeActivity, RealtimeActivityTracker
 from .realtime_backpressure import RealtimeBackpressureMonitor, RealtimeBackpressureStatus, RealtimeProcessingStatus
 from .realtime_catch_up import RealtimeCatchUpStatus, RealtimeCatchUpTracker, RealtimeCatchUpWaitError
@@ -414,10 +951,115 @@ from .realtime_workers import (
     consume_realtime_consumer_group,
     consume_realtime_consumer_group_with_credential,
 )
+from .stripe_webhook_state import (
+    StripeDeliveryContext,
+    StripeWebhookDecision,
+    StripeWebhookDelivery,
+    StripeWebhookError,
+    StripeWebhookEvent,
+    StripeWebhookIgnore,
+    StripeWebhookIgnoreReason,
+    StripeWebhookOutcome,
+    StripeWebhookReceipt,
+    StripeWebhookStage,
+    stripe_delivery_context_from_headers,
+)
+from .stripe_webhooks import StripeWebhookAction, StripeWebhookAdapter
 
 __all__ = (
+    "PIPELINE_COMPENSATION_SCHEMA",
+    "CompensationActor",
+    "CompensationAction",
+    "CompensationCommand",
+    "CompensationError",
+    "CompensationEffect",
+    "CompensationInput",
+    "CompensationOutcome",
+    "CompensationTask",
+    "CompensationResult",
+    "CompensationPlan",
+    "CompensationStore",
+    "PostgresCompensationStore",
+    "compensation_contracts",
+    "PipelineCompensation",
+    "CompensationSource",
+    "CompensationSourceStage",
+    "CompensationContext",
+    "CompensationMCP",
+
+    'PIPELINE_TOOL_SCHEMA',
+    'PipelineToolAction',
+    'PipelineToolActor',
+    'PipelineToolError',
+    'PipelineToolReceipt',
+    'PipelineToolStore',
+    'PostgresPipelineToolStore',
+    'PipelineTool',
+    'PipelineToolRequest',
+    'PipelineToolStart',
+    'PipelineToolStatus',
+    'PipelineToolApproval',
+    'PipelineToolMCP',
+    'PipelineToolMCPError',
+
+    "StripeWebhookAdapter",
+    "StripeWebhookAction",
+    "StripeWebhookDelivery",
+    "StripeDeliveryContext",
+    "StripeWebhookEvent",
+    "StripeWebhookDecision",
+    "StripeWebhookStage",
+    "StripeWebhookIgnore",
+    "StripeWebhookIgnoreReason",
+    "StripeWebhookReceipt",
+    "StripeWebhookOutcome",
+    "StripeWebhookError",
+    "stripe_delivery_context_from_headers",
+    "STRIPE_WEBHOOK_SCHEMA",
+
+    "PipelineScheduleClient",
+    "PipelineScheduleAction",
+    "ScheduledPipelineRun",
+    "PipelineSchedule",
+    "PipelineScheduleError",
+    "PipelineScheduleInfo",
+    "PipelineScheduleHistory",
+    "PipelineScheduleInspection",
+    "PipelineSchedulePreview",
+    "PipelineScheduleOccurrence",
+    "PipelineScheduleReplayOutcome",
+    "PipelineScheduleFire",
+    "PipelineScheduleDST",
+    "PipelineScheduleCatchUp",
+
+    "EventPublisher",
+    "EventOutbox",
+    "EventOutboxRecoveryOptions",
+    "EventOutboxReconciliation",
+    "EventOutboxError",
+    "EventOutboxStatus",
+    "EventOutboxOutcome",
+    "EventOutboxRetryPolicy",
+    "EventPublicationOptions",
+    "EventPublicationOutcome",
+    "EventPublicationReceipt",
+    "EventOutboxPool",
+    "EventOutboxConnection",
+    "EventOutboxTransaction",
+    "PsycopgEventOutboxPool",
+    "with_event_outbox_transaction",
+    "EVENT_OUTBOX_SCHEMA",
+
+    'EventContract', 'EventPipeline', 'EventPipelineAction', 'EventPipelineDelivery', 'EventPipelineOutcome', 'PipelineEvent', 'EVENT_PIPELINE_SCHEMA', 'EventPipelineError', 'EventPipelineReceipt', 'EventPipelineStore', 'PostgresEventPipelineStore', 'event_pipeline_identity',
+    'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
+    'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
+    'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',
+    'LiveJob', 'LiveJobError', 'LiveJobFailure', 'LiveJobSink', 'LiveJobSnapshot', 'LiveJobSource', 'LiveJobStatus', 'realtime_live_job_source',
+    "BytesFileSource", "FileBucket", "FileCheckpoint", "FileCode", "FileError", "FileMetadata", "FileObject", "FileOptions", "FilePage", "FilePart", "FileProgress", "FileSource", "FileUploadResult", "PathFileSource", "file_source_digest",
+    'FILE_PIPELINE_SCHEMA', 'FileCreatedEvent', 'FileDelivery', 'FilePipeline', 'FilePipelineError', 'FilePipelineInput', 'FilePipelineIntent', 'FilePipelineOptions', 'FilePipelineOutcome', 'FilePipelineOwner', 'FilePipelineReceipt', 'FilePipelineScope', 'FilePipelineStore', 'NativeFileVerifier', 'PostgresFilePipelineStore', 'file_event_invocation_id', 'file_pipeline_identity', 'parse_file_created_event',
     *_PACKAGE_ALL,
     "AI_CALL_HEADER",
+    "AI_PROMPT_VERSION_HEADER",
     "AI_SESSION_HEADER",
     "AI_TAGS_HEADER",
     "AI_TRACE_HEADER",
@@ -426,12 +1068,18 @@ __all__ = (
     "ai_gateway_feedback",
     "ai_gateway_headers",
     "ai_gateway_url",
+    "AIPrompt",
+    "AIPromptResult",
+    "ai_prompt",
     "is_valid_ai_user_id",
     "opaque_ai_user_id",
     "IssueReporter",
     "GREGALE_FLAG_CONTEXT_HEADER",
     "GREGALE_FLAG_EVIDENCE_HEADER",
     "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GREGALE_CLIENT_COUNTRY_HEADER",
+    "GREGALE_CLIENT_UA_FAMILY_HEADER",
+    "GREGALE_FLAG_KILLS_HEADER",
     "GregaleFlags",
     "GregaleFlagsMiddleware",
     "AsyncGregaleFlagsTransport",
@@ -442,6 +1090,8 @@ __all__ = (
     "flag_subject_bucket",
     "flag_subject_variant_bucket",
     "flag_variant_bucket",
+    "match_conditions",
+    "parse_kills",
     "validate_bundle",
     "CRASH_SNAPSHOT_ENDPOINT",
     "CrashSnapshotResult",
@@ -729,4 +1379,3 @@ def __getattr__(name: str):
     from importlib import import_module
 
     return getattr(import_module("faas_sdk"), name)
-

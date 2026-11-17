@@ -19,26 +19,27 @@ func TestLimiterBurstThenRefill(t *testing.T) {
 	clock := time.Now()
 	l.now = func() time.Time { return clock }
 
-	// Free plan: 5 rps, burst 20. First 20 allowed, 21st denied.
+	// Free plan: the first RateLimitBurst requests pass, the next is denied.
+	free := api.MustLimitsFor(api.PlanFree)
 	allowed := 0
-	for i := 0; i < 25; i++ {
+	for i := 0; i < free.RateLimitBurst+5; i++ {
 		if l.Allow(context.Background(), "app", api.PlanFree) {
 			allowed++
 		}
 	}
-	if allowed != 20 {
-		t.Errorf("burst allowed %d, want 20", allowed)
+	if allowed != free.RateLimitBurst {
+		t.Errorf("burst allowed %d, want %d", allowed, free.RateLimitBurst)
 	}
-	// After 1 second, ~5 tokens refill.
+	// After 1 second, RateLimitRPS tokens refill.
 	clock = clock.Add(time.Second)
 	refill := 0
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 2*free.RateLimitRPS; i++ {
 		if l.Allow(context.Background(), "app", api.PlanFree) {
 			refill++
 		}
 	}
-	if refill != 5 {
-		t.Errorf("refill after 1s = %d, want 5 (Free rps)", refill)
+	if refill != free.RateLimitRPS {
+		t.Errorf("refill after 1s = %d, want %d (Free rps)", refill, free.RateLimitRPS)
 	}
 }
 
@@ -47,7 +48,7 @@ func TestLimiterIsPerApp(t *testing.T) {
 	clock := time.Now()
 	l.now = func() time.Time { return clock }
 	// Drain app A's burst.
-	for i := 0; i < 20; i++ {
+	for i := 0; i < api.MustLimitsFor(api.PlanFree).RateLimitBurst; i++ {
 		l.Allow(context.Background(), "A", api.PlanFree)
 	}
 	if l.Allow(context.Background(), "A", api.PlanFree) {
@@ -62,16 +63,17 @@ func TestLimiterCapsAtBurst(t *testing.T) {
 	l := NewLimiter()
 	clock := time.Now()
 	l.now = func() time.Time { return clock }
-	l.Allow(context.Background(), "app", api.PlanPro) // create bucket (burst 500)
+	burst := api.MustLimitsFor(api.PlanPro).RateLimitBurst
+	l.Allow(context.Background(), "app", api.PlanPro) // create bucket
 	clock = clock.Add(time.Hour)                      // huge idle
 	allowed := 0
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 2*burst; i++ {
 		if l.Allow(context.Background(), "app", api.PlanPro) {
 			allowed++
 		}
 	}
-	if allowed > 500 {
-		t.Errorf("tokens should cap at burst 500, allowed %d", allowed)
+	if allowed > burst {
+		t.Errorf("tokens should cap at burst %d, allowed %d", burst, allowed)
 	}
 }
 
@@ -99,53 +101,56 @@ func TestLimiterAllowAccount_BurstThenRefill(t *testing.T) {
 	l := NewLimiter()
 	clock := time.Now()
 	l.now = func() time.Time { return clock }
-	// Free plan: 300/min → burst 300, refill 5 rps.
+	// Free plan: the burst is RateLimitPerAccountRPM, refilled over a minute.
+	rpm := api.MustLimitsFor(api.PlanFree).RateLimitPerAccountRPM
 	allowed := 0
-	for i := 0; i < 320; i++ {
+	for i := 0; i < rpm+20; i++ {
 		if l.AllowAccount(context.Background(), "acct", api.PlanFree) {
 			allowed++
 		}
 	}
-	if allowed != 300 {
-		t.Errorf("burst allowed %d, want 300", allowed)
+	if allowed != rpm {
+		t.Errorf("burst allowed %d, want %d", allowed, rpm)
 	}
 	// After 60 seconds, full burst refills.
 	clock = clock.Add(60 * time.Second)
 	refill := 0
-	for i := 0; i < 320; i++ {
+	for i := 0; i < rpm+20; i++ {
 		if l.AllowAccount(context.Background(), "acct", api.PlanFree) {
 			refill++
 		}
 	}
-	if refill != 300 {
-		t.Errorf("refill after 60s = %d, want 300", refill)
+	if refill != rpm {
+		t.Errorf("refill after 60s = %d, want %d", refill, rpm)
 	}
 }
 
 func TestLimiterAllowAccount_ExactRefill(t *testing.T) {
-	// Free plan: 300/min → 5 tokens/sec, burst 300.
+	// Free plan: burst RateLimitPerAccountRPM, refilled at rpm/60 a second.
+	rpm := api.MustLimitsFor(api.PlanFree).RateLimitPerAccountRPM
+	perSecond := rpm / 60
 	l := NewLimiter()
 	clock := time.Now()
 	l.now = func() time.Time { return clock }
 	// Drain the burst.
-	for i := 0; i < 300; i++ {
+	for i := 0; i < rpm; i++ {
 		if !l.AllowAccount(context.Background(), "acct-free", api.PlanFree) {
-			t.Fatalf("burst should have allowed 300, denied at iteration %d", i)
+			t.Fatalf("burst should have allowed %d, denied at iteration %d", rpm, i)
 		}
 	}
 	if l.AllowAccount(context.Background(), "acct-free", api.PlanFree) {
-		t.Fatal("301st request should be denied at burst ceiling")
+		t.Fatal("the request past the burst should be denied at the burst ceiling")
 	}
-	// Advance one second; expect exactly five tokens back.
+	// Advance one second; expect exactly rpm/60 tokens back.
 	clock = clock.Add(time.Second)
 	allowed := 0
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 2*perSecond; i++ {
 		if l.AllowAccount(context.Background(), "acct-free", api.PlanFree) {
 			allowed++
 		}
 	}
-	if allowed != 5 {
-		t.Errorf("refill after 1s = %d, want 5", allowed)
+	if allowed != perSecond {
+		t.Errorf("refill after 1s = %d, want %d", allowed, perSecond)
 	}
 }
 
@@ -154,14 +159,15 @@ func TestLimiterAllowAccount_ScaleSustainsAdvertisedRPS(t *testing.T) {
 	clock := time.Now()
 	l.now = func() time.Time { return clock }
 
-	// Five minutes at the advertised Scale rate is 150,000 requests.
-	// The account bucket must not reject any of them.
-	const requests = 500 * 5 * 60
+	// Five minutes at the advertised Scale per-app rate. The account
+	// bucket must not reject any of them.
+	rps := api.MustLimitsFor(api.PlanScale).RateLimitRPS
+	requests := rps * 5 * 60
 	for i := 0; i < requests; i++ {
 		if !l.AllowAccount(context.Background(), "acct-scale", api.PlanScale) {
-			t.Fatalf("request %d/%d was account-rate-limited at 500 rps", i+1, requests)
+			t.Fatalf("request %d/%d was account-rate-limited at %d rps", i+1, requests, rps)
 		}
-		clock = clock.Add(2 * time.Millisecond)
+		clock = clock.Add(time.Second / time.Duration(rps))
 	}
 }
 
@@ -169,8 +175,8 @@ func TestLimiterAllowAccount_PerAccountIsolation(t *testing.T) {
 	l := NewLimiter()
 	clock := time.Now()
 	l.now = func() time.Time { return clock }
-	// Drain acct1's Free bucket (300).
-	for i := 0; i < 300; i++ {
+	// Drain acct1's Free bucket.
+	for i := 0; i < api.MustLimitsFor(api.PlanFree).RateLimitPerAccountRPM; i++ {
 		l.AllowAccount(context.Background(), "acct1", api.PlanFree)
 	}
 	if l.AllowAccount(context.Background(), "acct1", api.PlanFree) {
@@ -218,25 +224,27 @@ func TestLimiterAllowAccount_PlanChange(t *testing.T) {
 	l := NewLimiter()
 	clock := time.Now()
 	l.now = func() time.Time { return clock }
-	// Drain the Free bucket (300) almost empty.
-	for i := 0; i < 299; i++ {
+	// Drain the Free bucket almost empty.
+	for i := 0; i < api.MustLimitsFor(api.PlanFree).RateLimitPerAccountRPM-1; i++ {
 		l.AllowAccount(context.Background(), "acct", api.PlanFree)
 	}
-	// Flip to Hobby mid-flight (1200 burst). Allow should retune rps/burst
-	// without losing tokens (1 token left in the Free bucket).
+	// Flip to Hobby mid-flight. Allow should retune rps/burst without
+	// losing tokens (1 token left in the Free bucket).
 	if !l.AllowAccount(context.Background(), "acct", api.PlanHobby) {
 		t.Fatal("flip to Hobby should succeed (1 token available)")
 	}
-	// Advance 1s to refill at Hobby's 20 rps, faster than Free's 5 rps.
+	// Advance 1s to refill at Hobby's per-second account rate, faster
+	// than Free's.
+	hobbyPerSecond := api.MustLimitsFor(api.PlanHobby).RateLimitPerAccountRPM / 60
 	clock = clock.Add(time.Second)
 	allowed := 0
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 2*hobbyPerSecond; i++ {
 		if l.AllowAccount(context.Background(), "acct", api.PlanHobby) {
 			allowed++
 		}
 	}
-	if allowed != 20 {
-		t.Errorf("plan change should restore refill at new rps; got %d allowed in 1s of refill", allowed)
+	if allowed != hobbyPerSecond {
+		t.Errorf("plan change should restore refill at new rps; got %d allowed in 1s of refill, want %d", allowed, hobbyPerSecond)
 	}
 }
 

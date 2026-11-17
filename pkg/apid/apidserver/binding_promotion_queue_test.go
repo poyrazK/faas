@@ -131,11 +131,9 @@ func TestBindingPromotionQueueUnobservedDisabledAndExternalConsumers(t *testing.
 				}
 				assertPromotionWeights(t, e, serving, candidate, 0)
 			} else {
-				coverage := "partial"
-				if mode == "disabled" {
-					coverage = "complete"
-				}
-				if r.Code != 200 || !strings.Contains(r.Body.String(), `"coverage":"`+coverage+`"`) {
+				// A pull consumer is external: the check skips it with a warning
+				// and still reports complete coverage (ADR-20261109180000).
+				if r.Code != 200 || !strings.Contains(r.Body.String(), `"coverage":"complete"`) {
 					t.Fatalf("%s queue: %d %s", mode, r.Code, r.Body.String())
 				}
 				assertPromotionWeights(t, e, serving, candidate, 100)

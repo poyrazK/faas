@@ -86,6 +86,9 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 	if database.State != "ready" && database.State != "provisioning" {
 		return Binding{}, false, ErrConflict
 	}
+	if err := customRoleBindingFence(ctx, tx, binding, databaseID); err != nil {
+		return Binding{}, false, err
+	}
 
 	existing, err := queryBinding(ctx, tx,
 		`SELECT `+postgresBindingColumns+` FROM managed_postgres_bindings WHERE id = $1`,
@@ -134,6 +137,23 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 	}
 	if secretExists {
 		return Binding{}, false, ErrConflict
+	}
+	if binding.appBindingLimit > 0 {
+		// Serialize every new binding of the app so concurrent reservations
+		// for different targets cannot each pass the count.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('managed_postgres_app_bindings:' || $1::text, 0))`, appID); err != nil {
+			return Binding{}, false, mapPostgresError(err)
+		}
+		var count int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM managed_postgres_bindings WHERE app_id = $1 AND state <> 'deleted'`,
+			appID,
+		).Scan(&count); err != nil {
+			return Binding{}, false, mapPostgresError(err)
+		}
+		if count >= binding.appBindingLimit {
+			return Binding{}, false, &BindingLimitError{Limit: binding.appBindingLimit, Observed: count}
+		}
 	}
 
 	created, err := queryBinding(ctx, tx,

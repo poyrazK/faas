@@ -115,7 +115,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 	}
 	key := snap.CacheKey
 	outcome, entry := h.responseCache.Get(key)
-	if outcome != "stale_if_error_eligible" {
+	if outcome != "stale_if_error_eligible" || entry == nil || responseForbidsSharedCaching(http.Header(entry.header)) {
 		return false, ""
 	}
 	for k, vs := range entry.header {
@@ -140,6 +140,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 	_, _ = w.Write(entry.body)
 	rec.status = entry.statusCode
 	rec.Bytes = int64(len(entry.body))
+	h.recordEdgeEgress(r, app, len(entry.body))
 	if h.metrics != nil {
 		h.metrics.cacheStaleWhileWaking.WithLabelValues(app.ID).Inc()
 	}
@@ -173,7 +174,7 @@ func (h *Handler) startCacheRefresh(r *http.Request, app App, rule *EdgeRuleCach
 	if _, inFlight := h.cacheRefreshing.LoadOrStore(refreshKey, struct{}{}); inFlight {
 		return
 	}
-	detached := withoutTrafficDecision(context.WithoutCancel(r.Context()))
+	detached := withoutTrafficDecision(context.WithoutCancel(withResponseCacheFill(r.Context(), h.responseCache)))
 	request := r.Clone(detached)
 	request.Body = http.NoBody
 	go func(ctx context.Context) {
@@ -240,7 +241,7 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 	}
 	base := httptest.NewRecorder()
 	rec := &statusRecorder{ResponseWriter: base, status: http.StatusOK}
-	cw := newCacheWriter(rec, rec, rule, ResponseCachePerEntryMaxBytes)
+	cw := newCacheWriter(rec, rec, rule, ResponseCachePerEntryMaxBytes, responseCacheFillFrom(ctx, h.responseCache))
 	cw.servedDeploymentID = target.DeploymentID
 	capped := h.setupBufferedCapWriter(cw, r.Method, app, app.Plan.MaxResponseBodyBytes())
 	request := r.Clone(ctx)
@@ -338,7 +339,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	}
 	key := snap.CacheKey
 	outcome, entry := h.responseCache.Get(key)
-	if outcome != "stale_if_error_eligible" {
+	if outcome != "stale_if_error_eligible" || entry == nil || responseForbidsSharedCaching(http.Header(entry.header)) {
 		return false, ""
 	}
 	// Stale-eligible → serve. The replay is structurally
@@ -369,6 +370,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	_, _ = w.Write(entry.body)
 	rec.status = entry.statusCode
 	rec.Bytes = int64(len(entry.body))
+	h.recordEdgeEgress(r, app, len(entry.body))
 	// ADR-122 §Decision: stale_if_error_served is its own
 	// outcome label so the hit-rate numerator cannot be
 	// inflated by stale serves. The dashboard surfaces

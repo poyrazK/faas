@@ -90,3 +90,27 @@ func TestDebugTelemetryCursorRejectsMalformedAndOutOfWindow(t *testing.T) {
 		t.Fatalf("decodeDebugTelemetryCursor(valid) error = %v", err)
 	}
 }
+
+// A full-retention list keeps paging: the cursor's start is clamped to the
+// horizon instead of expiring the cursor; a window wholly past retention or
+// ending in the future still expires.
+func TestDebugCursorWindowClampsToRetention(t *testing.T) {
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	week := 7 * 24 * time.Hour
+	for _, tc := range []struct {
+		name               string
+		start, end         time.Time
+		wantStart          time.Time
+		wantClamped, valid bool
+	}{
+		{"inside", now.Add(-time.Hour), now.Add(-time.Minute), now.Add(-time.Hour), false, true},
+		{"full retention a moment later", now.Add(-week - 5*time.Second), now.Add(-5 * time.Second), now.Add(-week), true, true},
+		{"wholly past retention", now.Add(-2 * week), now.Add(-week - time.Second), time.Time{}, false, false},
+		{"ends in the future", now.Add(-time.Hour), now.Add(2 * time.Minute), time.Time{}, false, false},
+	} {
+		start, _, clamped, ok := apidserver.DebugCursorWindow(tc.start, tc.end, now, week)
+		if ok != tc.valid || clamped != tc.wantClamped || (ok && !start.Equal(tc.wantStart)) {
+			t.Errorf("%s: start=%v clamped=%v ok=%v", tc.name, start, clamped, ok)
+		}
+	}
+}

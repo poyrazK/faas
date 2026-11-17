@@ -53,6 +53,9 @@ type SyntheticCheckResponse struct {
 	IntervalSeconds int    `json:"interval_seconds"`
 	Enabled         bool   `json:"enabled"`
 	CreatedAt       string `json:"created_at"`
+	// Warning explains why the check cannot pass as configured, e.g. the
+	// app's platform auth refuses the probe, which sends no credential.
+	Warning string `json:"warning,omitempty"`
 	// Results is present on GET /v1/apps/{slug}/synthetics/{id} only.
 	Results *SyntheticCheckResults `json:"results,omitempty"`
 }
@@ -76,6 +79,13 @@ type SyntheticCheckRun struct {
 	ErrorClass string `json:"error_class,omitempty"`
 }
 
+// SyntheticProbeCookieName names the cookie every synthetic probe carries.
+// A request with a cookie is never answered from the edge cache (ADR-122
+// D3), so a probe reaches the app even on a path the edge caches, and a
+// stale copy served because the app failed cannot pass a check
+// (ADR-20261104142830).
+const SyntheticProbeCookieName = "gregale_synthetic_probe"
+
 // NormalizeCreateSyntheticCheck applies defaults and checks the request
 // against the closed sets the synthetic_checks CHECKs enforce.
 func NormalizeCreateSyntheticCheck(req CreateSyntheticCheckRequest) (CreateSyntheticCheckRequest, *Problem) {
@@ -98,7 +108,7 @@ func NormalizeCreateSyntheticCheck(req CreateSyntheticCheckRequest) (CreateSynth
 	case req.TimeoutMS < SyntheticCheckTimeoutMinMS || req.TimeoutMS > SyntheticCheckTimeoutMaxMS:
 		return req, ErrSyntheticCheckInvalid(fmt.Sprintf("timeout_ms must be between %d and %d", SyntheticCheckTimeoutMinMS, SyntheticCheckTimeoutMaxMS))
 	case !slices.Contains(SyntheticCheckIntervalsSeconds, req.IntervalSeconds):
-		return req, ErrSyntheticCheckInvalid(fmt.Sprintf("interval_seconds must be one of %v; shorter intervals would keep the app permanently awake", SyntheticCheckIntervalsSeconds))
+		return req, ErrSyntheticCheckInvalid(fmt.Sprintf("interval_seconds must be one of %v; each probe resets the app's idle timer, so any interval at or under its idle timeout keeps it awake", SyntheticCheckIntervalsSeconds))
 	}
 	return req, nil
 }
@@ -106,6 +116,15 @@ func NormalizeCreateSyntheticCheck(req CreateSyntheticCheckRequest) (CreateSynth
 // ErrSyntheticCheckInvalid is a 400 for a malformed check definition.
 func ErrSyntheticCheckInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSyntheticCheckInvalid, "Invalid synthetic check", reason).
+		WithDocs(docsBase + "/synthetic-checks")
+}
+
+// ErrSyntheticCheckAppInternal is a 409 for a check on an internal app: the
+// public edge does not serve it, so every probe would fail
+// (ADR-20261031144636).
+func ErrSyntheticCheckAppInternal() *Problem {
+	return NewProblem(http.StatusConflict, CodeSyntheticCheckInvalid, "App is internal",
+		"synthetic checks probe the app's public hostname, which an internal app does not serve; make the app public to run checks").
 		WithDocs(docsBase + "/synthetic-checks")
 }
 

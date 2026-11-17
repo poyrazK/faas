@@ -18,7 +18,7 @@ HTTP at `/mcp`, exposes three tools, a static resource, a resource template and 
 prompt, and reports readiness at `/healthz`. It starts in open mode and rejects
 browser `Origin` headers unless you add the exact origin to `allowed_origins`.
 
-The generated `go.mod` declares `go 1.26.10`,
+The generated `go.mod` declares `go 1.26.11`,
 `github.com/modelcontextprotocol/go-sdk v1.8.0`, and
 `github.com/jackc/pgx/v5 v5.11.0` for PostgreSQL-backed Tasks.
 
@@ -221,6 +221,12 @@ list-change notifications only when the subscribing caller's authorized view
 changed. In external OAuth mode, add dynamic entry names and resource patterns
 to the corresponding scope allow-lists. The registry is process-local, so
 every serving replica needs the same application registration code.
+
+Custom resource subscriptions require an `MCPResourceAuthorizer` passed to
+`RegisterMCPResource` or `ReplaceMCPResource`. It receives context, URI and verified
+caller context, and must return true only for authorized readers. Reads,
+subscription setup and delivery share this side-effect-free check. Custom resources
+without an authorizer retain their read handlers but deny subscriptions.
 
 ## Durable task handlers
 

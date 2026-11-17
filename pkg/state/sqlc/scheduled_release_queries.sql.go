@@ -19,7 +19,7 @@ UPDATE scheduled_releases
        outcome_detail = $2::text,
        updated_at = $3::timestamptz
  WHERE app_id = $4::uuid AND state = 'scheduled'
-RETURNING id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids, override_freeze, override_freeze_ids, state, outcome_code, outcome_detail, scheduled_by, created_at, updated_at, started_at
+RETURNING id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids, override_freeze, override_freeze_ids, state, outcome_code, outcome_detail, scheduled_by, created_at, updated_at, started_at, scheduled_by_account_id, scheduled_by_key_id
 `
 
 type CancelPendingScheduledReleasesForAppParams struct {
@@ -62,6 +62,8 @@ func (q *Queries) CancelPendingScheduledReleasesForApp(ctx context.Context, db D
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.StartedAt,
+			&i.ScheduledByAccountID,
+			&i.ScheduledByKeyID,
 		); err != nil {
 			return nil, err
 		}
@@ -80,7 +82,7 @@ UPDATE scheduled_releases
        outcome_detail = $3::text,
        updated_at = $4::timestamptz
  WHERE id = $5::uuid AND state = 'scheduled'
-RETURNING id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids, override_freeze, override_freeze_ids, state, outcome_code, outcome_detail, scheduled_by, created_at, updated_at, started_at
+RETURNING id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids, override_freeze, override_freeze_ids, state, outcome_code, outcome_detail, scheduled_by, created_at, updated_at, started_at, scheduled_by_account_id, scheduled_by_key_id
 `
 
 type FinishScheduledReleaseParams struct {
@@ -119,12 +121,14 @@ func (q *Queries) FinishScheduledRelease(ctx context.Context, db DBTX, arg Finis
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StartedAt,
+		&i.ScheduledByAccountID,
+		&i.ScheduledByKeyID,
 	)
 	return i, err
 }
 
 const getLatestScheduledReleaseForDeployment = `-- name: GetLatestScheduledReleaseForDeployment :one
-SELECT sr.id, sr.account_id, sr.app_id, sr.deployment_id, sr.release_at, sr.canary, sr.notify_channel_ids, sr.override_freeze, sr.override_freeze_ids, sr.state, sr.outcome_code, sr.outcome_detail, sr.scheduled_by, sr.created_at, sr.updated_at, sr.started_at, d.revision
+SELECT sr.id, sr.account_id, sr.app_id, sr.deployment_id, sr.release_at, sr.canary, sr.notify_channel_ids, sr.override_freeze, sr.override_freeze_ids, sr.state, sr.outcome_code, sr.outcome_detail, sr.scheduled_by, sr.created_at, sr.updated_at, sr.started_at, sr.scheduled_by_account_id, sr.scheduled_by_key_id, d.revision
   FROM scheduled_releases sr
   JOIN deployments d ON d.id = sr.deployment_id
  WHERE sr.deployment_id = $1::uuid
@@ -157,13 +161,15 @@ func (q *Queries) GetLatestScheduledReleaseForDeployment(ctx context.Context, db
 		&i.ScheduledRelease.CreatedAt,
 		&i.ScheduledRelease.UpdatedAt,
 		&i.ScheduledRelease.StartedAt,
+		&i.ScheduledRelease.ScheduledByAccountID,
+		&i.ScheduledRelease.ScheduledByKeyID,
 		&i.Revision,
 	)
 	return i, err
 }
 
 const getScheduledRelease = `-- name: GetScheduledRelease :one
-SELECT sr.id, sr.account_id, sr.app_id, sr.deployment_id, sr.release_at, sr.canary, sr.notify_channel_ids, sr.override_freeze, sr.override_freeze_ids, sr.state, sr.outcome_code, sr.outcome_detail, sr.scheduled_by, sr.created_at, sr.updated_at, sr.started_at, d.revision
+SELECT sr.id, sr.account_id, sr.app_id, sr.deployment_id, sr.release_at, sr.canary, sr.notify_channel_ids, sr.override_freeze, sr.override_freeze_ids, sr.state, sr.outcome_code, sr.outcome_detail, sr.scheduled_by, sr.created_at, sr.updated_at, sr.started_at, sr.scheduled_by_account_id, sr.scheduled_by_key_id, d.revision
   FROM scheduled_releases sr
   JOIN deployments d ON d.id = sr.deployment_id
  WHERE sr.id = $1::uuid
@@ -194,6 +200,8 @@ func (q *Queries) GetScheduledRelease(ctx context.Context, db DBTX, id pgtype.UU
 		&i.ScheduledRelease.CreatedAt,
 		&i.ScheduledRelease.UpdatedAt,
 		&i.ScheduledRelease.StartedAt,
+		&i.ScheduledRelease.ScheduledByAccountID,
+		&i.ScheduledRelease.ScheduledByKeyID,
 		&i.Revision,
 	)
 	return i, err
@@ -202,29 +210,33 @@ func (q *Queries) GetScheduledRelease(ctx context.Context, db DBTX, id pgtype.UU
 const insertScheduledRelease = `-- name: InsertScheduledRelease :one
 INSERT INTO scheduled_releases (
   id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids,
-  override_freeze, override_freeze_ids, scheduled_by, created_at, updated_at
+  override_freeze, override_freeze_ids, scheduled_by, scheduled_by_account_id, scheduled_by_key_id,
+  created_at, updated_at
 )
 VALUES (
   $1::uuid, $2::uuid, $3::uuid, $4::uuid,
   $5::timestamptz, $6::jsonb, $7::uuid[],
   $8::text, $9::uuid[], $10::text,
-  $11::timestamptz, $11::timestamptz
+  $11::uuid, $12::uuid,
+  $13::timestamptz, $13::timestamptz
 )
-RETURNING id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids, override_freeze, override_freeze_ids, state, outcome_code, outcome_detail, scheduled_by, created_at, updated_at, started_at
+RETURNING id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids, override_freeze, override_freeze_ids, state, outcome_code, outcome_detail, scheduled_by, created_at, updated_at, started_at, scheduled_by_account_id, scheduled_by_key_id
 `
 
 type InsertScheduledReleaseParams struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	AppID             pgtype.UUID
-	DeploymentID      pgtype.UUID
-	ReleaseAt         pgtype.Timestamptz
-	Canary            []byte
-	NotifyChannelIds  []pgtype.UUID
-	OverrideFreeze    string
-	OverrideFreezeIds []pgtype.UUID
-	ScheduledBy       string
-	Now               pgtype.Timestamptz
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	ReleaseAt            pgtype.Timestamptz
+	Canary               []byte
+	NotifyChannelIds     []pgtype.UUID
+	OverrideFreeze       string
+	OverrideFreezeIds    []pgtype.UUID
+	ScheduledBy          string
+	ScheduledByAccountID pgtype.UUID
+	ScheduledByKeyID     pgtype.UUID
+	Now                  pgtype.Timestamptz
 }
 
 func (q *Queries) InsertScheduledRelease(ctx context.Context, db DBTX, arg InsertScheduledReleaseParams) (ScheduledRelease, error) {
@@ -239,6 +251,8 @@ func (q *Queries) InsertScheduledRelease(ctx context.Context, db DBTX, arg Inser
 		arg.OverrideFreeze,
 		arg.OverrideFreezeIds,
 		arg.ScheduledBy,
+		arg.ScheduledByAccountID,
+		arg.ScheduledByKeyID,
 		arg.Now,
 	)
 	var i ScheduledRelease
@@ -259,12 +273,14 @@ func (q *Queries) InsertScheduledRelease(ctx context.Context, db DBTX, arg Inser
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StartedAt,
+		&i.ScheduledByAccountID,
+		&i.ScheduledByKeyID,
 	)
 	return i, err
 }
 
 const listDueScheduledReleases = `-- name: ListDueScheduledReleases :many
-SELECT sr.id, sr.account_id, sr.app_id, sr.deployment_id, sr.release_at, sr.canary, sr.notify_channel_ids, sr.override_freeze, sr.override_freeze_ids, sr.state, sr.outcome_code, sr.outcome_detail, sr.scheduled_by, sr.created_at, sr.updated_at, sr.started_at, d.revision
+SELECT sr.id, sr.account_id, sr.app_id, sr.deployment_id, sr.release_at, sr.canary, sr.notify_channel_ids, sr.override_freeze, sr.override_freeze_ids, sr.state, sr.outcome_code, sr.outcome_detail, sr.scheduled_by, sr.created_at, sr.updated_at, sr.started_at, sr.scheduled_by_account_id, sr.scheduled_by_key_id, d.revision
   FROM scheduled_releases sr
   JOIN deployments d ON d.id = sr.deployment_id
  WHERE sr.state = 'scheduled' AND sr.release_at <= $1::timestamptz
@@ -317,6 +333,8 @@ func (q *Queries) ListDueScheduledReleases(ctx context.Context, db DBTX, arg Lis
 			&i.ScheduledRelease.CreatedAt,
 			&i.ScheduledRelease.UpdatedAt,
 			&i.ScheduledRelease.StartedAt,
+			&i.ScheduledRelease.ScheduledByAccountID,
+			&i.ScheduledRelease.ScheduledByKeyID,
 			&i.Revision,
 		); err != nil {
 			return nil, err
@@ -330,7 +348,7 @@ func (q *Queries) ListDueScheduledReleases(ctx context.Context, db DBTX, arg Lis
 }
 
 const listScheduledReleases = `-- name: ListScheduledReleases :many
-SELECT sr.id, sr.account_id, sr.app_id, sr.deployment_id, sr.release_at, sr.canary, sr.notify_channel_ids, sr.override_freeze, sr.override_freeze_ids, sr.state, sr.outcome_code, sr.outcome_detail, sr.scheduled_by, sr.created_at, sr.updated_at, sr.started_at, d.revision
+SELECT sr.id, sr.account_id, sr.app_id, sr.deployment_id, sr.release_at, sr.canary, sr.notify_channel_ids, sr.override_freeze, sr.override_freeze_ids, sr.state, sr.outcome_code, sr.outcome_detail, sr.scheduled_by, sr.created_at, sr.updated_at, sr.started_at, sr.scheduled_by_account_id, sr.scheduled_by_key_id, d.revision
   FROM scheduled_releases sr
   JOIN deployments d ON d.id = sr.deployment_id
  WHERE sr.account_id = $1::uuid
@@ -379,6 +397,8 @@ func (q *Queries) ListScheduledReleases(ctx context.Context, db DBTX, arg ListSc
 			&i.ScheduledRelease.CreatedAt,
 			&i.ScheduledRelease.UpdatedAt,
 			&i.ScheduledRelease.StartedAt,
+			&i.ScheduledRelease.ScheduledByAccountID,
+			&i.ScheduledRelease.ScheduledByKeyID,
 			&i.Revision,
 		); err != nil {
 			return nil, err
@@ -392,7 +412,7 @@ func (q *Queries) ListScheduledReleases(ctx context.Context, db DBTX, arg ListSc
 }
 
 const lockScheduledRelease = `-- name: LockScheduledRelease :one
-SELECT id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids, override_freeze, override_freeze_ids, state, outcome_code, outcome_detail, scheduled_by, created_at, updated_at, started_at FROM scheduled_releases WHERE id = $1::uuid FOR UPDATE
+SELECT id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids, override_freeze, override_freeze_ids, state, outcome_code, outcome_detail, scheduled_by, created_at, updated_at, started_at, scheduled_by_account_id, scheduled_by_key_id FROM scheduled_releases WHERE id = $1::uuid FOR UPDATE
 `
 
 func (q *Queries) LockScheduledRelease(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduledRelease, error) {
@@ -415,6 +435,8 @@ func (q *Queries) LockScheduledRelease(ctx context.Context, db DBTX, id pgtype.U
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StartedAt,
+		&i.ScheduledByAccountID,
+		&i.ScheduledByKeyID,
 	)
 	return i, err
 }

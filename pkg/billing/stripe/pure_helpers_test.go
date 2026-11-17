@@ -178,10 +178,12 @@ func TestPaymentMethodSummary_NoCustomerIgnoresAPIKey(t *testing.T) {
 // Pin the canonical M7 wire-quantity formula. 256 MB Hobby admission +
 // 8 MB overhead × 60 min/h × 24 h = 22_809_600 mb_seconds.
 //
-//	qty = mb_seconds * 1000 / 1024 / 3600
-//	    = 22_809_600 * 1000 / 1024 / 3600
-//	    = 22_809_600_000 / 3_686_400
-//	    = 6187
+//	qty = mb_seconds * 5000 / 1024 / 3600
+//	    = 22_809_600 * 5000 / 1024 / 3600
+//	    = 114_048_000_000 / 3_686_400
+//	    = 30937
+//
+// (5000 wire units per GB-hour since ADR-20261107192333.)
 //
 // This is the same integer the sandbox test asserts against the wire
 // (sandbox_test.go::TestInvoiceShadow24h_Sandbox); pinning it here
@@ -193,9 +195,9 @@ func TestWireQuantityForMBSeconds(t *testing.T) {
 		want      int64
 	}{
 		{"zero", 0, 0},
-		{"canonical_m7_24h", 22_809_600, 6187},
-		{"one_hour_264mb", 264 * 60 * 60, 257},
-		{"negative_truncates_to_zero", -1000, 0},
+		{"canonical_m7_24h", 22_809_600, 30937},
+		{"one_hour_264mb", 264 * 60 * 60, 1289},
+		{"negative_truncates_to_zero", -737, 0},
 		{"one_mb_second", 1, 0},
 	}
 	for _, tc := range cases {

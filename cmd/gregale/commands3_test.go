@@ -626,6 +626,9 @@ func TestCmdSecretsUnsetRestartUsesFreshRestartAfterDelete(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/restart":
 			calls = append(calls, "restart:"+r.URL.Query().Get("fresh"))
 			main.WriteJSONTestStatus(w, http.StatusAccepted, api.AppRestartResponse{WakeID: "wake-unset-1"})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/apps/x/runtime-config-restarts/"):
+			calls = append(calls, "status")
+			main.WriteJSONTest(w, restartStatusRow(strings.TrimPrefix(r.URL.Path, "/v1/apps/x/runtime-config-restarts/"), len(calls)))
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
@@ -641,8 +644,9 @@ func TestCmdSecretsUnsetRestartUsesFreshRestartAfterDelete(t *testing.T) {
 	if code := main.CmdSecrets([]string{"unset", "--app", "x", "OLD_KEY", "--restart"}); code != 0 {
 		t.Fatalf("cmdSecrets unset --restart = %d, want 0", code)
 	}
-	if len(calls) != 2 || calls[0] != "delete" || calls[1] != "restart:true" {
-		t.Fatalf("calls = %v, want [delete restart:true]", calls)
+	// The command follows the rolling refresh until it completes.
+	if len(calls) < 4 || calls[0] != "delete" || calls[1] != "restart:true" || calls[len(calls)-1] != "status" {
+		t.Fatalf("calls = %v, want [delete restart:true status... ]", calls)
 	}
 	if !strings.Contains(stdout.String(), "wake-unset-1") || strings.Contains(stdout.String(), "next cold wake") {
 		t.Fatalf("restart output = %q", stdout.String())
@@ -778,6 +782,9 @@ func TestCmdSecretsSetRestartUsesFreshRestartAfterWrites(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/restart":
 			calls = append(calls, "restart:"+r.URL.Query().Get("fresh"))
 			main.WriteJSONTestStatus(w, http.StatusAccepted, api.AppRestartResponse{WakeID: "wake-secret-1"})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/apps/x/runtime-config-restarts/"):
+			calls = append(calls, "status")
+			main.WriteJSONTest(w, restartStatusRow(strings.TrimPrefix(r.URL.Path, "/v1/apps/x/runtime-config-restarts/"), len(calls)))
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
@@ -793,8 +800,8 @@ func TestCmdSecretsSetRestartUsesFreshRestartAfterWrites(t *testing.T) {
 	if code := main.CmdSecrets([]string{"set", "--app", "x", "API_TOKEN=v2", "--restart"}); code != 0 {
 		t.Fatalf("cmdSecrets set --restart = %d, want 0", code)
 	}
-	if len(calls) != 2 || calls[0] != "put" || calls[1] != "restart:true" {
-		t.Fatalf("calls = %v, want [put restart:true]", calls)
+	if len(calls) < 4 || calls[0] != "put" || calls[1] != "restart:true" || calls[len(calls)-1] != "status" {
+		t.Fatalf("calls = %v, want [put restart:true status... ]", calls)
 	}
 	if !strings.Contains(stdout.String(), "wake-secret-1") || strings.Contains(stdout.String(), "next cold wake") {
 		t.Fatalf("restart output = %q", stdout.String())
@@ -867,8 +874,9 @@ func TestCmdSecretsRotateWaitForAckAfterKeyPair(t *testing.T) {
 	if code := main.CmdSecrets([]string{"rotate", "--app", "x", "DATABASE_URL=v2", "--wait-for-ack", "--timeout", "1s"}); code != 0 {
 		t.Fatalf("cmdSecrets rotate --wait-for-ack = %d, want 0", code)
 	}
-	if len(calls) != 2 || calls[0] != "rotate" || calls[1] != "status" {
-		t.Fatalf("calls = %v, want [rotate status]", calls)
+	// The first status read checks the key is set (Hunt 32 H32-82).
+	if strings.Join(calls, " ") != "status rotate status" {
+		t.Fatalf("calls = %v, want [status rotate status]", calls)
 	}
 	if !strings.Contains(stdout.String(), "All 1 active authorized runtime(s) confirmed") {
 		t.Fatalf("acknowledgement output = %q", stdout.String())
@@ -919,8 +927,8 @@ func TestCmdSecretsRotateRestartWaitsForColdStartAcknowledgement(t *testing.T) {
 	if code := main.CmdSecrets([]string{"rotate", "--app", "x", "DATABASE_URL=v2", "--restart", "--wait-for-ack", "--timeout", "1s"}); code != 0 {
 		t.Fatalf("cmdSecrets rotate --restart --wait-for-ack = %d", code)
 	}
-	if len(calls) != 4 || calls[0] != "rotate" || calls[1] != "restart" || calls[2] != "wake" || calls[3] != "status" {
-		t.Fatalf("calls = %v, want [rotate restart wake status]", calls)
+	if strings.Join(calls, " ") != "status rotate restart wake status" {
+		t.Fatalf("calls = %v, want [status rotate restart wake status]", calls)
 	}
 	if !strings.Contains(stdout.String(), "Restart completed") || !strings.Contains(stdout.String(), "All 1 active authorized runtime(s) confirmed") {
 		t.Fatalf("restart acknowledgement output = %q", stdout.String())
@@ -1125,5 +1133,42 @@ func TestSecretRuntimeReloadLabelStartupDeliveryIsNotApplicationAck(t *testing.T
 	got = main.SecretRuntimeReloadLabel(2, 2, "updated", "not_attempted", "instance", []api.SecretRuntimeReloadObservation{{InstanceID: "instance", Version: 2, Projection: "updated", Signal: "not_attempted"}})
 	if !strings.Contains(got, "1 received at startup") || !strings.Contains(got, "app ack unknown") {
 		t.Fatalf("startup delivery overclaimed application state: %s", got)
+	}
+}
+
+// restartStatusRow answers a fresh restart's status: running on the first
+// read, completed after (the 2026-11-15 journey run read a 503 because
+// `env set --restart` returned before the rolling refresh finished).
+func restartStatusRow(wakeID string, call int) api.RuntimeConfigRestartStatusResponse {
+	row := api.RuntimeConfigRestartStatusResponse{WakeID: wakeID, Status: "running", RequestedAt: time.Now().Add(-time.Second)}
+	if call >= 4 {
+		now := time.Now()
+		row.Status, row.CompletedAt = "completed", &now
+	}
+	return row
+}
+
+func TestCmdSecretsSetRestartReportsFailedRefresh(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/secrets/"):
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/secrets":
+			main.WriteJSONTest(w, api.AppSecretListResponse{Quota: 25, Count: 1})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/account":
+			main.WriteJSONTest(w, api.AccountResponse{Plan: string(api.PlanHobby)})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/restart":
+			main.WriteJSONTestStatus(w, http.StatusAccepted, api.AppRestartResponse{WakeID: "wake-failed-1"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/runtime-config-restarts/wake-failed-1":
+			main.WriteJSONTest(w, api.RuntimeConfigRestartStatusResponse{WakeID: "wake-failed-1", Status: "failed", FailureReason: "startup_failed", RequestedAt: time.Now()})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if code := main.CmdSecrets([]string{"set", "--app", "x", "API_TOKEN=v2", "--restart"}); code == 0 {
+		t.Fatal("a failed rolling refresh was reported as success")
 	}
 }

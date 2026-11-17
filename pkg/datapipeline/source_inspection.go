@@ -50,6 +50,9 @@ type sourceMetadata interface {
 // Catalog inspection never reads customer rows. This exact inspector also
 // constructs the schema used by replication; discovery cannot invent support.
 func inspectSourceTable(ctx context.Context, source sourceMetadata, name string) (relation, api.DataSourceTable, error) {
+	return inspectSourceTableMode(ctx, source, name, false)
+}
+func inspectSourceTableMode(ctx context.Context, source sourceMetadata, name string, snapshot bool) (relation, api.DataSourceTable, error) {
 	r := relation{Name: name}
 	table := api.DataSourceTable{Name: name, Supported: true, Columns: []api.DataSourceColumn{}, Issues: []api.DataConnectionIssue{}}
 	add := func(code, message, remediation, column string) {
@@ -62,10 +65,10 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 		add("source_table_unsupported", "Table name is unsupported", "Use a lowercase SQL identifier beginning with a letter, outside the gregale_ namespace.", "")
 	}
 	var ordinary, readable, owner bool
-	err := source.QueryRow(ctx, `SELECT c.oid,c.relkind='r' AND c.relpersistence='p' AND NOT c.relispartition AND NOT c.relrowsecurity AND c.relreplident='d'
+	err := source.QueryRow(ctx, `SELECT c.oid,c.relkind='r' AND c.relpersistence='p' AND NOT c.relispartition AND NOT c.relrowsecurity AND ($2::boolean OR c.relreplident='d')
  AND NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=c.oid OR inhparent=c.oid),
  has_table_privilege(c.oid,'SELECT'),pg_has_role(c.relowner,'USAGE')
- FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=$1`, name).Scan(&r.OID, &ordinary, &readable, &owner)
+ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=$1`, name, snapshot).Scan(&r.OID, &ordinary, &readable, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		add("source_table_unsupported", "Table is unavailable", "Select an existing public table and run the check again.", "")
 		return r, table, nil
@@ -79,14 +82,16 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 	if !readable {
 		add("source_table_unsupported", "Table cannot be read", "Grant the source role SELECT on this table.", "")
 	}
-	if !owner {
+	if !owner && !snapshot {
 		add("source_table_unsupported", "Publication cannot include this table", "Use a source role with ownership rights on this table.", "")
 	}
 	rows, err := source.Query(ctx, `SELECT a.attname,a.atttypmod,a.attnotnull,
 	 EXISTS(SELECT 1 FROM pg_index i,unnest(i.indkey) WITH ORDINALITY AS k(attnum,position)
  WHERE i.indrelid=a.attrelid AND i.indisprimary AND i.indisvalid AND i.indimmediate
  AND k.position<=i.indnkeyatts AND a.attnum=k.attnum),
- t.typname,nt.nspname,a.attgenerated::text,a.attnum,a.atthasdef,a.atthasmissing,a.attidentity<>''
+ t.typname,nt.nspname,a.attgenerated::text,a.attnum,a.atthasdef,a.atthasmissing,a.attidentity<>'',
+ coalesce((SELECT k.position::integer FROM pg_index i,unnest(i.indkey) WITH ORDINALITY AS k(attnum,position)
+ WHERE i.indrelid=a.attrelid AND i.indisprimary AND i.indisvalid AND i.indimmediate AND k.position<=i.indnkeyatts AND a.attnum=k.attnum),0)
  FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
  JOIN pg_type t ON t.oid=a.atttypid JOIN pg_namespace nt ON nt.oid=t.typnamespace
  WHERE n.nspname='public' AND c.relname=$1 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum LIMIT $2`, name, api.DataPipelineColumnsMax+1)
@@ -98,7 +103,7 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 	for rows.Next() {
 		var col column
 		var typ, namespace, generated string
-		if err = rows.Scan(&col.Name, &col.Modifier, &col.NotNull, &col.Key, &typ, &namespace, &generated, &col.Ordinal, &col.Default, &col.Missing, &col.Identity); err != nil {
+		if err = rows.Scan(&col.Name, &col.Modifier, &col.NotNull, &col.Key, &typ, &namespace, &generated, &col.Ordinal, &col.Default, &col.Missing, &col.Identity, &col.KeyPosition); err != nil {
 			return r, table, err
 		}
 		col.Type = typ
@@ -120,7 +125,7 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 			col.Unsupported = true
 			add("source_column_unsupported", "Column cannot be replicated", "Use a supported builtin type and a stored, nongenerated column.", col.Name)
 		}
-		table.Columns = append(table.Columns, api.DataSourceColumn{Name: col.Name, Type: col.Type, Nullable: !col.NotNull, PrimaryKey: col.Key})
+		table.Columns = append(table.Columns, api.DataSourceColumn{Name: col.Name, Type: col.Type, Nullable: !col.NotNull, PrimaryKey: col.Key, Unsupported: !supported})
 		r.Columns = append(r.Columns, col)
 		hasKey = hasKey || col.Key
 	}
@@ -133,5 +138,6 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 	if len(r.Columns) > api.DataPipelineColumnsMax {
 		add("source_column_unsupported", "Table exceeds the column limit", "Select a table with at most 128 columns.", "")
 	}
+	table.ColumnSelectionSupported = tableProjectionSupported(table)
 	return r, table, nil
 }

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or automation starts when bound.
+ * Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or stored workflow starts when bound.
  */
 export type CreateInboundWebhookEndpointRequest = {
   name: string;

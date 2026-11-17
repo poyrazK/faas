@@ -39,6 +39,18 @@ func TestChangeHookReportsKeepTheLatestPerApp(t *testing.T) {
 		got.LastPublishedAt == nil || !got.LastPublishedAt.Equal(published) || !got.ReportedAt.Equal(now.Add(time.Minute)) {
 		t.Fatalf("a later report from a runtime that has not published: %+v %v", got, err)
 	}
+	// Amendment 3: when changes were last left out is kept, the latest wins.
+	dropped := now.Add(-30 * time.Second)
+	full := api.DataAPIChangeHookReport{Version: 1, Pending: 100000, OldestPendingAt: &oldest, Publishing: api.DataAPIChangeHooksPublishingOK, LastDroppedAt: &dropped}
+	if err := store.RecordChangeHooks(ctx, account, app, full, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordChangeHooks(ctx, account, app, drained, now.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = store.ChangeHooks(ctx, app); err != nil || got.LastDroppedAt == nil || !got.LastDroppedAt.Equal(dropped) {
+		t.Fatalf("the last drop was lost: %+v %v", got, err)
+	}
 	for name, tc := range map[string]struct{ account, app string }{"other account": {other, app}, "deleted app": {account, gone}} {
 		if err := store.RecordChangeHooks(ctx, tc.account, tc.app, drained, now); !errors.Is(err, dataapiusage.ErrNotFound) {
 			t.Fatalf("%s: %v", name, err)

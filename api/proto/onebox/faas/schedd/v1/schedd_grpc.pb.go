@@ -43,6 +43,7 @@ const (
 	Schedd_EnsureWake_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/EnsureWake"
 	Schedd_ReportWorkloadOOM_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM"
 	Schedd_RunAgent_FullMethodName                = "/onebox.faas.schedd.v1.Schedd/RunAgent"
+	Schedd_RunSandbox_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/RunSandbox"
 	Schedd_ReportMemoryPressure_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/ReportMemoryPressure"
 	Schedd_ReportSlowRequest_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ReportSlowRequest"
 	Schedd_ProvisionDatabase_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ProvisionDatabase"
@@ -62,6 +63,8 @@ const (
 	Schedd_CaptureDatabaseSnapshot_FullMethodName = "/onebox.faas.schedd.v1.Schedd/CaptureDatabaseSnapshot"
 	Schedd_GetDatabaseSnapshot_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/GetDatabaseSnapshot"
 	Schedd_DeleteDatabaseSnapshot_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/DeleteDatabaseSnapshot"
+	Schedd_HoldDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/HoldDatabase"
+	Schedd_SetDatabaseComputeQuota_FullMethodName = "/onebox.faas.schedd.v1.Schedd/SetDatabaseComputeQuota"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -355,6 +358,16 @@ type ScheddClient interface {
 	// Cancel stops the harness, or ends the run before the boot. Events after
 	// proceed: booted, output chunks, then one result.
 	RunAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentRunRequest, AgentRunEvent], error)
+	// RunSandbox admits one sandbox session on the agent pool and keeps its VM
+	// for the stream's life (ADR-20261027090013 §4). The first client frame is
+	// start; after placed (the reservation is held, nothing booted) schedd
+	// waits for proceed, which agentd sends once it has recorded the session's
+	// placement. Then agentd may freeze or close the session; schedd relays
+	// vmmd's booted, activity, frozen, freeze_refused and thawed events, and
+	// relays a workspace persist's request and done events up and agentd's
+	// grant and recorded answers down. The VM is destroyed and the
+	// reservation released when the stream ends.
+	RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SandboxRunRequest, SandboxRunEvent], error)
 	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
 	// memory-pressure report: MemAvailable fell to the pressure share of
 	// MemTotal while a profile collector was registered. schedd queues one
@@ -426,6 +439,18 @@ type ScheddClient interface {
 	// DeleteDatabaseSnapshot releases a snapshot; a missing one is success.
 	// apid only.
 	DeleteDatabaseSnapshot(ctx context.Context, in *DatabaseSnapshotRef, opts ...grpc.CallOption) (*DeleteDatabaseSnapshotResponse, error)
+	// HoldDatabase holds or releases a database (ADR-1027 amendment
+	// 2026-11-10): apid's delete grace period and its compute cap sweep. A
+	// held database is parked and its wakes are refused with
+	// FAILED_PRECONDITION and an ErrorInfo reason "database_held". apid only.
+	HoldDatabase(ctx context.Context, in *HoldDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// SetDatabaseComputeQuota sets a database's compute quota for the UTC
+	// month in compute-unit seconds (zero clears it), the compute cap's
+	// backstop between sweeps. Once the month's compute reaches it the
+	// database is parked and its wakes are refused (reason
+	// "database_compute_quota"). DatabaseUsage reads the month's compute.
+	// apid only.
+	SetDatabaseComputeQuota(ctx context.Context, in *SetDatabaseComputeQuotaRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
 }
 
 type scheddClient struct {
@@ -609,6 +634,19 @@ func (c *scheddClient) RunAgent(ctx context.Context, opts ...grpc.CallOption) (g
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Schedd_RunAgentClient = grpc.BidiStreamingClient[AgentRunRequest, AgentRunEvent]
+
+func (c *scheddClient) RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SandboxRunRequest, SandboxRunEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Schedd_ServiceDesc.Streams[4], Schedd_RunSandbox_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SandboxRunRequest, SandboxRunEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Schedd_RunSandboxClient = grpc.BidiStreamingClient[SandboxRunRequest, SandboxRunEvent]
 
 func (c *scheddClient) ReportMemoryPressure(ctx context.Context, in *ReportMemoryPressureRequest, opts ...grpc.CallOption) (*ReportMemoryPressureAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -794,6 +832,26 @@ func (c *scheddClient) DeleteDatabaseSnapshot(ctx context.Context, in *DatabaseS
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteDatabaseSnapshotResponse)
 	err := c.cc.Invoke(ctx, Schedd_DeleteDatabaseSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) HoldDatabase(ctx context.Context, in *HoldDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_HoldDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) SetDatabaseComputeQuota(ctx context.Context, in *SetDatabaseComputeQuotaRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_SetDatabaseComputeQuota_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,6 +1149,16 @@ type ScheddServer interface {
 	// Cancel stops the harness, or ends the run before the boot. Events after
 	// proceed: booted, output chunks, then one result.
 	RunAgent(grpc.BidiStreamingServer[AgentRunRequest, AgentRunEvent]) error
+	// RunSandbox admits one sandbox session on the agent pool and keeps its VM
+	// for the stream's life (ADR-20261027090013 §4). The first client frame is
+	// start; after placed (the reservation is held, nothing booted) schedd
+	// waits for proceed, which agentd sends once it has recorded the session's
+	// placement. Then agentd may freeze or close the session; schedd relays
+	// vmmd's booted, activity, frozen, freeze_refused and thawed events, and
+	// relays a workspace persist's request and done events up and agentd's
+	// grant and recorded answers down. The VM is destroyed and the
+	// reservation released when the stream ends.
+	RunSandbox(grpc.BidiStreamingServer[SandboxRunRequest, SandboxRunEvent]) error
 	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
 	// memory-pressure report: MemAvailable fell to the pressure share of
 	// MemTotal while a profile collector was registered. schedd queues one
@@ -1162,6 +1230,18 @@ type ScheddServer interface {
 	// DeleteDatabaseSnapshot releases a snapshot; a missing one is success.
 	// apid only.
 	DeleteDatabaseSnapshot(context.Context, *DatabaseSnapshotRef) (*DeleteDatabaseSnapshotResponse, error)
+	// HoldDatabase holds or releases a database (ADR-1027 amendment
+	// 2026-11-10): apid's delete grace period and its compute cap sweep. A
+	// held database is parked and its wakes are refused with
+	// FAILED_PRECONDITION and an ErrorInfo reason "database_held". apid only.
+	HoldDatabase(context.Context, *HoldDatabaseRequest) (*DatabaseRuntime, error)
+	// SetDatabaseComputeQuota sets a database's compute quota for the UTC
+	// month in compute-unit seconds (zero clears it), the compute cap's
+	// backstop between sweeps. Once the month's compute reaches it the
+	// database is parked and its wakes are refused (reason
+	// "database_compute_quota"). DatabaseUsage reads the month's compute.
+	// apid only.
+	SetDatabaseComputeQuota(context.Context, *SetDatabaseComputeQuotaRequest) (*DatabaseRuntime, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -1216,6 +1296,9 @@ func (UnimplementedScheddServer) ReportWorkloadOOM(context.Context, *ReportWorkl
 }
 func (UnimplementedScheddServer) RunAgent(grpc.BidiStreamingServer[AgentRunRequest, AgentRunEvent]) error {
 	return status.Error(codes.Unimplemented, "method RunAgent not implemented")
+}
+func (UnimplementedScheddServer) RunSandbox(grpc.BidiStreamingServer[SandboxRunRequest, SandboxRunEvent]) error {
+	return status.Error(codes.Unimplemented, "method RunSandbox not implemented")
 }
 func (UnimplementedScheddServer) ReportMemoryPressure(context.Context, *ReportMemoryPressureRequest) (*ReportMemoryPressureAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportMemoryPressure not implemented")
@@ -1273,6 +1356,12 @@ func (UnimplementedScheddServer) GetDatabaseSnapshot(context.Context, *DatabaseS
 }
 func (UnimplementedScheddServer) DeleteDatabaseSnapshot(context.Context, *DatabaseSnapshotRef) (*DeleteDatabaseSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteDatabaseSnapshot not implemented")
+}
+func (UnimplementedScheddServer) HoldDatabase(context.Context, *HoldDatabaseRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method HoldDatabase not implemented")
+}
+func (UnimplementedScheddServer) SetDatabaseComputeQuota(context.Context, *SetDatabaseComputeQuotaRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetDatabaseComputeQuota not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -1528,6 +1617,13 @@ func _Schedd_RunAgent_Handler(srv interface{}, stream grpc.ServerStream) error {
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Schedd_RunAgentServer = grpc.BidiStreamingServer[AgentRunRequest, AgentRunEvent]
+
+func _Schedd_RunSandbox_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(ScheddServer).RunSandbox(&grpc.GenericServerStream[SandboxRunRequest, SandboxRunEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Schedd_RunSandboxServer = grpc.BidiStreamingServer[SandboxRunRequest, SandboxRunEvent]
 
 func _Schedd_ReportMemoryPressure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReportMemoryPressureRequest)
@@ -1871,6 +1967,42 @@ func _Schedd_DeleteDatabaseSnapshot_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_HoldDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HoldDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).HoldDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_HoldDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).HoldDatabase(ctx, req.(*HoldDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_SetDatabaseComputeQuota_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetDatabaseComputeQuotaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).SetDatabaseComputeQuota(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_SetDatabaseComputeQuota_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).SetDatabaseComputeQuota(ctx, req.(*SetDatabaseComputeQuotaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1998,6 +2130,14 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "DeleteDatabaseSnapshot",
 			Handler:    _Schedd_DeleteDatabaseSnapshot_Handler,
 		},
+		{
+			MethodName: "HoldDatabase",
+			Handler:    _Schedd_HoldDatabase_Handler,
+		},
+		{
+			MethodName: "SetDatabaseComputeQuota",
+			Handler:    _Schedd_SetDatabaseComputeQuota_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -2018,6 +2158,12 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "RunAgent",
 			Handler:       _Schedd_RunAgent_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "RunSandbox",
+			Handler:       _Schedd_RunSandbox_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

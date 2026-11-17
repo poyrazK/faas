@@ -973,6 +973,11 @@ func TestWarnSingleHostProtectiveRule(t *testing.T) {
 		if got != tc.warn {
 			t.Errorf("kind=%s host=%s: warned=%v, want %v (stderr %q)", tc.kind, tc.host, got, tc.warn, stderr.String())
 		}
+		// Hunt 33 H33-19: a rule on the platform hostname must not say the
+		// app is "also" served there.
+		if tc.host == "shop.gregale.dev" && (strings.Contains(stderr.String(), "its own platform hostname") || !strings.Contains(stderr.String(), "custom domains")) {
+			t.Errorf("platform-host warning: %q", stderr.String())
+		}
 	}
 }
 

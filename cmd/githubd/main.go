@@ -347,6 +347,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// apid daemon isn't running.
 	apidBridge := newApidBridgeClient(ctx, os.Getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK"), nil, log)
 	webhookSvc.Enqueuer = NewApidEnqueuer(apidBridge, log)
+	// Branch-backed PR previews need the live bridge; the stub keeps app
+	// previews (ADR-20261113121342).
+	if branches, ok := apidBridge.(githubd.PullRequestBranchClient); ok {
+		webhookSvc.PullRequestBranches = branches
+	}
 	webhookSvc.AutomationEvents = newApidAutomationEvents(os.Getenv, apidBridge, log)
 	// A missing GitHub App credential must stop push dispatch before source
 	// fetch; the branch-head check is a production freshness boundary.
@@ -437,7 +442,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
 				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
 				realSvc.CIPullRequests = githubd.NewHTTPCIPullRequests(tokens, deps.httpClient())
-				realSvc.IssueComments = githubd.NewHTTPIssueComments(tokens, deps.httpClient())
+				realSvc.IssueComments = githubd.NewHTTPIssueComments(tokens, deps.httpClient(), checks.AppID)
 				realSvc.CIChanges = githubd.NewHTTPCIChangedFiles(tokens, deps.httpClient())
 				realSvc.ProtectedBranches = githubd.NewHTTPProtectedBranches(tokens, deps.httpClient())
 				realSvc.ReviewedMerges = githubd.NewHTTPReviewedMerges(tokens, deps.httpClient())

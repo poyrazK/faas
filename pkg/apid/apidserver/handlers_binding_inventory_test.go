@@ -231,7 +231,7 @@ func TestAppBindingInventoryPermissionBoundaries(t *testing.T) {
 		objects   int32
 	}{
 		{"app read", []string{api.ScopeAppsRead}, 2, 0},
-		{"storage read", []string{api.ScopeAppsRead, api.ScopeStorageRead}, 2, 0},
+		{"storage read", []string{api.ScopeAppsRead, api.ScopeStorageRead}, 1, 1}, // ADR-20261109180000: storage:read lists bindings.
 		{"storage manage", []string{api.ScopeAppsRead, api.ScopeStorageManage}, 1, 1},
 		{"PostgreSQL read", []string{api.ScopeAppsRead, api.ScopeManagedPostgresRead}, 1, 0},
 	} {

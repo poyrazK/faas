@@ -372,6 +372,18 @@ func (m *MemStore) DeleteAppWebhook(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.appWebhooks, id)
+	// Mirror the PgStore cascade: the webhook's deliveries, and with them
+	// their derived dead-letter events, go too (ChronoLake finding 28).
+	for deliveryID, d := range m.appWebhookDeliveries {
+		if d.WebhookID != id {
+			continue
+		}
+		delete(m.appWebhookDeliveries, deliveryID)
+		delete(m.appWebhookDeliveryAttempts, deliveryID)
+		delete(m.appWebhookDeliverySources, deliveryID)
+		delete(m.appWebhookReplayGenerations, deliveryID)
+		delete(m.deadLetterPurged, unifiedDeadLetterEventID("webhook_delivery", deliveryID))
+	}
 	delete(m.appWebhookPreviousSecrets, id)
 	delete(m.realtimeChannelWebhookFilters, id)
 	delete(m.appWebhookReceiverCooldowns, id)
@@ -405,6 +417,23 @@ func (m *MemStore) ListAppWebhooksForAccount(_ context.Context, accountID string
 	return out, nil
 }
 
+// appWebhookOutboxHeldLocked counts the account's undelivered deliveries and
+// their payload bytes, skipping a deleted app's, which wait unsent until its
+// purge (mirrors checkAppWebhookOutboxAdmissionTx).
+func (m *MemStore) appWebhookOutboxHeldLocked(accountID string) (pending, held int64) {
+	for _, d := range m.appWebhookDeliveries {
+		if d.AccountID != accountID || (d.Status != AppWebhookDeliveryPending && d.Status != AppWebhookDeliveryInFlight) {
+			continue
+		}
+		if app, ok := m.apps[d.AppID]; d.AppID != "" && ok && app.Status == AppDeleted {
+			continue
+		}
+		pending++
+		held += int64(len(d.Payload))
+	}
+	return pending, held
+}
+
 // RecordAppWebhookDelivery stamps the row with a fresh ID + default
 // status='pending' + attempt=0 + next_attempt_at=now if unset. The
 // dispatcher picks it up at next tick.
@@ -416,13 +445,7 @@ func (m *MemStore) RecordAppWebhookDelivery(_ context.Context, in AppWebhookDeli
 	}
 	if in.AdmissionMaxPending > 0 || in.AdmissionMaxBacklogBytes > 0 {
 		// Mirrors checkAppWebhookOutboxAdmissionTx; m.mu is the lock.
-		var pending, held int64
-		for _, d := range m.appWebhookDeliveries {
-			if d.AccountID == in.AccountID && (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) {
-				pending++
-				held += int64(len(d.Payload))
-			}
-		}
+		pending, held := m.appWebhookOutboxHeldLocked(in.AccountID)
 		if err := appWebhookOutboxAdmission(in, pending, held); err != nil {
 			return AppWebhookDelivery{}, err
 		}

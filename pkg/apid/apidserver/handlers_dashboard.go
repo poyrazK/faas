@@ -313,6 +313,9 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderAppDetail(w, r, log, acct, slug)
 		case path == "/dashboard/usage":
 			s.renderUsage(w, r, log, acct)
+		case path == "/dashboard/account/health":
+			// ADR-20261112210000 — customer account health.
+			s.renderAccountHealth(w, r, log, acct)
 		case path == "/dashboard/billing":
 			s.renderBilling(w, r, log, acct)
 		case path == "/dashboard/upgrade":
@@ -450,6 +453,7 @@ func (s *server) renderIndex(w http.ResponseWriter, r *http.Request, log *slog.L
 		DeveloperAppCount:  developerAppCount,
 		DeveloperAppsLimit: limits.DeveloperApps,
 		Plan:               string(acct.Plan),
+		Attention:          s.accountAttention(acct),
 	}}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
@@ -1597,6 +1601,12 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		} else {
 			overageCents = saturatingAddCents(overageCents, storageCents)
 		}
+		// And the managed PostgreSQL overage charge (billing review 2026-11-13).
+		if databaseCents, err := meter.SpendCapManagedPostgresCents(ctx, s.store, acct.ID, time.Now()); err != nil {
+			log.Warn("dashboard renderBilling: managed postgres charge", "account_id", acct.ID, "err", err)
+		} else {
+			overageCents = saturatingAddCents(overageCents, databaseCents)
+		}
 	}
 	var overageRatio float64
 	if capOK && capCents > 0 && overageCents > 0 {
@@ -1851,6 +1861,8 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := dashboard.AccountData{
+		ReferralsEnabled:          s.sales.Enabled(),
+		SalesEnabled:              s.isSalesMember(acct),
 		Keys:                      keyItems,
 		ShowDelete:                view.Status != state.AccountDeletedPending,
 		ShowDeleteManagedPostgres: api.AccountDeletionManagedPostgresEnabled(acct.ID),
@@ -1948,6 +1960,11 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 	})
 	data.PlanConfirmToken = planTok
+	if err := s.fillAccountProfileForms(w, r, acct, &data); err != nil {
+		log.Error("dashboard renderAccount: account forms", "err", err, "account_id", view.ID)
+		renderProblem(w, log, err)
+		return
+	}
 	// Wire to .Data.ConnectGithubConfirmToken in account.html; the
 	// form action is /dashboard/install/connect (handlers_oauth_code_callback.go).
 	data.ConnectGithubConfirmToken = connectGithubTok
@@ -1994,6 +2011,9 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		if acct.Plan != api.PlanFree {
 			data.FlashSurface += " " + restoreSubscriptionNotice
 		}
+	}
+	if flash := accountFlowFlash(r); flash != "" {
+		data.FlashSurface = flash
 	}
 	switch r.URL.Query().Get("key_revoked") {
 	case "1":
@@ -2103,7 +2123,7 @@ func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountVi
 		Plan:                       string(acct.Plan),
 		AppCount:                   n,
 		EmailVerified:              acct.EmailVerified(),
-		EmailVerificationGraceEnds: acct.CreatedAt.Add(emailVerificationGrace).UTC().Format("2006-01-02"),
+		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
 	}
 }
 
@@ -2796,6 +2816,7 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	populateOrgApps(r.Context(), log, s.store, org, &data)
 	populateOrgActivity(r.Context(), r, log, s.store, org, &data)
+	s.populateOrgGitHub(w, r.Context(), log, acct, org, callerRole, &data)
 
 	page := dashboard.Page{
 		Title:   org.Name,

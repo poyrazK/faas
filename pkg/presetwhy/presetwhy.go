@@ -102,13 +102,13 @@ var catalog = map[string]row{
 	"cold_start_10pct": {
 		Explanation: Explanation{
 			Title:   "Cold starts exceed 10% of traffic",
-			Hint:    "more than 10% of your requests woke a parked instance in the last hour",
-			Why:     "the gateway counted wake events versus total requests for your app over a rolling 1-hour window; the cold-start rate crossed the 10% threshold. Cold starts add ~250 ms of latency while the microVM boots",
+			Hint:    "more than 10% of your requests needed a cold boot in the last hour",
+			Why:     "the gateway counted requests that needed a cold boot (no usable snapshot) versus total requests for your app over a rolling 1-hour window; the cold-start rate crossed the 10% threshold. A cold boot takes far longer than a snapshot wake",
 			Fix:     "• if traffic is bursty by design (cron, batch), this is expected — consider warming with a low-frequency probe\n• if traffic is steady but under your plan's idle timeout, raise the timeout (api.IdleTimeoutSeconds in pkg/api/limits.go) — but you'll pay for the resident RAM\n• if traffic is steady AND under the timeout, your idle window is too aggressive",
 			DocsURL: "/docs/alerts/cold-starts",
 		},
 		Observed: func(observed float64) (why, fix string) {
-			return fmt.Sprintf("the gateway counted wake events versus total requests for your app over a rolling 1-hour window; the cold-start rate landed at %.1f%%, past the 10%% threshold. Cold starts add ~250 ms of latency while the microVM boots", observed),
+			return fmt.Sprintf("the gateway counted requests that needed a cold boot (no usable snapshot) versus total requests for your app over a rolling 1-hour window; the cold-start rate landed at %.1f%%, past the 10%% threshold. A cold boot takes far longer than a snapshot wake", observed),
 				fmt.Sprintf("• if traffic is bursty by design (cron, batch), this is expected — consider warming with a low-frequency probe\n• if traffic is steady but under your plan's idle timeout, raise the timeout (api.IdleTimeoutSeconds in pkg/api/limits.go) — but you'll pay for the resident RAM\n• if traffic is steady AND under the timeout, your idle window is too aggressive (you saw %.1f%% cold starts — that's a wake-vs-resident imbalance)", observed)
 		},
 	},
@@ -128,14 +128,14 @@ var catalog = map[string]row{
 	},
 	"spend_eur_20": {
 		Explanation: Explanation{
-			Title:   "Daily spend exceeds $20",
-			Hint:    "your account's 24-hour rolling spend crossed the $20 threshold",
-			Why:     "meterd sums the per-instance RAM-seconds cost (plan RAM + 8 MB overhead, billed at the plan rate) for the last 24 hours; the total crossed the $20 threshold. Billing is plan RAM + 8 MB per running second (§4.7) — NOT sampled RSS",
+			Title:   "Monthly spend exceeds $20",
+			Hint:    "your account's month-to-date charges beyond its plan crossed the $20 threshold",
+			Why:     "meterd sums this month's charges beyond your plan: compute overage (plan RAM + 8 MB per running second past the included GB-hours, §4.7, NOT sampled RSS), elected egress overage and object storage; the total crossed the $20 threshold",
 			Fix:     "• if the spend is unexpected, check the instances panel — a runaway loop or ungraceful crash can keep waking instances\n• consider raising idle timeout to park instances faster\n• for predictable workloads, the Scale plan's GB-h pool is the cheapest path (3000 GB-h included)",
 			DocsURL: "/docs/runbooks/FaasSpendEur20",
 		},
 		Observed: func(observed float64) (why, fix string) {
-			return fmt.Sprintf("meterd summed the per-instance RAM-seconds cost for the last 24 hours; the total landed at $%.2f, past the $20 threshold", observed),
+			return fmt.Sprintf("meterd summed this month's compute, egress and object-storage charges beyond your plan; the total landed at $%.2f, past the $20 threshold", observed),
 				fmt.Sprintf("• if the spend is unexpected ($%.2f is unusual for this app shape), check the instances panel — a runaway loop or ungraceful crash can keep waking instances\n• consider raising idle timeout to park instances faster\n• for predictable workloads, the Scale plan's GB-h pool is the cheapest path (3000 GB-h included)", observed)
 		},
 	},
@@ -157,13 +157,13 @@ var catalog = map[string]row{
 			Title:   "TLS certificate expires within 14 days",
 			Hint:    "your custom-domain certificate will expire in less than 14 days",
 			Why:     "apid inspects the certificate on every custom-domain renewal scan; the notAfter timestamp is less than 14 days (1209600 seconds) away. Renewals normally run automatically via the cert engine (ADR-099) — this alert fires when auto-renew failed for 7+ days",
-			Fix:     "• check the renewal log: `gregale certs status <hostname>` shows the last attempt + ACME challenge outcome\n• if the ACME challenge is failing, the most common cause is a CAA record blocking issuance or a DNS propagation delay\n• if renewal is genuinely blocked, replace the cert manually (`gregale certs rotate <hostname>`)",
+			Fix:     "• check the certificate: `gregale domain status <hostname>` shows its Ready, Verified and CertificateReady conditions\n• if the ACME challenge is failing, the most common cause is a CAA record blocking issuance or a DNS propagation delay\n• if renewal is genuinely blocked, `gregale domain doctor <hostname>` names the failing check; fix it and run `gregale domain verify <hostname> --wait`",
 			DocsURL: "/docs/runbooks/FaasTLSCertExpiryPage",
 		},
 		Observed: func(observed float64) (why, fix string) {
 			days := observed / 86400
 			return fmt.Sprintf("apid inspected the certificate and the notAfter timestamp is %.0f seconds (%.1f days) away, under the 14-day threshold", observed, days),
-				fmt.Sprintf("• check the renewal log: `gregale certs status <hostname>` shows the last attempt + ACME challenge outcome (cert has %.1f days left)\n• if the ACME challenge is failing, the most common cause is a CAA record blocking issuance or a DNS propagation delay\n• if renewal is genuinely blocked, replace the cert manually (`gregale certs rotate <hostname>`)", days)
+				fmt.Sprintf("• check the certificate: `gregale domain status <hostname>` shows its Ready, Verified and CertificateReady conditions (cert has %.1f days left)\n• if the ACME challenge is failing, the most common cause is a CAA record blocking issuance or a DNS propagation delay\n• if renewal is genuinely blocked, `gregale domain doctor <hostname>` names the failing check; fix it and run `gregale domain verify <hostname> --wait`", days)
 		},
 	},
 	"queue_backlog_growing": {

@@ -67,7 +67,7 @@ func cmdDeployCheck(args []string) int {
 		}
 	}
 	if *slug == "" {
-		linked, _, linkErr := findProjectContext(root)
+		linked, _, linkErr := targetProjectContext(root)
 		if linkErr == nil {
 			*slug = linked.Project
 		} else if !errors.Is(linkErr, errProjectContextNotFound) {
@@ -170,6 +170,7 @@ func deploymentCheckWorkloads(root, secretsFile string, limits func() api.Limits
 	if envErr != nil {
 		composeEnv = reposcan.ComposeEnv{}
 	}
+	composeEnv = composeEnv.WithMeshServices(scan.Workloads)
 	var importLimits api.Limits
 	if composeEnv.ImportsAny() {
 		importLimits = limits()

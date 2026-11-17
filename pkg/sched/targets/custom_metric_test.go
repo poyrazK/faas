@@ -63,6 +63,41 @@ func TestCustomMetric_ScalesOnPushedValue(t *testing.T) {
 	}
 }
 
+type fakeCustomMetricSeries struct {
+	fakeCustomMetrics
+	series map[string][]state.CustomMetricSeries
+}
+
+func (f *fakeCustomMetricSeries) ListCustomMetricSeries(_ context.Context, appID string) ([]state.CustomMetricSeries, error) {
+	return f.series[appID], nil
+}
+
+// adr: 20261108160000 — slice C2: a labelled custom target scales on its one
+// series, not on the metric's aggregate (the max of every series).
+func TestCustomMetric_LabelledTargetReadsItsSeries(t *testing.T) {
+	now := time.Now()
+	policy := &state.ScalingPolicy{Targets: []state.ScalingTarget{{
+		Metric: api.ScalingMetricCustom, Name: "depth", Value: 100, Labels: map[string]string{"queue": "emails"},
+	}}}
+	tr, engine := customTrigger(t, policy, &fakeCustomMetricSeries{
+		fakeCustomMetrics: fakeCustomMetrics{byApp: map[string][]state.CustomMetric{
+			"app1": {{Name: "depth", Value: 900, ObservedAt: now, Labelled: true}},
+		}},
+		series: map[string][]state.CustomMetricSeries{"app1": {
+			{Name: "depth", SeriesKey: "queue=billing", Kind: state.CustomMetricKindGauge, Value: 900, ObservedAt: now},
+			{Name: "depth", SeriesKey: "queue=emails", Kind: state.CustomMetricKindGauge, Value: 420, ObservedAt: now},
+		}},
+	}, 2)
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	// ceil(420/100) = 5 desired from the emails series, minus 2 live = 3;
+	// the aggregate (900) would have asked for 7.
+	if len(engine.burstCounts) != 1 || engine.burstCounts[0] != 3 {
+		t.Fatalf("burstCounts = %v, want [3] from the selected series", engine.burstCounts)
+	}
+}
+
 // TestCustomMetric_StaleValueIsNoSignal is the reason observed_at is stored.
 //
 // If the pusher dies — the cron stops, the customer's infrastructure has an

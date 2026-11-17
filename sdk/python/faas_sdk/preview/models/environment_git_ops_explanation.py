@@ -7,6 +7,14 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.environment_git_ops_explanation_report_freshness import (
+    EnvironmentGitOpsExplanationReportFreshness,
+    check_environment_git_ops_explanation_report_freshness,
+)
+from ..models.environment_git_ops_explanation_report_status import (
+    EnvironmentGitOpsExplanationReportStatus,
+    check_environment_git_ops_explanation_report_status,
+)
 from ..models.environment_git_ops_explanation_source_freshness import (
     EnvironmentGitOpsExplanationSourceFreshness,
     check_environment_git_ops_explanation_source_freshness,
@@ -42,6 +50,11 @@ class EnvironmentGitOpsExplanation:
     source_freshness: EnvironmentGitOpsExplanationSourceFreshness
     issues: list[EnvironmentGitOpsDiagnostic]
     workloads: list[EnvironmentWorkloadProgress]
+    report_id: str | Unset = UNSET
+    """Latest completed report matching the current revision, generation and intent version."""
+    report_status: EnvironmentGitOpsExplanationReportStatus | Unset = UNSET
+    report_freshness: EnvironmentGitOpsExplanationReportFreshness | Unset = UNSET
+    report_observed_at: datetime.datetime | Unset = UNSET
     observed_commit_sha: str | Unset = UNSET
     approved_revision_id: str | Unset = UNSET
     applied_revision_id: str | Unset = UNSET
@@ -75,6 +88,20 @@ class EnvironmentGitOpsExplanation:
             workloads_item = workloads_item_data.to_dict()
             workloads.append(workloads_item)
 
+        report_id = self.report_id
+
+        report_status: str | Unset = UNSET
+        if not isinstance(self.report_status, Unset):
+            report_status = self.report_status
+
+        report_freshness: str | Unset = UNSET
+        if not isinstance(self.report_freshness, Unset):
+            report_freshness = self.report_freshness
+
+        report_observed_at: str | Unset = UNSET
+        if not isinstance(self.report_observed_at, Unset):
+            report_observed_at = self.report_observed_at.isoformat()
+
         observed_commit_sha = self.observed_commit_sha
 
         approved_revision_id = self.approved_revision_id
@@ -99,6 +126,14 @@ class EnvironmentGitOpsExplanation:
                 "workloads": workloads,
             }
         )
+        if report_id is not UNSET:
+            field_dict["report_id"] = report_id
+        if report_status is not UNSET:
+            field_dict["report_status"] = report_status
+        if report_freshness is not UNSET:
+            field_dict["report_freshness"] = report_freshness
+        if report_observed_at is not UNSET:
+            field_dict["report_observed_at"] = report_observed_at
         if observed_commit_sha is not UNSET:
             field_dict["observed_commit_sha"] = observed_commit_sha
         if approved_revision_id is not UNSET:
@@ -146,6 +181,29 @@ class EnvironmentGitOpsExplanation:
 
             workloads.append(workloads_item)
 
+        report_id = d.pop("report_id", UNSET)
+
+        _report_status = d.pop("report_status", UNSET)
+        report_status: EnvironmentGitOpsExplanationReportStatus | Unset
+        if isinstance(_report_status, Unset):
+            report_status = UNSET
+        else:
+            report_status = check_environment_git_ops_explanation_report_status(_report_status)
+
+        _report_freshness = d.pop("report_freshness", UNSET)
+        report_freshness: EnvironmentGitOpsExplanationReportFreshness | Unset
+        if isinstance(_report_freshness, Unset):
+            report_freshness = UNSET
+        else:
+            report_freshness = check_environment_git_ops_explanation_report_freshness(_report_freshness)
+
+        _report_observed_at = d.pop("report_observed_at", UNSET)
+        report_observed_at: datetime.datetime | Unset
+        if isinstance(_report_observed_at, Unset):
+            report_observed_at = UNSET
+        else:
+            report_observed_at = datetime.datetime.fromisoformat(_report_observed_at)
+
         observed_commit_sha = d.pop("observed_commit_sha", UNSET)
 
         approved_revision_id = d.pop("approved_revision_id", UNSET)
@@ -165,6 +223,10 @@ class EnvironmentGitOpsExplanation:
             source_freshness=source_freshness,
             issues=issues,
             workloads=workloads,
+            report_id=report_id,
+            report_status=report_status,
+            report_freshness=report_freshness,
+            report_observed_at=report_observed_at,
             observed_commit_sha=observed_commit_sha,
             approved_revision_id=approved_revision_id,
             applied_revision_id=applied_revision_id,

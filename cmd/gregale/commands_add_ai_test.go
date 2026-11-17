@@ -114,3 +114,19 @@ func TestCmdAddAIProviderInputs(t *testing.T) {
 		t.Fatalf("vertex create %v, credential %v; want the regional origin and the key on one line", f.bodies[0], f.bodies[1])
 	}
 }
+
+// ADR 20261027132936 amendment 2: the gateway serves production only, so
+// add ai refuses to point another scope's settings at it.
+func TestCmdAddAIRefusesNonProductionScope(t *testing.T) {
+	f := &fakeAddAIAPI{}
+	f.serve(t)
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	_ = captureAddDatadogStdout(t)
+
+	if code := main.CmdAdd([]string{"ai", "--app", "shop", "--provider", "openai", "--scope", "pr-preview"}); code == 0 {
+		t.Fatal("add ai --scope pr-preview succeeded; want a refusal")
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("calls = %v; want nothing changed", f.calls)
+	}
+}

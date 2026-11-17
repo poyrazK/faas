@@ -6,6 +6,7 @@
  * Column metadata only; no stored customer values are read.
  */
 export type DataSourceColumn = {
+  unsupported?: boolean;
   name: string;
   type: string;
   nullable: boolean;

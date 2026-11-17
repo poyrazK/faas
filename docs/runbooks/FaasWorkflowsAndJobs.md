@@ -38,10 +38,10 @@ The `workflows_and_jobs` platform flag gates both; `workflows` and `jobs` gate
 each one ([platform flags](../ops/platform-flags.md)). The flags are beta, so
 they are on for every entitled account unless an operator writes them.
 
-The separate `automations` flag gates the authoring API and dashboard. It does
+The separate `stored_workflows` flag gates the authoring API and dashboard. It does
 not stop published definitions, schedule admissions, accepted events, or runs:
 those share the workflow runtime with manifest-defined workflows. Before hiding
-the authoring surface, pause the affected automations and drain or cancel their
+the authoring surface, pause the affected stored workflows and drain or cancel their
 existing runs. To hold all workflow execution for an account during an incident,
 deny `workflows` as described below; this also affects manifest workflows. A
 selective execution switch requires durable ownership of each admitted run and

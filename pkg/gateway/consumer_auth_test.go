@@ -406,7 +406,9 @@ func TestConsumerScopeAllows(t *testing.T) {
 	}{
 		{name: "read get", method: http.MethodGet, scopes: []string{"read"}, want: true},
 		{name: "read post", method: http.MethodPost, scopes: []string{"read"}, want: false},
-		{name: "read head", method: http.MethodHead, scopes: []string{"read"}, want: false},
+		{name: "read head", method: http.MethodHead, scopes: []string{"read"}, want: true},
+		{name: "read options", method: http.MethodOptions, scopes: []string{"read"}, want: true},
+		{name: "read delete", method: http.MethodDelete, scopes: []string{"read"}, want: false},
 		{name: "write post", method: http.MethodPost, scopes: []string{"write"}, want: true},
 		{name: "write get", method: http.MethodGet, scopes: []string{"write"}, want: true},
 		{name: "admin all", method: http.MethodDelete, scopes: []string{"admin"}, want: true},
@@ -419,6 +421,39 @@ func TestConsumerScopeAllows(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := consumerScopeAllows(tc.scopes, tc.method); got != tc.want {
 				t.Fatalf("consumerScopeAllows(%v, %s) = %v, want %v", tc.scopes, tc.method, got, tc.want)
+			}
+		})
+	}
+}
+
+// Browsers send a CORS preflight without credentials, so required mode must
+// let it reach the edge CORS rule or the app (Hunt 34 H34-36). A plain OPTIONS
+// without the preflight headers is still a request that needs a key.
+func TestEnforceConsumerAuth_RequiredModePassesCORSPreflight(t *testing.T) {
+	store, _ := consumerAuthFixture()
+	h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
+	app := App{ID: "app-1", AccountID: "acct-1", ConsumerAuthMode: api.ConsumerAuthModeRequired}
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+		want    bool
+	}{
+		{name: "preflight", headers: map[string]string{"Origin": "https://shop.example", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization"}, want: true},
+		{name: "options without origin", headers: map[string]string{"Access-Control-Request-Method": "GET"}, want: false},
+		{name: "options without requested method", headers: map[string]string{"Origin": "https://shop.example"}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodOptions, "https://app.example.test/resource", nil)
+			for k, v := range tc.headers {
+				r.Header.Set(k, v)
+			}
+			rr := httptest.NewRecorder()
+			rec := &statusRecorder{ResponseWriter: rr, status: http.StatusOK, request: r}
+			if ok := h.enforceConsumerAuth(rr, r, rec, app); ok != tc.want {
+				t.Fatalf("enforceConsumerAuth = %v, want %v (status %d)", ok, tc.want, rr.Code)
+			}
+			if !tc.want && (rr.Code != http.StatusUnauthorized || problemCode(t, rr) != api.CodeConsumerKeyRequired) {
+				t.Fatalf("status = %d code = %s, want 401 %s", rr.Code, problemCode(t, rr), api.CodeConsumerKeyRequired)
 			}
 		})
 	}

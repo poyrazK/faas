@@ -90,5 +90,10 @@ func runtimeConfigRestartFailureReason(lastError string) string {
 			return reason
 		}
 	}
+	// The replacement instance exited before it became ready, usually because
+	// of the config the restart applies; retrying alone will not fix it.
+	if strings.Contains(lastError, api.CodeAppStartupCrash) {
+		return api.CodeAppStartupCrash
+	}
 	return "restart_attempt_failed"
 }

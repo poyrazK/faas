@@ -29,10 +29,11 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ObservabilityService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Search an app's log events.
    * Internal preview, enabled by
-   * `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+   * `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 403 `log_search_unavailable`.
    * Requires apps:read or admin.
    *
    * Returns one newest-first page of the app's log ledger. Filters
@@ -121,7 +122,7 @@ export class ObservabilityService {
      */
     cursor?: string,
   }): CancelablePromise<LogEventsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-events',
       path: {
@@ -218,7 +219,7 @@ export class ObservabilityService {
      */
     saved?: string,
   }): CancelablePromise<LogEventFacetsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-events/facets',
       path: {
@@ -249,7 +250,7 @@ export class ObservabilityService {
    * @throws ApiError
    */
   public static listDashboards(): CancelablePromise<DashboardsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dashboards',
     });
@@ -269,7 +270,7 @@ export class ObservabilityService {
   }: {
     requestBody: DashboardRequest,
   }): CancelablePromise<Problem | Dashboard> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dashboards',
       body: requestBody,
@@ -291,7 +292,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<Dashboard | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dashboards/{id}',
       path: {
@@ -316,7 +317,7 @@ export class ObservabilityService {
     id: string,
     requestBody: DashboardRequest,
   }): CancelablePromise<Dashboard | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/dashboards/{id}',
       path: {
@@ -340,7 +341,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dashboards/{id}',
       path: {
@@ -353,10 +354,12 @@ export class ObservabilityService {
    * Resolves every widget for its window through the code behind the
    * per-app endpoints: request metrics, log search counts, pushed custom
    * metrics and SLO status. A widget that cannot be read carries `error`
-   * and no value; the rest still resolve.
+   * and no value; the rest still resolve. An account reads at most two
+   * dashboards at once; a third read is refused with 429
+   * `dashboard_data_busy` and `Retry-After`.
    *
    * @returns DashboardData The resolved widgets.
-   * @returns Problem No dashboard to read widgets for (dashboard_not_found), or the preview is disabled.
+   * @returns Problem No dashboard to read widgets for (dashboard_not_found), two reads of the account's dashboards already in progress (dashboard_data_busy), or the preview is disabled.
    * @throws ApiError
    */
   public static getDashboardData({
@@ -367,7 +370,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<DashboardData | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dashboards/{id}/data',
       path: {
@@ -407,7 +410,7 @@ export class ObservabilityService {
      */
     since?: string,
   }): CancelablePromise<IncidentsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/incidents',
       query: {
@@ -437,7 +440,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<IncidentDetail | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/incidents/{id}',
       path: {
@@ -464,7 +467,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<IncidentNote | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/incidents/{id}/acknowledge',
       path: {
@@ -493,7 +496,7 @@ export class ObservabilityService {
     id: string,
     requestBody: IncidentNoteRequest,
   }): CancelablePromise<Problem | IncidentNote> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/incidents/{id}/notes',
       path: {
@@ -521,7 +524,7 @@ export class ObservabilityService {
      */
     slug: string,
   }): CancelablePromise<LogSavedSearchesResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-searches',
       path: {
@@ -554,7 +557,7 @@ export class ObservabilityService {
     name: string,
     requestBody: LogSavedSearchRequest,
   }): CancelablePromise<LogSavedSearch | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/log-searches/{name}',
       path: {
@@ -584,7 +587,7 @@ export class ObservabilityService {
      */
     name: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/log-searches/{name}',
       path: {
@@ -606,7 +609,7 @@ export class ObservabilityService {
      */
     slug: string,
   }): CancelablePromise<Array<AppLogDrainResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-drains',
       path: {
@@ -645,7 +648,7 @@ export class ObservabilityService {
     slug: string,
     requestBody: CreateAppLogDrainRequest,
   }): CancelablePromise<AppLogDrainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/log-drains',
       path: {
@@ -686,7 +689,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<AppLogDrainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-drains/{id}',
       path: {
@@ -725,7 +728,7 @@ export class ObservabilityService {
     id: string,
     requestBody: UpdateAppLogDrainRequest,
   }): CancelablePromise<AppLogDrainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/log-drains/{id}',
       path: {
@@ -766,7 +769,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/log-drains/{id}',
       path: {
@@ -807,7 +810,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<AppLogDrainHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-drains/{id}/health',
       path: {
@@ -855,7 +858,7 @@ export class ObservabilityService {
      */
     window?: '1h' | '24h' | '7d' | '30d',
   }): CancelablePromise<AppLogDrainAnalyticsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-drains/{id}/analytics',
       path: {
@@ -881,7 +884,7 @@ export class ObservabilityService {
   /**
    * Account service map of caller → target app edges.
    * Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
-   * otherwise 503 `service_map_unavailable`.
+   * otherwise 403 `service_map_unavailable`.
    *
    * Built from the unsampled service-proxy edge series. Both the
    * caller and the target are constrained to the account's apps.
@@ -901,7 +904,7 @@ export class ObservabilityService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<ServiceMapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/service-map',
       query: {
@@ -1000,7 +1003,7 @@ export class ObservabilityService {
      */
     cursor?: string,
   }): CancelablePromise<WakeTimelineResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/wakes/{wake_id}/timeline',
       path: {
@@ -1064,7 +1067,7 @@ export class ObservabilityService {
      */
     limit?: number,
   }): CancelablePromise<SidecarTimelineResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/sidecars/{sidecar_name}/timeline',
       path: {
@@ -1114,7 +1117,7 @@ export class ObservabilityService {
      */
     traceId: string,
   }): CancelablePromise<Trace> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/traces/{trace_id}',
       path: {

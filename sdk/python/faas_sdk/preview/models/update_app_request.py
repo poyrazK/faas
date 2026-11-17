@@ -145,6 +145,9 @@ if TYPE_CHECKING:
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
     from ..models.service_replicas import ServiceReplicas
     from ..models.tracing_config import TracingConfig
+    from ..models.update_app_request_function_callables_type_0 import UpdateAppRequestFunctionCallablesType0
+    from ..models.update_app_request_function_input_schema_type_0 import UpdateAppRequestFunctionInputSchemaType0
+    from ..models.warmup_hook import WarmupHook
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
 
@@ -245,6 +248,10 @@ class UpdateAppRequest:
     before_checkpoint: BeforeCheckpointHook | Unset = UNSET
     """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
     warm snapshots; snapshot reuse skips the callback."""
+    warmup: WarmupHook | Unset = UNSET
+    """Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests
+    (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails
+    a deploy."""
     pause: UpdateAppRequestPause | Unset = UNSET
     """When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the
     idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default:
@@ -267,6 +274,12 @@ class UpdateAppRequest:
     function_concurrency: int | None | Unset = UNSET
     """Changes how many requests one Node or Python function worker serves at once. 0 or 1 restores one request per
     worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."""
+    function_callables: None | Unset | UpdateAppRequestFunctionCallablesType0 = UNSET
+    """Replaces the names a function's typed client may call and their app slugs; {} clears them. Takes effect on
+    the next deploy as GREGALE_FUNCTIONS. Function apps only."""
+    function_input_schema: None | Unset | UpdateAppRequestFunctionInputSchemaType0 = UNSET
+    """Replaces the JSON Schema an SDK functions client's calls to this function are checked against; {} clears it.
+    Takes effect on the next deploy. Function apps only."""
     request_rate_limit_rps: int | None | Unset = UNSET
     """Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values
     may only tighten the plan ceiling. Does not create a deployment."""
@@ -424,6 +437,8 @@ class UpdateAppRequest:
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+        from ..models.update_app_request_function_callables_type_0 import UpdateAppRequestFunctionCallablesType0
+        from ..models.update_app_request_function_input_schema_type_0 import UpdateAppRequestFunctionInputSchemaType0
 
         deploy_settings_condition: dict[str, Any] | Unset = UNSET
         if not isinstance(self.deploy_settings_condition, Unset):
@@ -577,6 +592,10 @@ class UpdateAppRequest:
         if not isinstance(self.before_checkpoint, Unset):
             before_checkpoint = self.before_checkpoint.to_dict()
 
+        warmup: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.warmup, Unset):
+            warmup = self.warmup.to_dict()
+
         pause: str | Unset = UNSET
         if not isinstance(self.pause, Unset):
             pause = self.pause
@@ -624,6 +643,22 @@ class UpdateAppRequest:
             function_concurrency = UNSET
         else:
             function_concurrency = self.function_concurrency
+
+        function_callables: dict[str, Any] | None | Unset
+        if isinstance(self.function_callables, Unset):
+            function_callables = UNSET
+        elif isinstance(self.function_callables, UpdateAppRequestFunctionCallablesType0):
+            function_callables = self.function_callables.to_dict()
+        else:
+            function_callables = self.function_callables
+
+        function_input_schema: dict[str, Any] | None | Unset
+        if isinstance(self.function_input_schema, Unset):
+            function_input_schema = UNSET
+        elif isinstance(self.function_input_schema, UpdateAppRequestFunctionInputSchemaType0):
+            function_input_schema = self.function_input_schema.to_dict()
+        else:
+            function_input_schema = self.function_input_schema
 
         request_rate_limit_rps: int | None | Unset
         if isinstance(self.request_rate_limit_rps, Unset):
@@ -960,6 +995,8 @@ class UpdateAppRequest:
             field_dict["after_restore"] = after_restore
         if before_checkpoint is not UNSET:
             field_dict["before_checkpoint"] = before_checkpoint
+        if warmup is not UNSET:
+            field_dict["warmup"] = warmup
         if pause is not UNSET:
             field_dict["pause"] = pause
         if startup_deadline_s is not UNSET:
@@ -976,6 +1013,10 @@ class UpdateAppRequest:
             field_dict["request_timeout_s"] = request_timeout_s
         if function_concurrency is not UNSET:
             field_dict["function_concurrency"] = function_concurrency
+        if function_callables is not UNSET:
+            field_dict["function_callables"] = function_callables
+        if function_input_schema is not UNSET:
+            field_dict["function_input_schema"] = function_input_schema
         if request_rate_limit_rps is not UNSET:
             field_dict["request_rate_limit_rps"] = request_rate_limit_rps
         if request_rate_limit_burst is not UNSET:
@@ -1084,6 +1125,9 @@ class UpdateAppRequest:
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
         from ..models.service_replicas import ServiceReplicas
         from ..models.tracing_config import TracingConfig
+        from ..models.update_app_request_function_callables_type_0 import UpdateAppRequestFunctionCallablesType0
+        from ..models.update_app_request_function_input_schema_type_0 import UpdateAppRequestFunctionInputSchemaType0
+        from ..models.warmup_hook import WarmupHook
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
@@ -1531,6 +1575,13 @@ class UpdateAppRequest:
         else:
             before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
 
+        _warmup = d.pop("warmup", UNSET)
+        warmup: WarmupHook | Unset
+        if isinstance(_warmup, Unset):
+            warmup = UNSET
+        else:
+            warmup = WarmupHook.from_dict(_warmup)
+
         _pause = d.pop("pause", UNSET)
         pause: UpdateAppRequestPause | Unset
         if isinstance(_pause, Unset):
@@ -1608,6 +1659,40 @@ class UpdateAppRequest:
             return cast(int | None | Unset, data)
 
         function_concurrency = _parse_function_concurrency(d.pop("function_concurrency", UNSET))
+
+        def _parse_function_callables(data: object) -> None | Unset | UpdateAppRequestFunctionCallablesType0:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                function_callables_type_0 = UpdateAppRequestFunctionCallablesType0.from_dict(data)
+
+                return function_callables_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UpdateAppRequestFunctionCallablesType0, data)
+
+        function_callables = _parse_function_callables(d.pop("function_callables", UNSET))
+
+        def _parse_function_input_schema(data: object) -> None | Unset | UpdateAppRequestFunctionInputSchemaType0:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                function_input_schema_type_0 = UpdateAppRequestFunctionInputSchemaType0.from_dict(data)
+
+                return function_input_schema_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UpdateAppRequestFunctionInputSchemaType0, data)
+
+        function_input_schema = _parse_function_input_schema(d.pop("function_input_schema", UNSET))
 
         def _parse_request_rate_limit_rps(data: object) -> int | None | Unset:
             if data is None:
@@ -2203,6 +2288,7 @@ class UpdateAppRequest:
             restart_policy=restart_policy,
             after_restore=after_restore,
             before_checkpoint=before_checkpoint,
+            warmup=warmup,
             pause=pause,
             startup_deadline_s=startup_deadline_s,
             stop_grace_period_s=stop_grace_period_s,
@@ -2211,6 +2297,8 @@ class UpdateAppRequest:
             retry_policy=retry_policy,
             request_timeout_s=request_timeout_s,
             function_concurrency=function_concurrency,
+            function_callables=function_callables,
+            function_input_schema=function_input_schema,
             request_rate_limit_rps=request_rate_limit_rps,
             request_rate_limit_burst=request_rate_limit_burst,
             service_replicas=service_replicas,

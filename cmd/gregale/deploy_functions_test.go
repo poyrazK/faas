@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -799,5 +800,187 @@ func TestFunctionSetReconcilesRoutes(t *testing.T) {
 	client.ruleLog = nil
 	if code := d.run(context.Background(), client); code != 0 || len(client.ruleLog) != 0 {
 		t.Fatalf("idempotent run: exit %d, rule writes %v", code, client.ruleLog)
+	}
+}
+
+// ADR-20261111150000 §2: before each function's build, the deploy binds it to
+// its siblings and its `calls:` apps under the declared policy and sets the
+// GREGALE_FUNCTIONS map its typed client reads.
+func TestFunctionSetBindsSiblingsForTypedClients(t *testing.T) {
+	manifest := "functions:\n  - name: web\n    root: w\n    runtime: node24\n    calls: [billing-api]\n  - name: users\n    root: u\n    runtime: node24\n"
+	dir := writeFunctionProject(t, manifest, "w", "u")
+	m, _, _ := functionSetManifest(dir)
+	client := newFakeFunctionSetClient()
+	for _, slug := range []string{"shop-web", "shop-users"} {
+		client.apps[slug] = api.AppResponse{ID: testFunctionAppID, Slug: slug, Type: "function", ServiceBindingPolicy: api.ServiceBindingPolicyAccount}
+	}
+	var out bytes.Buffer
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+		deployOne: func([]string) int { return 0 }}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out.String())
+	}
+	for slug, want := range map[string][]string{"shop-web": {"billing-api", "shop-users"}, "shop-users": {"shop-web"}} {
+		var bound *api.UpdateAppRequest
+		for i, u := range client.updates[slug] {
+			if u.ServiceBindingTargets != nil {
+				bound = &client.updates[slug][i]
+			}
+		}
+		if bound == nil || !slices.Equal(*bound.ServiceBindingTargets, want) || bound.ServiceBindingPolicy == nil || *bound.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+			t.Errorf("%s bindings = %+v, want %v under the declared policy", slug, bound, want)
+		}
+	}
+	callables := func(slug string) map[string]string {
+		for _, u := range client.updates[slug] {
+			if u.FunctionCallables != nil {
+				return *u.FunctionCallables
+			}
+		}
+		return nil
+	}
+	if got := callables("shop-web"); !maps.Equal(got, map[string]string{"billing-api": "billing-api", "users": "shop-users"}) {
+		t.Errorf("shop-web function_callables = %v", got)
+	}
+	if got := callables("shop-users"); !maps.Equal(got, map[string]string{"web": "shop-web"}) {
+		t.Errorf("shop-users function_callables = %v", got)
+	}
+	if len(client.env["shop-web"]) != 0 {
+		t.Errorf("GREGALE_FUNCTIONS must not be written as user env: %v", client.env["shop-web"])
+	}
+}
+
+// ADR-20261111150000 §1: the deploy sets each function's input schema from
+// gregale.yaml before its build.
+func TestFunctionSetSetsInputSchema(t *testing.T) {
+	manifest := "functions:\n  - name: users\n    root: u\n    runtime: node24\n    input:\n      type: object\n      required: [email]\n"
+	dir := writeFunctionProject(t, manifest, "u")
+	m, _, _ := functionSetManifest(dir)
+	client := newFakeFunctionSetClient()
+	client.apps["shop-users"] = api.AppResponse{ID: testFunctionAppID, Slug: "shop-users", Type: "function"}
+	var out bytes.Buffer
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+		deployOne: func([]string) int { return 0 }}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out.String())
+	}
+	var got json.RawMessage
+	for _, u := range client.updates["shop-users"] {
+		if u.FunctionInputSchema != nil {
+			got = *u.FunctionInputSchema
+		}
+	}
+	if !jsonEqual(got, json.RawMessage(`{"type":"object","required":["email"]}`)) {
+		t.Fatalf("function_input_schema = %s", got)
+	}
+}
+
+// A schema the config no longer declares is cleared with {}; an unchanged one
+// is not rewritten.
+func TestFunctionInputSchemaUpdate(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	for _, tc := range []struct {
+		name              string
+		current, declared json.RawMessage
+		want              string
+		set               bool
+	}{
+		{"neither", nil, nil, "", false},
+		{"new", nil, schema, `{"type":"object"}`, true},
+		{"same up to spacing", json.RawMessage(`{ "type": "object" }`), schema, "", false},
+		{"changed", json.RawMessage(`{"type":"array"}`), schema, `{"type":"object"}`, true},
+		{"dropped", schema, nil, `{}`, true},
+	} {
+		got, set := functionInputSchemaUpdate(tc.current, tc.declared)
+		if set != tc.set || string(got) != tc.want {
+			t.Errorf("%s: got %s %v, want %s %v", tc.name, got, set, tc.want, tc.set)
+		}
+	}
+}
+
+// ADR-20261111150000 §1: `gregale function types` writes each function's
+// typed client, --check fails once a schema changes, and a deploy refreshes a
+// file the author already generated.
+func TestFunctionTypesWriteCheckAndDeployRefresh(t *testing.T) {
+	manifest := "functions:\n  - name: web\n    root: w\n    runtime: node24\n  - name: users\n    root: u\n    runtime: node24\n    input:\n      type: object\n      required: [email]\n      properties:\n        email: {type: string}\n"
+	dir := writeFunctionProject(t, manifest, "w", "u")
+	var out bytes.Buffer
+	if code := cmdFunctionTypes([]string{"--path", dir}, &out); code != 0 {
+		t.Fatalf("types exit %d\n%s", code, out.String())
+	}
+	webTypes := filepath.Join(dir, "w", gregalemanifest.NodeFunctionTypesFile)
+	got, err := os.ReadFile(webTypes)
+	if err != nil || !strings.Contains(string(got), "export type UsersInput = {\n  email: string;\n};") {
+		t.Fatalf("web types = %s, %v", got, err)
+	}
+	out.Reset()
+	if code := cmdFunctionTypes([]string{"--path", dir, "--check"}, &out); code != 0 {
+		t.Fatalf("fresh --check exit %d\n%s", code, out.String())
+	}
+	changed := strings.Replace(manifest, "email: {type: string}", "email: {type: string}\n        age: {type: integer}", 1)
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := cmdFunctionTypes([]string{"--path", dir, "--check"}, &out); code == 0 || !strings.Contains(out.String(), "out of date") {
+		t.Fatalf("stale --check exit %d\n%s", code, out.String())
+	}
+	m, _, _ := functionSetManifest(dir)
+	client := newFakeFunctionSetClient()
+	for _, slug := range []string{"shop-web", "shop-users"} {
+		client.apps[slug] = api.AppResponse{ID: testFunctionAppID, Slug: slug, Type: "function"}
+	}
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out, deployOne: func([]string) int { return 0 }}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("deploy exit %d\n%s", code, out.String())
+	}
+	if got, _ := os.ReadFile(webTypes); !strings.Contains(string(got), "age?: number;") {
+		t.Fatalf("deploy did not refresh the existing types:\n%s", got)
+	}
+}
+
+// ADR-20261113120824 §1: a functions-project deploy hands each workflow
+// function's code workflow to that function's deploy; other members send an
+// empty set (removing a workflow turned off), and a gregale.yaml beside the
+// function still wins.
+func TestFunctionSetHandsWorkflowsToMemberDeploys(t *testing.T) {
+	dir := writeFunctionProject(t, "functions:\n  - name: orders\n    root: fo\n    runtime: node24\n    workflow: {timeout: 45s}\n  - name: web\n    root: fw\n    runtime: node24\n", "fo", "fw")
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies":{"@gregale/sdk-node":"*"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := functionSetManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := &functionSetWorkflows{}
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, workflows: holder}
+	planned, err := d.plan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.recordWorkflows(planned); err != nil {
+		t.Fatal(err)
+	}
+	ctx := withFunctionSetWorkflows(withFunctionSetMember(context.Background()), holder)
+	orders := memberWorkflows(ctx, "shop-orders", nil)
+	if len(orders) != 1 || orders[0].Name != "orders" || orders[0].Code == nil || orders[0].Code.Path != "/" || orders[0].Code.Timeout != 45*time.Second {
+		t.Fatalf("orders workflows = %+v", orders)
+	}
+	if web := memberWorkflows(ctx, "shop-web", nil); web == nil || len(web) != 0 {
+		t.Fatalf("web workflows = %#v, want an explicit empty set", web)
+	}
+	own := []api.WorkflowSpec{{Name: "mine"}}
+	if got := memberWorkflows(ctx, "shop-orders", own); len(got) != 1 || got[0].Name != "mine" {
+		t.Fatalf("a gregale.yaml beside the function lost: %+v", got)
+	}
+	if got := memberWorkflows(context.Background(), "shop-orders", nil); got != nil {
+		t.Fatalf("a plain deploy got %+v", got)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "package.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.plan(); err == nil || !strings.Contains(err.Error(), "@gregale/sdk-node") {
+		t.Fatalf("plan without the SDK = %v", err)
 	}
 }

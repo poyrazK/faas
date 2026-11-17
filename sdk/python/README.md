@@ -1,5 +1,20 @@
-# faas_sdk
-A client library for accessing one-box FaaS REST API
+# Gregale Python SDK
+
+The Python client and runtime helpers for [Gregale](https://gregale.dev):
+the Gregale API, workflows, realtime, operations and feature flags. The
+distribution is `gregale-sdk`; import it as `faas_sdk`.
+
+## Install
+
+`gregale-sdk` is not on PyPI yet. Install a pinned commit of this repository:
+
+```sh
+pip install 'gregale-sdk @ git+https://github.com/gregale-dev/gregale-python@<commit>'
+```
+
+Do not run `pip install faas_sdk` or `pip install faas-sdk`: that PyPI name
+belongs to an unrelated company's package. See
+[Install the SDKs](../../docs/sdks.md#python) for extras.
 
 ## Default and preview packages
 
@@ -17,46 +32,770 @@ a preview capability only to the accounts it is released to; elsewhere its
 calls answer `404 no such API route`.
 
 ## Usage
-First, create a client:
+Read the account through the default client. Supply your existing credential
+through `FAAS_TOKEN`, never a literal in source:
+
+<!-- sdk-install-quickstart:start -->
+```python
+import os
+
+from faas_sdk import FaaSClient
+from faas_sdk.api.account import get_account
+from faas_sdk.models.account_response import AccountResponse
+
+client = FaaSClient(
+    base_url=os.environ.get("FAAS_API", "https://api.gregale.dev"),
+    token=os.environ["FAAS_TOKEN"],
+)
+try:
+    account = get_account.sync(client=client.inner)
+    if not isinstance(account, AccountResponse):
+        raise RuntimeError("The API did not return an account")
+    print(account.plan)
+finally:
+    client.close()
+```
+<!-- sdk-install-quickstart:end -->
+
+The generated service also offers `asyncio` and `asyncio_detailed`. Use the
+wrapper's async client and close it when finished:
 
 ```python
-from faas_sdk import Client
-
-client = Client(base_url="https://api.example.com")
+async def read_account():
+    client = FaaSClient(base_url="https://api.gregale.dev", token=os.environ["FAAS_TOKEN"])
+    try:
+        return await get_account.asyncio(client=client.inner)
+    finally:
+        await client.aclose()
 ```
 
-If the endpoints you're going to hit require authentication, use `AuthenticatedClient` instead:
+## Async per-request options and response diagnostics
+
+`FaaSClient.arequest` applies isolated policy to a generated async operation.
+Pass a factory returning a fresh coroutine; the generated function's parsed or
+detailed result type is preserved. Public and preview clients support this API:
 
 ```python
-from faas_sdk import AuthenticatedClient
+import asyncio
+import os
 
-client = AuthenticatedClient(base_url="https://api.example.com", token="SuperSecretToken")
+from faas_sdk import FaaSClient, FaaSClientOptions, RequestOptions, RetryPolicy
+from faas_sdk.api.deployments import get_build
+
+async def read_build(build_id: str):
+    client = FaaSClient(
+        base_url="https://api.gregale.dev",
+        token=os.environ["FAAS_TOKEN"],
+        options=FaaSClientOptions(
+            on_response=lambda info: print(info.request_id, info.status),
+        ),
+    )
+    try:
+        return await client.arequest(
+            lambda: get_build.asyncio(build_id, client=client.inner),
+            options=RequestOptions(timeout=3.0, retry=RetryPolicy(max_attempts=2, backoff=0.1)),
+        )
+    finally:
+        await client.aclose()
+        client.close()
 ```
 
-Now call your endpoint and use your models:
+`timeout` is a total budget in **seconds**, covering asynchronous setup,
+HTTP attempts, retry delays, body reads, and the operation's completion.
+Omitting it inherits the client's constructor timeout (30 seconds by default).
+Zero disables the total deadline; constructor `timeout=None` is also inherited
+as disabled. Values must be finite and nonnegative. This scope overrides HTTPX
+I/O timeout extensions for its own requests without mutating shared clients.
+`RequestTimeoutError`, a `TimeoutError` subclass, reports total-budget expiry;
+ordinary network/HTTPX exceptions retain their original type.
+
+Cancel the task awaiting `arequest` to stop the operation. `CancelledError` and
+its cancellation message are preserved. Active response bodies are closed and
+late transport responses are discarded. Custom transports must cooperate with
+cancellation/close to release their resources. Consume streaming bodies inside
+the operation factory's lifetime. Already-running Tasks and Futures are rejected
+as factories' results because their request context has already been captured.
+
+`RequestOptions` and `RetryPolicy` are frozen. Per-call `RetryPolicy.max_attempts`
+counts **total HTTP attempts**, from 1 through 9; `retry=False` sends once.
+`backoff` uses seconds, grows exponentially, and caps at 8 seconds (zero uses
+0.1 seconds). The longer valid `Retry-After` delay is respected within the total
+deadline. Scoped calls retry HTTP 429/5xx and retryable timed-out policy checks
+before decoding the final Problem. Network failures propagate immediately.
+Mutation keys remain stable across attempts; one-shot async uploads are sent once.
+Legacy constructor `RetryOptions.max_attempts` continues to count retries;
+`arequest` converts inherited defaults without changing existing callers.
+
+Client `FaaSClientOptions.on_response` and per-call `RequestOptions.on_response`
+both receive the same frozen `ResponseInfo` for each async HTTP response,
+including intermediate retries:
+
+| Field | Meaning |
+| --- | --- |
+| `request_id` | UUIDv4 from `X-Request-ID`, or `None` when absent or invalid |
+| `status` | HTTP status before body decoding |
+| `attempt` | One-based HTTP attempt within this request |
+| `duration_ms` | Monotonic milliseconds until headers; excludes body reads and retry waits |
+
+Metadata excludes URLs, credentials, bodies, and arbitrary headers. Failures
+without a response emit no event. Observer exceptions and rejected async
+callbacks do not affect requests; callbacks are not awaited. Their tasks are
+retired when the async client closes. Observers run without the originating
+request's policy context. The client observer also covers existing unscoped
+async calls. Synchronous calls retain their existing behavior.
+
+Continue calling generated `.sync`, `.sync_detailed`, `.asyncio`, and
+`.asyncio_detailed` directly when scoped policy is unnecessary. Request options
+apply only to the matching client's transport, so concurrent accounts and tasks
+retain their own policies. Cancellation does not establish that a server-side
+write was rolled back: retain idempotency identity and reconcile uncertain writes.
+
+## Lazy typed deployment and build pagination
+
+`FaaSClient` offers async item and page iterators for the public collections:
+
+| Collection | Items | Pages |
+| --- | --- | --- |
+| App deployments | `aiter_app_deployments(slug, ...)` | `aiter_app_deployment_pages(slug, ...)` |
+| Account deployments | `aiter_deployments(...)` | `aiter_deployment_pages(...)` |
+| Builds | `aiter_builds(app=..., status=..., ...)` | `aiter_build_pages(app=..., status=..., ...)` |
+
+Rows are generated `DeploymentResponse` or `BuildResponse` objects. These helpers
+are also inherited by `faas_sdk.preview.FaaSClient` and return the same public
+collection models. Build status filters accept `queued`, `running`, `succeeded`,
+or `failed`. Constructing an iterator performs no HTTP; it fetches only when the
+next item/page is needed and buffers at most one page.
 
 ```python
-from faas_sdk.models import MyDataModel
-from faas_sdk.api.my_tag import get_my_data_model
-from faas_sdk.types import Response
+from faas_sdk import FaaSClient, PaginationOptions
 
-with client as client:
-    my_data: MyDataModel = get_my_data_model.sync(client=client)
-    # or if you need more info (e.g. status_code)
-    response: Response[MyDataModel] = get_my_data_model.sync_detailed(client=client)
+async def inspect_builds(token: str) -> list[str]:
+    client = FaaSClient(base_url="https://faas.example.com", token=token)
+    try:
+        async with client.aiter_builds(
+            app="api", status="running", limit=50,
+            options=PaginationOptions(timeout=10, max_pages=4, max_items=120),
+        ) as builds:
+            return [build.id async for build in builds]
+    finally:
+        await client.aclose()
+        client.close()
 ```
 
-Or do the same thing with an async version:
+Use `async with` (or `contextlib.aclosing`) when stopping early. Python's bare
+`async for` does not close an arbitrary iterator on `break`. Cancelling the task
+awaiting `anext()` preserves `asyncio.CancelledError`; calling `aclose()` also
+interrupts a pending header/body/retry wait and cancels the pending `anext()`.
+Closing an iterator leaves the owning SDK client available for other requests.
+Each iterator supports one pending `anext()`; separate iterators can run concurrently.
+
+`PaginationOptions` extends `RequestOptions`, including retry policy and response
+diagnostics. `timeout` is a total traversal budget in **seconds**, beginning on
+first consumption and including HTTP, retries, body reads, and consumer pauses.
+`None` inherits the client default (30 seconds); `0` disables the total deadline.
+The deadline is checked before buffered items are yielded. No background timer
+runs while the consumer is paused. Client configuration and filters are captured
+when the iterator is created, so later token/base URL changes apply to new iterators.
+
+`limit` is the requested page size (1–200, default 50). `max_pages` counts fetched
+pages, including empty pages, rather than HTTP retry attempts. `max_items` reduces
+the final request's page size to the remaining row budget; a server returning too
+many rows raises `PaginationError(code="invalid_page")` rather than truncating a
+resumable boundary. Either count set to zero performs no HTTP. Missing, null,
+and empty terminal cursors end traversal; empty pages with a cursor advance.
+Repeated cursor cycles raise `PaginationError(code="repeated_cursor")` before
+returning the offending page. HTTP/Problem errors propagate without restarting.
+
+Page iterators yield frozen `PaginationPage[T]` objects with `items: tuple[T, ...]`
+and `next_before: str | None`. To resume, process the **whole page**. If
+`page.next_before` is nonempty, save it and pass that exact string as `before` on
+a new iterator with the same filters. Cursors are opaque: do not parse them as dates or decode them.
+Deployment cursors can contain nanoseconds; build cursors can contain opaque keys.
+A checkpoint after only part of a page can skip the remaining rows.
+
+Existing generated `.sync`, `.sync_detailed`, `.asyncio`, and `.asyncio_detailed`
+callers keep their behavior. The generated deployment-list `before` argument now
+also accepts exact strings; existing datetime arguments and datetime fields on
+`DeploymentListResponse` remain available. Prefer the new page wrapper when
+saving cursors, because Python datetime cannot retain nanosecond precision.
+
+## Build and deployment waiters
+
+Use `await client.wait_for_build(id, options=BuildWaitOptions(...))` or
+`await client.wait_for_deployment(id, options=DeploymentWaitOptions(...))` to
+observe an existing resource. Results are generated `BuildResponse` and
+`ReleaseTimeline` models, respectively. Both public and preview clients expose
+these helpers with the same public models. Existing generated calls are unchanged.
 
 ```python
-from faas_sdk.models import MyDataModel
-from faas_sdk.api.my_tag import get_my_data_model
-from faas_sdk.types import Response
+from faas_sdk import BuildWaitOptions, DeploymentWaitOptions, WaiterError, WaiterProgress
+from faas_sdk.models.build_response import BuildResponse
 
-async with client as client:
-    my_data: MyDataModel = await get_my_data_model.asyncio(client=client)
-    response: Response[MyDataModel] = await get_my_data_model.asyncio_detailed(client=client)
+# client is your existing FaaSClient; build_id and deployment_id identify
+# work already submitted. The waiter only issues status GET requests.
+def progress(value: BuildResponse, info: WaiterProgress) -> None:
+    print(info.poll, info.elapsed_ms, value.status)
+
+async def observe_release(client, build_id: str, deployment_id: str):
+    build = await client.wait_for_build(
+        build_id,
+        options=BuildWaitOptions(timeout=120, max_polls=60, on_progress=progress),
+    )
+    try:
+        timeline = await client.wait_for_deployment(
+            deployment_id, options=DeploymentWaitOptions(timeout=300),
+        )
+        return build, timeline
+    except WaiterError as error:
+        if error.code == "blocked":
+            # Show the approval/hold details and retain this ID for a later wait.
+            print(error.id, error.last_observed)
+        raise
 ```
+
+Each waiter requires a positive, finite total `timeout` in **seconds**, at most
+2147483.647. The budget starts when awaited and covers status reads, HTTP retry
+waits, body reads, polling delays, and awaited progress callbacks. This explicit
+budget overrides the client timeout for status reads. Client configuration is
+captured when the helper is called. Waiter options are frozen; concurrent waits
+retain separate accounts, retry policies, response observers, and deadlines.
+
+Poll immediately, then use exponential backoff with jitter. `min_delay` defaults
+to 1 second and `max_delay` to 5 seconds; both are positive and minimum must not
+exceed maximum. Optional `max_polls` is a positive integer and counts status
+reads, including the first. HTTP retries count within a poll. `retry` and
+`on_response` retain the request-option semantics described above. HTTP, network,
+and callback failures propagate without changing their exception identity.
+
+| Observation | Outcome |
+| --- | --- |
+| Build queued or running | Continue polling |
+| Build succeeded | Return the typed build |
+| Build failed or cancelled | Raise the corresponding `WaiterError.code` |
+| Release building, scheduled, rolling out, or watching | Continue polling |
+| Release awaiting approval or held | Raise `blocked`; set `stop_on_blocked=False` to keep observing |
+| Release failed, cancelled, rolled back, or superseded | Raise the matching failure code |
+| Release released, live, serving positive traffic, without recorded watch regression | Return the typed timeline |
+| Released with a recorded watch regression or without serving traffic | Raise `regressed` or `not_serving` |
+| Unknown state or malformed/mismatched response | Raise `unexpected_state` or `invalid_response` |
+
+`WaiterError` exposes typed `code`, `resource`, `id`, `polls`, and
+`last_observed: BuildResponse | ReleaseTimeline | None`. Invalid observations
+never overwrite the last valid one. `WaiterTimeoutError` is also a
+`RequestTimeoutError` and Python `TimeoutError`; poll exhaustion uses
+`WaiterError(code="poll_limit")`. Exception messages omit IDs and response data.
+
+`on_progress(value, info)` runs for every valid observation, including terminal
+states, and may be synchronous or async. Its completion is awaited within the
+same total deadline. `value` is a separate typed model copy;
+`WaiterProgress(poll, elapsed_ms)` is frozen. Editing a callback's model does not
+change the result or retained error observation. Reading `error.last_observed`
+returns another copy. Callback SDK calls do not inherit the status read's retry
+policy or response observer. A late callback cannot schedule more polls.
+
+Cancel the asyncio task awaiting the helper to stop observation, including
+stalled headers, bodies, callbacks, and polling delays. `CancelledError` and its
+message are preserved. Stopping observation leaves server work running and the
+shared SDK client available. To resume, use the same account/base URL and call
+the helper again with the retained resource ID and a fresh budget. Waiting does
+not submit work, approve a release, promote it, roll it back, or cancel it.
+Release success here describes that release's recorded state and positive
+traffic; application-specific health checks and a requirement for full traffic
+remain separate decisions.
+
+## Typed background jobs and batches
+
+Create a version-1 JSON contract naming an existing Jobs template and its input
+and output schemas; generate typed Python or TypeScript clients:
+
+```sh
+python -m faas_sdk.job_types job.json python job_generated.py
+```
+
+```python
+from faas_sdk import FaaSClient, JobInput, JobCheckpoint, JobSubmitOptions, JobRunOptions
+from job_generated import contract
+
+job = client.define_job(contract)
+run = await job.submit([JobInput("import-42:row-1", input)], options=JobSubmitOptions(
+    timeout=30, idempotency_key="import-42", parallelism=2, retry_max=0,
+))
+saved = run.checkpoint.to_dict()  # persist privately before following
+resumed = job.resume(JobCheckpoint.from_dict(saved))
+# If only the run ID was saved, reconstruct from authenticated task metadata:
+attached = await job.resume_by_id(run.checkpoint.run_id, options=JobRunOptions(timeout=30))
+progress = await resumed.wait(options=JobRunOptions(timeout=120, on_progress=print))
+for item in await resumed.results(options=JobRunOptions(timeout=30)):
+    if item.result is not None:
+        use_typed_result(item.result)
+replay = await resumed.retry_failed(
+    options=JobRunOptions(timeout=30), idempotency_key="import-42-replay",
+)
+```
+
+Checkpoints work in either language and retain account/job/run IDs, input digests,
+contract fingerprint and replay lineage. They contain no payloads or credentials.
+Each read is authenticated and checked against those exact identities. A target
+is a selection document, not an authorization capability.
+
+Submissions require an explicit stable key and send one mutation. After
+`acceptance_unknown` or interruption during submission, inspect/recover using the
+same logical input and key within the server's 24-hour window; never substitute a
+fresh key automatically. Failed-only replay is explicit and uses the server's
+atomic selection and image guard. Native execution is at least once.
+
+`wait` reports native aggregate progress. `results` returns per-input outcomes and
+validated typed outputs; missing/corrupt/schema-invalid output is `invalid_result`.
+Managed obj results use native verification plus independent signed GETs, bounded
+bytes, no inherited SDK credentials/cookies/redirects, and a second checksum check.
+External s3/gs artifacts require a caller-owned `JobStore` adapter.
+
+Durations are seconds. Positive `timeout` budgets include reads, stores, delays and
+progress callbacks. Asyncio cancellation stops local observation; use
+`await run.cancel(options=JobRunOptions(timeout=10))` explicitly for remote work.
+Defaults: 100 polls, 1s delay, 256 API requests, 100 pages, 1000 items, and 1 MiB per
+response/result envelope. SDK budgets do not override server plan/admission limits.
+
+`run_local_job_batch(contract, inputs, handler, timeout=..., concurrency=...,
+max_attempts=...)` exercises the same validation locally. `run_job_task` consumes
+native task identity, validates/stores the output and writes the existing manifest.
+Exit unsuccessfully on error; native successful process exit publishes success.
+Handlers get stable `context.input_id`, `context.attempt` and
+`context.check_cancelled()`. Store callbacks own their credentials and async I/O.
+Synchronous handlers must return promptly. Use input IDs for idempotent effects;
+cancellation cannot undo committed application writes. `LocalJobStore` uses
+private files with synthetic s3 references for local testing only.
+
+Schemas support closed objects, arrays/items, strings, finite numbers, safe
+integers, booleans, null, primitive enums and length/item/numeric bounds. Unsupported
+keywords are refused. Large inputs use immutable credential-free object references
+with size/digest validation; small inputs travel in the native opaque input ref.
+See the [CSV import example](../../examples/sdk-csv-jobs/README.md) for local setup,
+generated types, progress, rejection downloads, cross-language resume and replay.
+
+
+Small typed inputs are encoded in the native job history’s `input_ref`. For data
+that should stay in an application-owned store, model an object reference in the
+input schema and fetch it in the handler. Checkpoint files retain only digests
+and identities. Numeric enum values are restricted to safe integers.
+
+## Verify exact project deployments
+
+```python
+from faas_sdk import (
+    ProjectVerificationOptions, ProjectVerificationTarget,
+    VerificationCheck, VerificationCheckResult, project_verification_target,
+)
+
+target = project_verification_target(application)
+# Save target.to_dict() privately; resume without source or a repeated apply.
+restored = ProjectVerificationTarget.from_dict(saved_target)
+
+async def smoke(context):
+    # Use independent application URL/auth; SDK credentials are never supplied.
+    value = await read_bounded_application_response(context.remaining)
+    return VerificationCheckResult(
+        "verified" if value["ok"] else "failed", value["deployment_id"]
+    )
+
+report = await client.verify_project_application(restored, options=ProjectVerificationOptions(
+    timeout=120, max_polls=20, poll_delay=2, concurrency=2,
+    checks=(VerificationCheck("api-smoke", "shop-api", smoke),),
+))
+print(report.outcome, report.to_dict())
+```
+
+Also accepts `ProjectApplicationResult` directly. Outcomes are `verified`,
+`failed`, `blocked`, `inconclusive`, with immutable per-service codes, checks,
+health timestamps, release events, request IDs and next actions. Exact owned app,
+project, environment and deployment identities are validated before probes run.
+Expired telemetry, old/mixed serving releases, missing permissions and unknown
+identities cannot produce success. Checks must return IDs actually observed.
+Workers always need a functional check; `require_smoke_checks=False` explicitly
+allows HTTP platform-health-only verification. This verifies declared coverage.
+
+All durations are seconds. Asyncio task cancellation propagates; a total deadline
+returns partial evidence with code `deadline`. Defaults are 3 polls/service,
+1s delay, 2 concurrent services, 256 reads, 256 KiB/response and telemetry age at
+most 120s (also server TTL). Reads have no retries. Async checks and `on_progress`
+share the budget; sync callbacks must return promptly. No automatic repair occurs.
+
+Text is omitted unless `redact=remove_application_secrets` is supplied. You own
+that redaction policy; inputs over 4096 characters are omitted and output at
+20 strings × 512 characters/service. A failed redactor omits text. Reports are
+never saved automatically. See the complete [API/worker/PostgreSQL example](../../examples/sdk-project-application)
+for fresh worker-written evidence, failure injection and correction.
+
+
+## Preview and apply a complete project
+
+`await client.preview_project(directory, project_slug, options=...)` prepares the
+full repository and asks the server for its authoritative plan. The frozen
+`ReviewedProjectPlan` contains source identity, target environment, changes,
+managed-service requirements, warnings, quota blockers and the opaque review
+token. Its `preview` property returns a fresh typed `PlanResponse`; changing that
+copy does not alter the reviewed intent. Public and preview clients share the
+helpers. This first workflow targets account-owned local projects; generated
+organization and source-ref methods remain available separately.
+
+```python
+import json
+import os
+from pathlib import Path
+from faas_sdk import (
+    FaaSClient, ProjectPreviewOptions, ProjectApplyOptions, ReviewedProjectPlan,
+)
+
+async with FaaSClient(base_url=api_url, token=token) as client:
+    plan = await client.preview_project(
+        './my-project', 'shop', app_slugs={'api': 'shop-api', 'worker': 'shop-worker'},
+        options=ProjectPreviewOptions(timeout=120),
+    )
+    # Persist privately outside the source context, and review plan.preview.
+    with os.fdopen(os.open('../shop.plan.json', os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600), 'w') as file:
+        json.dump(plan.to_dict(), file)
+    options = ProjectApplyOptions(state_path='../shop.apply.json', timeout=1200)
+    result = await client.apply_project_plan(plan, options=options)
+    restored = ReviewedProjectPlan.from_dict(json.loads(Path('../shop.plan.json').read_text()))
+    recovered = await client.resume_project_application(restored, options=options)
+```
+
+Preview starts no builds and reconciles no resources. Optional `environment`,
+`only`, `no_triggers` and `app_slugs` bind selection through the server's token.
+Apply uses that exact retained archive without another upload. The server
+rechecks ownership, permissions, quotas, configuration and environment approval.
+Reviewed source normally expires after one hour. `preview_expired` or `plan_stale`
+requires another preview and a new journal; no automatic re-review occurs.
+
+`ProjectApplyOptions` requires a journal and a positive total deadline. Optional
+`initial_secrets` maps exact selected workload names to environment values;
+`approval_token` forwards an existing protected-environment approval. They stay
+in memory and never enter the plan, progress or journal. Atomic mode-0600 journal
+writes retain only endpoint, target, fingerprint, attempt ID and phase. Keep the
+journal outside source when planning later revisions.
+`load_project_application_state` reads the bounded journal.
+
+The attempt is saved before POST, with automatic HTTP retries disabled for
+preview and apply. An uncertain response or restart from `applying` recovers by
+reading the existing submission receipt; it never repeats apply. A missing
+receipt remains `acceptance_unknown`, including a crash after saving intent but
+before the request. The server must support the optional `Deployment-Attempt-ID`
+header on cached apply. Missing durable identity on a successful response remains
+uncertain. Existing callers without that header retain their behavior.
+
+Results contain aggregate `succeeded`, `partial`, `failed` or `blocked` outcomes
+and a tuple of immutable per-service outcomes. Accepted deployment/build IDs,
+missing results, enqueue errors, post-acceptance errors and blocked releases stay
+visible. Image deployments can omit a build ID. `receipt` and each `timeline`
+return fresh typed copies. Receipts are sparse acceptance records; `plan.preview`
+holds the full review. Release waiters observe release readiness; applications
+can perform additional end-to-end checks.
+
+One deadline covers preparation, callbacks, receipt reads and all service waits.
+Cancel the asyncio task to stop. `max_receipt_polls` bounds recovery reads;
+`max_polls` bounds each service's timeline reads. `min_delay`, `max_delay`,
+`stop_on_blocked`, `retry`, `on_response` and `on_progress` follow the existing SDK
+policies. In-process journal concurrency is rejected; coordinate separate
+processes externally. Plans and journals use the same JSON and fingerprints as
+Node, so another process or language can resume the same accepted intent.
+
+See [the API/worker/PostgreSQL example](../../examples/sdk-project-application/README.md)
+for private plan storage and Node/Python drivers.
+
+## Inspect and deploy an existing project
+
+`await inspect_project(directory, options=ProjectInspectionOptions(...))` reads
+local configuration and returns a frozen `ProjectPlan`. It includes context and
+source roots, the app target, framework, function runtime/handler, Docker build
+summary, workspace/function candidates, setting origins and typed issues.
+Public and preview clients share the same inspection and workflow types.
+
+```python
+import json
+from pathlib import Path
+from faas_sdk import (
+    FaaSClient, ProjectInspectionOptions, ProjectPlan,
+    SourceDeploymentOptions, inspect_project,
+)
+
+project = await inspect_project(
+    './apps/api', options=ProjectInspectionOptions(app_slug='api'),
+)
+if any(issue.severity == 'error' for issue in project.issues):
+    raise ValueError(project.issues)
+Path('../project-plan.json').write_text(json.dumps(project.to_dict()))
+options = SourceDeploymentOptions(state_path='../deployment.json', timeout=120)
+async with FaaSClient(base_url='https://api.gregale.example', token='token') as client:
+    result = await client.deploy_project(project, options=options)
+    # After a restart, restore the original plan and use the same journal.
+    restored = ProjectPlan.from_dict(json.loads(Path('../project-plan.json').read_text()))
+    resumed = await client.resume_project_deployment(restored, options=options)
+```
+
+Discovery honors `gregale.yaml` before `gregale.yml`, the CLI's Docker > Node >
+Python > Go marker priority, function declarations and conventional handlers.
+It recognizes npm/pnpm, Turbo, Nx, Go and Cargo workspace declarations. Declared
+members retain repository context and a relative source root. At a workspace
+root, choose `source_root` explicitly (including `'.'`). Use `function_name` to
+select from several `functions[]` entries. Explicit `app_slug`, `runtime`,
+`handler` and `dockerfile` override discovery; `context_root` sets the boundary
+when Git discovery is unsuitable. Set `app_slug` or `project.app` to deploy;
+a directory name never chooses a remote app.
+
+Typed issues identify invalid declarations, path escapes, ambiguity, missing
+inputs, unsupported settings and deferred validation. Root resource sections
+warn because source submission does not reconcile resources. Function-list
+resource settings and TOML deployment manifests require the CLI and block this
+helper. Docker summaries expose argument names and secret IDs, excluding their
+values and secret references. The original manifest remains in the archive for
+server validation.
+
+Project workflows validate configuration and directory fingerprints before and
+after preparation, reject excluded build inputs, and bind the plan fingerprint
+to the durable journal. Keep the serialized plan, journal and archive outside
+the inspected project. Resume with the original plan: prepared archives remain
+the deployment intent after source files change or disappear. Changed plans
+cannot reuse that journal. Existing `deploy_source` callers keep their explicit
+behavior; advanced callers can supply `project` in workflow options alongside
+matching deployment metadata (`project.deploy_options`). Selected functions get
+transport-only manifests and, when needed, a Go module inside the archive;
+inspection and preparation never rewrite the customer worktree.
+
+Inspection defaults to 120 seconds, at most 40,000 directory entries, 64 levels,
+1 MiB per input and bounded YAML expansion. `timeout` and `max_entries` can
+reduce budgets; cancelling the asyncio task stops inspection. Workspace traversal
+skips dot directories, `node_modules`, `vendor`, `dist`, `target`, `coverage` and
+Python caches. It does not run project code, hooks, shell commands, package
+managers or network requests. Server resource validation remains authoritative.
+`validate_project_plan` checks saved input identity without deploying anything.
+Plans serialize to the same versioned JSON and fingerprints as the Node SDK.
+
+## Resumable source deployment workflows
+
+`await client.deploy_source(directory, app_slug, options=...)` prepares local
+source, uploads the archive, commits and observes an existing app's release.
+A durable local journal identifies one deployment intent. Repeated calls with
+that journal resume the same intent; use a new state path for each intentionally
+new deployment.
+
+```python
+from pathlib import Path
+from faas_sdk import (
+    SourceDeploymentOptions, SourceDeploymentPreparationOptions,
+    SourceDeploymentWaitOptions,
+)
+from faas_sdk.models.upload_deploy_options import UploadDeployOptions
+
+artifacts = Path('../.gregale-artifacts').resolve()
+artifacts.mkdir(exist_ok=True)
+metadata = UploadDeployOptions(source_root='apps/api')
+options = SourceDeploymentOptions(
+    state_path=artifacts / 'api-deploy.json',
+    timeout=300,
+    preparation=SourceDeploymentPreparationOptions(max_bytes=100 * 1024 * 1024),
+    wait=SourceDeploymentWaitOptions(max_polls=300),
+    on_progress=lambda event: print(event.phase, event.elapsed_ms),
+)
+result = await client.deploy_source('.', 'api', deploy_options=metadata, options=options)
+print(result.outcome, result.deployment_id, result.timeline.summary)
+
+# After interruption, with the same metadata and preparation policy:
+resumed = await client.resume_source_deployment('api', deploy_options=metadata, options=options)
+```
+
+The state parent must exist outside the source context. Generated archives stay
+beside the private journal for recovery. Save archive identity and upload/commit
+identities before remote writes. Resume reuses prepared bytes even if the source
+changes. After committing or acceptance, neither source nor archive is needed:
+recovery checks the acceptance receipt and observes the saved deployment ID.
+Explicit resume fails when the journal is missing. The synchronous
+`load_source_deployment_state(path)` returns a frozen validated state with
+`to_dict()`/`from_dict()` for the common Node/Python JSON format.
+
+Supply the same endpoint, app, deployment metadata and preparation selection
+policy on resume. `source_root` comes from `deploy_options.source_root`. Time,
+wait/retry policies and callbacks can change. Journals contain fingerprints,
+identifiers and the original local path, without credentials, metadata values or
+release logs. Archives and journals are private files.
+
+`SourceDeploymentResult` has `outcome` (`succeeded`, `blocked`, `failed`), resource
+IDs, receipt, typed release timeline and optional diagnostic code. Holds and
+approval waits return `blocked` by default. `SourceDeploymentError` exposes
+`code`, `outcome`, `phase`, `state_path`, saved `state` and original `cause`.
+Timeouts have outcome `timed_out`. Cancellation raises
+`SourceDeploymentCancelledError`, an `asyncio.CancelledError` subtype retaining
+the caller's message and the workflow diagnostics. An uncertain commit remains
+`acceptance_unknown`; resume only checks its receipt, even after a crash just
+before commit was sent. It never starts a replacement attempt automatically.
+
+The required timeout is seconds for the whole invocation, including awaited
+callbacks. Cancel the awaiting task to stop local work/observation; accepted
+server deployments continue. Progress carries phase, elapsed milliseconds and
+optional source/upload/release observations. Preparation options support the
+existing limits, ignore rules and `on_plan`; `max_recoveries` and wait options
+retain the lower-level recovery/poll controls. Existing approval and traffic
+policies remain authoritative.
+
+Independent journals run concurrently. The SDK rejects simultaneous writers to
+one canonical journal within a process; coordinate one writer across processes.
+Public and preview clients expose the same workflow and existing low-level APIs.
+
+## Prepare local source
+
+`await inspect_source(directory)` returns a frozen `SourcePlan` with file hashes,
+sizes, modes, inclusion reasons, ignore-rule locations and blocking issues.
+`await prepare_source(directory, output_path, options=...)` streams a reproducible
+tar.gz, verifies the source again and atomically replaces the destination. The
+destination must be outside the context, with an existing parent directory.
+
+```python
+from pathlib import Path
+from faas_sdk import (
+    SourcePreparationOptions, SourceUploadOptions,
+    prepare_source, save_source_upload_checkpoint,
+)
+from faas_sdk.models.upload_deploy_options import UploadDeployOptions
+
+artifacts = Path("../.gregale-artifacts").resolve()
+artifacts.mkdir(exist_ok=True)
+source = await prepare_source(
+    ".", artifacts / "api-source.tar.gz",
+    options=SourcePreparationOptions(
+        source_root="apps/api",  # Retain the workspace build context.
+        timeout=60,
+        max_bytes=100 * 1024 * 1024,
+        max_archive_bytes=50 * 1024 * 1024,
+        on_plan=lambda plan: print(plan.file_count, plan.total_bytes, plan.issues),
+    ),
+)
+checkpoint = await client.upload_source(
+    source.path, "api",
+    deploy_options=UploadDeployOptions(source_root=source.plan.source_root),
+    options=SourceUploadOptions(
+        timeout=120,
+        on_checkpoint=lambda value: save_source_upload_checkpoint(artifacts / "api-source-checkpoint.json", value),
+    ),
+)
+# commit_source remains the explicit next step after review of the prepared upload.
+```
+
+Choose the context directory and `source_root` explicitly. Selection matches the
+CLI worktree rules for built-in exclusions, Go vendoring, `.gregaleignore`, and
+Dockerfile build-output/`.dockerignore` handling. Dockerfile markers are detected
+at the application root; set `dockerfile=True` for a `gregale.yaml` build section
+using a differently named Dockerfile. Archive names remain relative to the whole
+context. Sorted UTF-8 paths, epoch times, zero ownership and 0644/0755 permissions
+make repeated archives identical within the same runtime. Compression versions
+can change gzip bytes across runtimes. Unicode and long names use PAX headers.
+
+`secret_scan="strict"` defaults to the CLI's dotenv provider and entropy checks,
+including sandbox keys. Findings contain paths and reasons, without raw values.
+Use environment configuration or `exclude=(".env.local",)` to keep secrets out;
+`secret_scan="off"` explicitly disables the local check. The scope is dotenv
+files; server validation remains in effect. In-tree links are dereferenced.
+Escaping, dangling and cyclic links and devices/sockets/pipes produce blocking
+issues. Preparation raises `SourcePreparationError` with code `invalid_source`
+and its `plan` for these issues. Source mutations produce `source_changed` and
+preserve an existing archive.
+
+Options cap logical archive entries (`max_entries`, default/maximum 10,000),
+expanded bytes (`max_bytes`, default/maximum the server's 2 GiB safety cap), and
+compressed bytes (`max_archive_bytes`, set to your upload budget). Inspection
+caps visited entries at four times `max_entries`, nesting at 64, ignore files at
+1 MiB and dotenv lines at 64 KiB. Reads use 64 KiB chunks. `timeout` is seconds,
+defaults to 120, and covers callbacks too. Awaitable `on_plan` and `on_progress`
+callbacks support review and phase/path/file-byte reporting. Cancel the awaiting
+task to stop preparation; late reads or callbacks cannot publish an archive.
+Public and preview packages expose the same helpers, independently of clients.
+
+## Resumable source archives and deployment acceptance
+
+`upload_source` transfers a prebuilt source archive from a regular file and returns
+an immutable `SourceUploadCheckpoint`. `commit_source` is a separate, explicit
+operation that returns a typed `DeploymentSubmissionReceipt`. Both are available
+on public and preview clients. Existing generated calls remain available; Python
+now also generates `api.uploads.append_upload` for binary chunk requests.
+
+```python
+from faas_sdk import (
+    FaaSClient, SourceUploadCheckpoint, SourceUploadOptions, DeploymentWaitOptions,
+    load_source_upload_checkpoint, save_source_upload_checkpoint,
+)
+
+from faas_sdk.models.release_timeline import ReleaseTimeline
+
+async def deploy_archive(client: FaaSClient) -> ReleaseTimeline:
+    journal = "source-upload.json"
+    stored: SourceUploadCheckpoint | None = None
+    try:
+        stored = load_source_upload_checkpoint(journal)
+    except FileNotFoundError:
+        pass
+    options = SourceUploadOptions(
+        timeout=120,
+        on_checkpoint=lambda value: save_source_upload_checkpoint(journal, value),
+        on_progress=lambda value: print(value.stage, value.received_bytes, value.total_size),
+    )
+    if stored is None or stored.stage in ("new", "uploading"):
+        stored = await client.upload_source(
+            "source.tar.gz", "api", checkpoint=stored, options=options,
+        )
+    receipt = await client.commit_source(stored, options=options)
+    return await client.wait_for_deployment(
+        str(receipt.deployment_id), options=DeploymentWaitOptions(timeout=300),
+    )
+```
+
+The archive is fingerprinted in 1 MiB grains. Every grain is checked again before
+sending it, so same-size file changes during transfer are detected. Payloads use
+at most the server's advertised chunk size, with a 16 MiB SDK buffer bound; the
+whole archive is never required in memory. The source path and client settings
+are captured when the helper is called. Cancellation stops later requests even
+if a custom transport or checkpoint callback finishes late. Helpers refuse HTTP
+redirects for source bytes and receipt reads.
+
+Each call requires a positive total `timeout` in **seconds**, including archive
+fingerprinting, status reads, chunk writes, and awaited checkpoint/progress
+callbacks. `SourceUploadOptions.max_recoveries` defaults to 3 (0–100). HTTP retries
+are disabled for writes; interrupted or conflicting chunks first reconcile the
+server's accepted offset within the saved in-flight range. GET requests retain
+`retry` and `on_response` policy. `on_progress` receives frozen
+`SourceUploadProgress(stage, received_bytes, total_size)` values.
+
+`on_checkpoint` is required and awaited before mutations. Save it durably and use
+one writer per checkpoint. The file helper writes an atomic replacement with
+private permissions and syncs the file and parent directory on POSIX. For another
+store, persist `checkpoint.to_dict()` and restore it using
+`SourceUploadCheckpoint.from_dict(...)`. The JSON format is shared with Node.
+It includes no credentials, local source path, or deployment metadata values.
+
+Resume with the original archive, app, API base URL, and `deploy_options`, including
+whether options were supplied. The source fingerprint and portable metadata
+fingerprint must match; the API still enforces session ownership. Expired or
+cancelled sessions stop. Starting a fresh transfer is an explicit caller decision.
+
+Checkpoints advance through `new`, `uploading`, `ready`, `committing`, and
+`accepted`. They retain session state, byte offset, an in-flight range, and stable
+request/attempt IDs. Commit persists `committing` before its sole POST, then
+looks up the immutable acceptance receipt. On restart, `committing` and `accepted`
+checkpoints only perform receipt recovery. A missing receipt raises
+`SourceUploadError(code="acceptance_unknown")`; it never authorizes another
+commit or a fresh attempt ID. This includes a stop between saving intent and
+sending the commit request. Receipt recovery does not need the archive file.
+
+`SourceUploadError` exposes typed `code`, the latest immutable `checkpoint`, and
+original `cause`. Codes distinguish changed files, invalid checkpoints/responses,
+expired/closed sessions, persistence errors, exhausted recovery, request failures,
+unknown acceptance, and incomplete transfers. `SourceUploadTimeoutError` is also
+a `RequestTimeoutError` and `TimeoutError`. Native task cancellation retains
+`CancelledError`. Keep the journal after any uncertain submission and use its
+attempt ID for recovery. Uploading does not approve releases or change traffic;
+commit and the release waiters retain the API's existing deployment policies.
+
+For low-level binary access, `append_upload.sync_detailed` and
+`append_upload.asyncio_detailed` accept `body: bytes | File` and integer
+`upload_offset`. They preserve `application/offset+octet-stream` on the wire and
+expose the accepted offset through `response.headers["Upload-Offset"]`.
 
 ## Managed realtime publish retries
 
@@ -2971,3 +3710,194 @@ resolve exact original retries across SDKs, preserving native int64 generations
 and microsecond fences. Known rejection errors expose their `.receipt`; uncertain
 COMMIT requires retrying the saved command on a fresh connection. See
 [budget adoption, guards and cancellation](../../docs/event-acknowledgment-budget-adoption.md#python-selection-adoption-and-replay).
+
+## Application files (preview)
+
+The async preview file client uploads customer files, streams downloads, exposes
+metadata/list/delete, and provides a managed storage adapter for typed jobs:
+
+```python
+from faas_sdk.preview import FaaSClient, FileCheckpoint, FileOptions, PathFileSource
+
+client = FaaSClient(base_url=api_url, token=storage_token)
+files = client.files(app_slug="imports", bucket=bucket_id)
+source = PathFileSource("rows.csv")
+options = FileOptions(timeout=120, on_checkpoint=save_durably, on_progress=show_progress)
+try:
+    uploaded = await files.upload("imports/new-unique-id/input.csv", source,
+                                  options=options, content_type="text/csv")
+    # After restart, re-open the source and load checkpoint.to_dict() JSON:
+    await files.resume(FileCheckpoint.from_dict(saved_json), source, options=options)
+    store = await files.job_store(options=FileOptions(timeout=30), prefix="job-results/")
+    job = client.define_job(contract, store=store)
+finally:
+    await client.aclose()
+```
+
+The API requires storage preview access and bucket grants. Every operation needs
+a positive total timeout, including body reads and callbacks. Cancel its asyncio
+task to stop locally; use `abort(checkpoint, options=...)` to discard remote parts.
+One writer owns each session/checkpoint; keep source bytes stable and use a fresh
+key for each logical upload. Checkpoints are portable with Node and contain no
+credentials or signed URLs. Resume compares source digests and confirmed parts.
+
+`put(..., on_receipt=save_receipt)` supports empty files and
+`if_none_match="*"`. `confirm(receipt, key, size, options=...)` inspects the same
+attempt after a lost response. A completed receipt does not prove the current
+value of a mutable key. The managed JobStore uses create-only content-addressed
+objects, verifies SHA-256 bytes and restricts references to its configured prefix.
+
+`download_to(key, sink, options=...)` streams; `download` buffers within
+`max_bytes`. Sinks can receive partial bytes before failure. Defaults are 100 MiB,
+10,000 parts and 60 polls, with a maximum supported part size of 64 MiB. ETags
+are opaque. See the [browser CSV import example](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+for app-owned authorization, restart recovery and downloadable rejection reports.
+
+## File-triggered typed jobs (preview)
+
+`faas_sdk.preview` exports `FilePipeline`, `FilePipelineScope`,
+`FilePipelineOptions`, `NativeFileVerifier` and `PostgresFilePipelineStore`:
+
+```python
+from faas_sdk.preview import (
+    FileDelivery, FilePipeline, FilePipelineOptions, NativeFileVerifier,
+    PostgresFilePipelineStore,
+)
+pipeline = FilePipeline(
+    name="csv-files-v1", revision="1", scope=scope,
+    prefix="imports/", suffix="/input.csv", contract=contract, job=job,
+    files=files, job_store=job_store, store=PostgresFilePipelineStore(query),
+    verify=NativeFileVerifier(scope, lookup_invocation),
+    authorize=find_owned_upload, map_inputs=map_validated_csv,
+)
+result = await pipeline.handle(FileDelivery(body, invocation_id),
+                               options=FilePipelineOptions(timeout=60))
+if result.outcome == "unresolved" and result.receipt is not None:
+    save_recovery_identity(result.receipt.intent.identity)
+# Once an operator has identified the accepted run:
+await pipeline.reconcile(saved_identity, inspected_run_id,
+                         options=FilePipelineOptions(timeout=30))
+```
+
+See [file_pipeline.py](../../examples/sdk-csv-jobs/file_pipeline.py) for complete
+authenticated API lookup, owner mapping, CSV validation and psycopg integration.
+Callbacks receive a `check_cancelled()` callable; call it between your own work.
+Cancel the asyncio task to stop. One positive total timeout covers all stages,
+including callbacks, response bodies and receipt persistence.
+
+Install `FILE_PIPELINE_SCHEMA` separately with your migration runner. `query`
+must execute one acknowledged AUTOCOMMIT statement and return mapping rows,
+outside ambient transactions. Configure driver timeouts. `authorize` returns
+`FilePipelineOwner` from a durable application record or None; a mutable file
+needs its trusted SHA-256 or fixed-block `source_digest`. Immutable versions
+never fall back to the current object. Input mapping buffers within `max_bytes`
+(default 16 MiB), with at most `max_items` (default 1,000). Use the SAME stable,
+content-addressed `job_store` as the job for stored inputs. Mapping must be pure.
+
+Native verification checks account/app/bucket, payload and retained original
+invocation identity; public event headers are insufficient. HTTP adapters need a
+trusted gateway/authenticated boundary. Pruned proof fails closed. Duplicates
+share one durable intent. An uncertain intent/run/checkpoint acknowledgment never
+causes an automatic repost, including beyond the API idempotency window. Explicit
+run-ID reconciliation matches the exact saved manifest and scope without source
+bytes. Retain receipts while events/replays can arrive; deleting permits another
+submission. Job side effects remain at least once.
+
+The [CSV application](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+shows native trigger setup, separate input/output filters, browser-free job
+submission, two-user isolation, restart recovery and shared Node/Python receipts.
+
+## Live job and file-pipeline views (preview)
+
+`faas_sdk.preview.LiveJob` exposes typed `LiveJobSnapshot` updates through an
+owned async iterator. `realtime_live_job_source` reuses the native realtime
+recovery coordinator and `RealtimeWebSocketClient` (install `gregale-sdk[realtime]`).
+Application-authorized exact-channel tickets are renewed on reconnect. Shared
+Node/Python snapshot validation and authenticated refreshes keep worker messages,
+duplicates, reordered messages and history gaps from declaring completion.
+
+Supply an async authenticated snapshot loader that verifies native Jobs status
+and results. Set `timeout` in seconds, optionally bound `max_snapshots`, cancel
+the consuming task to stop locally, and use `contextlib.aclosing` when leaving
+iteration early. Remote Jobs continue independently. Create a fresh iterator
+for the current application session. Existing Jobs/file callers keep their APIs.
+See [the contract and Node/Python examples](../../docs/sdk-live-jobs.md) and
+[the CSV dashboard](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).
+
+## Durable typed job pipelines (preview)
+
+`faas_sdk.preview.JobPipeline`, `PipelineJob` and `JobPipelineContext` compose
+native typed Jobs with the existing workflow journal and durable sleeps.
+`JobPipelineClient` exposes typed start, attach-by-ID, inspect, result and cancel.
+`PostgresPipelineJobStore` retains durable submission intent and accepted
+checkpoints; uncertain acceptance never automatically submits another Job.
+Node/Python share receipts and journal results. `read_pipeline_artifact` checks
+owned file handoffs, and `job_pipeline_live_snapshot` supports private live views.
+
+Durations are seconds. Close `JobPipelineClient` with `async with`; cancel the
+consuming task to stop local requests. Native orchestration cancellation leaves
+accepted Jobs running. Attach-by-ID does not continue failed native code
+workflows. See [usage and recovery](../../docs/sdk-job-pipelines.md) and the
+[CSV pipeline](../../examples/sdk-csv-jobs/README.md#durable-three-stage-pipeline-preview).
+
+## Approval gates and external input (preview)
+
+Durable typed pipelines can pause for a generated review/reply contract using
+`approval` or `waitForInput` (Python: `wait_for_input`). The application-owned
+PostgreSQL ledger binds exact reviewed inputs, checks current user roles,
+expires decisions using database time, and recovers uncertain native event
+delivery. Existing pipelines remain unchanged until a gate store is configured.
+See [usage, authentication and recovery](../../docs/sdk-pipeline-gates.md) and
+the [reviewed CSV import](../../examples/sdk-csv-jobs/README.md#reviewed-import-preview).
+
+## Typed child pipelines and batches (preview)
+
+Invoke a registered pipeline with `wf.child`, or run ordered inputs through
+`wf.children` with a shared concurrency cap. `PipelineChildren` verifies native
+parent/child provenance, retains uncertain starts for explicit reconciliation,
+and applies captured failure, deadline and parent-stop policies. Recovery uses
+an application-owned PostgreSQL ledger and never automatically repeats unknown
+starts. Existing pipelines opt in through a coordinator; their APIs stay intact.
+See [usage and recovery](../../docs/sdk-pipeline-composition.md) and the
+[reviewed batch CSV example](../../examples/sdk-csv-jobs/README.md#batch-imports-preview).
+
+Typed application CloudEvents can start durable Job pipelines through the preview SDK,
+with generated payload types, current owner authorization and shared Node/Python
+start receipts. See [event-triggered pipelines](../../docs/sdk-event-pipelines.md)
+and the [CSV example](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
+Typed transactional publication is available through `EventPublisher`,
+`with_event_outbox_transaction`, `PsycopgEventOutboxPool` and bounded `EventOutbox`
+workers in `faas_sdk.preview`. Business writes and validated event intent commit
+together; workers share the upgraded Go/Node PostgreSQL protocol and controls.
+See [migration, authorization and recovery](../../docs/sdk-event-outbox.md) and
+the [complete CSV flow](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
+`PipelineSchedule` and `PipelineScheduleClient` in `faas_sdk.preview` bind typed
+inputs to native scheduled pipelines. Preview calendars, read precise bounded
+history, explicitly replay skipped occurrences and attach typed runs with current
+application authorization. See [usage and recovery](../../docs/sdk-pipeline-schedules.md)
+and the [nightly reviewed CSV example](../../examples/sdk-csv-jobs/README.md#scheduled-reviewed-imports).
+
+`StripeWebhookAdapter[Input, Access]` in `faas_sdk.preview` projects native verified
+Stripe snapshot deliveries into generated business events. Current-owner checks,
+business writes and typed outbox intent commit together with a cross-language
+handoff receipt. See [setup and recovery](../../docs/sdk-stripe-webhooks.md) and
+the [paid CSV flow](../../examples/sdk-csv-jobs/README.md#stripe-paid-reviewed-imports).
+
+`PipelineTool[Input, Output, Access]`, `PipelineToolMCP` and
+`PostgresPipelineToolStore` in `faas_sdk.preview` expose typed business pipelines
+with durable invocation receipts, current authorization, human-review status and
+verified results. The MCP adapter registers with an existing authenticated host;
+Node and Python share receipt/reconciliation semantics. See
+[setup and recovery](../../docs/sdk-pipeline-tools.md) and the
+[CSV agent flow](../../examples/sdk-csv-jobs/README.md#agent-tools-for-reviewed-imports).
+
+`PipelineCompensation[UndoInput, UndoOutput, Access]`, `CompensationMCP` and
+`PostgresCompensationStore` in `faas_sdk.preview` prepare immutable typed undo
+commands from verified failed-pipeline evidence. `compensation_contracts` derives
+worker/root/review contracts for a separate, human-approved recovery workflow.
+SQL handlers atomically commit business changes and typed effect receipts, with
+current authorization and application row-version guards. See
+[setup, limits and recovery](../../docs/sdk-pipeline-compensations.md) and the
+[CSV cleanup journey](../../examples/sdk-csv-jobs/README.md#reviewed-cleanup-after-report-failure).

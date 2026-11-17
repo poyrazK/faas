@@ -178,3 +178,39 @@ func TestManagedPostgresUsageViewComputeCapState(t *testing.T) {
 		}
 	})
 }
+
+// adr: 20261110160000 — amendment 2026-11-10: usage shows the egress
+// allowance and the account-wide hold, so a customer whose ready databases
+// refuse connections can see why; amendment 2026-11-11: the allowance is each
+// database's own, and egress holds the database that sent it, not the account.
+func TestManagedPostgresUsageHoldView(t *testing.T) {
+	view := api.ManagedPostgresUsageResponse{EgressBytes: 160}
+	apidserver.ManagedPostgresUsageHoldView(&view, managedpostgres.HoldInputs{Mode: managedpostgres.CapEnforcementOn,
+		DatabaseEgress: map[string]int64{"a": 100, "b": 60}, EgressAllowance: 100})
+	if view.EgressAllowanceBytes != 100 || view.AppEgressBytes != 0 || view.EgressState != api.ManagedPostgresEgressHeld || view.Hold != "" {
+		t.Fatalf("held usage view = %+v", view)
+	}
+	under := api.ManagedPostgresUsageResponse{}
+	apidserver.ManagedPostgresUsageHoldView(&under, managedpostgres.HoldInputs{Mode: managedpostgres.CapEnforcementOn,
+		DatabaseEgress: map[string]int64{"a": 70, "b": 70}, EgressAllowance: 100})
+	if under.EgressState != api.ManagedPostgresEgressHealthy {
+		t.Fatalf("databases under their own allowances = %+v", under)
+	}
+	quiet := api.ManagedPostgresUsageResponse{}
+	apidserver.ManagedPostgresUsageHoldView(&quiet, managedpostgres.HoldInputs{Mode: managedpostgres.CapEnforcementShadow,
+		DatabaseEgress: map[string]int64{"a": 100}, EgressAllowance: 100})
+	if quiet.EgressState != api.ManagedPostgresEgressWarning || quiet.Hold != "" {
+		t.Fatalf("shadow mode must not report a hold: %+v", quiet)
+	}
+	none := api.ManagedPostgresUsageResponse{}
+	apidserver.ManagedPostgresUsageHoldView(&none, managedpostgres.HoldInputs{Mode: managedpostgres.CapEnforcementOn})
+	encoded, err := json.Marshal(none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"egress_allowance_bytes", "app_egress_bytes", "egress_state", `"hold"`} {
+		if strings.Contains(string(encoded), key) {
+			t.Fatalf("%s present without an allowance or hold: %s", key, encoded)
+		}
+	}
+}

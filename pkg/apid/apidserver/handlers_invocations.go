@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -104,6 +105,11 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
+		// ADR-20261022105723 amendment 2026-11-13: the queue caps, counted
+		// without the app lock so async invokes never serialize.
+		AdmissionMaxPending:      limits.MaxQueueDepth,
+		AdmissionMaxBacklogBytes: limits.MaxQueueBacklogBytesPerAccount,
+		AdmissionUnlocked:        true,
 	}, "enqueue async invoke", req.Work)
 	if versionProblem != nil {
 		api.WriteProblem(w, versionProblem)
@@ -185,8 +191,10 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// MaxAsyncResultRetentionSeconds by sending an out-of-range
 		// value. RetryPolicy is the typed DTO; marshal to JSON for
 		// the JSONB column.
-		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
-		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts),
+		DeadlineAt: deadlineForRequest(req.DeadlineAt, acct),
+		// The caller receives a failure the app returned, so it ends after
+		// one attempt; platform failures still retry (Hunt 32 H32-65).
+		RetryPolicyJSON:        state.MarkSyncInvokeRetryPolicy(effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts)),
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
@@ -326,17 +334,152 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, req.Work)
+	work, problem := s.queueGroupKeyWork(acct, req.GroupKey, req.Work)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	setInvocationVersionResponseHeaders(w, inv)
+	s.warnUnconsumedQueue(r.Context(), w, app, inv)
 	writeJSON(w, http.StatusCreated, api.QueueSendResponse{
 		Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID,
 		ID:      inv.ID,
 		TraceID: traceID,
 	})
+}
+
+// queueSendBatch sends up to QueueSendBatchMaxMessages messages to one queue,
+// in order, as one API request against the account's budget
+// (ADR-20261018101500 amendment 2026-10-31). Each message passes the same
+// admission as queueSend; the first refusal ends the batch, and the messages
+// after it are not attempted.
+func (s *server) queueSendBatch(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if limits.MaxQueueDepth == 0 {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
+		return
+	}
+	var req api.QueueSendBatchRequest
+	if !decodeJSONLimit(w, r, &req, api.QueueSendBatchMaxBytes) {
+		return
+	}
+	if len(req.Messages) == 0 || len(req.Messages) > api.QueueSendBatchMaxMessages {
+		api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("messages must hold 1 to %d messages; got %d", api.QueueSendBatchMaxMessages, len(req.Messages))))
+		return
+	}
+	resp := api.QueueSendBatchResponse{Results: make([]api.QueueSendBatchResult, len(req.Messages))}
+	for i := range resp.Results {
+		resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "not_attempted"}
+	}
+	// A single send's body limit is its message size; a batch checks each,
+	// and each group_key (ADR-20261112193306). Messages before the first
+	// refused one are still sent, in order.
+	payloads := make([]json.RawMessage, 0, len(req.Messages))
+	works := make([]*api.InvokeWork, 0, len(req.Messages))
+	var oversized *api.Problem
+	for _, message := range req.Messages {
+		if len(message.Payload) > limits.MaxSourceBytesPerInvocation {
+			oversized = api.ErrPlanSourceBytes(limits.MaxSourceBytesPerInvocation, int64(len(message.Payload)))
+			break
+		}
+		work, problem := s.queueGroupKeyWork(acct, message.GroupKey, nil)
+		if problem != nil {
+			oversized = problem
+			break
+		}
+		payloads = append(payloads, message.Payload)
+		works = append(works, work)
+	}
+	accepted, traceID, refused := s.sendQueueBatch(r.Context(), r.Header, acct, app, req, payloads, works)
+	for i, inv := range accepted {
+		resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "accepted", Message: &api.QueueSendResponse{
+			Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID, ID: inv.ID, TraceID: traceID}}
+	}
+	if refused == nil && len(accepted) == len(payloads) {
+		refused = oversized
+	}
+	if refused != nil && len(accepted) < len(resp.Results) {
+		resp.Results[len(accepted)] = api.QueueSendBatchResult{Index: len(accepted), Status: "rejected", Problem: refused}
+	}
+	if len(accepted) > 0 {
+		s.warnUnconsumedQueue(r.Context(), w, app, accepted[0])
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// warnUnconsumedQueue sets a Warning header when nothing reads the named
+// queue a message was accepted into: on an app with no queue binding or
+// consumer, a send to any queue name succeeds, but the generic drain takes
+// only unnamed messages, so it waits, counts toward the app's queue depth
+// and expires after the plan's retention. Only the CLI warned; API and SDK
+// callers saw a plain success (ADR-20261112200000).
+func (s *server) warnUnconsumedQueue(ctx context.Context, w http.ResponseWriter, app state.App, inv state.Invocation) {
+	if inv.QueueName == "" || inv.QueueBindingID != "" {
+		return
+	}
+	names, problem := s.unboundQueueConsumerNames(ctx, app.ID)
+	if problem != nil || slices.Contains(names, inv.QueueName) {
+		return
+	}
+	w.Header().Set("Warning", fmt.Sprintf(`199 gregale "no queue binding or consumer reads queue %q; the message waits until one exists and expires after the plan's retention"`, inv.QueueName))
+}
+
+// sendQueueBatch admits payloads in order with one queue selection and
+// version resolution and, where the store supports it, one transaction under
+// one app lock (state.InvocationBatchEnqueuer). It returns the admitted rows
+// and, when it stopped early, the problem of the payload after them.
+func (s *server) sendQueueBatch(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, req api.QueueSendBatchRequest, payloads []json.RawMessage, works []*api.InvokeWork) ([]state.Invocation, string, *api.Problem) {
+	if len(payloads) == 0 {
+		return nil, "", nil
+	}
+	// Keyed messages take their work lanes one at a time; the first one's
+	// selector checks the queue can hold keyed work at all.
+	var keyed *api.InvokeWork
+	if i := slices.IndexFunc(works, func(w *api.InvokeWork) bool { return w != nil }); i >= 0 {
+		keyed = works[i]
+	}
+	template, traceID, problem := s.appMessageTemplate(ctx, acct, app, "", req.QueueName, req.Environment, req.RetryPolicy, keyed)
+	if problem != nil {
+		return nil, "", problem
+	}
+	template, problem = s.prepareInvocationVersion(ctx, requestHeaders, template)
+	if problem != nil {
+		return nil, "", problem
+	}
+	const detail = "enqueue application message"
+	if batcher, ok := s.store.(state.InvocationBatchEnqueuer); ok && keyed == nil {
+		rows, err := batcher.EnqueueInvocationBatch(ctx, template, payloads)
+		if !errors.Is(err, state.ErrInvocationBatchUnsupported) {
+			return rows, traceID, s.enqueueProblem(ctx, template, err, detail)
+		}
+	}
+	accepted := make([]state.Invocation, 0, len(payloads))
+	for i, payload := range payloads {
+		inv := template
+		inv.Payload = payload
+		var work *api.InvokeWork
+		if i < len(works) {
+			work = works[i]
+		}
+		row, problem := s.enqueuePreparedInvocation(ctx, inv, detail, work)
+		if problem != nil {
+			return accepted, traceID, problem
+		}
+		accepted = append(accepted, row)
+	}
+	return accepted, traceID, nil
 }
 
 // sendAppMessage is the ergonomic application-inbox facade. It deliberately
@@ -370,6 +513,7 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	setInvocationVersionResponseHeaders(w, inv)
+	s.warnUnconsumedQueue(r.Context(), w, app, inv)
 	writeJSON(w, http.StatusAccepted, api.SendAppMessageResponse{
 		Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID,
 		ID:        inv.ID,
@@ -411,6 +555,22 @@ func normalizeAppMessage(acct state.Account, req api.SendAppMessageRequest) (eve
 }
 
 func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, rawFlagContext, queueName, environment string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
+	template, traceID, problem := s.appMessageTemplate(ctx, acct, app, rawFlagContext, queueName, environment, retryPolicy, work)
+	if problem != nil {
+		return state.Invocation{}, "", problem
+	}
+	template.Payload = payload
+	inv, versionProblem := s.enqueueVersionedInvocation(ctx, requestHeaders, template, "enqueue application message", work)
+	if versionProblem != nil {
+		return state.Invocation{}, "", versionProblem
+	}
+	return inv, traceID, nil
+}
+
+// appMessageTemplate is everything about a queue message but its payload:
+// the queue selection, flag context, trace headers and caps. send-batch
+// builds it once for every message of the request.
+func (s *server) appMessageTemplate(ctx context.Context, acct state.Account, app state.App, rawFlagContext, queueName, environment string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxQueueDepth == 0 {
 		return state.Invocation{}, "", api.ErrPlanFeatureGated("queues", acct.Plan)
@@ -430,11 +590,13 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		return state.Invocation{}, "", problem
 	}
 	if work != nil && selection.Name != "" {
-		// A named keyed row is owned by the queue trigger poller. Require an
-		// enabled push consumer so it cannot be accepted into an arbitrary name
-		// that the generic invocation drain deliberately excludes.
-		if !selection.CanPush {
-			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer")
+		// A named keyed row is owned by the queue trigger poller or, on a
+		// pull binding, by pull leases (ADR-20261112193306). Require one of
+		// them so it cannot be accepted into an arbitrary name that the
+		// generic invocation drain deliberately excludes.
+		pull := selection.Binding != nil && selection.Binding.Mode == "pull" && selection.Binding.Enabled && selection.Binding.RetiredAt == nil
+		if !selection.CanPush && !pull {
+			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer or pull binding")
 		}
 	}
 	traceHeaders, err := pkgtrace.MergeHeaders(ctx, nil)
@@ -459,17 +621,16 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	if selection.Binding != nil {
 		bindingID = selection.Binding.ID
 	}
-	inv, versionProblem := s.enqueueVersionedInvocation(ctx, requestHeaders, state.Invocation{
+	inv := state.Invocation{
 		DeploymentScope: selection.Scope, QueueBindingID: bindingID,
 		AppID:            app.ID,
 		AccountID:        acct.ID,
 		PlatformTenantID: platformTenantID,
 		Source:           state.InvocationQueue,
 		QueueName:        selection.Name,
-		Payload:          payload,
 		Headers:          traceHeaders,
 		DueAt:            time.Now().UTC(),
-		RetryPolicyJSON:  effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
+		RetryPolicyJSON:  effectiveQueueRetryPolicy(app, selection.Binding, retryPolicy, limits.MaxQueueAttempts),
 		// The store counts and inserts under one app lock, so concurrent
 		// senders cannot overshoot; keep_latest replacement is net zero.
 		AdmissionMaxPending: limits.MaxQueueDepth,
@@ -477,9 +638,6 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		// one account do not share a lock, so concurrent senders to
 		// different apps may pass the cap by their own messages.
 		AdmissionMaxBacklogBytes: limits.MaxQueueBacklogBytesPerAccount,
-	}, "enqueue application message", work)
-	if versionProblem != nil {
-		return state.Invocation{}, "", versionProblem
 	}
 	var traceHeaderValues map[string]string
 	_ = json.Unmarshal(traceHeaders, &traceHeaderValues)
@@ -527,7 +685,11 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 	}
 	defer release()
 	inv, err := s.receiveProductionQueueInvocation(r, acct, app)
-	if errors.Is(err, db.ErrWaitTimeout) {
+	// The wait is bounded by the request budget as well as its own 30 s, and
+	// both often expire together. Either deadline means "nothing arrived":
+	// 204, so the client polls again (Hunt 33 H33-12: 5 of 9 receives on an
+	// idle queue answered 503). A client that went away gets Canceled.
+	if errors.Is(err, db.ErrWaitTimeout) || errors.Is(err, context.DeadlineExceeded) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -536,12 +698,14 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	if err != nil {
+		s.log.WarnContext(r.Context(), "queue receive failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("queue receive"))
 		return
 	}
 	var headers map[string]string
 	_ = json.Unmarshal(inv.Headers, &headers)
-	writeJSON(w, http.StatusOK, api.QueueReceiveResponse{ID: inv.ID, Payload: inv.Payload, Result: inv.Result, TraceID: headers[api.TraceIDHeader], Traceparent: headers["traceparent"]})
+	writeJSON(w, http.StatusOK, api.QueueReceiveResponse{ID: inv.ID, Payload: inv.Payload, Result: inv.Result, State: string(inv.State),
+		TraceID: headers[api.TraceIDHeader], Traceparent: headers["traceparent"]})
 }
 
 func (s *server) receiveProductionQueueInvocation(r *http.Request, acct state.Account, app state.App) (state.Invocation, error) {
@@ -651,9 +815,15 @@ func (s *server) queueAck(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrInvocationNotFound(id))
 		return
 	}
-	// Ack is informational only. The drain has already stamped
-	// completed_at; we just no-op. A future slice can introduce an
-	// `acked_at` column if a billing model needs it.
+	// Ack is informational only for a processed message: the drain has
+	// already stamped completed_at, so this no-ops. A message still pending
+	// is refused instead of reported "acked" while it stays queued (Hunt 32
+	// H32-44: ack printed success and the depth stayed 2).
+	if inv.State == state.InvocationPending || inv.State == state.InvocationDispatching {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "queue_message_not_processed", "Queue message not processed",
+			"this message has not been processed yet; ack confirms a processed message's result (queue receive returns those)"))
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -775,6 +945,9 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		// The count above rejects early; the store re-checks under the app
 		// lock so concurrent creates cannot overshoot.
 		AdmissionMaxPending: limits.MaxDelayedTasksPerApp,
+		// ADR-20261022105723 amendment 2026-11-13: delayed tasks share the
+		// account backlog bytes with queue messages and async invocations.
+		AdmissionMaxBacklogBytes: limits.MaxQueueBacklogBytesPerAccount,
 	}, "enqueue delayed task", req.Work)
 	if versionProblem != nil {
 		api.WriteProblem(w, versionProblem)
@@ -984,6 +1157,22 @@ func marshalRetryPolicy(p *api.RetryPolicyDTO) json.RawMessage {
 // default, followed by the plan default. The materialized row is always
 // finite and plan-capped; the scheduler clamps it again at dispatch time so a
 // later plan downgrade cannot retain a larger budget.
+// effectiveQueueRetryPolicy is a queue message's retry policy: the send's own
+// policy, else the selected binding's, else the app's. A pull consumer's
+// nacks and lapsed leases are budgeted by the message's policy, so a binding
+// policy that only shaped push deliveries left pull messages on the app's
+// default budget although the docs promise the binding's (queue review
+// 2026-11-12, ADR-20261112200000).
+func effectiveQueueRetryPolicy(app state.App, binding *state.QueueBinding, override *api.RetryPolicyDTO, planLimit int) json.RawMessage {
+	if override == nil && binding != nil && len(binding.RetryPolicyJSON) > 0 && string(binding.RetryPolicyJSON) != "{}" {
+		var policy api.RetryPolicyDTO
+		if json.Unmarshal(binding.RetryPolicyJSON, &policy) == nil {
+			return effectiveInvocationRetryPolicy(app, &policy, planLimit)
+		}
+	}
+	return effectiveInvocationRetryPolicy(app, override, planLimit)
+}
+
 func effectiveInvocationRetryPolicy(app state.App, override *api.RetryPolicyDTO, planLimit int) json.RawMessage {
 	policy := api.RetryPolicyDTO{}
 	if override != nil {
@@ -1016,6 +1205,12 @@ func (s *server) listInvocations(w http.ResponseWriter, r *http.Request, acct st
 		}
 	}
 	before := r.URL.Query().Get("before")
+	if _, err := uuid.Parse(before); before != "" && err != nil {
+		// The cursor is an invocation id; a malformed one reached the store
+		// and answered 503 "Briefly at capacity" (Hunt 32 H32-67).
+		api.WriteProblem(w, api.ErrValidation("before must be an invocation id from next_before"))
+		return
+	}
 	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, before, limit,
 		func(cursor string) ([]state.Invocation, error) {
 			return s.store.ListInvocationsForAccount(requestCtx, acct.ID, limit, cursor)

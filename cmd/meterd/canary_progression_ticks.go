@@ -35,6 +35,11 @@ func (a *canaryStoreAdapter) ListCanaryInFlight(ctx context.Context) ([]canary.C
 		if appErr != nil {
 			return nil, appErr
 		}
+		if app.Status == state.AppDeleted {
+			// safedeploy closes the rollout; its gates would only read a
+			// missing app until then.
+			continue
+		}
 		out = append(out, canary.CanaryRow{
 			ID:                d.ID,
 			AppID:             d.AppID,

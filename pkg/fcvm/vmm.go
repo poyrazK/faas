@@ -57,6 +57,9 @@ import (
 // kernel/base rootfs in (cheap) and link the per-app layer / snapshot files, then
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
+	// sealedPlain keeps decrypted sealed snapshots on this node (slice
+	// 3d-5); nil decrypts each wake into the instance's staging.
+	sealedPlain                   *SealedPlainCache
 	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
@@ -92,6 +95,9 @@ type JailerVMM struct {
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
+	// clockRealtime advances the guest's kvm-clock by the time a capture
+	// spent parked (ADR-20261109120000).
+	clockRealtime restoreClockRealtime
 	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
 	// client (ADR-20261024105607).
 	restoreReseedThread bool
@@ -230,6 +236,11 @@ type JailerVMM struct {
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.
 	bindMounts map[string][]ephemeralBind
+	// driveBaseKeys is the storage key of the app layer each instance's
+	// private drive started from, recorded at boot and restore. A park
+	// uploads the drive as a delta against it (ADR-20261115213230). Guarded
+	// by mu; an adopted instance has none and uploads its whole drive.
+	driveBaseKeys map[string]string
 	// bindSourceModes reference-counts temporary source permission widening
 	// when multiple VMs bind the same shared base image concurrently. It is
 	// keyed by path and inode: the artifact cache can rename a refreshed file
@@ -295,10 +306,10 @@ type bindSourceMode struct {
 	// handle pins the original inode so teardown can restore its mode even
 	// when a snapshot writer atomically replaces the source pathname.
 	handle *os.File
-	// viaGuest: an adopted guest's source the cache had already re-staged,
-	// so the handle came through the guest's own read-only bind mount
-	// (adoptGuestBinds). It cannot change the mode, and the source path no
-	// longer names this inode, so a failed restoration does not hold the
+	// viaGuest: an adopted guest's source the cache had already re-staged or
+	// evicted, so the handle came through the guest's own read-only bind
+	// mount (adoptGuestBinds). It cannot change the mode, and the source path
+	// no longer names this inode, so a failed restoration does not hold the
 	// guest's teardown.
 	viaGuest bool
 }
@@ -770,6 +781,11 @@ func firecrackerControlLine(line []byte) bool {
 		// queue worker's customer log on production-us rc.294 (Hunt 14
 		// H14-5).
 		"spurious notification from api thread",
+		// Firecracker's vsock device losing a host-side stream, e.g. "vsock:
+		// error writing to local stream (lp=1027, pp=…): GuestMemoryMmap(
+		// IOError(Os { code: 32, kind: BrokenPipe … }))". It reached a
+		// function's customer log on production-us rc.336 (Hunt 32 H32-69).
+		"vsock: error ",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -1236,6 +1252,16 @@ func (v *JailerVMM) JailRoot() string {
 	return filepath.Join(v.chrootBase, v.fcName)
 }
 
+// writableDriveImageName is the jail name of a writable drive: the scratch
+// or app layer is layer.ext4, and a builder's BuildKit seed copy has its own
+// name so the two never overwrite each other.
+func writableDriveImageName(d Drive) string {
+	if d.DriveID == DriveBuildKitSeed {
+		return buildkitSeedImageName
+	}
+	return layerImageName
+}
+
 // resolveDriveImage finds the writable drive inside Jailer’s chroot. The
 // canonical layer name is used when present; builderd and older callers may
 // preserve the source basename, so accept a single ext4 fallback as well.
@@ -1251,7 +1277,7 @@ func (v *JailerVMM) resolveDriveImage(instance string) (string, error) {
 	}
 	var found string
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ext4") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ext4") || entry.Name() == buildkitSeedImageName {
 			continue
 		}
 		if found != "" {
@@ -1307,6 +1333,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// field with the staged tmp path so BuildColdBootConfig's
 	// PathOnHost reads point at the chroot-basename tmp files.
 	if len(spec.Workloads) == 0 {
+		v.setDriveBaseKey(l.Instance, spec.LayerKey)
 		layerSrc, layerTiming, mErr := v.resolveColdBootArtifact(ctx, l.Instance, "main", spec.LayerKey)
 		if mErr != nil {
 			return fmt.Errorf("vmm: stage layer: %w", mErr)
@@ -1314,6 +1341,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 		breakdown.ResolveArtifacts = append(breakdown.ResolveArtifacts, layerTiming)
 		spec.LayerKey = layerSrc
 	} else {
+		v.setDriveBaseKey(l.Instance, spec.Workloads[0].StorageKey)
 		for i := range spec.Workloads {
 			artifact := "main"
 			if i > 0 {
@@ -1440,6 +1468,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			return fmt.Errorf("vmm: stage job manifest: %w", err)
 		}
 	}
+	if len(l.SandboxManifest) > 0 {
+		if err := v.stageSandboxManifestForOwner(ctx, stagingOwner, l.Instance, []byte(l.SandboxManifest)); err != nil {
+			return fmt.Errorf("vmm: stage sandbox manifest: %w", err)
+		}
+	}
 	stagedRuntimeAt := time.Now()
 	cfgBytes, err := json.Marshal(jailed)
 	if err != nil {
@@ -1456,6 +1489,13 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if !l.IsBuilder && cfg.VsockDevice != nil {
 		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
+		}
+	}
+	// ADR-20261110210000 slice 3j-3: a builder's private registries are
+	// served on vsock, through secretd.
+	if l.IsBuilder && cfg.VsockDevice != nil && len(l.buildMirrors.list()) > 0 {
+		if err = v.serveBuildMirrors(l); err != nil {
+			return fmt.Errorf("vmm: %w", err)
 		}
 	}
 	if jobManifest != nil {
@@ -1854,7 +1894,7 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 // child is kept in sync for accurate cgroup inspection even though guest
 // processes do not join that host-side leaf.
 func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
-	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	parentScope := filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance))
 	value, err := appCPUMax(l.Plan, configuredMillicores)
 	if err != nil {
 		return err
@@ -1886,16 +1926,16 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 
-	value, err := appCPUMax(l.Plan, cpuMillicores)
+	value, err := liveAppCPUMax(l, cpuMillicores)
 	if err != nil {
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	scope := filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance))
 	revert := v.trackFenceValue(l.Instance, fenceCPUMax, value)
-	if err := writeAppCPUMaxTo(scope, l.Plan, cpuMillicores); err != nil {
+	if err := writeCPUMaxValueTo(scope, value); err != nil {
 		revert()
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
@@ -2151,6 +2191,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		{artifact: "base", key: spec.BaseKey, errorContext: "vmm: stage base"},
 	}
 	snapshotDriveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
+	// The drive restores from the snapshot's drive, but its base for the
+	// next park's delta stays the app layer, so deltas never chain.
+	if len(spec.Workloads) == 0 {
+		v.setDriveBaseKey(l.Instance, spec.LayerKey)
+	} else {
+		v.setDriveBaseKey(l.Instance, spec.Workloads[0].StorageKey)
+	}
 	restoreDriveKey := snapshotDriveKey
 	if sealedDrive != "" {
 		restoreDriveKey = sealedDrive
@@ -2375,12 +2422,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tBindTun := time.Now()
-	body := map[string]any{
-		"snapshot_path": stateName,
-		"mem_backend":   map[string]any{"backend_type": "File", "backend_path": memName},
-		"resume_vm":     !spec.KeepPaused,
-	}
+	body := v.snapshotLoadBody(stateName, memName, !spec.KeepPaused)
 	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
+		v.noteSnapshotLoadError(err)
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
 	if err = v.checkRestoredVCPUs(l, spec.VCPUs); err != nil {
@@ -3170,8 +3214,14 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		// snapshot booted under; an older vmmd omits the field.
 		EventPublishVerdict  bool                            `json:"eventPublishVerdict,omitempty"`
 		QualificationReceipt *resumeHookQualificationReceipt `json:"qualificationReceipt,omitempty"`
+		// ADR-20261107160000: the serving instance's identity, which a
+		// restored process's environment cannot reflect.
+		Identity *resumeIdentityWire `json:"identity,omitempty"`
+		// ADR-20261031193635: reload the environment branch's identity
+		// through after_restore and echo its digest in the timing frame.
+		IdentityReload bool `json:"identityReload,omitempty"`
 	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true,
-		QualificationReceipt: qualificationReceipt})
+		QualificationReceipt: qualificationReceipt, Identity: resumeIdentityWireFromContext(ctx), IdentityReload: l.restoreIdentity.pending()})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
@@ -3220,6 +3270,13 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if err != nil {
 		return err
 	}
+	guestIdentity := ""
+	if guest != nil {
+		guestIdentity = guest.IdentityDigest
+	}
+	if err := checkRestoreIdentityAck(l.restoreIdentity, guestIdentity); err != nil {
+		return err
+	}
 	if validatePeer != nil {
 		if err := validatePeer(conn); err != nil {
 			return err
@@ -3243,6 +3300,12 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if guest != nil {
 		attrs = append(attrs, resumeGuestTimingAttrs(*guest, ackWait)...)
 		v.wakePhaseMetrics.ObserveResumeGuestStages(*guest, ackWait)
+		v.wakePhaseMetrics.ObserveReseedUnregistered(*guest)
+		if guest.ReseedUnregistered > 0 {
+			slog.Default().Warn("restore: guest processes not covered by the userspace RNG reseed",
+				"instance", l.Instance, "processes", guest.ReseedUnregistered,
+				"runtimes", guest.ReseedUnregisteredRuntimes, "adr", "ADR-20261109140000")
+		}
 	}
 	slog.Default().Info("resume hook timing", attrs...)
 	return nil
@@ -3272,6 +3335,7 @@ func resumeGuestTimingAttrs(t resumetimingproto.Timings, ackWait time.Duration) 
 		"guest_reseed_clients", t.ReseedClients,
 		"guest_reseed_slowest_us", t.ReseedSlowestUs,
 		"guest_reseed_slowest_runtime", t.ReseedSlowestRuntime,
+		"guest_reseed_unregistered", t.ReseedUnregistered,
 		"guest_profiles_us", t.ProfilesUs,
 		"guest_after_restore_us", t.AfterRestoreUs,
 	}
@@ -3685,6 +3749,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// can flush state that belongs in the snapshot. Hook delivery is strictly
 	// best-effort: snapshot correctness and error semantics do not depend on
 	// an extension being installed or reachable.
+	timer := newCaptureTimer(nil)
 	if err := v.TriggerExtensionHook(ctx, l, string(extension.PhasePreSnapshot), nil); err != nil {
 		slog.Default().Debug("vmm: pre-snapshot extension hook unavailable", "instance", l.Instance, "err", err)
 	}
@@ -3698,14 +3763,17 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	}
 	// Read after the app's before_checkpoint hook, which may free memory.
 	guestMem, guestMemErr := v.guestMemoryStats(ctx, l)
+	timer.mark("hooks")
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
 	}
+	timer.mark("pause")
 	restoreSnapshotLimit, snapshotErr := v.widenSnapshotFence(l)
 	if snapshotErr != nil {
 		return SnapshotInfo{}, snapshotErr
 	}
+	timer.mark("fence")
 	defer func() {
 		if restoreErr := restoreSnapshotLimit(); restoreErr != nil {
 			restoreErr = fmt.Errorf("vmm: snapshot memory fence cleanup: %w", restoreErr)
@@ -3739,6 +3807,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		slog.Default().Error("vmm: create snapshot failed", "instance", l.Instance, "err", err)
 		return SnapshotInfo{}, fmt.Errorf("vmm: create snapshot: %w", err)
 	}
+	timer.mark("create")
 	// Firecracker memory and vmstate reference the exact block contents of
 	// drive1 at this pause boundary. Freeze that private writable ext4 before
 	// the guest resumes; restoring against the deployment's pristine layer can
@@ -3778,6 +3847,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	if capture != nil {
 		return v.publishNativeSnapshot(l, spec, root, frozenDrivePath, capture)
 	}
+	timer.mark("freeze_drive")
 	if spec.ResumeBeforePublish {
 		// The snapshot files are complete once Firecracker returns from
 		// /snapshot/create. Shared OCI publication may take seconds and
@@ -3785,6 +3855,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if err := v.ResumeVM(ctx, l); err != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: resume before snapshot publish: %w", err)
 		}
+		timer.mark("resume")
 	}
 
 	// #96 / ADR-025 axis 2 — after slice 3 the mem destination is
@@ -3850,6 +3921,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			return SnapshotInfo{}, fmt.Errorf("vmm: export mem: %w", err)
 		}
 	}
+	timer.mark("export_mem")
 	// Vmstate publication branches on VMStateStorageKey exactly like mem
 	// does on StorageKey. Same predicate shape (key + non-nil storage);
 	// the value selector is the new field's emptiness, not storage nil,
@@ -3885,6 +3957,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			return SnapshotInfo{}, fmt.Errorf("vmm: export vmstate: %w", err)
 		}
 	}
+	timer.mark("publish_vmstate")
 
 	if spec.StorageKey != "" && store != nil && !memPublishedLocally {
 		// nolint:forbidigo // memTmpPath is a vmmd-allocated tmp under
@@ -3901,6 +3974,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			_ = f.Close()
 		}
 	}
+	timer.mark("publish_mem")
 
 	if driveKey != "" {
 		// nolint:forbidigo // frozenDrivePath is a vmmd-created immutable clone.
@@ -3908,7 +3982,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if oerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot private drive for publish: %w", oerr)
 		}
-		if perr := store.Put(ctx, driveKey, f); perr != nil {
+		if perr := store.Put(ctx, driveKey, storage.WithDriveDeltaBase(f, v.driveBaseKey(l.Instance))); perr != nil {
 			_ = f.Close()
 			return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot private drive: %w", perr)
 		}
@@ -3916,6 +3990,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			return SnapshotInfo{}, fmt.Errorf("vmm: close snapshot private drive: %w", cerr)
 		}
 	}
+	timer.mark("publish_drive")
 
 	// Logical snapshot lengths are required for Firecracker compatibility,
 	// but they are not the disk footprint of a sparse memory image. Resolve
@@ -3934,7 +4009,9 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	if driveKey != "" {
 		storedBytes += snapshotDriveStoredBytes(driveWritten, publishedPath(driveKey, frozenDrivePath), driveBytes)
 	}
+	timer.mark("measure")
 	logSnapshotMemory(l.Instance, memBytes, memContent, storedBytes, guestMem, guestMemErr)
+	logSnapshotCaptureTiming(l.Instance, spec.StorageKey, spec.ResumeBeforePublish, memBytes, driveWritten, timer)
 
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
 	// warm-tier capture keeps the VM paused until the engine's
@@ -4225,10 +4302,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 	if err := v.sweepMaterialised(l.Instance); err != nil {
 		return err
 	}
-	parent := ParentCgroupFor(l.Plan)
-	if l.IsBuilder {
-		parent = BuilderCgroupParent
-	}
+	parent := vmCgroupParent(l)
 	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(l.Instance))
 	if err := os.RemoveAll(scope); err != nil {
 		return fmt.Errorf("vmm: remove cgroup scope %s: %w", l.Instance, err)
@@ -4866,6 +4940,10 @@ func handoffBuildExportOwnership(exportDir string) error {
 // provision / stageWritable — copy preserves basename, so the chroot always
 // sees "layer.ext4").
 const layerImageName = "layer.ext4"
+
+// buildkitSeedImageName is a builder's BuildKit seed copy inside its chroot
+// (ADR-20261030122204), beside its scratch layer.
+const buildkitSeedImageName = "buildkit-seed.ext4"
 
 // Firecracker records chroot-relative backing-file names in vmstate. Keep
 // temporary storage materializations out of that snapshot contract.
@@ -5605,14 +5683,16 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	execFile = v.residentExecutable(FirecrackerBin, execFile)
 	argv := append(JailerCommand(JailerSpec{
 		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
-		Plan:        l.Plan,
-		Networkless: l.Networkless,
-		IsBuilder:   l.IsBuilder,
+		Plan:         l.Plan,
+		ParentCgroup: l.cgroupParent,
+		Networkless:  l.Networkless,
+		IsBuilder:    l.IsBuilder,
+		CPUWeight:    l.CPUWeight,
 		MemoryMaxBytes: func() int64 {
 			if l.MemoryMaxMiB < 1 {
 				return 0
 			}
-			memoryMB := api.BillableRAMMB(l.MemoryMaxMiB)
+			memoryMB := api.AppVMMemoryMaxMB(l.MemoryMaxMiB)
 			if l.IsBuilder {
 				memoryMB = api.BuilderMemoryMaxMB(l.MemoryMaxMiB)
 			}
@@ -5857,9 +5937,9 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		} else if d.IsReadOnly {
 			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
-			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
+			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, writableDriveImageName(d), uid, gid, instanceID)
 		} else {
-			name, err = v.stageWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
+			name, err = v.stageWritableAsForOwner(ctx, owner, root, d.PathOnHost, writableDriveImageName(d), uid, gid, instanceID)
 		}
 		if err != nil {
 			return out, err
@@ -5937,15 +6017,19 @@ func (v *JailerVMM) stageReadOnlyAsForOwner(ctx context.Context, owner nativeLau
 	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stage read-only %s: %w", src, err)
 	}
+	started := time.Now()
 	if err := os.Link(src, dst); err == nil {
 		if err := ensureOtherReadable(dst); err != nil {
 			return "", err
 		}
+		slog.Default().Debug("stage read-only", "instance", instance, "name", name, "via", "link", "ms", time.Since(started).Milliseconds())
 		return name, nil
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link read-only %s: %w", src, err)
 	}
-	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o044, true)
+	staged, err := v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o044, true)
+	slog.Default().Debug("stage read-only", "instance", instance, "name", name, "via", "bind", "src", src, "ms", time.Since(started).Milliseconds(), "err", err)
+	return staged, err
 }
 
 // bindImageForOwner exposes a source image without copying it into tmpfs.
@@ -6583,8 +6667,30 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 	}
 	v.mu.Lock()
 	delete(v.bindMounts, instance)
+	delete(v.driveBaseKeys, instance)
 	v.mu.Unlock()
 	return nil
+}
+
+// setDriveBaseKey records the layer key instance's private drive started
+// from; an empty key clears it.
+func (v *JailerVMM) setDriveBaseKey(instance, key string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if key == "" {
+		delete(v.driveBaseKeys, instance)
+		return
+	}
+	if v.driveBaseKeys == nil {
+		v.driveBaseKeys = make(map[string]string)
+	}
+	v.driveBaseKeys[instance] = key
+}
+
+func (v *JailerVMM) driveBaseKey(instance string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.driveBaseKeys[instance]
 }
 
 func hostMountPresent(path string) (bool, error) {
@@ -6811,9 +6917,31 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 		select {
 		case <-ctx.Done():
 			return v.readinessCutShort(ctx, l, healthcheckPath, seen, readyTimeout, readinessStartedAt)
-		case <-time.After(10 * time.Millisecond):
+		case <-time.After(seen.nextProbeDelay()):
 		}
 	}
+}
+
+// Readiness probe cadence. While nothing listens a probe costs the guest a
+// kernel RST, so it repeats every readinessProbeMinDelay to catch a fast boot.
+// Once the app answers without being ready, every probe runs the app's own
+// healthcheck on the guest's vCPU: production saw 1.3k-2.5k probes in a 30 s
+// boot (~80/s), slowing the startup they wait for and, for a healthcheck that
+// queries its database, issuing thousands of queries per cold boot
+// (deploy-path review P8). The delay then doubles up to readinessProbeMaxDelay.
+const (
+	readinessProbeMinDelay = 10 * time.Millisecond
+	readinessProbeMaxDelay = 100 * time.Millisecond
+)
+
+// nextProbeDelay is the wait before the next HTTP readiness probe.
+func (o *readinessObservation) nextProbeDelay() time.Duration {
+	if o.responses+o.nonHTTP == 0 {
+		o.delay = readinessProbeMinDelay
+		return o.delay
+	}
+	o.delay = min(max(o.delay*2, readinessProbeMinDelay), readinessProbeMaxDelay)
+	return o.delay
 }
 
 // readinessAnswerMargin is how long before the caller's deadline a readiness
@@ -6958,7 +7086,7 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		if len(tail) > 0 {
 			detail += ": " + string(tail)
 		}
-		return true, api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return true, startupCrashProblem(report.LogTail, detail)
 	}
 
 	switch executionMode {
@@ -7194,6 +7322,43 @@ func (v *JailerVMM) guestStopRequested(instance string) bool {
 // with the workload's own last output lines, in the same form as a
 // characterization report of a workload that exited during startup.
 func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
+	return v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance))
+}
+
+// ExplainGuestStop reports a guest that passed readiness and then stopped
+// before its wake finished, from the workload's own output, the way
+// guestStoppedDuringStartup reports one that stopped before readiness. Hunt
+// 34 H34-35: a crash-looping essential companion ended guest-init just after
+// the main workload answered its readiness probe, and the deploy failed with
+// "apply current app CPU policy: … connection refused" and none of the
+// companion's output.
+func (v *JailerVMM) ExplainGuestStop(l Lease) error {
+	v.mu.Lock()
+	rec := v.recs[l.Instance]
+	v.mu.Unlock()
+	if rec != nil && rec.done != nil {
+		select {
+		case <-rec.done:
+			// The tailer copies the guest's last lines into the ring once
+			// the process has exited.
+			v.awaitConsoleDrain(l.Instance, rec)
+		default:
+		}
+	}
+	err := v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited after becoming ready)", l.Instance))
+	if api.AsProblem(err) != nil {
+		return err
+	}
+	// The guest passed readiness, so its init, overlay and the app all ran;
+	// guest-init then exited cleanly, which it does when the supervisor
+	// returns. A workload that exits with status 0 is not restarted and
+	// prints no restart marker, so this read as an internal platform failure
+	// and the customer got no app code or logs hint (deploy-path review P4,
+	// production h35-comp 2026-11-13: the app exited 0 without listening).
+	return startupCrashProblem("", err.Error()+"; the app's process exited after it became ready (a clean exit is not restarted). Keep the server process running in the foreground")
+}
+
+func (v *JailerVMM) guestStopped(l Lease, detail string) error {
 	var lines []string
 	if ring := v.LogRing(l.Instance); ring != nil {
 		// Seq starts at 1; Snapshot(0) means "tail from now" and returned
@@ -7203,7 +7368,6 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 			lines = append(lines, line.Line)
 		}
 	}
-	detail := fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
 	if tail := workloadOutputTail(lines, 20); tail != "" {
 		detail += ": " + tail
 	}
@@ -7211,9 +7375,19 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 	// and exited. Without it the guest itself failed (overlay, pivot, init),
 	// which stays a platform failure (production-us hunt #9, H9-106).
 	if supervisedWorkloadExited(lines) {
-		return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return startupCrashProblem(strings.Join(lines, "\n"), detail+cleanExitHint(lines))
 	}
 	return errors.New(detail)
+}
+
+// startupCrashProblem names a workload that exited during startup. A
+// function whose init hook failed says so in its output, and gets its own
+// code (ADR-20261110190000).
+func startupCrashProblem(output, detail string) *api.Problem {
+	if strings.Contains(output, api.FunctionInitFailedMarker) {
+		return api.NewProblem(422, api.CodeFunctionInitFailed, "function init failed", detail)
+	}
+	return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
 }
 
 // supervisedWorkloadMarkers are guest-init's own console lines for a
@@ -7225,6 +7399,26 @@ var supervisedWorkloadMarkers = []string{
 	"guest-init: main restart (",
 	"app crash-looped after ",
 	"app restart budget exhausted",
+	// A companion's restarts: "guest-init: sidecar echo crashed (restart 1/3): …".
+	" crashed (restart ",
+	// A workload that exited 0 and was not restarted (deploy-path review P4;
+	// prod test 2026-11-15: an app that exits without listening failed its
+	// deploy as internal). guest/init main_linux.go, workload_linux.go.
+	guestCleanExitMarker,
+}
+
+// guestCleanExitMarker is the shared tail of guest-init's clean-exit lines
+// ("guest-init: app exited cleanly (status 0, policy=on-failure); …").
+const guestCleanExitMarker = " exited cleanly (status 0, policy="
+
+// cleanExitHint explains a workload that ended on its own with status 0.
+func cleanExitHint(lines []string) string {
+	for _, line := range lines {
+		if strings.Contains(line, guestCleanExitMarker) {
+			return "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+		}
+	}
+	return ""
 }
 
 func supervisedWorkloadExited(lines []string) bool {
@@ -7306,6 +7500,8 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 // crashed app was reported as "answered 348 readiness probes without a 2xx").
 type readinessObservation struct {
 	responses, lastStatus, connRefused, nonHTTP int
+	// delay is the current wait between probes (nextProbeDelay).
+	delay time.Duration
 }
 
 // isNonHTTPReply reports a probe the app accepted and answered with something
@@ -8308,10 +8504,37 @@ func (v *JailerVMM) openSealedCapture(ctx context.Context, instanceID string, sp
 }
 
 // materializeSealed copies key's plaintext from store into a staging file
-// tracked for instanceID and removed when it is killed.
+// tracked for instanceID and removed when it is killed. With a sealed
+// plaintext cache (slice 3d-5) the capture's plaintext is decrypted once per
+// node and linked into staging like an unsealed snapshot's cache file.
 func (v *JailerVMM) materializeSealed(ctx context.Context, instanceID string, store storage.StorageBackend, key string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("vmm: sealed capture is missing a storage key")
+	}
+	if backend, ok := store.(crashcrypt.Backend); ok && backend.Identity != nil {
+		v.mu.Lock()
+		cache := v.sealedPlain
+		v.mu.Unlock()
+		if cache != nil {
+			started, filled := time.Now(), false
+			entry, err := cache.Ensure(ctx, backend.Identity.Recipient().String(), key, func(ctx context.Context, f *os.File) error {
+				filled = true
+				_, err := backend.MaterializeTo(ctx, key, f)
+				return err
+			})
+			if err != nil {
+				return "", fmt.Errorf("vmm: open sealed %q: %w", key, err)
+			}
+			// The entry is the restore source itself, as an unsealed node-cache
+			// file is: staging bind-mounts it read-only into the chroot. It is
+			// not tracked as a staging file, so Kill never removes it, and it
+			// was synced when filled, so staging's chmod+fsync finds no dirty
+			// pages (a fresh 512 MiB decrypt cost ~175 ms there per wake).
+			slog.Default().Debug("sealed plaintext cache", "instance", instanceID, "key", key,
+				"filled", filled, "ensure_ms", time.Since(started).Milliseconds())
+			return entry, nil
+		}
+		return v.materializeSealedParallel(ctx, instanceID, backend, key)
 	}
 	rc, err := store.Get(ctx, key)
 	if err != nil {
@@ -8332,6 +8555,32 @@ func (v *JailerVMM) materializeSealed(ctx context.Context, instanceID string, st
 		return "", errors.Join(fmt.Errorf("vmm: close tmp for sealed %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
 	}
 	return tmpPath, nil
+}
+
+// materializeSealedParallel decrypts key into a staging file on several
+// cores (crashcrypt v2; a v1 object streams).
+func (v *JailerVMM) materializeSealedParallel(ctx context.Context, instanceID string, backend crashcrypt.Backend, key string) (string, error) {
+	tmp, err := v.newMaterialisedFile(instanceID, "", "faas-sealed-*.bin", "materialised")
+	if err != nil {
+		return "", fmt.Errorf("vmm: create tmp for sealed %q: %w", key, err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := backend.MaterializeTo(ctx, key, tmp); err != nil {
+		_ = tmp.Close()
+		return "", errors.Join(fmt.Errorf("vmm: decrypt %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
+	}
+	if err := tmp.Close(); err != nil {
+		return "", errors.Join(fmt.Errorf("vmm: close tmp for sealed %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
+	}
+	return tmpPath, nil
+}
+
+// WithSealedPlainCache keeps decrypted sealed snapshots on this node
+// (slice 3d-5); nil turns it off.
+func (v *JailerVMM) WithSealedPlainCache(c *SealedPlainCache) {
+	v.mu.Lock()
+	v.sealedPlain = c
+	v.mu.Unlock()
 }
 
 // restoreSourceFromStorage resolves a restore input without copying when the

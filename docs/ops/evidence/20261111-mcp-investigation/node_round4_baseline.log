@@ -1,0 +1,32 @@
+✔ worker writes require a live lease and unexpired Task (530.334177ms)
+✔ completion rechecks lease expiry after waiting for a row lock (1157.514989ms)
+✔ PostgreSQL recovers an expired lease and rejects writes from the former worker (125.64625ms)
+✔ PostgreSQL persists task input and resumes the same handler after a worker restart (313.60577ms)
+✔ PostgreSQL preserves live attempts and input/drain resumptions after lowering the budget (105.165695ms)
+✔ running limits are atomic across replicas and recover from completion and lease expiry (513.910707ms)
+✔ owner saturation leaves capacity for other owners and cancellation releases it (115.529486ms)
+✔ heartbeat renewal waits for the capacity lock and rechecks lease expiration (102.327638ms)
+✔ PostgreSQL persists retry delays, releases capacity and bounds retries by attempts and TTL (208.724301ms)
+✔ candidate compatibility includes delayed retries, paused input and both lease states (201.23745ms)
+✔ draining registrations are separate from available handler coverage (68.679897ms)
+✔ admission disable fences old producers, survives restart and requires draining before retirement (178.096964ms)
+✔ release gate starts verified replacements before draining old workers (244.073805ms)
+✔ release gate fails closed for missing admitted handlers, false readiness and failed drain (383.062924ms)
+✔ release gate serializes namespace rollouts and releases its lock on failure (101.277753ms)
+✔ release CLI executes bounded adapters without migration credentials (1930.292249ms)
+✔ release checkpoint resumes after drain failure without treating replacements as old workers (175.835275ms)
+✔ native replacement recheck rejects stale, draining and unsupported registrations (79.721416ms)
+✔ restore gate serializes with releases, checks retained and admitted handlers, and sanitizes hook failure (120.858416ms)
+✔ quarantine fences new claims across heartbeats while preserving active leases and healthy capacity (103.994571ms)
+✔ worker capability heartbeats publish exact handler versions and remove on shutdown (5.553629ms)
+✔ drain finishes active handlers and concurrent stop calls share completion (39.284657ms)
+✔ drain deadline aborts handlers and suppresses late terminal writes (1013.752761ms)
+✔ active handlers keep renewing their lease while draining (5003.970784ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7353.385131

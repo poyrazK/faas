@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,7 +31,7 @@ import (
 //	admission_ceiling_mb = 48000
 //	volume_capacity_bytes = 3000000000000
 //	boot_slots = 8
-//	postgres_majors = [14, 15, 16, 17, 18]
+//	postgres_majors = [15, 16, 17, 18]
 //
 // Listed nodes are upserted into database_nodes at startup. Without the
 // table the database RPCs return UNIMPLEMENTED.
@@ -112,14 +111,9 @@ func (c DatabaseNodeConfig) node() (dbsched.Node, error) {
 func databaseNodeVerifier(cfg *DatabaseSchedulerConfig) wire.NodeVerifier {
 	names := make([]string, 0, len(cfg.Nodes))
 	for _, node := range cfg.Nodes {
-		id := strings.TrimSpace(node.ID)
-		if id == "" {
-			continue
+		if cn := dbsched.NodeCN(node.ID); cn != "" {
+			names = append(names, cn)
 		}
-		if !strings.HasSuffix(id, ".faas") {
-			id += ".faas"
-		}
-		names = append(names, id)
 	}
 	verifier := wire.NewInmemNodeVerifier()
 	verifier.Set(names)
