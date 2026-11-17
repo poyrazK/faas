@@ -3097,68 +3097,37 @@ func (h *Harness) waitBuilderdListens(d time.Duration) error {
 // Without a label, the email is "e2e+<plan>@test.example" — one account per
 // plan per run. With a label, the email is "e2e+<plan>+<label>@test.example"
 // so each call produces a distinct account.
-// waitImagedListens waits until imaged holds a LISTEN session. Its process
-// being up is not enough: it stages bases before it subscribes, and a notify
-// sent before the subscription is lost — imaged's sweep only revisits
-// deployments older than staleDeploymentThreshold (2h). A session named
-// faas-imaged-direct whose last statement is a LISTEN is the subscription
-// itself, and proves imaged keeps that session off its ordinary query pool.
+// waitImagedListens waits until imaged subscribes to deployment_changed. Its
+// process being up is not enough: it stages bases before it subscribes, and a
+// notify sent before the subscription is lost — imaged's sweep only revisits
+// deployments older than staleDeploymentThreshold (2h).
 //
-// pg_stat_activity is cluster-wide and the harness database is shared, so a
-// LISTEN session that existed before this imaged started (another run's
-// imaged, or one left over) must not count: before holds those backend PIDs.
-// Counting one made the managed Redis metal run of 2026-11-17 report imaged
-// subscribed after 208 ms while the real one staged bases for 3.5 minutes,
-// and the fixture's deployment, posted in between, stayed pending.
-func (h *Harness) waitImagedListens(d time.Duration, before map[int32]bool) error {
+// A LISTEN in pg_stat_activity does not prove it either. imaged shares one
+// LISTEN backend between all its subscribers (pkg/db notify hub), and an
+// early one makes that backend show LISTEN within milliseconds while the
+// deploy loop is still minutes from subscribing. The managed Redis metal runs
+// of 2026-11-17 reported "subscribed after 203ms", imaged then staged bases
+// for 4.5 minutes, and the fixture's deployment, posted in between, stayed
+// pending. Loop.Run subscribes before its first select, and that select's
+// one-shot FC sweep logs "imaged: fc sweep" on every outcome, so that line
+// is the subscription's own evidence.
+func (h *Harness) waitImagedListens(d time.Duration, out fmt.Stringer) error {
 	h.T.Helper()
 	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		pids, err := listeningSessionPIDs(context.Background(), h.Pool, "faas-imaged-direct")
-		if err == nil {
-			for _, pid := range pids {
-				if !before[pid] {
-					return nil
-				}
-			}
+		ok, err := sessionListens(context.Background(), h.Pool, "faas-imaged-direct")
+		if err == nil && ok && strings.Contains(out.String(), imagedSubscribedLog) {
+			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("no new application_name='faas-imaged-direct' session holding a LISTEN in pg_stat_activity within %s", d)
+	return fmt.Errorf("imaged did not log %q with a faas-imaged-direct LISTEN session within %s", imagedSubscribedLog, d)
 }
 
-// imagedListenersBefore records the LISTEN sessions that exist before this
-// harness starts imaged, so waitImagedListens waits for its own.
-func (h *Harness) imagedListenersBefore() map[int32]bool {
-	pids, _ := listeningSessionPIDs(context.Background(), h.Pool, "faas-imaged-direct")
-	before := make(map[int32]bool, len(pids))
-	for _, pid := range pids {
-		before[pid] = true
-	}
-	return before
-}
-
-// listeningSessionPIDs returns the backend PIDs of sessions with the given
-// application_name that have issued a LISTEN.
-func listeningSessionPIDs(ctx context.Context, pool *pgxpool.Pool, appName string) ([]int32, error) {
-	rows, err := pool.Query(ctx,
-		`SELECT pid FROM pg_stat_activity
-		  WHERE application_name = $1 AND query ILIKE 'LISTEN %'`, appName)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var pids []int32
-	for rows.Next() {
-		var pid int32
-		if err := rows.Scan(&pid); err != nil {
-			return nil, err
-		}
-		pids = append(pids, pid)
-	}
-	return pids, rows.Err()
-}
+// imagedSubscribedLog is the first line imaged's deploy loop logs after it
+// subscribes (see waitImagedListens).
+const imagedSubscribedLog = "imaged: fc sweep"
 
 // sessionListens reports whether a session with the given application_name
 // has issued a LISTEN — the shape of a daemon's notify subscription.
@@ -3590,8 +3559,8 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// extraEnv last so a caller can override a harness default — a test
 	// that needs FAAS_STORAGE_ROOT somewhere writable, for instance.
 	env = append(env, extraEnv...)
-	listenersBefore := h.imagedListenersBefore()
-	h.procs = append(h.procs, startProc(t, bin, "imaged", env))
+	imagedProc := startProc(t, bin, "imaged", env)
+	h.procs = append(h.procs, imagedProc)
 	// imaged is not ready when its process is up. It stages the builder
 	// base first — 70s on faas-acceptance-1 in smoke run 35157946150 —
 	// and only then subscribes to deployment_changed. Start used to return
@@ -3609,7 +3578,7 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	if v, err := time.ParseDuration(os.Getenv("FAAS_E2E_IMAGED_READY_TIMEOUT")); err == nil && v > ready {
 		ready = v
 	}
-	if err := h.waitImagedListens(ready, listenersBefore); err != nil {
+	if err := h.waitImagedListens(ready, imagedProc.Stdout.(fmt.Stringer)); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run
