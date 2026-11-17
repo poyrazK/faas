@@ -35,7 +35,7 @@
     {"query": "can my app send email over SMTP port 25", "want": ["egress-denylist#blocked-ports"]},
     {"query": "websockets", "want": ["networking#public-websockets"]},
     {"query": "call another app privately", "want": ["internal-services#call-another-app-by-name"]},
-    {"query": "deploy a Python FastAPI app", "want": ["runtimes/python313"]},
+    {"query": "deploy a Python FastAPI app", "want": ["deploy-fastapi", "runtimes/python313"]},
     {"query": "minimal Node.js function handler", "want": ["runtimes/node24#minimal-handler", "handler-api#handler-shapes"]},
     {"query": "app_not_listening", "want": ["error-codes#app_not_listening"]},
     {"query": "plan_limit_apps", "want": ["error-codes#plan_limit_apps"]},

@@ -141,3 +141,20 @@ reads 87% for a disk the artifact cache shares. The constant is tied to
 restarts. Before that, with 21 GB free, vmmd evicted 114 snapshot replicas from
 compute-2's cache in 24 hours.
 
+
+## Amendment 2026-11-17: vmmd alone evicts what it ranks
+
+vmmd, schedd, imaged and builderd all open the compute node's cache
+directory, but only vmmd ranks entries (the tiers come from its fan-out).
+With the 48 GiB cap back on production-us from 2026-11-16 00:00 to the
+rc.349 restart on 2026-11-17 13:07 UTC, the others' oldest-first eviction
+deleted live app layers, and fan-out retired about 80 replicas for it.
+
+Decision: vmmd holds an advisory lock on `.eviction-owner` in the cache root
+while it runs. While the lock is held, another process using the directory
+never evicts a snapshot capture (`snap/`) or an app layer (`apps/`,
+`layers/`); it can still free bases, kernels and scans, so builderd's
+pre-build reclaim keeps working. vmmd enforces the budget and the free-space
+floor on every node cache sweep, not only on its own writes. Without vmmd
+(a control-plane node) every process evicts as before, and the kernel
+releases the lock when vmmd exits.

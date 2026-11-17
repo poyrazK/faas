@@ -44,9 +44,9 @@ import (
 )
 
 const (
-	// cliAuthCodeTTL is how long a minted code stays claimable. UX
+	// cliAuthCodeTTL is how long a terminal pairing code stays claimable. UX
 	// §2.2 promises 5 minutes; spec §11 limits the lifetime of any
-	// session-init artifact.
+	// session-init artifact. MCP approval uses MCPBrowserAuthorizationTTL.
 	cliAuthCodeTTL = 5 * time.Minute
 	// cliAuthPath is the dashboard-side route that mirrors the
 	// existing magic-link /login surface.
@@ -91,7 +91,11 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrCapacity("could not mint code"))
 		return
 	}
-	expiresAt := time.Now().Add(cliAuthCodeTTL)
+	ttl := cliAuthCodeTTL
+	if isMCPAuthCode(code) {
+		ttl = api.MCPBrowserAuthorizationTTL
+	}
+	expiresAt := time.Now().Add(ttl)
 	deviceCode, err := h.issueCliAuthCode(r, hash, device, challenge, expiresAt)
 	if err != nil {
 		h.log.Error("cli_auth.issue", "err", err)
@@ -392,7 +396,11 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Mint the CSRF token + authenticated cookie bound to this account.
-	token, err := middleware.IssueForAuthenticated(h.srv.sessions, "cli-auth", acct.ID)
+	csrfTTL := middleware.DefaultCSRFTTL
+	if isMCPAuthCode(raw) {
+		csrfTTL = api.MCPBrowserAuthorizationTTL
+	}
+	token, err := middleware.IssueForAuthenticatedNamedWithTTL(h.srv.sessions, "cli-auth", acct.ID, middleware.CookieNameAuthenticated, csrfTTL)
 	if err != nil {
 		h.log.Error("cli_auth.csrf_issue", "err", err)
 		renderProblem(w, h.log, err)
@@ -405,7 +413,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		HttpOnly: true,
 		Secure:   h.domain != "",
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+		MaxAge:   int(csrfTTL.Seconds()),
 	})
 
 	title := "Authorize CLI session"
