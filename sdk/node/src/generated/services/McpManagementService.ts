@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { HostedTaskBindingCheck } from '../models/HostedTaskBindingCheck.js';
+import type { HostedTaskBindingSelection } from '../models/HostedTaskBindingSelection.js';
+import type { HostedTaskBindingVerification } from '../models/HostedTaskBindingVerification.js';
 import type { HostedTaskSourceCheck } from '../models/HostedTaskSourceCheck.js';
 import type { HostedTaskSourceDecision } from '../models/HostedTaskSourceDecision.js';
 import type { HostedTaskSourceIntent } from '../models/HostedTaskSourceIntent.js';
@@ -144,6 +147,142 @@ export class McpManagementService {
         409: `The hosted source decision targets a different digest or conflicts with its retained terminal state.`,
         429: `Owner decisions for hosted source reviews are currently rate-limited.`,
         503: `Source review approval is disabled or the owner review journal is temporarily unavailable.`,
+      },
+    });
+  }
+  /**
+   * Inspect hosted Task binding qualification
+   * Owner writes require fresh unscoped non-agent personal administrator or authenticated owner authority and the account MFA policy. The original requester may only read metadata. Native managed PostgreSQL references must belong to the account, identify one ready database and preserve runtime, migration and observer role separation. Selection pins the approved source, app configuration, namespace and exact secret versions. Probes are bounded read-only catalog observations and run at most once per immutable source identity. Evidence expires within one minute, clamped to the original non-renewable source deadline; observed drift is terminal. Passing does not establish payload readability, migration compatibility, network readiness from a VM, or execution authorization. GET may persist terminal invalidation but never probes or exposes private references. Revocation remains available with admission disabled.
+   * @returns HostedTaskBindingVerification Closed metadata only; readiness and execution authority remain absent.
+   * @throws ApiError
+   */
+  public static getHostedTaskBindings({
+    id,
+  }: {
+    /**
+     * Immutable retained hosted Task source identity
+     */
+    id: string,
+  }): CancelablePromise<HostedTaskBindingVerification> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/task-tool-source-intents/{id}/bindings',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `Malformed selector or immutable binding reference.`,
+        401: `Authenticate before reading or changing hosted Task bindings.`,
+        403: `The caller lacks personal owner authority or the account MFA policy.`,
+        404: `The source, requester, owner or qualification is unavailable in this account.`,
+        409: `Bindings changed, a probe claim conflicts, or bounded workers are unavailable.`,
+        429: `This hosted Task binding request is rate limited.`,
+        503: `Binding verification or retention is disabled, or native sealing is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Select owner-reviewed native Task bindings
+   * Owner writes require fresh unscoped non-agent personal administrator or authenticated owner authority and the account MFA policy. The original requester may only read metadata. Native managed PostgreSQL references must belong to the account, identify one ready database and preserve runtime, migration and observer role separation. Selection pins the approved source, app configuration, namespace and exact secret versions. Probes are bounded read-only catalog observations and run at most once per immutable source identity. Evidence expires within one minute, clamped to the original non-renewable source deadline; observed drift is terminal. Passing does not establish payload readability, migration compatibility, network readiness from a VM, or execution authorization. GET may persist terminal invalidation but never probes or exposes private references. Revocation remains available with admission disabled.
+   * @returns HostedTaskBindingVerification Closed metadata only; readiness and execution authority remain absent.
+   * @throws ApiError
+   */
+  public static selectHostedTaskBindings({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Immutable retained hosted Task source identity
+     */
+    id: string,
+    requestBody: HostedTaskBindingSelection,
+  }): CancelablePromise<HostedTaskBindingVerification> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/task-tool-source-intents/{id}/bindings',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Malformed selector or immutable binding reference.`,
+        401: `Authenticate before reading or changing hosted Task bindings.`,
+        403: `The caller lacks personal owner authority or the account MFA policy.`,
+        404: `The source, requester, owner or qualification is unavailable in this account.`,
+        409: `Bindings changed, a probe claim conflicts, or bounded workers are unavailable.`,
+        429: `This hosted Task binding request is rate limited.`,
+        503: `Binding verification or retention is disabled, or native sealing is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Probe selected hosted Task bindings once
+   * Owner writes require fresh unscoped non-agent personal administrator or authenticated owner authority and the account MFA policy. The original requester may only read metadata. Native managed PostgreSQL references must belong to the account, identify one ready database and preserve runtime, migration and observer role separation. Selection pins the approved source, app configuration, namespace and exact secret versions. Probes are bounded read-only catalog observations and run at most once per immutable source identity. Evidence expires within one minute, clamped to the original non-renewable source deadline; observed drift is terminal. Passing does not establish payload readability, migration compatibility, network readiness from a VM, or execution authorization. GET may persist terminal invalidation but never probes or exposes private references. Revocation remains available with admission disabled.
+   * @returns HostedTaskBindingVerification Closed metadata only; readiness and execution authority remain absent.
+   * @throws ApiError
+   */
+  public static checkHostedTaskBindings({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Immutable retained hosted Task source identity
+     */
+    id: string,
+    requestBody: HostedTaskBindingCheck,
+  }): CancelablePromise<HostedTaskBindingVerification> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/task-tool-source-intents/{id}/bindings/check',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Malformed selector or immutable binding reference.`,
+        401: `Authenticate before reading or changing hosted Task bindings.`,
+        403: `The caller lacks personal owner authority or the account MFA policy.`,
+        404: `The source, requester, owner or qualification is unavailable in this account.`,
+        409: `Bindings changed, a probe claim conflicts, or bounded workers are unavailable.`,
+        429: `This hosted Task binding request is rate limited.`,
+        503: `Binding verification or retention is disabled, or native sealing is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Revoke hosted Task binding qualification
+   * Owner writes require fresh unscoped non-agent personal administrator or authenticated owner authority and the account MFA policy. The original requester may only read metadata. Native managed PostgreSQL references must belong to the account, identify one ready database and preserve runtime, migration and observer role separation. Selection pins the approved source, app configuration, namespace and exact secret versions. Probes are bounded read-only catalog observations and run at most once per immutable source identity. Evidence expires within one minute, clamped to the original non-renewable source deadline; observed drift is terminal. Passing does not establish payload readability, migration compatibility, network readiness from a VM, or execution authorization. GET may persist terminal invalidation but never probes or exposes private references. Revocation remains available with admission disabled.
+   * @returns HostedTaskBindingVerification Closed metadata only; readiness and execution authority remain absent.
+   * @throws ApiError
+   */
+  public static revokeHostedTaskBindings({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Immutable retained hosted Task source identity
+     */
+    id: string,
+    requestBody: HostedTaskBindingCheck,
+  }): CancelablePromise<HostedTaskBindingVerification> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/task-tool-source-intents/{id}/bindings/revoke',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Malformed selector or immutable binding reference.`,
+        401: `Authenticate before reading or changing hosted Task bindings.`,
+        403: `The caller lacks personal owner authority or the account MFA policy.`,
+        404: `The source, requester, owner or qualification is unavailable in this account.`,
+        409: `Bindings changed, a probe claim conflicts, or bounded workers are unavailable.`,
+        429: `This hosted Task binding request is rate limited.`,
+        503: `Binding verification or retention is disabled, or native sealing is unavailable.`,
       },
     });
   }

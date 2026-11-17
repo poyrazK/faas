@@ -43319,6 +43319,22 @@ COMMENT ON TABLE public.honeytokens IS 'Decoy credentials that belong to no acco
 
 
 --
+-- Name: hosted_task_binding_qualifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosted_task_binding_qualifications (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    payload jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT hosted_task_binding_qualifications_check CHECK ((((((payload -> 'Public'::text) ->> 'account_id'::text) = (account_id)::text) AND (((payload -> 'Public'::text) ->> 'intent_id'::text) = id) AND ((((payload -> 'Public'::text) ->> 'expires_at'::text))::timestamp with time zone = expires_at) AND (((payload -> 'Public'::text) ->> 'status'::text) = ANY (ARRAY['selected'::text, 'verifying'::text, 'passed'::text, 'failed'::text, 'stale'::text, 'revoked'::text, 'expired'::text]))) IS TRUE)),
+    CONSTRAINT hosted_task_binding_qualifications_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosted_task_binding_qualifications_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 32768))),
+    CONSTRAINT hosted_task_binding_qualifications_payload_check1 CHECK (((payload -> 'Public'::text) @> '{"ready_to_apply": false, "bindings_verified": false, "owner_authorization_required": true}'::jsonb))
+);
+
+
+--
 -- Name: hosted_task_source_intents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -68469,6 +68485,14 @@ ALTER TABLE ONLY public.honeytokens
 
 ALTER TABLE ONLY public.honeytokens
     ADD CONSTRAINT honeytokens_token_digest_key UNIQUE (token_digest);
+
+
+--
+-- Name: hosted_task_binding_qualifications hosted_task_binding_qualifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_binding_qualifications
+    ADD CONSTRAINT hosted_task_binding_qualifications_pkey PRIMARY KEY (account_id, id);
 
 
 --
@@ -103209,6 +103233,14 @@ ALTER TABLE ONLY public.github_installations
 
 ALTER TABLE ONLY public.gitlab_oauth_connections
     ADD CONSTRAINT gitlab_oauth_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosted_task_binding_qualifications hosted_task_binding_qualifications_account_id_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_binding_qualifications
+    ADD CONSTRAINT hosted_task_binding_qualifications_account_id_id_fkey FOREIGN KEY (account_id, id) REFERENCES public.hosted_task_source_intents(account_id, id) ON DELETE CASCADE;
 
 
 --

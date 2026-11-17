@@ -513,6 +513,223 @@ paths:
           description: Owner decisions for hosted source reviews are currently rate-limited.
         '503':
           description: Source review approval is disabled or the owner review journal is temporarily unavailable.
+  /v1/task-tool-source-intents/{id}/bindings:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Immutable retained hosted Task source identity
+    get:
+      operationId: getHostedTaskBindings
+      summary: Inspect hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: Owner writes require fresh unscoped non-agent personal administrator
+        or authenticated owner authority and the account MFA policy. The original requester
+        may only read metadata. Native managed PostgreSQL references must belong to
+        the account, identify one ready database and preserve runtime, migration and
+        observer role separation. Selection pins the approved source, app configuration,
+        namespace and exact secret versions. Probes are bounded read-only catalog observations
+        and run at most once per immutable source identity. Evidence expires within
+        one minute, clamped to the original non-renewable source deadline; observed
+        drift is terminal. Passing does not establish payload readability, migration
+        compatibility, network readiness from a VM, or execution authorization. GET
+        may persist terminal invalidation but never probes or exposes private references.
+        Revocation remains available with admission disabled.
+      responses:
+        '200':
+          description: Closed metadata only; readiness and execution authority remain
+            absent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: Malformed selector or immutable binding reference.
+        '401':
+          description: Authenticate before reading or changing hosted Task bindings.
+        '403':
+          description: The caller lacks personal owner authority or the account MFA
+            policy.
+        '404':
+          description: The source, requester, owner or qualification is unavailable
+            in this account.
+        '409':
+          description: Bindings changed, a probe claim conflicts, or bounded workers
+            are unavailable.
+        '429':
+          description: This hosted Task binding request is rate limited.
+        '503':
+          description: Binding verification or retention is disabled, or native sealing
+            is unavailable.
+    put:
+      operationId: selectHostedTaskBindings
+      summary: Select owner-reviewed native Task bindings
+      tags:
+      - mcp-management
+      description: Owner writes require fresh unscoped non-agent personal administrator
+        or authenticated owner authority and the account MFA policy. The original requester
+        may only read metadata. Native managed PostgreSQL references must belong to
+        the account, identify one ready database and preserve runtime, migration and
+        observer role separation. Selection pins the approved source, app configuration,
+        namespace and exact secret versions. Probes are bounded read-only catalog observations
+        and run at most once per immutable source identity. Evidence expires within
+        one minute, clamped to the original non-renewable source deadline; observed
+        drift is terminal. Passing does not establish payload readability, migration
+        compatibility, network readiness from a VM, or execution authorization. GET
+        may persist terminal invalidation but never probes or exposes private references.
+        Revocation remains available with admission disabled.
+      responses:
+        '200':
+          description: Closed metadata only; readiness and execution authority remain
+            absent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: Malformed selector or immutable binding reference.
+        '401':
+          description: Authenticate before reading or changing hosted Task bindings.
+        '403':
+          description: The caller lacks personal owner authority or the account MFA
+            policy.
+        '404':
+          description: The source, requester, owner or qualification is unavailable
+            in this account.
+        '409':
+          description: Bindings changed, a probe claim conflicts, or bounded workers
+            are unavailable.
+        '429':
+          description: This hosted Task binding request is rate limited.
+        '503':
+          description: Binding verification or retention is disabled, or native sealing
+            is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingSelection'
+  /v1/task-tool-source-intents/{id}/bindings/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Immutable retained hosted Task source identity
+    post:
+      operationId: checkHostedTaskBindings
+      summary: Probe selected hosted Task bindings once
+      tags:
+      - mcp-management
+      description: Owner writes require fresh unscoped non-agent personal administrator
+        or authenticated owner authority and the account MFA policy. The original requester
+        may only read metadata. Native managed PostgreSQL references must belong to
+        the account, identify one ready database and preserve runtime, migration and
+        observer role separation. Selection pins the approved source, app configuration,
+        namespace and exact secret versions. Probes are bounded read-only catalog observations
+        and run at most once per immutable source identity. Evidence expires within
+        one minute, clamped to the original non-renewable source deadline; observed
+        drift is terminal. Passing does not establish payload readability, migration
+        compatibility, network readiness from a VM, or execution authorization. GET
+        may persist terminal invalidation but never probes or exposes private references.
+        Revocation remains available with admission disabled.
+      responses:
+        '200':
+          description: Closed metadata only; readiness and execution authority remain
+            absent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: Malformed selector or immutable binding reference.
+        '401':
+          description: Authenticate before reading or changing hosted Task bindings.
+        '403':
+          description: The caller lacks personal owner authority or the account MFA
+            policy.
+        '404':
+          description: The source, requester, owner or qualification is unavailable
+            in this account.
+        '409':
+          description: Bindings changed, a probe claim conflicts, or bounded workers
+            are unavailable.
+        '429':
+          description: This hosted Task binding request is rate limited.
+        '503':
+          description: Binding verification or retention is disabled, or native sealing
+            is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
+  /v1/task-tool-source-intents/{id}/bindings/revoke:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Immutable retained hosted Task source identity
+    post:
+      operationId: revokeHostedTaskBindings
+      summary: Revoke hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: Owner writes require fresh unscoped non-agent personal administrator
+        or authenticated owner authority and the account MFA policy. The original requester
+        may only read metadata. Native managed PostgreSQL references must belong to
+        the account, identify one ready database and preserve runtime, migration and
+        observer role separation. Selection pins the approved source, app configuration,
+        namespace and exact secret versions. Probes are bounded read-only catalog observations
+        and run at most once per immutable source identity. Evidence expires within
+        one minute, clamped to the original non-renewable source deadline; observed
+        drift is terminal. Passing does not establish payload readability, migration
+        compatibility, network readiness from a VM, or execution authorization. GET
+        may persist terminal invalidation but never probes or exposes private references.
+        Revocation remains available with admission disabled.
+      responses:
+        '200':
+          description: Closed metadata only; readiness and execution authority remain
+            absent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: Malformed selector or immutable binding reference.
+        '401':
+          description: Authenticate before reading or changing hosted Task bindings.
+        '403':
+          description: The caller lacks personal owner authority or the account MFA
+            policy.
+        '404':
+          description: The source, requester, owner or qualification is unavailable
+            in this account.
+        '409':
+          description: Bindings changed, a probe claim conflicts, or bounded workers
+            are unavailable.
+        '429':
+          description: This hosted Task binding request is rate limited.
+        '503':
+          description: Binding verification or retention is disabled, or native sealing
+            is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
   /v1/task-tool-release-intents/{id}:
     parameters:
     - name: id
@@ -74952,6 +75169,159 @@ components:
           - reject
           - revoke
           description: Owner verdict on this hosted source review, independent of future execution authorization.
+    HostedTaskBindingSelection:
+      type: object
+      additionalProperties: false
+      required:
+      - intent_sha256
+      - review_sha256
+      - namespace
+      - web_database_ref
+      - worker_database_ref
+      - migration_database_ref
+      - observer_database_ref
+      properties:
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        namespace:
+          type: string
+          maxLength: 128
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:/-]*$
+        web_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Owner-only native managed PostgreSQL reference; no credential value.
+        worker_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Owner-only native managed PostgreSQL reference; no credential value.
+        migration_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Owner-only native managed PostgreSQL reference; no credential value.
+        observer_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Owner-only native managed PostgreSQL reference; no credential value.
+    HostedTaskBindingCheck:
+      type: object
+      additionalProperties: false
+      required:
+      - binding_sha256
+      properties:
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+    HostedTaskBindingResult:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - status
+      properties:
+        name:
+          type: string
+          enum:
+          - namespace
+          - owner_keys
+          - configured_payload_keys
+          - database_schema
+          - runtime_roles
+          - migration_owner
+          - observer_read_only
+        status:
+          type: string
+          enum:
+          - not_checked
+          - passed
+          - failed
+    HostedTaskBindingVerification:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - account_id
+      - intent_id
+      - intent_sha256
+      - review_sha256
+      - binding_sha256
+      - status
+      - checks
+      - created_at
+      - expires_at
+      - ready_to_apply
+      - bindings_verified
+      - owner_authorization_required
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        account_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        status:
+          type: string
+          enum:
+          - selected
+          - verifying
+          - passed
+          - failed
+          - stale
+          - revoked
+          - expired
+        checks:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/HostedTaskBindingResult'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        checked_at:
+          type: string
+          format: date-time
+        valid_until:
+          type: string
+          format: date-time
+        ready_to_apply:
+          type: boolean
+          enum:
+          - false
+        bindings_verified:
+          type: boolean
+          enum:
+          - false
+        owner_authorization_required:
+          type: boolean
+          enum:
+          - true
+      description: Historical private-binding qualification metadata only. No credential
+        values, references, source, database facts, owner decisions or execution authority.
     TaskToolReleaseIntent:
       type: object
       additionalProperties: false

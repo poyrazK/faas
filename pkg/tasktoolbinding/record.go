@@ -41,12 +41,13 @@ type Pin struct {
 	Access                               string
 }
 type Record struct {
-	Public     api.HostedTaskBindingVerification
-	Selection  api.HostedTaskBindingSelection
-	Policy     Policy
-	Pins       []Pin
-	OwnerKeyID string
-	Claim      string
+	Public         api.HostedTaskBindingVerification
+	RequesterKeyID string
+	Selection      api.HostedTaskBindingSelection
+	Policy         Policy
+	Pins           []Pin
+	OwnerKeyID     string
+	Claim          string
 }
 
 func validEnv(v string) bool { return api.ValidateEnvKey(v) == nil }
@@ -93,24 +94,25 @@ func validKeyID(id string) bool {
 }
 func Fingerprint(r Record) string {
 	b, _ := json.Marshal(struct {
-		Domain                      string
-		Account, ID, Intent, Review string
-		Selection                   api.HostedTaskBindingSelection
-		Policy                      Policy
-		Pins                        []Pin
-		Owner                       string
-		Created, Expires            time.Time
-	}{"hosted-task-binding:v1", r.Public.AccountID, r.Public.IntentID, r.Public.IntentSHA256, r.Public.ReviewSHA256, r.Selection, r.Policy, r.Pins, r.OwnerKeyID, r.Public.CreatedAt, r.Public.ExpiresAt})
+		Domain                                 string
+		Account, ID, Intent, Review, Requester string
+		Selection                              api.HostedTaskBindingSelection
+		Policy                                 Policy
+		Pins                                   []Pin
+		Owner                                  string
+		Created, Expires                       time.Time
+	}{"hosted-task-binding:v1", r.Public.AccountID, r.Public.IntentID, r.Public.IntentSHA256, r.Public.ReviewSHA256, r.RequesterKeyID, r.Selection, r.Policy, r.Pins, r.OwnerKeyID, r.Public.CreatedAt, r.Public.ExpiresAt})
 	return toolpublication.Digest(b)
 }
 func New(source api.HostedTaskSourceIntent, selection api.HostedTaskBindingSelection, policy Policy, pins []Pin, owner string, now time.Time) (Record, error) {
 	var out Record
-	if uuid.Validate(source.AccountID) != nil || !toolpublication.ValidID(source.ID) || ValidateSelection(selection) != nil || !policy.Valid() || source.ReviewStatus != "approved" || source.SourceState != "retained" || source.IntentSHA256 != selection.IntentSHA256 || source.ReviewSHA256 != selection.ReviewSHA256 || !now.Before(source.ExpiresAt) || len(pins) < 6 || len(pins) > api.HostedTaskBindingMaxPins || owner != "" && uuid.Validate(owner) != nil {
+	if uuid.Validate(source.AccountID) != nil || uuid.Validate(source.RequesterKeyID) != nil || !toolpublication.ValidID(source.ID) || ValidateSelection(selection) != nil || !policy.Valid() || source.ReviewStatus != "approved" || source.SourceState != "retained" || source.IntentSHA256 != selection.IntentSHA256 || source.ReviewSHA256 != selection.ReviewSHA256 || !now.Before(source.ExpiresAt) || len(pins) < 6 || len(pins) > api.HostedTaskBindingMaxPins || owner != "" && uuid.Validate(owner) != nil {
 		return out, ErrInvalid
 	}
 	now = now.UTC().Truncate(time.Microsecond)
 	policy.PreviousKeys = append([]PreviousKey(nil), policy.PreviousKeys...)
 	out = Record{Public: api.HostedTaskBindingVerification{Version: 1, AccountID: source.AccountID, IntentID: source.ID, IntentSHA256: source.IntentSHA256, ReviewSHA256: source.ReviewSHA256, Status: "selected", Checks: Results("not_checked"), CreatedAt: now, ExpiresAt: source.ExpiresAt, OwnerAuthorizationRequired: true}, Selection: selection, Policy: policy, Pins: append([]Pin(nil), pins...), OwnerKeyID: owner}
+	out.RequesterKeyID = source.RequesterKeyID
 	out.Public.BindingSHA256 = Fingerprint(out)
 	if err := ValidateRecord(out); err != nil {
 		return Record{}, err
@@ -186,7 +188,7 @@ func ValidateReceipt(p api.HostedTaskBindingVerification, account, id string) er
 }
 
 func ValidateRecord(r Record) error {
-	if ValidateReceipt(r.Public, r.Public.AccountID, r.Public.IntentID) != nil || ValidateSelection(r.Selection) != nil || !r.Policy.Valid() || r.Public.IntentSHA256 != r.Selection.IntentSHA256 || r.Public.ReviewSHA256 != r.Selection.ReviewSHA256 || Fingerprint(r) != r.Public.BindingSHA256 || len(r.Pins) < 6 || len(r.Pins) > api.HostedTaskBindingMaxPins || r.OwnerKeyID != "" && uuid.Validate(r.OwnerKeyID) != nil {
+	if ValidateReceipt(r.Public, r.Public.AccountID, r.Public.IntentID) != nil || uuid.Validate(r.RequesterKeyID) != nil || ValidateSelection(r.Selection) != nil || !r.Policy.Valid() || r.Public.IntentSHA256 != r.Selection.IntentSHA256 || r.Public.ReviewSHA256 != r.Selection.ReviewSHA256 || Fingerprint(r) != r.Public.BindingSHA256 || len(r.Pins) < 6 || len(r.Pins) > api.HostedTaskBindingMaxPins || r.OwnerKeyID != "" && uuid.Validate(r.OwnerKeyID) != nil {
 		return ErrInvalid
 	}
 	if (r.Public.Status == "verifying" || r.Public.CheckedAt != nil) && uuid.Validate(r.Claim) != nil {

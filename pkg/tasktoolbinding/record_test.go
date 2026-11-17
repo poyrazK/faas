@@ -14,7 +14,7 @@ import (
 func fixture(t *testing.T) (b.Record, time.Time) {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	s := api.HostedTaskSourceIntent{AccountID: uuid.NewString(), ID: strings.Repeat("a", 64), IntentSHA256: strings.Repeat("b", 64), ReviewSHA256: strings.Repeat("c", 64), SourceState: "retained", ReviewStatus: "approved", ExpiresAt: now.Add(api.HostedTaskSourceRetention)}
+	s := api.HostedTaskSourceIntent{RequesterKeyID: uuid.NewString(), AccountID: uuid.NewString(), ID: strings.Repeat("a", 64), IntentSHA256: strings.Repeat("b", 64), ReviewSHA256: strings.Repeat("c", 64), SourceState: "retained", ReviewStatus: "approved", ExpiresAt: now.Add(api.HostedTaskSourceRetention)}
 	in := api.HostedTaskBindingSelection{IntentSHA256: s.IntentSHA256, ReviewSHA256: s.ReviewSHA256, Namespace: "tasks:test", WebDatabaseRef: "secret:WEB_DB", WorkerDatabaseRef: "secret:WORKER_DB", MigrationDatabaseRef: "secret:MIGRATION_DB", ObserverDatabaseRef: "secret:OBSERVER_DB"}
 	p := b.Policy{WebDatabaseEnv: "WEB_DB", WorkerDatabaseEnv: "WORKER_DB", WebOwnerEnv: "OWNER_KEY", WorkerOwnerEnv: "OWNER_KEY", WebNamespaceEnv: "NAMESPACE", WorkerNamespaceEnv: "NAMESPACE", OwnerKeyID: "default"}
 	var pins []b.Pin

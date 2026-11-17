@@ -22014,6 +22014,16 @@
     "kind": "operational"
   },
   {
+    "table": "hosted_task_binding_qualifications",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "tool_publications",
     "columns": [
       "account_id",
