@@ -11,6 +11,7 @@
 package crashcrypt
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -211,11 +212,17 @@ func CopySparse(dst *os.File, src io.Reader) (int64, error) {
 	}
 }
 
+// zeroBlock is compared against with bytes.Equal, which is vectorized; a
+// byte loop dominated a mostly-zero memory image's open time.
+var zeroBlock = make([]byte, sparseBlock)
+
 func isZero(b []byte) bool {
-	for _, c := range b {
-		if c != 0 {
+	for len(b) > 0 {
+		n := min(len(b), len(zeroBlock))
+		if !bytes.Equal(b[:n], zeroBlock[:n]) {
 			return false
 		}
+		b = b[n:]
 	}
 	return true
 }

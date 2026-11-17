@@ -182,10 +182,16 @@ func TestChunkedFasterThanV1(t *testing.T) {
 	}
 	v2 := sealChunked(t, plain, id)
 	for name, data := range map[string][]byte{"v1": v1.Bytes(), "v2": v2} {
-		start := time.Now()
-		if _, err := decryptFile(t, data, id); err != nil {
+		f, err := os.Create(filepath.Join(t.TempDir(), name))
+		if err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("%s: sealed %d MiB, open %v", name, len(data)>>20, time.Since(start))
+		start := time.Now()
+		if _, err := DecryptToFile(context.Background(), f, bytes.NewReader(data), id); err != nil {
+			t.Fatal(err)
+		}
+		elapsed := time.Since(start)
+		_ = f.Close()
+		t.Logf("%s: sealed %d MiB, decrypt to file %v", name, len(data)>>20, elapsed)
 	}
 }
