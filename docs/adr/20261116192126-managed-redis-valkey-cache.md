@@ -321,8 +321,15 @@ closed by a later slice:
   512 MB. `api.ManagedValkeyMaxMemoryFor` derives this from plan RAM.
 - **Server commands are blocked with `rename-command`,** not an ACL user,
   because the server is configured on the command line only.
-- **Idle is today's rule.** An open session keeps the cache awake up to the
-  session idle timeout. The RESP-aware idle rule is slice 2.
+- **Idle (slice 2, built).** The service TCP proxy runs a RESP-aware session
+  for cache targets (`pkg/gateway/redis_session.go`). After 30 s with no
+  data command, no outstanding reply and no pinned state, it closes the
+  upstream leg, and vmmd's idle timeout then parks the cache. It keeps the
+  client connection open and answers `PING`, `QUIT` and `RESET` itself. It
+  re-attaches on the next command, replaying `HELLO`, `AUTH`, `SELECT` and
+  `CLIENT SETNAME`. The client sends `AUTH` itself, so the proxy never needs
+  the password. Proxy-side `AUTH`, which would keep the password out of app
+  env, is still open.
 - **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
   and adding it would break customers who deploy Valkey themselves. That is
   left for an owner decision.

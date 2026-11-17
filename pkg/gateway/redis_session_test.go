@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -82,10 +83,10 @@ func (f *fakeRedis) attach(ctx context.Context, conn net.Conn) (bool, error) {
 			if !ok {
 				reply += "$-1\r\n"
 			} else {
-				reply += "$" + itoa(len(v)) + "\r\n" + v + "\r\n"
+				reply += "$" + strconv.Itoa(len(v)) + "\r\n" + v + "\r\n"
 			}
 		case "SUBSCRIBE":
-			reply = "*3\r\n$9\r\nsubscribe\r\n$" + itoa(len(args[1])) + "\r\n" + args[1] + "\r\n:1\r\n"
+			reply = "*3\r\n$9\r\nsubscribe\r\n$" + strconv.Itoa(len(args[1])) + "\r\n" + args[1] + "\r\n:1\r\n"
 		case "BLPOP":
 			select {
 			case <-f.block:
@@ -111,19 +112,6 @@ func (f *fakeRedis) snapshot() ([][]string, int) {
 	return out, f.open
 }
 
-func itoa(n int) string { return strings.TrimSpace(strings.Repeat(" ", 0) + intString(n)) }
-
-func intString(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
-}
 
 type redisTestClient struct {
 	t    *testing.T
@@ -177,7 +165,7 @@ func (c *redisTestClient) read() string {
 	return b.String()
 }
 
-func waitFor(t *testing.T, what string, cond func() bool) {
+func redisWaitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for !cond() {
@@ -214,7 +202,7 @@ func TestRedisSessionDetachesWhenQuietAndReplaysStateOnReattach(t *testing.T) {
 	c.do("SET", "k", "v")
 
 	// Quiet: the leg closes, so the cache sees no activity.
-	waitFor(t, "detach", func() bool { _, open := f.snapshot(); return open == 0 })
+	redisWaitFor(t, "detach", func() bool { _, open := f.snapshot(); return open == 0 })
 
 	// A detached session answers PING itself, with no new leg.
 	if got := c.do("PING"); got != "+PONG\r\n" {
@@ -252,7 +240,7 @@ func TestRedisSessionHousekeepingDoesNotKeepCacheAwake(t *testing.T) {
 		c.do("PING")
 		time.Sleep(10 * time.Millisecond)
 	}
-	waitFor(t, "detach despite pings", func() bool { _, open := f.snapshot(); return open == 0 })
+	redisWaitFor(t, "detach despite pings", func() bool { _, open := f.snapshot(); return open == 0 })
 }
 
 func TestRedisSessionSubscriptionStaysAttached(t *testing.T) {
@@ -283,7 +271,7 @@ func TestRedisSessionOutstandingReplyBlocksDetach(t *testing.T) {
 	if got := c.read(); got != "*-1\r\n" {
 		t.Fatalf("BLPOP = %q", got)
 	}
-	waitFor(t, "detach after the reply", func() bool { _, open := f.snapshot(); return open == 0 })
+	redisWaitFor(t, "detach after the reply", func() bool { _, open := f.snapshot(); return open == 0 })
 }
 
 func TestRedisSessionMultiStaysAttached(t *testing.T) {
@@ -322,7 +310,7 @@ func TestRedisSessionPushFramesAreNotReplies(t *testing.T) {
 	if got := c.read2("GET", "k"); !strings.HasSuffix(got, "$1\r\nv\r\n") {
 		t.Fatalf("GET with push = %q", got)
 	}
-	waitFor(t, "detach after push", func() bool { _, open := f.snapshot(); return open == 0 })
+	redisWaitFor(t, "detach after push", func() bool { _, open := f.snapshot(); return open == 0 })
 }
 
 // read2 sends a command and reads two values (a push frame, then the reply).
@@ -354,7 +342,7 @@ func TestRedisSessionQuitWhileDetached(t *testing.T) {
 
 func TestRESPCopyValueNestedAndStreamed(t *testing.T) {
 	big := strings.Repeat("x", 200<<10)
-	in := "%2\r\n+a\r\n*2\r\n:1\r\n$" + intString(len(big)) + "\r\n" + big + "\r\n$1\r\nb\r\n_\r\n"
+	in := "%2\r\n+a\r\n*2\r\n:1\r\n$" + strconv.Itoa(len(big)) + "\r\n" + big + "\r\n$1\r\nb\r\n_\r\n"
 	var out bytes.Buffer
 	kind, err := respCopyValue(bufio.NewReaderSize(strings.NewReader(in), respMaxLine), &out)
 	if err != nil || kind != '%' || out.String() != in {
