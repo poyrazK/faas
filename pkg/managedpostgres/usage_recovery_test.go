@@ -139,7 +139,10 @@ func TestUsageRecoveryResumesAcrossCollectorRestartAndMonthBoundary(t *testing.T
 		if snapshotErr != nil {
 			t.Fatal(snapshotErr)
 		}
-		if snapshot.Stale(registry.UsagePolicy(), now) != (sweep < 2) {
+		// The second sweep leaves only the window that just closed, which
+		// an account with headroom is admitted through (ADR-20261115190000
+		// amendment 1).
+		if snapshot.Stale(registry.UsagePolicy(), now) != (sweep < 1) {
 			t.Fatalf("sweep %d freshness: %+v", sweep, snapshot)
 		}
 	}
