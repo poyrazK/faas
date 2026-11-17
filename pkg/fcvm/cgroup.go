@@ -110,7 +110,7 @@ var cgroupRoot = "/sys/fs/cgroup"
 //
 // The +8 MB is the per-VM overhead accounted for by
 // api.PerVMOverheadMB (pkg/api/limits.go). The fence itself sits a further
-// api.AppVMHeadroomMB above it (ADR-20261116170000): a cold-booting guest
+// api.AppVMHeadroomMB above it (ADR-20261116191801): a cold-booting guest
 // fills its RAM and Firecracker's own pages did not fit in 8 MB.
 //
 // Note: the original spec text used `vm-{instance}.scope`; jailer

@@ -25,6 +25,7 @@ func TestNewDashboardGaugesRegistersAllFour(t *testing.T) {
 		"fcvm_snapshot_fleet_avg_bytes",
 		"fcvm_snapshot_fleet_p95_bytes",
 		"fcvm_resident_ram_pct",
+		"fcvm_admission_ram_pct",
 		"fcvm_lv_fc_used_pct",
 	}
 	for _, w := range wants {
@@ -99,6 +100,40 @@ func TestDashboardGaugesResidentPctOverTheNodeCeiling(t *testing.T) {
 			}).WithTTL(time.Hour)
 			if got := g.residentPct(); got != tc.want {
 				t.Errorf("resident_pct = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// ADR-909 amendment 4: fcvm_admission_ram_pct reports the memory admission
+// counts. Under measured admission that is the node's measured memory, far
+// below its bookings; without a measured source it reports the bookings.
+func TestDashboardGaugesAdmissionPct(t *testing.T) {
+	booked := int64(11400) << 20 // 136% of an 8,381 MB node (prod, 2026-11-16)
+	measured := int64(2825) << 20
+	ceiling := func(context.Context) (int, error) { return 8381, nil }
+	unmeasured := errors.New("not measured yet")
+	for _, tc := range []struct {
+		name      string
+		admission func(context.Context) (int64, error)
+		want      float64
+	}{
+		{"measured admission", func(context.Context) (int64, error) { return measured, nil }, 100 * 2825.0 / 8381},
+		{"reservation admission", nil, 100 * 11400.0 / 8381},
+		{"no measurement yet", func(context.Context) (int64, error) { return 0, unmeasured }, math.NaN()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewDashboardGauges(DashboardMetrics{
+				ResidentBytes:  func(context.Context) (int64, error) { return booked, nil },
+				CeilingMB:      ceiling,
+				AdmissionBytes: tc.admission,
+			}).WithTTL(time.Hour)
+			got := g.admissionPct()
+			if math.IsNaN(tc.want) != math.IsNaN(got) || (!math.IsNaN(tc.want) && got != tc.want) {
+				t.Errorf("admission_pct = %v, want %v", got, tc.want)
+			}
+			if got := g.residentPct(); got != 100*11400.0/8381 {
+				t.Errorf("resident_pct = %v, want the bookings", got)
 			}
 		})
 	}

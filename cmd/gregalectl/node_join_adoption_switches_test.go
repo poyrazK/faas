@@ -78,7 +78,7 @@ func TestNodeJoinRendersTheAdoptionSwitches(t *testing.T) {
 	}
 }
 
-// ADR-20261116170000: fsn-2 refused on rc.346 and rc.347 because of a guest's
+// ADR-20261116191802: fsn-2 refused on rc.346 and rc.347 because of a guest's
 // state at one instant and drained 5.6 minutes; the same check passed when
 // re-run. The check retries while only guests are refused, stops on a
 // node-level reason, and the play names every refused guest.
