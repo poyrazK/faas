@@ -60711,6 +60711,39 @@ CREATE TABLE public.status_observation_buckets (
 
 
 --
+-- Name: storage_grant_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.storage_grant_audit (
+    id bigint NOT NULL,
+    node_id uuid NOT NULL,
+    subject_class text NOT NULL,
+    subject_id uuid NOT NULL,
+    app_id uuid,
+    access text NOT NULL,
+    objects integer NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT storage_grant_audit_access_check CHECK ((access = ANY (ARRAY['read'::text, 'write'::text]))),
+    CONSTRAINT storage_grant_audit_objects_check CHECK (((objects > 0) AND (objects <= 64))),
+    CONSTRAINT storage_grant_audit_subject_class_check CHECK ((subject_class = ANY (ARRAY['deployment'::text, 'sandbox_account'::text, 'job'::text])))
+);
+
+
+--
+-- Name: storage_grant_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.storage_grant_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.storage_grant_audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: storage_object_deletions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -76216,6 +76249,14 @@ ALTER TABLE ONLY public.status_observation_buckets
 
 
 --
+-- Name: storage_grant_audit storage_grant_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.storage_grant_audit
+    ADD CONSTRAINT storage_grant_audit_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: storage_object_deletions storage_object_deletions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87806,6 +87847,20 @@ CREATE INDEX status_incidents_timeline_idx ON public.status_incidents USING btre
 --
 
 CREATE INDEX status_observation_buckets_day_idx ON public.status_observation_buckets USING btree ((((bucket_at AT TIME ZONE 'UTC'::text))::date), component);
+
+
+--
+-- Name: storage_grant_audit_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_grant_audit_node_idx ON public.storage_grant_audit USING btree (node_id, granted_at);
+
+
+--
+-- Name: storage_grant_audit_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_grant_audit_subject_idx ON public.storage_grant_audit USING btree (subject_id, granted_at);
 
 
 --

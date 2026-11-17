@@ -1,6 +1,6 @@
 # ADR-20261117190000: Compute reaches the shared store only through per-object signed grants
 
-- Status: Accepted (slice 1 implemented, off by default)
+- Status: Accepted (slices 1 and 2 implemented, off by default)
 - Date: 2026-11-17
 - Amends: ADR-054 (compute nodes read and write the shared artifact store
   with bucket-wide credentials)
@@ -102,8 +102,8 @@ Owner decisions (2026-11-17):
 
 | slice | content |
 |---|---|
-| 1 | `pkg/storagegrant`: keyspace resolver, signer interface, GCS V4 and S3 presign signers (this change; no wiring) |
-| 2 | secretd `GrantStorageObjects`: placement checks, audit, metrics, budget; CP store config; off by default |
-| 3 | Compute: signed-grant `gcsArtifactStore`, `FAAS_STORAGE_ACCESS=secretd` in imaged, vmmd and builderd; compute-side listing GC skipped |
+| 1 | `pkg/storagegrant`: keyspace resolver, signer interface, GCS V4 and S3 presign signers (implemented) |
+| 2 | secretd `GrantStorageObjects`: placement checks, `storage_grant_audit`, `faas_secretd_storage_grants_total`, budget; `FAAS_SECRETD_STORAGE_GRANTS=off\|gcs\|s3` (implemented, off by default) |
+| 3 | Compute: signed-grant `gcsArtifactStore`, `FAAS_STORAGE_ACCESS=secretd` in imaged, vmmd and builderd; compute-side listing GC skipped. Also: agentd records a sandbox session's node at placement (today only at boot, after the node already read its image), and a session node may read its template layer |
 | 4 | S3 artifact backend on grants (with the OVH S3 store) |
 | 5 | Operations: remove compute's bucket role; runbook check that a direct read is refused |

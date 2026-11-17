@@ -16487,6 +16487,17 @@ type StatusObservationBucket struct {
 	HasTelemetry bool
 }
 
+type StorageGrantAudit struct {
+	ID           int64
+	NodeID       pgtype.UUID
+	SubjectClass string
+	SubjectID    pgtype.UUID
+	AppID        pgtype.UUID
+	Access       string
+	Objects      int32
+	GrantedAt    pgtype.Timestamptz
+}
+
 type StorageObjectDeletion struct {
 	StorageKey    string
 	Reason        string
