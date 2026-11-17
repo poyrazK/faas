@@ -133,22 +133,31 @@ func TestManifestFromLocalOCIConfigHostingStartReplacesImageCommand(t *testing.T
 	}
 }
 
-// The agent eval's deploy-flask-render task (2026-11-17): the dry-run showed
-// the profile's `gunicorn app:app` while the guest ran Railpack's
-// `main:app` and crash-looped. The deployed command is now the previewed
+// The agent eval's source fixtures (2026-11-17): the dry-run showed the
+// profile's start while the guest ran Railpack's, `gunicorn ... main:app`
+// for a Flask app in app.py and `python main.py` for a FastAPI app whose
+// uvicorn came from fastapi[all]. The deployed command is now the previewed
 // one (ADR-1500 amendment 4).
-func TestManifestFromLocalOCIConfigRunsPreviewedFlaskStart(t *testing.T) {
+func TestManifestFromLocalOCIConfigRunsPreviewedSourceStart(t *testing.T) {
 	t.Parallel()
-	profile, err := frameworkprofile.AnalyzeDir("../frameworkprofile/testdata/flask-hello-world")
-	if err != nil {
-		t.Fatal(err)
-	}
-	railpack := oci.Config{Cmd: []string{"/bin/bash", "-c", "gunicorn --bind 0.0.0.0:${PORT:-8000} main:app"}}
-	manifest, err := manifestFromLocalOCIConfig(railpack, profileDeployment(t, profile))
-	if err != nil {
-		t.Fatalf("manifestFromLocalOCIConfig: %v", err)
-	}
-	if want := []string{"/bin/sh", "-c", profile.StartCommand}; !reflect.DeepEqual(manifest.Entrypoint, want) {
-		t.Fatalf("deployed command = %#v, want the previewed %#v", manifest.Entrypoint, want)
+	for _, tt := range []struct{ fixture, railpack string }{
+		{"flask-hello-world", "gunicorn --bind 0.0.0.0:${PORT:-8000} main:app"},
+		{"fastapi-hello-world", "python main.py"},
+	} {
+		t.Run(tt.fixture, func(t *testing.T) {
+			t.Parallel()
+			profile, err := frameworkprofile.AnalyzeDir("../frameworkprofile/testdata/" + tt.fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			image := oci.Config{Cmd: []string{"/bin/bash", "-c", tt.railpack}}
+			manifest, err := manifestFromLocalOCIConfig(image, profileDeployment(t, profile))
+			if err != nil {
+				t.Fatalf("manifestFromLocalOCIConfig: %v", err)
+			}
+			if want := []string{"/bin/sh", "-c", profile.StartCommand}; !reflect.DeepEqual(manifest.Entrypoint, want) {
+				t.Fatalf("deployed command = %#v, want the previewed %#v", manifest.Entrypoint, want)
+			}
+		})
 	}
 }

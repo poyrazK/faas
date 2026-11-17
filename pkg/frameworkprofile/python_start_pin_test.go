@@ -7,47 +7,58 @@ import (
 	"testing/fstest"
 )
 
-const flaskHelloWorld = "testdata/flask-hello-world"
-
-// The coding-agent eval's deploy-flask-render task (2026-11-17) deployed
-// render-examples/flask-hello-world: app.py holds `app = Flask(__name__)`,
-// requirements.txt declares Flask and Gunicorn, and there is no Procfile and
-// no main.py. `gregale deploy --dry-run` showed `gunicorn app:app`, but the
-// guest ran Railpack's `gunicorn --bind 0.0.0.0:${PORT:-8000} main:app` and
-// crash-looped on ModuleNotFoundError until liveness_exhausted. The located
+// The coding-agent eval's source fixtures. deploy-flask-render (2026-11-17)
+// deployed render-examples/flask-hello-world: app.py holds
+// `app = Flask(__name__)`, requirements.txt declares Flask and Gunicorn, and
+// there is no Procfile and no main.py. `gregale deploy --dry-run` showed
+// `gunicorn app:app`, but the guest ran Railpack's
+// `gunicorn --bind 0.0.0.0:${PORT:-8000} main:app` and crash-looped on
+// ModuleNotFoundError until liveness_exhausted. render-examples/fastapi has
+// main.py with `app = FastAPI()` and requirements.txt `fastapi[all]`, which
+// names no uvicorn, so Railpack ran `python main.py`: it defines the app and
+// exits 0, while the dry-run showed `uvicorn main:app` (#7531). The located
 // start is now pinned over the image's (ADR-1500 amendment 4), through the
 // CLI's directory read and apid's archive read alike.
-func TestAnalyzePinsFlaskStartWithoutMainModule(t *testing.T) {
+var evalSourceFixtures = []struct {
+	dir, framework, command string
+}{
+	{"testdata/flask-hello-world", "flask", "gunicorn app:app --bind 0.0.0.0:$PORT"},
+	{"testdata/fastapi-hello-world", "fastapi", "uvicorn main:app --host 0.0.0.0 --port $PORT"},
+}
+
+func TestAnalyzePinsEvalSourceStarts(t *testing.T) {
 	t.Parallel()
-	entries := map[string]string{}
-	files, err := os.ReadDir(flaskHelloWorld)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range files {
-		body, err := os.ReadFile(filepath.Join(flaskHelloWorld, file.Name()))
+	for _, fixture := range evalSourceFixtures {
+		entries := map[string]string{}
+		files, err := os.ReadDir(fixture.dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		entries["flask-hello-world/"+file.Name()] = string(body)
-	}
-	analyze := map[string]func(*testing.T) (Profile, error){
-		"directory": func(*testing.T) (Profile, error) { return AnalyzeDir(flaskHelloWorld) },
-		"archive": func(t *testing.T) (Profile, error) {
-			return AnalyzeTarballAtRoot(writeProfileArchive(t, entries), "")
-		},
-	}
-	for name, run := range analyze {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			got, err := run(t)
+		for _, file := range files {
+			body, err := os.ReadFile(filepath.Join(fixture.dir, file.Name()))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Framework != "flask" || got.StartCommand != "gunicorn app:app --bind 0.0.0.0:$PORT" || !got.StartPinned || !got.Inferred || got.StartFromConfig {
-				t.Fatalf("profile = %+v, want flask, pinned `gunicorn app:app --bind 0.0.0.0:$PORT`", got)
-			}
-		})
+			entries["repo/"+file.Name()] = string(body)
+		}
+		analyze := map[string]func(*testing.T) (Profile, error){
+			"directory": func(*testing.T) (Profile, error) { return AnalyzeDir(fixture.dir) },
+			"archive": func(t *testing.T) (Profile, error) {
+				return AnalyzeTarballAtRoot(writeProfileArchive(t, entries), "")
+			},
+		}
+		for read, run := range analyze {
+			t.Run(filepath.Base(fixture.dir)+"/"+read, func(t *testing.T) {
+				t.Parallel()
+				got, err := run(t)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Framework != fixture.framework || got.StartCommand != fixture.command || !got.StartPinned || !got.Inferred || got.StartFromConfig {
+					t.Fatalf("profile = %+v, want %s, pinned %q", got, fixture.framework, fixture.command)
+				}
+			})
+		}
 	}
 }
 
@@ -138,6 +149,41 @@ func TestAnalyzePythonStartPinned(t *testing.T) {
 				"railpack.json":    {Data: []byte(`{"deploy":{"startCommand":"gunicorn -w 4 app:app"}}`)},
 			},
 			command: "gunicorn -w 4 app:app",
+		},
+		{
+			name: "fastapi[standard] in app.py",
+			files: fstest.MapFS{
+				"pyproject.toml": {Data: []byte("[project]\ndependencies = [\"fastapi[standard]>=0.115\"]\n")},
+				"app.py":         {Data: []byte("from fastapi import FastAPI\napp = FastAPI()\n")},
+			},
+			command: "uvicorn app:app --host 0.0.0.0 --port $PORT", pinned: true,
+		},
+		{
+			name: "no Railpack main file",
+			files: fstest.MapFS{
+				"requirements.txt": {Data: []byte("fastapi\nuvicorn\n")},
+				"src/__init__.py":  {Data: []byte("")},
+				"src/api.py":       {Data: []byte("from fastapi import FastAPI\napp = FastAPI()\n")},
+			},
+			command: "uvicorn src.api:app --host 0.0.0.0 --port $PORT", pinned: true,
+		},
+		{
+			// Railpack runs `python main.py`, which serves.
+			name: "main.py starts uvicorn itself",
+			files: fstest.MapFS{
+				"requirements.txt": {Data: []byte("fastapi[standard]\n")},
+				"main.py": {Data: []byte("import uvicorn\nfrom fastapi import FastAPI\napp = FastAPI()\n\n" +
+					"if __name__ == \"__main__\":\n    uvicorn.run(app, host=\"0.0.0.0\", port=8000)\n")},
+			},
+			command: "uvicorn main:app --host 0.0.0.0 --port $PORT",
+		},
+		{
+			name: "fastapi without a server",
+			files: fstest.MapFS{
+				"requirements.txt": {Data: []byte("fastapi\n")},
+				"main.py":          {Data: []byte("from fastapi import FastAPI\napp = FastAPI()\n")},
+			},
+			command: "uvicorn main:app --host 0.0.0.0 --port $PORT",
 		},
 		{
 			name: "django",

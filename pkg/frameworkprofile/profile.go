@@ -70,12 +70,12 @@ type Profile struct {
 	// the Python runner) (Hunt 12 H12-29).
 	StartFromConfig bool `json:"start_from_config,omitempty"`
 	// StartPinned reports that StartCommand also replaces the built image's
-	// command although no file named it: Railpack starts a Flask app it
-	// serves with gunicorn, and a FastAPI app it serves with uvicorn, as
-	// `main:app` whatever module defines the application, and this source
-	// has no main module, so the image's own command cannot start
-	// (ADR-1500 amendment 4). Profiles written before it lack the mark and
-	// keep the image's command.
+	// command although no file named it: the command Railpack builds for this
+	// Flask or FastAPI source cannot serve the application the profile
+	// located (a `main:app` without a main module, `python main.py` that only
+	// defines the app, or none at all), see pythonStartPinned (ADR-1500
+	// amendment 4). Profiles written before it lack the mark and keep the
+	// image's command.
 	StartPinned bool `json:"start_pinned,omitempty"`
 	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
 	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
@@ -729,18 +729,58 @@ func railpackConfigStartCommand(fsys fs.FS) string {
 	return strings.TrimSpace(config.Deploy.StartCommand)
 }
 
+// railpackPythonMainFiles are the files whose presence gives Railpack's
+// Python provider a start command (getMainPythonFile), in its order.
+var railpackPythonMainFiles = []string{"main.py", "app.py", "start.py", "bot.py", "hello.py", "server.py"}
+
+// fastapiServerExtra matches a FastAPI requirement whose extras install
+// uvicorn without naming it: fastapi[standard], fastapi[all] and
+// fastapi[standard-no-fastapi-cloud-cli].
+var fastapiServerExtra = regexp.MustCompile(`(^|[^a-z0-9_.-])fastapi\s*\[[^\]]*\b(standard|all)\b`)
+
 // pythonStartPinned reports whether a located Flask or FastAPI application's
-// inferred start must replace the built image's command. Railpack 0.38's
-// Python provider (GetStartCommand) starts a Flask app that declares gunicorn,
-// or a FastAPI app that declares uvicorn, as `main:app` whichever module
-// defines the application, and with none of its main files (main.py, app.py,
-// server.py, ...) it detects no start, so the image keeps its base's CMD
-// (python3, Hunt 12 H12-29). Without a root main module neither starts the
-// app. A main module may re-export the application, so its presence keeps
-// Railpack's command. server must be declared because the pinned command runs
-// it; manifests is the comment-stripped, lowercased dependency text.
+// inferred start must replace the built image's command because the command
+// Railpack 0.38's Python provider (GetStartCommand) builds cannot serve it:
+//
+//   - With none of its main files, Railpack detects no start and the image
+//     keeps its base's CMD (python3, Hunt 12 H12-29).
+//   - A Flask app whose manifests mention gunicorn, or a FastAPI app whose
+//     manifests mention uvicorn, starts as `main:app` whichever module
+//     defines the application. Without a root main module that fails; a main
+//     module may re-export the application, so its presence keeps it.
+//   - Otherwise Railpack runs `python <main file>`, which only defines the
+//     application and exits unless the file starts a server itself. FastAPI's
+//     own install, fastapi[standard], brings uvicorn without naming it.
+//
+// Railpack tests a dependency as a case-insensitive substring of a manifest,
+// comments included; only root manifests are read here. The pinned command
+// runs server, so it must be installed. manifests is the comment-stripped,
+// lowercased dependency text.
 func pythonStartPinned(fsys fs.FS, manifests, server string) bool {
-	return pythonDependencyNamed(manifests, server) && !fileExists(fsys, "main.py") && !fileExists(fsys, "main/__init__.py")
+	if !pythonDependencyNamed(manifests, server) && (server != "uvicorn" || !fastapiServerExtra.MatchString(manifests)) {
+		return false
+	}
+	script := ""
+	for _, name := range railpackPythonMainFiles {
+		if fileExists(fsys, name) {
+			script = name
+			break
+		}
+	}
+	if script == "" {
+		return true
+	}
+	var raw strings.Builder
+	for _, name := range []string{"requirements.txt", "pyproject.toml", "Pipfile"} {
+		raw.WriteString(strings.ToLower(readFile(fsys, name)))
+		raw.WriteByte('\n')
+	}
+	uses := func(dependency string) bool { return strings.Contains(raw.String(), dependency) }
+	if uses("flask") && uses("gunicorn") || uses("fastapi") && uses("uvicorn") {
+		return !fileExists(fsys, "main.py") && !fileExists(fsys, "main/__init__.py")
+	}
+	body := readFile(fsys, script)
+	return !strings.Contains(body, "__main__") && !strings.Contains(body, ".run(")
 }
 
 func fileExists(fsys fs.FS, path string) bool {
