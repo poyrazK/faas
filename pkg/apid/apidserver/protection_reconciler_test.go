@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/routeprobe"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // healthProbeFake is the route prober and challenge notifier for baseline
@@ -109,9 +110,9 @@ func goLive(t *testing.T, e testEnv, app state.App) {
 
 // unverifiedAccountStore reports every account's email as unverified
 // (MemStore accounts start verified and cannot be unverified).
-type unverifiedAccountStore struct{ *state.MemStore }
+type unverifiedAccountStore struct{ MemStore *state.MemStore }
 
-func (u unverifiedAccountStore) AccountByID(ctx context.Context, id string) (state.Account, error) {
+func (u *unverifiedAccountStore) AccountByID(ctx context.Context, id string) (state.Account, error) {
 	acct, err := u.MemStore.AccountByID(ctx, id)
 	acct.EmailVerifiedAt = nil
 	return acct, err
@@ -338,7 +339,7 @@ func TestProtectionReconcilerSkipsAndRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	goLive(t, e, app)
-	reconcileWith(t, e, app, unverifiedAccountStore{e.store})
+	reconcileWith(t, e, app, statetest.NewMem(&unverifiedAccountStore{MemStore: e.store}))
 	items := protectionItems(t, e, "shop")
 	want := map[string][2]string{
 		"availability_slo":        {api.AppProtectionItemSkipped, api.AppProtectionSkipNameTaken},
