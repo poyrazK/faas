@@ -45,12 +45,12 @@ func TestAppOwnerClaimsSkipRowsOfAppsAnotherNodeOwns(t *testing.T) {
 	}
 	claimAndComplete(t, pool, nodeA, channels, restart)
 
-	// Apps with no node, poison payloads and other channels stay claimable
-	// by any schedd: the handler reports them.
+	// Apps with no node, an unreadable app id and other channels stay
+	// claimable by any schedd: the handler reports them. (The table rejects
+	// payloads that are not JSON.)
 	for _, row := range []struct{ channel, payload string }{
 		{db.NotifyAppWake, fmt.Sprintf(`{"app_id":%q,"wake_id":"w2"}`, unplaced)},
 		{db.NotifyAppWake, `{"app_id":"not-a-uuid"}`},
-		{db.NotifyRuntimeConfigRestart, `not json`},
 		{db.NotifySnapshotPrime, fmt.Sprintf(`{"app_id":%q}`, ownedByA)},
 	} {
 		claimAndComplete(t, pool, nodeB, channels, queue(t, pool, row.channel, row.payload))
