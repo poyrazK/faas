@@ -383,7 +383,7 @@ func (s *Store) NodeRunsApp(ctx context.Context, appID, nodeID string) (bool, er
 	app, aerr := pgUUID(appID)
 	node, nerr := pgUUID(nodeID)
 	if aerr != nil || nerr != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // a malformed id runs nothing
 	}
 	ok, err := s.q.NodeRunsApp(ctx, s.db, sqlc.NodeRunsAppParams{AppID: app, NodeID: node})
 	if err != nil {
@@ -397,7 +397,7 @@ func (s *Store) NodeRunsJob(ctx context.Context, jobID, nodeID string) (bool, er
 	job, jerr := pgUUID(jobID)
 	node, nerr := pgUUID(nodeID)
 	if jerr != nil || nerr != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // a malformed id runs nothing
 	}
 	ok, err := s.q.NodeRunsJob(ctx, s.db, sqlc.NodeRunsJobParams{JobID: job, NodeID: node})
 	if err != nil {
