@@ -902,13 +902,14 @@ Sets GREGALE_AI_BASE_URL and, for OpenAI and Anthropic, the SDK&#39;s base URL a
 
 Link this checkout to a Gregale project
 
-`gregale link [<project-slug>] [--interactive] [--app <slug>] [--env <environment>] [--no-gitignore]`
+`gregale link [<project-slug>] [--interactive] [--app <slug>] [--environment <environment>] [--env <environment>] [--no-gitignore]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--interactive` | choose project, app, and environment, review defaults, and confirm saving |  |
-| `--app <slug>` | workload/app slug for app-scoped commands |  |
-| `--env <environment>` | default project environment scope (also --environment) |  |
+| `--app <slug>` | workload/app slug for app-scoped commands; alone, links the app (and its project, if any) |  |
+| `--environment <environment>` | default project environment scope |  |
+| `--env <environment>` | alias for --environment |  |
 | `--no-gitignore` | do not add .gregale/ to .gitignore |  |
 
 Examples:
@@ -917,6 +918,7 @@ Examples:
 gregale link --interactive
 gregale link my-project --interactive
 gregale link my-project --app my-api --env staging
+gregale link --app my-api
 ```
 
 
