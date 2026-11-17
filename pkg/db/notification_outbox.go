@@ -122,6 +122,17 @@ func ClaimNotification(ctx context.Context, pool *pgxpool.Pool, consumer string,
 // ClaimNotificationForNode skips sibling-node work before leasing it or
 // incrementing attempts. An empty node retains the legacy single-box contract.
 func ClaimNotificationForNode(ctx context.Context, pool *pgxpool.Pool, consumer, nodeID string, channels []string, lease time.Duration) (NotificationOutboxItem, error) {
+	return claimNotification(ctx, pool, consumer, nodeID, "", channels, lease)
+}
+
+// ClaimNotificationForAppOwner claims like ClaimNotificationForNode with no
+// node, but skips app_wake and runtime_config_restart rows whose app another
+// node owns. appOwner is the claiming schedd's node; "" claims every row.
+func ClaimNotificationForAppOwner(ctx context.Context, pool *pgxpool.Pool, consumer, appOwner string, channels []string, lease time.Duration) (NotificationOutboxItem, error) {
+	return claimNotification(ctx, pool, consumer, "", appOwner, channels, lease)
+}
+
+func claimNotification(ctx context.Context, pool *pgxpool.Pool, consumer, nodeID, appOwner string, channels []string, lease time.Duration) (NotificationOutboxItem, error) {
 	if pool == nil {
 		return NotificationOutboxItem{}, errors.New("db: claim notification: nil pool")
 	}
@@ -139,7 +150,7 @@ func ClaimNotificationForNode(ctx context.Context, pool *pgxpool.Pool, consumer,
 
 	claimToken := consumer + ":" + uuid.NewString()
 	row, err := sqlc.New().ClaimNotificationForNode(ctx, tx, sqlc.ClaimNotificationForNodeParams{
-		Channels: channels, NodeID: strings.TrimSpace(nodeID), ClaimToken: claimToken,
+		Channels: channels, NodeID: strings.TrimSpace(nodeID), AppOwner: strings.TrimSpace(appOwner), ClaimToken: claimToken,
 		LeaseMilliseconds: notificationLeaseMilliseconds(lease),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -262,12 +273,16 @@ func DrainNotificationOutboxOnce(ctx context.Context, pool *pgxpool.Pool, consum
 // DrainNotificationOutboxOnceForNode replays shared work and local-node
 // handoffs. A skipped callback is released without spending a retry attempt.
 func DrainNotificationOutboxOnceForNode(ctx context.Context, pool *pgxpool.Pool, consumer, nodeID string, channels []string, handler func(context.Context, Notification) error, log *slog.Logger) (int, error) {
+	return drainNotificationOutboxOnce(ctx, pool, consumer, nodeID, "", channels, handler, log)
+}
+
+func drainNotificationOutboxOnce(ctx context.Context, pool *pgxpool.Pool, consumer, nodeID, appOwner string, channels []string, handler func(context.Context, Notification) error, log *slog.Logger) (int, error) {
 	if handler == nil {
 		return 0, errors.New("db: notification handler required")
 	}
 	delivered := 0
 	for i := 0; i < notificationOutboxBatch; i++ {
-		item, err := ClaimNotificationForNode(ctx, pool, consumer, nodeID, channels, notificationOutboxLease)
+		item, err := claimNotification(ctx, pool, consumer, nodeID, appOwner, channels, notificationOutboxLease)
 		if errors.Is(err, ErrNotificationOutboxEmpty) {
 			return delivered, nil
 		}
@@ -306,6 +321,17 @@ func RunNotificationOutbox(ctx context.Context, pool *pgxpool.Pool, consumer str
 // RunNotificationOutboxForNode retains the normal poll/retry lifecycle while
 // limiting node-local handoffs to their owner.
 func RunNotificationOutboxForNode(ctx context.Context, pool *pgxpool.Pool, consumer, nodeID string, channels []string, handler func(context.Context, Notification) error, log *slog.Logger) error {
+	return runNotificationOutbox(ctx, pool, consumer, nodeID, "", channels, handler, log)
+}
+
+// RunNotificationOutboxForAppOwner replays like RunNotificationOutbox, but a
+// schedd skips app_wake and runtime_config_restart rows whose app another
+// node owns, so only the owner claims them.
+func RunNotificationOutboxForAppOwner(ctx context.Context, pool *pgxpool.Pool, consumer, appOwner string, channels []string, handler func(context.Context, Notification) error, log *slog.Logger) error {
+	return runNotificationOutbox(ctx, pool, consumer, "", appOwner, channels, handler, log)
+}
+
+func runNotificationOutbox(ctx context.Context, pool *pgxpool.Pool, consumer, nodeID, appOwner string, channels []string, handler func(context.Context, Notification) error, log *slog.Logger) error {
 	if pool == nil {
 		return errors.New("db: run notification outbox: nil pool")
 	}
@@ -317,7 +343,7 @@ func RunNotificationOutboxForNode(ctx context.Context, pool *pgxpool.Pool, consu
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if _, err := DrainNotificationOutboxOnceForNode(ctx, pool, consumer, nodeID, channels, handler, log); err != nil && ctx.Err() == nil && log != nil {
+			if _, err := drainNotificationOutboxOnce(ctx, pool, consumer, nodeID, appOwner, channels, handler, log); err != nil && ctx.Err() == nil && log != nil {
 				log.Warn("db: durable notification outbox drain failed", "consumer", consumer, "err", err)
 			}
 			now := time.Now().UTC()

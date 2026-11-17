@@ -7,6 +7,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.hosted_task_source_intent_review_status import (
+    HostedTaskSourceIntentReviewStatus,
+    check_hosted_task_source_intent_review_status,
+)
 from ..models.hosted_task_source_intent_source_state import (
     HostedTaskSourceIntentSourceState,
     check_hosted_task_source_intent_source_state,
@@ -15,6 +19,7 @@ from ..models.hosted_task_source_intent_version import (
     HostedTaskSourceIntentVersion,
     check_hosted_task_source_intent_version,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.hosted_task_source_review import HostedTaskSourceReview
@@ -25,8 +30,8 @@ T = TypeVar("T", bound="HostedTaskSourceIntent")
 
 @_attrs_define
 class HostedTaskSourceIntent:
-    """Immutable source intent metadata. Not an owner decision or execution plan. Expired ciphertext cannot be renewed
-    under the same identity.
+    """Immutable hosted source identity and last observed owner review metadata. Source review approval does not grant
+    credential or execution authority. Expired ciphertext cannot be renewed under the same identity.
 
     """
 
@@ -42,11 +47,15 @@ class HostedTaskSourceIntent:
     expires_at: datetime.datetime
     source_state: HostedTaskSourceIntentSourceState
     ready_to_apply: bool
-    """False because retained source alone has no owner execution authorization."""
+    """False because approval of a retained hosted source review is not permission to execute it."""
     bindings_verified: bool
     """False because storing authored Task source does not verify runtime credential bindings."""
     owner_authorization_required: bool
-    """True because a separate owner decision is required before any retained Task source can execute."""
+    """True until separate owner-controlled execution authorization and runtime credential qualification exist."""
+    review_status: HostedTaskSourceIntentReviewStatus | Unset = UNSET
+    """Last recorded hosted source review state; absent on older receipts means pending until source expiry."""
+    decided_at: datetime.datetime | Unset = UNSET
+    """Original hosted source owner decision time, retained unchanged by exact repeats."""
 
     def to_dict(self) -> dict[str, Any]:
         version: int = self.version
@@ -75,6 +84,14 @@ class HostedTaskSourceIntent:
 
         owner_authorization_required = self.owner_authorization_required
 
+        review_status: str | Unset = UNSET
+        if not isinstance(self.review_status, Unset):
+            review_status = self.review_status
+
+        decided_at: str | Unset = UNSET
+        if not isinstance(self.decided_at, Unset):
+            decided_at = self.decided_at.isoformat()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -94,6 +111,10 @@ class HostedTaskSourceIntent:
                 "owner_authorization_required": owner_authorization_required,
             }
         )
+        if review_status is not UNSET:
+            field_dict["review_status"] = review_status
+        if decided_at is not UNSET:
+            field_dict["decided_at"] = decided_at
 
         return field_dict
 
@@ -128,6 +149,20 @@ class HostedTaskSourceIntent:
 
         owner_authorization_required = d.pop("owner_authorization_required")
 
+        _review_status = d.pop("review_status", UNSET)
+        review_status: HostedTaskSourceIntentReviewStatus | Unset
+        if isinstance(_review_status, Unset):
+            review_status = UNSET
+        else:
+            review_status = check_hosted_task_source_intent_review_status(_review_status)
+
+        _decided_at = d.pop("decided_at", UNSET)
+        decided_at: datetime.datetime | Unset
+        if isinstance(_decided_at, Unset):
+            decided_at = UNSET
+        else:
+            decided_at = datetime.datetime.fromisoformat(_decided_at)
+
         hosted_task_source_intent = cls(
             version=version,
             id=id,
@@ -142,6 +177,8 @@ class HostedTaskSourceIntent:
             ready_to_apply=ready_to_apply,
             bindings_verified=bindings_verified,
             owner_authorization_required=owner_authorization_required,
+            review_status=review_status,
+            decided_at=decided_at,
         )
 
         return hosted_task_source_intent
