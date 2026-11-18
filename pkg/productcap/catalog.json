@@ -83,6 +83,7 @@
         "/v1/agent-runs",
         "/v1/agent-tools",
         "/v1/agents",
+        "/v1/sandbox-egress-policy",
         "/v1/sandbox-snapshots",
         "/v1/sandbox-templates",
         "/v1/sandboxes"
@@ -1267,7 +1268,9 @@
       "routes": [
         "/dashboard/orgs/{}/support",
         "/dashboard/support",
+        "/dashboard/support-access",
         "/v1/orgs/{}/support",
+        "/v1/orgs/{}/support-access",
         "/v1/support"
       ]
     },
@@ -4651,6 +4654,9 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_app_protection_test.go::TestGetAppProtectionReportsBaselineItems",
       "routes": [
         "/v1/apps/{}/protection"
+      ],
+      "settings": [
+        "manifest.protection"
       ],
       "cli": [
         "app protection"
