@@ -15,9 +15,9 @@ import (
 func TestPgOwnerBalanceCandidates(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	nodeID := resolveDefaultLocal(t, ctx, s)
-	_, withSnap, withSnapDep := seedLiveDeploy(t, s, ctx, "balance-snap")
-	_, noSnap, _ := seedLiveDeploy(t, s, ctx, "balance-nosnap")
-	_, moved, _ := seedLiveDeploy(t, s, ctx, "balance-moved")
+	_, withSnap, withSnapDep := seedLiveDeploy(t, s, ctx, "balance-snap", "snap")
+	_, noSnap, _ := seedLiveDeploy(t, s, ctx, "balance-nosnap", "nosnap")
+	_, moved, _ := seedLiveDeploy(t, s, ctx, "balance-moved", "moved")
 	for _, id := range []string{withSnap, noSnap, moved} {
 		if _, err := pool.Exec(ctx, `update apps set node_id = $2, status = 'active' where id = $1`, id, nodeID); err != nil {
 			t.Fatal(err)
