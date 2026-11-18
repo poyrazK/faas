@@ -1124,6 +1124,9 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appTaskNetworks mirrors app_task_networks (ADR-20261118070000), keyed
+	// by task id; created on first use.
+	appTaskNetworks map[string]appTaskNetwork
 	// appTaskCapacityWaits mirrors app_tasks.capacity_wait_started_at.
 	appTaskCapacityWaits map[string]time.Time
 	// releaseOutcomeChecks mirrors release_outcome_checks (ADR-1448

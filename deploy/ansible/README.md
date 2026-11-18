@@ -42,6 +42,8 @@ In order (each role is independent and verifies its own preconditions):
 | `nftables` | §7 | `/etc/nftables.conf` | managed-marker backup + `nft -c` syntax check |
 | `tenant_egress_client` | ADR-372 | compute: `wg-tenant` tunnel, tenant policy routing, the node's peer file on the gateway (no-op without `egress.tenant_gateway`) | node-minted key kept, templated config, `wg syncconf` on the gateway |
 | `tenant_egress_gateway` | ADR-372 | gateway host only (`tenant_egress_gateway.yml`): WireGuard, forwarding, `inet faas_tenant_gw` deny + NAT table | key checked against the manifest, `nft -c` validated table replace |
+| `agent_egress_client` | ADR-20261117185346 | compute: `wg-agent` tunnel and the agent table's route, the node's slice peer file on the agent gateway (no-op without `egress.agent_gateway`); vmmd owns the policy rules | node-minted key kept, templated config, `wg syncconf` on the gateway |
+| `agent_egress_gateway` | ADR-20261117185346 | agent gateway host only (`agent_egress_gateway.yml`): WireGuard, forwarding, `inet faas_agent_gw` deny + NAT to the agent addresses; may share the tenant gateway's host | key checked against the manifest, agent addresses checked on the NIC, `nft -c` validated table replace |
 | `postgres` | §1 (cp slice), §4 | distro PostgreSQL major, `faas` user | apt idempotent, `creates:` on home |
 | `postgres_backup` | §14 backup/restore gates | nightly tar-format basebackup + off-host push timers | systemd units, directories, and secret checks are idempotent |
 | `host_hardening` | §11, ADR-143 | sshd drop-in, fail2ban, unattended security upgrades, auditd rules, kernel sysctls | templates + validated `sshd -t`; lockout guard before disabling password auth |
