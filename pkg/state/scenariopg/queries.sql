@@ -17,13 +17,18 @@ RETURNING *;
 SELECT * FROM scenario_postgres_fixtures WHERE account_id=sqlc.arg(account_id)::uuid AND run_id=sqlc.arg(run_id);
 
 -- name: GetForApp :one
-SELECT f.* FROM scenario_postgres_fixtures f JOIN scenario_test_action_policies p ON p.app_id=sqlc.arg(app_id)::uuid
+SELECT sqlc.embed(f), COALESCE(part.access,'')::text AS participant_access
+FROM scenario_postgres_fixtures f JOIN scenario_test_action_policies p ON p.app_id=sqlc.arg(app_id)::uuid
  JOIN apps a ON a.id=p.app_id AND a.status<>'deleted' AND a.preview_expires_at>now()
+ LEFT JOIN LATERAL (
+  SELECT v->>'postgres' AS access FROM jsonb_array_elements(p.managed_work_plan->'participants') v
+  WHERE v->>'workload'=p.workload_name LIMIT 1
+ ) part ON true
 WHERE f.account_id=p.account_id AND f.run_id=p.run_id AND p.network_mode='contained'
  AND p.simulation_plan IS NOT NULL AND NOT p.simulation_failed AND p.sealed_at IS NULL AND NOT p.recorder_closing
  AND f.status='ready' AND f.expires_at>now()
- AND ((p.managed_work_plan IS NULL AND f.app_id=p.app_id) OR
-  (p.managed_work_plan IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements(p.managed_work_plan->'participants') v WHERE v->>'workload'=p.workload_name AND v->>'postgres'='read_write')));
+ AND ((p.managed_work_plan IS NULL AND f.app_id=p.app_id)
+   OR part.access IN ('read_write','task_runtime','task_observer'));
 
 -- name: Transition :one
 UPDATE scenario_postgres_fixtures SET status=sqlc.arg(status),

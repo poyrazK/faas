@@ -192,6 +192,10 @@ HTTP 422 Unprocessable Entity · No process listening on $PORT; App listens on a
 
 See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md).
 
+### `app_not_purgeable`
+
+HTTP 409 · App not purgeable
+
 ### `app_not_restorable`
 
 HTTP 409 Conflict · App not restorable

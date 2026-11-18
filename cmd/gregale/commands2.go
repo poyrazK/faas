@@ -1149,6 +1149,60 @@ func cmdAppsRestore(args []string) int {
 	return 0
 }
 
+// cmdAppsPurge implements `gregale app purge <slug>`: it permanently removes
+// one of the caller's deleted apps now instead of at the end of its restore
+// window, so the slug can be reused at once (redeploying a Compose project
+// after a teardown). The interactive path makes the user retype the slug.
+func cmdAppsPurge(args []string) int {
+	fs := newFlagSet("apps-purge", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "purge without prompting; required in non-interactive and JSON mode")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale app purge <slug> [--yes]", "apps")
+		return 1
+	}
+	if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
+		return code
+	}
+	slug := fs.Arg(0)
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	deleted, err := findDeletedApp(ctx, client, slug)
+	if err != nil {
+		return printErr("Could not list deleted apps", err)
+	}
+	if deleted == nil {
+		return printErr("Nothing to purge", fmt.Errorf("no deleted app named %q; delete it first with `gregale app delete %s`", slug, slug))
+	}
+	if !*yes {
+		if jsonOutput {
+			return printErr("Confirmation required", errors.New("app purge requires --yes in JSON mode"))
+		}
+		fmt.Fprintf(os.Stderr, "Permanently remove deleted app %q, its deployments and snapshots? This cannot be undone.\n", slug)
+		if !requireTyped(slug) {
+			return 130
+		}
+	}
+	out, err := client.PurgeDeletedApp(ctx, deleted.ID)
+	if err != nil {
+		return printErr("Could not purge app", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	if out.Purged {
+		PrintOK(osStdout, "Purged %s; the name is free to reuse", out.Slug)
+		return 0
+	}
+	PrintOK(osStdout, "Purge of %s started (waiting on %s); it can no longer be restored, and the name frees up within a few minutes", out.Slug, out.PendingReason)
+	return 0
+}
+
 // cmdDeployTarball extends cmdDeploy with `--tarball`, `--runtime`, `--handler`,
 // `--dockerfile`. Image digest stays as the default input. `--repo owner/name`
 // opens the dashboard's repo-picker page (slice 8) where the customer binds
@@ -1459,27 +1513,36 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 // gets a restore hint instead of a dead end (Hunt 14 H14-93). The lookup is
 // best effort: any error falls back to the generic message.
 func slugInUseError(ctx context.Context, client *Client, slug string) error {
+	if app, err := findDeletedApp(ctx, client, slug); err == nil && app != nil {
+		if app.RestoreEligible {
+			return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)
+		}
+		return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)
+	}
+	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+}
+
+// findDeletedApp returns the caller's deleted app holding slug, or nil when
+// the first 200 inventory rows hold none. An app deleted, restored and
+// deleted again lists once per tombstone; the newest comes first.
+func findDeletedApp(ctx context.Context, client *Client, slug string) (*api.DeletedAppSummary, error) {
 	cursor := ""
 	for page := 0; page < 4; page++ {
 		list, err := client.ListDeletedApps(ctx, cursor, 50)
 		if err != nil {
-			break
+			return nil, err
 		}
-		for _, app := range list.Apps {
-			if app.Slug != slug {
-				continue
+		for i := range list.Apps {
+			if list.Apps[i].Slug == slug {
+				return &list.Apps[i], nil
 			}
-			if app.RestoreEligible {
-				return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug)
-			}
-			return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "))
 		}
 		if list.NextCursor == "" {
 			break
 		}
 		cursor = list.NextCursor
 	}
-	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+	return nil, nil
 }
 
 func deletedAppUntil(t *time.Time, prefix string) string {
