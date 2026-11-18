@@ -9025,7 +9025,9 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// ADR-20261115113000: with no init snapshot to reuse on this node, the
 	// capture below would hold what this instance's requests left in memory.
 	// Retire it and let the refresher capture a fresh, primed boot instead.
-	if allowReuse && e.parkNeedsCleanRecapture(ctx, ins, app,
+	// A managed cache's memory is its data: capture it, never reuse or discard.
+	keepMemory := allowReuse && e.keepsMemoryAtPark(ctx, ins.AppID)
+	if allowReuse && !keepMemory && e.parkNeedsCleanRecapture(ctx, ins, app,
 		app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled, frozenFunction) {
 		return e.parkForCleanRecapture(ctx, ins)
 	}
@@ -9123,7 +9125,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// and loses the process state needed to qualify park/restore (ADR-824).
 	profilingEnabled := app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled
 	beforeCheckpoint := app.Manifest.BeforeCheckpoint != nil || profilingEnabled || frozenFunction
-	if allowReuse && !profilingEnabled {
+	if allowReuse && !profilingEnabled && !keepMemory {
 		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, beforeCheckpoint)
 	} else {
 		b, err = e.captureSnapshotWithStandards(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, beforeCheckpoint, "park")

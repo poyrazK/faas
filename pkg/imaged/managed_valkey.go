@@ -32,3 +32,20 @@ func (h *Handler) managedValkeyImageCheck(ctx context.Context, app state.App, re
 	}
 	return nil
 }
+
+// isManagedCacheDeployment reports whether deploymentID belongs to a managed
+// cache. A cache's park captures its memory, and that capture must replace
+// the deployment's live row: keeping the older row, as for every other app,
+// would wake the cache with old or no data (ADR-20261116192126).
+func (h *Handler) isManagedCacheDeployment(ctx context.Context, deploymentID string) bool {
+	store, ok := h.store.(state.ManagedValkeyStore)
+	if !ok {
+		return false
+	}
+	dep, err := h.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return false
+	}
+	_, err = store.GetManagedValkeyCache(ctx, dep.AppID)
+	return err == nil
+}

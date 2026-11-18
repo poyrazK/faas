@@ -361,6 +361,26 @@ closed by a later slice:
       cache's `max_instances: 1` (the rollout concurrency grant);
     - that `CONFIG SET port` opens TCP on a running Valkey 8.1;
     - the 100-handoff no-lost-writes test from the phasing list.
+- **Park keeps a cache's memory (slice 5, an exception to the snapshot
+  rule).** The platform's snapshots are deployment cache, not the memory of
+  the last run. Park reuses a healthy init capture, and a VM that served
+  requests is discarded for a clean recapture (ADR-20261115113000).
+  - Metal run redis-20261118T060901 showed what this does to a cache:
+    SET, park, then a wake from the primed init capture, and GET returned
+    nil.
+  - For a managed cache only, schedd's park now always captures the
+    running VM (`keepsMemoryAtPark`). It never reuses a capture and never
+    queues a clean recapture.
+  - imaged publishes that capture in place of the deployment's live row
+    (`isManagedCacheDeployment`). For any other app it keeps the older row
+    and drops the new capture.
+  - Wake restores the newest live row, as before.
+  - Retiring the old row and publishing the new one are two statements, so
+    a wake that lands between them cold-boots the cache empty. This matches
+    a cache cold boot after node loss.
+  - Clean recapture exists so one request's state cannot reach later
+    requests. That concern does not apply here: the cache's memory is the
+    customer's own data, and it is restored only into the same cache.
 - **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
   and adding it would break customers who deploy Valkey themselves. That is
   left for an owner decision.
