@@ -11,11 +11,75 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimEndedGrants = `-- name: ClaimEndedGrants :many
+UPDATE support_grants g SET summary_sent_at = clock_timestamp()
+FROM orgs o
+WHERE o.id = g.org_id AND g.id IN (
+  SELECT e.id FROM support_grants e
+  WHERE e.summary_sent_at IS NULL
+    AND (e.revoked_at IS NOT NULL OR e.expires_at <= now())
+    AND coalesce(e.revoked_at, e.expires_at) > now() - interval '1 day'
+  ORDER BY coalesce(e.revoked_at, e.expires_at)
+  LIMIT $1::int
+  FOR UPDATE SKIP LOCKED)
+RETURNING g.id, g.org_id, g.app_ids, g.created_by_account_id, g.request_id, g.reason, g.created_at, g.expires_at,
+          g.revoked_at, g.revoked_by_account_id, o.slug AS org_slug
+`
+
+type ClaimEndedGrantsRow struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	AppIds             []pgtype.UUID
+	CreatedByAccountID pgtype.UUID
+	RequestID          pgtype.UUID
+	Reason             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RevokedByAccountID pgtype.UUID
+	OrgSlug            string
+}
+
+// ClaimEndedGrants marks up to max grants that ended (revoked or expired) in
+// the last day and have no summary yet, and returns them for the summary
+// mail. SKIP LOCKED lets every apid run the loop; each grant is claimed once.
+func (q *Queries) ClaimEndedGrants(ctx context.Context, db DBTX, maxGrants int32) ([]ClaimEndedGrantsRow, error) {
+	rows, err := db.Query(ctx, claimEndedGrants, maxGrants)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimEndedGrantsRow
+	for rows.Next() {
+		var i ClaimEndedGrantsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.AppIds,
+			&i.CreatedByAccountID,
+			&i.RequestID,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+			&i.RevokedByAccountID,
+			&i.OrgSlug,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const decideRequest = `-- name: DecideRequest :one
 UPDATE support_grant_requests
 SET status = $1::text, decided_at = clock_timestamp(), decided_by_account_id = $2::uuid
 WHERE id = $3::uuid AND org_id = $4::uuid AND status = 'open' AND expires_at > now()
-RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id
+RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id, app_ids, ttl_seconds, extends_grant_id
 `
 
 type DecideRequestParams struct {
@@ -43,6 +107,9 @@ func (q *Queries) DecideRequest(ctx context.Context, db DBTX, arg DecideRequestP
 		&i.ExpiresAt,
 		&i.DecidedAt,
 		&i.DecidedByAccountID,
+		&i.AppIds,
+		&i.TtlSeconds,
+		&i.ExtendsGrantID,
 	)
 	return i, err
 }
@@ -104,8 +171,21 @@ type InsertGrantParams struct {
 	TtlSeconds float64
 }
 
+type InsertGrantRow struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	AppIds             []pgtype.UUID
+	CreatedByAccountID pgtype.UUID
+	RequestID          pgtype.UUID
+	Reason             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RevokedByAccountID pgtype.UUID
+}
+
 // Customer-granted support access (ADR-20261116163508).
-func (q *Queries) InsertGrant(ctx context.Context, db DBTX, arg InsertGrantParams) (SupportGrant, error) {
+func (q *Queries) InsertGrant(ctx context.Context, db DBTX, arg InsertGrantParams) (InsertGrantRow, error) {
 	row := db.QueryRow(ctx, insertGrant,
 		arg.OrgID,
 		arg.AppIds,
@@ -114,7 +194,7 @@ func (q *Queries) InsertGrant(ctx context.Context, db DBTX, arg InsertGrantParam
 		arg.Reason,
 		arg.TtlSeconds,
 	)
-	var i SupportGrant
+	var i InsertGrantRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -131,20 +211,24 @@ func (q *Queries) InsertGrant(ctx context.Context, db DBTX, arg InsertGrantParam
 }
 
 const insertRequest = `-- name: InsertRequest :one
-INSERT INTO support_grant_requests (org_id, operator_account_id, reason, expires_at)
+INSERT INTO support_grant_requests (org_id, operator_account_id, reason, expires_at, app_ids, ttl_seconds, extends_grant_id)
 SELECT $1::uuid, $2::uuid, $3::text,
-       clock_timestamp() + make_interval(secs => $4::double precision)
+       clock_timestamp() + make_interval(secs => $4::double precision),
+       $5::uuid[], $6::int, $7::uuid
 WHERE (SELECT count(*) FROM support_grant_requests r
-       WHERE r.org_id = $1::uuid AND r.status = 'open' AND r.expires_at > now()) < $5::int
-RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id
+       WHERE r.org_id = $1::uuid AND r.status = 'open' AND r.expires_at > now()) < $8::int
+RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id, app_ids, ttl_seconds, extends_grant_id
 `
 
 type InsertRequestParams struct {
-	OrgID      pgtype.UUID
-	OperatorID pgtype.UUID
-	Reason     string
-	TtlSeconds float64
-	MaxOpen    int32
+	OrgID           pgtype.UUID
+	OperatorID      pgtype.UUID
+	Reason          string
+	TtlSeconds      float64
+	AppIds          []pgtype.UUID
+	GrantTtlSeconds pgtype.Int4
+	ExtendsGrantID  pgtype.UUID
+	MaxOpen         int32
 }
 
 // At most max_open open, unexpired requests per organization; run under
@@ -155,6 +239,9 @@ func (q *Queries) InsertRequest(ctx context.Context, db DBTX, arg InsertRequestP
 		arg.OperatorID,
 		arg.Reason,
 		arg.TtlSeconds,
+		arg.AppIds,
+		arg.GrantTtlSeconds,
+		arg.ExtendsGrantID,
 		arg.MaxOpen,
 	)
 	var i SupportGrantRequest
@@ -168,6 +255,9 @@ func (q *Queries) InsertRequest(ctx context.Context, db DBTX, arg InsertRequestP
 		&i.ExpiresAt,
 		&i.DecidedAt,
 		&i.DecidedByAccountID,
+		&i.AppIds,
+		&i.TtlSeconds,
+		&i.ExtendsGrantID,
 	)
 	return i, err
 }
@@ -295,7 +385,7 @@ func (q *Queries) ListLiveGrants(ctx context.Context, db DBTX) ([]ListLiveGrants
 }
 
 const listRequests = `-- name: ListRequests :many
-SELECT id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id
+SELECT id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id, app_ids, ttl_seconds, extends_grant_id
 FROM support_grant_requests
 WHERE org_id = $1::uuid
 ORDER BY created_at DESC
@@ -321,6 +411,9 @@ func (q *Queries) ListRequests(ctx context.Context, db DBTX, orgID pgtype.UUID) 
 			&i.ExpiresAt,
 			&i.DecidedAt,
 			&i.DecidedByAccountID,
+			&i.AppIds,
+			&i.TtlSeconds,
+			&i.ExtendsGrantID,
 		); err != nil {
 			return nil, err
 		}

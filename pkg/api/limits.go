@@ -336,6 +336,9 @@ const (
 	// request's reason, in characters.
 	SupportReasonMinChars = 3
 	SupportReasonMaxChars = 400
+	// SupportGrantSummaryPollInterval is how often apid looks for ended
+	// grants to mail their end-of-access summary.
+	SupportGrantSummaryPollInterval = time.Minute
 )
 
 // EmailChangeRevertWindow is how long after a confirmed sign-in email
