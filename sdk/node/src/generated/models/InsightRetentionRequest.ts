@@ -15,7 +15,7 @@ export type InsightRetentionRequest = {
   periods?: number;
   unit?: 'customer' | 'subject';
   /**
-   * flag:KEY or property:KEY.
+   * Split cohorts by flag:KEY or property:KEY.
    */
   by?: string;
 };

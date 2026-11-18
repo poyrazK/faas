@@ -63705,8 +63705,8 @@ paths:
         - { $ref: '#/components/parameters/FlagsProjectSlug' }
         - { $ref: '#/components/parameters/FlagsEnvironment' }
         - { name: flag, in: query, required: true, description: Flag key., schema: { type: string } }
-        - { name: from, in: query, required: false, description: Range start (RFC 3339)., schema: { type: string, format: date-time } }
-        - { name: until, in: query, required: false, description: Range end (RFC 3339); defaults to now., schema: { type: string, format: date-time } }
+        - { name: from, in: query, required: false, description: Start of the request telemetry range (RFC 3339); defaults to one day ago., schema: { type: string, format: date-time } }
+        - { name: until, in: query, required: false, description: End of the request telemetry range (RFC 3339); defaults to now., schema: { type: string, format: date-time } }
       responses:
         '200':
           description: Request telemetry per flag value.
@@ -90545,7 +90545,7 @@ components:
         period: { type: string, enum: [day, week], default: day }
         periods: { type: integer, minimum: 1, maximum: 12 }
         unit: { type: string, enum: [customer, subject], default: customer }
-        by: { type: string, description: "flag:KEY or property:KEY." }
+        by: { type: string, description: "Split cohorts by flag:KEY or property:KEY." }
     InsightRetentionRow:
       description: A retention cohort, breakdown value or the overall row.
       type: object

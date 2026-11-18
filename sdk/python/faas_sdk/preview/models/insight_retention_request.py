@@ -34,7 +34,7 @@ class InsightRetentionRequest:
     periods: int | Unset = UNSET
     unit: InsightRetentionRequestUnit | Unset = "customer"
     by: str | Unset = UNSET
-    """flag:KEY or property:KEY."""
+    """Split cohorts by flag:KEY or property:KEY."""
 
     def to_dict(self) -> dict[str, Any]:
         start = self.start.to_dict()

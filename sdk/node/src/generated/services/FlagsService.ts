@@ -1099,11 +1099,11 @@ export class FlagsService {
      */
     flag: string,
     /**
-     * Range start (RFC 3339).
+     * Start of the request telemetry range (RFC 3339); defaults to one day ago.
      */
     from?: string,
     /**
-     * Range end (RFC 3339); defaults to now.
+     * End of the request telemetry range (RFC 3339); defaults to now.
      */
     until?: string,
   }): CancelablePromise<InsightRequests> {
