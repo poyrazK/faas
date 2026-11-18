@@ -401,50 +401,12 @@ func RetentionOnceRequestIDJournal(ctx context.Context, db retentionExecer) (int
 	return total, ErrRetentionBatchCap
 }
 
-// retentionDropExpiredPartitionsSQL is a single-statement
-// partition-drop pass (PR-B ADR-127). Enumerates monthly
-// partitions of request_telemetry whose upper bound is older than
-// the longest plan retention cap (Scale=14 days), and DROPs each
-// in turn via a DO block.
-//
-// The partition name is request_telemetry_YYYYMM (the 00435
-// migration convention). We parse the trailing 6-digit suffix
-// into a date and compare against now() - 1 day. Anything older
-// can be safely dropped — the per-row sweep above already
-// deleted any row that's not beyond the per-plan retention.
-//
-// Cost: O(partitions) ≈ 3-4 rows on a healthy fleet. The
-// pg_inherits catalog query is constant-time.
-const retentionDropExpiredPartitionsSQL = `
-DO $$
-DECLARE
-    partname text;
-    partsuffix text;
-    partstart date;
-BEGIN
-    -- DROP takes ACCESS EXCLUSIVE on request_telemetry; queued behind a
-    -- long reader it would block every later one. Retry on the next tick.
-    PERFORM set_config('lock_timeout', '2s', true);
-    FOR partname IN
-        SELECT c.relname
-        FROM pg_inherits i
-        JOIN pg_class c ON c.oid = i.inhrelid
-        JOIN pg_class p ON p.oid = i.inhparent
-        WHERE p.relname = 'request_telemetry'
-          AND c.relname ~ '^request_telemetry_[0-9]{6}$'
-    LOOP
-        partsuffix := substring(partname from '[0-9]{6}$');
-        BEGIN
-            partstart := to_date(partsuffix, 'YYYYMM');
-        EXCEPTION WHEN OTHERS THEN
-            CONTINUE;
-        END;
-        IF partstart + interval '1 month' <= now() - interval '14 days' THEN
-            EXECUTE 'DROP TABLE IF EXISTS public.' || quote_ident(partname);
-        END IF;
-    END LOOP;
-END $$;
-`
+// retentionDropExpiredPartitionsSQL drops monthly request_telemetry partitions
+// whose upper bound is past the longest plan retention (Scale, 14 days). It
+// runs as the schema owner in monthly_partitions_drop_expired (migration
+// 20261118162630014): meterd's runtime login cannot DROP, which paged
+// FaasDBPermissionDenied hourly on prod from 2026-11-17.
+const retentionDropExpiredPartitionsSQL = `SELECT monthly_partitions_drop_expired('request_telemetry'::regclass)`
 
 // DropExpiredRequestTelemetryPartitions (PR-B ADR-127) drops
 // monthly partitions of request_telemetry whose month-suffix has an
