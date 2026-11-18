@@ -20,12 +20,22 @@ scoped key in Gemini CLI's environment as `FAAS_TOKEN` instead; see
 ## Tell Gemini CLI how the project deploys
 
 Projects made with `gregale init` include an `AGENTS.md` with Gregale's
-deploy, check and rollback steps. For an existing project, add the section in
-[Project instructions for agents](agents.md#project-instructions-for-agents).
+deploy, check and rollback steps.
 
-Gemini CLI reads `GEMINI.md` unless told otherwise. To have it read
-`AGENTS.md` too, add this to the project's `.gemini/settings.json` (older
-releases call the setting `contextFileName`):
+For an existing project, run this in its root:
+
+```sh
+gregale init --agents --name my-api
+```
+
+It adds a Gregale section to `AGENTS.md`; see
+[Project instructions for agents](agents.md#project-instructions-for-agents).
+It also creates `.gemini/settings.json` when the project or your machine uses
+Gemini CLI.
+
+Gemini CLI reads `GEMINI.md` unless told otherwise. If the project already
+has a `.gemini/settings.json`, the command leaves it alone; add `AGENTS.md`
+to it yourself (older releases call the setting `contextFileName`):
 
 ```json
 {
