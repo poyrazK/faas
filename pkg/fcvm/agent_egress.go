@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -32,6 +33,14 @@ type AgentEgressConfig struct {
 	// HandshakeMaxAge is how old the tunnel's latest handshake may be when
 	// an agent VM boots (api.AgentEgressHandshakeMaxAgeSec).
 	HandshakeMaxAge time.Duration
+	// Proxy is the gateway's politeness proxy. When set, every agent VM is
+	// registered with it before boot, and a VM it cannot register does not
+	// boot (ADR-20261117185346 §3–§4). Nil while the gateway forwards agent
+	// traffic directly.
+	Proxy AgentEgressProxy
+	// ProxyRenewEvery is how often live registrations are renewed; it must
+	// be well under the proxy's registration TTL.
+	ProxyRenewEvery time.Duration
 }
 
 // The agent rules sit ahead of the static-egress exception (100) and the
@@ -53,6 +62,14 @@ type agentEgressState struct {
 	addrs map[netip.Addr]string
 	// starting holds the rules of agent VMs booting, before they are live.
 	starting map[string]netns.AgentEgressRule
+	// registered are the addresses the proxy holds a registration for.
+	registered map[netip.Addr]agentEgressRegistration
+	// regMu orders every registration call, so a late renewal or removal
+	// never lands after the address has moved to another VM. It is taken
+	// before Manager.mu, never inside it.
+	regMu sync.Mutex
+	// unregister forgets a released address at the proxy, then frees it.
+	unregister func(netip.Addr)
 	// now is the clock the handshake age is read against; nil is time.Now.
 	now func() time.Time
 }
@@ -76,10 +93,17 @@ func (m *Manager) SetAgentEgress(cfg AgentEgressConfig) error {
 		return errors.New("fcvm: agent egress needs its routing table")
 	case cfg.HandshakeMaxAge <= 0:
 		return errors.New("fcvm: agent egress needs a handshake age bound")
+	case cfg.Proxy != nil && cfg.ProxyRenewEvery <= 0:
+		return errors.New("fcvm: agent egress proxy needs a renewal interval")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.agentEgress = agentEgressState{cfg: &cfg, addrs: map[netip.Addr]string{}, starting: map[string]netns.AgentEgressRule{}}
+	s := &m.agentEgress
+	s.cfg = &cfg
+	s.addrs = map[netip.Addr]string{}
+	s.starting = map[string]netns.AgentEgressRule{}
+	s.registered = map[netip.Addr]agentEgressRegistration{}
+	s.unregister = m.unregisterAgentEgress
 	return nil
 }
 
@@ -133,6 +157,10 @@ func (m *Manager) prepareAgentEgressWake(ctx context.Context, req WakeRequest, l
 		m.agentEgress.releaseLocked(req.Instance)
 		m.mu.Unlock()
 		_ = m.renderHostSMTPAllowlistRules(context.WithoutCancel(ctx), false)
+	}
+	if err := m.registerAgentEgress(ctx, addr, req.Instance, req.AccountID, req.sandboxID); err != nil {
+		undo()
+		return nil, fmt.Errorf("%w: %w", errAgentEgressUnavailable, err)
 	}
 	if err := m.renderHostSMTPAllowlistRules(ctx, false); err != nil {
 		undo()
@@ -194,12 +222,21 @@ func (s *agentEgressState) allocateLocked(instance string) (netip.Addr, bool) {
 	return netip.Addr{}, false
 }
 
-// releaseLocked frees instance's address.
+// releaseLocked frees instance's address. With a proxy, the address stays
+// held, ownerless, until the proxy has forgotten it, so it never reaches the
+// next VM while the old registration stands.
 func (s *agentEgressState) releaseLocked(instance string) {
 	for addr, owner := range s.addrs {
-		if owner == instance {
-			delete(s.addrs, addr)
+		if owner != instance {
+			continue
 		}
+		delete(s.registered, addr)
+		if s.cfg == nil || s.cfg.Proxy == nil || s.unregister == nil {
+			delete(s.addrs, addr)
+			continue
+		}
+		s.addrs[addr] = ""
+		go s.unregister(addr)
 	}
 }
 

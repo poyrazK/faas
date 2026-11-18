@@ -3,7 +3,6 @@ package agentproxy
 import (
 	"context"
 	"errors"
-	"hash/fnv"
 	"io"
 	"log/slog"
 	"net"
@@ -129,11 +128,21 @@ func (p *Proxy) serve(ctx context.Context, conn net.Conn) (outcome, host string)
 }
 
 // addressFor is the agent address vm leaves from, the same for its life.
-func (p *Proxy) addressFor(vm netip.Addr) netip.Addr {
-	h := fnv.New32a()
+func (p *Proxy) addressFor(vm netip.Addr) netip.Addr { return AddressFor(p.Addresses, vm) }
+
+// AddressFor picks vm's agent address from its low bits: index
+// vm & (size-1), where size is the smallest power of two holding every
+// address, modulo the count. The gateway's nftables source NAT
+// (agent-egress-gw.nft.j2) makes the same choice for traffic the proxy does
+// not carry, so a VM leaves from one address whatever the port.
+func AddressFor(addresses []netip.Addr, vm netip.Addr) netip.Addr {
+	n := len(addresses)
+	size := 1
+	for size < n {
+		size <<= 1
+	}
 	b := vm.As4()
-	_, _ = h.Write(b[:])
-	return p.Addresses[int(h.Sum32()%uint32(len(p.Addresses)))]
+	return addresses[(int(b[3])&(size-1))%n]
 }
 
 // splice copies both ways until each side has finished sending.

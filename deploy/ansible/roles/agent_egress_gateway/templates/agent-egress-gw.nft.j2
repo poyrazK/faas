@@ -17,6 +17,11 @@ table inet faas_agent_gw {
     # Agents reach the internet through the gateway, never the gateway.
     iifname "{{ faas_agent_egress_iface }}" ct state established,related accept
     iifname "{{ faas_agent_egress_iface }}" icmp type echo-request accept
+{% if faas_agentproxyd_enabled | bool %}
+    # agentproxyd: the redirected agent connections, and the nodes'
+    # registrations (agentproxyd accepts those only from node addresses).
+    iifname "{{ faas_agent_egress_iface }}" ip daddr {{ faas_agent_egress_gateway_address | regex_replace('/.*$', '') }} tcp dport { {{ faas_agentproxyd_http_port }}, {{ faas_agentproxyd_tls_port }}, {{ faas_agentproxyd_registration_port }} } accept
+{% endif %}
     iifname "{{ faas_agent_egress_iface }}" counter name "faas_agent_gw_input_drop" drop
   }
 
@@ -37,14 +42,30 @@ table inet faas_agent_gw {
     oifname "{{ faas_agent_egress_iface }}" drop
   }
 
+{% if faas_agentproxyd_enabled | bool %}
+  # ADR-20261117185346 §4: agent TCP 80 and 443 go to agentproxyd, which
+  # dials out itself from the VM's agent address. Everything else is
+  # forwarded below.
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "{{ faas_agent_egress_iface }}" ip daddr != {{ faas_agent_egress_gateway_address | regex_replace('/.*$', '') }} tcp dport 80 redirect to :{{ faas_agentproxyd_http_port }}
+    iifname "{{ faas_agent_egress_iface }}" ip daddr != {{ faas_agent_egress_gateway_address | regex_replace('/.*$', '') }} tcp dport 443 redirect to :{{ faas_agentproxyd_tls_port }}
+  }
+
+{% endif %}
   # Ahead of the tenant table's masquerade, so agent traffic takes an agent
-  # address; each agent VM's tunnel address keeps one address for its life.
+  # address. Each agent VM's tunnel address keeps one address for its life:
+  # its low bits pick it, the same choice agentproxyd makes
+  # (agentproxy.AddressFor), so proxied and forwarded traffic agree.
   chain postrouting {
     type nat hook postrouting priority srcnat - 1; policy accept;
-{% if faas_agent_egress_addresses | length == 1 %}
+{% set n = faas_agent_egress_addresses | length %}
+{% if n == 1 %}
     ip saddr {{ faas_agent_egress_tunnel_cidr }} oifname "{{ faas_agent_egress_gateway_public_iface }}" snat ip to {{ faas_agent_egress_addresses[0] }}
 {% else %}
-    ip saddr {{ faas_agent_egress_tunnel_cidr }} oifname "{{ faas_agent_egress_gateway_public_iface }}" snat ip to jhash ip saddr mod {{ faas_agent_egress_addresses | length }} map { {% for a in faas_agent_egress_addresses %}{{ loop.index0 }} : {{ a }}{{ ", " if not loop.last }}{% endfor %} }
+{% set ns = namespace(size=1) %}
+{% for _ in range(6) %}{% if ns.size < n %}{% set ns.size = ns.size * 2 %}{% endif %}{% endfor %}
+    ip saddr {{ faas_agent_egress_tunnel_cidr }} oifname "{{ faas_agent_egress_gateway_public_iface }}" snat ip to ip saddr & 0.0.0.{{ ns.size - 1 }} map { {% for i in range(ns.size) %}0.0.0.{{ i }} : {{ faas_agent_egress_addresses[i % n] }}{{ ", " if not loop.last }}{% endfor %} }
 {% endif %}
   }
 }

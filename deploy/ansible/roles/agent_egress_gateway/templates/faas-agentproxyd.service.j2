@@ -1,0 +1,52 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Gregale agent egress politeness proxy (ADR-20261117185346)
+Documentation=https://github.com/poyrazK/faas/blob/main/docs/adr/20261117185346-agent-egress-gateway.md
+# It listens on the tunnel address, which exists only while wg-agent is up.
+Requires=wg-quick@{{ faas_agent_egress_iface }}.service
+After=wg-quick@{{ faas_agent_egress_iface }}.service faas-agent-egress-firewall.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=faas-agentproxyd
+Group=faas-agentproxyd
+ExecStart=/opt/faas/current/bin/agentproxyd \
+  -tunnel-cidr {{ faas_agent_egress_tunnel_cidr }} \
+  -node-prefix {{ faas_agent_egress_node_prefix }} \
+  -addresses {{ faas_agent_egress_addresses | join(',') }} \
+  -http-listen {{ faas_agent_egress_gateway_address | regex_replace('/.*$', '') }}:{{ faas_agentproxyd_http_port }} \
+  -tls-listen {{ faas_agent_egress_gateway_address | regex_replace('/.*$', '') }}:{{ faas_agentproxyd_tls_port }} \
+  -registration-listen {{ faas_agent_egress_gateway_address | regex_replace('/.*$', '') }}:{{ faas_agentproxyd_registration_port }} \
+  -metrics-listen {{ faas_agentproxyd_metrics_listen }} \
+  -blocklist /etc/faas/agentproxyd/blocklist.txt
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+MemoryHigh=768M
+MemoryMax=1G
+TasksMax=8192
+LimitNOFILE=65536
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ReadOnlyPaths=/etc/faas
+
+[Install]
+WantedBy=multi-user.target

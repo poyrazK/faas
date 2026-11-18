@@ -1,0 +1,152 @@
+---
+# ADR-20261117185346 §4: agentproxyd on the gateway host. The release comes
+# signed, as on a database node: verify the tarball against the release
+# workflow's identity, extract it, then switch /opt/faas/current. The
+# firewall already redirects agent TCP 80 and 443 to it, so until it runs
+# those connections are refused: agents fail closed, never around it.
+
+- name: agentproxyd — create the service group
+  ansible.builtin.group:
+    name: faas-agentproxyd
+    system: true
+
+- name: agentproxyd — create the service user
+  ansible.builtin.user:
+    name: faas-agentproxyd
+    group: faas-agentproxyd
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: agentproxyd — create the config directory
+  ansible.builtin.file:
+    path: /etc/faas/agentproxyd
+    state: directory
+    owner: root
+    group: faas-agentproxyd
+    mode: "0750"
+
+- name: agentproxyd — install the blocklist
+  ansible.builtin.copy:
+    src: blocklist.txt
+    dest: /etc/faas/agentproxyd/blocklist.txt
+    owner: root
+    group: faas-agentproxyd
+    mode: "0640"
+  notify: reload faas-agentproxyd blocklist
+
+- name: agentproxyd — install a signed release
+  when: faas_agent_egress_release_tarball | length > 0
+  block:
+    - name: agentproxyd — require every release input
+      ansible.builtin.assert:
+        that:
+          - faas_agent_egress_release_signature | length > 0
+          - faas_agent_egress_release_git_sha is match('^[0-9a-f]{7,40}$')
+          - faas_agent_egress_cosign_source | length > 0
+        fail_msg: >-
+          A release install needs faas_agent_egress_release_signature,
+          faas_agent_egress_release_git_sha and faas_agent_egress_cosign_source.
+
+    - name: agentproxyd — create the bootstrap directory
+      ansible.builtin.file:
+        path: /var/lib/faas/bootstrap
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: agentproxyd — install cosign
+      ansible.builtin.copy:
+        src: "{{ faas_agent_egress_cosign_source }}"
+        dest: /usr/local/bin/cosign
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: agentproxyd — stage the release and its signature
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - { src: "{{ faas_agent_egress_release_tarball }}", dest: /var/lib/faas/bootstrap/release.tar.gz }
+        - { src: "{{ faas_agent_egress_release_signature }}", dest: /var/lib/faas/bootstrap/release.cosign.bundle }
+
+    - name: agentproxyd — verify the release signature
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/cosign
+          - verify-blob
+          - --certificate-identity-regexp
+          - '^https://github\.com/poyrazK/faas/\.github/workflows/release\.yml@refs/tags/.+$'
+          - --certificate-oidc-issuer
+          - https://token.actions.githubusercontent.com
+          - --bundle
+          - /var/lib/faas/bootstrap/release.cosign.bundle
+          - /var/lib/faas/bootstrap/release.tar.gz
+      changed_when: false
+
+    - name: agentproxyd — create the release directory
+      ansible.builtin.file:
+        path: "/opt/faas/releases/{{ faas_agent_egress_release_git_sha }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: agentproxyd — extract the verified release
+      ansible.builtin.unarchive:
+        src: /var/lib/faas/bootstrap/release.tar.gz
+        dest: "/opt/faas/releases/{{ faas_agent_egress_release_git_sha }}"
+        remote_src: true
+        owner: root
+        group: root
+        creates: "/opt/faas/releases/{{ faas_agent_egress_release_git_sha }}/bin/agentproxyd"
+
+    - name: agentproxyd — switch /opt/faas/current to the release
+      ansible.builtin.file:
+        src: "/opt/faas/releases/{{ faas_agent_egress_release_git_sha }}"
+        dest: /opt/faas/current
+        state: link
+        force: true
+      notify: restart faas-agentproxyd
+
+- name: agentproxyd — install the unit
+  ansible.builtin.template:
+    src: faas-agentproxyd.service.j2
+    dest: /etc/systemd/system/faas-agentproxyd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-agentproxyd
+
+- name: agentproxyd — check for the released binary
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/agentproxyd
+  register: faas_agentproxyd_binary
+
+- name: agentproxyd — enable and start
+  ansible.builtin.systemd_service:
+    name: faas-agentproxyd.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: faas_agentproxyd_binary.stat.exists
+
+- name: agentproxyd — refuse a proxy without a release
+  ansible.builtin.fail:
+    msg: >-
+      egress.agent_gateway.proxy is on but /opt/faas/current/bin/agentproxyd
+      is missing, so agent TCP 80 and 443 are refused. Pass
+      faas_agent_egress_release_tarball, _signature, _git_sha and
+      faas_agent_egress_cosign_source for a release that contains agentproxyd.
+  when: not faas_agentproxyd_binary.stat.exists
+
+- name: agentproxyd — wait for the registration listener
+  ansible.builtin.wait_for:
+    host: "{{ faas_agent_egress_gateway_address | regex_replace('/.*$', '') }}"
+    port: "{{ faas_agentproxyd_registration_port }}"
+    timeout: 60

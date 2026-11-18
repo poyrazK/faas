@@ -13,12 +13,22 @@ func TestAgentEgressConfigFromEnv(t *testing.T) {
 	if err != nil || cfg.Iface != "wg-agent" || cfg.Slice.String() != "10.78.8.0/22" || cfg.Table != 51821 || cfg.HandshakeMaxAge != 180*time.Second {
 		t.Fatalf("cfg = %+v, %v", cfg, err)
 	}
+	if cfg.Proxy != nil {
+		t.Fatal("no FAAS_AGENT_EGRESS_PROXY_URL still set a proxy")
+	}
+	cfg, err = agentEgressConfigFromEnv(env(map[string]string{"FAAS_AGENT_EGRESS_IFACE": "wg-agent", "FAAS_AGENT_EGRESS_SLICE": "10.78.8.0/22",
+		"FAAS_AGENT_EGRESS_PROXY_URL": "http://10.78.0.1:15081"}))
+	if err != nil || cfg.Proxy == nil || cfg.ProxyRenewEvery != 100*time.Second {
+		t.Fatalf("with proxy: cfg = %+v, %v", cfg, err)
+	}
 	for _, bad := range []map[string]string{
 		{},
 		{"FAAS_AGENT_EGRESS_IFACE": "wg-agent"},
 		{"FAAS_AGENT_EGRESS_SLICE": "10.78.8.0/22"},
 		{"FAAS_AGENT_EGRESS_IFACE": "wg agent", "FAAS_AGENT_EGRESS_SLICE": "10.78.8.0/22"},
 		{"FAAS_AGENT_EGRESS_IFACE": "wg-agent", "FAAS_AGENT_EGRESS_SLICE": "not-a-cidr"},
+		{"FAAS_AGENT_EGRESS_IFACE": "wg-agent", "FAAS_AGENT_EGRESS_SLICE": "10.78.8.0/22", "FAAS_AGENT_EGRESS_PROXY_URL": "https://gw.example:15081"},
+		{"FAAS_AGENT_EGRESS_IFACE": "wg-agent", "FAAS_AGENT_EGRESS_SLICE": "10.78.8.0/22", "FAAS_AGENT_EGRESS_PROXY_URL": "http://10.78.0.1"},
 	} {
 		if _, err := agentEgressConfigFromEnv(env(bad)); err == nil {
 			t.Errorf("%v accepted", bad)

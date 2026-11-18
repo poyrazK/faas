@@ -12,6 +12,11 @@ Table = off
 # is the public NIC; loose reverse-path filtering accepts them.
 PostUp = sysctl -qw net.ipv4.conf.%i.rp_filter=2
 PostUp = ip route replace default dev %i table {{ faas_agent_egress_route_table }}
+{% if faas_agent_egress_gateway_address %}
+# vmmd's own calls to the gateway (agentproxyd registrations) take the
+# tunnel from the node's address, so the WireGuard peer vouches for them.
+PostUp = ip route replace {{ faas_agent_egress_gateway_address }}/32 dev %i src {{ faas_agent_egress_node_address | regex_replace('/.*$', '') }}
+{% endif %}
 PreDown = ip route flush table {{ faas_agent_egress_route_table }}
 
 [Peer]

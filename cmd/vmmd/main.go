@@ -1395,7 +1395,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err := mgr.SetAgentEgress(cfg); err != nil {
 			return fmt.Errorf("vmmd: %w", err)
 		}
-		log.Info("vmmd: sandbox sessions leave through the agent egress gateway", "iface", cfg.Iface, "slice", cfg.Slice.String())
+		log.Info("vmmd: sandbox sessions leave through the agent egress gateway", "iface", cfg.Iface, "slice", cfg.Slice.String(),
+			"proxy", cfg.Proxy != nil)
+		go mgr.RunAgentEgressRenewal(ctx)
 	}
 	// ADR-477: journal survivors remain quarantined. The legacy name reaper
 	// is only available to portable wiring without a journal.

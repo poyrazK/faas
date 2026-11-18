@@ -64,4 +64,9 @@ Environment="FAAS_TENANT_EGRESS_IFACE={{ faas_tenant_egress_iface }}"
 # use it only with FAAS_AGENT_EGRESS_GATEWAY=1.
 Environment="FAAS_AGENT_EGRESS_IFACE={{ faas_agent_egress_iface }}"
 Environment="FAAS_AGENT_EGRESS_SLICE={{ faas_agent_egress_node_slice }}"
+{% if faas_agent_egress_proxy_url | default('') %}
+# ADR-20261117185346 §4: register each agent VM with the gateway's proxy
+# before it boots.
+Environment="FAAS_AGENT_EGRESS_PROXY_URL={{ faas_agent_egress_proxy_url }}"
+{% endif %}
 {% endif %}
