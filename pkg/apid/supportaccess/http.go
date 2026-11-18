@@ -111,7 +111,7 @@ func (h HTTP) OperatorRequest(w http.ResponseWriter, r *http.Request, acct state
 	if !httpkit.DecodeJSONLimit(w, r, &req, maxBody) {
 		return
 	}
-	out, prob := h.Service.Request(r.Context(), h.Actor(r, acct), req.Org, req.Reason)
+	out, prob := h.Service.Request(r.Context(), h.Actor(r, acct), req)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
