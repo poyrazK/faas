@@ -58,7 +58,8 @@ A new daemon, `agentproxyd`, runs on the gateway host. It is a transparent TCP p
 ### 5. The connection log
 
 - The proxy logs every connection with: node, account, session or run, source address, destination name and address, the port, bytes each way, duration, and why it ended or was refused.
-- It writes JSON lines to the journal. The log shipper already carries those off the host. The gateway host gets no database access.
+- It writes one JSON line per connection, message `agent_egress_connection`, to its own journal namespace on the gateway host (`LogNamespace=agentproxyd`). The gateway host gets no database access.
+- *Amended in PR 3:* the draft said the log shipper already carries the journal off the host. It does not: the gateway host is outside the private network and runs no shipper, so the log stays on the gateway. Its namespace is persistent and kept 30 days (the ADR-371 flow log's retention), apart from the host journal's 7-day bound. Shipping it off the host needs a path to Loki and a logs leaf for the gateway; that is a follow-up.
 - So an abuse report naming a public address and a time maps to one session within minutes: the proxy log gives the session directly, and vmmd's flow log (ADR-371) and the session's domain log (ADR-20261117091026 §4) confirm it.
 
 ### Limits (`pkg/api/limits.go`)
@@ -83,7 +84,7 @@ These are starting values. A headless browser opens about six connections per ho
 
 1. **PR 1:** the manifest stanza, ansible (`wg-agent` on the gateway host and the nodes), vmmd's per-VM marking and source NAT, the policy rules (mark → agent table, then unreachable), and the handshake check. Behind `FAAS_AGENT_EGRESS_GATEWAY` (vmmd). Without the proxy, the gateway forwards agent traffic directly.
 2. **PR 2:** `agentproxyd`, with registration, caps, blocklist and metrics. vmmd registers VMs and refuses a boot it cannot register.
-3. **PR 3:** the connection log, its shipping, and the runbook entry for abuse reports.
+3. **PR 3:** the connection log, its retention on the gateway, and the runbook entry for abuse reports (`docs/runbooks/agent-egress-gateway.md`).
 4. **Before the switch is on:** the owner provisions the agent addresses on the gateway host. A metal check covers a web session and a registries session through `wg-agent`, a refusal with the tunnel down, and each cap's refusal. Then one node, then the fleet.
 
 ## Rejected alternatives

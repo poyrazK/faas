@@ -9,6 +9,13 @@
     state: restarted
     daemon_reload: true
 
+# Before the proxy's own restart, so it reconnects to the new instance.
+- name: restart agentproxyd journal
+  ansible.builtin.systemd:
+    name: systemd-journald@agentproxyd.service
+    state: restarted
+  failed_when: false
+
 - name: restart faas-agentproxyd
   ansible.builtin.systemd:
     name: faas-agentproxyd

@@ -30,8 +30,12 @@ type Proxy struct {
 	// Dial connects to dst from local.
 	Dial        func(ctx context.Context, local netip.Addr, dst netip.AddrPort) (net.Conn, error)
 	PeekTimeout time.Duration
-	Log         *slog.Logger
-	Metrics     *Metrics
+	// ConnLog receives one line per connection, accepted or refused
+	// (ADR-20261117185346 §5).
+	ConnLog *slog.Logger
+	Metrics *Metrics
+	// now is the clock; nil is time.Now.
+	now func() time.Time
 
 	limiter *limiter
 }
@@ -63,29 +67,44 @@ func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 // handle serves one agent connection and records its outcome.
 func (p *Proxy) handle(ctx context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
-	outcome, host := p.serve(ctx, conn)
+	rec := ConnRecord{Start: p.clock()}
+	rec.Source, _ = netip.ParseAddrPort(conn.RemoteAddr().String())
+	rec.Source = netip.AddrPortFrom(rec.Source.Addr().Unmap(), rec.Source.Port())
+	rec.Outcome = p.serve(ctx, conn, &rec)
 	if p.Metrics != nil {
-		p.Metrics.connections.WithLabelValues(outcome).Inc()
+		p.Metrics.connections.WithLabelValues(rec.Outcome).Inc()
 	}
-	if outcome != OutcomeAccepted && p.Log != nil {
-		p.Log.Info("agentproxy: connection refused", "outcome", outcome, "source", conn.RemoteAddr().String(), "host", host)
-	}
+	logConn(ctx, p.ConnLog, &rec, p.clock())
 }
 
-func (p *Proxy) serve(ctx context.Context, conn net.Conn) (outcome, host string) {
-	src, err := netip.ParseAddrPort(conn.RemoteAddr().String())
-	if err != nil {
-		return OutcomeUnregistered, ""
+func (p *Proxy) clock() time.Time {
+	if p.now != nil {
+		return p.now()
 	}
-	reg, ok := p.Registry.Lookup(src.Addr().Unmap())
+	return time.Now()
+}
+
+// serve carries conn and fills rec as it learns who and where; it returns
+// the outcome.
+func (p *Proxy) serve(ctx context.Context, conn net.Conn, rec *ConnRecord) string {
+	if !rec.Source.IsValid() {
+		return OutcomeUnregistered
+	}
+	reg, ok := p.Registry.Lookup(rec.Source.Addr())
 	if !ok {
-		return OutcomeUnregistered, ""
+		return OutcomeUnregistered
 	}
+	rec.Node, rec.AccountID, rec.SandboxID = reg.Node, reg.AccountID, reg.SandboxID
 	dst, err := p.OriginalDestination(conn)
-	if err != nil || !publicV4(dst.Addr()) || (dst.Port() != 80 && dst.Port() != 443) {
-		return OutcomeBadDestination, ""
+	if err != nil {
+		return OutcomeBadDestination
+	}
+	rec.Dest = dst
+	if !publicV4(dst.Addr()) || (dst.Port() != 80 && dst.Port() != 443) {
+		return OutcomeBadDestination
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(p.PeekTimeout))
+	var host string
 	var prefix []byte
 	if dst.Port() == 443 {
 		host, prefix, err = peekTLS(conn)
@@ -94,37 +113,45 @@ func (p *Proxy) serve(ctx context.Context, conn net.Conn) (outcome, host string)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if len(host) <= 253 {
+		rec.Host = host
+	}
 	if err != nil || !validHostname(host) {
-		return OutcomeNoSNI, host
+		return OutcomeNoSNI
 	}
 	domain, err := publicsuffix.EffectiveTLDPlusOne(host)
 	if err != nil {
-		return OutcomeNoSNI, host
+		return OutcomeNoSNI
 	}
 	if p.Blocklist.Blocks(host) {
-		return OutcomeBlocklist, host
+		return OutcomeBlocklist
 	}
 	release, refused := p.limiter.acquire(reg.Addr, reg.AccountID, domain)
 	if refused != "" {
-		return refused, host
+		return refused
 	}
 	defer release()
+	rec.Egress = p.addressFor(reg.Addr)
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	upstream, err := p.Dial(dialCtx, p.addressFor(reg.Addr), dst)
+	upstream, err := p.Dial(dialCtx, rec.Egress, dst)
 	cancel()
 	if err != nil {
-		return OutcomeUpstream, host
+		return OutcomeUpstream
 	}
 	defer func() { _ = upstream.Close() }()
-	if _, err := upstream.Write(prefix); err != nil {
-		return OutcomeUpstream, host
+	n, err := upstream.Write(prefix)
+	rec.BytesUp = int64(n)
+	if err != nil {
+		return OutcomeUpstream
 	}
 	if p.Metrics != nil {
 		p.Metrics.active.Inc()
 		defer p.Metrics.active.Dec()
 	}
-	splice(conn, upstream)
-	return OutcomeAccepted, host
+	up, down := splice(conn, upstream)
+	rec.BytesUp += up
+	rec.BytesDown = down
+	return OutcomeAccepted
 }
 
 // addressFor is the agent address vm leaves from, the same for its life.
@@ -145,22 +172,24 @@ func AddressFor(addresses []netip.Addr, vm netip.Addr) netip.Addr {
 	return addresses[(int(b[3])&(size-1))%n]
 }
 
-// splice copies both ways until each side has finished sending.
-func splice(a, b net.Conn) {
+// splice copies both ways until each side has finished sending, and
+// returns the bytes carried from a to b and from b to a.
+func splice(a, b net.Conn) (aToB, bToA int64) {
 	var wg sync.WaitGroup
 	wg.Add(2)
-	half := func(dst, src net.Conn) {
+	half := func(dst, src net.Conn, n *int64) {
 		defer wg.Done()
-		_, _ = io.Copy(dst, src)
+		*n, _ = io.Copy(dst, src)
 		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 			_ = cw.CloseWrite()
 		} else {
 			_ = dst.Close()
 		}
 	}
-	go half(a, b)
-	go half(b, a)
+	go half(a, b, &bToA)
+	go half(b, a, &aToB)
 	wg.Wait()
+	return aToB, bToA
 }
 
 // publicV4 is a public unicast IPv4 address: never a private, shared,
