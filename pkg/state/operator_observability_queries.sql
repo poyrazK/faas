@@ -98,6 +98,61 @@ SELECT count(*)::bigint AS accounts_created,
        coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_seconds), 0)::bigint AS p95_seconds
 FROM samples;
 
+-- name: OperatorOverviewCodingAgents :many
+-- Deploys and new accounts by the coding agent the Gregale CLI reported
+-- (ADR-20261112223000 amendment 1: audit_log.data->>'actor_agent'). Deploys
+-- read the audit window through audit_log_received_at_idx; new accounts start
+-- from the beta funnel cohort and reach their audit rows through
+-- audit_log_account_idx, so neither scans the whole log. A deployment emits
+-- one of these kinds; DISTINCT deployment_id keeps a repeat from counting twice.
+WITH recent AS (
+    SELECT l.data->>'actor_agent' AS agent,
+           count(DISTINCT l.data->>'deployment_id')::bigint AS deploys
+    FROM audit_log l
+    WHERE l.received_at >= sqlc.arg(audit_since)::timestamptz
+      AND l.received_at <= sqlc.arg(observed_at)::timestamptz
+      AND l.kind IN ('app.deployed', 'deploy.local_tarball', 'deploy.source_ref', 'upload.session_committed')
+      AND l.data ? 'actor_agent'
+    GROUP BY 1
+), cohort AS MATERIALIZED (
+    SELECT id, created_at, plan
+    FROM accounts
+    WHERE created_at >= sqlc.arg(cohort_since)::timestamptz
+      AND created_at <= sqlc.arg(observed_at)::timestamptz
+), cohort_agents AS (
+    SELECT DISTINCT l.data->>'actor_agent' AS agent, c.id AS account_id, c.created_at, c.plan
+    FROM cohort c
+    JOIN audit_log l ON l.account_id = c.id
+    WHERE l.received_at >= c.created_at
+      AND l.received_at <= sqlc.arg(observed_at)::timestamptz
+      AND l.kind IN ('app.deployed', 'deploy.local_tarball', 'deploy.source_ref', 'upload.session_committed')
+      AND l.data ? 'actor_agent'
+), cohort_outcomes AS (
+    SELECT ca.agent, ca.plan,
+           EXISTS (
+               SELECT 1 FROM apps a JOIN instances i ON i.app_id = a.id
+               WHERE a.account_id = ca.account_id
+                 AND i.last_request_at >= ca.created_at
+                 AND i.last_request_at <= sqlc.arg(observed_at)::timestamptz
+           ) AS served
+    FROM cohort_agents ca
+), accounts_by_agent AS (
+    SELECT agent,
+           count(*)::bigint AS new_accounts,
+           count(*) FILTER (WHERE served)::bigint AS new_accounts_serving,
+           count(*) FILTER (WHERE plan <> 'free')::bigint AS new_accounts_paid
+    FROM cohort_outcomes
+    GROUP BY agent
+)
+SELECT coalesce(r.agent, a.agent)::text AS agent,
+       coalesce(r.deploys, 0)::bigint AS deploys,
+       coalesce(a.new_accounts, 0)::bigint AS new_accounts,
+       coalesce(a.new_accounts_serving, 0)::bigint AS new_accounts_serving,
+       coalesce(a.new_accounts_paid, 0)::bigint AS new_accounts_paid
+FROM recent r
+FULL JOIN accounts_by_agent a ON a.agent = r.agent
+ORDER BY 3 DESC, 2 DESC, 1; -- new_accounts, deploys, agent
+
 -- name: OperatorOverviewNodes :many
 SELECT name, active, last_heartbeat_at FROM compute_nodes ORDER BY name, id;
 

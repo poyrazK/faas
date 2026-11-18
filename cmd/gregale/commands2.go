@@ -702,6 +702,7 @@ func cmdApp(args []string) int {
 	if explicit["health-path"] {
 		v := *healthPath
 		req.HealthPath = &v
+		warnRootHealthPath(v)
 	}
 	if explicit["health-path-wakes"] {
 		v := true
@@ -2201,6 +2202,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	safeProjectDeploy := fs.Bool("atomic", false, "build an existing HTTP project at zero traffic, then atomically publish its ready release")
 	projectDeploy := fs.Bool("project", false, "deploy all detected workloads as one project (slug defaults from --name or source)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
+	appSlugPrefix := fs.String("prefix", "", "name the project's new apps <prefix><service>, e.g. --prefix shop- (overrides x-gregale-slug-prefix)")
 	// --environment targets a registered project environment. The server
 	// resolves the name to the deployment scope after checking the app's
 	// project registry; omitted preserves the legacy default scope.
@@ -2463,6 +2465,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *progressiveProjectDeploy {
 		ctx = api.ContextWithProjectProgressiveRelease(ctx)
+	}
+	if *appSlugPrefix != "" {
+		if err := reposcan.ValidateSlugPrefix(*appSlugPrefix); err != nil {
+			return printErr("Invalid --prefix", err)
+		}
+		ctx = api.ContextWithProjectAppSlugPrefix(ctx, *appSlugPrefix)
 	}
 	selectedSourceMode, sourceModeErr := resolveDeploySourceMode(*sourceMode, explicit["source"], *worktree,
 		*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet, *createOnly)
@@ -2932,6 +2940,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// prov cleanly (commit_sha and dirty zero-valued).
 	var prov *zeroConfigProvenance
 	var dirtyFileCount int
+	var dirtyBuildFiles []string
 
 	// --github emits a copy-paste GitHub Actions workflow snippet to
 	// stdout and exits 0 (issue #270). This path does not authenticate or
@@ -3334,6 +3343,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
+	if *appSlugPrefix != "" && !projectRequested {
+		return printErr("Invalid --prefix", errors.New("--prefix names a project's new apps; use it with --project"))
+	}
 	var explicitHeadProv *zeroConfigProvenance
 	if selectedSourceMode == deploySourceHEAD {
 		resolved, resolveErr := resolveExplicitHeadProvenance(sourceDir)
@@ -3412,6 +3424,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 							dirtyFileCount++
 						}
 					}
+					dirtyBuildFiles = uncommittedBuildFiles(dirtyOut, provVal.Root, selectedSourceDir)
 					if file, untracked := uncommittedProjectFile(dirtyOut, provVal.Root, selectedSourceDir); file != "" && !*worktree {
 						switch {
 						case untracked && path.Base(file) != "gregale.yaml":
@@ -3426,7 +3439,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			if dirtyFileCount > 0 && !*worktree {
-				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD. Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount))
+				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD.%s Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount), dirtyBuildFilesSuffix(dirtyBuildFiles))
 			}
 			if *deployedBy == "" && provVal.DeployedBy != "" {
 				*deployedBy = provVal.DeployedBy
@@ -4162,12 +4175,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return waitForSafeProjectRelease(ctx, client, projectSession, time.Duration(*waitTimeoutSeconds)*time.Second)
 			}
 		}
+		if !explicit["tarball"] && *templateName == "" && *environment == "" {
+			linkCheckoutAfterProjectDeploy(osStderr, contextDir, *projectSlug, jsonOutput)
+		}
 		var projectWaitTimeouts []projectWaitTimeout
 		if waitForDeploy && !*safeProjectDeploy && len(apply.Builds) > 0 {
 			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(withProjectWaitProgress(ctx, osStderr, jsonOutput), client, apply,
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
-		return renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+		code := renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+		if !jsonOutput {
+			renderProjectEndpoints(ctx, osStdout, client, apply)
+		}
+		return code
 	}
 
 	// A template or gregale.yaml that turns on a capability the account does
@@ -7692,7 +7712,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		return runParkedAppLogs(ctx, client, slug, deployment, filter, explain)
 	}
 	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
-		next := recoveryCLI() + " inspect " + recoveryArgument(slug)
+		next := recoveryCLI() + " app health " + recoveryArgument(slug) + " --explain"
 		if deployment != "" {
 			next = recoveryCLI() + " deployment get " + recoveryArgument(deployment)
 		}

@@ -74,6 +74,12 @@ type composeCandidate struct {
 	// RenamedFrom names the service this one was called before, so a
 	// rename keeps its app (ADR-20261029090000).
 	RenamedFrom string `yaml:"x-gregale-renamed-from"`
+	// StartupDeadline is x-gregale-startup-deadline: seconds or a duration
+	// the service may take to become ready (retail-store feedback A5).
+	StartupDeadline any `yaml:"x-gregale-startup-deadline"`
+	// PublicAuth is x-gregale-public-auth: open or bearer for the service's
+	// public URL, replacing the plan default.
+	PublicAuth string `yaml:"x-gregale-public-auth"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -142,6 +148,14 @@ type composeDoc struct {
 	// ServiceBindingPolicy is the project-wide x-gregale-service-policy: the
 	// policy of every deployable service that sets none (ADR-20261022111119).
 	ServiceBindingPolicy string `yaml:"x-gregale-service-policy"`
+	// SlugPrefix is the top-level x-gregale-slug-prefix: new apps for this
+	// file's services are named <prefix><service>, so short service names
+	// (ui, cart) need not be globally unique app names. Service names, and
+	// the <service>.svc.gregale addresses built from them, are unchanged.
+	SlugPrefix string `yaml:"x-gregale-slug-prefix"`
+	// PublicAuth is the top-level x-gregale-public-auth: the public auth
+	// mode of every service that sets none.
+	PublicAuth string `yaml:"x-gregale-public-auth"`
 }
 type composeRoot struct {
 	Compose composeDoc `yaml:"compose"`
@@ -231,6 +245,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	projectServiceBindingPolicy, err := normalizeServiceBindingPolicy(projectPolicy)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reposcan: %s: %w", src, err)
+	}
+	slugPrefix, err := interpolateComposeString(c.SlugPrefix, composeEnv, src, "(top level)", "x-gregale-slug-prefix")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := ValidateSlugPrefix(slugPrefix); err != nil {
+		return nil, nil, nil, fmt.Errorf("reposcan: %s: x-gregale-slug-prefix: %w", src, err)
 	}
 	activeProfiles := composeActiveProfiles(composeEnv)
 	renamedBy := make(map[string]string)
@@ -379,6 +400,17 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if warning := composeStartupDeadlineWarning(fsys, healthcheck); warning != "" {
 			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 		}
+		startupDeadlineS, startupNote, err := composeStartupDeadline(fsys, s.StartupDeadline, healthcheck)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		if startupNote != "" {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+startupNote)
+		}
+		publicAuth, err := composePublicAuth(s.PublicAuth, c.PublicAuth)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
 		process, err = composeProcess(s, len(command) > 0)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
@@ -438,14 +470,34 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		// explicit hint from another detector can fill it. If no hint
 		// exists, mergeByKey infers HTTP from a published port and worker
 		// otherwise.
+		// A curl/wget fetch of the serving port becomes a host-side HTTP
+		// readiness check, so the image needs no curl (feedback B2).
+		var readinessCheck *api.DeploymentHealthcheck
+		servingPort := 0
+		if len(ports) > 0 {
+			servingPort = ports[0]
+		} else if len(internalPorts) > 0 {
+			servingPort = internalPorts[0].Port
+		}
+		if probe, replaced, converted := composeHTTPReadiness(healthcheck, servingPort); converted {
+			readinessCheck, healthcheck = probe, replaced
+			warnings = append(warnings, "reposcan: "+src+": "+name+": healthcheck runs as an HTTP readiness check of "+probe.Path+" from the platform; the image needs no curl or wget for it")
+		}
+		if slugPrefix != "" && !api.ValidAppSlug(slugPrefix+name) {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: x-gregale-slug-prefix %q makes app name %q, which is not a valid app name (3-40 lowercase letters, digits and hyphens)", src, name, slugPrefix, slugPrefix+name)
+		}
 		seeds = append(seeds, workloadSeed{
 			name:                name,
+			slugPrefix:          slugPrefix,
+			startupDeadlineS:    startupDeadlineS,
+			publicAuth:          publicAuth,
 			rootDir:             ctx,
 			dockerfile:          df,
 			dockerfileBuild:     dockerfileBuild,
 			image:               image,
 			imageSet:            true,
 			healthcheck:         healthcheck,
+			readinessCheck:      readinessCheck,
 			imageProcess:        process,
 			secretFiles:         secretFiles,
 			resources:           resources,

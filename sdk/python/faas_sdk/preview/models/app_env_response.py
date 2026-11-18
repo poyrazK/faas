@@ -18,13 +18,15 @@ T = TypeVar("T", bound="AppEnvResponse")
 
 @_attrs_define
 class AppEnvResponse:
-    """An env var envelope: key name + scope + timestamps. The plaintext value never appears here."""
+    """An env var envelope: key name + scope + timestamps. The plaintext value appears only on a `?values=true` listing."""
 
     key: str
     scope: str
     """Env-var scope. Always 'default' for the legacy flat response; varies for the nested `env_by_scope` response."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    value: str | Unset = UNSET
+    """The variable's plaintext; present only with `?values=true`."""
     config_change: ConfigChangeReceipt | Unset = UNSET
     """The config revision an env or secret write recorded and the guard watching it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -37,6 +39,8 @@ class AppEnvResponse:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        value = self.value
 
         config_change: dict[str, Any] | Unset = UNSET
         if not isinstance(self.config_change, Unset):
@@ -52,6 +56,8 @@ class AppEnvResponse:
                 "updated_at": updated_at,
             }
         )
+        if value is not UNSET:
+            field_dict["value"] = value
         if config_change is not UNSET:
             field_dict["config_change"] = config_change
 
@@ -70,6 +76,8 @@ class AppEnvResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        value = d.pop("value", UNSET)
+
         _config_change = d.pop("config_change", UNSET)
         config_change: ConfigChangeReceipt | Unset
         if isinstance(_config_change, Unset):
@@ -82,6 +90,7 @@ class AppEnvResponse:
             scope=scope,
             created_at=created_at,
             updated_at=updated_at,
+            value=value,
             config_change=config_change,
         )
 
