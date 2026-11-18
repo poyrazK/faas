@@ -53,3 +53,25 @@ write. A builderd test keeps `ArtifactCacheBuildFreeBytes` at least
   the owner keeps.
 - builderd still runs its own reclaim, for the entries it may evict (bases,
   blobs, and dependency caches on the build drive).
+
+## Amendment 1 (2026-11-18): only the eviction owner holds the build floor
+
+rc.352 raised the floor for every process that opens the cache. On
+production-us, imaged's runtime-base pre-stage on fsn-2 then failed twice.
+It ran rc.352 code next to rc.351's vmmd, with about 18 GB free against the
+24 GiB floor:
+
+- **Attempt 1:** `state: runtime inputs changed after admission`.
+- **Attempt 2:** `mark generation "base/runner-builder-amd64.ext4.digest"
+  without cached blob`.
+
+A process that is not the eviction owner may not evict captures or layers.
+To reach the floor it evicted the bases and sidecars it could, including the
+ones it had just written.
+
+The build floor is now `storage.OwnerMinFreeBytes`. The cache holds it only
+while its process is the eviction owner (`ClaimEvictionOwnership`; vmmd on a
+compute node), and returns to the standing floor on release.
+`ResolveCacheBudget` and every other process keep the ADR-20261114182830
+floor: 15%, never below 8 GiB. The byte budget is unchanged at 85 GiB on a
+100 GB disk. vmmd evicts below that to keep 24 GiB free.
