@@ -125,7 +125,9 @@ func TestAgentEgressFailsClosed(t *testing.T) {
 			p.handshakes = fmt.Sprintf("gwkey=\t%d\n", now.Add(-10*time.Minute).Unix())
 		}, "last shook hands"},
 		{"never shook hands", func(_ *Manager, p *agentProbe, _ *fakeHostRenderer, _ time.Time) { p.handshakes = "gwkey=\t0\n" }, "no handshake"},
-		{"tunnel probe fails", func(_ *Manager, p *agentProbe, _ *fakeHostRenderer, _ time.Time) { p.err = errors.New("no such device") }, "handshakes"},
+		{"tunnel probe fails", func(_ *Manager, p *agentProbe, _ *fakeHostRenderer, _ time.Time) {
+			p.err = errors.New("no such device")
+		}, "handshakes"},
 		{"render fails", func(_ *Manager, _ *agentProbe, r *fakeHostRenderer, _ time.Time) { r.renderErr = errors.New("nft") }, "install agent egress"},
 		{"slice full", func(m *Manager, _ *agentProbe, _ *fakeHostRenderer, _ time.Time) {
 			m.agentEgress.cfg.Slice = netip.MustParsePrefix("10.78.8.0/30") // the node's address and one VM's
