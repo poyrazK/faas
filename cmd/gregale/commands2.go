@@ -2196,6 +2196,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	safeProjectDeploy := fs.Bool("atomic", false, "build an existing HTTP project at zero traffic, then atomically publish its ready release")
 	projectDeploy := fs.Bool("project", false, "deploy all detected workloads as one project (slug defaults from --name or source)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
+	appSlugPrefix := fs.String("prefix", "", "name the project's new apps <prefix><service>, e.g. --prefix shop- (overrides x-gregale-slug-prefix)")
 	// --environment targets a registered project environment. The server
 	// resolves the name to the deployment scope after checking the app's
 	// project registry; omitted preserves the legacy default scope.
@@ -2458,6 +2459,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *progressiveProjectDeploy {
 		ctx = api.ContextWithProjectProgressiveRelease(ctx)
+	}
+	if *appSlugPrefix != "" {
+		if err := reposcan.ValidateSlugPrefix(*appSlugPrefix); err != nil {
+			return printErr("Invalid --prefix", err)
+		}
+		ctx = api.ContextWithProjectAppSlugPrefix(ctx, *appSlugPrefix)
 	}
 	selectedSourceMode, sourceModeErr := resolveDeploySourceMode(*sourceMode, explicit["source"], *worktree,
 		*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet, *createOnly)
@@ -3326,6 +3333,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
+	}
+	if *appSlugPrefix != "" && !projectRequested {
+		return printErr("Invalid --prefix", errors.New("--prefix names a project's new apps; use it with --project"))
 	}
 	var explicitHeadProv *zeroConfigProvenance
 	if selectedSourceMode == deploySourceHEAD {

@@ -263,6 +263,15 @@ keep ordinary readiness, use `HEALTHCHECK NONE`, drop the instruction, or set
 `healthcheck: {disable: true}` on the Compose service. Deployments built before
 this change keep their readiness until they are redeployed.
 
+A Compose healthcheck that only fetches the service's own serving port with
+`curl` or `wget` (`curl -f http://localhost:8080/actuator/health || exit 1`,
+or the `CMD` list form) runs from the platform instead: it becomes the
+service's HTTP readiness check on that path, with the same interval, timeout,
+retries and start period, and the command check (including an inherited image
+`HEALTHCHECK`) is set to `NONE`. The image then needs no `curl` or `wget`. A
+check of another port, with headers, a method other than GET, or any other
+shell syntax stays a command check. The plan notes each conversion.
+
 Required primary image checks also drive runtime recovery. Each serving
 instance executes fresh command attempts using the effective interval, timeout,
 startup grace, and consecutive failure threshold. Repeated command failures
@@ -316,6 +325,36 @@ so set them with `gregale env set` or secrets. The project plan shows, per
 service, each name that will have no value in the target environment under
 **Needs a value**: names already configured on the app, supplied by
 `--secrets-file`, or set by Gregale itself (`PORT`, `GREGALE_*`) are left out.
+
+Three more Gregale keys shape the apps a Compose file creates:
+
+```yaml
+x-gregale-slug-prefix: shop-    # new apps are shop-ui, shop-cart, ...
+x-gregale-public-auth: open     # or bearer; per service too
+services:
+  ui:
+    build: ./ui
+    x-gregale-startup-deadline: 90s
+```
+
+- `x-gregale-slug-prefix` (top level) names each new app `<prefix><service>`,
+  so short service names need not be unique across Gregale. Service names, and
+  the `<service>.svc.gregale` addresses built from them, do not change; an app
+  that already exists keeps its name. `gregale deploy --project --prefix P`
+  does the same and wins over the file.
+- `x-gregale-startup-deadline` (seconds or a duration, at most 120 s) is how
+  long a new instance may take to become ready. Without it, a healthcheck with
+  a `start_period` sets it to `start_period` plus `retries` × `interval`
+  (Docker's defaults: 3 and 30 s) when that is longer than the default 30 s. A
+  `lifecycle.startup_deadline_s` in `gregale.yaml` takes precedence over the
+  derived value. Either is capped at the plan's maximum (Free and Hobby 30 s,
+  Pro 60 s, Scale 120 s).
+- `x-gregale-public-auth` (`open` or `bearer`, top level or per service) sets
+  who may call a new app's public URL instead of the plan default; `bearer`
+  needs Hobby or above.
+
+The deadline and auth keys apply when an app is created; change an existing
+app with `gregale app update`.
 
 A Compose file can opt in to importing the plain values of `environment:`:
 

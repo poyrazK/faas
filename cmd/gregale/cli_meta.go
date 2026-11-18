@@ -3191,6 +3191,7 @@ var cliCommands = []cliCommand{
 			// subsequent deploys honor the persisted set automatically.
 			{Name: "persist-exclude", Group: "Projects", Short: "save --exclude slugs for future project deploys"},
 			{Name: "project-slug", Group: "Projects", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
+			{Name: "prefix", Group: "Projects", Short: "name new project apps <prefix><service> (overrides x-gregale-slug-prefix)", Value: "PREFIX"},
 			{Name: "rollout", Group: "Rollout and health", Short: "how this release reaches traffic: safe (adaptive canary with rollback; waits for 100%), fast (5% -> 50% -> 100%) or immediate; default: the app release policy", Value: "MODE", ClosedSet: []string{"safe", "fast", "immediate"}},
 			{Name: "override-freeze", Group: "Rollout and health", Short: "release to production during a deploy freeze; the reason is audited", Value: "REASON"},
 			{Name: "at", Group: "Rollout and health", Short: "build now and start the production rollout at this time: +2h, 02:00, \"2026-10-22 02:00\" (local) or RFC 3339; freezes are checked then", Value: "WHEN"},
