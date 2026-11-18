@@ -183,10 +183,13 @@ limits rather than add new numbers.
 
 The 2026-11-12 prod throughput test held an app's queue sends to about 30
 messages per second: every capped send took the app's row lock to count the
-backlog and held it through its insert. Queue sends (single and batch) now
-set `Invocation.AdmissionUnlocked`, as async producers do since the
-2026-11-13 amendment: the depth and bytes caps are read from the slotted
-backlog counters without the lock, so concurrent senders may pass a cap by
-the messages they insert at once (a batch by at most its
-`EnqueueInvocationBatch` size). Queue canaries, object notifications and
-binding verification keep the lock for their own admission.
+backlog and held it through its insert. Single queue sends now set
+`Invocation.AdmissionUnlocked`, as async producers do since the 2026-11-13
+amendment: the depth and bytes caps are read from the slotted backlog
+counters without the lock, so concurrent senders may pass a cap by the
+messages they insert at once. A batch (`EnqueueInvocationBatch`) still takes
+the app lock once for the whole batch: its rows bump several of the eight
+counter slots in id order, so two unlocked batches lock the slot rows in
+different orders and deadlock (prod re-run 2026-11-18: 3 of 12 concurrent
+batches refused before this was fixed). Queue canaries, object notifications
+and binding verification keep the lock for their own admission.

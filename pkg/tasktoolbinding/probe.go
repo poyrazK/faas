@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/credentialprobe"
 	"github.com/onebox-faas/faas/pkg/publicdest"
 	"github.com/onebox-faas/faas/pkg/tasktoolbinding/probedb"
+	"github.com/onebox-faas/faas/pkg/tasktoolbinding/taskacl"
 )
 
 // Driver errors and credentials must never enter a public receipt or log.
@@ -170,24 +171,19 @@ func observerReadOnly(f [4]databaseFacts) bool {
 	return !v.Privileged && !v.UnsafeMembership && !v.CanCreate && !v.DatabaseCreate && !v.Temporary && !v.OwnerMember && v.Login == v.RoleName && v.RoleName != f[2].identity.RoleName && !f[3].observerUnsafe && taskPrivileges(f[3].tables, true)
 }
 func taskPrivileges(rows []probedb.TaskBindingTablePrivilegesRow, observer bool) bool {
-	reads := []string{"gregale_mcp_tasks", "gregale_mcp_task_owners", "gregale_mcp_task_workers", "gregale_mcp_task_worker_handlers", "gregale_mcp_task_schema", "gregale_mcp_task_admission_namespaces"}
-	writes := map[string]bool{"gregale_mcp_tasks": true, "gregale_mcp_task_owners": true, "gregale_mcp_task_fairness": true, "gregale_mcp_task_workers": true, "gregale_mcp_task_worker_handlers": true}
-	if !observer {
-		reads = append(reads, "gregale_mcp_task_fairness", "gregale_mcp_task_crypto_keys", "gregale_mcp_task_admission")
-	}
 	seen := map[string]bool{}
 	for _, r := range rows {
-		if !r.OwnedBySchemaOwner || r.CanAdminister || observer && r.CanWrite || !observer && r.CanWrite && !writes[r.Name] {
+		if !r.OwnedBySchemaOwner || r.CanAdminister || observer && r.CanWrite || !observer && r.CanWrite && !taskacl.Writable(r.Name) {
 			return false
 		}
 		if r.CanRead {
 			seen[r.Name] = true
 		}
-		if !observer && writes[r.Name] && !r.CanDml {
+		if !observer && taskacl.Writable(r.Name) && !r.CanDml {
 			return false
 		}
 	}
-	for _, n := range reads {
+	for _, n := range taskacl.ReadTables(observer) {
 		if !seen[n] {
 			return false
 		}

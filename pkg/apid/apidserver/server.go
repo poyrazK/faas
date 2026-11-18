@@ -306,6 +306,10 @@ type server struct {
 	// logArchive reaches the runtime-log archive bucket; nil when this apid
 	// has none configured. The grace sweep erases archived logs through it.
 	logArchive logerasure.Objects
+	// purgeDeletedApp runs the grace sweep's purge for one app whose restore
+	// window the owner closed (POST /v1/deleted-apps/{id}/purge). Nil where
+	// no sweep runs: the purge then waits for the sweep elsewhere.
+	purgeDeletedApp func(ctx context.Context, appID, actor string) error
 	// databaseSwitchDrainOverride feeds the database switch worker drain
 	// evidence on stores without schedd's drain plans (tests).
 	databaseSwitchDrainOverride      state.DatabaseSwitchDrainStore
@@ -2448,6 +2452,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/experiments/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteFlagExperiment))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startFlagExperiment))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.stopFlagExperiment))))
+	// ADR 20261117084505: product analytics; every route is a bounded read.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/events", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getInsightEvents)))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/funnel", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightFunnel)))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/retention", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightRetention)))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/requests", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getInsightRequests)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.shipFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentResults)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rollbackFeatureFlags))))
@@ -2886,6 +2895,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/deleted-apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeletedApps))))
 	mux.HandleFunc("GET /v1/deleted-apps/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeletedApp))))
 	mux.HandleFunc("POST /v1/deleted-apps/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreDeletedApp))))
+	mux.HandleFunc("POST /v1/deleted-apps/{id}/purge", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.purgeDeletedAppNow))))
 	// First-class preview state keeps URL, expiry, production diff, and
 	// observability/configuration links behind the normal read surface.
 	mux.HandleFunc("GET /v1/preview/{slug}", s.authLimited(s.requireScope(api.ScopesPreviewStatusReadSurface...)(s.getPreviewStatus)))

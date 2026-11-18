@@ -124,6 +124,11 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 		if err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
+		if clone.branch != nil {
+			if err := captureBranchAutomationDB(ctx, tx, &clone); err != nil {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			}
+		}
 	}
 	clone.sourceValueScopesJSON, err = projectCloneValueScopesTx(ctx, tx, clone)
 	if err != nil {
@@ -449,6 +454,15 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 	result.VariablesCopied, result.SecretsCopied, err = copyProjectEnvironmentScopedValues(ctx, tx, clone)
 	if err != nil {
 		return result, err
+	}
+	if clone.capturedPolicies == nil && clone.branch != nil {
+		// A branch's paused automation (captureBranchAutomationDB).
+		if err := copyCapturedCronsTx(ctx, tx, clone, &result); err != nil {
+			return result, err
+		}
+		if err := copyCapturedEventSubscriptionsTx(ctx, tx, clone, &result); err != nil {
+			return result, err
+		}
 	}
 	if clone.capturedPolicies != nil {
 		if err := copyCapturedProjectEnvironmentScopedPolicies(ctx, tx, clone, &result); err != nil {

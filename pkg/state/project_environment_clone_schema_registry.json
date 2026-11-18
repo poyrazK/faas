@@ -19502,6 +19502,17 @@
     "kind": "operational"
   },
   {
+    "table": "app_task_networks",
+    "columns": [
+      "active",
+      "host_ip",
+      "lease_token",
+      "node_id",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_command_networks",
     "columns": [
       "active",
@@ -22246,6 +22257,31 @@
       "instance_id",
       "probe_done_at",
       "woke_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_events",
+    "columns": [
+      "account_id",
+      "at",
+      "customer_id",
+      "environment_id",
+      "flags",
+      "id",
+      "name",
+      "properties",
+      "subject_hash",
+      "value"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_property_keys",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "key"
     ],
     "kind": "operational"
   }

@@ -72,6 +72,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"metric", "Show app metrics, request breakdowns and the service map", "Observe"},
 	{"debug", "Inspect requests, traces, issues, profiles and regressions", "Observe"},
 	{"dashboard", "Save dashboards across apps", "Observe"},
+	{"insight", "Count product events, funnels and retention, by flag variant", "Observe"},
 	{"audit", "Search your account's audit log", "Observe"},
 	{"alert", "Manage alert rules, channels, incidents, SLOs and checks", "Observe"},
 	{"mcp", "Connect agents, host MCP servers, or call MCP tools", "Agents"},
@@ -150,6 +151,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app list", "apps"},
 	{"app delete", "apps rm"},
 	{"app restore", "apps restore"},
+	{"app purge", "apps purge"},
 	{"app instances", "ps"},
 	{"app park", "park"},
 	{"app wake", "wake"},
@@ -211,6 +213,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag experiment delete", "flags experiments delete"},
 	{"flag experiment result get", "flags experiments results"},
 	{"flag", "flags"},
+	// ADR 20261117084505: product analytics; `analytics` is request analytics.
+	{"insight event list", "insights events"},
+	{"insight funnel get", "insights funnel"},
+	{"insight retention get", "insights retention"},
+	{"insight request list", "insights requests"},
+	{"insight", "insights"},
 
 	// Data.
 	{"postgres", "postgres"},

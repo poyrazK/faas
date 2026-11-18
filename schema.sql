@@ -1183,6 +1183,29 @@ $$;
 
 
 --
+-- Name: app_task_network_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_task_network_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NOT NEW.active OR NOT EXISTS(SELECT 1 FROM app_tasks t
+   WHERE t.id=NEW.task_id AND t.lease_token=NEW.lease_token AND t.lease_expires_at>clock_timestamp()
+    AND t.status='restoring' AND t.cancel_requested_at IS NULL
+    AND t.command[1] IS DISTINCT FROM '__gregale_rehearsal_command_v1__') THEN
+   RAISE EXCEPTION 'app task network identity requires the restoring owner' USING ERRCODE='23514';
+  END IF;
+ ELSIF (NEW.task_id,NEW.node_id,NEW.host_ip,NEW.lease_token) IS DISTINCT FROM (OLD.task_id,OLD.node_id,OLD.host_ip,OLD.lease_token)
+    OR NOT OLD.active OR NEW.active THEN
+  RAISE EXCEPTION 'app task network identity is immutable and retirement irreversible' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: app_traffic_security_epoch_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -22439,6 +22462,136 @@ $$;
 
 
 --
+-- Name: monthly_partitions_drop_expired(regclass); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.monthly_partitions_drop_expired(parent regclass) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    schema_name text;
+    table_name text;
+    keep interval;
+    partname text;
+    partstart date;
+    dropped integer := 0;
+BEGIN
+    SELECT n.nspname, c.relname INTO schema_name, table_name
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.oid = parent AND c.relkind = 'p' AND c.relowner = current_user::regrole;
+    -- The longest plan retention of each table: Scale keeps 14 days of
+    -- request telemetry and 90 days of logs.
+    keep := CASE table_name WHEN 'request_telemetry' THEN interval '14 days' WHEN 'log_events' THEN interval '90 days' END;
+    IF keep IS NULL THEN
+        RAISE EXCEPTION 'monthly_partitions_drop_expired: % is not a maintained partitioned table', parent;
+    END IF;
+
+    -- DROP takes ACCESS EXCLUSIVE on the parent; queued behind a long reader
+    -- it would block every later one. Retry on the next pass instead.
+    PERFORM set_config('lock_timeout', '2s', true);
+    FOR partname IN
+        SELECT child.relname FROM pg_inherits i JOIN pg_class child ON child.oid = i.inhrelid
+         WHERE i.inhparent = parent
+           AND child.relname ~ ('^' || table_name || '_[0-9]{6}$')
+         ORDER BY child.relname
+    LOOP
+        BEGIN
+            partstart := to_date(substring(partname from '[0-9]{6}$'), 'YYYYMM');
+        EXCEPTION WHEN OTHERS THEN
+            CONTINUE;
+        END;
+        IF (CASE table_name WHEN 'log_events' THEN (partstart + interval '1 month') AT TIME ZONE 'UTC'
+                ELSE (partstart + interval '1 month')::timestamptz END) <= now() - keep THEN
+            EXECUTE format('DROP TABLE IF EXISTS %I.%I', schema_name, partname);
+            dropped := dropped + 1;
+        END IF;
+    END LOOP;
+    RETURN dropped;
+END;
+$_$;
+
+
+--
+-- Name: monthly_partitions_ensure(regclass); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.monthly_partitions_ensure(parent regclass) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+DECLARE
+    schema_name text;
+    table_name text;
+    time_column text;
+    month_offset integer;
+    range_start timestamptz;
+    range_end timestamptz;
+    partition_name text;
+    attached_count integer;
+    month_zero timestamp;
+BEGIN
+    SELECT n.nspname, c.relname INTO schema_name, table_name
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.oid = parent AND c.relkind = 'p' AND c.relowner = current_user::regrole;
+    time_column := CASE table_name WHEN 'request_telemetry' THEN 'received_at' WHEN 'log_events' THEN 'occurred_at' END;
+    IF time_column IS NULL THEN
+        RAISE EXCEPTION 'monthly_partitions_ensure: % is not a maintained partitioned table', parent;
+    END IF;
+
+    -- log_events months are UTC months; request_telemetry's follow the
+    -- session time zone, as the partitions the migrations created do (UTC on
+    -- every production host).
+    month_zero := CASE table_name
+        WHEN 'log_events' THEN date_trunc('month', now() AT TIME ZONE 'UTC')
+        ELSE date_trunc('month', now())::timestamp END;
+
+    -- Every hourly pass but about one a month finds the three months
+    -- attached and returns before taking any lock.
+    SELECT count(*) INTO attached_count
+      FROM generate_series(0, 2) AS n
+     WHERE EXISTS (
+         SELECT 1 FROM pg_inherits i JOIN pg_class child ON child.oid = i.inhrelid
+          WHERE i.inhparent = parent
+            AND child.relname = table_name || '_' || to_char(month_zero + make_interval(months => n), 'YYYYMM'));
+    IF attached_count = 3 THEN
+        RETURN;
+    END IF;
+
+    -- ACCESS EXCLUSIVE makes moving rows out of the default partition and
+    -- attaching the month atomic with inserts. A short lock timeout makes the
+    -- pass retry next hour instead of queueing ahead of every reader.
+    PERFORM set_config('lock_timeout', '2s', true);
+    EXECUTE format('LOCK TABLE %I.%I IN ACCESS EXCLUSIVE MODE', schema_name, table_name);
+    FOR month_offset IN 0..2 LOOP
+        partition_name := table_name || '_' || to_char(month_zero + make_interval(months => month_offset), 'YYYYMM');
+        IF table_name = 'log_events' THEN
+            range_start := (month_zero + make_interval(months => month_offset)) AT TIME ZONE 'UTC';
+            range_end := (month_zero + make_interval(months => month_offset + 1)) AT TIME ZONE 'UTC';
+        ELSE
+            range_start := (month_zero + make_interval(months => month_offset))::timestamptz;
+            range_end := (month_zero + make_interval(months => month_offset + 1))::timestamptz;
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class child ON child.oid = i.inhrelid
+                    WHERE i.inhparent = parent AND child.relname = partition_name) THEN
+            CONTINUE;
+        END IF;
+        IF to_regclass(format('%I.%I', schema_name, partition_name)) IS NOT NULL THEN
+            RAISE EXCEPTION '% partition % exists but is not attached', table_name, partition_name;
+        END IF;
+        EXECUTE format('CREATE TABLE %I.%I (LIKE %I.%I INCLUDING ALL)', schema_name, partition_name, schema_name, table_name);
+        EXECUTE format('INSERT INTO %I.%I SELECT * FROM %I.%I WHERE %I >= %L AND %I < %L',
+            schema_name, partition_name, schema_name, table_name || '_default', time_column, range_start, time_column, range_end);
+        EXECUTE format('DELETE FROM %I.%I WHERE %I >= %L AND %I < %L',
+            schema_name, table_name || '_default', time_column, range_start, time_column, range_end);
+        EXECUTE format('ALTER TABLE %I.%I ATTACH PARTITION %I.%I FOR VALUES FROM (%L) TO (%L)',
+            schema_name, table_name, schema_name, partition_name, range_start, range_end);
+    END LOOP;
+END;
+$$;
+
+
+--
 -- Name: node_admission_lock_capacity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -31796,6 +31949,56 @@ COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, w
 
 
 --
+-- Name: analytics_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_events (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    customer_id uuid NOT NULL,
+    subject_hash bytea,
+    name text NOT NULL,
+    at timestamp with time zone NOT NULL,
+    value bigint DEFAULT 0 NOT NULL,
+    properties jsonb DEFAULT '{}'::jsonb NOT NULL,
+    flags jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT analytics_events_chk CHECK (((name ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND ((subject_hash IS NULL) OR (length(subject_hash) = 32)) AND (jsonb_typeof(properties) = 'object'::text) AND (jsonb_typeof(flags) = 'object'::text)))
+);
+
+
+--
+-- Name: analytics_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.analytics_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: analytics_events_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.analytics_events_id_seq OWNED BY public.analytics_events.id;
+
+
+--
+-- Name: analytics_property_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_property_keys (
+    environment_id uuid NOT NULL,
+    key text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT analytics_property_keys_chk CHECK ((key ~ '^[a-z][a-z0-9_]{0,63}$'::text))
+);
+
+
+--
 -- Name: api_consumer_billing_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33860,6 +34063,27 @@ CREATE TABLE public.app_task_attach_sessions (
     CONSTRAINT app_task_attach_sessions_node_chk CHECK ((((node_id IS NULL) AND (node_recorded_at IS NULL)) OR (((octet_length(node_id) >= 1) AND (octet_length(node_id) <= 255)) AND (node_recorded_at IS NOT NULL)))),
     CONSTRAINT app_task_attach_sessions_token_credhash_chk CHECK ((octet_length(attach_token_sha256) = ANY (ARRAY[32, 33])))
 );
+
+
+--
+-- Name: app_task_networks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_task_networks (
+    task_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    host_ip inet NOT NULL,
+    lease_token uuid NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    CONSTRAINT app_task_networks_host_ip_check CHECK (((family(host_ip) = 4) AND (host_ip << '10.0.0.0/8'::inet)))
+);
+
+
+--
+-- Name: TABLE app_task_networks; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.app_task_networks IS 'ADR-20261118070000 service-mesh caller identity of a running app task VM, written by schedd.';
 
 
 --
@@ -62867,6 +63091,13 @@ ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_teleme
 
 
 --
+-- Name: analytics_events id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events ALTER COLUMN id SET DEFAULT nextval('public.analytics_events_id_seq'::regclass);
+
+
+--
 -- Name: compute_node_heartbeats id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -63382,6 +63613,22 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_test_sends
     ADD CONSTRAINT alert_test_sends_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: analytics_events analytics_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events
+    ADD CONSTRAINT analytics_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: analytics_property_keys analytics_property_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_property_keys
+    ADD CONSTRAINT analytics_property_keys_pkey PRIMARY KEY (environment_id, key);
 
 
 --
@@ -64294,6 +64541,14 @@ ALTER TABLE ONLY public.app_slug_holds
 
 ALTER TABLE ONLY public.app_task_attach_sessions
     ADD CONSTRAINT app_task_attach_sessions_pkey PRIMARY KEY (task_id);
+
+
+--
+-- Name: app_task_networks app_task_networks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_task_networks
+    ADD CONSTRAINT app_task_networks_pkey PRIMARY KEY (task_id);
 
 
 --
@@ -77821,6 +78076,34 @@ CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (creat
 
 
 --
+-- Name: analytics_events_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_events_at_idx ON public.analytics_events USING btree (at);
+
+
+--
+-- Name: analytics_events_customer_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_events_customer_at_idx ON public.analytics_events USING btree (customer_id, at);
+
+
+--
+-- Name: analytics_events_env_name_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_events_env_name_at_idx ON public.analytics_events USING btree (environment_id, name, at);
+
+
+--
+-- Name: analytics_events_subject_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_events_subject_at_idx ON public.analytics_events USING btree (environment_id, subject_hash, at) WHERE (subject_hash IS NOT NULL);
+
+
+--
 -- Name: api_consumer_credit_applications_statement_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -78413,6 +78696,13 @@ CREATE INDEX app_service_wake_ahead_account_idx ON public.app_service_wake_ahead
 --
 
 CREATE INDEX app_slo_hourly_hour_idx ON public.app_slo_hourly USING btree (hour);
+
+
+--
+-- Name: app_task_network_address; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_task_network_address ON public.app_task_networks USING btree (node_id, host_ip) WHERE active;
 
 
 --
@@ -89687,6 +89977,13 @@ CREATE TRIGGER app_storage_owner BEFORE INSERT ON public.snapshot_storage_daily 
 
 
 --
+-- Name: app_task_networks app_task_network_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_task_network_fence BEFORE INSERT OR UPDATE ON public.app_task_networks FOR EACH ROW EXECUTE FUNCTION public.app_task_network_fence();
+
+
+--
 -- Name: app_tasks app_tasks_schedule_occurrence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -97132,6 +97429,38 @@ ALTER TABLE ONLY public.alert_test_sends
 
 
 --
+-- Name: analytics_events analytics_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events
+    ADD CONSTRAINT analytics_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_events analytics_events_customer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events
+    ADD CONSTRAINT analytics_events_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_events analytics_events_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_events
+    ADD CONSTRAINT analytics_events_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_property_keys analytics_property_keys_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_property_keys
+    ADD CONSTRAINT analytics_property_keys_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_billing_policies api_consumer_billing_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -98649,6 +98978,22 @@ ALTER TABLE ONLY public.app_slos
 
 ALTER TABLE ONLY public.app_task_attach_sessions
     ADD CONSTRAINT app_task_attach_sessions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_task_networks app_task_networks_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_task_networks
+    ADD CONSTRAINT app_task_networks_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id);
+
+
+--
+-- Name: app_task_networks app_task_networks_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_task_networks
+    ADD CONSTRAINT app_task_networks_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
 
 
 --

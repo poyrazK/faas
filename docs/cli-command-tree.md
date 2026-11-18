@@ -103,6 +103,7 @@ touch them. The tables below map each earlier name.
 | `gregale freeze` | `gregale release freeze` |
 | `gregale functions` | `gregale function` |
 | `gregale incidents` | `gregale alert incident` |
+| `gregale insights` | `gregale insight` |
 | `gregale inspect` | `gregale app health --explain` |
 | `gregale invitations` | `gregale org` |
 | `gregale invocations` | `gregale invocation` |
@@ -177,6 +178,7 @@ touch them. The tables below map each earlier name.
 | `gregale approvals approve` | `gregale release approve` |
 | `gregale approvals off` | `gregale release approval disable` |
 | `gregale approvals reject` | `gregale release reject` |
+| `gregale apps purge` | `gregale app purge` |
 | `gregale apps restore` | `gregale app restore` |
 | `gregale apps rm` | `gregale app delete` |
 | `gregale apps streaming-cap` | `gregale app streaming-cap` |
@@ -405,6 +407,10 @@ touch them. The tables below map each earlier name.
 | `gregale flags unkill` | `gregale flag kill unset` |
 | `gregale github bind` | `gregale github link` |
 | `gregale incidents note` | `gregale alert incident update --note <NOTE>` |
+| `gregale insights events` | `gregale insight event list` |
+| `gregale insights funnel` | `gregale insight funnel get` |
+| `gregale insights requests` | `gregale insight request list` |
+| `gregale insights retention` | `gregale insight retention get` |
 | `gregale invitations accept` | `gregale org invitation accept` |
 | `gregale invitations peek` | `gregale org invitation peek` |
 | `gregale issues bulk` | `gregale debug issue update --issues <ISSUES>` |

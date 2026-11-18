@@ -40,15 +40,35 @@ func TestSlugHoldersExplainGlobalConflicts(t *testing.T) {
 		t.Fatalf("holders = %v, want foreign and tombstone", holders)
 	}
 
-	reasons := SlugHolderReasons("acct-a", workloads[:4], holders)
+	reasons := SlugHolderReasons("acct-a", "proj-new", workloads[:4], holders)
 	if len(reasons) != 2 {
 		t.Fatalf("reasons = %q, want two", reasons)
 	}
 	if !strings.Contains(reasons[0], `"foreign"`) || !strings.Contains(reasons[0], "already taken") {
 		t.Errorf("foreign reason = %q", reasons[0])
 	}
-	if !strings.Contains(reasons[1], "gregale app restore tombstone") {
-		t.Errorf("tombstone reason = %q, want the restore remedy", reasons[1])
+	// The tombstone has no project (its project was deleted): restoring it
+	// would bring it back outside this project, still colliding, so only
+	// the purge is offered.
+	if !strings.Contains(reasons[1], "gregale app purge tombstone") || strings.Contains(reasons[1], "restore") {
+		t.Errorf("tombstone reason = %q, want the purge remedy only", reasons[1])
+	}
+}
+
+// A deleted app of this same project comes back as its member on restore,
+// so both remedies are offered there.
+func TestSlugHolderReasonsOfferRestoreOnlyInsideTheProject(t *testing.T) {
+	holders := map[string]state.App{
+		"api": {Slug: "api", AccountID: "acct-a", ProjectID: "proj-1", WorkloadName: "api", Status: state.AppDeleted},
+	}
+	workloads := []reposcan.Workload{{Name: "api"}}
+	same := SlugHolderReasons("acct-a", "proj-1", workloads, holders)
+	if len(same) != 1 || !strings.Contains(same[0], "gregale app restore api") || !strings.Contains(same[0], "gregale app purge api") {
+		t.Fatalf("same-project reason = %q, want restore and purge", same)
+	}
+	other := SlugHolderReasons("acct-a", "proj-2", workloads, holders)
+	if len(other) != 1 || strings.Contains(other[0], "restore") || !strings.Contains(other[0], "gregale app purge api") {
+		t.Fatalf("other-project reason = %q, want purge only", other)
 	}
 }
 

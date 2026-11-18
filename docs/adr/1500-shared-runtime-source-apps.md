@@ -236,6 +236,62 @@ layer and serve after a snapshot restore. The full test passed 6/6 on the n2
 metal host on 2026-10-30, with leakcheck clean. The `uv run` app layer was
 40.3 MB, against 298 MB for the Python 3.11 own-base deployment.
 
+## Amendment 4 (2026-11-17): Railpack's fixed Python start
+
+Railpack 0.38's Python provider (`GetStartCommand`) builds a Flask or FastAPI
+start command without knowing where the application is defined:
+
+- When a manifest mentions gunicorn (Flask) or uvicorn (FastAPI) and any of
+  `main.py`, `app.py`, `start.py`, `bot.py`, `hello.py` or `server.py`
+  exists, it starts `gunicorn --bind 0.0.0.0:${PORT:-8000} main:app` or
+  `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`, whichever module
+  defines the application.
+- When none mentions the server but such a file exists, it runs
+  `python <file>`, which only defines the application and exits unless the
+  file starts a server itself. FastAPI's own recommended install,
+  `fastapi[standard]` (or `fastapi[all]`), brings uvicorn without naming it.
+- With none of those files it detects no start, and the image keeps its
+  base's CMD (`python3`, Hunt 12 H12-29).
+
+imaged keeps the image's command and uses the profile's inferred start only
+when the image has none, while `gregale deploy --dry-run` shows the profile's
+start. The coding-agent eval (2026-11-17, CLI v0.1.18-rc.347) hit both:
+`deploy-flask-render` (render-examples/flask-hello-world, `app.py`, Flask and
+Gunicorn) ran `main:app` and crash-looped on `ModuleNotFoundError: No module
+named 'main'` until `liveness_exhausted`; render-examples/fastapi (`main.py`,
+`fastapi[all]`) ran `python main.py`, which exited at once (#7531). Both
+previews showed a working command, and the agents recovered only by writing
+`hosting.start`.
+
+1. **Pin (profile).** `frameworkprofile` marks its start `start_pinned` when
+   it located a Flask or FastAPI application object, the server its command
+   runs is installed (gunicorn or uvicorn named in a manifest, or a FastAPI
+   `standard`/`all` extra), and Railpack's command cannot serve the
+   application: there is no main file; or Railpack's fixed `main:app` applies
+   and the root has no `main.py` or `main/__init__.py` (a main module may
+   re-export the application, so its presence keeps Railpack's command); or
+   Railpack runs `python <file>` and the file neither has a `__main__` block
+   nor calls `.run(`. A guessed entrypoint, a Procfile `web:` process,
+   `railpack.json`'s `deploy.startCommand` and `hosting.start` are never
+   pinned. The profile now also reports `deploy.startCommand`, which Railpack
+   runs ahead of the Procfile, as its start. Django is unaffected: Railpack
+   starts the WSGI module named by `WSGI_APPLICATION`.
+2. **Apply (imaged).** A pinned start replaces the image's command as
+   `hosting.start` does. An app-level start command still replaces both.
+   On the shared runner base the pinned command is resolved like any other
+   (amendment 3).
+3. **Compatibility.** The mark is an `omitempty` key of the deployment's
+   frozen `inferred_profile`, written by apid at enqueue. An imaged that
+   predates it ignores the key and keeps the image's command, as before; a
+   profile written before it lacks the mark. Rollback restores each
+   deployment's own profile.
+
+The dry-run, the deploy receipt and the guest now name the same command for
+such an app. Where Railpack's command may work and is kept (a `main.py`
+that serves itself, a `main.py` beside a `main:app` start, a Flask app with no
+gunicorn installed), the preview can still show the profile's server command
+instead of Railpack's.
+
 ## Consequences
 
 - An eligible Node app layer is its source plus `node_modules`, a few MB for
