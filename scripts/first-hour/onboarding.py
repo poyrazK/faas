@@ -34,6 +34,9 @@ PRIVATE_PHASES = (*PHASES[:6], "edited_release_rollout", *PHASES[6:])
 NODE = "hello-node"
 PRIVATE_NODE = "hello-node-private"
 INSTALLER = "https://get.gregale.dev"
+READ_ONLY = {("whoami",), ("init", "--list"), ("app", "list"), ("app", "get"),
+             ("project", "list"), ("project", "get"), ("release", "list"),
+             ("release", "verify"), ("release", "traffic", "status")}
 
 
 class Blocked(native.Failure):
@@ -250,8 +253,17 @@ class Run:
         (self.out / "onboarding.md").write_text(render(self.report))
 
     def call(self, *arguments, expect=0, timeout=90):
-        result = subprocess.run([str(self.cli), "--profile", self.profile, "--non-interactive", "--json", *arguments],
-                                cwd=self.workspace, env=self.env, capture_output=True, text=True, timeout=timeout)
+        command = [str(self.cli), "--profile", self.profile, "--non-interactive", "--json", *arguments]
+        read_only = any(arguments[:len(prefix)] == prefix for prefix in READ_ONLY)
+        # The remote request can lose its connection while Start is still
+        # healthy. Retry bounded read checks, including the starter's GET /.
+        for delay in (1, 2, 4, 0):
+            result = subprocess.run(command, cwd=self.workspace, env=self.env, capture_output=True, text=True, timeout=timeout)
+            if not (read_only and delay and result.returncode == 3 and '"transport_error"' in result.stderr):
+                break
+            metrics = self.report["metrics"]
+            metrics["transient_read_retries"] = metrics.get("transient_read_retries", 0) + 1
+            time.sleep(delay)
         if result.returncode != expect:
             path = self.private / "last-cli-failure.log"
             path.touch(mode=0o600, exist_ok=True)

@@ -229,6 +229,21 @@ class OwnershipContracts(unittest.TestCase):
             self.assertEqual(run.report["phases"]["cleanup_app"]["status"], "passed")
             self.assertEqual(run.report["proof"]["final_app_count"], 0)
 
+    def test_transport_retry_is_limited_to_read_checks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            run = self.make_run(Path(temp))
+            transport = subprocess.CompletedProcess([], 3, "", '{"code":"transport_error"}')
+            success = subprocess.CompletedProcess([], 0, '[]', "")
+            with mock.patch.object(ob.subprocess, "run", side_effect=[transport, success]) as process, \
+                    mock.patch.object(ob.time, "sleep"):
+                self.assertEqual(run.call("release", "verify", "release", "--app", run.slug, "--path", "/"), [])
+                self.assertEqual(process.call_count, 2)
+            self.assertEqual(run.report["metrics"]["transient_read_retries"], 1)
+            with mock.patch.object(ob.subprocess, "run", return_value=transport) as process, \
+                    self.assertRaises(ob.native.Failure):
+                run.call("app", "delete", run.slug, "--yes")
+            process.assert_called_once()
+
     def test_free_plan_gate_does_not_downgrade_or_mutate_another_plan(self):
         with tempfile.TemporaryDirectory() as temp:
             run = self.make_run(Path(temp))
