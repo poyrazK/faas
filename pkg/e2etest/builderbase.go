@@ -110,16 +110,6 @@ func OverrideDeployBase(t *testing.T, stubRef string) {
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", stubRef)
 }
 
-// ForceDeployBase points imaged's runtime base at stubRef even on a host with
-// real bases, for tests whose behavior depends on the base's own content:
-// the debug tools a base ships (ADR-20261117070620) are absent from older
-// staged bases. It lives here so cmd/e2e tests never set the variable
-// directly (TestMetalTestsDoNotSetTheBuilderBaseOverrideDirectly).
-func ForceDeployBase(t *testing.T, stubRef string) {
-	t.Helper()
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", stubRef)
-}
-
 // ClearDeployBaseOverride removes any inherited runtime-base override, for
 // tests that must resolve the host-approved base through the production
 // producer path. It lives here so cmd/e2e tests never set the variable

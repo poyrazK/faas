@@ -157,14 +157,11 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 			"sh", "id", "ls", "grep", "sed", "touch", "cat")
 	}
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	deployBaseRef := registry.Host() + "/onebox-faas/deploy-base:latest"
-	if busyboxErr == nil {
-		// A host's real staged bases may predate the debug tools; the stub
-		// base carries them, so use it even where real bases resolve.
-		e2etest.ForceDeployBase(t, deployBaseRef)
-	} else {
-		e2etest.OverrideDeployBase(t, deployBaseRef)
-	}
+	// A host with real bases keeps them: its node refuses another generation
+	// of a base its shared storage already publishes. The debug subtests then
+	// skip when those bases predate the tools; pkg/fcvm's
+	// TestMetalAppTaskDebugSession covers that host with a private base.
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake,
 		"FAAS_APP_TASK_API_ENABLED=1", "FAAS_INTERACTIVE_APP_TASKS=1", "FAAS_APP_TASK_DISPATCH=1")
@@ -334,6 +331,9 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 		session.send(api.AppTaskAttachStdinClose, nil)
 		var out bytes.Buffer
 		terminal := session.drain(&out)
+		if terminal.Failure != nil && terminal.Failure.Code == "debug_tools_unavailable" {
+			t.Skip("this host's runtime base predates the debug tools")
+		}
 		t.Logf("debug session output:\n%s", out.String())
 		if terminal.ExitCode == nil || *terminal.ExitCode != 0 {
 			t.Fatalf("debug terminal = %s", describeTerminal(terminal))
