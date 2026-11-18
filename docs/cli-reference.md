@@ -3270,7 +3270,7 @@ Set, list and sync an app&#39;s sealed variables
 
 Set a sealed secret
 
-`gregale env set [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--interactive] [--from-stdin] [--file <PATH>] [--env <SCOPE>] [--class <CLASS>] [--restart] [--no-guard] [<slug>] [<KEY=VALUE>...]`
+`gregale env set [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--interactive] [--from-stdin] [--file <PATH>] [--env <SCOPE>] [--class <CLASS>] [--restart] [--no-guard] [--plain] [<slug>] [<KEY=VALUE>...]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3285,6 +3285,7 @@ Set a sealed secret
 | `--class <CLASS>` | retention: persistent by default; ephemeral values make every wake a slower cold start; omission keeps an existing class | one of `persistent` · `ephemeral` |
 | `--restart` | restart the app and apply updated secrets now |  |
 | `--no-guard` | do not open a config guard for this change |  |
+| `--plain` | store KEY=VALUE as a readable, non-secret variable (shown by env list) |  |
 
 Examples:
 

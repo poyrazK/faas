@@ -5492,6 +5492,21 @@ func (c *Client) GetAppsSlugEnvWithScope(ctx context.Context, slug, scope string
 	var out AppEnvListResponse
 	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+slug+"/env", scope), nil, &out)
 }
+
+// GetAppsSlugEnvValues lists runtime variables in one scope with their
+// plaintext values (?values=true). Variables are non-sensitive by contract;
+// sealed secrets are listed separately and never carry a value.
+func (c *Client) GetAppsSlugEnvValues(ctx context.Context, slug, scope string) (AppEnvListResponse, error) {
+	var out AppEnvListResponse
+	path := c.scopeQuery("/v1/apps/"+slug+"/env", scope)
+	if strings.Contains(path, "?") {
+		path += "&" + EnvValuesQuery + "=true"
+	} else {
+		path += "?" + EnvValuesQuery + "=true"
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) PutAppsSlugEnvKey(ctx context.Context, slug, key, value string) error {
 	return c.do(ctx, "PUT", c.configWriteQuery("/v1/apps/"+slug+"/env/"+key, ""),
 		PutAppEnvRequest{Value: value}, nil)

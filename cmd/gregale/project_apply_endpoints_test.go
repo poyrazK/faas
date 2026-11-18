@@ -51,6 +51,31 @@ func TestRenderProjectEndpointsListsURLsAndAuth(t *testing.T) {
 	}
 }
 
+type fakePlainVariables struct{ resp api.AppEnvListResponse }
+
+func (f fakePlainVariables) GetAppsSlugEnvValues(context.Context, string, string) (api.AppEnvListResponse, error) {
+	return f.resp, nil
+}
+
+// B7: env list shows plain variables with their values, sorted, filtered by
+// --key, and says so when an older server returns no value.
+func TestPrintPlainVariables(t *testing.T) {
+	url := "http://orders.svc.gregale:10081"
+	client := fakePlainVariables{resp: api.AppEnvListResponse{Count: 2, Quota: 32, Env: []api.AppEnvResponse{
+		{Key: "ORDERS_URL", Value: &url}, {Key: "GIN_MODE"},
+	}}}
+	var out bytes.Buffer
+	printPlainVariables(&out, client, "shop-ui", "", nil)
+	if got := out.String(); !strings.Contains(got, "Variables (plain, readable; 2/32):\n  GIN_MODE=(value not returned by this server)\n  ORDERS_URL="+url+"\n") {
+		t.Fatalf("output:\n%s", got)
+	}
+	out.Reset()
+	printPlainVariables(&out, client, "shop-ui", "", []string{"ORDERS_URL"})
+	if strings.Contains(out.String(), "GIN_MODE") {
+		t.Fatalf("--key filter ignored:\n%s", out.String())
+	}
+}
+
 // A successful project deploy links an unlinked checkout, and never replaces
 // a link to another project (retail-store feedback A8).
 func TestLinkCheckoutAfterProjectDeploy(t *testing.T) {
