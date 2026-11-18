@@ -11377,6 +11377,12 @@ var (
 	// log keeps (ADR-20261117091026 §4); its granted ones are bounded by
 	// SandboxWebDistinctDomains.
 	SandboxEgressRefusedLogMax = 1000
+
+	// AgentEgressHandshakeMaxAgeSec bounds how old the agent tunnel's latest
+	// WireGuard handshake may be when a sandbox session boots on it
+	// (ADR-20261117185346 §3). WireGuard rekeys every two minutes while
+	// traffic flows, and keepalives hold an idle tunnel's handshake fresh.
+	AgentEgressHandshakeMaxAgeSec = 180
 	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
 	// command.
 	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}
