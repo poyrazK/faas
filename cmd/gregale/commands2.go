@@ -702,6 +702,7 @@ func cmdApp(args []string) int {
 	if explicit["health-path"] {
 		v := *healthPath
 		req.HealthPath = &v
+		warnRootHealthPath(v)
 	}
 	if explicit["health-path-wakes"] {
 		v := true
