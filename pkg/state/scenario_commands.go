@@ -313,8 +313,8 @@ func (m *MemStore) RevokeScenarioCommandNetworksForNode(ctx context.Context, nod
 	return nil
 }
 
-// LiveServiceCallersByHostIP adds leased commands and the exact original
-// resuming recorder to the fresh caller lookup. These source-only identities
+// LiveServiceCallersByHostIP adds leased commands, the exact original
+// resuming recorder and running app task VMs to the fresh caller lookup. These source-only identities
 // never expose a command or a still-unpublished resumed VM as a serving target.
 func (s *PgStore) LiveServiceCallersByHostIP(ctx context.Context, nodeName, hostIP string) ([]Instance, error) {
 	instances, err := s.LiveInstancesByHostIP(ctx, nodeName, hostIP)
@@ -335,5 +335,10 @@ func (s *PgStore) LiveServiceCallersByHostIP(ctx context.Context, nodeName, host
 	for _, r := range resuming {
 		instances = append(instances, Instance{ID: r.InstanceID, AppID: r.AppID, DeploymentID: r.DeploymentID, HostIP: hostIP, NodeID: nodeName, State: string(StateRunning)})
 	}
-	return instances, nil
+	// App task VMs call the app's services as the app (ADR-20261118070000).
+	tasks, err := s.appTaskCallersByHostIP(ctx, nodeName, hostIP)
+	if err != nil {
+		return nil, err
+	}
+	return append(instances, tasks...), nil
 }
