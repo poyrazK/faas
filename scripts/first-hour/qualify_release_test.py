@@ -90,12 +90,20 @@ class ArtifactTests(unittest.TestCase):
     def test_published_archive_passes_without_rebuilding_or_installing(self):
         self.prepare_case()
 
-    def prepare_case(self, corrupt=False, version=RELEASE, source=SOURCE, supports_verify=True, error=None):
+    def test_public_git_fallback_still_requires_published_archive_checksum_and_stamped_source(self):
+        self.prepare_case(rate_limited=True)
+        self.prepare_case(rate_limited=True, corrupt=True, error="archive_checksum_mismatch")
+        self.prepare_case(rate_limited=True, source="c" * 40, error="cli_source_mismatch")
+
+    def prepare_case(self, corrupt=False, version=RELEASE, source=SOURCE, supports_verify=True, error=None, rate_limited=False):
         payload = archive_bytes()
         checksum = hashlib.sha256(payload).hexdigest()
         commands = []
 
         def github(resource, directory, name):
+            if rate_limited:
+                raise qr.QualificationError("download_failed") from qr.HTTPError(
+                    "https://api.github.com", 403, "Rate limited", {"X-RateLimit-Remaining": "0"}, None)
             if resource.startswith("releases/"):
                 return {"tag_name": RELEASE, "draft": False, "published_at": "2026-11-17T12:11:51Z",
                         "assets": [{"name": n, "state": "uploaded"} for n in (f"gregale_{RELEASE[1:]}_linux_amd64.tar.gz", "CLI-SHA256SUMS")]}
@@ -111,6 +119,10 @@ class ArtifactTests(unittest.TestCase):
         def run(command, **kwargs):
             commands.append(command)
             self.assertNotIn("go", command)
+            if command[0] == "git":
+                ref = f"refs/tags/{RELEASE}"
+                self.assertEqual(command[-2:], [ref, ref + "^{}"])
+                return subprocess.CompletedProcess(command, 0, f"{'d' * 40}\t{ref}\n{SOURCE}\t{ref}^{{}}\n")
             if "version" in command:
                 return subprocess.CompletedProcess(command, 0, json.dumps({"version": version, "git_sha": source}))
             return subprocess.CompletedProcess(command, 0 if supports_verify else 1)
@@ -129,6 +141,8 @@ class ArtifactTests(unittest.TestCase):
                 self.assertEqual(evidence["status"], "passed")
                 self.assertEqual(evidence["cli_sha256"], hashlib.sha256(b"fixture").hexdigest())
                 self.assertTrue(evidence["checksum_verified"])
+                if rate_limited:
+                    self.assertEqual(evidence["source_lookup"], "public_git_tag")
             if corrupt:
                 self.assertEqual(commands, [])
 
