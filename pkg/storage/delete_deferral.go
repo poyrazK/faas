@@ -58,7 +58,7 @@ type GenerationDeleter interface {
 	DeleteGeneration(ctx context.Context, key string, generation int64) error
 }
 
-// DeferDeletes makes every shared remote backend under b (GCS, OCI) record
+// DeferDeletes makes every shared remote backend under b (GCS, S3, OCI) record
 // deletes through d instead of performing them. Composites are walked: the
 // read-through cache still evicts its local copy and node-local prefix
 // routes still delete their files, since only the shared store loses its
@@ -73,6 +73,9 @@ func DeferDeletes(b StorageBackend, d DeleteDeferrer) (int, error) {
 	}
 	switch be := b.(type) {
 	case *GCSStorageBackend:
+		be.deferDelete = d
+		return 1, nil
+	case *S3StorageBackend:
 		be.deferDelete = d
 		return 1, nil
 	case *OCIRegistryStorageBackend:

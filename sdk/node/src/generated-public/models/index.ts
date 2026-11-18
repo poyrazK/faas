@@ -276,6 +276,7 @@ export type { DelayedTaskRequest } from './DelayedTaskRequest.js';
 export type { DelayedTaskResponse } from './DelayedTaskResponse.js';
 export type { DeleteFinancialBudgetRequest } from './DeleteFinancialBudgetRequest.js';
 export type { DeletedAppListResponse } from './DeletedAppListResponse.js';
+export type { DeletedAppPurgeResponse } from './DeletedAppPurgeResponse.js';
 export type { DeletedAppSummary } from './DeletedAppSummary.js';
 export type { DeployTokenResponse } from './DeployTokenResponse.js';
 export type { DeploymentAliasListResponse } from './DeploymentAliasListResponse.js';

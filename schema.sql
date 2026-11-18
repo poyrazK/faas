@@ -1183,6 +1183,29 @@ $$;
 
 
 --
+-- Name: app_task_network_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_task_network_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NOT NEW.active OR NOT EXISTS(SELECT 1 FROM app_tasks t
+   WHERE t.id=NEW.task_id AND t.lease_token=NEW.lease_token AND t.lease_expires_at>clock_timestamp()
+    AND t.status='restoring' AND t.cancel_requested_at IS NULL
+    AND t.command[1] IS DISTINCT FROM '__gregale_rehearsal_command_v1__') THEN
+   RAISE EXCEPTION 'app task network identity requires the restoring owner' USING ERRCODE='23514';
+  END IF;
+ ELSIF (NEW.task_id,NEW.node_id,NEW.host_ip,NEW.lease_token) IS DISTINCT FROM (OLD.task_id,OLD.node_id,OLD.host_ip,OLD.lease_token)
+    OR NOT OLD.active OR NEW.active THEN
+  RAISE EXCEPTION 'app task network identity is immutable and retirement irreversible' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: app_traffic_security_epoch_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -33863,6 +33886,27 @@ CREATE TABLE public.app_task_attach_sessions (
 
 
 --
+-- Name: app_task_networks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_task_networks (
+    task_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    host_ip inet NOT NULL,
+    lease_token uuid NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    CONSTRAINT app_task_networks_host_ip_check CHECK (((family(host_ip) = 4) AND (host_ip << '10.0.0.0/8'::inet)))
+);
+
+
+--
+-- Name: TABLE app_task_networks; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.app_task_networks IS 'ADR-20261118070000 service-mesh caller identity of a running app task VM, written by schedd.';
+
+
+--
 -- Name: app_tasks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64297,6 +64341,14 @@ ALTER TABLE ONLY public.app_task_attach_sessions
 
 
 --
+-- Name: app_task_networks app_task_networks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_task_networks
+    ADD CONSTRAINT app_task_networks_pkey PRIMARY KEY (task_id);
+
+
+--
 -- Name: app_tasks app_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78416,6 +78468,13 @@ CREATE INDEX app_slo_hourly_hour_idx ON public.app_slo_hourly USING btree (hour)
 
 
 --
+-- Name: app_task_network_address; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_task_network_address ON public.app_task_networks USING btree (node_id, host_ip) WHERE active;
+
+
+--
 -- Name: app_tasks_account_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -89687,6 +89746,13 @@ CREATE TRIGGER app_storage_owner BEFORE INSERT ON public.snapshot_storage_daily 
 
 
 --
+-- Name: app_task_networks app_task_network_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_task_network_fence BEFORE INSERT OR UPDATE ON public.app_task_networks FOR EACH ROW EXECUTE FUNCTION public.app_task_network_fence();
+
+
+--
 -- Name: app_tasks app_tasks_schedule_occurrence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -98649,6 +98715,22 @@ ALTER TABLE ONLY public.app_slos
 
 ALTER TABLE ONLY public.app_task_attach_sessions
     ADD CONSTRAINT app_task_attach_sessions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_task_networks app_task_networks_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_task_networks
+    ADD CONSTRAINT app_task_networks_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id);
+
+
+--
+-- Name: app_task_networks app_task_networks_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_task_networks
+    ADD CONSTRAINT app_task_networks_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
 
 
 --

@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+# ADR-20261117185346 agent egress gateway. Peers are appended by
+# faas-agent-egress-sync from /etc/faas/agent-egress/peers/*.conf; the
+# private key is read from /etc/wireguard/{{ faas_agent_egress_iface }}.key at sync time.
+[Interface]
+Address = {{ faas_agent_egress_gateway_address }}
+ListenPort = {{ faas_agent_egress_listen_port }}
+MTU = {{ faas_agent_egress_mtu }}
