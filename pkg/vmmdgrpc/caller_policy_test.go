@@ -135,7 +135,7 @@ type recvStream struct {
 
 func (r *recvStream) Context() context.Context { return r.ctx }
 func (r *recvStream) RecvMsg(m any) error {
-	*(m.(*vmmdpb.LogsRequest)) = *r.req
+	m.(*vmmdpb.LogsRequest).Instance = r.req.GetInstance()
 	return nil
 }
 
