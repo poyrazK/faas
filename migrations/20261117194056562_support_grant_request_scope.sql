@@ -14,12 +14,26 @@ ALTER TABLE support_grant_requests ADD COLUMN IF NOT EXISTS app_ids uuid[];
 ALTER TABLE support_grant_requests ADD COLUMN IF NOT EXISTS ttl_seconds integer;
 ALTER TABLE support_grant_requests ADD COLUMN IF NOT EXISTS extends_grant_id uuid;
 ALTER TABLE support_grants ADD COLUMN IF NOT EXISTS summary_sent_at timestamptz;
-ALTER TABLE support_grant_requests ADD CONSTRAINT support_grant_requests_apps_check
-    CHECK (app_ids IS NULL OR cardinality(app_ids) BETWEEN 1 AND 100) NOT VALID;
-ALTER TABLE support_grant_requests ADD CONSTRAINT support_grant_requests_ttl_check
-    CHECK (ttl_seconds IS NULL OR ttl_seconds BETWEEN 3600 AND 604800) NOT VALID;
-ALTER TABLE support_grant_requests ADD CONSTRAINT support_grant_requests_extends_fkey
-    FOREIGN KEY (extends_grant_id) REFERENCES support_grants(id) ON DELETE SET NULL NOT VALID;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ SET LOCAL lock_timeout = '5s';
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'support_grant_requests_apps_check'
+                AND conrelid = 'support_grant_requests'::regclass) THEN
+  ALTER TABLE support_grant_requests ADD CONSTRAINT support_grant_requests_apps_check
+      CHECK (app_ids IS NULL OR cardinality(app_ids) BETWEEN 1 AND 100) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'support_grant_requests_ttl_check'
+                AND conrelid = 'support_grant_requests'::regclass) THEN
+  ALTER TABLE support_grant_requests ADD CONSTRAINT support_grant_requests_ttl_check
+      CHECK (ttl_seconds IS NULL OR ttl_seconds BETWEEN 3600 AND 604800) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'support_grant_requests_extends_fkey'
+                AND conrelid = 'support_grant_requests'::regclass) THEN
+  ALTER TABLE support_grant_requests ADD CONSTRAINT support_grant_requests_extends_fkey
+      FOREIGN KEY (extends_grant_id) REFERENCES support_grants(id) ON DELETE SET NULL NOT VALID;
+ END IF;
+END $$;
 -- +goose StatementEnd
 
 -- +goose Down
