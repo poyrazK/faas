@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; edge = the gateways, deployed after the control plane by cd-edge-units.yml one host at a time (services name the host role they run on); shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only (and database nodes, ADR-1027: pgproxyd, dbbackupd and vmmd there wait for the full release too); tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
+  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; edge = the gateways, deployed after the control plane by cd-edge-units.yml one host at a time (services name the host role they run on); shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only (and database nodes, ADR-1027: pgproxyd, dbbackupd and vmmd there wait for the full release too; and the agent egress gateway host, ADR-20261117185346: agentproxyd, installed by its ansible role); tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
   "binaries": {
     "apid": {
       "lane": "control-plane",
@@ -70,6 +70,7 @@
     },
     "vmmd": {"lane": "compute"},
     "pgproxyd": {"lane": "compute"},
+    "agentproxyd": {"lane": "compute"},
     "dbbackupd": {"lane": "compute"},
     "vmmd-jail-helper": {"lane": "compute"},
     "vmmd-guestdisk": {"lane": "compute"},
@@ -179,6 +180,7 @@
       "deploy/ansible/site.yml",
       "deploy/ansible/standby_takeover.yml",
       "deploy/ansible/tenant_egress_gateway.yml",
+      "deploy/ansible/agent_egress_gateway.yml",
       "deploy/ansible/verify.yml",
       "deploy/ansible/inventory/hosts.ini",
       "deploy/ansible/roles/control_plane_peer_access/",
@@ -194,6 +196,7 @@
       "deploy/ansible/roles/pgproxyd_service/",
       "deploy/ansible/roles/postgres_standby/",
       "deploy/ansible/roles/tenant_egress_gateway/",
+      "deploy/ansible/roles/agent_egress_gateway/",
       "deploy/controlplane/",
       "deploy/etc/",
       "deploy/firecracker/",

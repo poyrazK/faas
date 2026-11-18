@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -496,6 +497,88 @@ func TestRenderManifestAnsibleFiles_TenantEgressGateway(t *testing.T) {
 		`faas_tenant_egress_gateway_address: "10.43.0.1/24"`,
 		`faas_tenant_egress_listen_port: 51820`,
 		`faas_tenant_egress_tunnel_cidr: "10.43.0.0/24"`,
+	} {
+		if !strings.Contains(gatewayVars, want) {
+			t.Errorf("gateway host vars missing %s:\n%s", want, gatewayVars)
+		}
+	}
+}
+
+// adr: 20261117185346 §1–§2 — a declared agent egress gateway gives every
+// compute host its tunnel slice and address, derived from its name, and the
+// gateway host its own listener and public addresses; the control plane
+// gets none.
+func TestRenderManifestAnsibleFiles_AgentEgressGateway(t *testing.T) {
+	for _, proxy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("proxy=%t", proxy), func(t *testing.T) { testRenderAgentEgressGateway(t, proxy) })
+	}
+}
+
+// adr: 20261117185346 §4 — with proxy on, the gateway runs agentproxyd and
+// every node's vmmd gets its registration URL; off, neither.
+func testRenderAgentEgressGateway(t *testing.T, proxy bool) {
+	t.Helper()
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: fsn-1.gregale.dev:7100\n    - name: fsn-2\n      role: compute-only\n      address: fsn-2.gregale.dev:50051\n", 1)
+	yaml += "egress:\n  agent_gateway:\n    endpoint: egress-gw.gregale.dev:51821\n    public_key: " +
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n    tunnel_cidr: 10.78.0.0/16\n    addresses: [198.51.100.7, 198.51.100.8]\n"
+	proxyURL := ""
+	if proxy {
+		yaml += "    proxy: true\n"
+		proxyURL = "http://10.78.0.1:15081"
+	}
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var cpVars, computeVars, gatewayVars, inventory string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "hosts.ini"):
+			inventory = string(file.Body)
+		case strings.HasSuffix(file.Path, "agent-egress-gateway.yml"):
+			gatewayVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			cpVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	for _, want := range []string{
+		`faas_agent_egress_iface: "wg-agent"`,
+		`faas_agent_egress_gateway_endpoint: "egress-gw.gregale.dev:51821"`,
+		`faas_agent_egress_tunnel_cidr: "10.78.0.0/16"`,
+		`faas_agent_egress_node_slice: "10.78.8.0/22"`,
+		`faas_agent_egress_node_address: "10.78.8.1/32"`,
+		`faas_agent_egress_gateway_address: "10.78.0.1"` + "\n",
+		fmt.Sprintf("faas_agent_egress_proxy_url: %q\n", proxyURL),
+	} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute host vars missing %s:\n%s", want, computeVars)
+		}
+	}
+	if strings.Contains(cpVars, "faas_agent_egress_") || strings.Contains(computeVars, "faas_tenant_egress_") {
+		t.Errorf("unexpected egress vars:\ncontrol plane:\n%s\ncompute:\n%s", cpVars, computeVars)
+	}
+	if !strings.Contains(inventory, "[agent_egress_gateway]\nagent-egress-gateway\n") {
+		t.Errorf("inventory has no agent gateway group:\n%s", inventory)
+	}
+	for _, want := range []string{
+		`ansible_host: "egress-gw.gregale.dev"`,
+		`faas_agent_egress_gateway_address: "10.78.0.1/16"`,
+		`faas_agent_egress_listen_port: 51821`,
+		"faas_agent_egress_node_prefix: 22\n",
+		fmt.Sprintf("faas_agentproxyd_enabled: %t\n", proxy),
+		"faas_agentproxyd_registration_port: 15081\n",
+		"faas_agent_egress_addresses:\n  - \"198.51.100.7\"\n  - \"198.51.100.8\"\n",
 	} {
 		if !strings.Contains(gatewayVars, want) {
 			t.Errorf("gateway host vars missing %s:\n%s", want, gatewayVars)

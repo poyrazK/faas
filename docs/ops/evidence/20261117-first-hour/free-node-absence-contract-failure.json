@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "status": "failed",
+  "reason": "onboarding_step_failed",
+  "provenance": {
+    "evidence_kind": "deployed",
+    "target": "https://api.gregale.dev",
+    "plan": "free",
+    "interaction": "scripted_pty_and_browser",
+    "started_at": "2026-11-17T18:59:03Z",
+    "cli_version": "v0.1.18-rc.349",
+    "cli_sha256": "7a1597ffc8dc91ba76ca4f8478c12cb84fb608da9b513c1881b9c12d7daf12c1",
+    "harness_revision": "d2260cb2c9d49dd2a0a755ff0c64578c1ffcadf6",
+    "harness_worktree_dirty": false
+  },
+  "phases": {
+    "isolated_environment": {
+      "status": "passed",
+      "seconds": 0.002
+    },
+    "published_install": {
+      "status": "passed",
+      "seconds": 30.792
+    },
+    "fresh_browser_login": {
+      "status": "passed",
+      "seconds": 79.373
+    },
+    "free_account_preflight": {
+      "status": "failed",
+      "seconds": 1.165
+    },
+    "start_node": {
+      "status": "not_run",
+      "seconds": null
+    },
+    "edit_same_app": {
+      "status": "not_run",
+      "seconds": null
+    },
+    "cleanup_app": {
+      "status": "not_run",
+      "seconds": null
+    },
+    "logout": {
+      "status": "passed",
+      "seconds": 1.556
+    }
+  },
+  "artifact": {
+    "release_tag": "v0.1.18-rc.349",
+    "release_url": "https://github.com/poyrazK/faas/releases/tag/v0.1.18-rc.349",
+    "published_at": "2026-11-17T12:11:51Z",
+    "platform": "darwin/arm64",
+    "archive": "gregale_0.1.18-rc.349_darwin_arm64.tar.gz",
+    "archive_url": "https://github.com/poyrazK/faas/releases/download/v0.1.18-rc.349/gregale_0.1.18-rc.349_darwin_arm64.tar.gz",
+    "checksum_manifest_sha256": "35c0280d016a59d1e305a1af8afeb88cad3200b267b8fef4d92206a3b7c8c006",
+    "expected_archive_sha256": "7b10c2c34b2f93110c8965a252bc95ff8b2030b658e1411299353465f4625c78",
+    "archive_sha256": "7b10c2c34b2f93110c8965a252bc95ff8b2030b658e1411299353465f4625c78",
+    "checksum_verified": true,
+    "cli_sha256": "7a1597ffc8dc91ba76ca4f8478c12cb84fb608da9b513c1881b9c12d7daf12c1",
+    "cli_version": "v0.1.18-rc.349",
+    "cli_source_sha": "37b55bddef0ce36d22b524c9270b290ecd529e81",
+    "release_verify_available": true,
+    "status": "passed",
+    "installer_url": "https://get.gregale.dev",
+    "installer_sha256": "c45e00f965c0cef6ef0b028bdcfa406cce554c4755d36996b63bb95af5d88334",
+    "installer_cli_matches_archive": true
+  },
+  "proof": {
+    "signed_out_before_login": true,
+    "expected_account_verified": true,
+    "initial_app_count": 0
+  },
+  "metrics": {
+    "install_s": 30.589,
+    "browser_login_s": 78.769
+  }
+}

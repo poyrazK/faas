@@ -23,7 +23,7 @@ ADR-20261027090014 §4.4 decided a dedicated agent gateway and address pool, a p
 
 - The tenant gateway host gains a second WireGuard interface, `wg-agent`, with its own tunnel range and its own public addresses. Agent traffic is source-NATed only to agent addresses, and app traffic only to app addresses. Neither ever carries the other's traffic.
 - The addresses come from a provider whose terms allow multi-tenant egress. They are never rotated to get around a block.
-- Manifest: `egress.agent_gateway` with `endpoint`, `public_key`, `tunnel_cidr`, `node_prefix` and `addresses`. It may name the tenant gateway's `ssh_host`. The ansible roles that set up `wg-tenant` gain the agent interface beside it.
+- Manifest: `egress.agent_gateway` with `endpoint`, `public_key`, `tunnel_cidr`, `node_prefix`, `addresses` and `proxy` (puts the §4 proxy in the path). It may name the tenant gateway's `ssh_host`. The ansible roles that set up `wg-tenant` gain the agent interface beside it.
 - One host is one failure domain: when it is down, apps and agents lose egress together. The owner accepted that to stand the gateway up sooner. A dedicated host later is a manifest change, not a design change.
 
 ### 2. Which traffic
@@ -40,7 +40,9 @@ ADR-20261027090014 §4.4 decided a dedicated agent gateway and address pool, a p
 
 ### 4. The politeness proxy
 
-A new daemon, `agentproxyd`, runs on the gateway host. It is a transparent TCP proxy for agent traffic on ports 80 and 443, which nftables redirects to it.
+A new daemon, `agentproxyd`, runs on the gateway host. It is a transparent TCP proxy for agent traffic on ports 80 and 443, which nftables redirects to it. It ships in the signed release and is installed on the gateway host by its ansible role, as on a database node.
+
+- **One address per VM.** The proxy dials out from the VM's agent address, chosen from the low bits of the VM's tunnel address. The gateway's source NAT makes the same choice for the traffic it forwards, so a VM leaves from one address whatever the port.
 
 - **Destination.** It reads the destination from the TLS ClientHello's SNI, or from the plain-HTTP `Host` header. It never decrypts. A TLS connection without SNI, or HTTP without `Host`, is refused.
 - **Identity.** vmmd registers each agent VM's address with the proxy at boot: account, session or run, node, and an expiry. It does so over the tunnel, so the WireGuard peer authenticates the node, and the proxy accepts a registration only for addresses in that node's slice. vmmd removes the registration when the VM is destroyed. A connection from an unregistered address is refused.
@@ -56,7 +58,8 @@ A new daemon, `agentproxyd`, runs on the gateway host. It is a transparent TCP p
 ### 5. The connection log
 
 - The proxy logs every connection with: node, account, session or run, source address, destination name and address, the port, bytes each way, duration, and why it ended or was refused.
-- It writes JSON lines to the journal. The log shipper already carries those off the host. The gateway host gets no database access.
+- It writes one JSON line per connection, message `agent_egress_connection`, to its own journal namespace on the gateway host (`LogNamespace=agentproxyd`). The gateway host gets no database access.
+- *Amended in PR 3:* the draft said the log shipper already carries the journal off the host. It does not: the gateway host is outside the private network and runs no shipper, so the log stays on the gateway. Its namespace is persistent and kept 30 days (the ADR-371 flow log's retention), apart from the host journal's 7-day bound. Shipping it off the host needs a path to Loki and a logs leaf for the gateway; that is a follow-up.
 - So an abuse report naming a public address and a time maps to one session within minutes: the proxy log gives the session directly, and vmmd's flow log (ADR-371) and the session's domain log (ADR-20261117091026 §4) confirm it.
 
 ### Limits (`pkg/api/limits.go`)
@@ -81,7 +84,7 @@ These are starting values. A headless browser opens about six connections per ho
 
 1. **PR 1:** the manifest stanza, ansible (`wg-agent` on the gateway host and the nodes), vmmd's per-VM marking and source NAT, the policy rules (mark → agent table, then unreachable), and the handshake check. Behind `FAAS_AGENT_EGRESS_GATEWAY` (vmmd). Without the proxy, the gateway forwards agent traffic directly.
 2. **PR 2:** `agentproxyd`, with registration, caps, blocklist and metrics. vmmd registers VMs and refuses a boot it cannot register.
-3. **PR 3:** the connection log, its shipping, and the runbook entry for abuse reports.
+3. **PR 3:** the connection log, its retention on the gateway, and the runbook entry for abuse reports (`docs/runbooks/agent-egress-gateway.md`).
 4. **Before the switch is on:** the owner provisions the agent addresses on the gateway host. A metal check covers a web session and a registries session through `wg-agent`, a refusal with the tunnel down, and each cap's refusal. Then one node, then the fleet.
 
 ## Rejected alternatives

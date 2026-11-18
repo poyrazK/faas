@@ -1362,6 +1362,8 @@ from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOp
 from .delete_financial_budget_request import DeleteFinancialBudgetRequest
 from .delete_secret_prefer import DeleteSecretPrefer
 from .deleted_app_list_response import DeletedAppListResponse
+from .deleted_app_purge_response import DeletedAppPurgeResponse
+from .deleted_app_purge_response_pending_reason import DeletedAppPurgeResponsePendingReason
 from .deleted_app_summary import DeletedAppSummary
 from .deleted_app_summary_restore_blocker import DeletedAppSummaryRestoreBlocker
 from .deliver_app_event_request import DeliverAppEventRequest
@@ -5318,6 +5320,7 @@ from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeCha
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .publish_stored_workflow_request import PublishStoredWorkflowRequest
+from .purge_deleted_app_body import PurgeDeletedAppBody
 from .push_outbound_ai_prompt_version_request import PushOutboundAIPromptVersionRequest
 from .push_outbound_ai_prompt_version_request_defaults import PushOutboundAIPromptVersionRequestDefaults
 from .push_outbound_ai_prompt_version_response import PushOutboundAIPromptVersionResponse
@@ -8382,6 +8385,8 @@ __all__ = (
     "DelegatedToolInvocationIntent",
     "DeleteAccountSessionBody",
     "DeletedAppListResponse",
+    "DeletedAppPurgeResponse",
+    "DeletedAppPurgeResponsePendingReason",
     "DeletedAppSummary",
     "DeletedAppSummaryRestoreBlocker",
     "DeleteDeploymentScopeExclusionResponse200",
@@ -12072,6 +12077,7 @@ __all__ = (
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PublishStoredWorkflowRequest",
+    "PurgeDeletedAppBody",
     "PushOutboundAIPromptVersionRequest",
     "PushOutboundAIPromptVersionRequestDefaults",
     "PushOutboundAIPromptVersionResponse",

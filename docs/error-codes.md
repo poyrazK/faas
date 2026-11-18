@@ -192,6 +192,10 @@ HTTP 422 · No process listening on $PORT; App listens on a different port
 
 See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md).
 
+### `app_not_purgeable`
+
+HTTP 409 · App not purgeable
+
 ### `app_not_restorable`
 
 HTTP 409 · App not restorable
