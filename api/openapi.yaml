@@ -513,6 +513,182 @@ paths:
           description: Owner decisions for hosted source reviews are currently rate-limited.
         '503':
           description: Source review approval is disabled or the owner review journal is temporarily unavailable.
+  /v1/task-tool-source-intents/{id}/bindings:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Immutable retained source identity whose native Task binding selection is being inspected or set.
+    get:
+      operationId: getHostedTaskBindings
+      summary: Inspect hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: Fresh original requester or personal owner reads qualification metadata only. Native source, app,
+        credential and authority drift permanently invalidates previously observed evidence. This read can persist
+        terminal invalidation but never opens credentials or repeats probes. Passing evidence expires within one minute,
+        ends at the original source deadline and grants no readiness or execution authority.
+      responses:
+        '200':
+          description: Closed qualification metadata with current terminal invalidation and no source, references
+            or credential values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The retained source identity supplied for metadata inspection is malformed.
+        '401':
+          description: Authenticate the inspecting requester or personal owner before reading qualification metadata.
+        '403':
+          description: This caller lacks permission to inspect the selected source binding metadata.
+        '404':
+          description: No qualification for this source is visible to the current account or reader.
+        '409':
+          description: Qualification metadata could not be refreshed atomically; inspect the same source identity
+            again.
+        '429':
+          description: Metadata reads for this retained Task source are currently rate limited.
+        '503':
+          description: The native qualification journal is temporarily unavailable for metadata inspection.
+    put:
+      operationId: selectHostedTaskBindings
+      summary: Select owner-reviewed native Task bindings
+      tags:
+      - mcp-management
+      description: An authenticated account owner or fresh unscoped non-agent, non-MCP-login personal administrator
+        selects existing native managed PostgreSQL references under the account MFA policy. Both verification and
+        source-retention opt-ins and independent sealing identities are required. Selection immutably pins the approved
+        source digests, queue namespace, app baselines and secret versions for one ready account-owned database with
+        distinct runtime, migration and observer roles. Retries preserve the original non-renewable source deadline;
+        selection starts neither probes nor execution.
+      responses:
+        '200':
+          description: New or identically replayed native-reference selection metadata with its fixed source deadline;
+            no checks or execution are started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The binding selection contains malformed source digests, namespace or native secret references.
+        '401':
+          description: Authenticate the selecting personal owner before recording native binding references.
+        '403':
+          description: Selecting Task bindings requires personal owner authority and satisfaction of the account MFA
+            policy.
+        '404':
+          description: The retained source or selecting owner is unavailable within this account.
+        '409':
+          description: The source approval, selected references or pinned native facts differ from the immutable qualification.
+        '429':
+          description: Owner requests to select hosted Task bindings are currently rate limited.
+        '503':
+          description: New binding selection, source retention or the required independent seal identities are unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingSelection'
+  /v1/task-tool-source-intents/{id}/bindings/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity for the one-time personal-owner binding probe.
+    post:
+      operationId: checkHostedTaskBindings
+      summary: Probe selected hosted Task bindings once
+      tags:
+      - mcp-management
+      description: A fresh personal owner claims the exact selected fingerprint once and runs bounded read-only catalog
+        qualification under the account MFA policy. Native authority and pins are checked before and after the attempt.
+        Validated public destinations, verified TLS and sequential role connections keep credentials private. Concurrent
+        calls and restarts cannot repeat the claim. Success records at most one minute of historical evidence, clamped
+        to source expiry, without proving retained payload readability, migration compatibility, VM connectivity or
+        permission to apply.
+      responses:
+        '200':
+          description: Recorded one-time catalog results or the existing in-progress or terminal receipt for that
+            same immutable selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The probe request must name a valid source identity and lowercase SHA256 qualification fingerprint.
+        '401':
+          description: Authenticate the personal owner before requesting a one-time catalog probe.
+        '403':
+          description: Probing selected bindings requires fresh personal owner authority and the account MFA policy.
+        '404':
+          description: The source, selected qualification or current probing owner cannot be found in this account.
+        '409':
+          description: The probe fingerprint conflicts with the selection or all bounded private workers are occupied.
+        '429':
+          description: Personal-owner qualification probe requests are currently rate limited.
+        '503':
+          description: Owner probing, retained source admission or the required unseal configuration is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
+  /v1/task-tool-source-intents/{id}/bindings/revoke:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity whose selected binding evidence is being revoked.
+    post:
+      operationId: revokeHostedTaskBindings
+      summary: Revoke hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: A fresh personal owner permanently revokes the exact selected qualification under the account MFA
+        policy. Revocation remains available while new admission is disabled and does not require the old requester
+        or native app baseline to remain live. Revoked evidence cannot be revived and previously observed passing
+        checks never supply execution authority.
+      responses:
+        '200':
+          description: Terminal revocation metadata for the exact selected qualification fingerprint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The revocation request contains an invalid source identity or qualification fingerprint.
+        '401':
+          description: Authenticate the personal owner before revoking selected binding evidence.
+        '403':
+          description: Revoking binding evidence requires personal owner authority and compliance with the account
+            MFA policy.
+        '404':
+          description: The retained source, selected qualification or current revoking owner is unavailable in this
+            account.
+        '409':
+          description: Revocation names a fingerprint different from the immutable selected qualification.
+        '429':
+          description: Owner revocations of hosted Task qualifications are currently rate limited.
+        '503':
+          description: The native qualification journal cannot currently record binding revocations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
   /v1/task-tool-release-intents/{id}:
     parameters:
     - name: id
@@ -75062,6 +75238,167 @@ components:
           - reject
           - revoke
           description: Owner verdict on this hosted source review, independent of future execution authorization.
+    HostedTaskBindingSelection:
+      type: object
+      additionalProperties: false
+      required:
+      - intent_sha256
+      - review_sha256
+      - namespace
+      - web_database_ref
+      - worker_database_ref
+      - migration_database_ref
+      - observer_database_ref
+      properties:
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        namespace:
+          type: string
+          maxLength: 128
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:/-]*$
+        web_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Existing read_write native managed PostgreSQL secret reference on the reviewed web app; never
+            a credential value.
+        worker_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Existing read_write native managed PostgreSQL secret reference on the reviewed worker app sharing
+            the selected queue.
+        migration_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Worker app reference for its separate migration-only PostgreSQL role; qualification never runs
+            a migration.
+        observer_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Native read_only PostgreSQL secret reference on the reviewed observer app, isolated from runtime
+            and migration roles.
+      description: Personal-owner selection of native Task binding references for one approved retained source intent,
+        never plaintext credentials.
+    HostedTaskBindingCheck:
+      type: object
+      additionalProperties: false
+      required:
+      - binding_sha256
+      properties:
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+      description: Exact immutable qualification fingerprint supplied by a personal owner for a check or revocation.
+    HostedTaskBindingResult:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - status
+      properties:
+        name:
+          type: string
+          enum:
+          - namespace
+          - owner_keys
+          - configured_payload_keys
+          - database_schema
+          - runtime_roles
+          - migration_owner
+          - observer_read_only
+        status:
+          type: string
+          enum:
+          - not_checked
+          - passed
+          - failed
+      description: One fixed-name bounded qualification outcome containing no native database facts or secret material.
+    HostedTaskBindingVerification:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - account_id
+      - intent_id
+      - intent_sha256
+      - review_sha256
+      - binding_sha256
+      - status
+      - checks
+      - created_at
+      - expires_at
+      - ready_to_apply
+      - bindings_verified
+      - owner_authorization_required
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        account_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        status:
+          type: string
+          enum:
+          - selected
+          - verifying
+          - passed
+          - failed
+          - stale
+          - revoked
+          - expired
+        checks:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/HostedTaskBindingResult'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        checked_at:
+          type: string
+          format: date-time
+        valid_until:
+          type: string
+          format: date-time
+        ready_to_apply:
+          type: boolean
+          enum:
+          - false
+        bindings_verified:
+          type: boolean
+          enum:
+          - false
+        owner_authorization_required:
+          type: boolean
+          enum:
+          - true
+      description: Historical private-binding qualification metadata only. No credential values, references, source,
+        database facts, owner decisions or execution authority.
     TaskToolReleaseIntent:
       type: object
       additionalProperties: false

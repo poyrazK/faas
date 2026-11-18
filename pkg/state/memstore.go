@@ -158,6 +158,7 @@ type MemStore struct {
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
+	hostedTaskBindings             map[string]HostedTaskBindingRecord
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -25325,6 +25326,11 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, row := range m.hostedTaskSourceIntents {
 		if row.Record.AccountID == id {
 			delete(m.hostedTaskSourceIntents, key)
+		}
+	}
+	for key, record := range m.hostedTaskBindings {
+		if record.Public.AccountID == id {
+			delete(m.hostedTaskBindings, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

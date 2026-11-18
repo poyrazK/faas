@@ -2405,6 +2405,14 @@ from .guarded_debug_regression_action_request import GuardedDebugRegressionActio
 from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
 from .held_link_review import HeldLinkReview
 from .held_links_response import HeldLinksResponse
+from .hosted_task_binding_check import HostedTaskBindingCheck
+from .hosted_task_binding_result import HostedTaskBindingResult
+from .hosted_task_binding_result_name import HostedTaskBindingResultName
+from .hosted_task_binding_result_status import HostedTaskBindingResultStatus
+from .hosted_task_binding_selection import HostedTaskBindingSelection
+from .hosted_task_binding_verification import HostedTaskBindingVerification
+from .hosted_task_binding_verification_status import HostedTaskBindingVerificationStatus
+from .hosted_task_binding_verification_version import HostedTaskBindingVerificationVersion
 from .hosted_task_source_check import HostedTaskSourceCheck
 from .hosted_task_source_decision import HostedTaskSourceDecision
 from .hosted_task_source_decision_decision import HostedTaskSourceDecisionDecision
@@ -9378,6 +9386,14 @@ __all__ = (
     "GuardedDebugRegressionActionRequestAction",
     "HeldLinkReview",
     "HeldLinksResponse",
+    "HostedTaskBindingCheck",
+    "HostedTaskBindingResult",
+    "HostedTaskBindingResultName",
+    "HostedTaskBindingResultStatus",
+    "HostedTaskBindingSelection",
+    "HostedTaskBindingVerification",
+    "HostedTaskBindingVerificationStatus",
+    "HostedTaskBindingVerificationVersion",
     "HostedTaskSourceCheck",
     "HostedTaskSourceDecision",
     "HostedTaskSourceDecisionDecision",
