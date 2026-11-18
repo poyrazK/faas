@@ -95,11 +95,15 @@ func (s *server) createAppIfUnderQuotaWithActivity(ctx context.Context, r *http.
 		if err == nil && outboxID > 0 {
 			s.deliverOrgActivityOutbox(ctx, outboxID)
 		}
+		if err == nil {
+			s.enrollNewAppInProtection(ctx, acct, created)
+		}
 		return created, err
 	}
 	created, err := s.store.CreateAppIfUnderQuota(ctx, app, limits)
 	if err == nil {
 		s.recordAppActivity(ctx, r, acct, created, entry)
+		s.enrollNewAppInProtection(ctx, acct, created)
 	}
 	return created, err
 }

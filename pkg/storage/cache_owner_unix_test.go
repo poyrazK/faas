@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -107,4 +108,55 @@ func TestEvictionOwnershipIsExclusive(t *testing.T) {
 		t.Fatalf("claim after release: %v", err)
 	}
 	releaseB()
+}
+
+// ADR-20261118003000: only the eviction owner holds the build-drive floor.
+// rc.352 on production-us (2026-11-18) raised it for every process, and
+// imaged's pre-stage, which may not evict captures or layers, evicted the
+// sidecars it had just written trying to reach it.
+func TestOnlyTheEvictionOwnerHoldsTheBuildFloor(t *testing.T) {
+	const gib = int64(1) << 30
+	for _, tc := range []struct {
+		name          string
+		fs, floor     int64
+		wantOwnerFree int64
+	}{
+		{"100 GiB node disk keeps a build drive free", 100 * gib, 15 * gib, api.ArtifactCacheBuildFreeBytes},
+		{"200 GiB disk: the 15% reserve is larger", 200 * gib, 30 * gib, 30 * gib},
+		{"40 GiB disk is too small to host builds", 40 * gib, 8 * gib, 8 * gib},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := storage.OwnerMinFreeBytes(tc.fs, tc.floor); got != tc.wantOwnerFree {
+				t.Fatalf("OwnerMinFreeBytes(%d GiB, %d GiB) = %d, want %d", tc.fs/gib, tc.floor/gib, got, tc.wantOwnerFree)
+			}
+		})
+	}
+
+	dir := filepath.Join(t.TempDir(), "cache")
+	owner, err := storage.NewLocalCacheBackend(newFakeBackend(), dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := storage.NewLocalCacheBackend(newFakeBackend(), dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*storage.LocalCacheBackend{owner, other} {
+		c.SetMinFreeBytes(15 * gib)
+		c.SetOwnerMinFreeBytes(api.ArtifactCacheBuildFreeBytes)
+	}
+	release, err := owner.ClaimEvictionOwnership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := owner.MinFreeBytes(); got != api.ArtifactCacheBuildFreeBytes {
+		t.Fatalf("owner floor = %d, want the build floor %d", got, api.ArtifactCacheBuildFreeBytes)
+	}
+	if got := other.MinFreeBytes(); got != 15*gib {
+		t.Fatalf("non-owner floor = %d, want its standing 15 GiB", got)
+	}
+	release()
+	if got := owner.MinFreeBytes(); got != 15*gib {
+		t.Fatalf("released owner floor = %d, want its standing 15 GiB", got)
+	}
 }

@@ -246,7 +246,10 @@ type LocalCacheBackend struct {
 	// zero disables the check. diskSpace reports free and total bytes.
 	// Both are guarded by mu.
 	minFreeBytes int64
-	diskSpace    func(string) (free, total int64, err error)
+	// ownerMinFreeBytes is the floor this cache holds while it is the
+	// eviction owner (OwnerMinFreeBytes); zero keeps minFreeBytes.
+	ownerMinFreeBytes int64
+	diskSpace         func(string) (free, total int64, err error)
 	// evictionTier orders eviction (cache_retention.go); nil is plain
 	// oldest-first. Guarded by mu.
 	evictionTier func(key string) int
@@ -296,6 +299,21 @@ func (c *LocalCacheBackend) SetMinFreeBytes(n int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.minFreeBytes = n
+}
+
+// SetOwnerMinFreeBytes sets the floor the cache holds while this process is
+// its eviction owner (ClaimEvictionOwnership); see OwnerMinFreeBytes.
+func (c *LocalCacheBackend) SetOwnerMinFreeBytes(n int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ownerMinFreeBytes = n
+}
+
+// MinFreeBytes reports the free-space floor the cache holds now.
+func (c *LocalCacheBackend) MinFreeBytes() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.minFreeBytes
 }
 
 // NewLocalCacheBackend wires a LocalCacheBackend rooted at
