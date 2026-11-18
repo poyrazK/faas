@@ -100,7 +100,10 @@ func (b *OwnerBalancer) Tick(ctx context.Context) (int, error) {
 	moved := map[string]bool{}
 	count := 0
 	for _, c := range list {
-		if count >= api.OwnerBalanceMovesPerTick || ctx.Err() != nil {
+		if err := ctx.Err(); err != nil {
+			return count, err
+		}
+		if count >= api.OwnerBalanceMovesPerTick {
 			break
 		}
 		if nodes[from].sharePct()-nodes[to].sharePct() <= api.OwnerBalanceTargetSpreadPct {
@@ -111,11 +114,14 @@ func (b *OwnerBalancer) Tick(ctx context.Context) (int, error) {
 		if !ok {
 			continue
 		}
-		if err := reassign.ReassignParkedAppOwner(ctx, c.ID, source.ID, nodes[dest].node.ID); err != nil {
-			if errors.Is(err, state.ErrAppResident) || errors.Is(err, state.ErrConflict) {
-				continue
-			}
-			return count, fmt.Errorf("sched: ownership balance: move %s: %w", c.ID, err)
+		moveErr := reassign.ReassignParkedAppOwner(ctx, c.ID, source.ID, nodes[dest].node.ID)
+		switch {
+		case errors.Is(moveErr, state.ErrAppResident), errors.Is(moveErr, state.ErrConflict):
+			// Woken or moved since it was listed; the next tick re-reads.
+			continue
+		case moveErr != nil:
+			b.prewarm(ctx, moved)
+			return count, fmt.Errorf("sched: ownership balance: move %s: %w", c.ID, moveErr)
 		}
 		nodes[from].ownedMB -= int64(c.RAMMB)
 		nodes[dest].ownedMB += int64(c.RAMMB)
