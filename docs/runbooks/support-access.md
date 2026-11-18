@@ -45,8 +45,14 @@ granted it and why. If the customer already granted access, go to step 3.
 ## 2. Ask for access
 
 ```sh
-gregalectl support-access request --org <org slug> --reason "<why, in words the customer understands>"
+gregalectl support-access request --org <org slug> --reason "<why, in words the customer understands>" \
+  [--apps web,api] [--hours 4]
 ```
+
+Name the apps and how long when you know them: the customer's approval form
+is filled in with them, and approving takes one click. To keep working after a
+grant ends, ask for more time with `--extend <grant id>` (it asks for the same
+apps unless `--apps` names others).
 
 The customer reads the reason. Say what you will do and why, for example
 "Your last three deploys failed at the build stage; we would like to retry the
@@ -85,7 +91,9 @@ most once every 10 minutes). Write each action and its result in the ticket too.
 
 ## 4. Finish
 
-Tell the customer what you did and the result. Ask them to revoke the grant
+When the grant ends (revoked or expired) the owners and admins get a summary
+mail listing every change support made under it. Tell the customer what you did
+and the result too. Ask them to revoke the grant
 when the issue is solved; it also ends on its own at its end time, and when the
 person who granted it stops being an owner or admin.
 

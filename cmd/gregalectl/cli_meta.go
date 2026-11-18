@@ -132,6 +132,8 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "request", Short: "Ask an organization's owners and admins for access", Flags: []cliFlag{
 				{Name: "org", Short: "organization slug", Req: true}, {Name: "reason", Short: "why; the customer reads it", Req: true},
+				{Name: "apps", Short: "comma-separated app slugs to ask for"}, {Name: "hours", Short: "how long to ask for (1..168)"},
+				{Name: "extend", Short: "live grant id to extend"},
 			}},
 			{Name: "grants", Short: "List live grants customers gave support"},
 			{Name: "status", Short: "Show an app's latest deployment under a grant", Flags: []cliFlag{

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -283,5 +284,97 @@ func TestSupportAccessDashboardPage(t *testing.T) {
 	rec = f.env.DoSession(t, f.developer.ID, http.MethodGet, "/dashboard/support-access", nil, nil)
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "stuck deploy") {
 		t.Fatalf("developer page = %d, want 200 without the grant", rec.Code)
+	}
+}
+
+// A request says what support asks for; the mail links to a filled-in
+// approval form; approving with an empty body grants exactly that; support
+// can ask to extend a live grant; and when the grant ends the owners and
+// admins get a summary of what support did.
+func TestSupportAccessRequestScopeExtendAndSummary(t *testing.T) {
+	f := newSupportFixture(t, true)
+	mailer := &apidserver.RecordingMailer{}
+	*(*f.env.S()).Mailer() = mailer
+	request := func(key string, body api.OperatorSupportAccessRequest) api.SupportAccessRequest {
+		t.Helper()
+		rec := f.env.DoOperator(t, http.MethodPost, "/v1/admin/support-access/requests", body, map[string]string{"Idempotency-Key": key})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("request = %d %s, want 201", rec.Code, rec.Body.String())
+		}
+		var req api.SupportAccessRequest
+		if err := json.Unmarshal(rec.Body.Bytes(), &req); err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+	req := request("scope-1", api.OperatorSupportAccessRequest{Org: "acme", Reason: "retry the shop build", Apps: []string{"shop"}, TTLHours: 4})
+	if len(req.Apps) != 1 || req.Apps[0] != "shop" || req.TTLHours != 4 {
+		t.Fatalf("request = %+v, want shop for 4 hours", req)
+	}
+	if rec := f.env.DoOperator(t, http.MethodPost, "/v1/admin/support-access/requests",
+		api.OperatorSupportAccessRequest{Org: "acme", Reason: "not ours", Apps: []string{"nope"}}, map[string]string{"Idempotency-Key": "scope-bad"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("request for an unknown app = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+
+	page := f.env.DoSession(t, f.owner.ID, http.MethodGet, "/dashboard/support-access?request="+req.ID, nil, nil).Body.String()
+	for _, want := range []string{`id="request-` + req.ID + `"`, "focus", `name="apps" value="shop"`, `<option value="4" selected>4 hours</option>`, "asks for shop for 4 hours"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+
+	rec := f.env.DoSession(t, f.owner.ID, http.MethodPost, "/v1/orgs/acme/support-access/requests/"+req.ID+"/approve", json.RawMessage(`{}`), nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("approve = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+	var g api.SupportGrant
+	if err := json.Unmarshal(rec.Body.Bytes(), &g); err != nil || g.AllApps || len(g.Apps) != 1 || g.Apps[0] != "shop" {
+		t.Fatalf("approved grant = %+v %v, want shop only", g, err)
+	}
+	created, _ := time.Parse(time.RFC3339, g.CreatedAt)
+	expires, _ := time.Parse(time.RFC3339, g.ExpiresAt)
+	if d := expires.Sub(created); d < 4*time.Hour-time.Minute || d > 4*time.Hour+time.Minute {
+		t.Fatalf("approved grant lasts %s, want the 4 hours asked for", d)
+	}
+
+	ext := request("scope-2", api.OperatorSupportAccessRequest{Org: "acme", Reason: "the build needs another day", Extends: g.ID, TTLHours: 24})
+	if ext.Extends != g.ID || len(ext.Apps) != 1 || ext.Apps[0] != "shop" {
+		t.Fatalf("extend request = %+v, want the grant's apps", ext)
+	}
+
+	if code, body := f.asSupport(t, g.ID, http.MethodPost, "/v1/apps/shop/restart", nil); code == http.StatusForbidden || code == http.StatusNotFound || code == http.StatusUnauthorized {
+		t.Fatalf("restart under the grant = %d %s, want it admitted", code, body)
+	}
+	if rec := f.env.DoSession(t, f.owner.ID, http.MethodPost, "/v1/orgs/acme/support-access/grants/"+g.ID+"/revoke", nil, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke = %d %s", rec.Code, rec.Body.String())
+	}
+	before := len(mailer.Snapshot())
+	if n, err := (*f.env.S()).SummarizeSupportAccess(t.Context()); err != nil || n != 1 {
+		t.Fatalf("summary pass = %d, %v; want one grant", n, err)
+	}
+	if n, err := (*f.env.S()).SummarizeSupportAccess(t.Context()); err != nil || n != 0 {
+		t.Fatalf("second summary pass = %d, %v; want none", n, err)
+	}
+	var summary []apidserver.Message
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		summary = nil
+		for _, m := range mailer.Snapshot()[before:] {
+			if strings.Contains(m.Subject, "support's access") {
+				summary = append(summary, m)
+			}
+		}
+		if len(summary) >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(summary) != 2 {
+		t.Fatalf("summary mails = %d, want one each to the owner and the admin", len(summary))
+	}
+	for _, want := range []string{"revoked by owner@acme.test", "restart on shop", "gregale org activity --org acme"} {
+		if !strings.Contains(summary[0].TextBody, want) {
+			t.Errorf("summary lacks %q:\n%s", want, summary[0].TextBody)
+		}
 	}
 }

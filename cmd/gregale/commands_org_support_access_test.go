@@ -29,7 +29,7 @@ func supportAccessCLI(t *testing.T, gotMethod, gotPath *string) *bytes.Buffer {
 				{ID: "sg_0", Org: "acme", Apps: []string{}, AllApps: true, Status: api.SupportGrantRevoked, ExpiresAt: "2026-11-10T10:00:00Z", CreatedBy: "owner@acme.test"},
 			},
 			Requests: []api.SupportAccessRequest{
-				{ID: "sr_1", Org: "acme", Operator: "Gregale support", Reason: "retry the failed build", Status: "open", ExpiresAt: "2026-11-18T09:00:00Z"},
+				{ID: "sr_1", Org: "acme", Operator: "Gregale support", Reason: "retry the failed build", Status: "open", ExpiresAt: "2026-11-18T09:00:00Z", Apps: []string{"web"}, TTLHours: 4},
 				{ID: "sr_0", Org: "acme", Operator: "Gregale support", Reason: "old", Status: "declined", ExpiresAt: "2026-11-09T09:00:00Z"},
 			},
 		})
@@ -57,7 +57,7 @@ func TestCmdOrgSupportAccess(t *testing.T) {
 		{
 			name: "list", args: []string{"list", "--org", "acme"},
 			wantMethod: http.MethodGet, wantPath: "/v1/orgs/acme/support-access",
-			wantOut: []string{"Request sr_1 from Gregale support: retry the failed build", "sg_1", "web,api", "(all)", "owner@acme.test"},
+			wantOut: []string{"Request sr_1 from Gregale support asks for web for 4h: retry the failed build", "/dashboard/support-access?request=sr_1", "sg_1", "web,api", "(all)", "owner@acme.test"},
 			notOut:  []string{"sr_0"},
 		},
 		{
