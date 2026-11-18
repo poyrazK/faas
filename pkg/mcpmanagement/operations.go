@@ -35,7 +35,7 @@ type operationPlan struct {
 	ResourceHash      string                  `json:"resource_hash,omitempty"`
 }
 
-var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true, "run_command": true, "dlq_replay": true, "workflow_recovery": true, "monitoring_change": true}
+var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true, "run_command": true, "dlq_replay": true, "workflow_recovery": true, "monitoring_change": true, "edge_change": true, "preview_change": true}
 
 type operationArgs struct {
 	App         string `json:"app" jsonschema:"Existing app slug"`
@@ -389,6 +389,10 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 		return m.runAsyncOperation(ctx, p)
 	case "run_command":
 		return m.runCommand(ctx, p)
+	case "edge_change":
+		return m.runEdgeChange(ctx, p)
+	case "preview_change":
+		return m.runPreviewChange(ctx, p)
 	case "cron_update", "cron_delete", "domain_delete":
 		return m.applyResourceOperation(ctx, p)
 	}

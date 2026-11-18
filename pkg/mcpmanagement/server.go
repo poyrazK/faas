@@ -252,6 +252,8 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerCommandRuns(s, m)
 	registerPostgresQueries(s, m)
 	registerAsyncMonitoring(s, m)
+	registerEdgeRules(s, m)
+	registerPreviewsObjectsTests(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
 	registerAuthorizationLease(s)

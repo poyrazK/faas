@@ -54,7 +54,7 @@ still follows connection consent, including separate per-app diagnostic access:
 | Ask me for secrets | `gregale_request_secret`, `gregale_get_secret_request` |
 | Buckets | `gregale_plan_bucket` |
 | PostgreSQL | `gregale_plan_postgres` |
-| Read my app data | `gregale_get_postgres_schema`, `gregale_query_postgres`, and message and workflow payloads in queue and workflow tools (`data:read`), including on a read-only connection |
+| Read my app data | `gregale_get_postgres_schema`, `gregale_query_postgres`, `gregale_read_object`, message and workflow payloads in queue and workflow tools, and client IPs and user agents in edge events (`data:read`), including on a read-only connection |
 
 Write access also covers running a command in the app
 (`gregale_plan_run_command`) and changing feature flags
@@ -7244,6 +7244,29 @@ Reviewed changes (toolset `operate`), applied with `gregale_apply_operation`:
 `gregale_acknowledge_incident` and `gregale_add_incident_note` act at once.
 Replays and workflow recovery by an agent connection ask a person first
 (workflow run actions in every environment).
+
+## Edge rules, previews, objects and workflow tests
+
+ADR-20261118140000.
+
+- Edge rules: `gregale_list_edge_rules` and `gregale_get_edge_activity`
+  (toolset `diagnose`) read rules, attack mode, rule-set versions, hits and
+  recent rule events. Client IPs and user agents need `data:read`.
+  `gregale_plan_edge_rule_change` (toolset `operate`) reviews creating,
+  updating or deleting a rule, rolling back to a version, or switching attack
+  mode on or off. The plan is pinned to the current rules: apply fails with
+  `plan_stale` if they changed. On a production app the apply asks a person
+  first.
+- Previews (toolset `release`): `gregale_list_previews`, `gregale_get_preview`
+  and `gregale_plan_preview_change` (`create` for a pull request, or
+  `destroy`, which asks a person first). Previews are reached only through
+  their parent app.
+- Objects (toolset `diagnose`): `gregale_list_objects` lists keys and sizes;
+  `gregale_read_object` reads up to 256 KiB from the start of an object and
+  needs `data:read`. No writes or deletes.
+- Workflow tests (toolset `release`): `gregale_list_workflow_tests` and
+  `gregale_run_workflow_tests`, which runs a saved workflow's test cases (mocked
+  simulations) against its current draft.
 
 ## Watch one rollout
 

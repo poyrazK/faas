@@ -156,6 +156,12 @@ func registerAsyncMonitoring(s *mcp.Server, m *management) {
 // redactPayloads replaces customer payloads with their size unless the
 // connection has data:read consent.
 func (m *management) redactPayloads(v any) (any, error) {
+	return m.redactKeys(v, payloadKeys)
+}
+
+// redactKeys replaces the values under keys with their size unless the
+// connection has data:read consent.
+func (m *management) redactKeys(v any, keys []string) (any, error) {
 	if m.hasCapability(api.ScopeDataRead) {
 		return v, nil
 	}
@@ -167,23 +173,23 @@ func (m *management) redactPayloads(v any) (any, error) {
 	if err := json.Unmarshal(raw, &tree); err != nil {
 		return nil, err
 	}
-	return redactTree(tree), nil
+	return redactTree(tree, keys), nil
 }
 
-func redactTree(v any) any {
+func redactTree(v any, keys []string) any {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, child := range t {
-			if slices.Contains(payloadKeys, k) && child != nil {
+			if slices.Contains(keys, k) && child != nil {
 				b, _ := json.Marshal(child)
 				t[k] = map[string]any{"redacted": "data:read consent required", "bytes": len(b)}
 				continue
 			}
-			t[k] = redactTree(child)
+			t[k] = redactTree(child, keys)
 		}
 	case []any:
 		for i := range t {
-			t[i] = redactTree(t[i])
+			t[i] = redactTree(t[i], keys)
 		}
 	}
 	return v
