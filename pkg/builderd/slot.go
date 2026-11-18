@@ -13,9 +13,10 @@ import (
 // leak OOMs the control plane, never tenants. Within that envelope:
 //
 //   - 1 guaranteed builder slot — always available, lives in faas-cp.slice.
-//   - Opportunistic admission remains disabled while the production parent
-//     slice is capped at 5 GiB: two ordinary builder scopes can request more
-//     than that fence and trigger a host OOM under normal operation.
+//   - 1 opportunistic slot — only when tenant residency is below 60% AND the
+//     builder slice has secondSlotNeedMB free. The default 5 GiB slice never
+//     does while a build runs, so two builder scopes cannot overrun the fence;
+//     ops open the slot by raising faas_cp_build_slice_memory_max.
 //
 // Schedd's Ledger is the authoritative source for tenant residency. builderd
 // does NOT call schedd over its gRPC socket here — instead cmd/builderd polls
@@ -30,11 +31,23 @@ type SlotDecision struct {
 	Reason  string // populated when !Allowed
 }
 
-// slotThresholdFraction is retained by DecideSlot for capacity-aware callers;
-// acquireSlot currently fences local concurrency at one before consulting it.
+// slotThresholdFraction is the tenant-residency fraction below which the
+// opportunistic slot may open.
 const slotThresholdFraction = 0.60
 
-const maxBuilderSlots = 1
+// maxBuilderSlots is one guaranteed build plus one opportunistic build (the
+// notification path runs two build workers). The second runs only when
+// tenant residency is below slotThresholdFraction AND the builder slice has
+// room for a whole second builder (secondSlotNeedMB), which the default
+// 5120M slice never has while a build runs: raising
+// faas_cp_build_slice_memory_max (and faas_cp_slice_memory_max) turns it on
+// (retail-store feedback A3, 2026-11-17).
+const maxBuilderSlots = 2
+
+// secondSlotNeedMB is a second builder's worst case inside the slice: a full
+// snapshot charges its guest RAM twice plus the VMM overhead, and the slice
+// keeps BuilderSecondSlotHeadroomMB beyond that.
+const secondSlotNeedMB = 2*api.BuildVMRAMMB + api.BuildVMOverheadMB + api.BuilderSecondSlotHeadroomMB
 
 // acquireSlot reserves one of the process-wide builder slots. The first
 // active build is the guaranteed slot. The returned release function is
@@ -67,6 +80,16 @@ func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 			Label:   "none",
 			Reason:  "opportunistic slot denied by tenant residency gate",
 		}, nil, false
+	}
+	if b.activeSlots > 0 {
+		if freeMB, ok := b.builderSliceFreeMB(); !ok || freeMB < secondSlotNeedMB {
+			b.pipeline.observeAdmission("memory")
+			return SlotDecision{
+				Allowed: false,
+				Label:   "none",
+				Reason:  fmt.Sprintf("opportunistic slot needs %d MiB free in the builder slice", secondSlotNeedMB),
+			}, nil, false
+		}
 	}
 	if b.activeSlots == 0 {
 		decision.Label = "guaranteed"

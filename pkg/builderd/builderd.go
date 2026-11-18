@@ -212,6 +212,8 @@ type Builderd struct {
 	// future opportunistic eligibility but cannot bypass this host fence.
 	slotMu      sync.Mutex
 	activeSlots int
+	// sliceFreeMB overrides the builder-slice memory read in tests.
+	sliceFreeMB func() (int, bool)
 	// sourceStorage is the optional remote source handoff used by split-box
 	// deployments. Local/single-box deployments leave it nil and continue to
 	// read the source spool directly.

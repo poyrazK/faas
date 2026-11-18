@@ -8932,10 +8932,17 @@ const (
 	BuildVMOverheadMB = 768
 	// BuilderSliceMaxMB is the faas-cp-build.slice ceiling. It leaves enough
 	// room for one guaranteed builder's full snapshot below the 6 GiB parent.
-	BuilderSliceMaxMB      = 5_120
-	BuildVMVCPU            = 2
-	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
-	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
+	BuilderSliceMaxMB = 5_120
+	// BuilderSecondSlotHeadroomMB is the free builder-slice memory a second,
+	// opportunistic build must leave after its own worst case (a full
+	// snapshot: 2 × BuildVMRAMMB + BuildVMOverheadMB). The default slice
+	// above never has that much free while a build runs, so a second build
+	// runs only where ops raised faas_cp_build_slice_memory_max (retail-store
+	// feedback A3, 2026-11-17).
+	BuilderSecondSlotHeadroomMB = 512
+	BuildVMVCPU                 = 2
+	BuildTimeoutSeconds         = 900 // 15 min build; cold rootless Railpack export needs headroom
+	BuildE2ETimeoutSeconds      = 900 // 15 min end-to-end
 	// BuildCacheExportTimeoutSeconds bounds the second builder VM that exports
 	// a deferred dependency cache (ADR-20261029171525). On rc.304 a cold
 	// Node cache export took about 115 s. The builder slot stays held for the
