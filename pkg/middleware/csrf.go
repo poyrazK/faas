@@ -55,6 +55,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/session"
 )
 
@@ -125,10 +126,20 @@ func IssueForAuthenticated(manager *session.Manager, action, accountID string) (
 // one rendered page. Existing single-form callers keep using
 // CookieNameAuthenticated through IssueForAuthenticated.
 func IssueForAuthenticatedNamed(manager *session.Manager, action, accountID, cookieName string) (string, error) {
+	return IssueForAuthenticatedNamedWithTTL(manager, action, accountID, cookieName, DefaultCSRFTTL)
+}
+
+// IssueForAuthenticatedNamedWithTTL lets a server-selected setup form share
+// its authorization window. Callers never take ttl from request input. Normal
+// forms retain DefaultCSRFTTL; even setup forms cannot exceed the MCP window.
+func IssueForAuthenticatedNamedWithTTL(manager *session.Manager, action, accountID, cookieName string, ttl time.Duration) (string, error) {
+	if ttl <= 0 || ttl > api.MCPBrowserAuthorizationTTL {
+		return "", errors.New("csrf: invalid form lifetime")
+	}
 	if err := validateCSRFCookieName(cookieName); err != nil {
 		return "", err
 	}
-	return issue(manager, action, accountID, DefaultCSRFTTL)
+	return issue(manager, action, accountID, ttl)
 }
 
 // IssueForAnonymous is the anonymous-form equivalent: bound to action +

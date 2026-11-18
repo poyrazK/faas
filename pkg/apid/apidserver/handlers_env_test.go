@@ -101,6 +101,26 @@ func TestEnv_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 }
 
+// B7: ?values=true returns each variable's plaintext; the default listing
+// still never does.
+func TestEnv_ListValuesOnRequest(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-values-app")
+	if rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/ORDERS_URL",
+		api.PutAppEnvRequest{Value: "http://orders.svc.gregale:10081"}, nil); rec.Code != 200 {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/env", nil, nil); strings.Contains(rec.Body.String(), "orders.svc") {
+		t.Fatalf("default listing leaked a value: %s", rec.Body.String())
+	}
+	for _, path := range []string{"/env?values=true", "/env?values=true&scope=__all__"} {
+		rec := e.Do(t, "GET", "/v1/apps/"+app.Slug+path, nil, nil)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"value":"http://orders.svc.gregale:10081"`) {
+			t.Fatalf("GET %s: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestEnvScopedMutationPreservesNeighborSnapshots(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	app := apidserver.CreateApp(t, e, "env-scoped-snapshots")
@@ -342,7 +362,8 @@ func TestEnv_InvalidKey_400(t *testing.T) {
 		name string
 		key  string
 	}{
-		{"lowercase", "log_level"},
+		{"reserved_lowercase", "port"},
+		{"starts_with_underscore", "_FOO"},
 		{"starts_with_digit", "1FOO"},
 		{"contains_dash", "LOG-LEVEL"},
 		{"contains_dot", "LOG.LEVEL"},

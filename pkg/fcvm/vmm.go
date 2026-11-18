@@ -133,6 +133,11 @@ type JailerVMM struct {
 	fenceMu sync.Mutex
 	fences  map[string]*cgroupFence
 
+	// coldByGen is whether idle ladder compression can use the multi-gen
+	// LRU's debugfs interface, probed once (lru_gen.go).
+	coldByGenOnce sync.Once
+	coldByGen     bool
+
 	mu              sync.Mutex
 	resourceJournal *ResourceJournal
 	ownedJails      map[string][]resourceAsset // live owner only; never reconstructed from storage
@@ -236,6 +241,10 @@ type JailerVMM struct {
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.
 	bindMounts map[string][]ephemeralBind
+	// buildkitSeedSources is each builder's host BuildKit seed drive, handed
+	// back to builderd once the VM is gone (buildkit_seed_handback.go).
+	// Guarded by mu.
+	buildkitSeedSources map[string]string
 	// driveBaseKeys is the storage key of the app layer each instance's
 	// private drive started from, recorded at boot and restore. A park
 	// uploads the drive as a delta against it (ADR-20261115213230). Guarded
@@ -1854,8 +1863,14 @@ func parseServiceDiscoveryIP(bridgeIP string) (netip.Addr, error) {
 
 const serviceDiscoveryResolverMode os.FileMode = 0o644
 
+// serviceDiscoveryResolverContents searches svc.gregale, so a Compose
+// service's bare name (`http://orders:8080`, ORDERS_HOST=orders, or a host
+// hard-coded in application.yml) resolves as orders.svc.gregale; with
+// private service addresses (ADR-576) its declared ports answer too
+// (retail-store feedback A2, 2026-11-17). Names with a dot are tried as
+// written first (ndots:1), so external hosts are unaffected.
 func serviceDiscoveryResolverContents(ip netip.Addr) []byte {
-	return fmt.Appendf(nil, "# Gregale tenant service resolver\nnameserver %s\noptions timeout:2 attempts:2\n", ip)
+	return fmt.Appendf(nil, "# Gregale tenant service resolver\nnameserver %s\nsearch svc.gregale\noptions ndots:1 timeout:2 attempts:2\n", ip)
 }
 
 // applyPreBootCgroupFence installs the host-side memory/CPU fence after
@@ -4296,6 +4311,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 	if err := v.unmountBindMounts(l.Instance); err != nil {
 		return err
 	}
+	v.handBackBuildKitSeed(l.Instance)
 	if err := v.removeOwnedJail(l.Instance); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
@@ -5937,6 +5953,9 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		} else if d.IsReadOnly {
 			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
+			if d.DriveID == DriveBuildKitSeed {
+				v.noteBuildKitSeedSource(instanceID, d.PathOnHost)
+			}
 			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, writableDriveImageName(d), uid, gid, instanceID)
 		} else {
 			name, err = v.stageWritableAsForOwner(ctx, owner, root, d.PathOnHost, writableDriveImageName(d), uid, gid, instanceID)
@@ -7377,7 +7396,31 @@ func (v *JailerVMM) guestStopped(l Lease, detail string) error {
 	if supervisedWorkloadExited(lines) {
 		return startupCrashProblem(strings.Join(lines, "\n"), detail+cleanExitHint(lines))
 	}
+	// guest-init exits with status 0 only when its supervisor returned nil:
+	// the workload exited 0 and was not restarted. A guest failure (overlay,
+	// pivot, init) exits 1, and a stop vmmd asked for never reaches here.
+	// guest-init's own clean-exit line can still be missing: until guest-init
+	// drained the console before every exit, the kernel's panic dump cut it to
+	// "guest-init: app " (coding-agent eval 2026-11-17, a FastAPI source build
+	// whose start command was `python main.py`).
+	if v.guestInitExitedCleanly(l.Instance) {
+		return startupCrashProblem(strings.Join(lines, "\n"), detail+cleanExitDetail)
+	}
 	return errors.New(detail)
+}
+
+// guestInitExitedCleanly reports whether the instance's unfiltered console
+// shows guest-init (PID 1) exiting with status 0. The customer log ring drops
+// the kernel's panic lines, so this reads the console file.
+func (v *JailerVMM) guestInitExitedCleanly(instance string) bool {
+	v.mu.Lock()
+	rec := v.recs[instance]
+	v.mu.Unlock()
+	if rec == nil || rec.consolePath == "" {
+		return false
+	}
+	status, ok := guestInitWaitStatus(consoleTail(rec.consolePath))
+	return ok && status == 0
 }
 
 // startupCrashProblem names a workload that exited during startup. A
@@ -7411,11 +7454,15 @@ var supervisedWorkloadMarkers = []string{
 // ("guest-init: app exited cleanly (status 0, policy=on-failure); …").
 const guestCleanExitMarker = " exited cleanly (status 0, policy="
 
-// cleanExitHint explains a workload that ended on its own with status 0.
+// cleanExitDetail explains a workload that ended on its own with status 0.
+const cleanExitDetail = "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+
+// cleanExitHint is cleanExitDetail when guest-init's clean-exit line is among
+// lines.
 func cleanExitHint(lines []string) string {
 	for _, line := range lines {
 		if strings.Contains(line, guestCleanExitMarker) {
-			return "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+			return cleanExitDetail
 		}
 	}
 	return ""

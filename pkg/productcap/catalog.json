@@ -367,7 +367,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/cli",
+      "docs_url": "/docs/auth#api-keys",
       "acceptance_test": "pkg/apid/apidserver/handlers_scopes_test.go::TestMintKeyScopes",
       "core": true,
       "routes": [
@@ -426,7 +426,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/auth",
+      "docs_url": "/docs/auth#app-access-control",
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestGetApp_SurfacesRequireAuthn",
       "settings": [
         "app.public_auth",
@@ -4033,7 +4033,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/account",
+      "docs_url": "/docs/account#members-roles-and-invitations",
       "acceptance_test": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin",
       "routes": [
         "/dashboard/invitations/{}",
@@ -4047,7 +4047,8 @@
         "/v1/orgs/{}/invitations",
         "/v1/orgs/{}/leave",
         "/v1/orgs/{}/members",
-        "/v1/orgs/{}/transfer_ownership"
+        "/v1/orgs/{}/transfer_ownership",
+        "/v1/orgs/{}/security-policy"
       ],
       "cli": [
         "orgs",
@@ -4632,6 +4633,27 @@
         "projects",
         "projects environments config",
         "projects environments secrets"
+      ]
+    },
+    {
+      "id": "protection-baseline",
+      "name": "Production protection by default",
+      "category": "observability",
+      "description": "New public apps get availability and latency SLOs, an hourly health check, email alerts and an SLO release gate, created as ordinary objects you can edit or remove.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/synthetic-checks",
+      "acceptance_test": "pkg/apid/apidserver/handlers_app_protection_test.go::TestGetAppProtectionReportsBaselineItems",
+      "routes": [
+        "/v1/apps/{}/protection"
+      ],
+      "cli": [
+        "app protection"
       ]
     },
     {
@@ -6019,7 +6041,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/rollouts#traffic-mirroring",
       "acceptance_test": "pkg/apid/apidserver/handlers_mirror_test.go::TestMirrorCreate_RangeCheck",
       "consumers": [
         "gatewayd-internal"

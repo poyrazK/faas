@@ -3,8 +3,9 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // BuildRegistryMirrorsKey is the secrets.env entry that tells a builder VM
@@ -35,7 +36,7 @@ type BuildRegistryMirror struct {
 	VsockPort uint32 `json:"vsock_port"`
 }
 
-var buildMirrorRegistry = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$`)
+var buildMirrorRegistry = lazyregexp.New(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$`)
 
 // PlanBuildRegistryMirrors assigns ports to a build's private registries:
 // distinct valid hosts in sorted order, at most BuildRegistryMirrorMax, so

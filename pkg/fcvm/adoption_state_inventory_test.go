@@ -87,6 +87,7 @@ var adoptionStateInventory = map[string]map[string]string{
 	"JailerVMM": {
 		"bindMounts":               "rebuilt",
 		"bindSourceModes":          "rebuilt",
+		"buildkitSeedSources":      "bootonly", // seed-run builders are killed at adoption, never adopted
 		"characterizationReceipts": "bootonly", // awaited only during a boot
 		"clients":                  "rebuilt",  // created on first use
 		"cpuBoostTails":            "reset",    // adoption writes the steady fence instead
@@ -202,8 +203,12 @@ var adoptionInstanceInventory = map[string]string{
 	"environmentBranch":        "refused", // a contained branch guest is not adopted (ADR-20261031193635)
 	"branchDatabaseEgress":     "refused", // its branch_db pairs go with it
 	"webDomains":               "reset",   // a restart restarts the web session's distinct-domain count (ADR-20261112121456 §4)
-	"TailCount":                "reset",   // the host only ever sees decrements
-	"tailSecondsAccum":         "reset",   // informational, not billed
+	"webAllow":                 "refused", // a sandbox session's domain policy; sessions are not adopted (ADR-20261117091026 §3)
+	"webDeny":                  "refused",
+	"webLog":                   "refused", // its domain log (ADR-20261117091026 §4)
+	"webRefusedLogged":         "refused",
+	"TailCount":                "reset", // the host only ever sees decrements
+	"tailSecondsAccum":         "reset", // informational, not billed
 	"adoptionVCPUs":            "rebuilt",
 	"adoptionMemSizeMiB":       "rebuilt",
 	"adoptionOp":               "reset", // resolved before adoption (slice 3)

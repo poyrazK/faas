@@ -486,7 +486,12 @@ func TestUsageCollectorRecordsSharedRestoreUsageOnlyAgainstSource(t *testing.T) 
 	if snapshot.ReadyDatabases != 3 || snapshot.Stale(registry.UsagePolicy(), now) {
 		t.Fatalf("restore descendants did not share source coverage: %+v", snapshot)
 	}
-	if !snapshot.Stale(registry.UsagePolicy(), now.Add(time.Hour)) {
+	// One uncollected window is the latest-window grace (ADR-20261115190000
+	// amendment 1); a second one must block.
+	if snapshot.Stale(registry.UsagePolicy(), now.Add(time.Hour)) {
+		t.Fatal("the window that just closed paused an account with headroom")
+	}
+	if !snapshot.Stale(registry.UsagePolicy(), now.Add(2*time.Hour)) {
 		t.Fatal("shared source coverage hid an uncollected window")
 	}
 }
@@ -577,8 +582,14 @@ func TestNewDatabaseDoesNotMakeItsAccountStale(t *testing.T) {
 	if snapshot.Stale(policy, database.CreatedAt.Add(time.Minute)) {
 		t.Fatal("a database created this window made its account stale")
 	}
+	// Its first window, once closed, is the latest-window grace while the
+	// account has headroom (ADR-20261115190000 amendment 1); a second
+	// uncollected window blocks.
 	nextWindow := database.CreatedAt.Truncate(policy.Window).Add(policy.Window)
-	if !snapshot.Stale(policy, nextWindow) {
-		t.Fatal("an uncollected database stayed fresh after its first window closed")
+	if snapshot.Stale(policy, nextWindow) {
+		t.Fatal("a database whose first window just closed made its account stale")
+	}
+	if !snapshot.Stale(policy, nextWindow.Add(policy.Window)) {
+		t.Fatal("an uncollected database stayed fresh after its second window closed")
 	}
 }

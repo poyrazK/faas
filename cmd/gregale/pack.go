@@ -1153,7 +1153,7 @@ func packWriteError(capMB int, name string, err error) error {
 type sourceUploadLimitErr struct{ capMB int }
 
 func (e *sourceUploadLimitErr) Error() string {
-	return fmt.Sprintf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", e.capMB)
+	return fmt.Sprintf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploys#what-gets-uploaded)", e.capMB)
 }
 
 func sourceUploadLimitError(capMB int) error {
@@ -1161,7 +1161,7 @@ func sourceUploadLimitError(capMB int) error {
 }
 
 func sourceExpandedLimitError() error {
-	return fmt.Errorf("source expands to more than %d MB uncompressed, the limit on every plan; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", api.SourceArchiveMaxExpandedBytes>>20)
+	return fmt.Errorf("source expands to more than %d MB uncompressed, the limit on every plan; exclude large files in .gregaleignore (https://gregale.dev/docs/deploys#what-gets-uploaded)", api.SourceArchiveMaxExpandedBytes>>20)
 }
 
 // packEntry is one archive entry: rel is its archive name and abs the file

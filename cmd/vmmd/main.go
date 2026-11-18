@@ -915,6 +915,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case "gcs":
 		log.Info("vmmd: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("vmmd: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("vmmd: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"))
 	}
@@ -1019,6 +1023,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}()
 		log.Info("vmmd: snapshot fan-out enabled", "node_id", nodeID, "interval", fanout.Interval())
+		// ADR-20261114182830 amendment: vmmd alone evicts the shared node
+		// cache, by the tiers its fan-out sets; schedd, imaged and builderd
+		// then leave snapshot captures and app layers to it.
+		if release, ownErr := storage.ClaimCacheEvictionOwnership(storageBackend); ownErr != nil {
+			log.Warn("vmmd: node cache eviction not claimed; other daemons keep evicting oldest-first", "err", ownErr)
+		} else {
+			defer release()
+		}
 	}
 	// Issue #667 / ADR-078: single storeStamper adapter satisfies
 	// BOTH the FrameworkReadyStamper interface (PR #470-FU-B) and

@@ -44,9 +44,9 @@ import (
 )
 
 const (
-	// cliAuthCodeTTL is how long a minted code stays claimable. UX
+	// cliAuthCodeTTL is how long a terminal pairing code stays claimable. UX
 	// §2.2 promises 5 minutes; spec §11 limits the lifetime of any
-	// session-init artifact.
+	// session-init artifact. MCP approval uses MCPBrowserAuthorizationTTL.
 	cliAuthCodeTTL = 5 * time.Minute
 	// cliAuthPath is the dashboard-side route that mirrors the
 	// existing magic-link /login surface.
@@ -91,7 +91,11 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrCapacity("could not mint code"))
 		return
 	}
-	expiresAt := time.Now().Add(cliAuthCodeTTL)
+	ttl := cliAuthCodeTTL
+	if isMCPAuthCode(code) {
+		ttl = api.MCPBrowserAuthorizationTTL
+	}
+	expiresAt := time.Now().Add(ttl)
 	deviceCode, err := h.issueCliAuthCode(r, hash, device, challenge, expiresAt)
 	if err != nil {
 		h.log.Error("cli_auth.issue", "err", err)
@@ -369,12 +373,17 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	}
 	hash, ok := normalizeCliAuthCode(r.URL.Query().Get("code"))
 	if !ok {
-		h.renderCliAuthError(w, r, "Code looks malformed", "Use the code your terminal shows, like ABCD-1234.")
+		h.renderCliAuthError(w, r, "Code looks malformed", "Run gregale login again and open the new link from your terminal.")
 		return
 	}
 	status, _, err := h.srv.store.PeekCliAuthCode(r.Context(), hash)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		h.log.Error("cli_auth.lookup", "err", err)
+		h.renderCliAuthError(w, r, "Sign-in temporarily unavailable", "Reload this page to try again. If the code has expired, run gregale login again.")
+		return
+	}
 	if err != nil || status != api.CliAuthStatusPending {
-		h.renderCliAuthError(w, r, "Code unavailable", "This code is expired or already used.")
+		h.renderCliAuthError(w, r, "Code unavailable", "This code is expired or already used. Run gregale login again for a new code.")
 		return
 	}
 	acct, ok := AccountFrom(r.Context())
@@ -392,7 +401,11 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Mint the CSRF token + authenticated cookie bound to this account.
-	token, err := middleware.IssueForAuthenticated(h.srv.sessions, "cli-auth", acct.ID)
+	csrfTTL := middleware.DefaultCSRFTTL
+	if isMCPAuthCode(raw) {
+		csrfTTL = api.MCPBrowserAuthorizationTTL
+	}
+	token, err := middleware.IssueForAuthenticatedNamedWithTTL(h.srv.sessions, "cli-auth", acct.ID, middleware.CookieNameAuthenticated, csrfTTL)
 	if err != nil {
 		h.log.Error("cli_auth.csrf_issue", "err", err)
 		renderProblem(w, h.log, err)
@@ -405,7 +418,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		HttpOnly: true,
 		Secure:   h.domain != "",
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+		MaxAge:   int(csrfTTL.Seconds()),
 	})
 
 	title := "Authorize CLI session"
@@ -432,6 +445,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 			"Code":            shownCode,
 			"CSRFToken":       token,
 			"AccountEmail":    acct.Email,
+			"SignInURL":       cliAuthSwitchAccountURL(r, raw),
 			"MCP":             isMCPAuthCode(raw),
 			"LoopbackPort":    loopbackPort,
 			"Request":         h.cliAuthRequest(r, hash),
@@ -485,12 +499,12 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	// Resolve the code first so we can pass it as the CSRF subject.
 	rawCode := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(r.FormValue("code")), "-", ""))
 	if rawCode == "" {
-		h.renderCliAuthError(w, r, "Missing code", "The CLI authorization code is required.")
+		h.renderCliAuthError(w, r, "Missing code", "Return to the link opened by gregale login and enter the code shown in your terminal.")
 		return
 	}
 	hash, ok := normalizeCliAuthCode(rawCode)
 	if !ok {
-		h.renderCliAuthError(w, r, "Invalid code", "The CLI authorization code is not valid.")
+		h.renderCliAuthError(w, r, "Invalid code", "Return to the link opened by gregale login and enter the code exactly as shown in your terminal.")
 		return
 	}
 	// CSRF guard (review finding A1). Cookie + form value must be a
@@ -498,7 +512,7 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	// cross-site POST lacks the cookie and is rejected here before
 	// the code claim.
 	if err := middleware.VerifyAuthenticated(h.srv.sessions, r, "cli-auth", acct.ID); err != nil {
-		h.renderCliAuthError(w, r, "Invalid form", "Please reload the page and try again.")
+		h.renderCliAuthError(w, r, "Invalid form", "Reopen the link from your terminal and approve again. If the code has expired, run gregale login again.")
 		return
 	}
 	if h.cliApprovalRefused(w, r, acct, rawCode) {

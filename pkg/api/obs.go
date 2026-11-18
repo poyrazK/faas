@@ -42,6 +42,30 @@ type ObsOverviewResponse struct {
 	TopRateLimitedAccounts24h []ObsOverviewRateLimited `json:"top_rate_limited_accounts_24h"`
 	NodeHealth                []ObsOverviewNodeHealth  `json:"node_health"`
 	RecentFailures1h          []ObsOverviewFailureKind `json:"recent_failures_1h"`
+	CodingAgents              []ObsCodingAgent         `json:"coding_agents"`
+}
+
+// ObsCodingAgent is one coding agent's share of recent deploys and new
+// accounts: whether the coding-agent acquisition channel brings customers.
+// Agent is the name the Gregale CLI reported in its User-Agent and apid
+// recorded as audit_log.data.actor_agent (ADR-20261112223000 amendment 1);
+// apid keeps only names in api.CodingAgents, so the list is short. Deploys
+// with no agent (people, CI, the dashboard, older CLIs, DO_NOT_TRACK) are not
+// listed. Deploys24h counts deployments over ObsOverviewAuditWindow; the
+// NewAccounts fields cover accounts created in the beta funnel's cohort
+// window (ObsOverviewCohortWindow) that deployed through the agent since
+// signup. An account that used two agents counts under both. Aggregates
+// only: no account IDs leave this row.
+type ObsCodingAgent struct {
+	Agent      string `json:"agent"`
+	Deploys24h int    `json:"deploys_24h"`
+	// NewAccounts14d: cohort accounts with at least one deploy through Agent.
+	NewAccounts14d int `json:"new_accounts_14d"`
+	// NewAccountsServing14d: of those, accounts with an app that served a
+	// request since signup.
+	NewAccountsServing14d int `json:"new_accounts_serving_14d"`
+	// NewAccountsPaid14d: of those, accounts on a paid plan now.
+	NewAccountsPaid14d int `json:"new_accounts_paid_14d"`
 }
 
 // ObsBetaFunnel is the privacy-safe activation funnel for accounts created in

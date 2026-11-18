@@ -190,6 +190,7 @@ func (s *server) listEnv(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
+	withValues := r.URL.Query().Get(api.EnvValuesQuery) == "true"
 
 	if isAll {
 		// `?scope=__all__` returns the nested map shape. Read every
@@ -201,7 +202,7 @@ func (s *server) listEnv(w http.ResponseWriter, r *http.Request, acct state.Acco
 			api.WriteProblem(w, api.ErrCapacity("could not list env vars"))
 			return
 		}
-		writeEnvListAll(w, rows, limits.EnvVarsMax)
+		writeEnvListAll(w, rows, limits.EnvVarsMax, withValues)
 		return
 	}
 
@@ -216,6 +217,7 @@ func (s *server) listEnv(w http.ResponseWriter, r *http.Request, acct state.Acco
 			Key:       row.Key,
 			CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339),
 			UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339),
+			Value:     envValueIf(withValues, row.Value),
 		})
 	}
 	// Count across ALL scopes so the dashboard renders one unified
@@ -240,7 +242,17 @@ func (s *server) listEnv(w http.ResponseWriter, r *http.Request, acct state.Acco
 // keys are scope names. Rows are grouped by scope and the per-scope
 // slice is sorted by key ASC to match the flat response. Count is
 // the row total (cross-scope); Quota is unchanged.
-func writeEnvListAll(w http.ResponseWriter, rows []state.AppEnv, quota int) {
+// envValueIf returns value for a ?values=true listing and nil otherwise.
+// Variables are non-sensitive by contract (ADR-045); sealed secrets have
+// their own list, which never carries a value.
+func envValueIf(withValues bool, value string) *string {
+	if !withValues {
+		return nil
+	}
+	return &value
+}
+
+func writeEnvListAll(w http.ResponseWriter, rows []state.AppEnv, quota int, withValues bool) {
 	// Bucket rows by scope. Deterministic ordering: scope ASC, then
 	// per-scope key ASC — matches the flat response's key ASC for
 	// each scope, and the per-scope list in the nested response.
@@ -251,6 +263,7 @@ func writeEnvListAll(w http.ResponseWriter, rows []state.AppEnv, quota int) {
 			Key:       r.Key,
 			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 			UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
+			Value:     envValueIf(withValues, r.Value),
 		})
 	}
 	for scope := range bucket {

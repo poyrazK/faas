@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 
@@ -125,7 +126,25 @@ func (g *GCSStorageBackend) RetireExclusiveArtifact(ctx context.Context, r Exclu
 	if err := g.checkArtifactReceipt(ctx, r); err != nil {
 		return err
 	}
-	err := g.store.(gcsExclusiveReceiptStore).RetireGeneration(ctx, g.bucket, r.ObjectKey, r.Generation)
+	if g.deferDelete != nil {
+		// ADR-20261115180000 slice 2: a deferring node has no delete right;
+		// the control plane retires exactly this generation.
+		rd, ok := g.deferDelete.(GenerationRetireDeferrer)
+		if !ok {
+			return fmt.Errorf("%w: deletes are deferred and the deferrer cannot record a generation", ErrExclusiveRetireUnsupported)
+		}
+		return rd.DeferRetireGeneration(ctx, r.ObjectKey, r.Generation)
+	}
+	return g.deleteGeneration(ctx, r.ObjectKey, r.Generation)
+}
+
+// deleteGeneration deletes exactly generation of key.
+func (g *GCSStorageBackend) deleteGeneration(ctx context.Context, key string, generation int64) error {
+	store, ok := g.store.(gcsExclusiveReceiptStore)
+	if !ok {
+		return ErrExclusiveReceiptUnsupported
+	}
+	err := store.RetireGeneration(ctx, g.bucket, key, generation)
 	// A missing acknowledged generation is idempotent retirement evidence.
 	// A replacement's existence does not grant permission to delete it.
 	if errors.Is(err, gcs.ErrObjectNotExist) {

@@ -26,6 +26,6 @@ func keyValueScanErr(err error) error {
 	if !errors.Is(err, bufio.ErrTooLong) {
 		return err
 	}
-	return fmt.Errorf("a KEY=VALUE line is longer than %d KiB; secret values are capped at %d bytes on the largest plan (https://gregale.dev/docs/secrets#limits)",
+	return fmt.Errorf("a KEY=VALUE line is longer than %d KiB; secret values are capped at %d bytes on the largest plan (https://gregale.dev/docs/secrets)",
 		keyValueLineMaxBytes/1024, api.MustLimitsFor(api.PlanScale).SecretValueMaxBytes)
 }
