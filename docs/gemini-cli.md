@@ -5,6 +5,11 @@ Gemini CLI can deploy, check and roll back your apps on Gregale by running the
 up and shows what to ask for. The CLI's automation contract, scoped keys and
 approvals are on [Use Gregale from coding agents](agents.md).
 
+Gemini CLI serves Gemini Code Assist Standard and Enterprise licenses and
+paid Gemini API or Vertex AI keys. Free, Google AI Pro and Google AI Ultra
+accounts moved to Antigravity in June 2026; see
+[Deploy with Antigravity](antigravity.md).
+
 ## Install the CLI and sign in
 
 ```sh
@@ -30,12 +35,12 @@ gregale init --agents --name my-api
 
 It adds a Gregale section to `AGENTS.md`; see
 [Project instructions for agents](agents.md#project-instructions-for-agents).
-It also creates `.gemini/settings.json` when the project or your machine uses
-Gemini CLI.
+In a project with a `.gemini` folder, it also creates
+`.gemini/settings.json` so Gemini CLI reads `AGENTS.md`.
 
-Gemini CLI reads `GEMINI.md` unless told otherwise. If the project already
-has a `.gemini/settings.json`, the command leaves it alone; add `AGENTS.md`
-to it yourself (older releases call the setting `contextFileName`):
+Gemini CLI reads `GEMINI.md` unless told otherwise. If the project has no
+`.gemini` folder, or already has a `.gemini/settings.json`, add `AGENTS.md`
+yourself (older releases call the setting `contextFileName`):
 
 ```json
 {
