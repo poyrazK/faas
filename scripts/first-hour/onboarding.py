@@ -113,6 +113,17 @@ def anonymous_status(url, slug):
             return response.status
 
 
+def browser_handoff(output, require_code):
+    match = re.search(r"(?:Opening|Open) (https://[^\s]+)(?=[^\n]*\n)", output)
+    if not match:
+        return None
+    handoff = {"url": match[1], "phase": "browser_login"}
+    if code := re.search(r"(?m)^Your code: ([a-zA-Z0-9-]+)\s*$", output):
+        handoff["code"] = code[1]
+    native.require(not require_code or "code" in handoff, "browser device code was not observed")
+    return handoff
+
+
 def validate(report):
     """A fixture, wrong plan, incomplete step, bad identity or cleanup cannot pass."""
     if report.get("provenance", {}).get("evidence_kind") != "deployed":
@@ -320,17 +331,11 @@ class Run:
                 # A private handoff receipt lets an observer open the normal
                 # approval page. Never put it in the public report/transcript.
                 deadline = time.monotonic() + 10
-                url = None
-                while time.monotonic() < deadline and not url:
+                handoff = None
+                while time.monotonic() < deadline and not handoff:
                     terminal.pump()
-                    match = re.search(r"(?:Opening|Open) (https://[^\s]+)", terminal.output)
-                    if match and "\n" in terminal.output[match.end():]:
-                        url = match.group(1)
-                native.require(url is not None, "browser authorization URL was not observed")
-                handoff = {"url": url, "phase": "browser_login"}
-                if match := re.search(r"Your code: ([A-Z0-9-]+)\s", terminal.output):
-                    handoff["code"] = match.group(1)
-                native.require(not self.args.device_login or "code" in handoff, "browser device code was not observed")
+                    handoff = browser_handoff(terminal.output, self.args.device_login)
+                native.require(handoff is not None, "browser authorization URL was not observed")
                 native.save(self.private / "browser-handoff.json", handoff)
                 print("Complete the isolated CLI login in your browser; the acceptance is waiting for approval.", flush=True)
                 terminal.wait(0, timeout=360)

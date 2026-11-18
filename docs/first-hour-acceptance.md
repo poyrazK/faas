@@ -161,6 +161,9 @@ python3 scripts/first-hour/onboarding.py --api https://api.gregale.dev \
   --expected-email user@example.com --out /tmp/gregale-free-private-onboarding
 ```
 
+In a container that doesn't export `SHELL`, set it to the path of the
+container's shell before the run. The public installer uses it when printing
+PATH setup instructions for the isolated destination.
 Use `--file-credentials` when the Linux environment has no usable keyring.
 It stores the isolated login under the run's private home and revokes it during
 cleanup. Open the URL and enter the code from `private/browser-handoff.json`

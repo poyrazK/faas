@@ -148,6 +148,14 @@ class ResponseContracts(unittest.TestCase):
 
 
 class IsolationContracts(unittest.TestCase):
+    def test_browser_handoff_preserves_lowercase_device_code_and_complete_url(self):
+        url = "https://example.test/cli-auth"
+        self.assertIsNone(ob.browser_handoff("Opening " + url, False))
+        self.assertEqual(ob.browser_handoff("Opening " + url + "\n", False),
+                         {"url": url, "phase": "browser_login"})
+        self.assertEqual(ob.browser_handoff(f"Your code: 123a-b456\nOpen {url} and enter the code there.\n", True),
+                         {"url": url, "phase": "browser_login", "code": "123a-b456"})
+
     def test_cli_single_pretty_json_and_ndjson_collections_are_both_supported(self):
         account = {"id": "account", "plan": "free"}
         rows = [{"id": "one"}, {"id": "two"}]
