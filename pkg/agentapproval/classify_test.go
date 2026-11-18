@@ -37,6 +37,11 @@ func TestClassify(t *testing.T) {
 		{"PUT /v1/projects/{slug}/environments/{environment}/flags", api.AgentApprovalProduction, TargetNone},
 		{"POST /v1/projects/{slug}/environments/{environment}/flags/rollback", api.AgentApprovalProduction, TargetNone},
 		{"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote", api.AgentApprovalProduction, TargetNone},
+		// ADR-20261117232109: replays and workflow recovery re-run app code.
+		{"POST /v1/apps/{slug}/dlq/{id}/replay", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/apps/{slug}/dlq:replay_all", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/workflows/runs/{id}/steps/{step}/retry", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/workflows/runs/{id}/resume", api.AgentApprovalProduction, TargetNone},
 		// Deploy review 2026-11-10 (D3): project deploys, promotions,
 		// release sets and GitOps sources, in their ServeMux spelling.
 		// Apps/projects review 2026-11-10 (P10): production configuration
@@ -94,6 +99,8 @@ func TestClassify(t *testing.T) {
 		"DELETE /v1/admin/accounts/{id}",
 		"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/kill",
 		"POST /v1/postgres/databases/{id}/query",
+		"POST /v1/incidents/{id}/notes",
+		"POST /v1/apps/{slug}/slos",
 	} {
 		if rule, ok := Classify(pattern); ok {
 			t.Errorf("Classify(%q) = %+v; want no approval", pattern, rule)
