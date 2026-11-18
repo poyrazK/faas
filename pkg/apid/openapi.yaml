@@ -11675,7 +11675,7 @@ paths:
     get:
       operationId: listBucketObjects
       summary: List objects with opaque cursor pagination
-      description: Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket.
+      description: Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket. An environment branch's bucket lists as the branch reads it, its own objects over its parent bucket's, keys it deleted hidden; each parent object has from_parent.
       tags: [storage]
       parameters:
         - { name: prefix, description: Only return keys starting with this prefix., in: query, schema: { type: string, maxLength: 1024 } }
@@ -11699,6 +11699,7 @@ paths:
                         key: { type: string }
                         size_bytes: { type: integer, format: int64 }
                         last_modified: { type: string, format: date-time }
+                        from_parent: { type: boolean, description: "In an environment branch's bucket, the object is read from the parent environment's bucket." }
                   next_cursor: { type: string }
         default:
           description: Invalid request, access denied, bucket unavailable, or provider error
