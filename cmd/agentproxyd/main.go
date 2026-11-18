@@ -132,7 +132,7 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 		select {
 		case <-ctx.Done():
 			for _, srv := range servers {
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				_ = srv.Shutdown(shutdownCtx)
 				cancel()
 			}
@@ -157,11 +157,11 @@ func loadBlocklist(b *agentproxy.Blocklist, path string) error {
 	if path == "" {
 		return nil
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // operator-owned config path from a flag, not a customer path
 	if err != nil {
 		return fmt.Errorf("agentproxyd: open blocklist: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return b.Load(f)
 }
 

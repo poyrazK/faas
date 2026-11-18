@@ -53,7 +53,7 @@ func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return nil //nolint:nilerr // the listener closed because ctx ended: a clean stop
 			}
 			return err
 		}
@@ -63,7 +63,7 @@ func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 
 // handle serves one agent connection and records its outcome.
 func (p *Proxy) handle(ctx context.Context, conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	outcome, host := p.serve(ctx, conn)
 	if p.Metrics != nil {
 		p.Metrics.connections.WithLabelValues(outcome).Inc()
@@ -116,7 +116,7 @@ func (p *Proxy) serve(ctx context.Context, conn net.Conn) (outcome, host string)
 	if err != nil {
 		return OutcomeUpstream, host
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	if _, err := upstream.Write(prefix); err != nil {
 		return OutcomeUpstream, host
 	}
