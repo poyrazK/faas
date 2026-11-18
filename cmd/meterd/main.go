@@ -258,6 +258,8 @@ func (a *scheddEgressAdapter) ReadUsageDeltas(instanceID string) (meter.UsageDel
 		NetworkCumulative: true,
 		NetTXValid:        row.TxValid == 0,
 		NetRXValid:        row.RxValid == 0,
+		InternalTXBytes:   row.InternalTxBytes,
+		InternalTXValid:   row.InternalTxValid,
 	}, true
 }
 
@@ -610,6 +612,8 @@ func (a *egressAggregator) ReadUsageDeltas(instanceID string) (meter.UsageDeltas
 		out.NetworkCumulative = schedd.NetworkCumulative
 		out.NetTXValid = schedd.NetTXValid
 		out.NetRXValid = schedd.NetRXValid
+		out.InternalTXBytes = schedd.InternalTXBytes
+		out.InternalTXValid = schedd.InternalTXValid
 	}
 	if a.gw != nil {
 		var gateway meter.UsageDeltas
@@ -1056,6 +1060,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Notif:                       pn,
 		Log:                         log,
 		Registerer:                  ops.Registry(),
+		Subscriptions:               dunningSubscriptions(pusher),
 	})
 
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
@@ -1212,6 +1217,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// meterd holds the alerting key.
 	go runAlertTestSends(ctx, evaluator, log)
 	startAgentApprovalNotifications(ctx, store, mailer, evaluator, ops.Registry(), log)
+	startPlatformAlerts(ctx, store, mailer, promClient, ops.Registry(), log)
 	evaluator.SetRuleRelease(release.ForAccount)
 	evaluator.SetRuleLimits(release.RuleLimits)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
@@ -1356,6 +1362,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261023171905: the quiet pause ledger keeps
 	// api.QuietPauseLedgerRetentionDays.
 	go meter.QuietPauseRetentionLoop(ctx, store, mc.RetentionInterval, log)
+	// ADR-20261116120000: probe wakes are kept api.PlatformProbeWakeRetention.
+	go meter.PlatformProbeWakeRetentionLoop(ctx, store, mc.RetentionInterval, log)
 	// ADR-371: egress flow log rows are kept api.EgressFlowLogRetentionDays.
 	go meter.RetentionLoopEgressFlowLog(ctx, poolAdapter{pool}, time.Hour, log)
 	// ADR-20261113160000: sign-up addresses and user agents are kept

@@ -1,5 +1,10 @@
 package sched
 
+import (
+	"sort"
+	"time"
+)
+
 // The ledger's per-node and CPU-boost indexes (ADR 20261104143005).
 //
 // Placement asks the ledger for each candidate node's admission figure on
@@ -58,4 +63,31 @@ func (l *NodeLedger) unindexEntry_locked(instance string, e *reservation) {
 // itself: callers read it under l.mu and never change it.
 func (l *NodeLedger) entriesOnNode_locked(nodeID string) map[string]*reservation {
 	return l.byNode[nodeID]
+}
+
+// AppReservation describes one ledger reservation of an app, for the
+// diagnostic a refused runtime-config restart logs.
+type AppReservation struct {
+	Instance, DeploymentID, EnvironmentKey, NodeID string
+	CountsConcurrency, Frozen                      bool
+	AdmittedAt                                     time.Time
+}
+
+// AppReservations lists appID's reservations in this ledger, sorted by
+// instance ID.
+func (l *NodeLedger) AppReservations(appID string) []AppReservation {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []AppReservation
+	for id, r := range l.entries {
+		if r.appID == appID {
+			out = append(out, AppReservation{Instance: id, DeploymentID: r.deploymentID, EnvironmentKey: r.environmentKey,
+				NodeID: r.nodeID, CountsConcurrency: r.countsConc, Frozen: r.frozen, AdmittedAt: r.admittedAt})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Instance < out[j].Instance })
+	return out
 }

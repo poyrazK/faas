@@ -131,6 +131,7 @@ func cmdInstancesForcePark(args []string) int {
 	requestKey := fs.String("request-key", "", "reuse this key with the same target and reason after an uncertain submission")
 	traceIDFlag := fs.String("trace-id", "", "OTel 32-char-hex trace id (auto-generated when empty)")
 	breakGlass := fs.Bool("break-glass-local", false, "bypass apid and call the local schedd directly")
+	breakGlassDB := fs.Bool("break-glass-db", false, "bypass apid and write the durable recovery intent directly (node rollouts, ADR-20261116191802)")
 	ack := fs.Bool("yes", false, "acknowledge that the instance will be evicted from the wake path")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -144,6 +145,20 @@ func cmdInstancesForcePark(args []string) int {
 		return 2
 	}
 	traceID := instanceTraceID(*traceIDFlag)
+	if *breakGlass && *breakGlassDB {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl instances force-park: --break-glass-local and --break-glass-db are exclusive")
+		return 2
+	}
+	if *breakGlassDB {
+		if *requestKey != "" {
+			_, _ = fmt.Fprintln(osStderr, "--request-key requires the apid submission path")
+			return 2
+		}
+		if !instanceBreakGlassAllowed("force-park", *reason) {
+			return 2
+		}
+		return forceParkBreakGlassDB(strings.TrimSpace(*instanceID), strings.TrimSpace(*reason), traceID, *timeout)
+	}
 	if *breakGlass {
 		if *requestKey != "" {
 			_, _ = fmt.Fprintln(osStderr, "--request-key requires the apid submission path")

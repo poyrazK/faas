@@ -1,6 +1,8 @@
 package events
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -40,11 +42,46 @@ func TestPublishLimiterChargesEveryEventPerAccount(t *testing.T) {
 	if _, ok := unset.Allow("a", limits, 1000); !ok {
 		t.Fatal("a nil limiter limited the account")
 	}
-	problem := limiter.PublishRateProblem("b", api.EventPublishLimits{PerSecond: 5, Burst: 1}, 1)
+	problem := limiter.PublishRateProblem(t.Context(), nil, "b", api.PlanFree, api.EventPublishLimits{PerSecond: 5, Burst: 1}, 1)
 	if problem == nil {
-		problem = limiter.PublishRateProblem("b", api.EventPublishLimits{PerSecond: 5, Burst: 1}, 1)
+		problem = limiter.PublishRateProblem(t.Context(), nil, "b", api.PlanFree, api.EventPublishLimits{PerSecond: 5, Burst: 1}, 1)
 	}
 	if problem == nil || problem.Status != http.StatusTooManyRequests || problem.Code != api.CodeEventPublishRateLimited {
 		t.Fatalf("problem = %+v", problem)
+	}
+}
+
+type fakeSharedRate struct {
+	granted bool
+	err     error
+	calls   int
+}
+
+func (f *fakeSharedRate) ConsumeEventPublishRate(context.Context, string, api.Plan, api.EventPublishLimits, int) (bool, error) {
+	f.calls++
+	return f.granted, f.err
+}
+
+// The shared counter refuses what the process bucket admits once other
+// processes have spent the account's rate; an unreadable counter admits on
+// the process bucket alone (event-driven hunt #16).
+func TestPublishLimiterChargesTheSharedCounter(t *testing.T) {
+	var limiter PublishLimiter
+	limits := api.EventPublishLimits{PerSecond: 5, Burst: 100}
+	spent := &fakeSharedRate{}
+	wait, ok := limiter.AllowShared(t.Context(), spent, "a", api.PlanFree, limits, 10)
+	if ok || wait < time.Second || spent.calls != 1 {
+		t.Fatalf("spent shared counter = %v, %v (calls %d); want a refusal", wait, ok, spent.calls)
+	}
+	if _, ok := limiter.AllowShared(t.Context(), &fakeSharedRate{granted: true}, "a", api.PlanFree, limits, 10); !ok {
+		t.Fatal("a granting shared counter refused")
+	}
+	if _, ok := limiter.AllowShared(t.Context(), &fakeSharedRate{err: errors.New("down")}, "a", api.PlanFree, limits, 10); !ok {
+		t.Fatal("an unreadable shared counter refused")
+	}
+	// The process bucket refuses first, without asking the shared counter.
+	unasked := &fakeSharedRate{granted: true}
+	if _, ok := limiter.AllowShared(t.Context(), unasked, "b", api.PlanFree, limits, 101); ok || unasked.calls != 0 {
+		t.Fatalf("oversize batch: ok=%v calls=%d", ok, unasked.calls)
 	}
 }

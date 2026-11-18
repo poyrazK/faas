@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/markers"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
 const (
@@ -71,8 +72,15 @@ type Profile struct {
 	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
 	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
 	// port (ADR-20261027090000).
-	HealthFromConfig bool      `json:"health_from_config,omitempty"`
-	Warnings         []Warning `json:"warnings,omitempty"`
+	HealthFromConfig bool `json:"health_from_config,omitempty"`
+	// HealthDefaulted reports that HealthPath is the platform's /healthz:
+	// neither gregale.yaml nor the source named a health route. Startup
+	// readiness is then the port accepting connections, as for a direct
+	// image, because a plain Express or Flask app answers /healthz with 404
+	// and failed every deploy (ADR-079 amendment 2). Profiles written before
+	// it lack the mark and keep HTTP readiness.
+	HealthDefaulted bool      `json:"health_defaulted,omitempty"`
+	Warnings        []Warning `json:"warnings,omitempty"`
 	// ImageCommand is the accepted Compose CMD contract. Its presence freezes
 	// image semantics even when Cmd is nil (inherit) or the app changes class.
 	ImageCommand     *ImageCommand     `json:"image_command,omitempty"`
@@ -165,9 +173,10 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		}
 	}
 	// An unknown tree may be a home directory, not a project: do not scan it.
+	healthInferred := false
 	if framework != markers.FrameworkDocker && framework != markers.FrameworkUnknown {
 		if health := inferHealthPath(fsys); health != "" {
-			profile.HealthPath = health
+			profile.HealthPath, healthInferred = health, true
 		}
 	}
 	if cfg, present, err := hostingconfig.Load(fsys); err != nil {
@@ -179,10 +188,27 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		} else {
 			profile.ConfigFile = "gregale.yml"
 		}
+		if profile.HealthFromConfig && profile.HealthPath == "/" {
+			profile.Warnings = append(profile.Warnings, rootHealthPathWarning(profile.ConfigFile))
+		}
 	}
 	profile.Warnings = append(profile.Warnings, loopbackWarnings(fsys)...)
 	profile.Inferred = profile.StartCommand != "" && profile.Framework != string(markers.FrameworkUnknown)
+	profile.HealthDefaulted = !healthInferred && !profile.HealthFromConfig
 	return profile, nil
+}
+
+// rootHealthPathWarning flags hosting.health: /. Gregale answers GET and
+// HEAD on an app's health path at its edge without running the app (unless
+// health_path_wakes is on), so with "/" every visitor to the home page got
+// {"status":"ok","source":"edge"} and never reached the app. Coding agents
+// set it when an app had no health route (agent eval baseline 2026-11-17).
+func rootHealthPathWarning(configFile string) Warning {
+	return Warning{
+		Code:    "health_path_root",
+		Message: `hosting.health is "/": Gregale answers the health path at its edge, so visitors to / get {"status":"ok"} instead of the app's page. Add a small route such as /healthz and name it instead.`,
+		Sources: []string{configFile},
+	}
 }
 
 func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
@@ -364,22 +390,17 @@ var fromPattern = regexp.MustCompile(`(?im)^\s*FROM\s+(?:--\S+\s+)*(\S+)`)
 
 // nonHTTPServiceWarning reports a Dockerfile whose serving port is a raw TCP
 // server's: its own EXPOSE, else the port of a known server image it builds
-// FROM. A source build is probed with HTTP GET /healthz on that port, which a
-// raw TCP server never answers, so the deploy fails with
-// app_startup_timeout. A directly deployed image is gated by TCP accept.
+// FROM. The build readies once the port accepts connections, but the app's
+// public route speaks HTTP, which the server does not, so it is reached over
+// an internal TCP port instead. A final stage built FROM a datastore is
+// reported whatever its port: apid refuses that build (stateless_only_violation).
 func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
+	if base, hosted, stateful := statefuldenylist.MatchDockerfile([]byte(dockerfile)); stateful {
+		return datastoreWarning(imageName(base), hosted), true
+	}
 	server, port := "", firstPort(dockerfile)
 	if froms := fromPattern.FindAllStringSubmatch(dockerfile, -1); len(froms) > 0 {
-		ref := strings.ToLower(froms[len(froms)-1][1])
-		if at := strings.IndexByte(ref, '@'); at >= 0 {
-			ref = ref[:at]
-		}
-		if slash := strings.LastIndexByte(ref, '/'); slash >= 0 {
-			ref = ref[slash+1:]
-		}
-		if colon := strings.IndexByte(ref, ':'); colon >= 0 {
-			ref = ref[:colon]
-		}
+		ref := imageName(froms[len(froms)-1][1])
 		if serverPort, known := nonHTTPServers[ref]; known {
 			server = ref
 			if port == 0 {
@@ -395,10 +416,40 @@ func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
 		what = fmt.Sprintf("this builds %s, which serves its own TCP protocol on port %d", server, port)
 	}
 	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
-		"%s. A source build must answer HTTP GET /healthz on its serving port, so this deploy fails with app_startup_timeout. "+
-			"Deploy the published image instead, which is ready once the port accepts connections: "+
-			"`gregale deploy --image <image>@sha256:<digest> --name <app>`. Then keep it private and let other apps reach it "+
-			"with `gregale app <app> --visibility internal --ports <name>=tcp:%d:internal`.", what, port)}, true
+		"%s. The app's public URL speaks HTTP, which this server does not answer. "+
+			"Deploy this build or the published image (`gregale deploy --image <image>@sha256:<digest> --name <app>`); "+
+			"either is ready once the port accepts connections. Then keep it private and let other apps reach it over TCP with "+
+			"`gregale app <app> --visibility internal --ports <name>=tcp:%d:internal`.", what, port)}, true
+}
+
+// datastoreWarning names the hosted service for a datastore build. A datastore
+// is refused built or as an image (stateless_only_violation): an app parks to
+// a snapshot and keeps no data.
+func datastoreWarning(server, hosted string) Warning {
+	managed := hosted
+	if server == "postgres" {
+		managed = "use managed PostgreSQL: `gregale postgres create <name>`"
+	}
+	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
+		"this builds %s, a datastore. Gregale does not run datastores, built or as an image: an app parks to a snapshot and keeps no data. "+
+			"%s, and read its URL from the environment: `gregale env set --app <app> %s_URL=<url>`.",
+		server, upperFirst(managed), strings.ToUpper(server))}
+}
+
+// imageName is an image reference's last path segment without tag or digest:
+// docker.io/library/postgres:16@sha256:… → postgres.
+func imageName(ref string) string {
+	ref = strings.ToLower(ref)
+	if at := strings.IndexByte(ref, '@'); at >= 0 {
+		ref = ref[:at]
+	}
+	if slash := strings.LastIndexByte(ref, '/'); slash >= 0 {
+		ref = ref[slash+1:]
+	}
+	if colon := strings.IndexByte(ref, ':'); colon >= 0 {
+		ref = ref[:colon]
+	}
+	return ref
 }
 
 func nodePackageManager(fsys fs.FS, declared string) string {
@@ -455,7 +506,14 @@ func looksLikeDevelopmentCommand(command string) bool {
 	return false
 }
 
-var healthPathRegex = regexp.MustCompile(`(?i)(?:get|route|handle|head|live|post|put|patch|delete)\s*\(\s*["'](/(?:healthz?|readyz?|livez?|ready|live))["']`)
+// healthPathRegex finds a conventional health route in source: a framework
+// registration (app.get("/healthz"), @app.route, http.HandleFunc), a plain
+// router's switch case (case "/healthz":) or a path comparison
+// (url.pathname === "/healthz", self.path == "/healthz", r.URL.Path ==
+// "/healthz"). A plain node:http server declared its /healthz only in a
+// switch, so its 503 went unprobed under TCP readiness and an unhealthy
+// release deployed (journeys 2026-11-16 TestHealthGate; ADR-079 amendment 2).
+var healthPathRegex = regexp.MustCompile(`(?i)(?:(?:get|route|handle|handlefunc|head|live|post|put|patch|delete)\s*\(\s*|\bcase\s+|[=!]==?\s*)["'](/(?:healthz?|readyz?|livez?|ready|live))["']`)
 
 // inferHealthPath only accepts conventional readiness names. Choosing an
 // arbitrary application route as a smoke endpoint is worse than retaining the
@@ -674,4 +732,11 @@ func readFile(fsys fs.FS, path string) string {
 		return ""
 	}
 	return string(data)
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

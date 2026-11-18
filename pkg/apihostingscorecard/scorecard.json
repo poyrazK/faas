@@ -81,7 +81,7 @@
       "name": "Capability acceptance: async",
       "category": "reliability",
       "description": "Each released async capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "queue-bindings", "queue-pull-leases", "queues", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
+      "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "postgres-changes", "queue-bindings", "queue-pull-leases", "queues", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/e2e/cron_e2e_test.go::TestE2E_Cron_FiresOnScheduleAndOnDemand"},
@@ -112,6 +112,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_approval_inputs_test.go::TestOperationApprovalFormsAreHiddenUntilAllowlisted"},
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_children_test.go::TestOperationChildrenPlanLimit"},
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_signals_test.go::TestOperationSignalRoutes"},
+        {"kind": "test", "locator": "pkg/commitmanaged/changes_test.go::TestChangesSourceDeliversToWorkerQueue"},
         {"kind": "test", "locator": "pkg/operations/acceptance/artifacts_test.go::TestPgOperationArtifacts"},
         {"kind": "test", "locator": "pkg/operations/acceptance/recovery_test.go::TestPgOperationRecovery"},
         {"kind": "test", "locator": "pkg/operations/milestones_test.go::TestMilestoneContracts"},
@@ -142,7 +143,7 @@
       "name": "Capability acceptance: data",
       "category": "resources",
       "description": "Each released data capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["ai-access-tokens", "ai-content-policy", "ai-request-replay", "ai-routes", "ai-usage-limits", "application-auth", "bucket-access-grants", "bucket-cors", "bucket-encryption", "data-api", "database-rollbacks", "durable-entities", "entity-backups", "entity-quotas", "entity-registry", "entity-sessions", "live-queries", "managed-postgres", "multipart-uploads", "object-lifecycle", "object-protection", "object-storage-compute", "object-versioning", "org-postgres", "outbound-integrations", "postgres-bindings", "postgres-compute-policy", "postgres-cutovers", "postgres-restore", "preview-databases", "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy", "realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers", "s3-credentials", "signed-urls"],
+      "capabilities": ["ai-access-tokens", "ai-content-policy", "ai-prompts", "ai-request-replay", "ai-routes", "ai-usage-limits", "application-auth", "bucket-access-grants", "bucket-cors", "bucket-encryption", "data-api", "database-rollbacks", "durable-entities", "entity-backups", "entity-quotas", "entity-registry", "entity-sessions", "live-queries", "managed-postgres", "multipart-uploads", "object-lifecycle", "object-protection", "object-storage-compute", "object-versioning", "org-postgres", "outbound-integrations", "postgres-bindings", "postgres-compute-policy", "postgres-custom-roles", "postgres-cutovers", "postgres-restore", "preview-databases", "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy", "realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers", "s3-credentials", "signed-urls"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_bucket_versioning_test.go::TestBucketVersioningCLI"},
@@ -172,9 +173,11 @@
         {"kind": "test", "locator": "pkg/apid/databaseswitch/worker_test.go::TestDatabaseSwitchRestoresFencesDrainsSwitchesAndResumes"},
         {"kind": "test", "locator": "pkg/apid/livequeries/service_test.go::TestLiveQueriesLogins"},
         {"kind": "test", "locator": "pkg/apid/managedrealtime/handlers_tickets_test.go::TestRevokeRealtimeTicketHandlers"},
+        {"kind": "test", "locator": "pkg/apid/outboundai/prompts_test.go::TestPromptAPILifecycle"},
         {"kind": "test", "locator": "pkg/apid/receivers/realtime_occupancy_test.go::TestOccupancyOperationRPC"},
         {"kind": "test", "locator": "pkg/dashboard/tls_cutover_test.go::TestReadTLSCutoverState"},
         {"kind": "test", "locator": "pkg/durableentity/socket/quota_migration_test.go::TestQuotaMigrationPlanResumeVerifyAndFencing"},
+        {"kind": "test", "locator": "pkg/managedpostgres/custom_role_service_test.go::TestCustomRoleServiceDeclaresAppliesAndFences"},
         {"kind": "test", "locator": "pkg/outbound/ai_usage_test.go::TestAIUsageOutcome"},
         {"kind": "test", "locator": "pkg/s3gateway/bucket_cors_test.go::TestGatewayBucketCORS"},
         {"kind": "test", "locator": "pkg/state/object_bucket_access_test.go::TestObjectBucketAccessMem"},
@@ -651,6 +654,21 @@
           "kind": "runbook",
           "locator": "docs/runbooks/FaasCrashSnapshots.md"
         }
+      ]
+    },
+    {
+      "id": "production-protection-baseline",
+      "name": "Production protection by default",
+      "category": "observability",
+      "description": "A new public app is enrolled after its first live production deploy and gets SLOs, an hourly health check, email alerts and an SLO release gate as ordinary objects; customer objects are never overwritten, and the platform health check is neither billed nor counted as traffic (ADR-20261116120000).",
+      "capabilities": ["protection-baseline"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_app_protection_test.go::TestGetAppProtectionReportsBaselineItems"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/protection_reconciler_test.go::TestProtectionReconcilerCreatesBaseline"},
+        {"kind": "test", "locator": "pkg/gateway/route_probe_unbilled_test.go::TestUnbilledRouteProbeChallenge"},
+        {"kind": "test", "locator": "pkg/meter/sampler_probe_wake_test.go::TestSamplerLeavesPlatformProbeWakesUnbilled"},
+        {"kind": "runbook", "locator": "docs/production-protection.md"}
       ]
     },
     {

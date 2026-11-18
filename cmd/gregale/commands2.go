@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
@@ -326,6 +327,7 @@ func cmdApp(args []string) int {
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
 	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
 	noHealthPathWakes := fs.Bool("no-health-path-wakes", false, "answer health probes at the edge without waking")
+	settingFlags := registerAppSettingFlags(fs)
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -700,6 +702,7 @@ func cmdApp(args []string) int {
 	if explicit["health-path"] {
 		v := *healthPath
 		req.HealthPath = &v
+		warnRootHealthPath(v)
 	}
 	if explicit["health-path-wakes"] {
 		v := true
@@ -794,6 +797,9 @@ func cmdApp(args []string) int {
 		v := *overflowNode
 		req.OverflowNode = &v
 	}
+	if err := settingFlags.apply(explicit, &req); err != nil {
+		return printErr("Invalid flags", err)
+	}
 
 	// Any update flag sets a field of req; none means a read. Listing fields
 	// by hand here missed --release-policy and --release-probe-paths, which
@@ -809,6 +815,7 @@ func cmdApp(args []string) int {
 		printAppReadContext(slug, *environment)
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
 		fmt.Printf("%-30s %s\n", "url:", canonicalAppURL(a))
+		printAppProtectionLine(ctx, client, slug, *environment)
 		fmt.Printf("%-30s %s\n", "visibility:", api.NormalizeAppVisibility(api.AppVisibility(a.Visibility)))
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
 		fmt.Printf("%-30s %d\n", "guest vcpu:", a.VCPU)
@@ -1005,7 +1012,7 @@ func cmdApp(args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
-		return printErr("Could not update app", err)
+		return printErr("Could not update app", explainPerInstanceConcurrencyRefusal(err, explicit["per-instance-concurrency"]))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -1683,6 +1690,17 @@ func errNegativePerInstanceConcurrency(value int) error {
 	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the plan's concurrency per VM); got %d", value)
 }
 
+// explainPerInstanceConcurrencyRefusal turns the API's dark-launch refusal of
+// per_instance_concurrency, which answers like an unknown field so an N-1
+// apid and this one agree (ADR-20261022203523), into what it means for the
+// caller: the setting is not enabled for this account yet.
+func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
+	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
+		return fmt.Errorf("--per-instance-concurrency is in early access and not enabled for this account; leave it unset to use the plan's concurrency per VM (%w)", err)
+	}
+	return err
+}
+
 const manifestTriggerCleanupTimeout = 10 * time.Second
 
 func manifestCronKey(schedule, path string) string {
@@ -2025,6 +2043,10 @@ func cmdDeployTarball(args []string) int {
 // behavior below.
 type deployExecution struct {
 	projectRetry     map[string]string
+	projectPlan      func(context.Context, *Client, api.PlanResponse) error
+	confirmProject   func(api.PlanResponse) (bool, error)
+	onProjectAttempt func(string) error
+	onProjectApply   func(api.ApplyResponse) error
 	onQueued         func(api.DeploymentResponse)
 	onSubmission     func(deploySubmission) error
 	onUploadSession  func(deployUploadIdentity) error
@@ -2039,6 +2061,11 @@ type deployExecution struct {
 	compactProgress  bool // Guided sessions own their review and progress display.
 	streamLogsOnJSON bool
 	developerSource  *devSourceSyncState
+	// devBuildNow opts developer-source syncs out of build coalescing
+	// (ADR-20261021221906); untilDevPatched finishes a sync whose build was deferred
+	// behind its live patch, and reports false to follow the build instead.
+	devBuildNow     bool
+	untilDevPatched func(context.Context, api.DeploymentResponse) (int, bool)
 	// overrideEnv carries non-secret values that belong only to the new
 	// deployment revision. MCP hosting uses it to pin a candidate catalog.
 	overrideEnv map[string]string
@@ -2175,6 +2202,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	safeProjectDeploy := fs.Bool("atomic", false, "build an existing HTTP project at zero traffic, then atomically publish its ready release")
 	projectDeploy := fs.Bool("project", false, "deploy all detected workloads as one project (slug defaults from --name or source)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
+	appSlugPrefix := fs.String("prefix", "", "name the project's new apps <prefix><service>, e.g. --prefix shop- (overrides x-gregale-slug-prefix)")
 	// --environment targets a registered project environment. The server
 	// resolves the name to the deployment scope after checking the app's
 	// project registry; omitted preserves the legacy default scope.
@@ -2438,6 +2466,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *progressiveProjectDeploy {
 		ctx = api.ContextWithProjectProgressiveRelease(ctx)
 	}
+	if *appSlugPrefix != "" {
+		if err := reposcan.ValidateSlugPrefix(*appSlugPrefix); err != nil {
+			return printErr("Invalid --prefix", err)
+		}
+		ctx = api.ContextWithProjectAppSlugPrefix(ctx, *appSlugPrefix)
+	}
 	selectedSourceMode, sourceModeErr := resolveDeploySourceMode(*sourceMode, explicit["source"], *worktree,
 		*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet, *createOnly)
 	if sourceModeErr != nil {
@@ -2603,7 +2637,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if explicit["preview"] {
 			planFlag = "--preview"
 		}
-		if *diff || *dryRun || *serverDiff || *createOnly || *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+		if *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
+			return printErr("Invalid flags", errors.New(planFlag+" previews a single app; for a project run: gregale deploy --project --dry-run"))
+		}
+		if *diff || *dryRun || *serverDiff || *createOnly {
 			return printErr("Invalid flags", errors.New(planFlag+" cannot be combined with deploy mutation or project preview flags"))
 		}
 		if *tarball != "" || *templateName != "" || *repo != "" || *githubSnippet {
@@ -2679,7 +2716,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// `canary preset "--canary-stages requires …" is not in the
 		// closed-set catalog`.
 		problem := api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidCanaryPreset, "Invalid canary rollout", canaryErr.Error()).
-			WithDocs("https://gregale.dev/docs/deployments#canary-presets")
+			WithDocs("https://gregale.dev/docs/rollouts#how-a-rollout-proceeds")
 		return printErr("Invalid canary rollout", &api.APIError{Problem: *problem})
 	}
 	if explicit["traffic-percent"] && canarySpec != nil {
@@ -2707,6 +2744,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *templateName != "" {
 		if !templateAvailable(*templateName) {
 			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.ListedNames(), ", ")))
+		}
+		if *templateName == templates.PrivateNode {
+			return printErr("Scaffold the private Node project first", errors.New("run gregale init --template hello-node-private --path ./my-api, then gregale start ./my-api"))
 		}
 		// The data-api template is the bare runtime: it cannot start without a
 		// database binding and token settings, and its copy in this CLI may be
@@ -2786,9 +2826,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 		if len(unsupported) > 0 {
-			return printErr("Unsupported project deploy flags", fmt.Errorf(
-				"%s cannot be combined with project scope controls; project deploy policy is not yet supported",
-				strings.Join(unsupported, ", ")))
+			return printErr("Unsupported project deploy flags", projectDeployFlagRefusal(unsupported))
 		}
 	}
 	if explicit["wait"] && explicit["no-wait"] {
@@ -2902,6 +2940,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// prov cleanly (commit_sha and dirty zero-valued).
 	var prov *zeroConfigProvenance
 	var dirtyFileCount int
+	var dirtyBuildFiles []string
 
 	// --github emits a copy-paste GitHub Actions workflow snippet to
 	// stdout and exits 0 (issue #270). This path does not authenticate or
@@ -3304,6 +3343,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
+	if *appSlugPrefix != "" && !projectRequested {
+		return printErr("Invalid --prefix", errors.New("--prefix names a project's new apps; use it with --project"))
+	}
 	var explicitHeadProv *zeroConfigProvenance
 	if selectedSourceMode == deploySourceHEAD {
 		resolved, resolveErr := resolveExplicitHeadProvenance(sourceDir)
@@ -3382,10 +3424,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 							dirtyFileCount++
 						}
 					}
+					dirtyBuildFiles = uncommittedBuildFiles(dirtyOut, provVal.Root, selectedSourceDir)
+					if file, untracked := uncommittedProjectFile(dirtyOut, provVal.Root, selectedSourceDir); file != "" && !*worktree {
+						switch {
+						case untracked && path.Base(file) != "gregale.yaml":
+							// HEAD has no Compose file, so the project would plan no workloads.
+							return printErr("Compose file not committed", fmt.Errorf("%s is not committed, and deploy ships committed HEAD without it; commit it, or rerun with --worktree to ship the working tree", file))
+						case untracked:
+							PrintWarn(osStderr, "%s is not committed; this deploy ignores it. Use --worktree to ship it.", file)
+						default:
+							PrintWarn(osStderr, "%s has uncommitted changes; this deploy uses its committed version. Use --worktree to ship your edits.", file)
+						}
+					}
 				}
 			}
 			if dirtyFileCount > 0 && !*worktree {
-				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD. Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount))
+				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD.%s Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount), dirtyBuildFilesSuffix(dirtyBuildFiles))
 			}
 			if *deployedBy == "" && provVal.DeployedBy != "" {
 				*deployedBy = provVal.DeployedBy
@@ -3498,6 +3552,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			appEnv = &loaded
 		}
 		rep := runDoctorChecksForApp(sourceDir, doctorShape, appEnv)
+		if projectRequested {
+			// The project root is not one app: the plan scans each Compose
+			// service on its own, and an image-only project has no source
+			// framework at all. A root profile warned "framework_not_detected
+			// ... supply an explicit Dockerfile" for a valid project of
+			// digest-pinned images (retail-store GREG-05).
+			rep.Profile = nil
+		}
 		if *doctorStrict && rep.HasErrors() {
 			if jsonOutput {
 				_ = json.NewEncoder(osStderr).Encode(struct {
@@ -3521,7 +3583,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		doctorPreflightRan = true
 	}
 	// localSourceWarning names credential-looking files a local-files
-	// upload (no Git archive) includes; the receipt repeats it for --json.
+	// upload (no Git archive) left out; the receipt repeats it for --json.
 	localSourceWarning := ""
 	if *image == "" && *tarball == "" {
 		if cwdErr != nil {
@@ -3639,15 +3701,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// Preserve the complete selected repository for ScanProject. A project
 			// root is allowed to contain only nested workload markers; framework
 			// detection belongs to the planner, not this single-app CLI path.
+			var excludes []string
+			excludes, localSourceWarning = excludeDeployCredentials(sourceDir, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 			overrides, scanFindings, scanErr := scanAndRedactEnvFiles(sourceDir, secretScanMode)
+			scanFindings, scanErr = withoutExcludedFindings(sourceDir, excludes, scanFindings, scanErr)
 			if scanErr != nil {
 				return printErr("Secret scan failed", scanErr)
 			}
-			path, _, n, packErr := autoPackSource(sourceDir, sourceDir, false, planCapMB, overrides, execution.extraSourceExcludes...)
+			path, _, n, packErr := autoPackSource(sourceDir, sourceDir, false, planCapMB, overrides, excludes...)
 			if packErr != nil {
 				return printErr("Could not pack project source", sourceCap.explain(packErr))
 			}
-			localSourceWarning = warnLocalCredentialFiles(sourceDir, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 			if n == 0 {
 				_ = os.Remove(path)
 				return printErr("No project source found in "+filepath.Base(sourceDir), errors.New("the selected directory contains no regular source files after deploy exclusions"))
@@ -3694,15 +3758,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					packRoot = workspaceContextRoot
 					flatContext = true
 				}
+				var excludes []string
+				excludes, localSourceWarning = excludeDeployCredentials(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(packRoot, secretScanMode)
+				scanFindings, scanErr = withoutExcludedFindings(packRoot, excludes, scanFindings, scanErr)
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, _, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, execution.extraSourceExcludes...)
+				path, _, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, excludes...)
 				if err != nil {
 					return printErr("Could not pack deploy source", sourceCap.explain(err))
 				}
-				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
 				PrintProgress(os.Stderr, "packing %d file(s) from %s", n, filepath.Base(sourceDir))
@@ -3715,15 +3781,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					packRoot = workspaceContextRoot
 					flatContext = true
 				}
+				var excludes []string
+				excludes, localSourceWarning = excludeDeployCredentials(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(packRoot, secretScanMode)
+				scanFindings, scanErr = withoutExcludedFindings(packRoot, excludes, scanFindings, scanErr)
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, fw, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, execution.extraSourceExcludes...)
+				path, fw, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, excludes...)
 				if err != nil {
 					return printErr("Could not pack deploy source", sourceCap.explain(err))
 				}
-				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
 				if fw == fwDocker {
@@ -3892,6 +3960,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if workflowErr != nil {
 			return printErr("Workflow manifest validation failed", workflowErr)
 		}
+		previewWorkflows = memberWorkflows(ctx, slug, previewWorkflows)
 		// Project deploys have a different preview contract from a
 		// single-app diff: the apply path is driven by ScanProject, so
 		// preview must use that same planner and render the complete
@@ -3911,6 +3980,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
 		opts.Preview = newCLIPreview("remote comparison", slug, "", source, changes, "Compares current remote settings; build execution and readiness are not verified. State can change before deployment.")
 		deploymentPreviewTargetSources(opts.Preview, contextDir, *name != "", explicit["environment"])
+		opts.TargetLinked = sourceLinkedTo(contextDir, slug)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec
@@ -4009,7 +4079,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 
 		plan = withProvidedEnvKeys(plan, deploySecrets)
-		if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
+		if execution.projectPlan != nil && plan.CanApply {
+			if err := execution.projectPlan(ctx, client, plan); err != nil {
+				return printErr("Could not review project target", err)
+			}
+		}
+		if execution.confirmProject != nil && plan.CanApply {
+			ok, err := execution.confirmProject(plan)
+			if err != nil {
+				return startInputExit(err)
+			}
+			if !ok {
+				return 0
+			}
+		} else if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
 			return code
 		}
 		approvalToken := ""
@@ -4041,6 +4124,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not save project submission attempt; no apply was submitted", saveErr)
 		}
 		defer func() { _ = projectLock.Close() }()
+		if execution.onProjectAttempt != nil {
+			if err := execution.onProjectAttempt(projectSession.record.ID); err != nil {
+				return printErr("Could not save the guided project session", err)
+			}
+		}
 		projectSession.addWarning(localSourceWarning)
 		applyCtx = api.ContextWithDeploymentAttempt(applyCtx, projectSession.record.Project.AttemptID)
 		apply, err := client.ApplyProjectPlanWithInitialSecrets(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
@@ -4066,6 +4154,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if saveErr := projectSession.rememberProjectApply(apply); saveErr != nil {
 			return renderProjectDeployReceipt(plan, apply, projectSession, false, saveErr)
 		}
+		if execution.onProjectApply != nil {
+			if err := execution.onProjectApply(apply); err != nil {
+				return projectSubmissionFailure(projectSession, err)
+			}
+		}
 		if len(execution.projectRetry) > 0 {
 			if err := validateProjectRetryAcceptance(execution.projectRetry, apply); err != nil {
 				return projectSubmissionFailure(projectSession, err)
@@ -4082,12 +4175,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return waitForSafeProjectRelease(ctx, client, projectSession, time.Duration(*waitTimeoutSeconds)*time.Second)
 			}
 		}
+		if !explicit["tarball"] && *templateName == "" && *environment == "" {
+			linkCheckoutAfterProjectDeploy(osStderr, contextDir, *projectSlug, jsonOutput)
+		}
 		var projectWaitTimeouts []projectWaitTimeout
 		if waitForDeploy && !*safeProjectDeploy && len(apply.Builds) > 0 {
-			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(ctx, client, apply,
+			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(withProjectWaitProgress(ctx, osStderr, jsonOutput), client, apply,
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
-		return renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+		code := renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+		if !jsonOutput {
+			renderProjectEndpoints(ctx, osStdout, client, apply)
+		}
+		return code
 	}
 
 	// A template or gregale.yaml that turns on a capability the account does
@@ -4103,6 +4203,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err != nil {
 			return printErr("Workflow manifest validation failed", err)
 		}
+		workflowDefs = memberWorkflows(ctx, slug, workflowDefs)
 		sidecarDefs, err = loadExtensionSidecarsManifestForDeploy(ctx, client, sourceDir)
 		if err != nil {
 			return printErr("Extension manifest validation failed", err)
@@ -4112,14 +4213,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Manifest resource scope resolution failed", err)
 	}
-	if existingApp && !projectRequested && !*createOnly {
-		warnMissingRequiredSecrets(ctx, client, slug, manifestScope)
-	}
 	// The deploy session is written after the app is created or updated;
 	// prove it can be before changing anything remotely (#6625).
 	if !*createOnly {
 		if err := preflightDeploySessionStorage(client); err != nil {
 			return printErr("Could not save deploy session", err)
+		}
+	}
+	// A datastore image is refused after the app exists, which left an
+	// empty app counting toward the app quota (prod 2026-11-15: --image
+	// redis). Refuse it here, before anything is created.
+	if *image != "" {
+		if hint, denied := statefuldenylist.Match(*image); denied {
+			return printErr("Stateless-only platform", fmt.Errorf("image %s runs a datastore, which loses its data when the app parks; %s. Nothing was created or deployed", *image, hint))
 		}
 	}
 	resolvedApp := api.AppResponse{}
@@ -4158,6 +4264,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			existingReq := createReq
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
+			}
+			if !*createOnly {
+				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
+					return code
+				}
 			}
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 		}
@@ -4214,6 +4325,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !jsonOutput {
 			PrintOK(osStdout, "Configured %d secret(s) before deployment", len(deploySecrets))
 		}
+	}
+	// After the app exists and --secrets-file values are sealed, so a first
+	// deploy is checked and the file's names count (deploy-path review P10).
+	if !projectRequested {
+		warnMissingRequiredSecrets(ctx, client, slug, manifestScope, sourceDir)
 	}
 
 	// Issue #791 PR-C / ADR-090: gregale.yaml triggers are staged after
@@ -4325,8 +4441,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestQueueBindings(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest queue bindings failed", err)
 	}
+	if err := deployManifestPostgresChanges(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest postgres_changes failed", err)
+	}
 	if err := deployManifestLabels(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest labels failed", err)
+	}
+	if err := deployManifestProtection(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest protection failed", err)
 	}
 
 	recordQueued := func(dep api.DeploymentResponse) int {
@@ -4379,7 +4501,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if developerSync != nil {
 			var deployErr error
 			sourceSyncStarted := time.Now()
-			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann, developerSync)
+			devAnn := ann
+			devAnn.DevBuildNow = execution.devBuildNow
+			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, devAnn, developerSync)
 			if execution.onSourceSync != nil {
 				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
 			}
@@ -4446,6 +4570,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if issueMaps != nil && !jsonOutput {
 			PrintOK(osStdout, "Source maps ready: %d map(s) for deployment %s (%s)", issueMaps.MapCount, issueMaps.DeploymentID, issueMaps.ManifestSHA256)
+		}
+		if execution.untilDevPatched != nil && dep.DevPatch != nil && dep.DevPatch.BuildDeferredUntil != nil {
+			if code, handled := execution.untilDevPatched(ctx, dep); handled {
+				return code
+			}
 		}
 		if jsonOutput && !streamLogsOnJSON {
 			// Legacy multipart uploads do not calculate the digest while
@@ -6196,19 +6325,32 @@ func cmdKeys(args []string) int {
 // `gregale keys grace-window`.
 func cmdKeysRotate(args []string) int {
 	fs := newFlagSet("keys rotate", flag.ContinueOnError)
+	revokeOld := fs.Bool("revoke-old", false, "revoke the old key now instead of after the grace window (use when the key leaked)")
+	graceDays := fs.Int("grace-days", -1, "days the old key keeps working, for this rotation only (0 to 30; default: the account's grace window)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale key rotate <key-id>", "keys")
+		PrintUsage(os.Stderr, "usage: gregale key rotate <key-id> [--revoke-old | --grace-days N]", "keys")
 		return 1
+	}
+	if *revokeOld && *graceDays >= 0 {
+		return printErr("Invalid flags", fmt.Errorf("--revoke-old and --grace-days are mutually exclusive"))
+	}
+	if *revokeOld {
+		*graceDays = 0
 	}
 	id := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.RotateKey(context.Background(), id)
+	var resp api.RotateKeyResponse
+	if *graceDays >= 0 {
+		resp, err = client.RotateKeyWithGrace(context.Background(), id, *graceDays)
+	} else {
+		resp, err = client.RotateKey(context.Background(), id)
+	}
 	if err != nil {
 		return printErr("Rotate failed", err)
 	}
@@ -6218,7 +6360,12 @@ func cmdKeysRotate(args []string) int {
 	PrintOK(osStdout, "Rotated key. New plaintext (shown ONCE):\n  %s", resp.KeyPlaintext)
 	PrintProgress(osStdout, "  new id:        %s", resp.Key.ID)
 	PrintProgress(osStdout, "  old key id:    %s", resp.OldKeyID)
-	PrintProgress(osStdout, "  old key grace: %s", resp.OldKeyExpiresAt)
+	if *graceDays == 0 {
+		PrintProgress(osStdout, "  old key:       revoked now")
+		return 0
+	}
+	PrintProgress(osStdout, "  old key works until %s", resp.OldKeyExpiresAt)
+	PrintProgress(osStdout, "If the old key leaked, revoke it now: gregale key delete %s", resp.OldKeyID)
 	return 0
 }
 
@@ -7002,7 +7149,11 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	projectSlug := fs.String("project", "", "read every service of this project together, each line prefixed with its service")
 	projectServices := fs.String("service", "", "with --project, only these services (comma-separated)")
 	if err := parseAppLogFlags(fs, args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
+		// The parser already wrote its single JSON Problem. Keep the
+		// existing synopsis for human output and unreported local errors.
+		if diagnostic, ok := fs.Output().(*jsonFlagErrorWriter); !ok || !diagnostic.wrote {
+			PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
+		}
 		return 1
 	}
 	if *projectSlug != "" {
@@ -7561,7 +7712,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		return runParkedAppLogs(ctx, client, slug, deployment, filter, explain)
 	}
 	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
-		next := recoveryCLI() + " inspect " + recoveryArgument(slug)
+		next := recoveryCLI() + " app health " + recoveryArgument(slug) + " --explain"
 		if deployment != "" {
 			next = recoveryCLI() + " deployment get " + recoveryArgument(deployment)
 		}

@@ -354,7 +354,7 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			CodeUnsupportedByCLI,
 			"endpoint requires the dashboard session cookie",
 			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
-		).WithDocs(docsBase + "/cli#cookie-only-routes")
+		).WithDocs(docsBase + "/cli")
 	}
 	path, err := c.projectRoute(path)
 	if err != nil {
@@ -921,6 +921,14 @@ func (c *Client) PostAccountMfaDisableEmail(ctx context.Context, req MFADisableE
 	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email", req, &out)
 }
 
+// PostAccountMfaDisableEmailCancel cancels every pending email-assisted MFA
+// disable on the account. It needs a session that passed the second factor
+// (or a full-access key); a session from a password reset alone cannot.
+func (c *Client) PostAccountMfaDisableEmailCancel(ctx context.Context, req MFADisableEmailCancelRequest) (MFADisableEmailCancelResponse, error) {
+	var out MFADisableEmailCancelResponse
+	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email-cancel", req, &out)
+}
+
 // PostAccountMfaDisableEmailConfirm consumes the emailed token after the
 // mandatory cooldown and clears the account's MFA state.
 func (c *Client) PostAccountMfaDisableEmailConfirm(ctx context.Context, req MFADisableEmailConfirmRequest) (MFADisableEmailConfirmResponse, error) {
@@ -1186,6 +1194,21 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 		path += "?" + query.Encode()
 	}
 	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
+// DestroyDevSessionByApp stops a developer environment selected by its
+// backing dev-* app slug instead of the local workspace, for environments
+// whose checkout moved (DELETE /v1/dev/sessions/{project}?app=).
+func (c *Client) DestroyDevSessionByApp(ctx context.Context, project, appSlug string) error {
+	path := "/v1/dev/sessions/" + project + "?" + url.Values{"app": {appSlug}}.Encode()
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
+// GetDevSessions is the path-shaped SDK method for GET /v1/dev/sessions: the
+// account's developer environments, wherever they were started.
+func (c *Client) GetDevSessions(ctx context.Context) (DevSessionListResponse, error) {
+	var out DevSessionListResponse
+	return out, c.do(ctx, "GET", "/v1/dev/sessions", nil, &out)
 }
 
 // RegisterScenarioTest gives a run's developer sessions a private service
@@ -1707,7 +1730,17 @@ func (c *Client) DeployDevSource(ctx context.Context, slug string, source io.Rea
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Idempotency-Key", newUUIDv4())
+	// Like DeployTarball: a caller-supplied key and attempt identity let a
+	// retried or timed-out sync replay or recover the same deployment
+	// instead of starting a second build nobody can cancel.
+	idempotencyKey := IdempotencyKeyFromContext(ctx)
+	if idempotencyKey == "" {
+		idempotencyKey = newUUIDv4()
+	}
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	for key, values := range deploymentAttemptHeaders(ctx) {
+		req.Header[key] = values
+	}
 	var out DeploymentResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
@@ -2000,6 +2033,9 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 	}
 	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
 		return PlanResponse{}, fmt.Errorf("build tenant policy field: %w", err)
+	}
+	if err := writeProjectAppSlugPrefix(ctx, w); err != nil {
+		return PlanResponse{}, fmt.Errorf("build app name prefix field: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		return PlanResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -4710,6 +4746,14 @@ func (c *Client) RotateKey(ctx context.Context, id string) (RotateKeyResponse, e
 	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", nil, &out)
 }
 
+// RotateKeyWithGrace rotates a key and sets, for this rotation only, how
+// many days the old key keeps working. 0 revokes the old key at once; use
+// it when the key leaked.
+func (c *Client) RotateKeyWithGrace(ctx context.Context, id string, graceWindowDays int) (RotateKeyResponse, error) {
+	var out RotateKeyResponse
+	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", RotateKeyRequest{GraceWindowDays: &graceWindowDays}, &out)
+}
+
 // GetGraceWindow returns the customer's per-account rotation
 // grace-window override (issue #189 / IAM-5). days=null means
 // "no override" — the rotation handler uses the plan default.
@@ -4994,16 +5038,40 @@ func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, sin
 // MintCliAuthCode anonymously mints a fresh login code bound to a device
 // code; ExchangeCliAuthLogin exchanges it.
 func (c *Client) MintCliAuthCode(ctx context.Context) (CliAuthCodeResponse, error) {
-	var out CliAuthCodeResponse
-	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true}, &out)
+	return c.mintCliAuthLoginCode(ctx, CliAuthCodeRequest{Device: true})
 }
 
 // MintCliAuthLoopbackCode mints a one-click login code whose approval is
 // sent to 127.0.0.1:port (ADR-20261111170000). The response's Loopback is
 // false when the server kept the typed-code flow.
 func (c *Client) MintCliAuthLoopbackCode(ctx context.Context, port int) (CliAuthCodeResponse, error) {
+	return c.mintCliAuthLoginCode(ctx, CliAuthCodeRequest{Device: true, LoopbackPort: port})
+}
+
+// mintCliAuthLoginCode mints a login code bound to a fresh verifier, whose
+// SHA-256 goes as the code challenge and which only the exchange sees, so a
+// device code that leaks on its way back (browser history, a local server's
+// log) is useless alone. A server that predates code challenges refuses the
+// unknown field with 400; the request is then sent once without it.
+func (c *Client) mintCliAuthLoginCode(ctx context.Context, req CliAuthCodeRequest) (CliAuthCodeResponse, error) {
+	verifier, challenge, err := NewCliAuthVerifier()
+	if err != nil {
+		return CliAuthCodeResponse{}, err
+	}
+	withChallenge := req
+	withChallenge.CodeChallenge = challenge
 	var out CliAuthCodeResponse
-	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true, LoopbackPort: port}, &out)
+	err = c.do(ctx, "POST", "/v1/cli-auth/code", withChallenge, &out)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Problem.Status == http.StatusBadRequest {
+		out = CliAuthCodeResponse{}
+		return out, c.do(ctx, "POST", "/v1/cli-auth/code", req, &out)
+	}
+	if err != nil {
+		return out, err
+	}
+	out.Verifier = verifier
+	return out, nil
 }
 
 // ExchangeCliAuthLogin polls for a minted code's approval: with its device
@@ -5014,7 +5082,7 @@ func (c *Client) ExchangeCliAuthLogin(ctx context.Context, minted CliAuthCodeRes
 	}
 	var out CliAuthExchangeResponse
 	return out, c.do(ctx, "POST", "/v1/cli-auth/exchange",
-		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode}, &out)
+		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode, CodeVerifier: minted.Verifier}, &out)
 }
 
 // ExchangeCliAuthCode polls the server for the user's approval.
@@ -5424,6 +5492,21 @@ func (c *Client) GetAppsSlugEnvWithScope(ctx context.Context, slug, scope string
 	var out AppEnvListResponse
 	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+slug+"/env", scope), nil, &out)
 }
+
+// GetAppsSlugEnvValues lists runtime variables in one scope with their
+// plaintext values (?values=true). Variables are non-sensitive by contract;
+// sealed secrets are listed separately and never carry a value.
+func (c *Client) GetAppsSlugEnvValues(ctx context.Context, slug, scope string) (AppEnvListResponse, error) {
+	var out AppEnvListResponse
+	path := c.scopeQuery("/v1/apps/"+slug+"/env", scope)
+	if strings.Contains(path, "?") {
+		path += "&" + EnvValuesQuery + "=true"
+	} else {
+		path += "?" + EnvValuesQuery + "=true"
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) PutAppsSlugEnvKey(ctx context.Context, slug, key, value string) error {
 	return c.do(ctx, "PUT", c.configWriteQuery("/v1/apps/"+slug+"/env/"+key, ""),
 		PutAppEnvRequest{Value: value}, nil)
@@ -6195,6 +6278,37 @@ func (c *Client) ListEgressFlows(ctx context.Context, q EgressFlowQuery) (Egress
 		path += "?" + encoded
 	}
 	var out EgressFlowLogResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAccountRisk reads an account's abuse risk via
+// GET /v1/admin/accounts/{id}/risk (ADR-20261115090000). includePII adds
+// email, sign-up address and user agent and is audited. Operator-only.
+func (c *Client) GetAccountRisk(ctx context.Context, accountID string, includePII bool) (AccountRiskResponse, error) {
+	path := "/v1/admin/accounts/" + url.PathEscape(accountID) + "/risk"
+	if includePII {
+		path += "?include_pii=1"
+	}
+	var out AccountRiskResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListHeldLinks lists links to abuse-held accounts detected in the last
+// since via GET /v1/admin/held-links (ADR-20261114174600). since and limit
+// default to 24h and 200 when zero. Operator-only.
+func (c *Client) ListHeldLinks(ctx context.Context, since time.Duration, limit int) (HeldLinksResponse, error) {
+	v := url.Values{}
+	if since > 0 {
+		v.Set("since", since.String())
+	}
+	if limit > 0 {
+		v.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/admin/held-links"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out HeldLinksResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 

@@ -43,7 +43,7 @@ func waitForMail(t *testing.T, mailer *apidserver.RecordingMailer, to, contains 
 }
 
 // Transferring ownership and deleting an organization need a signed-in
-// browser; an API key, however it leaked, cannot (ADR 20261113180000).
+// browser; an API key, however it leaked, cannot (ADR 20261114170352).
 func TestOrgOwnershipAndDeletionNeedBrowserSession(t *testing.T) {
 	srv, _, store := apidserver.V1AuthTestHarness(t)
 	h := srv.Handler()

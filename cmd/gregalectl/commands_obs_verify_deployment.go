@@ -21,10 +21,12 @@ import (
 )
 
 type obsDeploymentOptions struct {
-	release, report string
-	after           time.Time
-	wait, poll      time.Duration
-	json            bool
+	runtimeDiagnostics            *operatorobs.RuntimeDiagnostics
+	runtimeDiagnosticsUnsupported bool
+	release, report, expectedRole string
+	after, processCompareAt       time.Time
+	wait, poll, stableFor         time.Duration
+	json                          bool
 }
 
 func cmdObsVerifyDeployment(args []string) int {
@@ -35,7 +37,8 @@ func cmdObsVerifyDeployment(args []string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	client := &http.Client{Timeout: api.ObsPostDeployHTTPTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	fetch := func(ctx context.Context) obsDeploymentSnapshot { return fetchObsDeploymentSnapshot(ctx, client, cred) }
+	fetch := newObsDeploymentProcessFetcher(client, cred, options)
+
 	save := func(report obsDeploymentReport) error {
 		if options.report == "" {
 			return nil
@@ -48,10 +51,7 @@ func cmdObsVerifyDeployment(args []string) int {
 			return 2
 		}
 	} else {
-		_, _ = fmt.Fprintf(osStdout, "monitoring=%s reason=%s release=%s attempts=%d wait_seconds=%g\n", report.State, report.Reason, report.Release, report.Attempts, report.WaitSeconds)
-		for _, check := range report.Checks {
-			_, _ = fmt.Fprintf(osStdout, "  check=%s state=%s reason=%s runbook=%s\n", check.Name, check.State, check.Reason, check.Runbook)
-		}
+		writeObsDeploymentHuman(osStdout, report)
 	}
 	return code
 }
@@ -61,9 +61,12 @@ func parseObsDeploymentOptions(args []string) (obsDeploymentOptions, obsCredenti
 	fs.SetOutput(osStderr)
 	opts := obsDeploymentOptions{}
 	fs.StringVar(&opts.release, "release", "", "requested release SHA")
+	fs.StringVar(&opts.expectedRole, "expected-role", "", "advisory build profile: "+strings.Join(operatorobs.RuntimeBuildRoles(), ", "))
+	diagnostics := fs.String("runtime-diagnostics", "", "advisory groups: all, none, or comma-separated names; core evidence is always collected")
 	after := fs.String("after", "", "rollout evidence boundary")
 	fs.DurationVar(&opts.wait, "wait-timeout", 0, "wait budget; zero derives from probe policy")
 	fs.DurationVar(&opts.poll, "poll-interval", api.ObsPostDeployPollDefault, "poll interval")
+	fs.DurationVar(&opts.stableFor, "stable-for", 0, "passing window with advancing source evidence; zero exits at the first pass")
 	fs.StringVar(&opts.report, "report", "", "private JSON report path")
 	fs.BoolVar(&opts.json, "json", false, "emit JSON")
 	token := fs.String("admin-token", "", obsAdminTokenUsage)
@@ -72,11 +75,28 @@ func parseObsDeploymentOptions(args []string) (obsDeploymentOptions, obsCredenti
 		return opts, obsCredential{}, false
 	}
 	at, err := time.Parse(time.RFC3339Nano, *after)
-	if err != nil || fs.NArg() != 0 || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(opts.release) || at.After(time.Now().Add(api.ObsHealthClockSkewTolerance)) || opts.wait < 0 || opts.wait > api.ObsPostDeployWaitMax || opts.poll < time.Second || opts.poll > api.ObsPostDeployPollMax || *stdin && *token != "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: valid release, boundary, bounded wait and poll interval required")
+	if err != nil || fs.NArg() != 0 || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(opts.release) || at.After(time.Now().Add(api.ObsHealthClockSkewTolerance)) || opts.wait < 0 || opts.wait > api.ObsPostDeployWaitMax || opts.poll < time.Second || opts.poll > api.ObsPostDeployPollMax || opts.stableFor < 0 || opts.stableFor > api.ObsPostDeployWaitMax || opts.wait > 0 && opts.stableFor > opts.wait || *stdin && *token != "" {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: valid release, boundary, bounded wait, poll interval and stability window within the explicit wait required")
 		return opts, obsCredential{}, false
 	}
 	opts.after = at.UTC()
+	if opts.expectedRole != "" && !operatorobs.RuntimeBuildRoleValid(opts.expectedRole) {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: unknown expected role")
+		return opts, obsCredential{}, false
+	}
+	diagnosticsSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "runtime-diagnostics" {
+			diagnosticsSet = true
+		}
+	})
+	if diagnosticsSet {
+		opts.runtimeDiagnostics, err = operatorobs.ParseRuntimeDiagnostics(opts.expectedRole, *diagnostics)
+		if err != nil {
+			_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: runtime diagnostics require an expected role and distinct supported groups, all, or none")
+			return opts, obsCredential{}, false
+		}
+	}
 	if *stdin {
 		reader := bufio.NewReader(io.LimitReader(os.Stdin, int64(api.ObsPostDeployTokenMaxBytes)+2))
 		value, err := reader.ReadString('\n')
@@ -127,10 +147,13 @@ func fetchObsDeploymentSnapshot(ctx context.Context, client *http.Client, cred o
 	serving := make(chan obsDeploymentServingRead, 1)
 	go func() {
 		var out api.ObsServingHealth
+		started := time.Now()
 		err := fetchObsBundleSection(ctx, client, apidBase()+operatorobs.ServingHealthPath, cred, subObsServingHealth, &out)
-		serving <- obsDeploymentServingRead{out, err}
+		serving <- obsDeploymentServingRead{value: out, err: err, timing: obsDeploymentReadTime(started, time.Now())}
 	}()
 	var notifications api.ObsNotificationHealth
+	started := time.Now()
 	err := fetchObsBundleSection(ctx, client, apidBase()+operatorobs.NotificationHealthPath, cred, subObsNotificationHealth, &notifications)
-	return obsDeploymentSnapshot{serving: <-serving, notifications: notifications, notificationErr: err}
+	timing := obsDeploymentReadTime(started, time.Now())
+	return obsDeploymentSnapshot{serving: <-serving, notifications: notifications, notificationErr: err, notificationTiming: timing}
 }

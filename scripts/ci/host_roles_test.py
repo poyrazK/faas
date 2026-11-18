@@ -25,6 +25,7 @@ BOOTSTRAP = """\
   pre_tasks:
     - name: gather
       ansible.builtin.setup:
+      when: faas_gather_facts | bool
   roles:
     # Shared preconditions.
     - role: nftables
@@ -48,7 +49,11 @@ FILES = {
     "deploy/ansible/requirements.yml": "collections: []\n",
     "deploy/ansible/control_plane_converge.yml": "- import_playbook: bootstrap.yml\n",
     "deploy/ansible/node_join.yml": "- import_playbook: bootstrap.yml\n",
-    "deploy/ansible/group_vars/control_plane/backup.yml": "faas_backup: true\n",
+    "deploy/ansible/group_vars/control_plane/backup.yml":
+        "# Backups.\nfaas_backup: true\nfaas_backup_bucket: \"{{ faas_backup_prefix }}-pg\"\n"
+        "faas_backup_prefix: prod\nfaas_gather_facts: true\n",
+    "deploy/ansible/group_vars/control_plane/switches.yml":
+        "# Read only by the converge playbook.\nfaas_join_switch: false\nfaas_list:\n- a\n- b\n",
     "deploy/ansible/group_vars/compute_nodes/log.yml": "faas_log: true\n",
     "deploy/ansible/tasks/validate_udp_policy.yml": "- ansible.builtin.assert: {that: [true]}\n",
     "deploy/ansible/roles/_shared/templates/99-node-name.conf.j2": "[Service]\n",
@@ -60,7 +65,8 @@ FILES = {
     "deploy/ansible/roles/postgres/tasks/main.yml":
         "# Install the backup units from the shared unit tree: {{ role_path }}/../../../nowhere\n"
         "- ansible.builtin.copy:\n    src: \"{{ role_path }}/../../../systemd/faas-pg-basebackup.service\"\n"
-        "    dest: /etc/systemd/system/faas-pg-basebackup.service\n",
+        "    dest: /etc/systemd/system/faas-pg-basebackup.service\n"
+        "- ansible.builtin.debug: {msg: \"{{ faas_backup_bucket }}\"}\n",
     "deploy/ansible/roles/postgres/defaults/main.yml": "postgres_max_connections: 170\n",
     "deploy/ansible/roles/postgres/README.md": "postgres role\n",
     "deploy/ansible/roles/prometheus/tasks/main.yml":
@@ -90,7 +96,8 @@ FILES = {
         "  ansible.builtin.command: systemctl try-restart faas-gatewayd-public.service\n",
     "deploy/ansible/roles/vmmd_service/tasks/main.yml":
         "- ansible.builtin.include_role:\n    name: vmmd_jail\n",
-    "deploy/ansible/roles/vmmd_jail/tasks/main.yml": "- ansible.builtin.debug: {msg: jail}\n",
+    "deploy/ansible/roles/vmmd_jail/tasks/main.yml":
+        "- ansible.builtin.debug: {msg: \"{{ lookup('vars', 'faas_' ~ item) }}\"}\n",
     "deploy/systemd/faas-pg-basebackup.service": "[Service]\n",
     "deploy/systemd/faas-gatewayd-internal.service": "[Service]\n",
     "deploy/statuspage/index.html": "<html></html>\n",
@@ -170,8 +177,37 @@ class ChangedTest(unittest.TestCase):
          edit("deploy/ansible/ansible.cfg", "[defaults]\nforks = 2\n"), True, None),
         ("collection pins are a globals change", "compute_nodes",
          edit("deploy/ansible/requirements.yml", "collections: [x]\n"), True, None),
-        ("group_vars are the group's globals", "control_plane",
-         edit("deploy/ansible/group_vars/control_plane/backup.yml", "faas_backup: false\n"), True, None),
+        # ADR-20261117140000: group_vars are hashed per variable.
+        ("a group var no role reads selects nothing", "control_plane",
+         edit("deploy/ansible/group_vars/control_plane/switches.yml",
+              "faas_join_switch: true\nfaas_list:\n- a\n- b\n"), False, []),
+        ("a new group var no role reads selects nothing", "control_plane",
+         edit("deploy/ansible/group_vars/control_plane/switches.yml",
+              FILES["deploy/ansible/group_vars/control_plane/switches.yml"] + "faas_new_switch: true\n"), False, []),
+        ("a comment in group_vars selects nothing", "control_plane",
+         edit("deploy/ansible/group_vars/control_plane/backup.yml",
+              FILES["deploy/ansible/group_vars/control_plane/backup.yml"].replace("# Backups.", "# Nightly backups.")),
+         False, []),
+        ("a group var a role names selects that role", "control_plane",
+         edit("deploy/ansible/group_vars/control_plane/backup.yml",
+              FILES["deploy/ansible/group_vars/control_plane/backup.yml"].replace("-pg", "-postgres")),
+         False, ["postgres"]),
+        ("a group var another var names selects that var's readers", "control_plane",
+         edit("deploy/ansible/group_vars/control_plane/backup.yml",
+              FILES["deploy/ansible/group_vars/control_plane/backup.yml"].replace("prefix: prod", "prefix: staging")),
+         False, ["postgres"]),
+        ("a role entry's when: names its variables", "control_plane",
+         edit("deploy/ansible/group_vars/control_plane/backup.yml",
+              FILES["deploy/ansible/group_vars/control_plane/backup.yml"] + "faas_postgres_enabled: false\n"),
+         False, ["postgres"]),
+        ("a group var a play body names is a globals change", "control_plane",
+         edit("deploy/ansible/group_vars/control_plane/backup.yml",
+              FILES["deploy/ansible/group_vars/control_plane/backup.yml"].replace("facts: true", "facts: false")),
+         True, None),
+        ("a role reading variables by computed name reads every variable", "compute_nodes",
+         edit("deploy/ansible/group_vars/compute_nodes/log.yml", "faas_log: false\n"), False, ["vmmd_service"]),
+        ("a vars file that is not a top-level mapping is a globals change", "compute_nodes",
+         edit("deploy/ansible/group_vars/compute_nodes/log.yml", "- faas_log\n"), True, None),
         ("another group's vars are not", "control_plane",
          edit("deploy/ansible/group_vars/compute_nodes/log.yml", "faas_log: false\n"), False, []),
         ("the converge playbook is not role content", "control_plane",
@@ -183,6 +219,12 @@ class ChangedTest(unittest.TestCase):
                        "    - role: nftables\n      when: faas_cp_converge_roles is none or 'nftables' in faas_cp_converge_roles\n"
                        "    - role: postgres\n      when:\n        - faas_postgres_enabled | default(true) | bool\n"
                        "        - faas_cp_converge_roles is none or 'postgres' in faas_cp_converge_roles\n")),
+         False, []),
+        ("the compute role selection condition is not role content", "compute_nodes",
+         edit("deploy/ansible/bootstrap.yml", BOOTSTRAP
+              .replace("    - role: vmmd_service\n",
+                       "    - role: vmmd_service\n"
+                       "      when: faas_join_converge_roles | default(none) is none or 'vmmd_service' in faas_join_converge_roles\n")),
          False, []),
         ("an included role's change selects its includer", "compute_nodes",
          edit("deploy/ansible/roles/vmmd_jail/tasks/main.yml", "- debug: {msg: jail2}\n"), False, ["vmmd_service"]),

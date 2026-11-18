@@ -30,8 +30,8 @@ Operators: see the [operator guide](managed-postgres.md).
   pool.
 - Compute suspends when a database is idle. Always-on compute is not part of
   these plans.
-- Storage and compute are limits. Nothing past them is billed while managed
-  PostgreSQL has no invoicing.
+- Storage is a limit. Compute and egress past the allowance are billed only
+  when you turn on overage; see [Usage and limits](#usage-and-limits).
 - A database runs in a single zone. Gregale makes no high-availability
   promise for it; point-in-time restore and the 7-day undo of a delete are the
   recovery paths.
@@ -220,7 +220,7 @@ gregale postgres attach orders my-api --access migration --env MIGRATION_DATABAS
 
 A failed release command leaves the previous deployment serving. A rollback
 never undoes a migration; see
-[Releases that change the database](deploys.md#releases-that-change-the-database).
+[Releases that change the database](releases.md#releases-that-change-the-database).
 
 To rotate a credential, run `gregale postgres bindings list orders`, then
 `gregale postgres bindings rotate BINDING_ID --wait`. Rotation returns once
@@ -278,9 +278,73 @@ every plan:
   source keeps its 7-day undo, but recovering it then needs room under your
   plan's limit (delete or purge the copy, or upgrade). A purged source is
   kept, with its name and storage, until the copy is deleted.
-- A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
+- A [rollback that restores the database](releases.md#rollbacks-that-restore-the-database)
   never uses the slot: its copy becomes the app's database, so the account
   needs room for it inside the limit.
+
+### Restore and switch an app
+
+`--switch` restores the database and moves an app to the copy in one step,
+without changing the app's code. Use it when bad data, not bad code, is the
+problem: a mistaken `DELETE`, a broken import, a job that ran twice.
+
+```sh
+gregale postgres restore orders --name orders-0900 --point-in-time 2026-10-30T09:00:00Z --switch my-api
+```
+
+```text
+orders is restored to 2026-10-30T09:00:00Z as a new database, orders-0900, and my-api moves to it; its code does not change.
+Writes to orders after that moment stay only in orders, which keeps every write and is no longer bound to my-api.
+my-api stops serving while it switches (usually under a minute, then a cold start).
+Type "my-api" to confirm: my-api
+restoring orders to 2026-10-30T09:00:00Z as orders-0900
+staging and verifying credentials for orders-0900
+fencing my-api; it stops serving until the switch ends
+draining my-api: 2 retired, 1 parked, 0 pending
+switching my-api to orders-0900
+resuming my-api on v42
+✓ Switched my-api to orders-0900. orders keeps every write and is no longer bound to my-api; delete it when you no longer need it.
+```
+
+It runs the same steps as a
+[rollback that restores the database](deploys.md#rollbacks-that-restore-the-database),
+except that the release stays the same: restore, stage and verify credentials,
+fence and drain the app, move every binding the app has to the database in
+the scope (`--env`, default `default`) in one transaction, then resume. Until
+the bindings move, a failure or `gregale release rollback status my-api <id>
+--cancel` unwinds it, and the app keeps serving on `orders`.
+
+- **Data:** the copy holds exactly what `orders` held at the restore point.
+  Writes after it are not copied; `orders` keeps them unchanged, so you can
+  compare or copy rows by hand. Nothing is lost by switching.
+- **Downtime:** the app does not serve from the fence until the first request
+  after the switch, usually under a minute plus a cold start. Instances and
+  tasks must settle within 2 minutes of the fence and the drain must finish
+  within 10, otherwise the switch fails and the app resumes on `orders`.
+- **Room:** the copy becomes the app's database, so it must fit inside your
+  plan's database limit; it cannot use the restore slot.
+- **One app per switch.** Other apps bound to `orders` stay on it.
+- `--yes` skips the prompt (scripts and `--json` need it); `--no-wait`
+  returns once the switch starts. `gregale rollback switches my-api` lists
+  switches. The API is `POST /v1/apps/{slug}/database-switches` with
+  `database_id`, `name`, `point_in_time` and an optional `scope`; it needs the
+  `postgres:manage` scope and a verified email.
+
+### Recovery objectives
+
+What a recovery gives back, and how long it takes:
+
+| Situation | Recovery | Data | Time to serve again |
+| --- | --- | --- | --- |
+| Bad data or a mistaken write | `restore --switch` | everything up to the point you pick | minutes: the restore, then under a minute of downtime and a cold start |
+| A bad migration | `gregale rollback --restore-databases` | everything up to the start of the release | the same |
+| A database deleted by mistake | `gregale postgres recover`, within 7 days | everything | minutes |
+| A provider zone outage | none from Gregale | committed writes are kept by the provider | until the provider recovers; no high-availability promise |
+
+The restore point can be any moment inside the restore window (7 days). The
+switch's own steps are bounded: the restore 1 hour, settling 2 minutes,
+draining 10 minutes; a step that runs over fails the switch and the app keeps
+serving.
 
 ## Branches
 
@@ -368,10 +432,16 @@ databases by up to two hours.
   then refuses connections until the 1st of next month; your other databases
   and apps keep running, and the account is emailed once that month. Data a
   database sends your app counts as database egress; private network
-  transfer (Private Link) does not.
+  transfer (Private Link) does not. A copy of a database (a restore, a branch
+  or a PR preview copy) shares its source's 500 GB: the source and its copies
+  are held once together they sent it.
 - With egress overage on (`gregale billing egress-overage`), each database's
-  egress past its own 500 GB is billed at $0.105 per GB. `egress_state` is
-  then `overage`, and a database is held only at twice its allowance.
+  egress past its own 500 GB (shared with its copies) is billed at $0.105 per
+  GB. `egress_state` is then `overage`, and a database is held only at twice
+  its allowance.
+- Database overage counts toward your [spend cap](billing.md#spend-cap) and
+  is billed only up to it; at the cap your databases are held with
+  `hold: compute_ceiling`.
 
 When the platform stops a database that is still `ready`, `get`, `list` and
 the API say why in `hold`: `compute_ceiling`, `egress`, `inactive` (the

@@ -162,6 +162,7 @@ touch them. The tables below map each earlier name.
 | `gregale account billing-run schedule-set` | `gregale account billing-run schedule set` |
 | `gregale account billing-run schedule` | `gregale account billing-run schedule get` |
 | `gregale account dpa` | `gregale account dpa get` |
+| `gregale account health` | `gregale account health get` |
 | `gregale account slo` | `gregale alert slo list --account` |
 | `gregale ai app-limit` | `gregale ai app-limit get` |
 | `gregale ai app-limit` | `gregale ai app-limit set` |
@@ -281,6 +282,7 @@ touch them. The tables below map each earlier name.
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
 | `gregale deployment timeline` | `gregale release timeline` |
+| `gregale deployment verify` | `gregale release verify` |
 | `gregale deployment wait` | `gregale release wait` |
 | `gregale deployments alias` | `gregale release alias` |
 | `gregale deploys cancel` | `gregale release cancel` |
@@ -385,6 +387,22 @@ touch them. The tables below map each earlier name.
 | `gregale events subscriptions` | `gregale event subscription list` |
 | `gregale events workflow-backfill` | `gregale event backfill create --workflow-name <WORKFLOW-NAME>` |
 | `gregale events workflow-replay-preview` | `gregale event backfill create --workflow-name <WORKFLOW-NAME> --dry-run` |
+| `gregale flags experiments create` | `gregale flag experiment create` |
+| `gregale flags experiments delete` | `gregale flag experiment delete` |
+| `gregale flags experiments get` | `gregale flag experiment get` |
+| `gregale flags experiments list` | `gregale flag experiment list` |
+| `gregale flags experiments results` | `gregale flag experiment result get` |
+| `gregale flags experiments ship` | `gregale flag experiment promote` |
+| `gregale flags experiments start` | `gregale flag experiment start` |
+| `gregale flags experiments stop` | `gregale flag experiment stop` |
+| `gregale flags kill` | `gregale flag kill set` |
+| `gregale flags off` | `gregale flag disable` |
+| `gregale flags on` | `gregale flag enable` |
+| `gregale flags percent` | `gregale flag rollout set` |
+| `gregale flags rule-add` | `gregale flag rule create` |
+| `gregale flags rule-rm` | `gregale flag rule delete` |
+| `gregale flags stale` | `gregale flag stale list` |
+| `gregale flags unkill` | `gregale flag kill unset` |
 | `gregale github bind` | `gregale github link` |
 | `gregale incidents note` | `gregale alert incident update --note <NOTE>` |
 | `gregale invitations accept` | `gregale org invitation accept` |
@@ -443,8 +461,12 @@ touch them. The tables below map each earlier name.
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
 | `gregale mcp task-wait` | `gregale mcp client wait` |
+| `gregale mcp tasks bindings` | `gregale mcp server tasks bind` |
+| `gregale mcp tasks execution` | `gregale mcp server tasks run` |
+| `gregale mcp tasks intent` | `gregale mcp server tasks review` |
 | `gregale mcp tasks observer` | `gregale mcp observer` |
 | `gregale mcp tasks release` | `gregale mcp server tasks deploy` |
+| `gregale mcp tasks source-review` | `gregale mcp server tasks audit` |
 | `gregale mcp tools` | `gregale mcp client tools` |
 | `gregale openapi dry-run` | `gregale api spec import --dry-run` |
 | `gregale openapi preview` | `gregale api spec apply --dry-run` |
@@ -460,7 +482,20 @@ touch them. The tables below map each earlier name.
 | `gregale orgs standards local-intent` | `gregale org standards local set` |
 | `gregale orgs standards operation abort` | `gregale org standards operation cancel` |
 | `gregale orgs standards reviews preview` | `gregale org standards reviews approve --dry-run` |
+| `gregale orgs support-access` | `gregale org support` |
 | `gregale orgs transfer-ownership` | `gregale org owner set` |
+| `gregale pipeline access` | `gregale pipeline access approve` |
+| `gregale pipeline access` | `gregale pipeline access check` |
+| `gregale pipeline access` | `gregale pipeline access review` |
+| `gregale pipeline connection guide` | `gregale pipeline connection explain` |
+| `gregale pipeline connection guide` | `gregale pipeline connection guide get` |
+| `gregale pipeline evolve` | `gregale pipeline evolution review` |
+| `gregale pipeline freshness` | `gregale pipeline freshness get` |
+| `gregale pipeline freshness` | `gregale pipeline freshness set` |
+| `gregale pipeline indexes` | `gregale pipeline index approve` |
+| `gregale pipeline indexes` | `gregale pipeline index check` |
+| `gregale pipeline indexes` | `gregale pipeline index review` |
+| `gregale pipeline operations` | `gregale pipeline work update` |
 | `gregale platform-tenants activation` | `gregale api tenant activation get` |
 | `gregale platform-tenants activation` | `gregale api tenant activation wait` |
 | `gregale platform-tenants billing-policy-delete` | `gregale api tenant billing-policy delete` |

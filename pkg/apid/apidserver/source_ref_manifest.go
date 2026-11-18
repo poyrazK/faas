@@ -251,7 +251,9 @@ func functionReleaseCommandProblem() *api.Problem {
 	return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Release commands need an app",
 		"This function app declares a release command (gregale.yaml release.command, a Procfile release: process, or its project's Compose file). "+
 			"Release commands run in an app's container image, which a function deployment does not have. "+
-			"Remove the declaration, or run the command from an app (type: app) in the same project or from a machine you control.")
+			"Remove the declaration and run it from an app (type: app) in the same project: give that app a migration binding "+
+			"(gregale postgres attach <database> <app> --access migration) and declare release.command there, "+
+			"or open psql through it with gregale postgres connect <database> --app <app> --access migration.")
 }
 
 func declaredSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
@@ -417,6 +419,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		staged.baselineDeploymentID = baseline.ID
 	}
 	if problem := s.applyManifestLabels(ctx, acct, app, m.Labels); problem != nil {
+		return staged, problem
+	}
+	if problem := s.applyManifestProtection(ctx, acct, app, m.Protection); problem != nil {
 		return staged, problem
 	}
 	if !s.operation.OperationDefinitionsAdmission(acct.ID, app.ID, deploymentScope, sourceOperationSpecs(m)) {
@@ -1146,6 +1151,7 @@ func copySourceLifecycleFields(dst *state.AppManifest, src state.AppManifest) {
 	dst.RestartPolicy = src.RestartPolicy
 	dst.AfterRestore = src.AfterRestore
 	dst.BeforeCheckpoint = src.BeforeCheckpoint
+	dst.Warmup = src.Warmup
 	dst.Pause = src.Pause
 	dst.Profiling = src.Profiling
 	dst.Tracing = src.Tracing

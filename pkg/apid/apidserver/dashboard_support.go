@@ -1,7 +1,9 @@
 package apidserver
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -50,7 +52,9 @@ func (s *server) supportPortal(staff bool) http.HandlerFunc {
 				}
 				s.renderCustomDashboardPage(w, r, acct, title, "support", data)
 			},
-			Customer: s.supportCustomerContext,
+			Customer: func(r *http.Request, ticket *support.StaffTicket) *supportportal.CustomerContext {
+				return s.supportCustomerContext(r, ticket.Ticket.ID)
+			},
 		}
 		portal.Serve(w, r, support.Actor{ID: acct.ID, Session: true}, staff)
 	}
@@ -61,13 +65,17 @@ func (s *server) supportPortal(staff bool) http.HandlerFunc {
 // tenant 360 diagnosis. Portal has already checked the staff roster and the
 // MFA-completed session. Any failure yields an Unavailable panel; the
 // ticket page itself still renders.
-func (s *server) supportCustomerContext(r *http.Request, ticket *support.StaffTicket) *supportportal.CustomerContext {
+func (s *server) supportCustomerContext(r *http.Request, ticketID string) *supportportal.CustomerContext {
 	unavailable := &supportportal.CustomerContext{Unavailable: true}
-	accountID, orgID, err := s.customerSupport.TicketOwner(r.Context(), ticket.Ticket.ID)
+	accountID, orgID, err := s.customerSupport.TicketOwner(r.Context(), ticketID)
 	if err != nil || accountID == "" {
 		return unavailable
 	}
 	target, err := s.store.AccountByID(r.Context(), accountID)
+	if errors.Is(err, state.ErrNotFound) {
+		// Support stores dashed UUIDs; some stores key accounts without dashes.
+		target, err = s.store.AccountByID(r.Context(), strings.ReplaceAll(accountID, "-", ""))
+	}
 	if err != nil {
 		return unavailable
 	}
@@ -87,7 +95,7 @@ func (s *server) supportCustomerContext(r *http.Request, ticket *support.StaffTi
 		billing = api.ObsTenantBilling{}
 	}
 	panel.Diagnosis = s.buildTenantDiagnosis(r.Context(), target, billing)
-	s.loadTicketSnapshot(r.Context(), ticket.Ticket.ID, panel)
+	s.loadTicketSnapshot(r.Context(), ticketID, panel)
 	return panel
 }
 

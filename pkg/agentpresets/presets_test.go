@@ -47,8 +47,17 @@ func TestCatalogMatchesAgentBaseLock(t *testing.T) {
 		t.Fatalf("lockfileVersion %d, want 3", lock.LockfileVersion)
 	}
 	presets := agentpresets.All()
-	if len(pkg.Dependencies) != len(presets) {
-		t.Fatalf("package.json has %d dependencies, the catalog %d presets", len(pkg.Dependencies), len(presets))
+	// The sandbox browser's Playwright (ADR-20261112133503) shares the drive
+	// but is not a harness preset.
+	browser := map[string]bool{"@playwright/mcp": true, "playwright-core": true}
+	harnesses := 0
+	for name := range pkg.Dependencies {
+		if !browser[name] {
+			harnesses++
+		}
+	}
+	if harnesses != len(presets) {
+		t.Fatalf("package.json has %d harness dependencies, the catalog %d presets", harnesses, len(presets))
 	}
 	for _, p := range presets {
 		if got := pkg.Dependencies[p.Package]; got != p.Version {

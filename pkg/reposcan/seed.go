@@ -115,6 +115,9 @@ type workloadSeed struct {
 	det                 detector
 	source              string // provenance string; carried into Workload.Source
 	name                string
+	slugPrefix          string // Compose x-gregale-slug-prefix
+	startupDeadlineS    int    // Compose x-gregale-startup-deadline or healthcheck timing
+	publicAuth          string // Compose x-gregale-public-auth
 	rootDir             string
 	dockerfile          string
 	dockerfileBuild     *api.DockerfileBuildOptions
@@ -140,6 +143,8 @@ type workloadSeed struct {
 	allowedServiceCallers     *[]string
 	allowedServiceCallScopes  *api.ServiceCallerScopes
 	platformTenantRequired    *bool
+	streaming                 *bool
+	wakeAhead                 *bool
 	renamedFrom               string
 
 	class     Class

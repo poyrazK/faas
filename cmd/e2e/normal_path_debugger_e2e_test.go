@@ -676,17 +676,20 @@ func TestE2E_NormalPath_RequestIDJournalSurvivesLoadRestartAndBackpressure(t *te
 	f.vmmd.SetVersion(sourceInstance.ID, "request-id-restart-source")
 	waitForNormalPathDebuggerResponse(t, f, "normal-path:request-id-restart-source\n", 10*time.Second)
 
-	const durableRequestID = "customer-request-before-apid-restart"
+	// The public listener mints every request ID and never adopts a client's
+	// (prod findings 2026-11-15), so the journal is keyed by the minted one.
+	const suppliedRequestID = "customer-request-before-apid-restart"
 	requestHeaders, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet,
 		"/request-id-restart", nil, map[string]string{
 			"Authorization":     "Bearer " + f.key,
-			api.RequestIDHeader: durableRequestID,
+			api.RequestIDHeader: suppliedRequestID,
 		})
 	if statusCode != http.StatusOK || string(body) != "normal-path:request-id-restart-source\n" {
 		t.Fatalf("pre-restart request: status=%d body=%q", statusCode, body)
 	}
-	if got := requestHeaders.Get(api.RequestIDHeader); got != durableRequestID {
-		t.Fatalf("pre-restart public request ID=%q, want %q", got, durableRequestID)
+	durableRequestID := requestHeaders.Get(api.RequestIDHeader)
+	if durableRequestID == "" || durableRequestID == suppliedRequestID {
+		t.Fatalf("pre-restart public request ID=%q, want one the gateway minted", durableRequestID)
 	}
 
 	// Send a bounded concurrent burst through the real gateway → apid →
@@ -703,10 +706,8 @@ func TestE2E_NormalPath_RequestIDJournalSurvivesLoadRestartAndBackpressure(t *te
 	start := make(chan struct{})
 	results := make(chan requestResult, concurrentRequestCount)
 	client := *f.h.HTTPClient()
-	loadRequestIDs := make([]string, concurrentRequestCount)
-	for i := range loadRequestIDs {
+	for i := range concurrentRequestCount {
 		requestID := fmt.Sprintf("customer-request-load-%02d", i)
-		loadRequestIDs[i] = requestID
 		go func(requestID string) {
 			<-start
 			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
@@ -737,6 +738,7 @@ func TestE2E_NormalPath_RequestIDJournalSurvivesLoadRestartAndBackpressure(t *te
 		}(requestID)
 	}
 	close(start)
+	loadRequestIDs := make([]string, 0, concurrentRequestCount)
 	for i := 0; i < concurrentRequestCount; i++ {
 		result := <-results
 		if result.err != nil {
@@ -745,9 +747,10 @@ func TestE2E_NormalPath_RequestIDJournalSurvivesLoadRestartAndBackpressure(t *te
 		if result.statusCode != http.StatusOK || string(result.body) != "normal-path:request-id-restart-source\n" {
 			t.Fatalf("concurrent request %s: status=%d body=%q", result.requestID, result.statusCode, result.body)
 		}
-		if result.responseID != result.requestID {
-			t.Fatalf("concurrent response request ID=%q, want %q", result.responseID, result.requestID)
+		if result.responseID == "" || result.responseID == result.requestID {
+			t.Fatalf("concurrent response request ID=%q for supplied %q, want one the gateway minted", result.responseID, result.requestID)
 		}
+		loadRequestIDs = append(loadRequestIDs, result.responseID)
 	}
 
 	// ADR-634: the journal is written asynchronously, so wait for every
@@ -794,10 +797,11 @@ func TestE2E_NormalPath_RequestIDJournalSurvivesLoadRestartAndBackpressure(t *te
 	if statusCode != http.StatusOK || string(body) != "normal-path:request-id-restart-source\n" {
 		t.Fatalf("post-restart journal write: status=%d body=%q", statusCode, body)
 	}
-	if got := requestHeaders.Get(api.RequestIDHeader); got != "customer-request-after-apid-restart" {
-		t.Fatalf("post-restart public request ID=%q, want customer-request-after-apid-restart", got)
+	afterRestartID := requestHeaders.Get(api.RequestIDHeader)
+	if afterRestartID == "" || afterRestartID == "customer-request-after-apid-restart" {
+		t.Fatalf("post-restart public request ID=%q, want one the gateway minted", afterRestartID)
 	}
-	waitForRequestIDJournal(t, f, "normal-request-id-restart", "customer-request-after-apid-restart", 10*time.Second)
+	waitForRequestIDJournal(t, f, "normal-request-id-restart", afterRestartID, 10*time.Second)
 
 	// Hold the journal table so the real apid gRPC writer cannot commit.
 	// ADR-634: the request is still served; only its journal write waits.
@@ -822,8 +826,8 @@ func TestE2E_NormalPath_RequestIDJournalSurvivesLoadRestartAndBackpressure(t *te
 	if statusCode != http.StatusOK || string(body) != "normal-path:request-id-restart-source\n" {
 		t.Fatalf("backpressured journal request: status=%d body=%q, want 200 from the guest", statusCode, body)
 	}
-	if got := requestHeaders.Get(api.RequestIDHeader); got != backpressuredRequestID {
-		t.Fatalf("backpressured response public request ID=%q, want %q", got, backpressuredRequestID)
+	if got := requestHeaders.Get(api.RequestIDHeader); got == "" || got == backpressuredRequestID {
+		t.Fatalf("backpressured response public request ID=%q, want one the gateway minted", got)
 	}
 	if got := len(f.vmmd.Requests()); got != requestsBeforeBackpressure+1 {
 		t.Fatalf("backpressured request did not reach the guest: vmmd requests=%d, want %d", got, requestsBeforeBackpressure+1)
@@ -840,11 +844,12 @@ func TestE2E_NormalPath_RequestIDJournalSurvivesLoadRestartAndBackpressure(t *te
 	if statusCode != http.StatusOK || string(body) != "normal-path:request-id-restart-source\n" {
 		t.Fatalf("request after journal recovery: status=%d body=%q", statusCode, body)
 	}
-	if got := requestHeaders.Get(api.RequestIDHeader); got != backpressuredRequestID {
-		t.Fatalf("recovered response public request ID=%q, want %q", got, backpressuredRequestID)
+	recoveredRequestID := requestHeaders.Get(api.RequestIDHeader)
+	if recoveredRequestID == "" || recoveredRequestID == backpressuredRequestID {
+		t.Fatalf("recovered response public request ID=%q, want one the gateway minted", recoveredRequestID)
 	}
-	detail = waitForRequestIDJournal(t, f, "normal-request-id-restart", backpressuredRequestID, 10*time.Second)
-	if detail.RequestID != backpressuredRequestID || detail.EvidenceStatus != "request_id_only" {
+	detail = waitForRequestIDJournal(t, f, "normal-request-id-restart", recoveredRequestID, 10*time.Second)
+	if detail.RequestID != recoveredRequestID || detail.EvidenceStatus != "request_id_only" {
 		t.Fatalf("post-recovery request-ID detail = %+v, want exact journal-only mapping", detail)
 	}
 }

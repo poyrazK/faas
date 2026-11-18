@@ -1,0 +1,14 @@
+# Workflow functions (ADR-20261113120824): orders is a durable workflow that
+# calls its sibling users with wf.call and parks on an event; web starts it
+# with the platform's workflow-runs route, signals it and waits for it.
+functions:
+  - name: web
+    root: web
+    runtime: node24
+  - name: orders
+    root: orders
+    runtime: node24
+    workflow: true
+  - name: users
+    root: users
+    runtime: node24

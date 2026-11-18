@@ -301,6 +301,15 @@ func (q *Queries) ClaimAgentDeliveries(ctx context.Context, db DBTX, arg ClaimAg
 	return items, nil
 }
 
+const clearSandboxScreenshot = `-- name: ClearSandboxScreenshot :exec
+UPDATE sandbox_actions SET screenshot_key = NULL WHERE id = $1::text::uuid
+`
+
+func (q *Queries) ClearSandboxScreenshot(ctx context.Context, db DBTX, id string) error {
+	_, err := db.Exec(ctx, clearSandboxScreenshot, id)
+	return err
+}
+
 const closeQueuedSandboxSession = `-- name: CloseQueuedSandboxSession :execrows
 UPDATE sandbox_sessions SET state='closed', outcome_code='closed', closed_at=now(), updated_at=now()
  WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND state='queued'
@@ -440,6 +449,26 @@ func (q *Queries) CountSandboxPorts(ctx context.Context, db DBTX, arg CountSandb
 	return column_1, err
 }
 
+const countSandboxSessionDomains = `-- name: CountSandboxSessionDomains :one
+SELECT count(*) FILTER (WHERE refused = '')::integer AS granted,
+       count(*) FILTER (WHERE refused <> '')::integer AS refused
+  FROM sandbox_session_domains WHERE sandbox_id=$1::text::uuid
+`
+
+type CountSandboxSessionDomainsRow struct {
+	Granted int32
+	Refused int32
+}
+
+// How many grants and refusals a session's domain log holds
+// (ADR-20261117091026 §4).
+func (q *Queries) CountSandboxSessionDomains(ctx context.Context, db DBTX, sessionID string) (CountSandboxSessionDomainsRow, error) {
+	row := db.QueryRow(ctx, countSandboxSessionDomains, sessionID)
+	var i CountSandboxSessionDomainsRow
+	err := row.Scan(&i.Granted, &i.Refused)
+	return i, err
+}
+
 const deleteExpiredAgentGitHubSubscriptions = `-- name: DeleteExpiredAgentGitHubSubscriptions :execrows
 DELETE FROM agent_github_subscriptions WHERE id IN (
   SELECT id FROM agent_github_subscriptions WHERE expires_at < $1::timestamptz
@@ -546,6 +575,29 @@ func (q *Queries) EndAgentDeliveryAttempt(ctx context.Context, db DBTX, arg EndA
 	return run_id, err
 }
 
+const endOpenSandboxActions = `-- name: EndOpenSandboxActions :execrows
+UPDATE sandbox_actions a SET state='done', finished_at=now()
+ FROM sandbox_sessions sb
+ WHERE a.session_id=$1::text::uuid AND a.state = ANY($2::text[]) AND sb.id=a.session_id
+ AND sb.lease_token=$3::text
+`
+
+type EndOpenSandboxActionsParams struct {
+	SessionID  string
+	States     []string
+	LeaseToken string
+}
+
+// Ends a session's actions that will not run to their end: on a fresh
+// claim (a running action's VM is gone) and as the session ends.
+func (q *Queries) EndOpenSandboxActions(ctx context.Context, db DBTX, arg EndOpenSandboxActionsParams) (int64, error) {
+	result, err := db.Exec(ctx, endOpenSandboxActions, arg.SessionID, arg.States, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const enterAgentRunDelivering = `-- name: EnterAgentRunDelivering :execrows
 UPDATE agent_runs SET state='delivering', exit_code=$1::integer, signal=$2::integer,
   lease_token=NULL, lease_expires_at=NULL, updated_at=now()
@@ -628,6 +680,46 @@ func (q *Queries) ExpireQueuedSandboxSessions(ctx context.Context, db DBTX) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const expiredSandboxScreenshots = `-- name: ExpiredSandboxScreenshots :many
+SELECT a.id::text AS id, a.screenshot_key::text AS screenshot_key
+ FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
+ WHERE a.screenshot_key IS NOT NULL AND sb.closed_at IS NOT NULL
+ AND sb.closed_at < now() - make_interval(secs => $1::integer)
+ ORDER BY sb.closed_at LIMIT $2::integer
+`
+
+type ExpiredSandboxScreenshotsParams struct {
+	RetentionS int32
+	MaxRows    int32
+}
+
+type ExpiredSandboxScreenshotsRow struct {
+	ID            string
+	ScreenshotKey string
+}
+
+// ADR-20261117065818 §5: screenshots of sessions that ended at least
+// retention_s ago, for agentd's sweep to delete.
+func (q *Queries) ExpiredSandboxScreenshots(ctx context.Context, db DBTX, arg ExpiredSandboxScreenshotsParams) ([]ExpiredSandboxScreenshotsRow, error) {
+	rows, err := db.Query(ctx, expiredSandboxScreenshots, arg.RetentionS, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpiredSandboxScreenshotsRow{}
+	for rows.Next() {
+		var i ExpiredSandboxScreenshotsRow
+		if err := rows.Scan(&i.ID, &i.ScreenshotKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const failExpiredLiveSandboxSessions = `-- name: FailExpiredLiveSandboxSessions :execrows
@@ -775,6 +867,40 @@ func (q *Queries) FinishDeliveringAgentRun(ctx context.Context, db DBTX, arg Fin
 		arg.OutcomeCode,
 		arg.OutcomeMessage,
 		arg.RunID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishSandboxAction = `-- name: FinishSandboxAction :execrows
+UPDATE sandbox_actions a SET state='done', exit_code=$1::integer, output=$2::bytea, finished_at=now(),
+  screenshot_key=$3::text, screenshot_bytes=$4::bigint
+ FROM sandbox_sessions sb
+ WHERE a.id=$5::text::uuid AND a.state='running' AND sb.id=a.session_id
+ AND sb.lease_token=$6::text
+`
+
+type FinishSandboxActionParams struct {
+	ExitCode        pgtype.Int4
+	Output          []byte
+	ScreenshotKey   pgtype.Text
+	ScreenshotBytes pgtype.Int8
+	ID              string
+	LeaseToken      string
+}
+
+// agentd records a running action's end under its session's lease. A nil
+// exit code is an action that never ran to its end.
+func (q *Queries) FinishSandboxAction(ctx context.Context, db DBTX, arg FinishSandboxActionParams) (int64, error) {
+	result, err := db.Exec(ctx, finishSandboxAction,
+		arg.ExitCode,
+		arg.Output,
+		arg.ScreenshotKey,
+		arg.ScreenshotBytes,
+		arg.ID,
+		arg.LeaseToken,
 	)
 	if err != nil {
 		return 0, err
@@ -1155,6 +1281,64 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 	return i, err
 }
 
+const getSandboxAction = `-- name: GetSandboxAction :one
+SELECT a.kind, a.args, a.state, a.exit_code, a.output, coalesce(a.screenshot_key, '')::text AS screenshot_key,
+  coalesce(a.screenshot_bytes, 0)::bigint AS screenshot_bytes
+ FROM sandbox_actions a
+ WHERE a.session_id = $1::text::uuid AND a.account_id = $2::text::uuid
+ AND a.seq = $3::integer
+`
+
+type GetSandboxActionParams struct {
+	SessionID string
+	AccountID string
+	Seq       int32
+}
+
+type GetSandboxActionRow struct {
+	Kind            string
+	Args            []byte
+	State           string
+	ExitCode        pgtype.Int4
+	Output          []byte
+	ScreenshotKey   string
+	ScreenshotBytes int64
+}
+
+// One action of the account's session, for GET /v1/sandboxes/{id}/actions/{seq}.
+func (q *Queries) GetSandboxAction(ctx context.Context, db DBTX, arg GetSandboxActionParams) (GetSandboxActionRow, error) {
+	row := db.QueryRow(ctx, getSandboxAction, arg.SessionID, arg.AccountID, arg.Seq)
+	var i GetSandboxActionRow
+	err := row.Scan(
+		&i.Kind,
+		&i.Args,
+		&i.State,
+		&i.ExitCode,
+		&i.Output,
+		&i.ScreenshotKey,
+		&i.ScreenshotBytes,
+	)
+	return i, err
+}
+
+const getSandboxEgressPolicy = `-- name: GetSandboxEgressPolicy :one
+SELECT allow_rules, deny_rules, updated_at FROM sandbox_egress_policies WHERE account_id = $1::text::uuid
+`
+
+type GetSandboxEgressPolicyRow struct {
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
+// ADR-20261117091026 §2: the account's default web-mode domain policy.
+func (q *Queries) GetSandboxEgressPolicy(ctx context.Context, db DBTX, accountID string) (GetSandboxEgressPolicyRow, error) {
+	row := db.QueryRow(ctx, getSandboxEgressPolicy, accountID)
+	var i GetSandboxEgressPolicyRow
+	err := row.Scan(&i.AllowRules, &i.DenyRules, &i.UpdatedAt)
+	return i, err
+}
+
 const getSandboxPreviewRoute = `-- name: GetSandboxPreviewRoute :one
 SELECT sb.account_id::text AS account_id, a.plan, sb.state, coalesce(sb.node_id, '')::text AS node_id,
   coalesce(sb.instance_id, '')::text AS instance_id,
@@ -1191,7 +1375,8 @@ const getSandboxSession = `-- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
 
@@ -1223,6 +1408,9 @@ type GetSandboxSessionRow struct {
 	InstanceID          string
 	WorkspaceSnapshotID string
 	ImageRef            string
+	Browser             bool
+	EgressAllow         []string
+	EgressDeny          []string
 }
 
 func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandboxSessionParams) (GetSandboxSessionRow, error) {
@@ -1251,6 +1439,9 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 		&i.InstanceID,
 		&i.WorkspaceSnapshotID,
 		&i.ImageRef,
+		&i.Browser,
+		&i.EgressAllow,
+		&i.EgressDeny,
 	)
 	return i, err
 }
@@ -1264,7 +1455,10 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
     tpl.rootfs_key, '')::text AS image_key,
   (sb.image_ref IS NOT NULL)::boolean AS from_image,
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
-  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s
+  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
+  coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
+  coalesce(sb.task_max_chars, 0)::integer AS task_max_chars,
+  coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
@@ -1291,6 +1485,12 @@ type GetSandboxSessionClaimRow struct {
 	StartCmd         string
 	ReadyCmd         string
 	ReadyTimeoutS    int32
+	Browser          bool
+	TaskKind         string
+	TaskUrl          string
+	TaskMaxChars     int32
+	EgressAllow      []string
+	EgressDeny       []string
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1314,6 +1514,12 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.StartCmd,
 		&i.ReadyCmd,
 		&i.ReadyTimeoutS,
+		&i.Browser,
+		&i.TaskKind,
+		&i.TaskUrl,
+		&i.TaskMaxChars,
+		&i.EgressAllow,
+		&i.EgressDeny,
 	)
 	return i, err
 }
@@ -1406,6 +1612,44 @@ func (q *Queries) GetSandboxSnapshot(ctx context.Context, db DBTX, arg GetSandbo
 		&i.DeleteRequestedAt,
 		&i.CreatedAt,
 		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const getSandboxTaskResult = `-- name: GetSandboxTaskResult :one
+SELECT state, coalesce(task_kind, '')::text AS task_kind, coalesce(task_url, '')::text AS task_url, task_exit_code, task_output,
+  coalesce(outcome_code, '')::text AS outcome_code, coalesce(outcome_message, '')::text AS outcome_message
+ FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type GetSandboxTaskResultParams struct {
+	SessionID string
+	AccountID string
+}
+
+type GetSandboxTaskResultRow struct {
+	State          string
+	TaskKind       string
+	TaskUrl        string
+	TaskExitCode   pgtype.Int4
+	TaskOutput     []byte
+	OutcomeCode    string
+	OutcomeMessage string
+}
+
+// GET /v1/sandboxes/{id}/task: a task session's arguments and, once it
+// ended, its exit code and output.
+func (q *Queries) GetSandboxTaskResult(ctx context.Context, db DBTX, arg GetSandboxTaskResultParams) (GetSandboxTaskResultRow, error) {
+	row := db.QueryRow(ctx, getSandboxTaskResult, arg.SessionID, arg.AccountID)
+	var i GetSandboxTaskResultRow
+	err := row.Scan(
+		&i.State,
+		&i.TaskKind,
+		&i.TaskUrl,
+		&i.TaskExitCode,
+		&i.TaskOutput,
+		&i.OutcomeCode,
+		&i.OutcomeMessage,
 	)
 	return i, err
 }
@@ -1778,13 +2022,58 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 	return i, err
 }
 
+const insertSandboxAction = `-- name: InsertSandboxAction :one
+INSERT INTO sandbox_actions (session_id, account_id, seq, kind, args, endpoint_id, thread_id, tool_call_id, issued_at)
+SELECT $1::text::uuid, $2::text::uuid,
+  coalesce((SELECT max(a.seq) FROM sandbox_actions a WHERE a.session_id = $1::text::uuid), 0) + 1,
+  $3::text, $4::jsonb, $5::text::uuid, $6::text,
+  $7::text, $8::timestamptz
+ON CONFLICT (endpoint_id, thread_id, tool_call_id) DO NOTHING
+RETURNING id::text AS id, seq
+`
+
+type InsertSandboxActionParams struct {
+	SessionID  string
+	AccountID  string
+	Kind       string
+	Args       []byte
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+	IssuedAt   pgtype.Timestamptz
+}
+
+type InsertSandboxActionRow struct {
+	ID  string
+	Seq int32
+}
+
+// ADR-20261117065818 §2: apid records a gregale_browser action on a live
+// session as the session's next, once per tool call.
+func (q *Queries) InsertSandboxAction(ctx context.Context, db DBTX, arg InsertSandboxActionParams) (InsertSandboxActionRow, error) {
+	row := db.QueryRow(ctx, insertSandboxAction,
+		arg.SessionID,
+		arg.AccountID,
+		arg.Kind,
+		arg.Args,
+		arg.EndpointID,
+		arg.ThreadID,
+		arg.ToolCallID,
+		arg.IssuedAt,
+	)
+	var i InsertSandboxActionRow
+	err := row.Scan(&i.ID, &i.Seq)
+	return i, err
+}
+
 const insertSandboxSession = `-- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny)
 VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
   $5::integer,$6::text,$7::integer,$8::timestamptz,
   $9::jsonb,$10::text::uuid,$11::text,$12::text::uuid,
-  $13::text::uuid)
+  $13::text::uuid,$14::boolean,$15::text,$16::text,
+  $17::integer,$18::text[],$19::text[])
 RETURNING id::text AS id
 `
 
@@ -1802,6 +2091,12 @@ type InsertSandboxSessionParams struct {
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.Text
 	TemplateID          pgtype.Text
+	Browser             bool
+	TaskKind            pgtype.Text
+	TaskUrl             pgtype.Text
+	TaskMaxChars        pgtype.Int4
+	EgressAllow         []string
+	EgressDeny          []string
 }
 
 func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
@@ -1819,6 +2114,12 @@ func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertS
 		arg.ImageRef,
 		arg.ImageJobID,
 		arg.TemplateID,
+		arg.Browser,
+		arg.TaskKind,
+		arg.TaskUrl,
+		arg.TaskMaxChars,
+		arg.EgressAllow,
+		arg.EgressDeny,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -1848,6 +2149,33 @@ func (q *Queries) InsertSandboxSnapshot(ctx context.Context, db DBTX, arg Insert
 		arg.StorageKey,
 		arg.ReservedBytes,
 		arg.ExpiresAt,
+	)
+	return err
+}
+
+const insertSandboxTaskCall = `-- name: InsertSandboxTaskCall :exec
+INSERT INTO agent_sandbox_task_calls (sandbox_id, account_id, endpoint_id, thread_id, tool_call_id, issued_at)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid,
+  $4::text, $5::text, $6::timestamptz)
+`
+
+type InsertSandboxTaskCallParams struct {
+	SandboxID  string
+	AccountID  string
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+	IssuedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertSandboxTaskCall(ctx context.Context, db DBTX, arg InsertSandboxTaskCallParams) error {
+	_, err := db.Exec(ctx, insertSandboxTaskCall,
+		arg.SandboxID,
+		arg.AccountID,
+		arg.EndpointID,
+		arg.ThreadID,
+		arg.ToolCallID,
+		arg.IssuedAt,
 	)
 	return err
 }
@@ -2302,11 +2630,51 @@ func (q *Queries) ListSandboxPorts(ctx context.Context, db DBTX, arg ListSandbox
 	return items, nil
 }
 
+const listSandboxSessionDomains = `-- name: ListSandboxSessionDomains :many
+SELECT d.domain, d.refused, d.first_seen
+  FROM sandbox_session_domains d JOIN sandbox_sessions s ON s.id = d.sandbox_id
+ WHERE d.sandbox_id=$1::text::uuid AND s.account_id=$2::text::uuid
+ ORDER BY d.first_seen, d.refused, d.domain
+`
+
+type ListSandboxSessionDomainsParams struct {
+	SessionID string
+	AccountID string
+}
+
+type ListSandboxSessionDomainsRow struct {
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
+}
+
+// A session's domain log, for its account (ADR-20261117091026 §4).
+func (q *Queries) ListSandboxSessionDomains(ctx context.Context, db DBTX, arg ListSandboxSessionDomainsParams) ([]ListSandboxSessionDomainsRow, error) {
+	rows, err := db.Query(ctx, listSandboxSessionDomains, arg.SessionID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSandboxSessionDomainsRow{}
+	for rows.Next() {
+		var i ListSandboxSessionDomainsRow
+		if err := rows.Scan(&i.Domain, &i.Refused, &i.FirstSeen); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSandboxSessions = `-- name: ListSandboxSessions :many
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions
  WHERE account_id=$1::text::uuid
  AND ($2::text IS NULL OR state=$2::text)
@@ -2345,6 +2713,9 @@ type ListSandboxSessionsRow struct {
 	InstanceID          string
 	WorkspaceSnapshotID string
 	ImageRef            string
+	Browser             bool
+	EgressAllow         []string
+	EgressDeny          []string
 }
 
 // Newest first; a page continues before the (created_at, id) of the last row.
@@ -2386,6 +2757,9 @@ func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSand
 			&i.InstanceID,
 			&i.WorkspaceSnapshotID,
 			&i.ImageRef,
+			&i.Browser,
+			&i.EgressAllow,
+			&i.EgressDeny,
 		); err != nil {
 			return nil, err
 		}
@@ -2672,6 +3046,136 @@ func (q *Queries) ListUndeliveredAgentRunCallbacks(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const listUndeliveredSandboxActions = `-- name: ListUndeliveredSandboxActions :many
+SELECT a.id::text AS id, a.session_id::text AS session_id, a.account_id::text AS account_id, a.seq, a.kind, a.args,
+  a.endpoint_id::text AS endpoint_id, a.thread_id, a.tool_call_id, a.issued_at, a.exit_code, a.output,
+  sb.state AS session_state, coalesce(sb.outcome_code, '')::text AS outcome_code,
+  coalesce(a.screenshot_bytes, 0)::bigint AS screenshot_bytes
+ FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
+ WHERE a.state = 'done' AND a.delivered_at IS NULL
+ ORDER BY a.finished_at, a.id LIMIT $1::integer
+`
+
+type ListUndeliveredSandboxActionsRow struct {
+	ID              string
+	SessionID       string
+	AccountID       string
+	Seq             int32
+	Kind            string
+	Args            []byte
+	EndpointID      string
+	ThreadID        string
+	ToolCallID      string
+	IssuedAt        pgtype.Timestamptz
+	ExitCode        pgtype.Int4
+	Output          []byte
+	SessionState    string
+	OutcomeCode     string
+	ScreenshotBytes int64
+}
+
+// Ended gregale_browser actions whose result apid has not yet published
+// into their thread. The mark is written after the publish, which is
+// idempotent, so an interrupted delivery is retried and lands once.
+func (q *Queries) ListUndeliveredSandboxActions(ctx context.Context, db DBTX, maxRows int32) ([]ListUndeliveredSandboxActionsRow, error) {
+	rows, err := db.Query(ctx, listUndeliveredSandboxActions, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUndeliveredSandboxActionsRow{}
+	for rows.Next() {
+		var i ListUndeliveredSandboxActionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.AccountID,
+			&i.Seq,
+			&i.Kind,
+			&i.Args,
+			&i.EndpointID,
+			&i.ThreadID,
+			&i.ToolCallID,
+			&i.IssuedAt,
+			&i.ExitCode,
+			&i.Output,
+			&i.SessionState,
+			&i.OutcomeCode,
+			&i.ScreenshotBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUndeliveredSandboxTaskCalls = `-- name: ListUndeliveredSandboxTaskCalls :many
+SELECT c.sandbox_id::text AS sandbox_id, c.account_id::text AS account_id, c.endpoint_id::text AS endpoint_id, c.thread_id,
+  c.tool_call_id, c.issued_at, sb.state, coalesce(sb.outcome_code, '')::text AS outcome_code,
+  coalesce(sb.outcome_message, '')::text AS outcome_message, coalesce(sb.task_kind, '')::text AS task_kind,
+  coalesce(sb.task_url, '')::text AS task_url, sb.task_exit_code, sb.task_output
+ FROM agent_sandbox_task_calls c JOIN sandbox_sessions sb ON sb.id=c.sandbox_id
+ WHERE c.delivered_at IS NULL AND sb.state IN ('closed', 'expired', 'failed')
+ ORDER BY sb.closed_at, c.sandbox_id LIMIT $1::integer
+`
+
+type ListUndeliveredSandboxTaskCallsRow struct {
+	SandboxID      string
+	AccountID      string
+	EndpointID     string
+	ThreadID       string
+	ToolCallID     string
+	IssuedAt       pgtype.Timestamptz
+	State          string
+	OutcomeCode    string
+	OutcomeMessage string
+	TaskKind       string
+	TaskUrl        string
+	TaskExitCode   pgtype.Int4
+	TaskOutput     []byte
+}
+
+// Ended gregale_browse tasks whose result apid has not yet published into
+// their thread. The mark is written after the publish, which is
+// idempotent, so an interrupted delivery is retried and lands once.
+func (q *Queries) ListUndeliveredSandboxTaskCalls(ctx context.Context, db DBTX, maxRows int32) ([]ListUndeliveredSandboxTaskCallsRow, error) {
+	rows, err := db.Query(ctx, listUndeliveredSandboxTaskCalls, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUndeliveredSandboxTaskCallsRow{}
+	for rows.Next() {
+		var i ListUndeliveredSandboxTaskCallsRow
+		if err := rows.Scan(
+			&i.SandboxID,
+			&i.AccountID,
+			&i.EndpointID,
+			&i.ThreadID,
+			&i.ToolCallID,
+			&i.IssuedAt,
+			&i.State,
+			&i.OutcomeCode,
+			&i.OutcomeMessage,
+			&i.TaskKind,
+			&i.TaskUrl,
+			&i.TaskExitCode,
+			&i.TaskOutput,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUndeliveredWorkflowAgentRuns = `-- name: ListUndeliveredWorkflowAgentRuns :many
 SELECT r.id::text AS id,r.account_id::text AS account_id,r.workflow_run_id::text AS workflow_run_id,
   r.workflow_step::text AS workflow_step,r.workflow_event::text AS workflow_event,r.state,r.outcome_code,r.outcome_message,o.result
@@ -2842,6 +3346,15 @@ func (q *Queries) MarkAgentRunRunning(ctx context.Context, db DBTX, arg MarkAgen
 	return result.RowsAffected(), nil
 }
 
+const markSandboxActionDelivered = `-- name: MarkSandboxActionDelivered :exec
+UPDATE sandbox_actions SET delivered_at = now() WHERE id = $1::text::uuid AND delivered_at IS NULL
+`
+
+func (q *Queries) MarkSandboxActionDelivered(ctx context.Context, db DBTX, id string) error {
+	_, err := db.Exec(ctx, markSandboxActionDelivered, id)
+	return err
+}
+
 const markSandboxSessionReady = `-- name: MarkSandboxSessionReady :execrows
 UPDATE sandbox_sessions SET state='ready', node_id=$1::text, instance_id=$2::text,
   last_activity_at=now(), updated_at=now()
@@ -2867,6 +3380,85 @@ func (q *Queries) MarkSandboxSessionReady(ctx context.Context, db DBTX, arg Mark
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const markSandboxTaskCallDelivered = `-- name: MarkSandboxTaskCallDelivered :exec
+UPDATE agent_sandbox_task_calls SET delivered_at = now() WHERE sandbox_id = $1::text::uuid AND delivered_at IS NULL
+`
+
+func (q *Queries) MarkSandboxTaskCallDelivered(ctx context.Context, db DBTX, sandboxID string) error {
+	_, err := db.Exec(ctx, markSandboxTaskCallDelivered, sandboxID)
+	return err
+}
+
+const nextSandboxActions = `-- name: NextSandboxActions :many
+SELECT DISTINCT ON (a.session_id) a.id::text AS id, a.session_id::text AS session_id, a.seq, a.kind, a.args
+ FROM sandbox_actions a
+ WHERE a.session_id = ANY($1::text[]::uuid[]) AND a.state = 'pending'
+ AND NOT EXISTS (SELECT 1 FROM sandbox_actions r WHERE r.session_id = a.session_id AND r.state = 'running')
+ ORDER BY a.session_id, a.seq
+`
+
+type NextSandboxActionsRow struct {
+	ID        string
+	SessionID string
+	Seq       int32
+	Kind      string
+	Args      []byte
+}
+
+// Each listed session's next pending action, for the sessions that run none:
+// agentd sends a session one action at a time.
+func (q *Queries) NextSandboxActions(ctx context.Context, db DBTX, sessionIds []string) ([]NextSandboxActionsRow, error) {
+	rows, err := db.Query(ctx, nextSandboxActions, sessionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NextSandboxActionsRow{}
+	for rows.Next() {
+		var i NextSandboxActionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Seq,
+			&i.Kind,
+			&i.Args,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const putSandboxEgressPolicy = `-- name: PutSandboxEgressPolicy :one
+INSERT INTO sandbox_egress_policies (account_id, allow_rules, deny_rules)
+VALUES ($1::text::uuid, $2::text[], $3::text[])
+ON CONFLICT (account_id) DO UPDATE SET allow_rules = EXCLUDED.allow_rules, deny_rules = EXCLUDED.deny_rules, updated_at = now()
+RETURNING allow_rules, deny_rules, updated_at
+`
+
+type PutSandboxEgressPolicyParams struct {
+	AccountID  string
+	AllowRules []string
+	DenyRules  []string
+}
+
+type PutSandboxEgressPolicyRow struct {
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) PutSandboxEgressPolicy(ctx context.Context, db DBTX, arg PutSandboxEgressPolicyParams) (PutSandboxEgressPolicyRow, error) {
+	row := db.QueryRow(ctx, putSandboxEgressPolicy, arg.AccountID, arg.AllowRules, arg.DenyRules)
+	var i PutSandboxEgressPolicyRow
+	err := row.Scan(&i.AllowRules, &i.DenyRules, &i.UpdatedAt)
+	return i, err
 }
 
 const recordAgentRunBoot = `-- name: RecordAgentRunBoot :execrows
@@ -2938,6 +3530,40 @@ func (q *Queries) RecordAgentRunUsage(ctx context.Context, db DBTX, arg RecordAg
 	return result.RowsAffected(), nil
 }
 
+const recordSandboxSessionDomains = `-- name: RecordSandboxSessionDomains :execrows
+INSERT INTO sandbox_session_domains (sandbox_id, domain, refused, first_seen)
+SELECT s.id, x.domain, x.refused, x.first_seen
+  FROM sandbox_sessions s,
+       (SELECT unnest($1::text[]) AS domain, unnest($2::text[]) AS refused,
+               unnest($3::timestamptz[]) AS first_seen) x
+ WHERE s.id=$4::text::uuid AND s.lease_token=$5::text AND s.state IN ('ready','frozen')
+ON CONFLICT DO NOTHING
+`
+
+type RecordSandboxSessionDomainsParams struct {
+	Domains    []string
+	Refused    []string
+	FirstSeen  []pgtype.Timestamptz
+	SessionID  string
+	LeaseToken string
+}
+
+// Adds entries to a session's domain log while the lease is held and the
+// session has a VM; an entry already there keeps its first sighting.
+func (q *Queries) RecordSandboxSessionDomains(ctx context.Context, db DBTX, arg RecordSandboxSessionDomainsParams) (int64, error) {
+	result, err := db.Exec(ctx, recordSandboxSessionDomains,
+		arg.Domains,
+		arg.Refused,
+		arg.FirstSeen,
+		arg.SessionID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordSandboxSessionUsage = `-- name: RecordSandboxSessionUsage :execrows
 INSERT INTO sandbox_session_usage AS u (sandbox_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
     frozen_ms, private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot, final)
@@ -2989,6 +3615,34 @@ func (q *Queries) RecordSandboxSessionUsage(ctx context.Context, db DBTX, arg Re
 		arg.PeakPrivateMb,
 		arg.ColdBoot,
 		arg.Final,
+		arg.SessionID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordSandboxTaskResult = `-- name: RecordSandboxTaskResult :execrows
+UPDATE sandbox_sessions SET task_exit_code=$1::integer, task_output=$2::bytea, updated_at=now()
+ WHERE id=$3::text::uuid AND lease_token=$4::text
+ AND task_kind IS NOT NULL AND task_exit_code IS NULL
+`
+
+type RecordSandboxTaskResultParams struct {
+	ExitCode   int32
+	Output     []byte
+	SessionID  string
+	LeaseToken string
+}
+
+// ADR-20261116182615 §3: agentd records a sandbox task's end under its lease,
+// once.
+func (q *Queries) RecordSandboxTaskResult(ctx context.Context, db DBTX, arg RecordSandboxTaskResultParams) (int64, error) {
+	result, err := db.Exec(ctx, recordSandboxTaskResult,
+		arg.ExitCode,
+		arg.Output,
 		arg.SessionID,
 		arg.LeaseToken,
 	)
@@ -3235,6 +3889,64 @@ func (q *Queries) RevokeAgentCallbacks(ctx context.Context, db DBTX, arg RevokeA
 	return revoked_at, err
 }
 
+const sandboxActionByCall = `-- name: SandboxActionByCall :one
+SELECT id::text AS id, session_id::text AS session_id, seq FROM sandbox_actions
+ WHERE endpoint_id=$1::text::uuid AND thread_id=$2::text
+ AND tool_call_id=$3::text
+`
+
+type SandboxActionByCallParams struct {
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+}
+
+type SandboxActionByCallRow struct {
+	ID        string
+	SessionID string
+	Seq       int32
+}
+
+func (q *Queries) SandboxActionByCall(ctx context.Context, db DBTX, arg SandboxActionByCallParams) (SandboxActionByCallRow, error) {
+	row := db.QueryRow(ctx, sandboxActionByCall, arg.EndpointID, arg.ThreadID, arg.ToolCallID)
+	var i SandboxActionByCallRow
+	err := row.Scan(&i.ID, &i.SessionID, &i.Seq)
+	return i, err
+}
+
+const sandboxActionThread = `-- name: SandboxActionThread :one
+SELECT sb.state, a.endpoint_id::text AS endpoint_id, a.thread_id,
+  (SELECT count(*) FROM sandbox_actions c WHERE c.session_id = sb.id)::integer AS actions
+ FROM sandbox_sessions sb JOIN sandbox_actions a ON a.session_id = sb.id AND a.seq = 1
+ WHERE sb.id = $1::text::uuid AND sb.account_id = $2::text::uuid
+`
+
+type SandboxActionThreadParams struct {
+	SessionID string
+	AccountID string
+}
+
+type SandboxActionThreadRow struct {
+	State      string
+	EndpointID string
+	ThreadID   string
+	Actions    int32
+}
+
+// ADR-20261117065818 §3: the thread a gregale_browser session answers (its
+// first action's), its state, and how many actions it has had.
+func (q *Queries) SandboxActionThread(ctx context.Context, db DBTX, arg SandboxActionThreadParams) (SandboxActionThreadRow, error) {
+	row := db.QueryRow(ctx, sandboxActionThread, arg.SessionID, arg.AccountID)
+	var i SandboxActionThreadRow
+	err := row.Scan(
+		&i.State,
+		&i.EndpointID,
+		&i.ThreadID,
+		&i.Actions,
+	)
+	return i, err
+}
+
 const sandboxSnapshotBytesUsed = `-- name: SandboxSnapshotBytesUsed :one
 SELECT coalesce(sum(coalesce(bytes, reserved_bytes)), 0)::bigint FROM sandbox_workspace_snapshots
  WHERE account_id=$1::text::uuid
@@ -3248,6 +3960,26 @@ func (q *Queries) SandboxSnapshotBytesUsed(ctx context.Context, db DBTX, account
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const sandboxTaskCallByCall = `-- name: SandboxTaskCallByCall :one
+SELECT sandbox_id::text AS sandbox_id FROM agent_sandbox_task_calls
+ WHERE endpoint_id=$1::text::uuid AND thread_id=$2::text
+ AND tool_call_id=$3::text
+`
+
+type SandboxTaskCallByCallParams struct {
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+}
+
+// The task a gregale_browse call admitted, if it admitted one.
+func (q *Queries) SandboxTaskCallByCall(ctx context.Context, db DBTX, arg SandboxTaskCallByCallParams) (string, error) {
+	row := db.QueryRow(ctx, sandboxTaskCallByCall, arg.EndpointID, arg.ThreadID, arg.ToolCallID)
+	var sandbox_id string
+	err := row.Scan(&sandbox_id)
+	return sandbox_id, err
 }
 
 const setSandboxSessionFrozen = `-- name: SetSandboxSessionFrozen :execrows
@@ -3328,6 +4060,27 @@ func (q *Queries) StartAgentRun(ctx context.Context, db DBTX, arg StartAgentRunP
 		arg.TtlSeconds,
 		arg.RunID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startSandboxAction = `-- name: StartSandboxAction :execrows
+UPDATE sandbox_actions a SET state='running', started_at=now()
+ FROM sandbox_sessions sb
+ WHERE a.id=$1::text::uuid AND a.state='pending' AND sb.id=a.session_id
+ AND sb.lease_token=$2::text
+`
+
+type StartSandboxActionParams struct {
+	ID         string
+	LeaseToken string
+}
+
+// agentd starts a pending action under its session's lease.
+func (q *Queries) StartSandboxAction(ctx context.Context, db DBTX, arg StartSandboxActionParams) (int64, error) {
+	result, err := db.Exec(ctx, startSandboxAction, arg.ID, arg.LeaseToken)
 	if err != nil {
 		return 0, err
 	}

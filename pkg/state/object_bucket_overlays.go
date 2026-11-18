@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -51,6 +52,14 @@ type ObjectBucketOverlayStore interface {
 	// DeleteObjectBucketOverlay drops a deleted bucket's overlay and its
 	// tombstones. Deleting an absent overlay succeeds.
 	DeleteObjectBucketOverlay(ctx context.Context, bucketID string) error
+}
+
+// ObjectBucketOverlayTombstonePrefixStore lets the gateway skip checking a
+// source common prefix under which the branch deleted nothing.
+type ObjectBucketOverlayTombstonePrefixStore interface {
+	// ObjectBucketOverlayTombstonesUnder reports whether the branch deleted
+	// any key that starts with prefix.
+	ObjectBucketOverlayTombstonesUnder(ctx context.Context, bucketID, prefix string) (bool, error)
 }
 
 // ProjectEnvironmentBranchBucket is one overlay bucket a branch owns. The row
@@ -169,6 +178,17 @@ func (m *MemStore) ObjectBucketOverlayTombstones(_ context.Context, bucketID str
 		}
 	}
 	return out, nil
+}
+
+func (m *MemStore) ObjectBucketOverlayTombstonesUnder(_ context.Context, bucketID, prefix string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key := range m.objectBucketOverlayTombstones[bucketID] {
+		if strings.HasPrefix(key, prefix) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *MemStore) DeleteObjectBucketOverlay(_ context.Context, bucketID string) error {

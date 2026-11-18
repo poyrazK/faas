@@ -186,7 +186,7 @@ func ErrReleaseApprovalRejected(status ReleaseApprovalStatus) *Problem {
 func ErrReleaseApprovalCanaryRequired(app string) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need a canary",
 		fmt.Sprintf("%s requires approvals for production releases, and this release would take traffic without a canary to wait in.", app)).
-		WithHint("Deploy with --rollout safe or fast (or without --rollout immediate and --traffic-percent), or remove the policy with `gregale approvals off`.").
+		WithHint("Deploy with --rollout safe or fast (or without --rollout immediate and --traffic-percent), or remove the policy with `gregale release approval disable`.").
 		WithDocs(docsBase + "/deploys#release-approvals")
 }
 
@@ -207,7 +207,7 @@ func ErrReleaseApprovalParked(app, release string) *Problem {
 func ErrReleaseApprovalPromotionUnprotected(app, project, environment string) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need an approved promotion",
 		fmt.Sprintf("%s requires approvals for production releases, and this promotion would release it into %s without one.", app, environment)).
-		WithHint(fmt.Sprintf("Protect the environment so promotions into it need an approval (`gregale projects environments protect %s %s`), or remove the app's policy with `gregale approvals off --app %s`.", project, environment, app)).
+		WithHint(fmt.Sprintf("Protect the environment so promotions into it need an approval (`gregale projects environments protect %s %s`), or remove the app's policy with `gregale release approval disable --app %s`.", project, environment, app)).
 		WithDocs(docsBase + "/deploys#release-approvals")
 }
 

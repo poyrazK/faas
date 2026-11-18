@@ -131,6 +131,10 @@ var registry = []Spec{
 		// build domain's contract check waits for any such capture to
 		// expire.
 		cols("crash_captures", "sealed_key"),
+		// ADR-20261110210000 slice 3d-3: a park or warm snapshot's capture
+		// key, sealed at the source by vmmd exactly as a crash capture's,
+		// opened by vmmd (or secretd by reference) to restore it.
+		cols("snapshots", "sealed_key"),
 	)},
 	{Domain: Outbound, Readers: []string{"outboundd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("outbound_integration_credentials", "authorization_sealed"),
@@ -187,7 +191,9 @@ var registry = []Spec{
 		cols("app_webhooks", "secret_sealed", "previous_secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
-	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
+	// ADR-20261110210000 slice 3k: the control plane's secretd also opens the
+	// cluster key, to mint internal-service tokens for compute schedds.
+	{Domain: Control, Readers: []string{"schedd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("cluster_signing_keys", "sealed_blob"),
 	)},
 	// Account values are wired a group at a time (ADR 20261022111812):
@@ -202,6 +208,7 @@ var registry = []Spec{
 		cols("accounts", "mfa_secret_encrypted"),
 		cols("tool_oauth_connections", "credentials_ciphertext"),
 		cols("tool_oauth_authorizations", "flow_ciphertext"),
+		cols("hosted_task_source_intents", "ciphertext"),
 		// apid seals a managed workflow's plan and its workflow worker
 		// opens it; schedd never reads it.
 		cols("agent_execution_workflows", "sealed_plan"),

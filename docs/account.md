@@ -48,11 +48,18 @@ operation still enforces its own authorization and admission checks.
   saying which one to update. Wrong passwords count
   against the same limits as sign-in.
 - **Failed passwords:** after 20 wrong passwords for one email address within
-  an hour, from any network, password checks for that address pause until
-  the hour is over and you get one email. Sign-in, changing your password or
-  email, and turning off two-factor authentication all count and all pause.
-  A password reset lifts the pause.
-- **Password:** `gregale account password update` opens the form. A reset
+  an hour from one network (an IPv4 /24 or IPv6 /48), password checks for
+  that address pause on that network until the hour is over, and you get one
+  email; someone guessing from elsewhere does not lock you out. After 300
+  wrong passwords within an hour from all networks together, checks pause
+  everywhere. Sign-in, changing your password or email, and turning off
+  two-factor authentication all count and all pause. A password reset lifts
+  the pause on your network and the overall one.
+- **Password:** `gregale account password update` opens the form. A new
+  password needs at least 12 characters and is refused when it is a common
+  breached password (checked against a list built into Gregale, without
+  sending the password anywhere), one repeated character or a plain
+  sequence such as `123456789012`. A reset
   (**Forgot password**) signs out every browser and revokes the keys that
   sign-ins created. API keys you created by hand keep working; the reset
   emails you a list of them and the account page shows it, so you can revoke
@@ -80,7 +87,9 @@ operation still enforces its own authorization and admission checks.
   an unverified address with an email link, and an operator's email revert or
   two-factor reset remove every linked provider whose email is not your
   Gregale email, and email you for each. Link it again from the account page
-  if it was yours.
+  if it was yours. Confirming an email change removes the providers linked
+  under your previous address (for example a work Google account you no
+  longer control) and emails you for each.
 - **Signing in again for sensitive changes:** if your account has neither a
   password nor two-factor authentication, setting a first password,
   changing the email, removing a sign-in method and setting up two-factor
@@ -91,12 +100,17 @@ operation still enforces its own authorization and admission checks.
 - **Approving a CLI or agent (MCP) sign-in** in the browser needs a verified
   email, and a sign-in from the last 15 minutes (with two-factor
   authentication on, a code from the last 15 minutes). An older browser
-  signs in again and comes back to the same code.
+  signs in again and comes back to the same code. With the one-click
+  `gregale login`, the page shows the login's code and the port it hands
+  the sign-in to: approve only when your terminal shows the same.
 - **Two-factor changes:** turning two-factor authentication on signs out
   every other browser and revokes CLI and agent sign-in keys; hand-made API
   keys keep working. Turning it off with your password also needs a code
   from the last 5 minutes; without your authenticator, use a recovery code
-  or the emailed disable link.
+  or the emailed disable link. While an emailed disable is waiting out its
+  24 hours, the two-factor page shows it with a **Cancel** button (only to a
+  session that passed two-factor), and signing in with your authenticator
+  or a recovery code cancels it; either way you get an email.
 - **Sign-in keys and recovery:** CLI and agent sign-in keys are also revoked
   when you confirm an email change and when an operator signs out your
   browsers or resets your two-factor authentication.
@@ -120,9 +134,117 @@ operation still enforces its own authorization and admission checks.
   credential you did not create is noticed.
 - **Rotation grace window:** `gregale key grace-window set --days N` keeps a
   rotated key working for N days (0 to 30). Changing it asks for a recent
-  sign-in or authenticator code.
+  sign-in or authenticator code. To end it sooner for one rotation, for a key
+  that leaked, run `gregale key rotate KEY_ID --revoke-old` (or
+  `--grace-days N`); the old key stops working at once.
+- **Key lifetime:** every new API key, full-access keys included, expires a
+  year after it is made (agent keys after 90 days); rotate it before then.
+  `gregale login` keeps your five newest CLI sign-ins and signs older ones
+  out.
 - **Leaving an org:** `gregale org leave SLUG`. Owners transfer ownership first,
   billing contacts are replaced first, and a personal org cannot be left.
+
+## Members, roles and invitations
+
+An organization shares apps, projects, databases and billing between people.
+Every account also has a personal organization, which cannot take members,
+change owner or be deleted on its own. To work with others, create a team
+organization and invite them:
+
+```bash
+gregale org create --name "Acme" acme
+gregale org members invite --org acme --email ada@example.com --role developer
+```
+
+### Roles
+
+Each member has one role. The default for an invitation is `developer`.
+
+| Role | Can |
+|---|---|
+| `owner` | Everything an admin can, plus change roles, remove members, change the plan, require two-factor authentication, transfer ownership and delete the organization. There is exactly one owner. |
+| `admin` | Everything a developer can, plus delete apps and projects, change their access and security settings, manage databases and object storage, replay queue messages, invite members other than admins, and create or revoke organization API keys. |
+| `developer` | Read apps and logs, change app settings, deploy, manage secrets, approve releases, attach databases and storage, and send and consume queue messages. |
+| `viewer` | Read apps, logs, projects, databases, storage and queues. Changes nothing. |
+| `billing` | Manage billing details and the organization's name, and read usage. Cannot see apps. |
+
+`gregale org members list acme` shows each member's user ID, email, name and
+role. An action your role does not allow fails with `403 org_role_forbidden`.
+
+### Invitations
+
+`gregale org members invite` prints a single-use invitation token once. Gregale
+does not email it: send it to the person yourself. They run
+`gregale org invitation peek TOKEN` to see the organization and role, then
+`gregale org invitation accept TOKEN` while signed in as the invited email
+address. An invitation expires after 14 days. Accepting an expired, revoked
+or already used token fails with `410 org_invitation_invalid`; send a new
+invitation.
+
+Owners and admins can invite. Only the owner can invite an admin.
+
+```bash
+gregale org invitation list --org acme                  # pending invitations
+gregale org invitation revoke --org acme --invitation ID
+```
+
+Resetting your password, confirming an email change or signing out everywhere
+also cancels the invitations you sent that were not yet accepted.
+
+### Changing roles, removing members and ownership
+
+Only the owner changes roles and removes members:
+
+```bash
+gregale org members update --org acme --user USER_ID --role viewer
+gregale org members rm --org acme --user USER_ID
+gregale org owner set --org acme --to USER_ID
+```
+
+Nobody can be given the `owner` role directly. To transfer ownership,
+`gregale org owner set` hands it to an existing member, and the previous owner
+becomes an admin.
+Transferring ownership and deleting the organization need a signed-in browser,
+so an API key alone cannot do either. The last owner cannot be removed or leave
+(`409 org_last_owner`).
+
+### Member limits
+
+| Plan | Members | Pending invitations |
+|---|---|---|
+| Free | 0 | 0 |
+| Hobby | 10 | 5 |
+| Pro | 50 | 25 |
+| Scale | 200 | 100 |
+
+The plan is the organization's own plan. `gregale org usage --org acme` shows
+how many seats are used. An invitation past the pending limit fails with
+`403 org_invitation_cap_exceeded`; accepting one when the organization is full
+fails with `403 org_member_cap_exceeded`. Besides its personal organization,
+an account can own one team organization on the Free plan; creating or taking
+over another fails with `403 org_free_limit_exceeded` until one is upgraded.
+
+### Organization API keys
+
+Owners and admins create keys that belong to the organization rather than to
+a person:
+
+```bash
+gregale org keys add --org acme --label ci-deploy --scopes deploy:write
+gregale org keys list --org acme
+gregale org keys rotate --org acme KEY_ID
+gregale org keys rm --org acme KEY_ID
+```
+
+Creating one emails the owner. Scopes, lifetime and rotation work as for
+personal keys; see [API keys](auth.md#api-keys).
+
+### Require two-factor authentication
+
+The owner can require every member to use two-factor authentication with
+`PUT /v1/orgs/{slug}/security-policy` and `{"require_mfa": true}`. The owner
+needs it turned on first. Members without it get `403 org_mfa_required` until
+they turn it on.
 
 ## Export and deletion
 

@@ -866,6 +866,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			srv.runAgentActivitySweep(ctx)
 		})
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPostReleaseWatchWorker(ctx) })
+		// ADR-20261116120000: create the protection baseline for enrolled apps.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProtectionReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProtectionHealthProber(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runScheduledReleaseWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runDatabaseSwitchWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.plainRollbacks().Run(ctx) })
@@ -1011,7 +1014,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.productControl.StartOverdueHolds(ctx, log)    // ADR-20261018212918
 		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
-		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
+		startFeatureFlagLifecycleReconciler(ctx, srv, log)
+		startFlagExperimentReconciler(ctx, srv, log) // ADR 20261115163113
+		startPlatformFlagRamps(ctx, srv, log)        // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
 		srv.startIssueTrackerReminders(ctx)
@@ -1623,6 +1628,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithListenersEnabled(strings.TrimSpace(deps.getenv("FAAS_TCP_LISTENERS_ENABLED")) == "1", strings.TrimSpace(deps.getenv("FAAS_UDP_LISTENERS_ENABLED")) == "1").
 		WithReleasePhaseEnabled(releasePhaseEnabledFromEnv(deps.getenv)).
 		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
 		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
@@ -1779,7 +1785,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if srv.managedPostgresUncapped {
 		log.Warn("managed postgres release held to accounts a flag rule names: compute and storage caps are not both on")
 	}
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(ctx, deps.pool, deps.getenv, log,
 		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired,
 			BranchExpired: srv.recordManagedPostgresBranchExpired, NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot, NotifyPlanExcess: srv.noticeManagedPostgresPlanExcess,
 			Egress: srv.managedPostgresEgressAllowance}, ops.Registry())
@@ -1946,6 +1952,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if verifyErr != nil {
 			return fmt.Errorf("apid: load rollback artifact verifier: %w", verifyErr)
 		}
+		rollbackVerifier.RequireV2(deps.getenv("FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2") == "1")
 		srv.WithRollbackArtifactVerifier(rollbackVerifier)
 		log.Info("apid: rollback artifact verifier ready", "pub", signPubPath)
 	}
@@ -2907,6 +2914,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	if srv.privateTools != nil {
+		srv.privateTools.StartSourceRetentionCleanup(ctx)
+	}
 	privateStop := context.AfterFunc(ctx, srv.stopPrivateTools)
 	defer func() { privateStop(); srv.stopPrivateTools() }()
 	defer srv.startInternalCIWorker(ctx, log)()

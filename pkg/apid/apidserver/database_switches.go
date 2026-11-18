@@ -179,6 +179,9 @@ func (s *server) startDatabaseSwitch(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.ErrDatabaseSwitchUnavailable("Managed PostgreSQL is not configured on this platform.", ""))
 		return
 	}
+	if !s.databaseSwitchCanVerify(w, r, app) {
+		return
+	}
 	if p, ok := principalFrom(r); !ok || !principalHasScope(p, api.ScopesManagedPostgresManageSurface) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Insufficient scope",
 			"restore_databases restores and rebinds a managed PostgreSQL database; the key needs the postgres:manage scope as well"))
@@ -200,7 +203,7 @@ func (s *server) startDatabaseSwitch(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, rollbackDuringTrafficSplitProblem(app.Slug, split))
 		return
 	}
-	sw, problem := s.databaseSwitchFor(ctx, r, acct, app, plan)
+	sw, problem := s.databaseSwitchFor(ctx, r, acct, app, plan, req.AcknowledgeReleases)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -231,10 +234,15 @@ func (s *server) startDatabaseSwitch(w http.ResponseWriter, r *http.Request, acc
 // databaseSwitchFor builds the switch for a checked rollback plan: one
 // migratable managed database, restored to before the earliest crossed
 // release.
-func (s *server) databaseSwitchFor(ctx context.Context, r *http.Request, acct state.Account, app state.App, plan rollbackPlan) (state.DatabaseSwitch, *api.Problem) {
-	if len(plan.crossed) == 0 {
+func (s *server) databaseSwitchFor(ctx context.Context, r *http.Request, acct state.Account, app state.App, plan rollbackPlan, acknowledged bool) (state.DatabaseSwitch, *api.Problem) {
+	runs, err := release.SwitchRuns(ctx, s.store, app.ID, plan.target, plan.crossed)
+	if err != nil {
+		return state.DatabaseSwitch{}, customerCapacityProblem(s.log, "list releases a database switch undoes", "Rollback temporarily unavailable",
+			"Gregale could not list the release commands this rollback would undo.", "Retry the request in a moment.", err)
+	}
+	if len(runs) == 0 {
 		return state.DatabaseSwitch{}, api.ErrDatabaseSwitchUnavailable(
-			"This rollback crosses no release command, so there is nothing to restore.", "Roll back without restore_databases.")
+			"Neither this rollback nor the release that replaced its target ran a release command, so there is nothing to restore.", "Roll back without restore_databases.")
 	}
 	databases, err := s.releaseMigrationDatabases(ctx, acct, app, plan.target.Scope)
 	if err != nil {
@@ -251,6 +259,13 @@ func (s *server) databaseSwitchFor(ctx context.Context, r *http.Request, acct st
 			fmt.Sprintf("The release commands can migrate %d managed databases; a switch restores one.", len(databases)),
 			"Restore each database with gregale postgres restore, then roll back with acknowledge_releases.")
 	}
+	// The rollback guard passed a rollback that crosses nothing, but the
+	// switch still undoes the replacing release's command: the caller must
+	// see and acknowledge it like a crossed one, or the CLI would restore
+	// the database without its confirmation prompt.
+	if !acknowledged && len(runs) > len(plan.crossed) {
+		return state.DatabaseSwitch{}, release.CrossingProblem(plan.target, runs, databases)
+	}
 	source, err := s.managedPostgres.Get(ctx, acct.ID, databases[0].ID)
 	if err != nil {
 		s.log.WarnContext(ctx, "database switch: read source database", "app", app.ID, "database", databases[0].ID, "err", err)
@@ -263,14 +278,14 @@ func (s *server) databaseSwitchFor(ctx context.Context, r *http.Request, acct st
 	if problem := s.databaseSwitchRoom(ctx, acct); problem != nil {
 		return state.DatabaseSwitch{}, problem
 	}
-	point, name := release.SwitchRestore(plan.crossed, databases[0])
+	point, name := release.SwitchRestore(runs, databases[0])
 	if window := time.Duration(source.Spec.RestoreWindowSeconds) * time.Second; window > 0 && time.Since(point) > window {
 		return state.DatabaseSwitch{}, api.ErrDatabaseSwitchUnavailable(
 			fmt.Sprintf("The restore point %s is outside %s's %s restore window.", point.Format(time.RFC3339), source.Name, window),
 			"Roll back with acknowledge_releases and repair the database by hand.")
 	}
-	undone := make([]string, 0, len(plan.crossed))
-	for _, run := range plan.crossed {
+	undone := make([]string, 0, len(runs))
+	for _, run := range runs {
 		if !slices.Contains(undone, run.DeploymentID) {
 			undone = append(undone, run.DeploymentID)
 		}
@@ -299,9 +314,9 @@ func (s *server) databaseSwitchRoom(ctx context.Context, acct state.Account) *ap
 		return nil
 	}
 	return api.NewProblem(http.StatusForbidden, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded",
-		fmt.Sprintf("A rollback that restores the database needs room for the restored copy, which becomes the app's database and so cannot use the restore slot; the account has %d of %d databases.", used, limit)).
+		fmt.Sprintf("A database switch needs room for the restored copy, which becomes the app's database and so cannot use the restore slot; the account has %d of %d databases.", used, limit)).
 		WithLimit(int64(limit), used).
-		WithHint("Delete a database you no longer need or upgrade the plan, then roll back again; or restore the database with gregale postgres restore and roll back with acknowledge_releases.").
+		WithHint("Delete a database you no longer need or upgrade the plan, then try again; or restore the database with gregale postgres restore and attach the copy yourself.").
 		WithDocs("https://gregale.dev/docs/plans")
 }
 
@@ -500,4 +515,22 @@ func (s *server) appendDatabaseSwitchAudit(ctx context.Context, sw state.Databas
 	}); err != nil {
 		s.log.Warn("database switch: append deployment_audit failed", "switch", sw.ID, "err", err)
 	}
+}
+
+// databaseSwitchCanVerify refuses a switch whose staged credential the
+// platform could not verify, before it restores anything. Without it the
+// switch retried its verification phase for 30 minutes and then failed
+// (production 2026-11-17: runtime credentials were sealed to secretd's runtime
+// domain, and neither secretd's verifier nor the domain identity was available
+// to apid).
+func (s *server) databaseSwitchCanVerify(w http.ResponseWriter, r *http.Request, app state.App) bool {
+	if s.managedPostgresBindings.CanVerifyCutoverCredentials() {
+		return true
+	}
+	s.log.WarnContext(r.Context(), "database switch refused: staged credentials cannot be verified; configure apid's secretd verifier (FAAS_APID_SECRETD_TARGET) or stop sealing runtime credentials to the domain",
+		"app", app.ID)
+	api.WriteProblem(w, api.ErrDatabaseSwitchUnavailable(
+		"Database switches are temporarily unavailable: the platform cannot verify the restored copy's credentials.",
+		"Restore the database with gregale postgres restore and attach the copy, or retry later."))
+	return false
 }

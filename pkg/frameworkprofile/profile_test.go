@@ -1,6 +1,8 @@
 package frameworkprofile
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -153,10 +155,12 @@ func TestAnalyzeDockerfileWarnsForRawTCPServer(t *testing.T) {
 		want       bool
 		mention    string
 	}{
-		{"redis inherits its port", "FROM redis:7-alpine\nCMD [\"redis-server\"]\n", true, "builds redis"},
-		{"registry path and digest", "FROM --platform=linux/amd64 docker.io/library/postgres:16@sha256:abc\n", true, "port 5432"},
-		{"own EXPOSE of a raw port", "FROM alpine:3.20\nEXPOSE 9092\n", true, "port 9092 is a raw TCP port"},
-		{"server with HTTP sidecar", "FROM redis:7-alpine\nRUN apk add busybox-extras\nEXPOSE 8080\nCMD [\"/start.sh\"]\n", false, ""},
+		{"redis inherits its port", "FROM redis:7-alpine\nCMD [\"redis-server\"]\n", true, "Upstash"},
+		{"registry path and digest", "FROM --platform=linux/amd64 docker.io/library/postgres:16@sha256:abc\n", true, "gregale postgres create"},
+		{"own EXPOSE of a raw port", "FROM alpine:3.20\nEXPOSE 9092\n", true, "gregale deploy --image"},
+		{"stateless TCP server", "FROM rabbitmq:3\n", true, "gregale deploy --image"},
+		// apid refuses a datastore build whatever it exposes (2026-11-15 agent eval).
+		{"datastore with HTTP sidecar", "FROM redis:7-alpine\nRUN apk add busybox-extras\nEXPOSE 8080\nCMD [\"/start.sh\"]\n", true, "Upstash"},
 		{"final stage decides", "FROM redis:7 AS tools\nFROM node:22\nEXPOSE 3000\n", false, ""},
 		{"http app", "FROM node:22\nEXPOSE 9000\n", false, ""},
 	}
@@ -175,8 +179,14 @@ func TestAnalyzeDockerfileWarnsForRawTCPServer(t *testing.T) {
 			if (found != nil) != tt.want {
 				t.Fatalf("non_http_service = %v, want %v (warnings %+v)", found != nil, tt.want, got.Warnings)
 			}
-			if found != nil && (!strings.Contains(found.Message, tt.mention) || !strings.Contains(found.Message, "gregale deploy --image")) {
-				t.Fatalf("message = %q, want %q and the image deploy", found.Message, tt.mention)
+			// A raw TCP source build readies on TCP accept, so no message
+			// predicts app_startup_timeout (ADR-079 amendment 2).
+			if found != nil && (!strings.Contains(found.Message, tt.mention) || strings.Contains(found.Message, "app_startup_timeout")) {
+				t.Fatalf("message = %q, want %q", found.Message, tt.mention)
+			}
+			// A datastore is refused as an image too; never suggest it.
+			if found != nil && strings.Contains(found.Message, "Gregale does not run datastores") && strings.Contains(found.Message, "deploy --image") {
+				t.Fatalf("datastore message suggests an image deploy: %q", found.Message)
 			}
 		})
 	}
@@ -218,6 +228,46 @@ func TestAnalyzeNodeUsesDeclaredPackageManagerAndHealthRoute(t *testing.T) {
 	}
 }
 
+// ADR-079 amendment 2: /healthz is marked defaulted, and so TCP readiness,
+// only when neither the source nor gregale.yaml names a health route.
+func TestAnalyzeMarksADefaultedHealthPath(t *testing.T) {
+	express := `{"dependencies":{"express":"^5"},"scripts":{"start":"node server.js"}}`
+	for _, tc := range []struct {
+		name      string
+		files     fstest.MapFS
+		path      string
+		defaulted bool
+	}{
+		{"plain express app", fstest.MapFS{"package.json": {Data: []byte(express)}, "server.js": {Data: []byte("app.listen(process.env.PORT);\n")}}, "/healthz", true},
+		{"route in the source", fstest.MapFS{"package.json": {Data: []byte(express)}, "server.js": {Data: []byte(`app.get("/healthz", ok); app.listen(3000);`)}}, "/healthz", false},
+		{"gregale.yaml health", fstest.MapFS{"package.json": {Data: []byte(express)}, "server.js": {Data: []byte("app.listen(3000);\n")},
+			"gregale.yaml": {Data: []byte("hosting:\n  health: /healthz\n")}}, "/healthz", false},
+		{"dockerfile", fstest.MapFS{"Dockerfile": {Data: []byte("FROM redis:7\n")}}, "/healthz", true},
+		// Plain routers declare the route without a registration call
+		// (journeys 2026-11-16 TestHealthGate).
+		{"node:http switch", fstest.MapFS{"package.json": {Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
+			"server.js": {Data: []byte("switch (url.pathname) {\n  case \"/healthz\":\n    return ok(res);\n}\n")}}, "/healthz", false},
+		{"pathname comparison", fstest.MapFS{"package.json": {Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
+			"server.js": {Data: []byte("if (req.url === '/ready') { res.end('ok'); }\n")}}, "/ready", false},
+		{"go HandleFunc", fstest.MapFS{"go.mod": {Data: []byte("module x\n\ngo 1.22\n")},
+			"main.go": {Data: []byte("package main\nfunc main() { http.HandleFunc(\"/healthz\", ok) }\n")}}, "/healthz", false},
+		{"python http.server", fstest.MapFS{"requirements.txt": {Data: []byte("\n")},
+			"main.py": {Data: []byte("class H(BaseHTTPRequestHandler):\n    def do_GET(self):\n        if self.path == \"/health\":\n            pass\n")}}, "/health", false},
+		{"client call is not a route", fstest.MapFS{"package.json": {Data: []byte(express)},
+			"server.js": {Data: []byte("await fetch(\"/healthz\"); app.listen(3000);\n")}}, "/healthz", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Analyze(tc.files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.HealthPath != tc.path || got.HealthDefaulted != tc.defaulted {
+				t.Fatalf("health %q defaulted %v; want %q %v", got.HealthPath, got.HealthDefaulted, tc.path, tc.defaulted)
+			}
+		})
+	}
+}
+
 func TestAnalyzeAppliesHostingOverrides(t *testing.T) {
 	got, err := Analyze(fstest.MapFS{
 		"package.json": &fstest.MapFile{Data: []byte(`{"dependencies":{"express":"^5"},"scripts":{"start":"node server.js"}}`)},
@@ -232,6 +282,36 @@ func TestAnalyzeAppliesHostingOverrides(t *testing.T) {
 	}
 	if got.ConfigFile != "gregale.yaml" || !got.Inferred {
 		t.Fatalf("profile metadata = %+v, want config_file and inferred=true", got)
+	}
+}
+
+// hosting.health: / hides the app's home page behind the edge's health
+// answer; only that exact path warns.
+func TestAnalyzeWarnsForRootHealthPath(t *testing.T) {
+	for _, tc := range []struct {
+		health string
+		want   bool
+	}{{"/", true}, {"/healthz", false}, {"/ready", false}} {
+		got, err := Analyze(fstest.MapFS{
+			"package.json": &fstest.MapFile{Data: []byte(`{"dependencies":{"express":"^5"},"scripts":{"start":"node server.js"}}`)},
+			"server.js":    &fstest.MapFile{Data: []byte("app.listen(process.env.PORT);\n")},
+			"gregale.yaml": &fstest.MapFile{Data: []byte("hosting:\n  health: " + tc.health + "\n")},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		warned := false
+		for _, warning := range got.Warnings {
+			if warning.Code == "health_path_root" {
+				warned = true
+				if len(warning.Sources) != 1 || warning.Sources[0] != "gregale.yaml" {
+					t.Fatalf("health %q: sources = %v, want [gregale.yaml]", tc.health, warning.Sources)
+				}
+			}
+		}
+		if warned != tc.want {
+			t.Fatalf("health %q: health_path_root warned = %v, want %v (%+v)", tc.health, warned, tc.want, got.Warnings)
+		}
 	}
 }
 
@@ -314,5 +394,18 @@ func TestAnalyzeMarksHostingStartExplicit(t *testing.T) {
 				t.Fatalf("start = %q explicit=%v; want %q explicit=%v", profile.StartCommand, profile.StartFromConfig, tt.wantCmd, tt.explicit)
 			}
 		})
+	}
+}
+
+// The journey probe app (tests/journeys/testdata/probe-node) declares /healthz
+// in a node:http switch; its readiness must stay strict HTTP so TestHealthGate
+// can refuse a release whose /healthz answers 503.
+func TestAnalyzeJourneyProbeKeepsStrictHealth(t *testing.T) {
+	got, err := Analyze(os.DirFS(filepath.Join("..", "..", "tests", "journeys", "testdata", "probe-node")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HealthPath != "/healthz" || got.HealthDefaulted {
+		t.Fatalf("probe health %q defaulted %v; want /healthz declared", got.HealthPath, got.HealthDefaulted)
 	}
 }

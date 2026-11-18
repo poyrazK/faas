@@ -146,6 +146,8 @@ var actionableProfileWarnings = map[string]bool{
 	"missing_start_command": true,
 	// A raw TCP server built from source fails readiness every time.
 	"non_http_service": true,
+	// hosting.health: / hides the home page behind the edge's health answer.
+	"health_path_root": true,
 }
 
 // ActionableProfileWarnings lists the profile warnings doctor reports.
@@ -1057,7 +1059,7 @@ func scanStatelessShape(path string) []string {
 			defer func() { _ = f.Close() }() //nolint:errcheck // read-only scan; close is best-effort
 			scanner := bufio.NewScanner(f)
 			for scanner.Scan() {
-				if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(scanner.Text())), "VOLUME ") {
+				if len(statelessshape.StatefulVolume(scanner.Text())) > 0 {
 					out = append(out, p)
 					break
 				}

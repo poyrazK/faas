@@ -266,6 +266,11 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases, behind the preview-databases
 	// capability until launch.
 	"PUT /v1/postgres/databases/{id}/previews": true,
+	// ADR-20261116213000 custom Postgres roles, behind the
+	// postgres_custom_roles flag until launch.
+	"GET /v1/postgres/databases/{id}/roles":           true,
+	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
+	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -317,40 +322,57 @@ var routeExclude = map[string]bool{
 	// unregistered routes to every account it is not released to, so it stays
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
-	"POST /v1/agents":                                 true,
-	"POST /v1/agent-callbacks":                        true,
-	"POST /v1/agent-callbacks/{token}":                true,
-	"POST /v1/agent-callbacks/revocations":            true,
-	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
-	"POST /v1/agent-tools/invoke":                     true,
-	"POST /v1/agent-tools/close_thread":               true,
-	"POST /v1/sandboxes":                              true,
-	"GET /v1/sandboxes":                               true,
-	"GET /v1/sandboxes/{id}":                          true,
-	"PATCH /v1/sandboxes/{id}":                        true,
-	"DELETE /v1/sandboxes/{id}":                       true,
-	"GET /v1/sandbox-snapshots":                       true,
-	"GET /v1/sandbox-snapshots/{id}":                  true,
-	"DELETE /v1/sandbox-snapshots/{id}":               true,
-	"GET /v1/sandbox-templates":                       true,
-	"GET /v1/sandbox-templates/{name}":                true,
-	"PUT /v1/sandbox-templates/{name}":                true,
-	"DELETE /v1/sandbox-templates/{name}":             true,
-	"POST /v1/sandboxes/{id}/ports":                   true,
-	"GET /v1/sandboxes/{id}/ports":                    true,
-	"GET /v1/sandboxes/{id}/ports/{port}":             true,
-	"DELETE /v1/sandboxes/{id}/ports/{port}":          true,
-	"GET /v1/agents":                                  true,
-	"GET /v1/agents/{agent}":                          true,
-	"DELETE /v1/agents/{agent}":                       true,
-	"POST /v1/agents/{agent}/versions":                true,
-	"GET /v1/agents/{agent}/versions/{version}":       true,
-	"POST /v1/agents/{agent}/runs":                    true,
-	"GET /v1/agent-runs":                              true,
-	"GET /v1/agent-runs/{id}":                         true,
-	"DELETE /v1/agent-runs/{id}":                      true,
-	"GET /v1/agent-runs/{id}/outputs":                 true,
-	"GET /v1/agent-runs/{id}/outputs/files/{name...}": true,
+	"POST /v1/agents": true,
+	// ADR-20261116163508 customer-granted support access: dark behind the
+	// support_grants platform flag, so it stays out of the public OpenAPI spec
+	// and generated SDKs until launch. Mirror across this list AND
+	// scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"GET /v1/orgs/{slug}/support-access":                        true,
+	"POST /v1/orgs/{slug}/support-access/grants":                true,
+	"POST /v1/orgs/{slug}/support-access/grants/{id}/revoke":    true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/approve": true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/decline": true,
+	"POST /v1/admin/support-access/requests":                    true, // operator-only
+	"GET /v1/admin/support-access/grants":                       true, // operator-only
+	"POST /v1/agent-callbacks":                                  true,
+	"POST /v1/agent-callbacks/{token}":                          true,
+	"POST /v1/agent-callbacks/revocations":                      true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":               true,
+	"POST /v1/agent-tools/invoke":                               true,
+	"POST /v1/agent-tools/close_thread":                         true,
+	"POST /v1/sandboxes":                                        true,
+	"GET /v1/sandboxes":                                         true,
+	"GET /v1/sandboxes/{id}":                                    true,
+	"PATCH /v1/sandboxes/{id}":                                  true,
+	"DELETE /v1/sandboxes/{id}":                                 true,
+	"GET /v1/sandbox-snapshots":                                 true,
+	"GET /v1/sandbox-snapshots/{id}":                            true,
+	"DELETE /v1/sandbox-snapshots/{id}":                         true,
+	"GET /v1/sandbox-templates":                                 true,
+	"GET /v1/sandbox-templates/{name}":                          true,
+	"PUT /v1/sandbox-templates/{name}":                          true,
+	"DELETE /v1/sandbox-templates/{name}":                       true,
+	"POST /v1/sandboxes/{id}/ports":                             true,
+	"GET /v1/sandboxes/{id}/ports":                              true,
+	"GET /v1/sandboxes/{id}/ports/{port}":                       true,
+	"DELETE /v1/sandboxes/{id}/ports/{port}":                    true,
+	"GET /v1/sandboxes/{id}/task":                               true,
+	"GET /v1/sandboxes/{id}/actions/{seq}":                      true,
+	"GET /v1/sandboxes/{id}/actions/{seq}/screenshot":           true,
+	"GET /v1/sandboxes/{id}/egress":                             true,
+	"GET /v1/sandbox-egress-policy":                             true,
+	"PUT /v1/sandbox-egress-policy":                             true,
+	"GET /v1/agents":                                            true,
+	"GET /v1/agents/{agent}":                                    true,
+	"DELETE /v1/agents/{agent}":                                 true,
+	"POST /v1/agents/{agent}/versions":                          true,
+	"GET /v1/agents/{agent}/versions/{version}":                 true,
+	"POST /v1/agents/{agent}/runs":                              true,
+	"GET /v1/agent-runs":                                        true,
+	"GET /v1/agent-runs/{id}":                                   true,
+	"DELETE /v1/agent-runs/{id}":                                true,
+	"GET /v1/agent-runs/{id}/outputs":                           true,
+	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
 
 	// Issue #777 / ADR-091: operator observability backend. Same
 	// operator-only posture as /v1/compute-nodes — admin scope
@@ -408,11 +430,13 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
 	"GET /v1/admin/obs/serving-health":                               true, // private serving-probe coverage evidence
+	"GET /v1/admin/obs/nodes/{name}/probe-notifications":             true, // private node notification submission evidence
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
 	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
 	"GET /v1/admin/obs/recording-coverage":                           true, // private explicitly selected recording coverage
 	"GET /v1/admin/obs/input-health":                                 true, // private explicitly selected telemetry inputs
+	"GET /v1/admin/obs/runtime-builds":                               true, // private sampled daemon identity evidence
 	"GET /v1/admin/obs/incidents/platform_alert/summary":             true, // private retained-alert workload summary
 	"GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history": true, // private sanitized operator triage receipts
 	"GET /v1/admin/obs/incidents/{kind}/{id}/context":                true, // private operator incident context
@@ -614,29 +638,45 @@ var sdkMethodExclude = map[string]bool{
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
 	// Reviewed agent-tool publication, grants, invocation and execution credentials.
-	"DELETE /v1/tool-grants/{id}":                        "RevokeToolGrant",
-	"DELETE /v1/tool-oauth-connections/{id}":             "RevokeToolOAuthConnection",
-	"GET /v1/delegated-tool-connections/{grant}":         "GetDelegatedToolConnection",
-	"GET /v1/delegated-tool-invocations/{id}":            "GetDelegatedToolInvocation",
-	"GET /v1/tool-grants":                                "ListToolGrants",
-	"GET /v1/tool-grants/{id}":                           "GetToolGrant",
-	"GET /v1/tool-invocations/{id}":                      "GetToolInvocation",
-	"GET /v1/tool-oauth-connections":                     "ListToolOAuthConnections",
-	"GET /v1/tool-oauth-connections/{id}":                "GetToolOAuthConnection",
-	"GET /v1/tool-oauth-connections/{id}/authorization":  "GetToolOAuthAuthorization",
-	"GET /v1/tool-publications/{id}":                     "GetToolPublication",
-	"GET /v1/tool-registry":                              "SearchToolRegistry",
-	"GET /v1/tool-registry/{version}/tools/{name}":       "GetRegistryTool",
-	"POST /v1/delegated-tool-invocations/{id}/execute":   "ExecutePrivateToolInvocation",
-	"POST /v1/delegated-tool-invocations/{id}/{action}":  "DispatchDelegatedToolInvocation",
-	"POST /v1/tool-invocations/{id}/{action}":            "DispatchToolInvocation",
-	"POST /v1/tool-oauth-connections/{id}/authorization": "AuthorizeToolOAuthConnection",
-	"POST /v1/tool-publications/{id}/outcome":            "FinishToolPublication",
-	"PUT /v1/delegated-tool-invocations/{id}":            "BeginDelegatedToolInvocation",
-	"PUT /v1/tool-grants/{id}":                           "PutToolGrant",
-	"PUT /v1/tool-invocations/{id}":                      "BeginToolInvocation",
-	"PUT /v1/tool-oauth-connections/{id}":                "PutToolOAuthConnection",
-	"PUT /v1/tool-publications/{id}":                     "BeginToolPublication",
+	"DELETE /v1/tool-grants/{id}":                              "RevokeToolGrant",
+	"DELETE /v1/tool-oauth-connections/{id}":                   "RevokeToolOAuthConnection",
+	"GET /v1/delegated-tool-connections/{grant}":               "GetDelegatedToolConnection",
+	"GET /v1/delegated-tool-invocations/{id}":                  "GetDelegatedToolInvocation",
+	"GET /v1/tool-grants":                                      "ListToolGrants",
+	"GET /v1/tool-grants/{id}":                                 "GetToolGrant",
+	"GET /v1/tool-invocations/{id}":                            "GetToolInvocation",
+	"GET /v1/tool-oauth-connections":                           "ListToolOAuthConnections",
+	"GET /v1/tool-oauth-connections/{id}":                      "GetToolOAuthConnection",
+	"GET /v1/tool-oauth-connections/{id}/authorization":        "GetToolOAuthAuthorization",
+	"GET /v1/tool-publications/{id}":                           "GetToolPublication",
+	"POST /v1/task-tool-release-intents/{id}/recovery/retire":  "ParkTaskToolRetirement",
+	"POST /v1/task-tool-release-intents/{id}/recovery/restore": "RestoreTaskToolRecovery",
+	"GET /v1/task-tool-source-intents/{id}":                    "GetHostedTaskSourceIntent",
+	"PUT /v1/task-tool-source-intents/{id}":                    "PrepareHostedTaskSourceIntent",
+	"POST /v1/task-tool-source-intents/{id}/check":             "CheckHostedTaskSourceIntent",
+	"GET /v1/task-tool-source-intents/{id}/bindings":           "GetHostedTaskBindings",
+	"PUT /v1/task-tool-source-intents/{id}/bindings":           "SelectHostedTaskBindings",
+	"POST /v1/task-tool-source-intents/{id}/bindings/check":    "CheckHostedTaskBindings",
+	"POST /v1/task-tool-source-intents/{id}/bindings/revoke":   "RevokeHostedTaskBindings",
+	"PUT /v1/task-tool-source-intents/{id}/decision":           "DecideHostedTaskSourceIntent",
+	"GET /v1/task-tool-release-intents/{id}":                   "GetTaskToolReleaseIntent",
+	"PUT /v1/task-tool-release-intents/{id}":                   "PrepareTaskToolReleaseIntent",
+	"POST /v1/task-tool-release-intents/{id}/check":            "CheckTaskToolReleaseIntent",
+	"PUT /v1/task-tool-release-intents/{id}/decision":          "DecideTaskToolReleaseIntent",
+	"GET /v1/tool-registry":                                    "SearchToolRegistry",
+	"GET /v1/tool-registry/{version}/tools/{name}":             "GetRegistryTool",
+	"POST /v1/delegated-tool-invocations/{id}/execute":         "ExecutePrivateToolInvocation",
+	"POST /v1/delegated-tool-invocations/{id}/{action}":        "DispatchDelegatedToolInvocation",
+	"POST /v1/tool-invocations/{id}/{action}":                  "DispatchToolInvocation",
+	"POST /v1/tool-oauth-connections/{id}/authorization":       "AuthorizeToolOAuthConnection",
+	"POST /v1/tool-publications/{id}/outcome":                  "FinishToolPublication",
+	"POST /v1/tool-publications/{id}/verification":             "VerifyToolPublication",
+	"PUT /v1/delegated-tool-invocations/{id}":                  "BeginDelegatedToolInvocation",
+	"PUT /v1/tool-grants/{id}":                                 "PutToolGrant",
+	"PUT /v1/tool-invocations/{id}":                            "BeginToolInvocation",
+	"PUT /v1/tool-oauth-connections/{id}":                      "PutToolOAuthConnection",
+	"PUT /v1/tool-publications/{id}":                           "BeginToolPublication",
+	"PUT /v1/tool-publications/{id}/verification":              "DecideToolPublicationVerification",
 
 	// Customer support uses typed personal and organization methods.
 	"GET /v1/support/tickets":                                   "ListSupportTickets",
@@ -1094,6 +1134,15 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/flags":                        "ProjectFlags",
 	"PUT /v1/projects/{slug}/environments/{environment}/flags":                        "PublishProjectFlags",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":               "ProjectFlagVersions",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle":              "ProjectFlagLifecycle",
+	"GET /v1/projects/{slug}/environments/{environment}/experiments":                  "ListProjectFlagExperiments",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments":                 "CreateProjectFlagExperiment",
+	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}":            "GetProjectFlagExperiment",
+	"DELETE /v1/projects/{slug}/environments/{environment}/experiments/{key}":         "DeleteProjectFlagExperiment",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start":     "StartProjectFlagExperiment",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop":      "StopProjectFlagExperiment",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship":      "ShipProjectFlagExperiment",
+	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results":    "ProjectFlagExperimentResults",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":              "RollbackProjectFlags",
 	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":           "ResumeEnvironmentAutomation",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":         "InspectProjectFlag",
@@ -1101,6 +1150,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":         "ProjectFlagOutcomes",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote": "PromoteProjectFlagRollout",
 	"GET /v1/runtime/flags":                                                           "RuntimeFlags",
+	"POST /v1/runtime/flags/events":                                                   "RuntimeFlagEvents",
 	"GET /v1/previews":                                                                "ListPreviews",
 	"PUT /v1/previews/{key}":                                                          "JoinPreview",
 	"DELETE /v1/previews/{key}":                                                       "LeavePreview",
@@ -1289,6 +1339,21 @@ var methodRouteMap = map[string]string{
 	"GET /v1/outbound/integrations/{integration}/ai-prices":                            "GetOutboundIntegrationAIPrices",
 	"PUT /v1/outbound/integrations/{integration}/ai-prices":                            "SetOutboundIntegrationAIPrices",
 	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-budget":                    "SetOutboundBindingAIBudget",
+	"GET /v1/outbound/ai-prompts":                                                      "ListOutboundAIPrompts",
+	"GET /v1/outbound/ai-prompts/{prompt}":                                             "GetOutboundAIPrompt",
+	"DELETE /v1/outbound/ai-prompts/{prompt}":                                          "DeleteOutboundAIPrompt",
+	"GET /v1/outbound/ai-prompts/{prompt}/versions":                                    "ListOutboundAIPromptVersions",
+	"POST /v1/outbound/ai-prompts/{prompt}/versions":                                   "PushOutboundAIPromptVersion",
+	"GET /v1/outbound/ai-prompts/{prompt}/versions/{version}":                          "GetOutboundAIPromptVersion",
+	"PUT /v1/outbound/ai-prompts/{prompt}/live":                                        "SetOutboundAIPromptLive",
+	"POST /v1/outbound/ai-prompts/{prompt}/rollback":                                   "RollBackOutboundAIPrompt",
+	"PUT /v1/outbound/ai-prompts/{prompt}/canary":                                      "SetOutboundAIPromptCanary",
+	"POST /v1/outbound/ai-prompts/{prompt}/canary/promote":                             "PromoteOutboundAIPromptCanary",
+	"DELETE /v1/outbound/ai-prompts/{prompt}/canary":                                   "DeleteOutboundAIPromptCanary",
+	"GET /v1/outbound/ai-prompts/{prompt}/stats":                                       "GetOutboundAIPromptStats",
+	"POST /v1/outbound/ai-prompts/{prompt}/evaluations":                                "CreateOutboundAIPromptEvaluation",
+	"GET /v1/outbound/ai-prompts/{prompt}/evaluations":                                 "ListOutboundAIPromptEvaluations",
+	"GET /v1/outbound/ai-prompt-evaluations/{evaluation}":                              "GetOutboundAIPromptEvaluation",
 	"GET /v1/outbound/ai-routes":                                                       "ListOutboundAIRoutes",
 	"PUT /v1/outbound/ai-routes/{route}/canary":                                        "SetOutboundAIRouteCanary",
 	"GET /v1/outbound/ai-routes/{route}/canary":                                        "GetOutboundAIRouteCanary",
@@ -1436,6 +1501,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/deployments/{id}/schedule":                                  "ScheduleDeployment",
 	"DELETE /v1/deployments/{id}/schedule":                               "CancelDeploymentSchedule",
 	"GET /v1/apps/{slug}/database-switches":                              "ListDatabaseSwitches",
+	"POST /v1/apps/{slug}/database-switches":                             "CreateDatabaseSwitch",
 	"GET /v1/apps/{slug}/database-switches/{id}":                         "GetDatabaseSwitch",
 	"POST /v1/apps/{slug}/database-switches/{id}/cancel":                 "CancelDatabaseSwitch",
 	"PUT /v1/apps/{slug}/secrets/{key}":                                  "SetSecret",
@@ -1595,6 +1661,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/account/egress-overage":                             "SetEgressOverage",
 	"POST /v1/account/mfa/disable-email":                         "PostAccountMfaDisableEmail",
 	"POST /v1/account/mfa/disable-email/confirm":                 "PostAccountMfaDisableEmailConfirm",
+	"POST /v1/account/mfa/disable-email-cancel":                  "PostAccountMfaDisableEmailCancel", // literal hyphen; operationId mfaDisableEmailCancel (ADR-20261115100000)
 	// ADR-20261107103000 account flow routes.
 	"PATCH /v1/account":                              "SetDisplayName",
 	"GET /v1/account/sign-in-methods":                "SignInMethods",
@@ -1649,6 +1716,17 @@ var methodRouteMap = map[string]string{
 	"GET /v1/data/pipelines":                                                          "ListDataPipelines",
 	"GET /v1/data/pipelines/{id}":                                                     "GetDataPipeline",
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
+	"POST /v1/data/pipelines/{id}/schema-approval":                                    "ApproveDataPipelineSchema",
+	"POST /v1/data/pipelines/{id}/operations":                                         "ConfigureDataPipelineOperations",
+	"POST /v1/data/pipelines/{id}/evolution":                                          "EvolveDataPipeline",
+	"POST /v1/data/pipelines/{id}/tenant-readers":                                     "ChangeDataPipelineTenantReaders",
+	"POST /v1/data/pipeline-setups/plan":                                              "PlanDataPipelineSetup",
+	"POST /v1/data/pipeline-setups":                                                   "CreateDataPipelineSetup",
+	"GET /v1/data/pipeline-setups":                                                    "ListDataPipelineSetups",
+	"GET /v1/data/pipeline-setups/{id}":                                               "GetDataPipelineSetup",
+	"POST /v1/data/pipeline-setups/{id}/control":                                      "ControlDataPipelineSetup",
+	"POST /v1/data/pipelines/{id}/freshness":                                          "ConfigureDataPipelineFreshness",
+	"POST /v1/data/pipelines/{id}/indexes":                                            "ChangeDataPipelineIndexes",
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
@@ -1937,6 +2015,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/slos/{id}":    "GetSLO",
 	"DELETE /v1/apps/{slug}/slos/{id}": "DeleteSLO",
 	// ADR-748 synthetic checks are named after the resource noun.
+	"GET /v1/apps/{slug}/protection":                 "GetAppProtection",
+	"PUT /v1/apps/{slug}/protection":                 "SetAppProtection",
 	"GET /v1/apps/{slug}/synthetics":                 "ListSyntheticChecks",
 	"POST /v1/apps/{slug}/synthetics":                "CreateSyntheticCheck",
 	"GET /v1/apps/{slug}/synthetics/{id}":            "GetSyntheticCheck",
@@ -2522,7 +2602,9 @@ var methodRouteMap = map[string]string{
 	"POST /v1/admin/accounts/{id}/refunds": "RefundAccount",
 	// ADR-371 egress flow log lookup; the hyphenated path follows the
 	// operationId listEgressFlows.
-	"GET /v1/admin/egress-flows": "ListEgressFlows",
+	"GET /v1/admin/egress-flows":       "ListEgressFlows",
+	"GET /v1/admin/accounts/{id}/risk": "GetAccountRisk",
+	"GET /v1/admin/held-links":         "ListHeldLinks",
 	// ADR-361 account abuse hold. The literal hyphen in "abuse-hold" makes
 	// the auto-derived name an illegal Go identifier; the SDK follows the
 	// spec operationIds placeAccountAbuseHold / releaseAccountAbuseHold.
@@ -2833,11 +2915,17 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/members/{user_id}":    "ChangeOrgMemberRole",
 	"DELETE /v1/orgs/{slug}/members/{user_id}":   "RemoveOrgMember",
 	"POST /v1/orgs/{slug}/transfer_ownership":    "TransferOrgOwnership",
-	"GET /v1/orgs/{slug}/security-policy":        "GetOrgSecurityPolicy", // literal hyphen; follows operationId getOrgSecurityPolicy (ADR-20261113180000)
+	"GET /v1/orgs/{slug}/security-policy":        "GetOrgSecurityPolicy", // literal hyphen; follows operationId getOrgSecurityPolicy (ADR-20261114170352)
 	"PUT /v1/orgs/{slug}/security-policy":        "PutOrgSecurityPolicy", // follows operationId putOrgSecurityPolicy
 	"GET /v1/invitations/{token}":                "PeekInvitation",
 	"POST /v1/invitations/{token}/accept":        "AcceptInvitation",
 	"DELETE /v1/orgs/{slug}/invitations/{token}": "RevokeInvitation",
+	// Postgres change workers (ADR-20261112140000): literal hyphen; the SDK
+	// verbs follow the operationIds.
+	"GET /v1/apps/{slug}/postgres-changes":            "GetPostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes":            "PutPostgresChanges",
+	"DELETE /v1/apps/{slug}/postgres-changes":         "DeletePostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes/connection": "PutPostgresChangesConnection",
 	// PR-8 §2 — cursor-paginated list of every invitation minted on
 	// the org (pending/consumed/revoked/expired). Auto-derivation
 	// yields "GetOrgsSlugInvitations" which reads as a singleton

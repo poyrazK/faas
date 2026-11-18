@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -68,5 +69,22 @@ func TestSynchronousDurableHandlersObserveLostDeliveryOwnership(t *testing.T) {
 				t.Fatal("synchronous handler ignored delivery cancellation")
 			}
 		})
+	}
+}
+
+// A peer's deferrals spread across one poll interval, so the reopening does
+// not keep landing just before the same peer's next tick.
+func TestPeerDeferralDelayIsJittered(t *testing.T) {
+	base, poll := db.NotificationRetryDelay(1), db.NotificationOutboxPollInterval()
+	seen := map[time.Duration]bool{}
+	for range 64 {
+		d := peerDeferralDelay()
+		if d < base || d >= base+poll {
+			t.Fatalf("delay %s outside [%s, %s)", d, base, base+poll)
+		}
+		seen[d/(poll/4)] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("64 deferrals all fell in one quarter of the poll interval: %v", seen)
 	}
 }

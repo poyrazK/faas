@@ -50,12 +50,19 @@ func (m *MemStore) BeginAppParkTransitionIfDeployment(ctx context.Context, appID
 		return AppParkTransition{}, false, nil
 	}
 
+	retirement, err := m.prepareTaskRetirementParkLocked(ctx, appID, deploymentID)
+	if err != nil {
+		return AppParkTransition{}, false, err
+	}
 	for id, previous := range m.appParkTransitions {
 		if previous.AppID == appID {
 			delete(m.appParkTransitions, id)
 		}
 	}
 	id := uuid.NewString()
+	if retirement != nil {
+		id = retirement.Execution.Recovery.Retirement.ParkTransitionID
+	}
 	now := time.Now().UTC()
 	transition := memAppParkTransition{
 		AppParkTransition: AppParkTransition{ID: id, AppID: appID},
@@ -67,6 +74,10 @@ func (m *MemStore) BeginAppParkTransitionIfDeployment(ctx context.Context, appID
 	changed := app.Status != AppEvictedCold
 	app.Status = AppEvictedCold
 	m.apps[appID] = app
+	if retirement != nil {
+		g := retirementGuardFrom(ctx)
+		m.taskToolReleaseIntents[g.account+":"+g.intent] = cloneTaskToolRelease(*retirement)
+	}
 	return transition.AppParkTransition, changed, nil
 }
 

@@ -1,5 +1,9 @@
 # Install the SDKs
 
+For private live progress on typed Jobs and file pipelines, see
+[live job views](sdk-live-jobs.md) and the
+[CSV application example](../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).
+
 Gregale's application SDKs (code-first workflows, realtime, operations,
 feature flags) are not on npm or PyPI yet. Install them from Gregale's SDK
 repositories as shown below. Until this page says otherwise, a package on a
@@ -15,14 +19,19 @@ public registry under a similar name is not Gregale's.
 > That name on PyPI belongs to an unrelated company's package. Gregale's
 > Python SDK is distributed as `gregale-sdk` and imported as `faas_sdk`.
 
-Pin a commit (or a release tag) rather than `main`, so a rebuild installs the
-same SDK. Replace `<commit>` with a full commit SHA from the SDK's repository.
+There are no release tags yet. Each install below pins what it installs (Go
+in `go.mod`, Python by commit, Node as a tarball you commit), so a rebuild
+installs the same SDK. Repeat it to upgrade.
 
 ## Go
 
 ```sh
-go get github.com/gregale-dev/gregale-go@<commit>
+go get github.com/gregale-dev/gregale-go@latest
 ```
+
+`go get` writes the exact version to `go.mod` and `go.sum`. Until the SDK is
+tagged, that version is a pseudo-version of the newest commit
+(`v0.0.0-<date>-<commit>`).
 
 ```go
 import faas "github.com/gregale-dev/gregale-go"
@@ -30,7 +39,11 @@ import faas "github.com/gregale-dev/gregale-go"
 
 ## Python
 
+Look up the newest commit, then install it, replacing `<commit>` with the full
+SHA the first command prints:
+
 ```sh
+git ls-remote https://github.com/gregale-dev/gregale-python refs/heads/main
 pip install 'gregale-sdk @ git+https://github.com/gregale-dev/gregale-python@<commit>'
 ```
 
@@ -40,8 +53,8 @@ Optional extras use the same reference:
 pip install 'gregale-sdk[realtime] @ git+https://github.com/gregale-dev/gregale-python@<commit>'
 ```
 
-In `requirements.txt`, use the same line without `pip install`. Import the
-package as `faas_sdk`:
+In `requirements.txt` or `pyproject.toml`, use the same requirement without
+`pip install`. Import the package as `faas_sdk`:
 
 ```python
 from faas_sdk.workflows import serve_workflows, workflow
@@ -50,14 +63,21 @@ from faas_sdk.workflows import serve_workflows, workflow
 ## Node
 
 npm cannot install a package from a subdirectory of a Git repository, so
-build a tarball once and install it from your project:
+build a tarball once:
 
 ```sh
-git clone https://github.com/gregale-dev/gregale-js gregale-js
-cd gregale-js && git checkout <commit>
-cd packages/sdk-node && npm ci && npm run build && npm pack
-# in your project
-mkdir -p packages && cp /path/to/gregale-js/packages/sdk-node/gregale-sdk-node-*.tgz packages/gregale-sdk.tgz
+git clone --depth 1 https://github.com/gregale-dev/gregale-js
+cd gregale-js/packages/sdk-node
+npm ci --ignore-scripts
+npm run build
+npm pack --ignore-scripts
+```
+
+Then add it to your project:
+
+```sh
+mkdir -p packages
+cp /path/to/gregale-js/packages/sdk-node/gregale-sdk-node-*.tgz packages/gregale-sdk.tgz
 npm install ./packages/gregale-sdk.tgz
 ```
 
@@ -67,6 +87,9 @@ deploy installs the same SDK. Import it as `@gregale/sdk-node`:
 ```js
 import { defineWorkflow, serveWorkflows } from '@gregale/sdk-node/workflows';
 ```
+
+The starters from `gregale init` that use the Node SDK expect the tarball at
+the same path, `packages/gregale-sdk.tgz`.
 
 For control-plane API calls, use an independent client per account or agent:
 

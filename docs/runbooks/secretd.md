@@ -20,6 +20,40 @@ compute nodes can stop holding the runtime seal domain's identity.
    `journalctl -u faas-secretd` shows `secretd: serving` with
    `identities=1` (2 during a rotation).
 
+## Staged PostgreSQL credential verification
+
+Managed PostgreSQL cutover and restore rollback verify staged credentials
+through `VerifyPostgresCutover`. The dedicated `apid-postgres-verifier.faas`
+client can request a read-only SQL probe for a live leased cutover; it cannot
+open application secrets or receive a connection string. secretd checks the
+stored target, envelope digest, account binding and fingerprint, then records
+`secret_verification_audit` before opening the envelope.
+
+Roll out in this order:
+
+1. Apply migration `20261114190000002_secret_verification_audit.sql` and the
+   runtime-role grants before activating the new verifier.
+2. Deploy secretd and converge `secretd_service`. It issues both the server
+   leaf and `/etc/faas/tls/secretd-verifier/apid.{crt,key}`, and loads the
+   control plane's `/etc/faas/secrets/host.hmac.key` with
+   `FAAS_SECRETD_POSTGRES_HMAC_KEY`. This must be the same fingerprint key
+   used by the local apid; do not route these probes to a different host
+   with a different fingerprint key.
+3. Deploy apid with the role's `51-faas-postgres-verifier.conf` drop-in. It
+   sets `FAAS_APID_SECRETD_TARGET` and its three `FAAS_APID_SECRETD_TLS_*_PATH`
+   variables. apid retains local verification for historical fleet-encrypted
+   envelopes and delegates runtime-domain envelopes to secretd.
+4. Verify a temporary cutover and restore rollback. Successful probes add
+   `secret_verification_audit` rows and increment
+   `faas_secretd_opens_total{rpc="VerifyPostgresCutover",via="verification"}`.
+   Refusals increment `faas_secretd_refusals_total` for that RPC. Missing TLS,
+   key, audit access or an expired lease fails verification before promotion.
+
+Keep the audit migration when rolling binaries back. Removing the apid
+drop-in restores the historical fleet-only verification path; runtime-domain
+cutovers require the new verifier. This change does not stage the private
+runtime identity in apid.
+
 ## Turn it on for a compute node (slice 3c-1)
 
 Prerequisite: `faas_seal_domain_runtime_binding_required: true` on compute
@@ -187,15 +221,48 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
    rising means a node pulled for an app it neither owns, holds a grant for,
    nor prepares an image of: find the path in imaged's journal before
    turning on more nodes. Then the rest of compute.
-3. **Builder VMs** come with slice 3j-3. Job images pull through secretd
-   with the same switch (3j-2b).
+3. **Builder VMs (slice 3j-3), one node first:** set
+   `faas_vmmd_build_registry_mirror: true` on one compute node (needs
+   `faas_secretd_target`) and converge it; vmmd logs `builder VMs pull private
+   registries through secretd`. A Dockerfile build on that node whose app has
+   a registry credential now gets no Docker config: guest-init forwards
+   `127.0.0.1:15000+i` to vmmd on vsock, BuildKit lists those as the
+   registries' mirrors, and vmmd pulls each request through secretd by build
+   id. secretd admits only the node that claimed the running build
+   (`builds.builder_node_name`, recorded at the claim; with per-node database
+   logins the claim records it and no other node can change it). Run a build
+   `FROM` a private base image and check it succeeds and
+   `faas_secretd_opens_total{rpc="RegistryFetch"}` rises; a
+   `not_authorized` refusal for a build means the claim recorded no node
+   (builderd logs `record the build's node`). Then the rest of compute. Once
+   every node runs it, no compute daemon opens a registry password, and the
+   build identity can leave compute ("Take the build identity off compute"
+   below). Job images pull through secretd with imaged's switch (3j-2b).
+
+   Known limit: secretd finds a credential by the registry URL's exact host,
+   so a Docker Hub credential stored as `docker.io` is not used for
+   `registry-1.docker.io` pulls (as for imaged's pulls, 3j-2).
+4. **Builds pull only what their Dockerfiles name (slice 3j-4).** When apid
+   accepts a source deploy it records, in `deployments.build_registry_scope`,
+   the image repositories every Dockerfile in the source names (`FROM`,
+   `COPY --from`, `RUN --mount from=`, ARG defaults and Compose build args
+   expanded). The column never changes, and a per-node compute login cannot
+   record one. secretd checks each build pull against it per
+   `faas_secretd_build_registry_scope`: `observe` (the default) counts
+   `faas_secretd_build_registry_scope_total{result}` and logs `build registry
+   pull outside its deployment's scope`, refusing nothing; `enforce` refuses
+   (`faas_secretd_refusals_total{reason="out_of_scope"}`). Watch observe for a
+   few days: `out_of_scope` means a build pulled a repository its Dockerfiles
+   do not name (an ARG the parser could not resolve, a Dockerfile under an
+   unusual name); `unrecorded` means a deployment created without apid's
+   source path (GitOps candidates, older rows). Turn on enforce once both stay
+   at 0 for real builds; a node that claims another app's build then gets at
+   most that build's own base images. Back out by setting `observe` again.
 
 ## Take the edge and delivery identities off compute
 
 Once slices 3f–3i run on every compute node, nothing on compute needs the
-edge or delivery identity. The build identity stays until builder VMs pull
-through the control plane (slice 3j-3): vmmd still opens builder registry
-passwords with it.
+edge or delivery identity. The build identity has its own section below.
 
 **Edge, per node.** Prerequisites: `faas_seal_domain_edge_contracted: true`
 (the fleet identity also opens edge values), `faas_gateway_secretd_log_drains:
@@ -232,6 +299,143 @@ including nodes that join later, as retired. The control plane keeps both.
 Back out a node by setting its switch to false and converging: the role
 stages the identity again and the daemon restarts with it. With the CD
 variable on, unset it first.
+
+## Take the build identity off compute (slice 3g-3)
+
+Once imaged (3j-2) and builder VMs (3j-3) pull private registries through
+secretd on every compute node, nothing on compute needs the build identity.
+
+**Per node.** Prerequisites: `faas_seal_domain_build_contracted: true` and
+`faas_seal_domain_runtime_contracted: true` (imaged and vmmd without the
+fleet and host identities, which also open registry passwords),
+`faas_imaged_secretd_registry_pulls: true`,
+`faas_vmmd_build_registry_mirror: true`, `faas_secretd_target`, and
+`SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true`, so secretd holds the identity. Set
+`faas_seal_domain_build_retired_on_compute: true` for the node and converge
+(`--limit`). The role removes `build.age` and `build.age.previous`, stops
+publishing the build probe from the node, gives imaged
+`FAAS_SEAL_DOMAIN_BUILD_RETIRED=true` (and restarts it without any build,
+fleet or host credential) and gives vmmd the same switch. vmmd still holds
+the identity it loaded, so **drain the node and restart vmmd**. Check:
+imaged logs `build identity retired on this node` and the converge proves its
+credentials hold no build, fleet or host identity; vmmd logs `vmmd: build
+identity retired`; either refuses to start if its secretd path is off or a
+build identity is back. A private-image deploy and a Dockerfile build `FROM`
+a private base image both still succeed on the node.
+
+**Fleet-wide (CD).** Once every compute node is retired, set the GitHub
+environment variable `SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=true` (needs
+`SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true`). cd-compute is then not handed the
+build identity, does not fetch it from the escrow, and marks every node,
+including nodes that join later, as retired. The control plane keeps it for
+secretd.
+
+Back out a node by setting its switch to false and converging: the role
+stages the identity again; restart vmmd to load it. With the CD variable on,
+unset it first.
+
+## Seal park and warm snapshots at the source (slice 3d-3)
+
+Off by default. With it on, vmmd publishes a park or warm capture only as
+age-encrypted `.age` twins and returns the capture key sealed to the runtime
+recipient; imaged records it on the snapshot row (`snapshots.sealed_key`,
+`sealed_capture_id`); a wake hands it back and vmmd opens it through
+secretd's `OpenCaptureKey` (cached per node for 10 minutes). A node's
+object-store credentials then neither read another app's snapshot memory
+nor rewrite it undetected. A snapshot that cannot be opened cold boots
+(ADR-005).
+
+1. **Before.** Every vmmd runs a release with `SnapshotRef.sealed_cache`
+   (a vmmd without it treats a sealed snapshot as a crash capture and fails
+   the wake instead of cold booting). On a node with the runtime identity
+   retired (slice 3e), vmmd must open keys through secretd
+   (`faas_vmmd_secretd_open`).
+   **Fast sealed wakes (slice 3d-5).** The first metal run (2026-11-16)
+   measured sealed wakes at 6.6–7.4 s against 1.15 s unsealed, because each
+   wake decrypted the whole memory file. Once every vmmd runs a release that
+   reads the chunked format, set on every vmmd:
+   - `FAAS_VMMD_SEALED_FORMAT=v2`: captures are written in 4 MiB chunks
+     with zero chunks left out, and a wake opens them in parallel;
+   - `FAAS_VMMD_SEALED_PLAIN_CACHE_DIR=/var/lib/faas/sealed-plain` (and
+     `FAAS_VMMD_SEALED_PLAIN_CACHE_MB`, default 20480): a node keeps one
+     decrypted copy of each sealed snapshot it restored, so only its first
+     wake per capture decrypts and later wakes link the copy like an
+     unsealed snapshot. Plaintext is only ever on a node that restored the
+     app; unused copies expire after 24 h.
+   Then run `make test-metal` and `make leakcheck` on a native KVM host, and
+   measure the restore p95 on the reference node with sealing on, first
+   wakes and repeat wakes separately: repeat wakes must stay under 350 ms.
+2. **Turn on.** Set `FAAS_SCHEDD_SEAL_SNAPSHOTS=1` for schedd and restart
+   it. Check: schedd logs `schedd: park and warm snapshots sealed at the
+   source`; new rows carry a key
+   (`select count(*) filter (where sealed_key is not null), count(*) from
+   snapshots where not stale and created_at > now() - interval '1 hour'`);
+   `faas_secretd_opens_total{rpc="OpenCaptureKey"}` rises with sealed wakes.
+   Plaintext rows are recaptured sealed at their next park instead of being
+   reused; until then they stay plaintext.
+3. **Not covered.** Captures under Application Standard native admission
+   (measured) and the execution runtime catalog stay plaintext. Encrypted
+   memory does not compress or share pages across snapshots: watch
+   `snapshot_fleet_avg_mb`.
+
+Turn it off by unsetting the variable: new captures are plaintext again and
+sealed rows still restore while the runtime recipient's identity is served.
+## Internal-service tokens from secretd (slice 3k)
+
+Compute schedds normally sign the internal-service tokens they attach for
+internal_only apps (ADR-119) with the cluster key, which every compute node
+can open. With slice 3k they ask secretd instead, for each app they own or
+hold a grant for, and need no cluster key.
+
+1. **Control plane.** The control domain identity must be staged on the
+   control plane (`/etc/faas/secrets/domains/control.age`, which the CP
+   schedd already reads). Converge secretd_service. The unit gains
+   `FAAS_SECRETD_CONTROL_IDENTITY`, and after a restart secretd mints. Check:
+   from a compute node, a dispatch to an internal_only app still succeeds
+   after step 2, and
+   `faas_secretd_opens_total{rpc="MintInternalServiceToken"}` rises.
+2. **One compute node.** Set `FAAS_SCHEDD_INTERNAL_SVC_MINTER=secretd` for
+   its schedd. It needs `FAAS_SCHEDD_SECRETD_TARGET`. Workflow outbound
+   (`FAAS_WORKFLOW_OUTBOUND_ENABLED=1`) refuses to start on such a schedd.
+   Restart schedd. Check:
+   - The journal shows `schedd: internal-service tokens minted by secretd`.
+   - Internal_only cron and trigger dispatches still pass.
+   - `faas_secretd_refusals_total{rpc="MintInternalServiceToken"}` stays
+     flat. A rise means the node dispatches for an app it neither owns nor
+     holds a grant for.
+3. **Gateways.** From this release on, both internal-only gates refuse a
+   token minted for another app, with audit reason `app_mismatch`. A legacy
+   token without an `app_id` passes as before.
+
+Back out a node by unsetting the variable and restarting schedd.
+
+### Take the control identity off compute (slice 3k-2)
+
+After step 2 holds on every compute node, the node no longer needs the
+cluster signing key at all.
+
+1. **Every compute node mints through secretd.** In Ansible, set
+   `faas_schedd_secretd_internal_svc: true` for each compute host and
+   converge. Workflow outbound (if enabled) now mints through secretd too.
+   Check that `faas_secretd_opens_total{rpc="MintWorkflowIdentity"}` rises
+   when outbound steps run and that refusals stay flat.
+2. **schedd's contract step is done.** `faas_seal_domain_control_contracted`
+   and `faas_seal_domain_delivery_contracted` are true, so no fleet identity
+   is loaded. The role refuses the retirement without it.
+3. **Retire.** Set the GitHub environment variable
+   `SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE=true` and run cd-compute. Each
+   node loses `control.age`, its previous twin and its probe result, and
+   schedd starts with `FAAS_SEAL_DOMAIN_CONTROL_RETIRED=true`. Check:
+   - the journal shows `control identity retired on this node`;
+   - compute schedds export no `faas_seal_domain_loaded{domain="control"}`
+     series (a retired domain is left out, so FaasSealDomainIdentityMissing
+     stays quiet) and the control plane's schedd reports 1;
+   - internal_only dispatches and workflow outbound steps still pass.
+
+A schedd that refuses to start names what is left (a minter that is not
+secretd, a control identity, or a fleet identity). Back out by unsetting the
+variable and running cd-compute again: the identity comes back with the next
+converge.
 
 ## Rotation
 

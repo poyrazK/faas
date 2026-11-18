@@ -500,6 +500,17 @@
     group: root
     mode: "0644"
 
+# Prod findings 2026-11-15 #25: the capability list follows whether the edge
+# runs tcpd/udpd. Rendered unconditionally so turning them off clears it.
+- name: control_plane_service — tell apid whether TCP/UDP listeners are served
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-listeners.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-listeners.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into every control-plane unit so the multi-box identity
 # travels from host_vars to the daemons without a TOML edit on every
@@ -735,6 +746,20 @@
     state: absent
   register: faas_app_errors_dropin_removed
   when: faas_apid_app_errors_listen | default('') | length == 0
+
+- name: control_plane_service — install the v2-only artifact signature switch
+  notify:
+    - restart faas-schedd
+    - restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-artifact-signatures.conf.j2
+    dest: "/etc/systemd/system/{{ item }}.service.d/zz-faas-artifact-signatures.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-schedd
+    - faas-apid
 
 - name: control_plane_service — install split-box schedd routing drop-in
   notify: restart faas-schedd

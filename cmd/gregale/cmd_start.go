@@ -207,6 +207,12 @@ func startTemplateAllowed(name string) bool {
 func (r *startRunner) selectSource() int {
 	PrintProgress(osStdout, "2/4 · Find your app")
 	root := r.session.ScopePath
+	if slug, err := privateNodeStarterName(root); err != nil {
+		return printErr("Could not read Compose source", err)
+	} else if slug != "" {
+		r.selectPrivateNodeSource(root, slug)
+		return 0
+	}
 	if n := projectWorkloadCount(root); n >= 2 {
 		choice, err := r.prompt.choose(r.ctx, fmt.Sprintf("This directory has %d services. What would you like to deploy?", n),
 			[]string{"All of them, as one project", "One service"}, 0)
@@ -237,11 +243,11 @@ func (r *startRunner) selectSource() int {
 	case 0:
 		path = root
 	case 1:
-		n, err := r.prompt.choose(r.ctx, "Pick a starter. You keep a local copy to edit.", []string{"Node.js HTTP app", "Python HTTP app", "Go HTTP app"}, 0)
+		n, err := r.prompt.choose(r.ctx, "Pick a starter. You keep a local copy to edit.", []string{"Node.js HTTP app", "Python HTTP app", "Go HTTP app", "Private Node.js HTTP app (Free plan)"}, 0)
 		if err != nil {
 			return startInputExit(err)
 		}
-		template = []string{"hello-node", "hello-python", "hello-go"}[n]
+		template = []string{"hello-node", "hello-python", "hello-go", templates.PrivateNode}[n]
 	case 2:
 		path, err = r.requiredLocalPath("Project directory")
 		if err != nil {
@@ -266,6 +272,15 @@ func (r *startRunner) selectSource() int {
 		if err := os.MkdirAll(abs, 0o755); err != nil {
 			return printErr("Could not create starter directory", err)
 		}
+		if template == templates.PrivateNode {
+			slug := sanitizeSlug(filepath.Base(abs))
+			if err := templates.MaterializePrivateNode(abs, slug); err != nil {
+				return printErr("Could not create starter", err)
+			}
+			PrintOK(osStdout, "Starter ready in %s", abs)
+			r.selectPrivateNodeSource(abs, slug)
+			return 0
+		}
 		if err := templates.Materialize(template, abs); err != nil {
 			return printErr("Could not create starter", err)
 		}
@@ -273,6 +288,12 @@ func (r *startRunner) selectSource() int {
 	}
 	info, err := os.Stat(abs)
 	if template == "" && err == nil && info.IsDir() {
+		if slug, err := privateNodeStarterName(abs); err != nil {
+			return printErr("Could not read Compose source", err)
+		} else if slug != "" {
+			r.selectPrivateNodeSource(abs, slug)
+			return 0
+		}
 		selected, err := r.selectProjectSource(abs)
 		if err != nil {
 			return startInputExit(err)
@@ -379,6 +400,9 @@ func (r *startRunner) reviewAndDeploy() (int, bool) {
 }
 
 func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
+	if r.session.Template == templates.PrivateNode {
+		return r.deployPrivateNode()
+	}
 	if r.session.PendingSubmission != nil {
 		return printErr("A source submission still needs recovery", errors.New("run gregale start again to recover the pending launch before deploying another revision")), false
 	}
@@ -592,6 +616,12 @@ func (r *startRunner) terminal(dep api.DeploymentResponse) int {
 }
 
 func (r *startRunner) resume() int {
+	if r.session.ProjectSessionID != "" {
+		if err := r.recoverPrivateNodeApply(); err != nil {
+			r.printRecovery()
+			return printErr("Could not recover project submission", err)
+		}
+	}
 	if r.session.PendingSubmission != nil {
 		if err := r.recoverStartSubmission(); err != nil {
 			r.printRecovery()
@@ -599,7 +629,11 @@ func (r *startRunner) resume() int {
 		}
 	}
 	PrintProgress(osStdout, "Resume · %s (deployment %s)", r.session.AppSlug, r.session.DeploymentID)
-	if err := r.verifyStartProject(r.ctx, r.client); err != nil {
+	verifyTarget := r.verifyStartProject
+	if r.session.Template == templates.PrivateNode {
+		verifyTarget = r.verifyPrivateNodeTarget
+	}
+	if err := verifyTarget(r.ctx, r.client); err != nil {
 		return printErr("Could not recover linked target", err)
 	}
 	app, err := r.getLaunchApp(r.ctx, r.client, r.session.AppSlug)
@@ -636,6 +670,12 @@ func (r *startRunner) resume() int {
 }
 
 func (r *startRunner) printRecovery() {
+	if r.session.ProjectSessionID != "" {
+		PrintProgress(osStdout, "Check the pending project launch: %s start %s", recoveryCLI(), recoveryArgument(r.session.ScopePath))
+		PrintProgress(osStdout, "Inspect its receipt: %s release resume %s", recoveryCLI(), recoveryArgument(r.session.ProjectSessionID))
+		r.printPreviouslyVerified()
+		return
+	}
 	if pending := r.session.PendingSubmission; pending != nil {
 		PrintProgress(osStdout, "Check the pending launch: %s start %s", recoveryCLI(), recoveryArgument(r.session.ScopePath))
 		PrintProgress(osStdout, "Inspect app history: %s deployments --app %s", recoveryCLI(), recoveryArgument(r.session.AppSlug))
@@ -712,8 +752,20 @@ func (r *startRunner) finish() {
 		PrintWarn(osStdout, "App is live, but its local default could not be saved: %v", err)
 	}
 	cli, source, app := recoveryCLI(), recoveryArgument(r.session.SourcePath), recoveryArgument(r.session.AppSlug)
-	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Update: %s deploy --path %s --source=worktree --name %s --environment=%s\n  Logs:   %s logs %s --deployment %s --follow\n", cli, source, app, recoveryArgument(r.session.Environment), cli, app, recoveryArgument(r.session.DeploymentID))
-	if r.session.Environment == "" {
+	update := fmt.Sprintf("%s deploy --path %s --source=worktree --name %s --environment=%s", cli, source, app, recoveryArgument(r.session.Environment))
+	if r.session.Template == templates.PrivateNode {
+		update = fmt.Sprintf("%s start %s", cli, recoveryArgument(r.session.ScopePath))
+	}
+	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Update: %s\n  Logs:   %s logs %s --deployment %s --follow\n", update, cli, app, recoveryArgument(r.session.DeploymentID))
+	// A public app checked through the account (its response lacked a
+	// deployment header) is still publicly reachable, so it keeps the Open line.
+	if r.session.Template == templates.PrivateNode || r.lastRequest != nil && r.lastRequest.private && !r.lastRequest.publicDeploymentCheck {
+		path := r.suggestedRequestPath()
+		if r.lastRequest != nil {
+			path = r.lastRequest.path
+		}
+		_, _ = fmt.Fprintf(osStdout, "  Test:   %s\n", deploymentResponseCheckCommand(r.session.AppSlug, r.session.DeploymentID, path, r.session.ProjectID, r.session.EnvironmentID))
+	} else if r.session.Environment == "" {
 		_, _ = fmt.Fprintf(osStdout, "  Open:   %s open %s\n", cli, app)
 	} else if r.lastRequest != nil && r.lastRequest.httpStatus != 0 && !r.lastRequest.private {
 		_, _ = fmt.Fprintf(osStdout, "  Open URL: %s\n", startResponseText(r.lastRequest.appURL))

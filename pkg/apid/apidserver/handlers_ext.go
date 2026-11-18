@@ -2188,11 +2188,12 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// (spec §9: row goes to AppDeleted, snapshot GC follows on
 	// the grace sweeper). data carries the slug so the
 	// audit row is searchable even after the row soft-deletes.
-	s.audit.Emit(r.Context(), "app.deleted", &acct.ID, map[string]any{
+	deleted := map[string]any{
 		"app_id":             parked.ID,
 		"slug":               parked.Slug,
 		"delete_grace_until": parked.DeleteGraceUntil,
-	})
+	}
+	s.audit.EmitAs(r.Context(), requestAuditActor(r, acct.ID, deleted), "app.deleted", &acct.ID, deleted)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2211,10 +2212,21 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
+	if app.Status == state.AppDeleted {
+		// The configuration read below excludes deleted apps; answer the
+		// final state instead of a 503 that a deploy wait retries forever.
+		api.WriteProblem(w, api.ErrAppDeleted(app.Slug))
+		return
+	}
 	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
 	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
 		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such deployment")
+			return
+		}
 		if err != nil {
+			s.log.Error("read deployment configuration status", "deployment_id", d.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
 			return
 		}
@@ -2720,7 +2732,7 @@ func rollbackEnvironmentAmbiguousProblem(appSlug string) *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"More than one environment serves this app",
 		fmt.Sprintf("the app serves in several environments and none is production, so a plain rollback cannot tell which one to restore. Name the release: gregale rollback %s --to <deployment|vN>", appSlug)).
-		WithDocs("https://gregale.dev/docs/deploys#rollback")
+		WithDocs("https://gregale.dev/docs/deploys#revisions")
 }
 
 // trafficSplit describes a scope whose traffic more than one deployment
@@ -2782,12 +2794,12 @@ func rollbackDuringTrafficSplitProblem(appSlug string, split trafficSplit) *api.
 		return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 			"A release is still rolling out",
 			fmt.Sprintf("the newest release is still rolling out, so traffic is split and there is no single previous release to roll back to. Stop the rollout and return its traffic to the release it replaced: gregale rollouts recover %s --action abort", appSlug)).
-			WithDocs("https://gregale.dev/docs/deploys#rollback")
+			WithDocs("https://gregale.dev/docs/deploys#revisions")
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"Traffic is split between deployments",
 		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, split.earlier)).
-		WithDocs("https://gregale.dev/docs/deploys#rollback")
+		WithDocs("https://gregale.dev/docs/deploys#revisions")
 }
 
 // rollbackAppCore performs the shared rollback state transition for the REST
@@ -3426,7 +3438,7 @@ func minInstancesAboveMaxConcurrency(minInstances, appMax int) *api.Problem {
 		"Invalid min_instances",
 		fmt.Sprintf("min_instances (%d) exceeds this app's max_concurrency (%d); raise max_concurrency or lower min_instances.", minInstances, appMax)).
 		WithLimit(int64(appMax), int64(minInstances)).
-		WithDocs("https://gregale.dev/docs/apps#min-instances")
+		WithDocs("https://gregale.dev/docs/scale-to-zero#opting-out-keep-n-instances-warm-pro-scale")
 }
 
 func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool, error) {
@@ -5138,21 +5150,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
 		return
 	}
-	// IAM-5: expiry policy. Non-admin scopes get a 365-day
-	// expires_at (spec: "set-and-forget" CI rotation, plus a
-	// bounded exposure window for exfiltrated keys). Admin keys
-	// default to nil expiry (legacy admin semantics — never
-	// expire, must be explicitly revoked). The customer can
-	// rotate an admin key with grace=0 to opt into finite expiry.
-	var expiresAt *time.Time
-	if !slices.Contains(scopes, api.ScopeAdmin) {
-		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
-		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
-		if slices.Contains(scopes, api.ScopeAgent) {
-			t = time.Now().UTC().Add(api.AgentKeyLifetime)
-		}
-		expiresAt = &t
-	}
+	expiresAt := api.NewAPIKeyExpiry(scopes, time.Now())
 	// PR 6 (issue #190 / IAM-6) dual-write: the legacy /v1/keys
 	// POST persists the key against the caller's personal org
 	// so api_keys.org_id is populated (the 00127 NOT NULL flip).
@@ -5401,20 +5399,12 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// cache keeps the per-rotation handler off a hot PG path;
 	// admin updates invalidate the cache and propagate on the
 	// next rotation.
-	var graceWindow time.Duration
-	gw, err := s.resolveGraceWindow(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve grace window"))
+	var req api.RotateKeyRequest
+	_ = decodeJSON(r, &req)
+	graceWindow, graceWindowDays, prob := s.rotationGraceWindow(r.Context(), acct.ID, req.GraceWindowDays)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
-	}
-	if gw == nil {
-		graceWindow = time.Duration(api.DefaultAPIKeyGraceWindowDays) * 24 * time.Hour
-	} else {
-		graceWindow = time.Duration(*gw) * 24 * time.Hour
-	}
-	var graceWindowDays int
-	if graceWindow > 0 {
-		graceWindowDays = int(graceWindow / (24 * time.Hour))
 	}
 
 	// Mint the new plaintext + hash BEFORE the rotation so the
@@ -5532,6 +5522,29 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // in-process cache, falling back to the store on a miss. The
 // handler is the only caller; nil-safe when the cache is nil
 // (legacy tests that pre-date the cache field).
+// rotationGraceWindow is how long a rotated key keeps working: override when
+// the caller set one for this rotation (0 revokes the old key at once), else
+// the account's setting, else the plan default.
+func (s *server) rotationGraceWindow(ctx context.Context, accountID string, override *int) (time.Duration, int, *api.Problem) {
+	days := override
+	if days != nil && (*days < 0 || *days > api.APIKeyGraceWindowMaxDays) {
+		return 0, 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid grace window",
+			fmt.Sprintf("grace_window_days must be between 0 and %d; got %d", api.APIKeyGraceWindowMaxDays, *days))
+	}
+	if days == nil {
+		gw, err := s.resolveGraceWindow(ctx, accountID)
+		if err != nil {
+			return 0, 0, api.ErrCapacity("could not resolve grace window")
+		}
+		days = gw
+	}
+	n := api.DefaultAPIKeyGraceWindowDays
+	if days != nil {
+		n = *days
+	}
+	return time.Duration(n) * 24 * time.Hour, n, nil
+}
+
 func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
 	var days *int
 	var err error
@@ -6382,6 +6395,11 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// (provider redelivery) and rows in suspended/deleted_pending
 		// (no business flipping state backwards), both of which we
 		// swallow as no-ops.
+		if acct.MovedToFreeForNonpayment() {
+			// Already moved to Free for this unpaid balance (R9-1): the
+			// old subscription's retries must not restart the ladder.
+			return nil
+		}
 		if err := s.store.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				s.log.Debug("apid: payment_failed on already-advanced account",
@@ -6418,6 +6436,9 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// exactly once on the first delivery (EventPaymentFailed
 		// or this branch, whichever lands first). Emitting twice
 		// would double-mail customers.
+		if acct.MovedToFreeForNonpayment() {
+			return nil // already on Free for this unpaid balance (R9-1)
+		}
 		if err := s.store.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				s.log.Debug("apid: subscription_past_due on already-advanced account",
@@ -6431,6 +6452,12 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 	case billing.EventPaymentSucceeded:
 		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested() && !orgBillingSubject(acct))
 	case billing.EventSubscriptionUpdated:
+		if acct.MovedToFreeForNonpayment() && ev.SubscriptionID == acct.StripeSubscriptionItem {
+			// On Free for non-payment (R9-1): an update to the unpaid
+			// subscription does not re-bind its paid plan; its payment
+			// (EventPaymentSucceeded) restores the account.
+			return nil
+		}
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
 				return fmt.Errorf("store updated subscription id: %w", err)
@@ -8114,6 +8141,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	// `current` field maps straight through without a string copy.
 	announced := make(map[state.StageName]string)
 	var lastStageStateRaw []byte
+	lastLogSeq := initialDeploymentLogSeq(ctx, s.store, id, page, beforeSeq)
 
 	// A deployment that already finished has nothing to tail. End now
 	// rather than at the first status poll: the dashboard's release
@@ -8194,8 +8222,12 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// superseded rows used to keep it open until the 10-min
 			// backstop, so a waiting `gregale deploy` sat on a
 			// cancelled build for minutes (H10-48).
+			lastLogSeq = tailDeploymentLogs(ctx, w, flusher, s.store, id, lastLogSeq)
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
 				if deploymentLogTailDone(d2.Status) {
+					// Rows written between the tail above and the
+					// terminal flip.
+					_ = tailDeploymentLogs(ctx, w, flusher, s.store, id, lastLogSeq)
 					endDeploymentLogStream(w, flusher, d2, announced, &lastStageStateRaw)
 					return
 				}

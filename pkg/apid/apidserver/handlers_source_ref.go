@@ -289,6 +289,9 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		workflowDefs = manifest.Workflows
 	}
 	rolloutReq.Workflows = workflowDefs
+	if s.answerSourceManifestPreview(w, r, acct, app, manifest) {
+		return
+	}
 	rollout, sched, rolloutProblem := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
@@ -678,7 +681,7 @@ func (s *server) auditSourceRefDeploy(r *http.Request, acct state.Account, app s
 	// "omit when zero" so pre-feature rows stay byte-identical
 	// at the JSON layer.
 	mergeAnnotationAudit(data, ann)
-	s.audit.EmitAs(ctx, resolvedActor, "deploy.source_ref", &acct.ID, mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.audit.EmitAs(ctx, resolvedActor, "deploy.source_ref", &acct.ID, mergeAgentAudit(mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin), r))
 	s.recordDeploymentActivity(ctx, r, acct, app, d,
 		map[string]any{"revision": d.Revision, "scope": d.Scope, "supersedes": supersedes, "source": "source_ref"})
 }

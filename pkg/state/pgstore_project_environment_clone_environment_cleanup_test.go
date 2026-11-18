@@ -310,6 +310,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"deployments.scope",
 		"dev_bridge_sessions.environment_id",
 		"dev_bridge_sessions.scope",
+		"environment_api_routes.environment_id",                    // Observed-traffic telemetry; cascades with the environment row.
 		"environment_deployment_cron_activations.deployment_scope", // App-scoped cron activation state, removed with the app.
 		"environment_deployment_cron_states.deployment_scope",
 		"environment_external_field_owners.environment_id",
@@ -319,10 +320,15 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"environment_management_overrides.environment_id",
 		"environment_workload_graphs.environment_id",
 		"environment_workload_retirements.environment_id", // ADR-1331: immutable retained retirement evidence; journal/source deletion guards prevent cleanup cascades.
+		"event_subscriptions.deployment_scope",            // Removed by environment deletion (deleteProjectEnvironmentRowsTx).
+		"event_subscriptions.environment_id",
 		"exclusive_work_keys.environment_id",
 		"feature_flag_versions.environment_id",
 		"financial_budget_stop_targets.environment_id",      // In-flight (requested/draining) budget stops block scope cleanup; enforced and failed ones are retained history.
 		"financial_preview_command_runtimes.environment_id", // Preparing/active preview runtimes block scope cleanup; retired rows are retained history.
+		"flag_conversion_daily.environment_id",              // Flag experiment telemetry and definitions cascade with the environment row.
+		"flag_event_names.environment_id",
+		"flag_experiments.environment_id",
 		"github_deploy_branches.scope",
 		"hosting_oidc_trusts.environment", // GitHub Actions OIDC environment claim, not a Gregale environment; its site FK is classified.
 		"hosting_sites.environment",       // Sites reference the environment through a composite foreign key.

@@ -411,3 +411,42 @@ func TestApplyFunctionInputSchema(t *testing.T) {
 		t.Fatal("stamp mutated the input manifest's env")
 	}
 }
+
+// ADR-20261113120824 amendment 1: a function whose deployment declares its
+// own code workflow at "/" builds with FAAS_FUNCTION_WORKFLOW=1, so its
+// adapter refuses plain requests, and its deploy smoke checks route
+// connectivity (the refusal is a 404). A function without one, an app, or
+// a code workflow elsewhere is left alone.
+func TestApplyFunctionWorkflow(t *testing.T) {
+	base := api.AppManifest{Env: map[string]string{"A": "1"}}
+	fn := state.App{Type: state.AppTypeFunction}
+	atRoot := json.RawMessage(`[{"name":"orders","code":{"path":"/"}}]`)
+	for name, tc := range map[string]struct {
+		app  state.App
+		dep  state.Deployment
+		want bool
+	}{
+		"workflow function":             {fn, state.Deployment{Workflows: atRoot}, true},
+		"function without workflows":    {fn, state.Deployment{}, false},
+		"code workflow on another path": {fn, state.Deployment{Workflows: json.RawMessage(`[{"name":"orders","code":{"path":"/wf"}}]`)}, false},
+		"app with a code workflow at /": {state.App{Type: state.AppTypeApp}, state.Deployment{Workflows: atRoot}, false},
+		"unreadable workflows":          {fn, state.Deployment{Workflows: json.RawMessage(`{`)}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := applyFunctionWorkflow(base, tc.app, tc.dep)
+			want := map[string]string{"A": "1"}
+			if tc.want {
+				want[api.FunctionWorkflowEnv] = "1"
+			}
+			if !reflect.DeepEqual(got.Env, want) {
+				t.Fatalf("env = %v, want %v", got.Env, want)
+			}
+			if got := routeConnectivitySmoke(tc.app, tc.dep); tc.want && !got {
+				t.Fatal("a workflow function's smoke must check route connectivity: its adapter answers plain requests with 404")
+			}
+		})
+	}
+	if _, shared := base.Env[api.FunctionWorkflowEnv]; shared {
+		t.Fatal("stamp mutated the input manifest's env")
+	}
+}

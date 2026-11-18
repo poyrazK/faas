@@ -328,6 +328,9 @@ type bringUpTimings struct {
 	// after_restore failure. RestoreFallbackNodeLocal tells schedd to keep the
 	// snapshot; other restore diagnostics stay operator-only.
 	restoreFallbackReason string
+	// baseScanGrace: the base scan gate admitted a fixable CRITICAL inside
+	// api.BaseScanCriticalBootGrace.
+	baseScanGrace bool
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
 	// (ADR-192). bringUp adds the ADR-510 backing check to it.
@@ -553,6 +556,9 @@ type Instance struct {
 	// only) when the failure was this node's. Empty for other failures,
 	// planned cold boots, and successful restores.
 	RestoreFallbackReason string
+	// BaseScanGrace reports that the base scan gate admitted this boot only
+	// inside api.BaseScanCriticalBootGrace (a fixable CRITICAL on its base).
+	BaseScanGrace bool
 	// AppID is the apps.id UUID the instance was woken for.
 	// UpdateEgressAllowlist (PR-B, ADR-031+033) uses it to walk
 	// the live map keyed by app instead of by instance, so a
@@ -729,6 +735,12 @@ type Instance struct {
 	// first window has been observed.
 	EgressNewDstPerMin int64
 	EgressFanoutValid  bool
+	// InternalTxBytes is the cumulative bytes this instance sent to
+	// Gregale-internal destinations (billing review R8-2), accumulated from
+	// the per-namespace faas_internal_tx counter deltas so a counter reset
+	// does not lower it. InternalTxValid is false until the first poll.
+	InternalTxBytes uint64
+	InternalTxValid bool
 	// EgressFloodDropsPerMin is the new flows dropped in the last minute for
 	// exceeding the per-destination rate (ADR-361 decision 9). It is
 	// recorded in the same poll tick as the fan-out sample.
@@ -746,6 +758,18 @@ type Instance struct {
 	// branch_db set expires (ADR-20261031193635).
 	environmentBranch    *environmentBranchContainment
 	branchDatabaseEgress map[databaseEgressKey]time.Time
+	// webDomains are the registrable domains a web-mode sandbox session
+	// was granted, which SandboxWebDistinctDomains bounds
+	// (ADR-20261112121456 §4).
+	webDomains map[string]struct{}
+	// webAllow and webDeny are the session's domain policy
+	// (ADR-20261117091026 §3); both empty is none.
+	webAllow, webDeny []string
+	// webLog holds the domains granted or refused since vmmd last drained
+	// them (ADR-20261117091026 §4); webRefusedLogged bounds the refused
+	// ones a session reports.
+	webLog           []SandboxWebDomain
+	webRefusedLogged map[string]bool
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -966,6 +990,10 @@ type Manager struct {
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
 	dnsGatingOff bool
+	// sandboxWebNodeEgress lets web-mode sandbox sessions boot on a node
+	// without the ADR-372 tenant egress gateway (FAAS_SANDBOX_WEB_NODE_EGRESS,
+	// development and test fleets only; ADR-20261112121456 §3).
+	sandboxWebNodeEgress bool
 	// releaseConnectionsOnDestroy resets an app guest's TCP connections
 	// before teardown destroys it (ADR-20261109130000).
 	releaseConnectionsOnDestroy bool
@@ -1006,6 +1034,9 @@ type Manager struct {
 	// anchorNetns re-creates an adopted guest's netns binding; tests replace
 	// it. nil uses anchorAdoptedNetns.
 	anchorNetns func(name string, pid int, want resourceFileIdentity) (*resourceAsset, error)
+	// killRefused ends a proven guest that adoption refused
+	// (killRefusedSurvivor); nil uses killProvenGuest. Tests replace it.
+	killRefused func(resourceProcessIdentity) error
 	// adoption writes version-7 adoption blocks once EnableAdoptionRecords
 	// is called; nil writes none. Atomic so state changes can mark an
 	// instance whether or not they hold mu.
@@ -1206,6 +1237,9 @@ type Manager struct {
 	// base images with (ADR-20261026091500): the build seal domain, then
 	// the fleet and host identities. nil leaves builders anonymous.
 	registryIdentities []*age.X25519Identity
+	// buildRegistryMirror, when set, serves builders their private
+	// registries through secretd instead (ADR-20261110210000 slice 3j-3).
+	buildRegistryMirror BuildRegistryMirror
 	// requireSecretBinding refuses runtime envelopes that carry no account
 	// binding (ADR-20261023173624, contract step). Off until every stored
 	// envelope is bound.
@@ -1221,6 +1255,13 @@ type Manager struct {
 	// captureRecipient, when set, is what crash-capture keys are sealed to
 	// in place of the first host identity's recipient (slice 3e).
 	captureRecipient *age.X25519Recipient
+	// sealChunked makes sealed captures use crashcrypt's v2 format (slice
+	// 3d-5).
+	sealChunked bool
+	// captureKeys caches sealed snapshot keys opened through secretd
+	// (ADR-20261110210000 slice 3d-3) so a sealed wake pays the round trip
+	// once per capture, not on every restore.
+	captureKeys captureKeyCache
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -1869,6 +1910,14 @@ func (m *Manager) SetParentMountRegistry(r *vmmdmount.Registry) {
 // for tenant VMs created from now on.
 func (m *Manager) WithDNSGatedEgress(enabled bool) *Manager {
 	m.dnsGatingOff = !enabled
+	return m
+}
+
+// WithSandboxWebNodeEgress lets web-mode sandbox sessions leave from the
+// node's own address when the host has no tenant egress gateway
+// (ADR-20261112121456 §3). Only development and test fleets set it.
+func (m *Manager) WithSandboxWebNodeEgress(allowed bool) *Manager {
+	m.sandboxWebNodeEgress = allowed
 	return m
 }
 
@@ -2970,6 +3019,36 @@ func (m *Manager) RecordEgressFanout(instance string, perMinute int64) {
 	}
 }
 
+// RecordInternalEgress adds delta bytes the instance sent to internal
+// destinations (billing review R8-2) and marks the total observed. Unknown
+// instances are ignored: the poll raced a teardown.
+func (m *Manager) RecordInternalEgress(instance string, delta uint64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.live[instance]; ok {
+		inst.InternalTxBytes += delta
+		inst.InternalTxValid = true
+	}
+}
+
+// InternalEgressBytes returns the instance's cumulative internal egress
+// bytes; ok is false until the first per-namespace poll observed it.
+func (m *Manager) InternalEgressBytes(instance string) (uint64, bool) {
+	if m == nil {
+		return 0, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || !inst.InternalTxValid {
+		return 0, false
+	}
+	return inst.InternalTxBytes, true
+}
+
 // EgressFanout returns the instance's latest fan-out sample and its plan's
 // ceiling. ok is false until a window has been observed.
 func (m *Manager) EgressFanout(instance string) (EgressFanout, bool) {
@@ -3684,8 +3763,19 @@ func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secret
 	}
 	// ADR-20261026091500: a builder's Docker config rides in its
 	// secrets.env, written after the build's own secrets.
+	// ADR-20261110210000 slice 3j-3: with a build registry mirror the
+	// builder gets only the mirror plan, and no password is opened here.
 	if req.ExportDir != "" {
-		if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
+		if plan := m.buildMirrorPlan(req); len(plan) > 0 {
+			config, err := buildMirrorConfig(plan)
+			if err != nil {
+				return nil, nil, err
+			}
+			if merged == nil {
+				merged = secretbox.Envelope{}
+			}
+			merged[api.BuildRegistryMirrorsKey] = config
+		} else if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
 			if merged == nil {
 				merged = secretbox.Envelope{}
 			}
@@ -4005,11 +4095,18 @@ type WakeRequest struct {
 	// only with agentRunOnly (ADR-20261027090012).
 	agentRunWaitPauseAfter time.Duration
 	// sandboxID is set only by WakeSandbox (ADR-20261027090013), on top of
-	// ExecutionOnly; it becomes Instance.SandboxID. sandboxRegistries gives
-	// that VM a network in registries mode (§6): DNS-gated, TCP 443 only,
-	// through the registries-only resolver.
-	sandboxID         string
-	sandboxRegistries bool
+	// ExecutionOnly; it becomes Instance.SandboxID. sandboxNetwork gives
+	// that VM a network: api.SandboxNetworkRegistries (§6: DNS-gated, TCP 443
+	// only, through the registries-only resolver) or api.SandboxNetworkWeb
+	// (ADR-20261112121456: DNS-gated, TCP 80 and 443, through the
+	// public-names resolver). Empty is no network.
+	sandboxID      string
+	sandboxNetwork string
+	// sandboxEgressAllow and sandboxEgressDeny are a web-mode session's
+	// domain policy (ADR-20261117091026 §3), set on the instance before it
+	// boots so no name escapes it.
+	sandboxEgressAllow []string
+	sandboxEgressDeny  []string
 	// sandboxManifest marks a session booted from an image: LayerKey is
 	// a full-rootfs job image, and vmmd stages sandbox.json on its private
 	// drive1 before boot (Lease.SandboxManifest). It holds that file.
@@ -4105,6 +4202,11 @@ type WakeRequest struct {
 	// them into the builder's secrets.env as a Docker config. Ignored for
 	// every VM that is not a builder.
 	BuildRegistryCredentials []BuildRegistryCredential
+	// BuildID is the build a builder VM runs (ADR-20261110210000 slice
+	// 3j-3). With a build registry mirror set (SetBuildRegistryMirror), the
+	// builder pulls BuildRegistryCredentials' registries through the mirror
+	// by this id and is given no password. Empty from an older builderd.
+	BuildID string
 	// BuildKitSeedDrive is a builder VM's writable drive2: builderd's copy of
 	// the node's BuildKit seed, beside drive1 (ADR-20261030122204). Empty for
 	// a two-drive builder and for every VM that is not a builder.
@@ -5115,13 +5217,14 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.Plan = req.Plan
 	lease.AccountID = req.AccountID
 	lease.Networkless = req.networkless()
-	lease.AgentSized = req.sandboxRegistries
+	lease.AgentSized = req.sandboxNetwork != ""
 	lease.SandboxManifest = req.sandboxManifest
 	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	if req.IdentityReload && !req.ExecutionOnly {
 		lease.restoreIdentity = newRestoreIdentityExpectation()
 	}
 	lease.IsBuilder = req.ExportDir != ""
+	lease.buildMirrors = m.leaseBuildMirrors(req)
 	m.stampCgroupParent(&lease)
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
@@ -5255,11 +5358,16 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.ConntrackCap = m.conntrackCap
 	// ADR-361: default-deny guest egress (base ports + per-plan rate).
 	switch {
-	case req.sandboxRegistries:
+	case req.sandboxNetwork == api.SandboxNetworkRegistries:
 		if m.dnsGatingOff {
 			return nil, fmt.Errorf("wake %s: sandbox registries egress needs DNS-gated egress, which this vmmd has switched off", req.Instance)
 		}
 		applySandboxRegistriesEgress(&nc, req.Plan)
+	case req.sandboxNetwork == api.SandboxNetworkWeb:
+		if err := m.sandboxWebEgressRefusal(); err != nil {
+			return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
+		}
+		applySandboxWebEgress(&nc, req.Plan)
 	case !req.ExecutionOnly:
 		applyTenantEgressPolicy(&nc, req.Plan, req.EgressPorts)
 		nc.DNSGated = nc.DNSGated && !m.dnsGatingOff
@@ -5755,6 +5863,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
 		environmentBranch:      req.environmentBranch,
+		webAllow:               slices.Clone(req.sandboxEgressAllow),
+		webDeny:                slices.Clone(req.sandboxEgressDeny),
 		StaticEgressExcluded:   req.StaticEgressExcluded,
 		PrivateNetworkExcluded: req.privateNetworkExcluded,
 		WakeID:                 wakeID, NodeID: fields.NodeID,
@@ -5773,6 +5883,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		Characterization:       report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
+		BaseScanGrace: timings.baseScanGrace,
 	}
 	if err = m.stampNativeInstanceGeneration(inst); err != nil {
 		return nil, fmt.Errorf("wake %s: original launch identity: %w", req.Instance, err)
@@ -5994,19 +6105,31 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// error — the wake-error channel expects it). No-op when storage
 	// is nil (unit tests that don't wire WithStorage continue to pass).
 	scanCheckStartedAt := time.Now()
-	scanErr := m.bringUpScanCheck(ctx, req.BaseKey)
+	scanGrace, scanErr := m.bringUpScanCheck(ctx, req.BaseKey)
 	if timings != nil {
 		timings.scanCheckMs = time.Since(scanCheckStartedAt).Milliseconds()
+		timings.baseScanGrace = scanGrace
 	}
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
 	// ADR-733: a sealed crash capture restores or fails. Cold booting would
-	// hand the caller a fresh instance that is not the capture.
-	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0
-	if sealed {
+	// hand the caller a fresh instance that is not the capture. A sealed park
+	// or warm snapshot (SealedCache, ADR-20261110210000 slice 3d-3) is cache
+	// like any snapshot: one that cannot be opened cold boots (ADR-005).
+	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0 && !req.Snapshot.SealedCache
+	if req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0 {
 		if err := m.openSealedSnapshot(ctx, req.AppID, req.Snapshot); err != nil {
-			return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
+			if sealed {
+				return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
+			}
+			m.log.Warn("sealed snapshot key not opened, cold booting instead of restoring",
+				"instance", req.Instance, "storage_key", req.Snapshot.StorageKey, "err", err)
+			if timings != nil {
+				timings.restoreError = err.Error()
+			}
+			m.metrics.ObserveFallback()
+			req.Snapshot.Stale = true
 		}
 	}
 	restorable := (len(req.ArtifactSources) == 0 || req.SnapshotRestore != nil) && PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
@@ -6262,6 +6385,10 @@ type baseScanSidecar struct {
 	Image                string         `json:"image"`
 	Findings             map[string]int `json:"findings"`
 	FixAvailableFindings map[string]int `json:"fix_available_findings"`
+	// FixableCriticalSince is when a scan of this base generation first
+	// found a fixable CRITICAL; it starts api.BaseScanCriticalBootGrace.
+	// Absent (older imaged) means no grace.
+	FixableCriticalSince *time.Time `json:"fixable_critical_since,omitempty"`
 }
 
 func (m *Manager) readBaseScan(ctx context.Context, scanKey string) (baseScanSidecar, error) {
@@ -6385,9 +6512,9 @@ func (m *Manager) beginProcessAttempt(lease Lease) Lease {
 	return lease
 }
 
-func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
+func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) (grace bool, err error) {
 	if m.storage == nil {
-		return nil
+		return false, nil
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
 	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
@@ -6395,7 +6522,7 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 		if m.log != nil {
 			m.log.Warn("fcvm: runtime base could not adopt its configured generation", "base", baseKey, "err", err)
 		}
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return false, api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"runtime base generation unavailable",
 			fmt.Sprintf("runtime base %q could not adopt its configured generation", baseKey))
 	}
@@ -6413,7 +6540,15 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	}
 	if gateErr != nil {
 		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, reason)
-		return gateErr
+		return false, gateErr
+	}
+	if reason == baseScanGraceReason {
+		m.imageScanMetrics.ObserveBaseScanGraceAdmit(baseKey)
+		if m.log != nil {
+			m.log.Warn("fcvm: booting a base with a fixable CRITICAL vulnerability inside its grace window",
+				"base", baseKey, "critical_since", scan.FixableCriticalSince)
+		}
+		grace = true
 	}
 	// Forward per-severity finding counts to the vmmd Prometheus
 	// counter. The image label is the OCI ref imaged wrote into
@@ -6422,11 +6557,15 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	for sev, n := range scan.Findings {
 		m.metricsImageScan(scan.Image, sev, n)
 	}
-	return nil
+	return grace, nil
 }
 
 // baseScanVerdict applies the boot gate to one read of a base's scan sidecar.
 // A refusal also returns its wire.BaseScanRefusalReasons reason.
+// baseScanGraceReason is baseScanVerdict's reason for a fixable CRITICAL
+// admitted inside api.BaseScanCriticalBootGrace.
+const baseScanGraceReason = "critical_grace"
+
 func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) (string, error) {
 	if readErr != nil {
 		return "sidecar_missing", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
@@ -6462,6 +6601,12 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 		return "scan_failed", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"Base image scan unavailable",
 			fmt.Sprintf("Gregale could not finish the vulnerability scan of its base image %q, so Gregale will not start instances on it until the scan completes; this is a platform problem, not your code", baseKey))
+	}
+	if now := time.Now(); n > 0 && scan.FixableCriticalSince != nil && !scan.FixableCriticalSince.After(now) && now.Before(scan.FixableCriticalSince.Add(api.BaseScanCriticalBootGrace)) {
+		// Keep serving apps on the base while a patched one is published
+		// (deploy-path review P5). schedd refuses a new deployment's prime
+		// that comes back with this grace flag.
+		return baseScanGraceReason, nil
 	}
 	if n > 0 {
 		// The deploy and wake errors carry this detail to the customer, who
@@ -6571,7 +6716,13 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	}
 	if spec.nativeRuntime == nil {
 		// The native producer already published the backing object exclusively.
-		m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+		// A sealed park (slice 3d-3) publishes its backing through the sealing
+		// store too, as WarmSnapshot does.
+		store := m.storage
+		if spec.Storage != nil {
+			store = spec.Storage
+		}
+		m.writeSnapshotBackingTo(context.WithoutCancel(ctx), store, instance, spec.StorageKey)
 	}
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, true, nil

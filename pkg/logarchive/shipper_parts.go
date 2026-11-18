@@ -46,7 +46,10 @@ func (s *Shipper) uploadPart(ctx context.Context, f FileInfo) (int64, error) {
 	}
 	defer func() { _ = body.Close() }()
 	uploadStart := s.now()
-	err = s.s3.PutObject(ctx, key, "application/gzip", body, size)
+	// Create-only: a retry of an upload the bucket already holds finds the
+	// same content under the same key, which a write-only credential could
+	// not overwrite (ADR-20261110210000 slice 3l).
+	_, err = s.s3.PutObjectIfAbsent(ctx, key, "application/gzip", body, size)
 	s.metrics.ObserveUploadDuration(s.now().Sub(uploadStart).Seconds())
 	if err != nil {
 		return 0, fmt.Errorf("put %s: %w", key, err)

@@ -20,9 +20,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 	"github.com/onebox-faas/faas/pkg/statelessshape"
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
@@ -392,7 +394,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			ann.PRNumber = value
-		case "dev_source_base", "dev_source_target", "dev_source_deleted":
+		case "dev_source_base", "dev_source_target", "dev_source_deleted", "dev_source_build_now":
 			if !developerSource {
 				_, _ = io.Copy(io.Discard, part)
 				break
@@ -597,7 +599,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// legacy hardcoded "image" diverged from Kind for tarball /
 		// dockerfile deploys and produced misleading split-by-source
 		// dashboards.
+		// ADR-20261021221906: a sync about to reach the running instance as a live
+		// patch holds its build back; a later sync supersedes it.
+		buildNotBefore := devloop.BuildNotBefore(time.Now(), devPatch.preview, devPatchDeliveryEnabled(), devSource.buildNow, devloop.CoalesceWindow(os.Getenv))
 		res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+			BuildNotBefore:            buildNotBefore,
 			OperationDefinitions:      sourceOperationSpecs(manifest),
 			OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 			Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": string(kind), "scope": rollout.Scope}),
@@ -666,7 +672,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if developerSource {
-			s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
+			s.cancelSupersededDevBuilds(r.Context(), acct, app, d.ID)
+			published := s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
+			s.settleDeferredDevBuild(r.Context(), app, d.ID, buildNotBefore, published, devPatch.preview)
 		}
 		if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
 			api.WriteProblem(w, prob)
@@ -1058,9 +1066,10 @@ const dockerfileMaxBytes = 256 * 1024
 // The checks are intentionally narrow: VOLUME on its own line, and
 // mkfs/mount -t ext4|xfs inside any RUN. We do NOT try to be clever
 // about RUN continuations or here-docs — adversarial users can `RUN
-// echo VOLUME > /tmp/x` to bypass. The deny-list at the base-image
-// level (pkg/imaged/base.go) catches the postgres/redis/mysql case
-// which is the actually common one.
+// echo VOLUME > /tmp/x` to bypass. The postgres/redis/mysql case, the
+// common one, is the final stage's base image: pkg/imaged's denylist only
+// sees `--image` deploys, so a one-line `FROM redis` Dockerfile is checked
+// here against the same pkg/statefuldenylist set (2026-11-15 agent eval).
 func scanDockerfileForStatefulShape(b []byte) string {
 	scanner := bufio.NewScanner(bytes.NewReader(b))
 	// Allow long lines (some RUN directives run thousands of chars).
@@ -1085,12 +1094,12 @@ func scanDockerfileForStatefulShape(b []byte) string {
 		}
 		upper := strings.ToUpper(line)
 		if strings.HasPrefix(upper, "VOLUME") {
-			// VOLUME ["/data"] or VOLUME /data /var — extract the args.
-			args := strings.Fields(line)
-			if len(args) > 1 {
-				return "VOLUME " + strings.Join(args[1:], " ")
+			// VOLUME ["/data"] or VOLUME /data /var. Scratch paths such as
+			// /tmp keep nothing worth losing, so only the others refuse.
+			if stateful := statelessshape.StatefulVolume(line); len(stateful) > 0 {
+				return "VOLUME " + strings.Join(stateful, " ")
 			}
-			return "VOLUME"
+			continue
 		}
 		if strings.HasPrefix(upper, "RUN") {
 			inRun = strings.HasSuffix(scanner.Text(), `\`)
@@ -1099,6 +1108,9 @@ func scanDockerfileForStatefulShape(b []byte) string {
 				return "mkfs/mount of a block device inside RUN"
 			}
 		}
+	}
+	if base, hint, denied := statefuldenylist.MatchDockerfile(b); denied {
+		return fmt.Sprintf("FROM %s runs a datastore, which loses its data when the app parks; %s", base, hint)
 	}
 	return ""
 }

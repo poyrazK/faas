@@ -40,12 +40,14 @@
 // session work. imaged isolates its LISTEN and long-held deployment locks in
 // a sibling pool even when both pools connect to the same postmaster: its
 // three-connection ordinary pool can otherwise be exhausted during activation.
+// The sibling's own budget is imagedDirectHubOnMaxConns.
 package db
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -73,13 +75,64 @@ const DirectDSNEnv = "FAAS_DATABASE_URL_DIRECT"
 // reflected in its fleet connection and memory plan.
 const directHubOnMaxConns int32 = 2
 
-// ADR-570: apid holds its outer edge mutation lock, and imaged its deployment
-// activation lock, while a traffic policy guard pins a second connection
-// (imaged's MarkDeploymentLive). Each admits one outer lock at a time: apid's
-// process mutex, imaged's serial notification loop. Without the extra
-// connection imaged's guard waited behind the parked hub connection and image
-// deploys stalled in snapshotting.
+// ADR-570: apid holds its outer edge mutation lock while a traffic policy
+// guard pins a second connection. apid's process mutex admits one outer lock
+// at a time. Without the extra connection the guard waited behind the parked
+// hub connection.
 const directNestedGuardHubOnMaxConns int32 = directHubOnMaxConns + 1
+
+// ImagedParallelPrepEnv turns on imaged's parallel image preparation
+// (ADR-20261029174438). imaged's direct pool reserves a connection for each
+// preparation worker when it is on.
+const ImagedParallelPrepEnv = "FAAS_IMAGED_PARALLEL_PREP"
+
+// imagedActivationConns is what one imaged deployment activation holds at
+// once: the deployment's activation lock, and MarkDeploymentLive's ADR-570
+// traffic guard.
+const imagedActivationConns int32 = 2
+
+// imagedDirectHubOnMaxConns is imaged's session-scoped budget with the hub
+// on. imaged holds session connections in up to four places at once:
+//
+//   - the notify hub's parked LISTEN connection;
+//   - its LISTEN loop and its durable-notification replay worker, each of
+//     which runs one notification at a time: an activation (activation lock
+//     plus traffic guard) or, inline, a preparation (activation lock);
+//   - with parallel preparation on, each preparation worker's activation
+//     lock, held for the whole preparation while the loop goes on.
+//
+// The budget of three this replaced covered one activation and the hub. A
+// preparation running on the loop then left the replay worker's activation
+// one connection short: its traffic guard waited out its deadline and
+// retried until the preparation ended. 57 production deployments, about one
+// in eight, waited 10-110 s at the end of snapshot_prepare that way between
+// 2026-11-14 and 2026-11-17.
+func imagedDirectHubOnMaxConns() int32 {
+	conns := 1 + 2*imagedActivationConns
+	if imagedParallelPrep() {
+		conns += api.ImagedImagePrepWorkers
+	}
+	return conns
+}
+
+// imagedParallelPrep reads ImagedParallelPrepEnv as imaged does. A value
+// imaged rejects stops imaged at boot, so it counts as off here.
+func imagedParallelPrep() bool {
+	on, err := ImagedParallelPrep(os.Getenv(ImagedParallelPrepEnv))
+	return err == nil && on
+}
+
+// ImagedParallelPrep parses ImagedParallelPrepEnv. Unset means on: a
+// project's services otherwise waited for each other's scan and snapshot
+// one deployment at a time (retail-store feedback A3, 2026-11-17); "false"
+// keeps the serial loop.
+func ImagedParallelPrep(raw string) (bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return true, nil
+	}
+	return strconv.ParseBool(raw)
+}
 
 // schedd retains a session lock throughout each prime's boot and capture.
 // Reserve its worker slots, inline overflow, the parked hub, and one short
@@ -102,8 +155,11 @@ func directMaxConns(appName string) int32 {
 		if name == "schedd" {
 			return directSchedulerHubOnMaxConns
 		}
-		if name == "apid" || name == "imaged" {
+		if name == "apid" {
 			return directNestedGuardHubOnMaxConns
+		}
+		if name == "imaged" {
+			return imagedDirectHubOnMaxConns()
 		}
 		return directHubOnMaxConns
 	}

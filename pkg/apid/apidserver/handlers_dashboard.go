@@ -1601,6 +1601,12 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		} else {
 			overageCents = saturatingAddCents(overageCents, storageCents)
 		}
+		// And the managed PostgreSQL overage charge (billing review 2026-11-13).
+		if databaseCents, err := meter.SpendCapManagedPostgresCents(ctx, s.store, acct.ID, time.Now()); err != nil {
+			log.Warn("dashboard renderBilling: managed postgres charge", "account_id", acct.ID, "err", err)
+		} else {
+			overageCents = saturatingAddCents(overageCents, databaseCents)
+		}
 	}
 	var overageRatio float64
 	if capOK && capCents > 0 && overageCents > 0 {
@@ -2118,6 +2124,7 @@ func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountVi
 		AppCount:                   n,
 		EmailVerified:              acct.EmailVerified(),
 		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
+		LegalNotice:                legalChangeNotice(),
 	}
 }
 
@@ -3768,7 +3775,7 @@ func (s *server) renderDomainDoctor(w http.ResponseWriter, r *http.Request, log 
 			"Gregale could not complete the domain checks right now.",
 		).WithHeader("Retry-After", "30").
 			WithHint("Wait a moment, then run the domain check again.").
-			WithDocs("https://gregale.dev/docs/domains#doctor"))
+			WithDocs("https://gregale.dev/docs/domains"))
 		return
 	}
 	view := dashboard.DomainDoctorView{

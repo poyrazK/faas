@@ -80,6 +80,18 @@
   register: faas_secretd_build_identities
   when: faas_secretd_listen | length > 0
 
+# ADR-20261110210000 slice 3k: with the control domain staged here, secretd
+# also mints internal-service tokens for compute schedds
+# (FAAS_SCHEDD_INTERNAL_SVC_MINTER=secretd), so they need no cluster key.
+- name: secretd_service — inspect the control domain identities
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/faas/secrets/domains/control.age
+    - /etc/faas/secrets/domains/control.age.previous
+  register: faas_secretd_control_identities
+  when: faas_secretd_listen | length > 0
+
 # The user exists everywhere the role runs so pg_ident's faas-secretd line
 # maps a real user; it has no shell, no home and no password.
 - name: secretd_service — create the faas-secretd user
@@ -112,14 +124,16 @@
 # from the CA on this host. A run keeps a leaf valid for 30 days or more, so
 # this is also its renewal. The key stays root-only: systemd hands it to
 # secretd as a credential.
-- name: secretd_service — issue secretd's server leaf
+- name: secretd_service — issue secretd's server and PostgreSQL verifier leaves
   ansible.builtin.command:
     argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, secret-opener, --box-role, control-plane,
            --ca-dir, /etc/faas/tls, --root-dir, /etc/faas/tls]
   register: faas_secretd_leaf
   changed_when: (faas_secretd_leaf.stdout | from_json).issued | length > 0
   when: faas_secretd_listen | length > 0
-  notify: restart faas-secretd
+  notify:
+    - restart faas-secretd
+    - restart faas-apid postgres verifier
 
 - name: secretd_service — install configuration drop-in
   ansible.builtin.template:
@@ -130,6 +144,32 @@
     mode: "0644"
   when: faas_secretd_listen | length > 0
   notify: restart faas-secretd
+
+- name: secretd_service — create apid drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_secretd_listen | length > 0
+
+- name: secretd_service — configure staged PostgreSQL verification
+  ansible.builtin.template:
+    src: 51-faas-postgres-verifier.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/51-faas-postgres-verifier.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_secretd_listen | length > 0
+  notify: restart faas-apid postgres verifier
+
+- name: secretd_service — remove apid verifier while secretd is off
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d/51-faas-postgres-verifier.conf
+    state: absent
+  when: faas_secretd_listen | length == 0
+  notify: restart faas-apid postgres verifier
 
 # Without the drop-in the unit has no listener and no identity; CD's start
 # step reads its absence as "secretd off".

@@ -107,9 +107,12 @@ type scanPlanRequest struct {
 	SafeRelease              *api.ProjectSafeRelease
 	RetryTargets             map[string]string
 	AppSlugs                 map[string]string
-	Migration                bool
-	SourcePath               string // spool path after validateAndSpool + extractTarGzToDir
-	SourceSHA256             string // hex digest of the original compressed bytes
+	// AppSlugPrefix is `deploy --project --prefix`: new apps are named
+	// <prefix><service>, replacing a Compose x-gregale-slug-prefix.
+	AppSlugPrefix string
+	Migration     bool
+	SourcePath    string // spool path after validateAndSpool + extractTarGzToDir
+	SourceSHA256  string // hex digest of the original compressed bytes
 	// ScanDir is the extracted source tree. Cleaned up by scanService's
 	// defer (task #19 fix; pre-fix was "cleaned up by caller" but no
 	// caller ever removed it, so every successful scan leaked the dir).
@@ -859,6 +862,39 @@ type liveDeploymentForScopeStore interface {
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (state.Deployment, error)
 }
 
+type productionRedeployStore interface {
+	liveDeploymentForScopeStore
+	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
+}
+
+// productionAppsWithoutRelease returns selected production apps the reconcile
+// left unchanged that serve nothing and have nothing on the way: no live
+// release, and a latest deployment that ended (failed, cancelled) or never
+// existed. Re-running the deploy after a failed first boot otherwise reported
+// them "unchanged; its live release keeps serving" and queued nothing, and
+// without a source change nothing ever rebuilt them (2026-11-15 agent eval:
+// three retail services stayed down across retries). An app with a
+// deployment still in flight is left to it.
+func productionAppsWithoutRelease(ctx context.Context, store productionRedeployStore, selected []state.App, added, changed []state.App) ([]state.App, error) {
+	candidates, err := environmentAppsWithoutLiveDeployment(ctx, store, selected, state.DefaultEnvScope, added, changed)
+	if err != nil {
+		return nil, err
+	}
+	var out []state.App
+	for _, app := range candidates {
+		latest, err := store.LatestDeployment(ctx, app.ID)
+		switch {
+		case errors.Is(err, state.ErrNotFound) || errors.Is(err, pgx.ErrNoRows):
+		case err != nil:
+			return nil, fmt.Errorf("latest deployment for %s: %w", app.Slug, err)
+		case !latest.Status.IsTerminal():
+			continue
+		}
+		out = append(out, app)
+	}
+	return out, nil
+}
+
 // environmentAppsWithoutLiveDeployment returns selected apps that the
 // reconcile left unchanged but that have never been deployed to environment.
 // Builds were enqueued only for added or changed app rows, so a cloned
@@ -1601,6 +1637,7 @@ func (s *server) scanService(
 	if !preserveNames {
 		scopeGenericRootWorkload(&result, req.ProjectSlug)
 	}
+	reposcan.ApplySlugPrefix(result.Workloads, req.AppSlugPrefix)
 	appSlugs, slugProblem := projectsetup.AppSlugs(result.Workloads, acctApps, projectID, req.ProjectSlug, req.AppSlugs, req.Migration)
 	if slugProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, slugProblem
@@ -2723,6 +2760,23 @@ func (s *server) scanService(
 			}
 		}
 	}
+	if reconcileProductionEnvironment(req.Environment) && len(req.RetryTargets) == 0 {
+		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if appsErr != nil {
+			prob := customerInternalProblem(s.log, "load workloads for production deployment",
+				"Gregale could not load this project's workloads to deploy.",
+				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		down, downErr := productionAppsWithoutRelease(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), rec.Added, buildChanged)
+		if downErr != nil {
+			prob := customerInternalProblem(s.log, "inspect production deployments",
+				"Gregale could not check which workloads still need a release.",
+				"Retry the deployment in a moment; if it continues, contact support.", downErr)
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		buildChanged = append(append([]state.App(nil), buildChanged...), down...)
+	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if appsErr != nil {
@@ -2865,6 +2919,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	}
 	var (
 		appSlugs               map[string]string
+		appSlugPrefix          string
 		appSlugsSet            bool
 		migration              bool
 		sourcePath             string
@@ -2943,6 +2998,13 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 			}
 			sourcePath = path
 			_ = n
+		case "app_slug_prefix":
+			b, readErr := io.ReadAll(io.LimitReader(part, 64))
+			appSlugPrefix = strings.TrimSpace(string(b))
+			if readErr != nil || reposcan.ValidateSlugPrefix(appSlugPrefix) != nil {
+				return nil, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Invalid app name prefix", "app_slug_prefix must be at most 30 lowercase letters, digits and hyphens, starting with a letter")
+			}
 		case "project_slug":
 			projectSlugSet = true
 			b, readErr := io.ReadAll(io.LimitReader(part, 64))
@@ -3114,6 +3176,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	parsed = true
 	return &scanPlanRequest{
 		AppSlugs:               appSlugs,
+		AppSlugPrefix:          appSlugPrefix,
 		Migration:              migration,
 		SourcePath:             sourcePath,
 		SourceSHA256:           hash,

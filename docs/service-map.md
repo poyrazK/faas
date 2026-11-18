@@ -2,7 +2,7 @@
 
 The service map shows which of your apps call which, how often, how reliably,
 and how fast. It is built from Gregale's own record of every call made through
-[internal service routing](networking.md#internal-services), so it needs no SDK,
+[internal service routing](internal-services.md#internal-services), so it needs no SDK,
 agent, or tracing setup in your code.
 
 The service map is an internal preview (ADR-1131). It is available on Hobby,

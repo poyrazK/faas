@@ -144,3 +144,49 @@ pending and 100,000 dead-lettered messages:
   `invocations_queue_pending_created_idx` (6 ms). The legacy poller for
   triggers without a binding, shared with delayed tasks, still sorts the
   app's unbound pending rows (309 ms at 20,000); new queues use bindings.
+
+## Amendment 2026-11-13: async work meets the queue limits
+
+Event-driven hunts #7 and #15 found that plain async invocations (API async
+invoke, async routes, a function's `send()`) had no pending cap at all, and
+delayed tasks only a count cap: a function sending to itself, or a public async
+route, could grow the backlog without bound. The owner chose to reuse the queue
+limits rather than add new numbers.
+
+- **Per-app depth.** Async invocations are admitted against `MaxQueueDepth`
+  for source `async_invoke` (Hobby 10,000, Pro 100,000, Scale 1,000,000) and
+  answer `429 plan_async_backlog` with `Retry-After: 60` at the cap. Event
+  deliveries, which are `async_invoke` rows too, count towards the app's
+  backlog but keep their own event caps; they are not refused here.
+- **Account bytes.** `invocation_backlog_bytes` now counts `async_invoke` and
+  `delayed_task` payloads as well as `queue`, and the account's pending bytes
+  across the three are one pool against `MaxQueueBacklogBytesPerAccount`.
+  Migration `20261113190512417` changes the function without recounting:
+  a recount under a lock on `invocations` is an unbatched write
+  (docs/release-compatibility.md), and a batched one cannot stay consistent
+  with live decrements. Async and delayed rows already pending were counted
+  with 0 bytes, so a decrement now stops at zero. Those rows' bytes go
+  uncounted until they leave the backlog: the pool may admit up to that much
+  over the cap meanwhile, never refuse below it, and is exact again once the
+  pre-upgrade backlog drains.
+- **No serialization.** Async producers count without the app lock queue
+  sends take (`Invocation.AdmissionUnlocked`); concurrent requests may pass
+  the cap by the requests in flight. An idempotent async route retry at the
+  cap answers with the invocation it already accepted.
+- **`send()` rate.** Sends enter from inside the platform, past the edge's
+  account and app limiters, so the gateway holds each target app's sends to
+  its plan's `RateLimitRPS`/`RateLimitBurst` (`429 function_send_rate_limited`).
+  A send's completion invocation is enqueued with its terminal transition and
+  is not capped: there is at most one per admitted send.
+
+## Amendment 2026-11-17: queue sends count without the app lock
+
+The 2026-11-12 prod throughput test held an app's queue sends to about 30
+messages per second: every capped send took the app's row lock to count the
+backlog and held it through its insert. Queue sends (single and batch) now
+set `Invocation.AdmissionUnlocked`, as async producers do since the
+2026-11-13 amendment: the depth and bytes caps are read from the slotted
+backlog counters without the lock, so concurrent senders may pass a cap by
+the messages they insert at once (a batch by at most its
+`EnqueueInvocationBatch` size). Queue canaries, object notifications and
+binding verification keep the lock for their own admission.

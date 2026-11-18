@@ -3,12 +3,13 @@
 Use `gregale.yaml` for source-specific build and runtime settings. Keep the file in version control so a deployment can be reproduced.
 
 ```yaml
-name: checkout-api
 hosting:
   start: node server.js
   port: 8080
   health: /healthz
 ```
+
+`gregale.yaml` does not name the app: pass `gregale deploy --name checkout-api` the first time, or run `gregale link --app checkout-api` so later deploys from this directory update that app.
 
 `hosting.start` is the command the app runs: it replaces the command the source build produces, including a Procfile `web:` entry and the builder's detected start. Without it, Gregale keeps the built image's command and uses its own inferred start only when the image has none.
 

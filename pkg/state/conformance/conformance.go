@@ -96,7 +96,15 @@ func Run(t *testing.T, open Open) {
 		{"webhook_delivery_claim_fences_replays", testWebhookDeliveryClaimFencesReplays},
 		{"operator_intent_claim_is_exactly_once", testOperatorIntentClaimIsExactlyOnce},
 		{"cli_auth_code_claim_binds_one_account", testCliAuthCodeClaimBindsOneAccount},
+		{"failing_cron_pauses_and_queues_notice", testFailingCronPausesAndQueuesNotice},
+		{"platform_alert_notice_queue_dedupes", testPlatformAlertNoticeQueueDedupes},
+		{"app_protection_enrollment_and_objects", testAppProtectionEnrollmentAndObjects},
+		{"app_protection_reconcile_claims", testAppProtectionReconcileClaims},
+		{"protection_health_probe_claims", testProtectionHealthProbeClaims},
+		{"platform_probe_wake_ledger", testPlatformProbeWakeLedger},
 		{"cli_auth_loopback_claim_rebinds_device", testCliAuthLoopbackClaimRebindsDevice},
+		{"cli_auth_device_code_needs_its_verifier", testCliAuthDeviceCodeNeedsItsVerifier},
+		{"cli_auth_requester_is_recorded_until_approval", testCliAuthRequesterIsRecordedUntilApproval},
 		{"due_webhook_delivery_claim_respects_schedule_and_limit", testDueWebhookDeliveryClaimRespectsScheduleAndLimit},
 		{"webhook_delivery_attempts_health_retention_and_storage", testWebhookDeliveryAttemptsHealthRetentionAndStorage},
 		{"account_release_webhook_quota_and_cross_app_pagination", testAccountReleaseWebhookQuotaAndPagination},
@@ -144,6 +152,7 @@ func Run(t *testing.T, open Open) {
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
 		{"live_instance_list_follows_app_ownership", testLiveInstanceListOwnership},
 		{"live_instances_by_node_are_the_nodes_live_rows", testLiveInstancesByNode},
+		{"resident_instances_on_node_are_the_vms_it_holds", testResidentInstancesOnNode},
 		{"org_access_fences_and_org_projects", testOrgAccessAndOrgProjects},
 		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
@@ -153,6 +162,8 @@ func Run(t *testing.T, open Open) {
 		{"invoice_history_import_is_insert_only_and_atomic", testInvoiceHistoryImport},
 		{"invoice_detail_refresh_is_revision_fenced", testInvoiceDetailRefresh},
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
+		{"internal_egress_subtracts_once_and_carries", testInternalEgressSubtraction},
+		{"internal_egress_baselines_when_switched_on_midway", testInternalEgressBaselineMidway},
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"overage_cap_default_follows_the_plan", testOverageCapDefaultFollowsThePlan},
@@ -160,6 +171,8 @@ func Run(t *testing.T, open Open) {
 		{"pending_billing_skips_free_subjects", testPendingBillingSkipsFreeSubjects},
 		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
+		{"nonpayment_marker_survives_the_quota_stop", testNonpaymentMarkerSurvivesTheQuotaStop},
+		{"plan_fit_notice_round_trip", testPlanFitNoticeRoundTrip},
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
 		{"app_restore_honours_quota", testAppRestoreHonoursQuota},
 		{"app_restore_keeps_crons", testAppRestoreKeepsCrons},
@@ -2161,6 +2174,101 @@ func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.RefreshInvoiceDetails(fx.Ctx, fx.Account.ID, stored.ID, stored.UpdatedAt, details); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale RefreshInvoiceDetails error = %v, want ErrConflict", err)
 	}
+}
+
+// Billing review R8-2: a network observation that excludes internal egress
+// adds only public bytes, excludes each internal reading once, never goes
+// below zero, and carries what a minute could not absorb to the next one.
+func testInternalEgressSubtraction(t *testing.T, fx *Fixture) {
+	observer, ok := fx.Store.(state.InternalEgressObserver)
+	if !ok {
+		t.Skip("store does not implement state.InternalEgressObserver")
+	}
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	minute := time.Now().UTC().Truncate(time.Hour).Add(-50 * time.Minute)
+	next := minute.Add(time.Minute)
+	before := monthlyNetTx(t, fx, minute)
+	for _, at := range []time.Time{minute, next} {
+		if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, at, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
+			t.Fatalf("AppendUsage: %v", err)
+		}
+	}
+	steps := []struct {
+		at                   time.Time
+		netTx, internal      int64
+		wantBilled, wantExcl int64
+	}{
+		{minute, 1000, 400, 600, 400}, // first readings: all of both
+		{minute, 1000, 400, 0, 0},     // replay after commit: nothing twice
+		{minute, 1600, 1500, 0, 600},  // +600 veth, +1100 internal: 500 carries
+		{next, 3000, 100, 800, 600},   // +1400 veth; reset 100 plus the 500 carried
+	}
+	for i, step := range steps {
+		billed, _, excluded, err := observer.AppendNetworkUsageObservationExcludingInternal(fx.Ctx,
+			fx.Account.ID, fx.App.ID, instance.ID, step.at, step.netTx, true, 0, true, step.internal)
+		if err != nil || billed != step.wantBilled || excluded != step.wantExcl {
+			t.Fatalf("step %d = (billed %d, excluded %d, %v), want (%d, %d)", i, billed, excluded, err, step.wantBilled, step.wantExcl)
+		}
+	}
+	// 3000 veth bytes less 1600 internal.
+	if got := monthlyNetTx(t, fx, minute) - before; got != 1400 {
+		t.Fatalf("monthly net_tx_bytes grew by %d, want the 1400 public bytes", got)
+	}
+}
+
+// Billing review R12-3: an instance already metered before the switch turned
+// on had its internal bytes billed by earlier observations. The first
+// internal reading only sets the baseline; later ones subtract.
+func testInternalEgressBaselineMidway(t *testing.T, fx *Fixture) {
+	observer, ok := fx.Store.(state.InternalEgressObserver)
+	if !ok {
+		t.Skip("store does not implement state.InternalEgressObserver")
+	}
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	minute := time.Now().UTC().Truncate(time.Hour).Add(-40 * time.Minute)
+	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, minute, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	if billed, _, err := fx.Store.AppendNetworkUsageObservation(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, minute, 10_000, true, 0, true); err != nil || billed != 10_000 {
+		t.Fatalf("switch-off observation = (%d, %v), want 10000", billed, err)
+	}
+	steps := []struct {
+		netTx, internal      int64
+		wantBilled, wantExcl int64
+	}{
+		{12_000, 8_000, 2_000, 0}, // first internal reading: baseline only
+		{13_000, 8_300, 700, 300}, // +1000 veth, +300 internal
+	}
+	for i, step := range steps {
+		billed, _, excluded, err := observer.AppendNetworkUsageObservationExcludingInternal(fx.Ctx,
+			fx.Account.ID, fx.App.ID, instance.ID, minute, step.netTx, true, 0, true, step.internal)
+		if err != nil || billed != step.wantBilled || excluded != step.wantExcl {
+			t.Fatalf("step %d = (billed %d, excluded %d, %v), want (%d, %d)", i, billed, excluded, err, step.wantBilled, step.wantExcl)
+		}
+	}
+}
+
+func monthlyNetTx(t *testing.T, fx *Fixture, month time.Time) int64 {
+	t.Helper()
+	rows, err := fx.Store.UsageByMonth(fx.Ctx, fx.Account.ID, month)
+	if err != nil {
+		t.Fatalf("UsageByMonth: %v", err)
+	}
+	var total int64
+	for _, row := range rows {
+		if row.AppID == fx.App.ID {
+			total += row.NetTxBytes
+		}
+	}
+	return total
 }
 
 func testBillingUsageDelivery(t *testing.T, fx *Fixture) {

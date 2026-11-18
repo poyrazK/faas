@@ -39,7 +39,7 @@ func appOperationalRecommendations(slug string, summary api.AppOperationalSummar
 		}
 		add("restart_"+operation.Status, severity,
 			fmt.Sprintf("Restart %s: %s", operation.WakeID, operation.ProgressMessage()),
-			"Run `gregale app "+slug+" restart status --wake-id "+operation.WakeID+" --wait` for progress.")
+			"Run `gregale app restart status "+slug+" --wake-id "+operation.WakeID+" --wait` for progress.")
 	}
 	return out
 }

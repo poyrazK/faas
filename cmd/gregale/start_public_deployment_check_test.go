@@ -96,6 +96,15 @@ func TestStartPublicLaunchChecksExactDeploymentWhenPublicIdentityUnavailable(t *
 				if outcome == "success" && (runner.lastRequest == nil || !runner.lastRequest.publicDeploymentCheck || runner.lastRequest.servedDeployment != startResponseDeploymentID || runner.lastRequest.body != "selected deployment" || strings.Contains(stdout.String(), "previous revision body") || strings.Contains(stdout.String(), "Verified URL") || !strings.Contains(stdout.String(), "owner-authorized check")) {
 					t.Fatalf("owner check claimed public deployment evidence: %s", stdout)
 				}
+				if outcome == "success" && runner.session.Environment == "" {
+					// A public app checked through the account is still public:
+					// the summary keeps the Open line rather than a Test line.
+					stdout.Reset()
+					runner.finish()
+					if !strings.Contains(stdout.String(), "  Open:") || strings.Contains(stdout.String(), "  Test:") {
+						t.Fatalf("public app lost its Open line: %s", stdout)
+					}
+				}
 				if !success && (runner.lastRequest != nil || strings.Contains(stdout.String(), "Your app answered.") || strings.Contains(stdout.String(), "Verified URL")) {
 					t.Fatalf("unverified launch was reported as successful: %s", stdout)
 				}

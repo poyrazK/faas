@@ -82,6 +82,23 @@ func TestDeliverAppEventEnqueuesRegisteredWebhook(t *testing.T) {
 	}
 }
 
+// TestDeliverAppEventRefusesPlatformEventTypes: an explicit delivery is
+// signed and sent exactly like Gregale's own events, so it cannot use a
+// platform event type a receiver would trust (event-driven hunt #16).
+func TestDeliverAppEventRefusesPlatformEventTypes(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "checkout-api")
+	hook := mustCreateWebhook(t, e, "checkout-api", webhookReq())
+	for _, typ := range []string{"consumer.plan_changed", "deployment.failed", "workflow.finished", "agent_run.finished"} {
+		rec := e.Do(t, http.MethodPost, "/v1/apps/checkout-api/outbox", api.DeliverAppEventRequest{
+			Destination: hook.TargetURL, Type: typ, Data: json.RawMessage(`{}`),
+		}, nil)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "platform event") {
+			t.Fatalf("%s: status = %d, want 400 platform event; body=%s", typ, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestDeliverAppEventRejectsUnregisteredDestination(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
 	apidserver.MustSeedApp(t, e, "checkout-api")

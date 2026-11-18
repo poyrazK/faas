@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -103,9 +104,112 @@ func RouteBaseGenerations(be storage.StorageBackend, generations map[string]stri
 				return nil, fmt.Errorf("imaged: route runtime base %q: %w", baseKey, err)
 			}
 		}
+		if err := adoptCachedBaseGroup(be, baseKey, generation); err != nil {
+			return nil, fmt.Errorf("imaged: route runtime base %q: %w", baseKey, err)
+		}
 		routed = append(routed, baseKey)
 	}
 	return routed, nil
+}
+
+// adoptCachedBaseGroup carries a base group this node cached under its
+// logical names, committed as generation, over to the generation's own cache
+// files (ADR-20261116190000), so the first release that keeps generations
+// side by side downloads nothing the node already holds. The base goes last:
+// its marker is the commit record vmmd reads.
+func adoptCachedBaseGroup(be storage.StorageBackend, baseKey, generation string) error {
+	for _, key := range []string{baseKey + ".digest", wire.ScanKeyForBaseKey(baseKey), baseKey} {
+		cache, rel, err := storage.CacheBackendForKey(be, key)
+		if err != nil {
+			return err
+		}
+		if cache == nil {
+			continue
+		}
+		if _, err := cache.AdoptCachedGeneration(rel, generation); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UnpinOtherBaseGenerations drops the eviction pin of every cached runtime
+// base file the routed bases no longer boot: their copies under the logical
+// names, and every other generation's files. vmmd runs it at startup, once
+// no vmmd of an older release serves on the node; imaged never does, because
+// its pre-stage runs beside the serving vmmd (ADR-20261116190000). A running
+// guest keeps its own hard link to its base, so an evicted file never pulls
+// a disk out from under one. It reports how many entries it unpinned.
+func UnpinOtherBaseGenerations(be storage.StorageBackend, generations map[string]string, routed []string) (int, error) {
+	keep := make(map[string]bool)
+	stale := make(map[string]bool)
+	// patterns match a key of the same artifact under any
+	// generation: the cache's name for it with the generation hash cut out.
+	type generationPattern struct{ prefix, suffix string }
+	var patterns []generationPattern
+	caches := make(map[*storage.LocalCacheBackend]bool)
+	for _, baseKey := range routed {
+		generation := generations[baseKey]
+		if generation == "" {
+			continue
+		}
+		logical := baseGroupKeys(baseKey)
+		published := baseGroupKeys(storagekey.BaseGeneration(baseKey, generation))
+		hash := generationHash(baseKey, generation)
+		for i := range logical {
+			cache, rel, err := storage.CacheBackendForKey(be, logical[i])
+			if err != nil {
+				return 0, err
+			}
+			_, publishedRel, err := storage.CacheBackendForKey(be, published[i])
+			if err != nil {
+				return 0, err
+			}
+			if cache == nil {
+				continue
+			}
+			caches[cache] = true
+			stale[rel] = true
+			keep[publishedRel] = true
+			if at := strings.Index(publishedRel, hash); at >= 0 {
+				patterns = append(patterns, generationPattern{prefix: publishedRel[:at], suffix: publishedRel[at+len(hash):]})
+			}
+		}
+	}
+	unpin := func(key string) bool {
+		if keep[key] {
+			return false
+		}
+		if stale[key] {
+			return true
+		}
+		for _, p := range patterns {
+			if strings.HasPrefix(key, p.prefix) && strings.HasSuffix(key, p.suffix) && len(key) == len(p.prefix)+generationHashLen+len(p.suffix) {
+				return true
+			}
+		}
+		return false
+	}
+	total := 0
+	for cache := range caches {
+		n, err := cache.UnpinCachedGenerations(unpin)
+		total += n
+		if err != nil {
+			return total, fmt.Errorf("imaged: unpin other runtime base generations: %w", err)
+		}
+	}
+	return total, nil
+}
+
+// generationHashLen is the length of the hex hash storagekey.BaseGeneration
+// names a generation by.
+const generationHashLen = 64
+
+// generationHash is the hash segment storagekey.BaseGeneration puts in the
+// keys of generation.
+func generationHash(baseKey, generation string) string {
+	key := strings.TrimPrefix(storagekey.BaseGeneration(baseKey, generation), storagekey.BaseGenerationsPrefix)
+	return key[:generationHashLen]
 }
 
 // sharedBaseGroup reports whether one read-through cache owns every key of a

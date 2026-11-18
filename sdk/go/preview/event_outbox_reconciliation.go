@@ -105,7 +105,7 @@ func reconcileEventOutbox(ctx context.Context, db eventOutboxControlStore, clien
 	}
 	hash := sha256.Sum256([]byte(body.String))
 	var request AppPublishEventRequest
-	if !body.Valid || !bytes.Equal(hash[:], digest) || json.Unmarshal([]byte(body.String), &request) != nil || request.Validate() != nil || request.Key != key || request.ExpectedAppID != app {
+	if !body.Valid || !bytes.Equal(hash[:], digest) || decodeEventOutboxRequest(body.String, &request) != nil || request.Validate() != nil || request.Key != key || request.ExpectedAppID != app {
 		return out, ErrEventOutboxConflict
 	}
 	slug := s.AppSlug

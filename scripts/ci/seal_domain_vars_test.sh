@@ -164,11 +164,62 @@ grep -qxF "faas_seal_domain_edge_identity_src: \"$work/ed_retired_cp/out/edge.ag
 if run compute edge_retired_no_secretd "${all[@]}" SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE=true 2>/dev/null; then
   fail "edge retired without secretd holding the edge identity was accepted"
 fi
+# Slice 3k-2: a retired compute node gets nothing of control, CD is not
+# handed the key, and the control plane keeps it for schedd and secretd.
+no_control_key=()
+for v in "${all[@]}"; do
+  [[ "$v" == SEAL_DOMAIN_CONTROL_AGE_KEY=* ]] || no_control_key+=("$v")
+done
+run compute c_retired "${no_control_key[@]}" SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE=true ||
+  fail "control retired compute staging failed"
+grep -qxF "faas_seal_domain_control_retired_on_compute: true" "$work/c_retired/vars.yml" || fail "retired compute is not told control is retired"
+! grep -qE "faas_seal_domain_control_(identity|recipient)_src" "$work/c_retired/vars.yml" || fail "retired compute got a control key: $(cat "$work/c_retired/vars.yml")"
+[[ ! -e "$work/c_retired/out/control.age" ]] || fail "retired compute staged control.age"
+listed="$(env -i PATH="$PATH" "${all[@]}" SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE=true bash "$script" --identities compute)"
+! grep -qxF control <<<"$listed" || fail "--identities compute lists control once retired: $listed"
+run control-plane c_retired_cp "${all[@]}" SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE=true || fail "control plane staging with control retired failed"
+grep -qxF "faas_seal_domain_control_identity_src: \"$work/c_retired_cp/out/control.age\"" "$work/c_retired_cp/vars.yml" || fail "control plane lost the control identity"
+! grep -q "_retired_on_compute" "$work/c_retired_cp/vars.yml" || fail "control plane was told a compute control retirement"
+if run compute control_retired_bad "${all[@]}" SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE=yes 2>/dev/null; then
+  fail "a malformed control retirement switch was accepted"
+fi
+if run compute control_not_retired_no_key "${no_control_key[@]}" 2>/dev/null; then
+  fail "a compute node that signs locally was staged without its control identity"
+fi
 if run compute delivery_retired_bad "${all[@]}" SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE=yes 2>/dev/null; then
   fail "a malformed delivery retirement switch was accepted"
 fi
 if run compute delivery_not_retired_no_key "${no_edge_delivery_keys[@]}" 2>/dev/null; then
   fail "a compute node that opens delivery locally was staged without its identity"
+fi
+
+# Slice 3g-3: retired compute nodes get nothing of build, CD is not handed
+# the key, the escrow list leaves it out, and the control plane keeps it for
+# secretd.
+no_build_key=()
+for v in "${all[@]}"; do
+  [[ "$v" == SEAL_DOMAIN_BUILD_AGE_KEY=* ]] || no_build_key+=("$v")
+done
+run compute b_retired "${no_build_key[@]}" SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=true ||
+  fail "build retired compute staging failed"
+grep -qxF "faas_seal_domain_build_retired_on_compute: true" "$work/b_retired/vars.yml" || fail "retired compute is not told build is retired"
+! grep -qE "faas_seal_domain_build_(identity|recipient)_src" "$work/b_retired/vars.yml" || fail "retired compute got a build key: $(cat "$work/b_retired/vars.yml")"
+[[ ! -e "$work/b_retired/out/build.age" ]] || fail "retired compute staged build.age"
+grep -qxF "faas_seal_domain_runtime_identity_src: \"$work/b_retired/out/runtime.age\"" "$work/b_retired/vars.yml" || fail "build retirement took the runtime identity"
+listed="$(env -i PATH="$PATH" "${all[@]}" SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=true bash "$script" --identities compute)"
+! grep -qxF build <<<"$listed" || fail "--identities compute lists build once retired: $listed"
+run control-plane b_retired_cp "${all[@]}" SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=true ||
+  fail "control plane staging with compute build retired failed"
+grep -qxF "faas_seal_domain_build_identity_src: \"$work/b_retired_cp/out/build.age\"" "$work/b_retired_cp/vars.yml" || fail "control plane lost the build identity"
+! grep -q "_retired_on_compute" "$work/b_retired_cp/vars.yml" || fail "control plane was told a compute retirement"
+if run compute build_retired_no_secretd "${all[@]}" SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=true 2>/dev/null; then
+  fail "build retired without secretd holding the build identity was accepted"
+fi
+if run compute build_retired_bad "${all[@]}" SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=1 2>/dev/null; then
+  fail "a malformed build retirement switch was accepted"
+fi
+if run compute build_not_retired_no_key "${no_build_key[@]}" 2>/dev/null; then
+  fail "a compute node that opens registry passwords locally was staged without the build identity"
 fi
 
 # Half a pair, a malformed key, and variables CD owns all refuse.

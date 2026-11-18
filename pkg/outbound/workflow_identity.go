@@ -83,6 +83,18 @@ func validWorkflowIdentity(identity WorkflowIdentity) bool {
 // and subject. Ordinary app, Run, and internal-service assertions cannot authorize
 // this request. The body, route, query and route template are bound to one attempt.
 func MintWorkflowIdentity(identity WorkflowIdentity, request WorkflowOutboundRequest, body []byte, private ed25519.PrivateKey, keyID string, now time.Time) (string, error) {
+	return MintWorkflowIdentityForBodyHash(identity, request, workflowBodyHash(body), private, keyID, now)
+}
+
+// WorkflowBodySHA256 is the lowercase hex SHA-256 a workflow identity binds.
+func WorkflowBodySHA256(body []byte) string { return workflowBodyHash(body) }
+
+// MintWorkflowIdentityForBodyHash is MintWorkflowIdentity for a signer that
+// holds only the body's hash (secretd, ADR-20261110210000 slice 3k-2).
+func MintWorkflowIdentityForBodyHash(identity WorkflowIdentity, request WorkflowOutboundRequest, bodySHA256 string, private ed25519.PrivateKey, keyID string, now time.Time) (string, error) {
+	if !validBodySHA256(bodySHA256) {
+		return "", ErrWorkflowNotAuthorized
+	}
 	if !validWorkflowIdentity(identity) || len(private) != ed25519.PrivateKeySize || keyID == "" || request.IntegrationID == "" || request.PathTemplate == "" {
 		return "", ErrWorkflowNotAuthorized
 	}
@@ -102,9 +114,21 @@ func MintWorkflowIdentity(identity WorkflowIdentity, request WorkflowOutboundReq
 		RawQuery:         request.RawQuery,
 		PathTemplate:     request.PathTemplate,
 		QueryTemplate:    queryTemplate,
-		BodySHA256:       workflowBodyHash(body),
+		BodySHA256:       bodySHA256,
 	}
 	return jwt.Signed(signer).Claims(claims).Serialize()
+}
+
+func validBodySHA256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func verifyWorkflowIdentity(raw string, request WorkflowOutboundRequest, body []byte, keyID string, public ed25519.PublicKey, now time.Time) (WorkflowIdentity, WorkflowOutboundRequest, error) {

@@ -27,6 +27,36 @@ func loadBuildSealDomain(getenv func(string) string) ([]*age.X25519Identity, err
 	return ids, nil
 }
 
+// envSealDomainBuildRetired marks a compute node whose build identity is
+// retired (ADR-20261110210000 slice 3g-3).
+const envSealDomainBuildRetired = "FAAS_SEAL_DOMAIN_BUILD_RETIRED"
+
+// buildRetiredFromEnv reads FAAS_SEAL_DOMAIN_BUILD_RETIRED. A retired imaged
+// holds no identity that opens a registry password: it pulls private images
+// through secretd (FAAS_IMAGED_REGISTRY_PULLS=secretd), loads no build
+// identity, and runs contracted, without the fleet and host identities
+// (FAAS_HOST_AGE_IDENTITY_PATH), since passwords sealed before the domain
+// open with them. Anything left refuses the start.
+func buildRetiredFromEnv(getenv func(string) string, pullsViaSecretd bool) (bool, error) {
+	switch v := getenv(envSealDomainBuildRetired); v {
+	case "", "false":
+		return false, nil
+	case "true":
+	default:
+		return false, fmt.Errorf("imaged: %s=%q: want true or false", envSealDomainBuildRetired, v)
+	}
+	if !pullsViaSecretd {
+		return false, fmt.Errorf("imaged: %s needs FAAS_IMAGED_REGISTRY_PULLS=secretd: nothing else would pull apps' private images", envSealDomainBuildRetired)
+	}
+	if getenv(envSealDomainBuildIdentity) != "" {
+		return false, fmt.Errorf("imaged: %s but %s is set: remove the build identity (seal_domains role, faas_seal_domain_build_retired_on_compute) before starting", envSealDomainBuildRetired, envSealDomainBuildIdentity)
+	}
+	if getenv("FAAS_HOST_AGE_IDENTITY_PATH") != "" {
+		return false, fmt.Errorf("imaged: %s needs the build contract step (faas_seal_domain_build_contracted): the fleet and host identities at FAAS_HOST_AGE_IDENTITY_PATH also open registry passwords", envSealDomainBuildRetired)
+	}
+	return true, nil
+}
+
 // registryReaders returns the identities that open private-registry
 // passwords: the build domain first, then legacy (the fleet and host
 // identities) for passwords sealed before the domain, each once.

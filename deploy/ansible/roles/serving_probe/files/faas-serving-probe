@@ -26,14 +26,19 @@ Credentials (systemd LoadCredential): webhook_url, optional heartbeat_url.
 State (systemd StateDirectory): the last outcome per URL.
 """
 
+import errno
+import hashlib
 import json
 import math
+import multiprocessing
 import os
 import re
 import socket
+import ssl
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -44,6 +49,29 @@ REMINDER_SECONDS = 3600
 DEFAULT_TEXTFILE = "/var/lib/node_exporter/textfile_collector/serving-probe.prom"
 USER_AGENT = "gregale-serving-probe/1"
 MAX_EXPECTED_BODY_BYTES = 4096
+NOTIFICATION_TIMEOUT_SECONDS = 10
+MAX_NOTIFICATION_RESPONSE_BYTES = 4096
+# Stable numeric metric values; mirrored by ServingProbeFailureCodes in Go.
+FAILURE_CODES = {name: value for value, name in enumerate((
+    "none", "dns", "connection", "tls", "timeout", "http_status", "latency", "body_mismatch", "unknown"))}
+
+
+def classify_failure(error):
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    if isinstance(reason, socket.gaierror):
+        return "dns"
+    if isinstance(reason, ssl.SSLError):
+        return "tls"
+    if isinstance(reason, TimeoutError):
+        return "timeout"
+    if isinstance(reason, ConnectionError) or isinstance(reason, OSError) and reason.errno in (
+            errno.EHOSTUNREACH, errno.ENETUNREACH, errno.ENETDOWN, errno.EADDRNOTAVAIL):
+        return "connection"
+    return "unknown"
+
+
+def url_id(url):
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -62,7 +90,7 @@ class Config:
         raw = env.get("FAAS_SERVING_PROBE_URLS", "").split()
         bad = [u for u in raw if not URL_RE.match(u)]
         if not raw or bad:
-            raise ValueError(f"FAAS_SERVING_PROBE_URLS must list https URLs; rejected {bad or 'an empty list'}")
+            raise ValueError("FAAS_SERVING_PROBE_URLS must list valid https URLs")
         self.urls = raw
         self.timeout = float(env.get("FAAS_SERVING_PROBE_TIMEOUT_SECONDS", "20"))
         self.retry_delay = float(env.get("FAAS_SERVING_PROBE_RETRY_DELAY_SECONDS", "30"))
@@ -81,6 +109,7 @@ class Config:
         self.textfile = Path(env.get("FAAS_SERVING_PROBE_TEXTFILE", DEFAULT_TEXTFILE))
         state_dir = env.get("STATE_DIRECTORY", "").split(":")[0]
         self.state = Path(state_dir) / "state.json" if state_dir else None
+        self.notification_state = Path(state_dir) / "notifications.json" if state_dir else None
         creds = env.get("CREDENTIALS_DIRECTORY", "")
         self.webhook = _read_credential(creds, "webhook_url")
         self.heartbeat = _read_credential(creds, "heartbeat_url")
@@ -96,51 +125,127 @@ def _read_credential(directory, name):
         return ""
 
 
-def probe_once(url, cfg, opener, monotonic=time.monotonic):
-    """Return (status, first_byte_seconds, error). status 0 = no response."""
+def _probe_request(url, cfg, opener, monotonic=time.monotonic, progress=lambda event: None):
+    """Run inside the disposable worker; publish observations before blocking reads."""
     start = monotonic()
+    status, seconds = 0, None
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache, no-store"})
     try:
         with opener.open(req, timeout=cfg.timeout) as resp:
+            status = resp.status
+            progress(("status", status))
+            if not 200 <= status < 300:
+                return status, monotonic() - start, f"HTTP {status}", "http_status"
             first = resp.read(1)
             seconds = monotonic() - start
-            if not 200 <= resp.status < 300:
-                return resp.status, seconds, f"HTTP {resp.status}"
+            progress(("seconds", seconds))
             if seconds > cfg.max_first_byte:
-                return resp.status, seconds, f"first byte exceeded {cfg.max_first_byte:g}s budget"
+                return status, seconds, f"first byte exceeded {cfg.max_first_byte:g}s budget", "latency"
             if cfg.expected_body:
                 # One extra byte rejects a valid prefix followed by a parking
                 # page or other unexpected content, with bounded memory use.
                 body = first + resp.read(len(cfg.expected_body))
                 if monotonic() - start > cfg.timeout:
-                    return resp.status, seconds, "response body exceeded attempt timeout"
+                    return status, seconds, "response body exceeded attempt timeout", "timeout"
                 if body != cfg.expected_body:
-                    return resp.status, seconds, "response body mismatch"
-            return resp.status, seconds, ""
+                    return status, seconds, "response body mismatch", "body_mismatch"
+            return status, seconds, "", "none"
     except urllib.error.HTTPError as err:
+        status = err.code
+        progress(("status", status))
         err.close()
-        return err.code, monotonic() - start, f"HTTP {err.code}"
+        return status, monotonic() - start, f"HTTP {status}", "http_status"
     except Exception as err:  # URLError, socket timeout, TLS failure
-        reason = getattr(err, "reason", err)
-        return 0, monotonic() - start, str(reason)[:200]
+        code = classify_failure(err)
+        elapsed = seconds if seconds is not None else monotonic() - start
+        return status, elapsed, f"probe request failed ({code})", code
+
+
+def _request_worker(connection, request, args):
+    try:
+        result = request(*args, progress=connection.send)
+        connection.send(("result", result))
+    except BaseException:
+        # A failed worker is unavailable evidence, never a successful request.
+        # Do not let multiprocessing print exceptions containing private URLs.
+        pass
+    finally:
+        connection.close()
+
+
+def _run_request(request, args, timeout, error_prefix):
+    """Return (status, seconds, safe_error, failure_code) before a total deadline.
+
+    This Linux service is single-threaded. Fork one worker at a time so even
+    an uninterruptible userspace resolver or a slow-drip read can be cancelled.
+    A thread timeout or socket timeout cannot enforce this total deadline.
+    """
+    start = time.monotonic()
+    deadline = start + timeout
+    status, seconds = 0, None
+    context = multiprocessing.get_context("fork")
+    reader, writer = context.Pipe(duplex=False)
+    worker = context.Process(target=_request_worker, args=(writer, request, args), daemon=True)
+
+    def failed(code):
+        elapsed = seconds if seconds is not None else time.monotonic() - start
+        return status, elapsed, f"{error_prefix} ({code})", code
+
+    try:
+        worker.start()
+        writer.close()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not reader.poll(remaining):
+                return failed("timeout")
+            event, value = reader.recv()
+            # Reject a result that becomes readable after the total deadline,
+            # even if it is a valid HTTP response with the expected body.
+            if time.monotonic() >= deadline:
+                return failed("timeout")
+            if event == "status":
+                status = value
+            elif event == "seconds":
+                seconds = value
+            elif event == "result":
+                return value
+    except (EOFError, OSError):
+        return failed("timeout" if time.monotonic() >= deadline else "unknown")
+    finally:
+        writer.close()
+        reader.close()
+        if worker.pid is not None:
+            # Reap on success, timeout, failed IPC and parent cancellation.
+            # SIGKILL also closes the worker's response sockets immediately.
+            if worker.is_alive():
+                worker.kill()
+            worker.join()
+        worker.close()
+
+
+def probe_once(url, cfg, opener, monotonic=time.monotonic):
+    """Return (status, first_byte_seconds, safe_error, failure_code)."""
+    return _run_request(_probe_request, (url, cfg, opener, monotonic), cfg.timeout, "probe request failed")
 
 
 def probe(url, cfg, opener, sleep, monotonic=time.monotonic):
     """Two attempts; the result is the last attempt's."""
-    status, seconds, error = probe_once(url, cfg, opener, monotonic)
+    status, seconds, error, code = probe_once(url, cfg, opener, monotonic)
+    first_code = code
     attempts = 1
     if not 200 <= status < 300 or error:
         sleep(cfg.retry_delay)
-        status, seconds, error = probe_once(url, cfg, opener, monotonic)
+        status, seconds, error, code = probe_once(url, cfg, opener, monotonic)
         attempts = 2
-    return {"ok": 200 <= status < 300 and not error, "status": status, "seconds": seconds, "error": error, "attempts": attempts}
+    return {"ok": 200 <= status < 300 and not error, "status": status, "seconds": seconds,
+            "error": error, "attempts": attempts, "failure_code": code, "first_failure_code": first_code}
 
 
 def _label(value):
     return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
-def write_metrics(path, results, now, cfg):
+def write_metrics(path, results, now, cfg, notifications=None):
     lines = [
         "# HELP faas_serving_probe_success 1 when status, configured body and first-byte checks passed within two attempts.",
         "# TYPE faas_serving_probe_success gauge",
@@ -156,6 +261,13 @@ def write_metrics(path, results, now, cfg):
         "# TYPE faas_serving_probe_http_status gauge",
     ]
     lines += [f'faas_serving_probe_http_status{{url="{_label(u)}"}} {r["status"]}' for u, r in results.items()]
+    for metric, key, description in (("faas_serving_probe_failure_code", "failure_code", "Fixed failure code of the last attempt; 0 none, 1 DNS, 2 connection, 3 TLS, 4 timeout, 5 HTTP status, 6 latency, 7 body mismatch, 8 unknown."),
+                                     ("faas_serving_probe_first_failure_code", "first_failure_code", "Fixed failure code of the first attempt using the same code table."),
+                                     ("faas_serving_probe_attempts", "attempts", "Number of attempts in this run, either 1 or 2.")):
+        lines += [f"# HELP {metric} {description}", f"# TYPE {metric} gauge"]
+        for target, result in results.items():
+            value = result[key] if key == "attempts" else FAILURE_CODES[result[key]]
+            lines.append(f'{metric}{{url="{_label(target)}"}} {value}')
     lines += [
         "# HELP faas_serving_probe_content_check_enabled 1 when an exact response body is required.",
         "# TYPE faas_serving_probe_content_check_enabled gauge",
@@ -169,6 +281,17 @@ def write_metrics(path, results, now, cfg):
         "# TYPE faas_serving_probe_last_run_timestamp_seconds gauge",
         f"faas_serving_probe_last_run_timestamp_seconds {now:.0f}",
     ]
+    for metric, field, help_text in (
+            ("faas_serving_probe_notification_enabled", "enabled", "1 when the channel has a configured credential."),
+            ("faas_serving_probe_notification_attempted", "attempted", "1 when a submission was attempted in this run; 0 includes intentional skips."),
+            ("faas_serving_probe_notification_last_attempt_success", "last_attempt_success", "1 when the last completed submission succeeded; absent when unknown."),
+            ("faas_serving_probe_notification_last_attempt_failure_code", "last_attempt_failure_code", "Last completed submission failure code using the probe code table; absent when unknown."),
+            ("faas_serving_probe_notification_last_attempt_timestamp_seconds", "last_attempt_at", "Unix time the last submission attempt completed; absent when unknown."),
+            ("faas_serving_probe_notification_last_success_timestamp_seconds", "last_success_at", "Unix time of the last successful transport submission; absent when unknown, never human receipt.")):
+        lines += [f"# HELP {metric} {help_text}", f"# TYPE {metric} gauge"]
+        for channel, row in (notifications or {}).items():
+            if field in row:
+                lines.append(f'{metric}{{channel="{channel}"}} {float(row[field]):.6f}')
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
@@ -189,12 +312,57 @@ def load_state(path):
         return {}
 
 
-def save_state(path, state):
+def save_state(path, state, mode=None):
     if path is None:
         return
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(state, sort_keys=True))
+    if mode is not None:
+        os.chmod(tmp, mode)
     os.replace(tmp, path)
+
+
+def notification_channels(cfg, now):
+    try:
+        saved = load_state(cfg.notification_state)
+    except OSError:
+        print("serving-probe: notification_state_read_failed", file=sys.stderr)
+        saved = {}
+    if (not isinstance(saved, dict) or type(saved.get("version")) is not int
+            or saved.get("version") != 1 or not isinstance(saved.get("channels"), dict)):
+        saved = {"channels": {}}
+    channels = {}
+    for channel, destination in (("webhook", cfg.webhook), ("heartbeat", cfg.heartbeat)):
+        row = {"enabled": bool(destination), "attempted": False, "destination_sha256": url_id(destination)}
+        channels[channel] = row
+        old = saved["channels"].get(channel)
+        if not destination or not isinstance(old, dict) or old.get("destination_sha256") != row["destination_sha256"]:
+            continue
+        at, success, code, last = (old.get(k) for k in (
+            "last_attempt_at", "last_attempt_success", "last_attempt_failure_code", "last_success_at"))
+        valid_clock = lambda value: type(value) in (int, float) and 0 < value <= now and math.isfinite(value)
+        if not valid_clock(at) or type(success) is not bool or type(code) is not int:
+            continue
+        if code not in (0, 1, 2, 3, 4, 5, 8) or success != (code == 0):
+            continue
+        if (last is not None and (not valid_clock(last) or last > at)) or (success and last != at):
+            continue
+        row.update(last_attempt_at=at, last_attempt_success=success, last_attempt_failure_code=code)
+        if last is not None:
+            row["last_success_at"] = last
+    return channels
+
+
+def save_notification_channels(cfg, channels):
+    # Keep notification history independent of incident notification cadence.
+    # Persist failed attempts too, but never the destination URL or runtime flags.
+    state = {"version": 1, "channels": {
+        channel: {k: v for k, v in row.items() if k not in ("enabled", "attempted")}
+        for channel, row in channels.items() if row["enabled"]}}
+    try:
+        save_state(cfg.notification_state, state, mode=0o600)
+    except OSError:
+        print("serving-probe: notification_state_write_failed", file=sys.stderr)
 
 
 def decide(results, previous, now):
@@ -205,7 +373,7 @@ def decide(results, previous, now):
         if r["ok"]:
             state[url] = {"ok": True}
             if prev.get("ok") is False:
-                messages.append(f"RECOVERED {url} answered {r['status']} in {r['seconds']:.2f}s")
+                messages.append(f"RECOVERED url_id={url_id(url)} answered {r['status']} in {r['seconds']:.2f}s")
             continue
         last = prev.get("notified_at", 0) if prev.get("ok") is False else 0
         if prev.get("ok") is not False or now - last >= REMINDER_SECONDS:
@@ -213,7 +381,7 @@ def decide(results, previous, now):
             since = prev.get("failing_since", now) if prev.get("ok") is False else now
             minutes = int((now - since) // 60)
             still = f" (failing for {minutes} min)" if minutes else ""
-            messages.append(f"FAILING {url}: {detail} after {r['attempts']} attempts{still}")
+            messages.append(f"FAILING url_id={url_id(url)}: {detail} after {r['attempts']} attempts{still}")
             last = now
         state[url] = {
             "ok": False,
@@ -223,17 +391,78 @@ def decide(results, previous, now):
     return messages, state
 
 
-def post_json(url, payload, timeout=10):
-    body = json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        resp.read()
+class NotificationError(Exception):
+    def __init__(self, code):
+        self.failure_code = code if code in ("dns", "connection", "tls", "timeout", "http_status", "unknown") else "unknown"
+        super().__init__(f"notification request failed ({self.failure_code})")
 
 
-def ping(url, timeout=10):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        resp.read()
+def _notification_request(url, payload, timeout, opener, progress=lambda event: None):
+    start = time.monotonic()
+    status = 0
+    try:
+        if urllib.parse.urlsplit(url).scheme != "https":
+            raise ValueError("HTTPS required")
+        headers = {"User-Agent": USER_AGENT}
+        body = None
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(payload).encode()
+        req = urllib.request.Request(url, data=body, headers=headers)
+        with opener.open(req, timeout=timeout) as response:
+            status = response.status
+            progress(("status", status))
+            if not 200 <= status < 300:
+                return status, time.monotonic() - start, "notification HTTP failure", "http_status"
+            if len(response.read(MAX_NOTIFICATION_RESPONSE_BYTES + 1)) > MAX_NOTIFICATION_RESPONSE_BYTES:
+                return status, time.monotonic() - start, "notification response exceeded size limit", "unknown"
+            # HTTPResponse.read(n) can return a short body at EOF without
+            # raising IncompleteRead. A remaining declared length is failure.
+            if getattr(response, "length", 0):
+                return status, time.monotonic() - start, "notification response incomplete", "unknown"
+        return status, time.monotonic() - start, "", "none"
+    except urllib.error.HTTPError as err:
+        status = err.code
+        progress(("status", status))
+        err.close()
+        return status, time.monotonic() - start, "notification HTTP failure", "http_status"
+    except Exception as err:
+        code = classify_failure(err)
+        return status, time.monotonic() - start, f"notification request failed ({code})", code
+
+
+def _submit_notification(url, payload, timeout, opener):
+    _, _, error, code = _run_request(
+        _notification_request, (url, payload, timeout, opener or default_opener()),
+        timeout, "notification request failed")
+    if error:
+        raise NotificationError(code)
+
+
+def post_json(url, payload, timeout=NOTIFICATION_TIMEOUT_SECONDS, opener=None):
+    _submit_notification(url, payload, timeout, opener)
+
+
+def ping(url, timeout=NOTIFICATION_TIMEOUT_SECONDS, opener=None):
+    _submit_notification(url, None, timeout, opener)
+
+
+def attempt_notification(row, submit, args, now, failure_message):
+    row["attempted"] = True
+    code = "none"
+    try:
+        submit(*args)
+    except Exception as err:
+        code = err.failure_code if isinstance(err, NotificationError) else classify_failure(err)
+        print(f"serving-probe: {failure_message} failure_code={code}", file=sys.stderr)
+    finished = now()
+    success = code == "none"
+    if row.get("last_success_at", 0) > finished:
+        row.pop("last_success_at", None)
+    row.update(last_attempt_at=finished, last_attempt_success=success, last_attempt_failure_code=FAILURE_CODES[code])
+    if success:
+        row["last_success_at"] = finished
+    return success
 
 
 def run(env=None, opener=None, sleep=time.sleep, now=time.time, post=post_json, beat=ping, monotonic=time.monotonic):
@@ -241,35 +470,34 @@ def run(env=None, opener=None, sleep=time.sleep, now=time.time, post=post_json, 
     opener = opener or default_opener()
     results = {url: probe(url, cfg, opener, sleep, monotonic) for url in cfg.urls}
     finished = now()
-    write_metrics(cfg.textfile, results, finished, cfg)
+    channels = notification_channels(cfg, finished)
+    write_metrics(cfg.textfile, results, finished, cfg, channels)
 
     for url, r in results.items():
         outcome = "ok" if r["ok"] else "FAIL"
-        print(f"serving-probe: {outcome} {url} status={r['status']} first_byte={r['seconds']:.3f}s attempts={r['attempts']} {r['error']}".rstrip())
+        print(f"serving-probe: {outcome} url_id={url_id(url)} status={r['status']} first_byte={r['seconds']:.3f}s attempts={r['attempts']} failure_code={r['failure_code']} first_failure_code={r['first_failure_code']} {r['error']}".rstrip())
 
     messages, state = decide(results, load_state(cfg.state), finished)
     delivered = True
-    if messages:
-        text = f"Gregale serving probe from {cfg.node}:\n" + "\n".join(messages)
-        if cfg.webhook:
-            try:
-                post(cfg.webhook, {"text": text})
-            except Exception as err:
-                delivered = False
-                print(f"serving-probe: webhook delivery failed: {err}", file=sys.stderr)
-        else:
-            delivered = False
-            print("serving-probe: no webhook_url credential; notification not sent", file=sys.stderr)
-    if delivered:
-        # A reminder that could not be delivered stays due on the next run.
-        save_state(cfg.state, state)
-
     failed = [u for u, r in results.items() if not r["ok"]]
-    if not failed and cfg.heartbeat:
-        try:
-            beat(cfg.heartbeat)
-        except Exception as err:
-            print(f"serving-probe: heartbeat ping failed: {err}", file=sys.stderr)
+    try:
+        if messages:
+            text = f"Gregale serving probe from {cfg.node}:\n" + "\n".join(messages)
+            if cfg.webhook:
+                delivered = attempt_notification(channels["webhook"], post, (cfg.webhook, {"text": text}),
+                                                 now, "notification_submission_failed")
+            else:
+                delivered = False
+                print("serving-probe: no webhook_url credential; notification not sent", file=sys.stderr)
+        if delivered:
+            # A reminder that could not be delivered stays due on the next run.
+            save_state(cfg.state, state)
+        if not failed and cfg.heartbeat:
+            attempt_notification(channels["heartbeat"], beat, (cfg.heartbeat,), now, "heartbeat_submission_failed")
+    finally:
+        save_notification_channels(cfg, channels)
+        # Provider completion must not make older serving evidence look newer.
+        write_metrics(cfg.textfile, results, finished, cfg, channels)
     return 1 if failed or not delivered else 0
 
 

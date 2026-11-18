@@ -26,12 +26,14 @@ import (
 type TargetSQL func(context.Context, string, string, func(*pgx.Conn, string) error) error
 
 type Engine struct {
-	RefreshSchema   func(context.Context, Pipeline, SchemaChange) ([]SchemaRefresh, bool, error)
-	RefreshReadGate func(context.Context, Pipeline, string) error
-	Policy          commit.NetworkPolicy
-	Target          TargetSQL
-	Capacity        *CapacityObserver
-	Admit           func(context.Context, Pipeline) error
+	RefreshRelationships func(context.Context, Pipeline, SchemaChange) ([]SchemaRefresh, bool, error)
+	IndexStorageLimit    func(context.Context, Pipeline) (int64, error)
+	RefreshSchema        func(context.Context, Pipeline, SchemaChange) ([]SchemaRefresh, bool, error)
+	RefreshReadGate      func(context.Context, Pipeline, string) error
+	Policy               commit.NetworkPolicy
+	Target               TargetSQL
+	Capacity             *CapacityObserver
+	Admit                func(context.Context, Pipeline) error
 	// Test-only seam: production always uses Commit's verified/pinned dialer.
 	openSource func(context.Context, string) (*pgxpool.Pool, error)
 	pinSource  func(context.Context, string) (string, error)
@@ -61,6 +63,10 @@ func (e *blocked) Error() string { return e.code }
 
 func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current func(context.Context) error) Observation {
 	ob := pipelineObservation(p)
+	if p.ServingInvalid || !validRuntimeServing(p) {
+		ob.State, ob.Reason = "blocked", "serving_contract_invalid"
+		return ob
+	}
 	err := e.withTarget(ctx, p, current, func(target *pgx.Conn, owner string) error {
 		if p.DesiredState == "paused" && p.ReaderChange != nil && p.ReaderChange.State == "approved" {
 			if err := pausePipelineSubscriptions(ctx, p, target, current); err != nil {
@@ -92,6 +98,12 @@ func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current 
 			if p.DesiredState == "paused" {
 				ob.State = "paused"
 			}
+			return nil
+		}
+		if change, err := e.reconcileIndex(ctx, p, target, owner, current); err != nil {
+			return err
+		} else if change != nil {
+			ob.IndexOnly, ob.IndexChange = true, change
 			return nil
 		}
 		if p.DesiredState == "running" {
@@ -144,7 +156,13 @@ func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current 
 				return capacityBlock(err)
 			}
 		}
-		return e.reconcile(ctx, p, raw, source, target, owner, &ob, current)
+		if err = e.reconcile(ctx, p, raw, source, target, owner, &ob, current); err != nil {
+			return err
+		}
+		if ob.State == "live" {
+			return e.finishEvolution(ctx, p, target, owner, &ob, current)
+		}
+		return nil
 	})
 	return observeReconcileError(p, ob, err)
 }
@@ -202,7 +220,7 @@ func (e *Engine) withTarget(ctx context.Context, p Pipeline, current func(contex
 func (e *Engine) reconcileUnavailable(ctx context.Context, p Pipeline, current func(context.Context) error) Observation {
 	ob := pipelineObservation(p)
 	ob.Reason = "credential_unavailable"
-	err := e.withTarget(ctx, p, current, func(target *pgx.Conn, _ string) error {
+	err := e.withTarget(ctx, p, current, func(target *pgx.Conn, owner string) error {
 		if p.DesiredState == "paused" || p.DesiredState == "deleted" {
 			if err := pausePipelineSubscriptions(ctx, p, target, current); err != nil {
 				return err
@@ -226,6 +244,11 @@ func (e *Engine) reconcileUnavailable(ctx context.Context, p Pipeline, current f
 		}
 		if applied != nil {
 			ob.ReaderChange, ob.ReaderOnly = applied, true
+		} else if change, err := e.reconcileIndex(ctx, p, target, owner, current); err != nil {
+			return err
+		} else if change != nil {
+			ob.IndexOnly, ob.IndexChange = true, change
+			return nil
 		} else if p.DesiredState != "deleted" {
 			if err := ensurePipelineReadGate(ctx, p, target); err == nil {
 				_ = e.refreshPipelineReadGate(ctx, p, target, current)
@@ -353,6 +376,9 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 		return err
 	}
 	if activeSchema {
+		if err = advanceProjectedPublication(ctx, p, source, current); err != nil {
+			return err
+		}
 		intent, _ := verificationID(p, relations)
 		if verificationCancelled(p, intent) {
 			// Cancellation is bound to the approved logical run, not its
@@ -502,7 +528,7 @@ func inspectSource(ctx context.Context, p Pipeline, source *pgxpool.Pool) ([]rel
 	}
 	result := make([]relation, 0, len(p.Tables))
 	for _, name := range p.Tables {
-		r, table, err := inspectSourceTable(ctx, source, name)
+		r, table, err := inspectPipelineTable(ctx, p, source, name)
 		if err != nil {
 			return nil, "", err
 		}
@@ -680,14 +706,14 @@ func ensurePublication(ctx context.Context, p Pipeline, source *pgxpool.Pool) er
 		defer func() { _ = tx.Rollback(ctx) }()
 		tables := make([]string, 0, len(p.Tables))
 		for _, table := range p.Tables {
-			_, inspected, err := inspectSourceTable(ctx, tx, table)
+			_, inspected, err := inspectPipelineTable(ctx, p, tx, table)
 			if err != nil {
 				return err
 			}
 			if !inspected.Supported {
 				return &blocked{inspected.Issues[0].Code, false}
 			}
-			tables = append(tables, "ONLY "+tableIdent(table))
+			tables = append(tables, publicationTable(p, inspected))
 		}
 		if _, err = tx.Exec(ctx, "CREATE PUBLICATION "+ident(name)+" FOR TABLE "+strings.Join(tables, ",")); err != nil {
 			return err
@@ -709,6 +735,9 @@ func ensurePublication(ctx context.Context, p Pipeline, source *pgxpool.Pool) er
 	}
 	if !fullChanges {
 		return &blocked{"source_publication_changed", true}
+	}
+	if p.Serving != nil && len(p.Serving.Columns) > 0 {
+		return checkProjectedPublication(ctx, p, source)
 	}
 	var matches bool
 	err = source.QueryRow(ctx, `SELECT count(*)=$2 AND coalesce(bool_and(schemaname='public' AND tablename=ANY($3::text[]) AND rowfilter IS NULL
@@ -891,7 +920,10 @@ func updateTableReads(ctx context.Context, p Pipeline, tx receiptSQL, allowed bo
 		if err != nil {
 			return err
 		}
-		predicate = readerPredicate(readers)
+		predicate, err = authorityPredicate(ctx, p, tx, readers)
+		if err != nil {
+			return err
+		}
 	}
 	for _, table := range owned {
 		if _, err := tx.Exec(ctx, "ALTER POLICY gregale_pipeline_read ON "+tableIdent(table)+" USING ("+predicate+")"); err != nil {
@@ -1015,6 +1047,20 @@ func (e *Engine) cleanupGeneration(ctx context.Context, p Pipeline, raw string, 
 
 	// A resync explicitly replaces only tables carrying this generation's
 	// ownership marker. Deleting a pipeline retains its destination data.
+	cleanup, err := target.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cleanup.Rollback(ctx) }()
+	if err = dropRelationships(ctx, p, cleanup, []string{}); err != nil {
+		return err
+	}
+	if err = current(ctx); err != nil {
+		return err
+	}
+	if err = cleanup.Commit(ctx); err != nil {
+		return err
+	}
 	if p.DesiredState != "deleted" {
 		tx, err := target.Begin(ctx)
 		if err != nil {

@@ -122,6 +122,11 @@ BEGIN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_open_audit FROM faas_runtime;
 		GRANT SELECT, INSERT ON public.secret_open_audit TO faas_secretd;
 	END IF;
+	IF to_regclass('public.secret_verification_audit') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_verification_audit FROM faas_runtime;
+		GRANT SELECT, INSERT ON public.secret_verification_audit TO faas_secretd;
+		GRANT USAGE ON SEQUENCE public.secret_verification_audit_id_seq TO faas_secretd;
+	END IF;
 	-- ADR-20261110210000 slice 3h: basic-auth verifiers decide which
 	-- password every node's edge accepts for an app. Only apid, which has the
 	-- plaintext when the customer sets it, writes them.

@@ -3,6 +3,8 @@ package fcvm
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -127,6 +129,15 @@ func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing
 			"Too many arguments!\n",
 			"guest-init: sidecar echo crashed (restart 1/3): run sidecar echo: exit status 127\n",
 		}, wantCrash: true},
+		// Prod test 2026-11-15 (P4): an app that exits 0 without listening
+		// failed its deploy as internal.
+		{name: "clean exit before readiness", lines: []string{
+			"exiting without listening\n",
+			"guest-init: app exited cleanly (status 0, policy=on-failure); a clean exit is not restarted\n",
+		}, wantCrash: true},
+		{name: "workload set main clean exit", lines: []string{
+			"guest-init: main exited cleanly (status 0, policy=no); a clean exit is not restarted\n",
+		}, wantCrash: true},
 		{name: "guest-init failure", lines: []string{
 			"guest-init: assemble overlay: mount overlay: invalid argument\n",
 			"[    0.912345] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100\n",
@@ -147,10 +158,70 @@ func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing
 				if p == nil || p.Code != api.CodeAppStartupCrash || p.Status != 422 || !strings.Contains(p.Detail, "exited before becoming ready") {
 					t.Fatalf("startup failure = %#v, want a 422 %s problem carrying the detail", err, api.CodeAppStartupCrash)
 				}
+				if clean := strings.Contains(strings.Join(tc.lines, ""), "exited cleanly"); clean != strings.Contains(p.Detail, "listening on $PORT") {
+					t.Fatalf("clean-exit hint present = %v, want %v: %q", !clean, clean, p.Detail)
+				}
 				return
 			}
 			if p != nil {
 				t.Fatalf("guest failure without supervisor output = %#v, want a platform (non-problem) error", p)
+			}
+		})
+	}
+}
+
+// spec: §4.8, §6.1
+// Coding-agent eval 2026-11-17 (render-examples/fastapi from source, rc.347):
+// the app ran `python main.py`, which exited 0. guest-init exited without
+// draining the console, the panic dump cut its clean-exit line to
+// "guest-init: app ", and the deploy failed as internal. guest-init exits 0
+// only when its supervisor returned nil, so the console's exit status alone
+// attributes the stop to the app; any other status stays a platform failure.
+func TestGuestStoppedDuringStartupReadsACleanGuestInitExitFromTheConsole(t *testing.T) {
+	const evalLine = "guest-init: app [    2.577505] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000000\n"
+	for _, tc := range []struct {
+		name      string
+		console   string // "" leaves no console file
+		wantCrash bool
+	}{
+		{name: "eval clean exit", console: evalLine + "[    2.580220] CPU: 0 UID: 0 PID: 586 Comm: init Not tainted 6.18.54 #1\n[    2.621172] Rebooting in 1 seconds..\n", wantCrash: true},
+		{name: "guest-init error", console: "guest-init: assemble overlay: mount overlay: invalid argument\n[    0.912345] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100\n"},
+		{name: "guest-init killed by a signal", console: "[    0.912345] Kernel panic - not syncing: Attempted to kill init! exitcode=0x0000000b\n"},
+		{name: "panic without a status", console: "[    3.000000] Kernel panic - not syncing: Attempted to kill init!\n"},
+		{name: "no console file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			v := NewJailerVMM(dir, 0)
+			ring := v.registerRing("inst")
+			if _, err := ring.Write("stdout", []byte(evalLine)); err != nil {
+				t.Fatal(err)
+			}
+			rec := &instanceRecord{done: make(chan struct{}), consolePath: filepath.Join(dir, "console.log")}
+			if tc.console != "" {
+				if err := os.WriteFile(rec.consolePath, []byte(tc.console), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			v.mu.Lock()
+			v.recs["inst"] = rec
+			v.mu.Unlock()
+
+			err := v.guestStoppedDuringStartup(Lease{Instance: "inst"})
+			p := api.AsProblem(err)
+			if !tc.wantCrash {
+				if p != nil {
+					t.Fatalf("stop = %#v, want a platform (non-problem) error", p)
+				}
+				return
+			}
+			if p == nil || p.Code != api.CodeAppStartupCrash || p.Status != 422 {
+				t.Fatalf("stop = %#v, want a 422 %s problem", err, api.CodeAppStartupCrash)
+			}
+			for _, want := range []string{"exited before becoming ready", "exited with status 0", "listening on $PORT"} {
+				if !strings.Contains(p.Detail, want) {
+					t.Errorf("detail %q lacks %q", p.Detail, want)
+				}
 			}
 		})
 	}
@@ -297,6 +368,9 @@ func TestGuestBootArgsSuppressRCUStallWarnings(t *testing.T) {
 	for name, args := range map[string]string{"cold boot": coldBootArgs, "execution": executionBootArgs} {
 		if !strings.Contains(args, "rcupdate.rcu_cpu_stall_suppress=1") {
 			t.Errorf("%s boot args lack RCU stall suppression: %q", name, args)
+		}
+		if !strings.Contains(args, "workqueue.watchdog_thresh=0") {
+			t.Errorf("%s boot args lack workqueue lockup suppression: %q", name, args)
 		}
 	}
 }

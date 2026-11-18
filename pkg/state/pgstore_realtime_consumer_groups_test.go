@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -163,6 +164,40 @@ func TestPgStoreRealtimeConsumerGroupReleaseRenewAndIdempotentSettlement(t *test
 	bad := state.RealtimeConsumerGroupSettlement{Sequence: "1", ClaimToken: "not-a-token", Action: "complete"}
 	if _, err := s.SettleRealtimeConsumerGroup(ctx, ep, "orders", "billing", bad); !errors.Is(err, state.ErrRealtimeConsumerGroupInvalid) {
 		t.Fatalf("malformed token err = %v, want ErrRealtimeConsumerGroupInvalid", err)
+	}
+}
+
+// A worker that always releases cannot loop on one message forever: the
+// RealtimeConsumerGroupReleasesMax-th release dead-letters it as
+// release_limit (event-driven hunt #7).
+func TestPgStoreRealtimeConsumerGroupReleaseLimitDeadLetters(t *testing.T) {
+	s, ctx, ep := realtimeGroupFixture(t, "-rt-group-release-limit", 1)
+	if _, err := s.CreateRealtimeConsumerGroup(ctx, ep, "orders", "billing", state.RealtimeConsumerGroupConfig{AfterSequence: "0"}); err != nil {
+		t.Fatalf("CreateRealtimeConsumerGroup: %v", err)
+	}
+	for i := 1; i < api.RealtimeConsumerGroupReleasesMax; i++ {
+		res, err := settle(s, ctx, ep, claimSequence(t, s, ctx, ep, "worker-a"), "release")
+		if err != nil || res.Status != "ready" {
+			t.Fatalf("release %d = %+v, %v", i, res, err)
+		}
+	}
+	res, err := settle(s, ctx, ep, claimSequence(t, s, ctx, ep, "worker-a"), "release")
+	if err != nil || res.Status != "dead" || res.AvailableAt != nil {
+		t.Fatalf("release %d = %+v, %v, want dead", api.RealtimeConsumerGroupReleasesMax, res, err)
+	}
+	if claim, err := s.ClaimRealtimeConsumerGroup(ctx, ep, "orders", "billing", "worker-a"); err != nil || claim != nil {
+		t.Fatalf("claim after release_limit = %+v, %v, want none", claim, err)
+	}
+	dead, err := s.ListRealtimeConsumerGroupDeadLetters(ctx, ep, "orders", "billing")
+	if err != nil || len(dead) != 1 || dead[0].FailureCode != "release_limit" {
+		t.Fatalf("dead letters = %+v, %v; want one release_limit", dead, err)
+	}
+	// A replay starts the releases over: the next release returns it to ready.
+	if err := s.ReplayRealtimeConsumerGroupDeadLetter(ctx, ep, "orders", "billing", dead[0].Message.Sequence); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if res, err := settle(s, ctx, ep, claimSequence(t, s, ctx, ep, "worker-a"), "release"); err != nil || res.Status != "ready" {
+		t.Fatalf("release after replay = %+v, %v, want ready", res, err)
 	}
 }
 

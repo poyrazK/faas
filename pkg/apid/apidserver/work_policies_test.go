@@ -178,10 +178,12 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	}
 	if _, err := (*e.Store()).CreateQueueBinding(context.Background(), state.QueueBinding{
 		AccountID: (*e.Acct()).ID, AppID: app, Name: "manual", QueueName: "manual",
-		Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1,
+		Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: false, MaxConcurrency: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// A keyed row needs a consumer: an enabled pull binding would take it
+	// (ADR-20261112193306), a disabled one cannot.
 	apidserver.AssertProblem(t, e.Do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
 		QueueName: "manual", Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d7"`)},
 	}, nil), http.StatusBadRequest, api.CodeValidation)

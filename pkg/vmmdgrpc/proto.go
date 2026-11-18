@@ -503,6 +503,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 			MemBytes:          snap.GetMemBytes(),
 			CaptureID:         snap.GetCaptureId(),
 			SealedKey:         snap.GetSealedKey(),
+			SealedCache:       snap.GetSealedCache(),
 		}
 	}
 	return wr, nil
@@ -662,6 +663,9 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// credentials, for the builder's FROM pulls.
 		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
 		BuildKitSeedDrive:        seedDrive,
+		// ADR-20261110210000 slice 3j-3: the build a registry mirror pulls
+		// for through secretd.
+		BuildID: req.GetBuild().GetBuildId(),
 	}, nil
 }
 
@@ -898,6 +902,7 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 	resp := &vmmdpb.WakeResponse{
 		RehearsalRunId:                     inst.Net.RehearsalRunID,
 		EnvironmentBranchContained:         inst.Net.EnvironmentBranchContained,
+		BaseScanGrace:                      inst.BaseScanGrace,
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,

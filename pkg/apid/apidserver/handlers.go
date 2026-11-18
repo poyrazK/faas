@@ -349,7 +349,7 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
-	s.audit.Emit(r.Context(), "app.created", &acct.ID, map[string]any{
+	s.audit.Emit(r.Context(), "app.created", &acct.ID, mergeAgentAudit(map[string]any{
 		"app_id":                   created.ID,
 		"slug":                     created.Slug,
 		"type":                     string(created.Type),
@@ -360,7 +360,7 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		"runtime":                  created.Runtime,
 		"visibility":               string(created.Visibility),
 		"platform_tenant_required": created.PlatformTenantRequired,
-	})
+	}, r))
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponseWithContext(r.Context(), created, acct.Plan)
 	resp.Status = api.AppStatusUndeployed
@@ -1008,6 +1008,13 @@ func (s *server) handleDevSourceDeploy(w http.ResponseWriter, r *http.Request, a
 		s.notFound(w, "no such developer environment")
 		return
 	}
+	// A sync must not build into an environment the janitor or --stop has
+	// claimed for teardown; the CLI renews the session first and gets the
+	// same answer there.
+	if app.PreviewPrState == state.PreviewPrStateTearingDown || app.PreviewPrState == state.PreviewPrStateTornDown {
+		api.WriteProblem(w, api.ErrDevSessionTearingDown())
+		return
+	}
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 		api.WriteProblem(w, api.ErrValidation("developer source sync requires multipart/form-data"))
 		return
@@ -1168,6 +1175,7 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 			WorkerReplicas:               apiManifestFromState(a.Manifest).WorkerReplicas,
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			Warmup:                       a.Manifest.Warmup,
 			Pause:                        a.Manifest.Pause,
 			Profiling:                    a.Manifest.Profiling,
 			Tracing:                      a.Manifest.Tracing,

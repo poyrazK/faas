@@ -179,9 +179,52 @@ change against it.
 
 0. Eval agents, foreign-repo tasks and graders; record the baseline.
 1. Feature hints in project plans (done: `pkg/featurehints`).
-2. Failure `fix` fields and parked-status display.
-3. Parity gate with the frozen exemption list.
-4. `gregale guide` and agent-marker hints.
+2. Failure `fix` fields and parked-status display (done; see "As built" below).
+3. Parity gate with the frozen exemption list (done 2026-11-14: the
+   app-update inventory `cmd/gregale/app_update_cli_surface.go` already
+   reflected over UpdateAppRequest; `deploy_request_cli_surface.go` adds the
+   deploy request and its overrides, and `TestCLIAPIParityExemptionsAreFrozen`
+   holds `docs/cli-api-parity-exemptions.txt` to the known gaps at a ceiling of
+   17 that may only fall. Compose `x-gregale-*` keys are not yet a path).
+4. `gregale guide` and agent-marker hints (done; see "As built" below).
+
+### As built (2026-11-14)
+
+The voting-app re-run of 2026-11-13 used the plan hints, then spent ten
+commands guessing how to expose a TCP port and hand-edited every hardcoded
+service host. This round answers those:
+
+- **Source hosts (§1).** reposcan reads each source-built workload's code,
+  bounded (400 files, 256 KiB each, tests and vendored trees skipped), for
+  string literals that dial another service by its Compose name
+  (`host="redis"`, `postgres://…@db/`, `Server=db;`, `"redis:6379"`,
+  `Connect("redis")`). Lines that read the environment are skipped: a
+  literal there is a fallback. The plan carries them as
+  `workloads[].source_hosts`, and the `source-hosts` hint names, per host, the
+  variable to read: the managed binding (`DATABASE_URL`), a URL to set for a
+  datastore Gregale does not run, or `$GREGALE_SERVICE_<NAME>_HOST`/`_URL`.
+- **Fix commands (§2).** `TestEveryFixCommandExists` resolves every
+  backticked `gregale …` command in the failure surfaces (`pkg/api/errors.go`,
+  whycopy, presetwhy, featurehints, preflight, frameworkprofile) against the
+  manifest; `TestEveryFailureCodeHasAFix` requires a fix on every catalog row.
+  It found `gregale certs …` (no such command) in the certificate alert and
+  the operator-only `rollouts recover` in a customer error; both now name real
+  commands. A `tcp add` against a declared internal port says why it is
+  refused and how same-account apps reach it.
+- **Guessed words.** An unknown subcommand that is a known concept
+  (listener, port, expose, private, public, redis, healthcheck, memory,
+  tunnel, shell, …) prints the real verbs and flags that do it, only those
+  the command declares; `app listener <verb> --help --all` prints the verb's
+  help instead of today's `app` help.
+- **Guide (§4).** `gregale guide [<task>] [--json]`, seven pages, each under
+  4 KiB, every command resolved by a test; `docs/agent-guide/` is generated
+  from the same pages.
+- **Agent markers (§5).** `CLAUDECODE`, `GEMINI_CLI`, `CODEX_THREAD_ID`,
+  `CODEX_SANDBOX`, `CURSOR_AGENT`, each found in that agent's installed
+  release on 2026-11-14. The pointer is printed once, on stderr, with help,
+  usage errors and errors; `GREGALE_NO_AGENT_HINT=1` turns it off, and the
+  CLI's test binary sets it so stderr comparisons do not depend on where the
+  tests run.
 
 Fixing the gaps the parity gate freezes (the liveness flag first) is
 separate work, tracked by the exemption list shrinking.
@@ -213,3 +256,68 @@ separate work, tracked by the exemption list shrinking.
   and detection can be wrong; the owner chose hint-only.
 - **Fix only the liveness flag.** That closes this gap, not the next
   API-only field or the next feature an agent cannot find.
+
+## Amendment 1 (2026-11-17): the CLI names the coding agent in its User-Agent
+
+### Context
+
+The CLI already knows when a coding agent runs it (§5), but it kept that to
+itself. Coding agents are now a planned acquisition channel, and nothing on
+the server could tell an agent's deploy from a person's: deploy audit rows
+carry `actor_via` (`api`, `cli`, `dashboard`, `github`), and the CLI's
+User-Agent named only its release and platform. Hosted MCP and agent keys
+were visible per key (agent connections), but not on the deploys they made.
+
+### Decision
+
+1. `pkg/api.CodingAgents` is the one table of markers and reported names
+   (`claude-code`, `codex`, `cursor`, `gemini-cli`). The CLI's hint (§5),
+   its User-Agent and the server's parser all read it.
+2. Run under a known agent, the CLI's User-Agent adds `; agent=<name>` to its
+   comment: `gregale/0.1.0 (linux/amd64; agent=claude-code)`. `DO_NOT_TRACK`
+   set to anything but `0` leaves it out. `GREGALE_NO_AGENT_HINT` still only
+   controls the hint. Defaults, prompts and output do not change, so §5's
+   "without changing behavior" holds.
+3. apid adds two keys to the audit payload of `app.created`, `app.deployed`,
+   `deploy.local_tarball`, `deploy.source_ref` and `upload.session_committed`
+   (`mergeAgentAudit`, beside `mergeActorAudit`):
+   - `actor_agent`: the name `api.CodingAgentFromUserAgent` reads from a
+     `gregale/` User-Agent; any name outside the table is dropped.
+   - `actor_agent_key`: `agentconnections.Kind` of the authenticated key
+     (`hosted_mcp`, `agent_key`, `app_agent`).
+   Absent values add no keys.
+4. The agent name is self-reported. It attributes usage and never grants or
+   refuses anything, so it does not reopen the header-sniffing problem
+   `deploy_actor.go` describes for `deployed_via`.
+
+No schema change: the keys live in `audit_log.data`. API keys minted by
+`gregale login` or `gregale mcp connect --headless` in an agent's shell also
+record the agent through their existing `created_ua` column.
+
+Accounts whose first agent deploy happened in their first week, by agent:
+
+```sql
+SELECT data->>'actor_agent' AS agent, count(DISTINCT l.account_id) AS accounts
+FROM audit_log l JOIN accounts a ON a.id = l.account_id
+WHERE l.kind IN ('app.deployed', 'deploy.local_tarball', 'deploy.source_ref', 'upload.session_committed')
+  AND l.data ? 'actor_agent'
+  AND l.received_at < a.created_at + interval '7 days'
+GROUP BY 1;
+```
+
+The operator overview (`GET /v1/admin/obs/overview`, `gregalectl obs
+overview`) reports the same per agent as `coding_agents`: deploys in the last
+24 hours, and accounts created in the beta funnel's 14-day window that
+deployed through the agent, with how many served a request and how many pay.
+
+### Rejected alternatives
+
+- **A `deployments.deployed_by_agent` column or a new table.** Needs a
+  migration and a CHECK for a value the client reports itself; the audit
+  payload answers the funnel question without one. Revisit if dashboards
+  need it outside the audit log.
+- **A Prometheus label on every apid request.** Counts requests, not
+  accounts, so it cannot answer "which agent-made accounts pay"; it can be
+  added later from the same parser.
+- **An opt-in flag.** Nobody would set it, and the name carries no personal
+  data. `DO_NOT_TRACK` is the conventional opt-out.

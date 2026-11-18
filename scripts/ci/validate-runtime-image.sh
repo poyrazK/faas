@@ -39,7 +39,8 @@ case "${runtime_image}" in
     # ADR-20261027090010 §2: the preset harnesses, their catalog, and the tools agents
     # expect in a checkout.
     required=(etc/passwd usr/local/bin/node usr/local/bin/codex usr/local/bin/claude usr/local/bin/opencode
-      usr/bin/git usr/bin/rg usr/share/faas/agent-presets.json work/output)
+      usr/bin/git usr/bin/rg usr/share/faas/agent-presets.json work/output
+      usr/local/bin/gregale-browser usr/local/bin/playwright-mcp)
     ;;
   *)
     echo "unsupported runtime image ${runtime_image}" >&2
@@ -175,6 +176,14 @@ for preset in catalog["presets"]:
     text = out.stdout + out.stderr
     assert out.returncode == 0 and preset["version"] in text, (preset["name"], text)
     print(preset["name"], preset["version"], "ok")
+'
+  # ADR-20261112121456 phase 2: the sandbox browser starts as the tenant uid
+  # on a read-only rootfs with no network and answers CDP through its relay.
+  docker run --rm --platform "${expected_platform}" --network none --read-only --tmpfs /tmp \
+    --user 1000:1000 -e HOME=/tmp --entrypoint /bin/sh "${image_ref}" -c '
+gregale-browser >/tmp/browser.log 2>&1 &
+if ! gregale-browser --wait 60; then cat /tmp/browser.log; exit 1; fi
+node -e "fetch(\"http://127.0.0.1:9222/json/version\").then(r => r.json()).then(v => { if (!v.webSocketDebuggerUrl.startsWith(\"ws://127.0.0.1:9222/\")) process.exit(1); console.log(\"browser\", v.Browser, \"ok\"); })"
 '
 fi
 echo "OK: ${image_ref} contains the ${runtime_image} rootfs contract"

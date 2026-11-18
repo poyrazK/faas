@@ -19,6 +19,8 @@ from .account_health_request import AccountHealthRequest
 from .account_health_requests import AccountHealthRequests
 from .account_health_restriction import AccountHealthRestriction
 from .account_health_restriction_kind import AccountHealthRestrictionKind
+from .account_health_signal import AccountHealthSignal
+from .account_health_signal_kind import AccountHealthSignalKind
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
@@ -450,6 +452,7 @@ from .create_binding_verification_run_request_service_targets import CreateBindi
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_database_switch_request import CreateDatabaseSwitchRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deploy_token_request_scopes_item import CreateDeployTokenRequestScopesItem
 from .create_deployment_files_body import CreateDeploymentFilesBody
@@ -524,6 +527,7 @@ from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
 from .database_switch import DatabaseSwitch
 from .database_switch_drain import DatabaseSwitchDrain
+from .database_switch_list import DatabaseSwitchList
 from .database_switch_phase import DatabaseSwitchPhase
 from .debug_coverage_response import DebugCoverageResponse
 from .debug_coverage_signal import DebugCoverageSignal
@@ -1096,6 +1100,7 @@ from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_env_values import ListEnvValues
 from .list_environment_git_releases_request import ListEnvironmentGitReleasesRequest
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -1167,6 +1172,8 @@ from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHo
 from .managed_service_probe_spec import ManagedServiceProbeSpec
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
 from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotState
+from .mcp_readiness_expectation import MCPReadinessExpectation
+from .mcp_readiness_expectation_evidence_ids import MCPReadinessExpectationEvidenceIds
 from .mcp_resource_policy import MCPResourcePolicy
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
@@ -1174,6 +1181,8 @@ from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesT
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
+from .mfa_disable_email_cancel_request import MFADisableEmailCancelRequest
+from .mfa_disable_email_cancel_response import MFADisableEmailCancelResponse
 from .mfa_disable_email_confirm_request import MFADisableEmailConfirmRequest
 from .mfa_disable_email_confirm_response import MFADisableEmailConfirmResponse
 from .mfa_disable_email_request import MFADisableEmailRequest
@@ -1832,6 +1841,7 @@ from .plan_managed_not_provisioned_reason import PlanManagedNotProvisionedReason
 from .plan_managed_provision import PlanManagedProvision
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
+from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
@@ -2162,6 +2172,7 @@ from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
 )
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
+from .rotate_key_request import RotateKeyRequest
 from .rotate_key_response import RotateKeyResponse
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
@@ -2479,6 +2490,7 @@ from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClas
 from .wake_timeline_page import WakeTimelinePage
 from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
+from .warmup_hook import WarmupHook
 from .webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
 from .webhook_workflow_receipt_response_ignored_reason import WebhookWorkflowReceiptResponseIgnoredReason
 from .webhook_workflow_receipt_response_routing_status import WebhookWorkflowReceiptResponseRoutingStatus
@@ -2735,6 +2747,8 @@ __all__ = (
     "AccountHealthRequests",
     "AccountHealthRestriction",
     "AccountHealthRestrictionKind",
+    "AccountHealthSignal",
+    "AccountHealthSignalKind",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
@@ -3162,6 +3176,7 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDatabaseSwitchRequest",
     "CreateDeploymentFilesBody",
     "CreateDeploymentFilesBodyKind",
     "CreateDeploymentFilesBodyRuntime",
@@ -3234,6 +3249,7 @@ __all__ = (
     "DailyUsageResponse",
     "DatabaseSwitch",
     "DatabaseSwitchDrain",
+    "DatabaseSwitchList",
     "DatabaseSwitchPhase",
     "DebugCoverageResponse",
     "DebugCoverageSignal",
@@ -3787,6 +3803,7 @@ __all__ = (
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
     "ListEnvironmentGitReleasesRequest",
+    "ListEnvValues",
     "ListInstancesResponse",
     "ListInvocationsResponse",
     "ListJobRunsResponse",
@@ -3857,6 +3874,8 @@ __all__ = (
     "ManagedServiceProbeSpec",
     "MCPPolicyConvergenceSnapshot",
     "MCPPolicyConvergenceSnapshotState",
+    "MCPReadinessExpectation",
+    "MCPReadinessExpectationEvidenceIds",
     "MCPResourcePolicy",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
@@ -3864,6 +3883,8 @@ __all__ = (
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
+    "MFADisableEmailCancelRequest",
+    "MFADisableEmailCancelResponse",
     "MFADisableEmailConfirmRequest",
     "MFADisableEmailConfirmResponse",
     "MFADisableEmailRequest",
@@ -4412,6 +4433,7 @@ __all__ = (
     "PlanManagedProvision",
     "PlanResponse",
     "PlanResponseScanSource",
+    "PlanSourceHost",
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
@@ -4726,6 +4748,7 @@ __all__ = (
     "RotateAppWebhookSecretResponseWebhookSecretSealedMasked",
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
+    "RotateKeyRequest",
     "RotateKeyResponse",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
@@ -5033,6 +5056,7 @@ __all__ = (
     "WakeTimelinePage",
     "WakeTimelinePageMode",
     "WakeTimelineResponse",
+    "WarmupHook",
     "WebhookWorkflowReceiptResponse",
     "WebhookWorkflowReceiptResponseIgnoredReason",
     "WebhookWorkflowReceiptResponseRoutingStatus",

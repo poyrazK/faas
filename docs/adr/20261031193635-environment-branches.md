@@ -311,7 +311,8 @@ bound to exactly one bucket (`pkg/s3gateway/overlay.go`):
 | PUT, multipart | Write to the branch only. |
 | DELETE (single and bulk) | Write a tombstone, then delete the branch's own object. The tombstone lands first, so the parent's object never shows through in between. The parent is never deleted from. A delete of a version ID is branch-only. |
 | ListObjectsV2 | Merge the branch's entries over the parent's (`listOverlayObjects`). The branch wins a key both hold, tombstoned parent keys are skipped, and a page stops at the first truncated list's last entry, so no key is skipped. Continuation tokens are the gateway's own: the start-after boundary of the next page. |
-| Copy, version listing, tagging, attributes, multipart listing | The branch's own objects only. |
+| Copy (CopyObject, UploadPartCopy) | The branch's own object when it holds the key. Otherwise, with no tombstone for the key, a server-side copy from the parent as the branch would read it (amendment 2026-11-14). |
+| Version listing, tagging, attributes, multipart listing | The branch's own objects only. |
 
 A read-through is admitted and metered against the branch bucket, which belongs to the
 same account. The gateway caches each bucket's overlay for 30 seconds. An overlay never
@@ -321,16 +322,61 @@ it finds nothing.
 **Consistency.** Each overlay row records its consistency:
 - **`live_parent`** (built): a read-through serves the parent's current object, so parent
   writes made after T show through.
-- **`as_of`** (later): for parents whose placement supports versioning (today S3 and GCS)
-  with versioning observed on, a read-through resolves the parent version that was
-  current at T. The gateway serves no other consistency, so a row it does not know reads
-  as an empty branch.
+- **`as_of`** (built, amendment 2026-11-14): for parents whose placement supports
+  versioning (today S3 and GCS) with versioning observed on, a read-through resolves the
+  parent version that was current at T. The gateway serves no other consistency, so a
+  row it does not know reads as an empty branch.
 
-**Known limits of `live_parent`.** A parent common prefix whose keys the branch deleted
-still lists. A copy whose source exists only in the parent returns 404; a server-side
-read-through copy is a follow-up. apid's object API (console and CLI object commands)
-shows the branch bucket's own objects only. Overlay data with the parent's objects is
-served by the gateway alone.
+**Known limits.** apid's object API (console and CLI object commands) shows the branch
+bucket's own objects only. Overlay data with the parent's objects is served by the
+gateway alone.
+
+**Amendment 2026-11-17: emptied prefixes.** A delimited listing showed a parent common
+prefix whose keys the branch had all deleted and, under `as_of`, one holding only keys
+written after T. The gateway now checks each parent prefix the branch does not list
+itself before listing it: under `live_parent` a prefix with no tombstone under it lists
+at once (the parent listed it, so it holds a current object); otherwise one parent
+listing of the prefix (at T for `as_of`) must hold a key the branch has not deleted. A
+prefix that listing cannot decide (more than one provider listing of tombstoned or
+later keys) still lists. One page checks at most 16 prefixes and then ends with a
+continuation token, as a page cut at a provider horizon does. Tombstone lookups are
+batched, so a source listing longer than one lookup (an `as_of` listing reads whole
+provider pages) no longer answers 503.
+
+**Amendment 2026-11-14: `as_of` and copy-through.**
+- *Which consistency.* apid picks it when it records the overlay: `as_of` when the
+  parent bucket's versioning is observed `Enabled`, its state is `ready` and its
+  propagation window is over, so every version from T on is kept; `live_parent`
+  otherwise. A retry keeps the consistency the first attempt recorded. The branch's own
+  view (`GET .../environments/{branch}/branch`, `gregale environment branch --status`)
+  reports each bucket's consistency and, for `as_of`, the instant it reads at.
+- *Reads.* For a key the branch does not hold, the gateway lists the parent's versions
+  of that key and serves the newest one written at or before T, through a versioned
+  read. A key written after T, deleted at T, or whose version at T a lifecycle rule has
+  since removed reads as missing (404). Of two versions with the same timestamp the one
+  the provider marks latest wins, and otherwise a delete marker, so a tie never revives
+  a deleted key. A parent whose provider cannot list or read versions answers 503: an
+  `as_of` branch never falls back to the parent's current data.
+- *Listing.* The parent side of a merged page comes from the parent's version listing,
+  each key decided only once all its versions are in (a provider page may split a
+  key's versions). One request reads at most 8 provider pages of 1,000 versions; a key
+  with more versions than that, or a stretch that long with nothing at T, answers 503 or
+  returns a shorter page with a continuation token.
+- *Copy-through.* A copy in the branch bucket whose source key the branch does not hold
+  and has not deleted copies from the parent, server side: the current object under
+  `live_parent`, the version at T (pinned by version ID) under `as_of`. The authority
+  is an ordinary copy grant on the parent bucket (ADR-562), which apid gives each
+  write-capable credential it binds to the branch bucket, so the copy-receipt checks and
+  database trigger are unchanged. The provider copies only within one backend, which a
+  branch bucket shares with its parent; elsewhere, and for a credential without a grant
+  (one the customer made later on the branch bucket), the copy answers the branch's own
+  404 as before.
+- *Accepted edge.* The grant is an ordinary copy grant, so a branch credential can also
+  name the parent bucket by its UUID as an explicit copy source. That copies the
+  parent's current objects, including keys the branch deleted and writes made after T.
+  It reaches only data the branch's own credential could already read through its
+  binding's parent, in the same account; isolation of the parent from the branch's
+  writes is unchanged.
 
 **Cleanup.** The branch owns each overlay bucket through
 `project_environment_branch_buckets`, written before the bucket is reserved. After the
@@ -574,7 +620,7 @@ or `production` (refused for branches).
 | 0 | Prerequisites: #6034, #6037, #6044 merged; the clone-database cleanup fixes (E1/E2 from the 2026-10-30 stage audit) merged. | Already tracked. |
 | 1 | Branch primitive: schema, create/list/delete, TTL sweeper, config copy, unprimed artifact deployments, cold boot on first request, limits, gate. | Create p99 < 100 ms apid-side. First request cold-boots with no build row. Parent deployments, traffic and snapshots unchanged. Delete leaves nothing. |
 | 2 | PostgreSQL branches: branch data reconciler (restore at T, bind into the branch, data-gated activation), orphaned-copy deletion. Copies sit in the PostgreSQL branch allowance (amended 2026-11-12). | The copy is restored at T and bound with new credentials. Workloads stay dark until it exists. The copy and its binding are gone after delete. |
-| 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and read-through copy are follow-ups. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
+| 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and copy-through followed (amendment 2026-11-14). | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
 | 4 | Network and identity scoping. Service calls, egress and identity come from #6034 and #6044, which key on the deployment scope. Built here: branches and private networks refuse each other per project. Branch instances without the parent's attachments are a follow-up. | A branch caller never reaches a production service or private network. |
 | 5 | Restore with a new identity (opt-in) from a lazily made credential-free capture of the parent deployment (section 3). Splits into 5a, the capture (placeholder managed secrets, `branch-capture` identity, its own `environment_branch_captures` table that production lookups cannot read), and 5b, the restore (tmpfs identity file, digest acknowledgement, lineage checks). Both need `test-metal`. | No real parent credential in any memory a branch restores. Production never restores a credential-free capture. Identity digest acknowledged; a wrong or missing digest cold-boots. |
 | 6 | `contained` and `simulated` egress. Branches share projects with private networks (section 6): off by default, `join` by opt-in. 6a (built): the contained profile, its authority and the operator gate (section 7). 6b (built): `simulated` through seeded rehearsal twins (section 7): `POST /v1/dev/sessions/{project}/seed` and `from_branch` in `gregale test rehearse`. 6c (built): contained branches with object storage, through the bridge object relay (section 7). | 6a: public TCP and non-branch bridge ports are dropped while the service proxy, resolver and the branch's own database are reached, after resets too (`TestMetalEnvironmentBranchContainedProfile`). 6b: a twin boots the branch's build with no source build and serves the branch's values (`TestEnvironmentBranchSeedTwinMetal`); the run itself is covered by the rehearsal native acceptance. 6c: a contained branch guest reads and writes its overlay bucket through the relay, while a parent key is refused at the relay and the public gateway stays unreachable (`TestEnvironmentBranchContainedObjectsMetal`). |

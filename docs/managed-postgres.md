@@ -199,15 +199,22 @@ customers out until the owner has tested production
 
    ```bash
    gregalectl flags default --key managed_postgres --value true --reason "GA" --yes
+   gregalectl flags default --key database_rollbacks --value true --reason "GA" --yes
    ```
+
+   `database_rollbacks` is GA as well, but a stored definition wins over the
+   tier default: a platform that closed it during the preview keeps it closed
+   until this second command.
 
 `gregalectl flags disable --capability managed-postgres --reason "<why>" --yes`
 hides managed PostgreSQL again. Existing databases keep running, and the
 credentials apps already hold keep working.
 
-Rollbacks that restore the database are a separate preview,
-`database-rollbacks`. An account that used them through a `postgres_restore`
-rule needs `database_rollbacks` allowed as well.
+Rollbacks that restore the database and `gregale postgres restore --switch`
+belong to `database-rollbacks`, which is GA
+([ADR-20261031091607 amendment 1](adr/20261031091607-managed-postgres-ga.md)).
+An account that used them through a `postgres_restore` rule needs
+`database_rollbacks` allowed as well while that flag stays closed.
 
 ## Provider health
 
@@ -427,7 +434,10 @@ the binding reconciler revokes that identity with retry-safe cleanup. The
 response sets `rotation_pending` while the previous identity is still retained;
 retries during that interval reuse the same generation and wake ID. If the app
 has no live deployment or resident instances, the previous identity is queued
-for cleanup immediately.
+for cleanup immediately. The refresh's outbox row stays closed to replay for
+`api.ManagedPostgresRotationRefreshWakeDelay` (5 s), like every other runtime
+restart, so the app's owning scheduler claims the live notification before a
+peer scheduler's replay worker can take it.
 
 ## Neon backend configuration
 
@@ -668,7 +678,7 @@ served since a later release command ran is refused with
 command for each database the release commands can migrate, at the moment
 before the earliest of them
 ([ADR-1448](adr/1448-releases-that-change-the-database.md); see
-[Releases that change the database](deploys.md#releases-that-change-the-database)).
+[Releases that change the database](releases.md#releases-that-change-the-database)).
 
 Migration sessions automatically switch to the schema owner. `SET ROLE NONE`
 removes DDL access until that owner is selected again, so normal migrations do
@@ -868,8 +878,8 @@ in the customer response.
 
 Operators can diagnose stale accounting with
 `GET /v1/admin/managed-postgres/accounting/{account_id}` or
-`gregale postgres diagnostics ACCOUNT_ID --json`. The route uses the admin scope,
-MFA middleware, and operator email allowlist. Pages default to 50 resources, with
+`gregalectl billing postgres diagnostics --account-id ACCOUNT_ID --json`. The route
+requires an MFA-completed operator session. Pages default to 50 resources, with
 `limit` capped at 100 and `after` set to the preceding page's `next_cursor`.
 Each page is a current local snapshot; a multi-page read does not freeze the
 account. The report reads the catalog and ledger without provider calls or writes.
@@ -880,6 +890,16 @@ times, lease expiry, and stable stale-admission reasons: `identity_unknown`,
 `shutdown_unconfirmed`, `coverage_incomplete`, `observation_stale`, or
 `final_correction_pending` (the final correction tail is overdue: its deadline,
 `correction_required_at`, passed more than `usage.stale_after_seconds` ago).
+`final_window_pending` is advisory and leaves the resource non-blocking: a deleted
+database owes only the window it was deleted in, which closed less than
+`usage.stale_after_seconds` ago. Admission waits for it only while the account's
+recorded month is at or above 90% of any monthly ceiling
+([ADR-20261115190000](adr/20261115190000-managed-postgres-final-window-headroom-grace.md)).
+`latest_window_pending` is advisory in the same way: a live database's only
+uncollected window is the one that just closed (the provider publishes an hour's
+usage some minutes after it ends), or it was created in that window. A second
+uncollected window is `coverage_incomplete` (or `coverage_missing`) and blocks
+(amendment 1).
 Shared restores use their root's evidence. Unknown
 legacy tombstones have no confirmed terminal deadline. A disabled policy reports
 no blockers, while retaining identity and coverage metadata. Empty reasons do not
@@ -889,13 +909,13 @@ material are excluded. See [ADR-582](adr/582-managed-postgres-accounting-diagnos
 Operators can repair unavailable historical usage with retained evidence:
 
 ```sh
-gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --json
+gregalectl billing postgres usage-import --account-id ACCOUNT_ID --file retained-usage.json --json
 # Review the costs/coverage; put the returned revision in expected_revision.
-gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --apply --session-file operator-session --json
+gregalectl billing postgres usage-import --account-id ACCOUNT_ID --file retained-usage.json --apply --json
 ```
 
 Preview makes no provider calls or writes. Apply requires an allowlisted operator
-session with a recent MFA step-up; the ordinary CLI bearer login cannot apply.
+session with a recent MFA step-up (`gregalectl auth login`, then `gregalectl auth step-up`).
 The session file contains the opaque `faas_sid` cookie value and must be a private
 regular file (mode 0600). It is never saved in the normal CLI token store.
 Go SDK callers can use an empty bearer token and a cookie jar on `HTTPClient()`;
@@ -934,9 +954,9 @@ shutdown evidence before usage recovery. An allowlisted operator can preview
 and apply that repair:
 
 ```sh
-gregale postgres reconcile ACCOUNT_ID --file retained-shutdown.json --json
+gregalectl billing postgres reconcile --account-id ACCOUNT_ID --file retained-shutdown.json --json
 # Review the confirmed shutdown; put the returned revision in expected_revision.
-gregale postgres reconcile ACCOUNT_ID --file retained-shutdown.json --apply --session-file operator-session --json
+gregalectl billing postgres reconcile --account-id ACCOUNT_ID --file retained-shutdown.json --apply --json
 ```
 
 The file contains the following fields; replace the illustrative IDs, times,
@@ -980,7 +1000,7 @@ Recorded quantities and costs stay intact. Derived coverage is reset, so the
 account remains stale until the collector or retained-usage import establishes
 complete history and final correction observations. Shared restore children
 continue to use their root's aggregate; import quantities against that root.
-Recheck `gregale postgres diagnostics ACCOUNT_ID --json` after recovery. A repair
+Recheck `gregalectl billing postgres diagnostics --account-id ACCOUNT_ID --json` after recovery. A repair
 receipt reports the committed repair, not current admission or final invoice
 settlement. See [ADR-591](adr/591-managed-postgres-legacy-accounting-reconciliation.md).
 
@@ -1462,7 +1482,7 @@ no activation operation. Only a rollback that restores the database activates it
 own cutover: it fences and drains the app, then moves the bindings in one
 transaction, and the cutover becomes `activated`, which is final. It accepts the
 loss of writes made after the restore point, so it does not need the writer
-isolation above; see [Rollbacks that restore the database](deploys.md#rollbacks-that-restore-the-database)
+isolation above; see [Rollbacks that restore the database](releases.md#rollbacks-that-restore-the-database)
 and [ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md).
 For other cutovers, both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.

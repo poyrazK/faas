@@ -21,5 +21,8 @@ func refuseDevFunctionSet(sourceDir string) error {
 	for _, fn := range m.Functions {
 		names = append(names, fn.Name)
 	}
-	return fmt.Errorf("this is a functions project (%s), and a developer environment runs one app. Run every function on this machine with `gregale dev --local` (it uses your developer environment's database and buckets), or one function remotely with `gregale dev --path <its root>`", strings.Join(names, ", "))
+	// A remote developer environment (and so its database and buckets) is
+	// keyed to one app's directory, which a functions project root never
+	// is; --offline gives the functions a local database and buckets instead.
+	return fmt.Errorf("this is a functions project (%s), and a developer environment runs one app. Run every function on this machine with `gregale dev --local` (add --offline --postgres or --bucket NAME for a local database and buckets), or one function remotely with `gregale dev --path <its root>`", strings.Join(names, ", "))
 }

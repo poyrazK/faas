@@ -12,7 +12,7 @@ import (
 )
 
 // OrgSecurityPolicy is an organization's security settings (ADR
-// 20261113180000). RequireMFA keeps members without two-factor
+// 20261114170352). RequireMFA keeps members without two-factor
 // authentication out of the organization: the org-access snapshot does not
 // admit them, so every org route, app, project and credential of the
 // organization refuses them until they enroll.

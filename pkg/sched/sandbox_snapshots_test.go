@@ -51,7 +51,7 @@ func (r *snapRouter) RunSandbox(ctx context.Context, _ string, spec sched.Sandbo
 		method = "WAKE_RESTORE"
 	}
 	r.mu.Unlock()
-	return hooks.Booted(ctx, method, 5)
+	return hooks.Booted(ctx, sched.SandboxBooted{Method: method, BootMs: 5})
 }
 
 func (r *snapRouter) CaptureSandboxSnapshot(_ context.Context, nodeID string, spec sched.SandboxSpec, namespace, captureID string) (*sched.AgentRunSnapshot, error) {

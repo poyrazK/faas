@@ -67,3 +67,33 @@ WITH account AS MATERIALIZED (
 )
 INSERT INTO mfa_disable_requests(token_hash,account_id,requested_at)
 SELECT $1,id,$3 FROM account;
+
+-- A successful second-factor sign-in, or the owner pressing Cancel, ends every
+-- pending email-assisted disable (F14-1, ADR-20261115100000). Account lock
+-- first, then requests and tokens, matching issuance.
+-- name: CancelPendingMFADisable :one
+WITH account AS MATERIALIZED (
+    SELECT id FROM accounts WHERE id=$1 FOR UPDATE
+), legacy AS (
+    UPDATE mfa_disable_requests r SET consumed_at=clock_timestamp()
+    FROM account a WHERE r.account_id=a.id AND r.consumed_at IS NULL
+    RETURNING 1
+), durable AS (
+    UPDATE mfa_disable_tokens t SET consumed_at=clock_timestamp()
+    FROM account a WHERE t.account_id=a.id AND t.consumed_at IS NULL AND t.expires_at>clock_timestamp()
+    RETURNING 1
+)
+SELECT ((SELECT count(*) FROM legacy) + (SELECT count(*) FROM durable))::bigint AS cancelled;
+
+-- The earliest still-usable pending email-assisted disable, for the account
+-- page's banner. Legacy requests carry no expiry column; they stop working
+-- window_seconds after they were requested.
+-- name: PendingMFADisableRequestedAt :one
+SELECT min(pending.requested_at)::timestamptz AS requested_at FROM (
+    SELECT r.requested_at FROM mfa_disable_requests r
+    WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.consumed_at IS NULL
+      AND r.requested_at > clock_timestamp() - make_interval(secs => sqlc.arg(window_seconds)::float8)
+    UNION ALL
+    SELECT t.requested_at FROM mfa_disable_tokens t
+    WHERE t.account_id=sqlc.arg(account_id)::uuid AND t.consumed_at IS NULL AND t.expires_at>clock_timestamp()
+) pending;

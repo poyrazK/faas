@@ -81,7 +81,10 @@ var agentMigrations = []string{"20261029093503390_agent_runs.sql", "202610290935
 	"20261110153935557_sandbox_workspace_snapshots.sql", "20261110153935586_sandbox_ports.sql",
 	"20261110153935627_sandbox_session_images.sql", "20261110153935666_sandbox_templates.sql",
 	"20261110153935695_sandbox_session_templates.sql", "20261110153935721_sandbox_session_usage.sql",
-	"20261112074016981_agent_github_subscriptions.sql"}
+	"20261112074016981_agent_github_subscriptions.sql", "20261117075028100_sandbox_sessions_browser.sql",
+	"20261117075028200_sandbox_tasks.sql", "20261117075028300_sandbox_actions.sql",
+	"20261117084816832_sandbox_action_screenshots.sql",
+	"20261117164722100_sandbox_egress_policies.sql", "20261117164722200_sandbox_session_domains.sql"}
 
 func spec() agents.VersionSpec {
 	return agents.VersionSpec{Harness: agents.Harness{Preset: "codex"}, PromptTemplate: "Triage {{event.title}}", TimeoutSec: 300}
@@ -152,6 +155,12 @@ func TestAgentsAndVersions(t *testing.T) {
 	}
 	if _, err := s.Version(ctx, other, "triage", 2); !errors.Is(err, agents.ErrNotFound) {
 		t.Fatalf("another account's version: %v", err)
+	}
+	// Versions are int4: a number past it used to wrap, so 1<<32+1 read version 1.
+	for _, n := range []int{1<<32 + 1, 1 << 31, 0, -1} {
+		if got, err := s.Version(ctx, account, "triage", n); !errors.Is(err, agents.ErrNotFound) {
+			t.Fatalf("version %d: got %+v, %v; want not found", n, got, err)
+		}
 	}
 	list, err := s.Agents(ctx, account, "", 10)
 	if err != nil || len(list) != 2 || list[0].Name != "review" || list[1].Name != "triage" {

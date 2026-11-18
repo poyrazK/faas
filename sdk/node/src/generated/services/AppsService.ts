@@ -17,6 +17,7 @@ import type { ApplyAppScalingRequest } from '../models/ApplyAppScalingRequest.js
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
 import type { AppOperationPreview } from '../models/AppOperationPreview.js';
+import type { AppProtectionResponse } from '../models/AppProtectionResponse.js';
 import type { AppReleaseReview } from '../models/AppReleaseReview.js';
 import type { AppResourceInventoryResponse } from '../models/AppResourceInventoryResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
@@ -206,6 +207,7 @@ import type { SaveProfileInvestigationRequest } from '../models/SaveProfileInves
 import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
 import type { ServiceBindingExplanation } from '../models/ServiceBindingExplanation.js';
 import type { ServiceWakeAheadResponse } from '../models/ServiceWakeAheadResponse.js';
+import type { SetAppProtectionRequest } from '../models/SetAppProtectionRequest.js';
 import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetEnvironmentRouteBudgetsRequest } from '../models/SetEnvironmentRouteBudgetsRequest.js';
@@ -2838,6 +2840,61 @@ export class AppsService {
       path: {
         'slug': slug,
         'id': id,
+      },
+    });
+  }
+  /**
+   * Show the app's production protection
+   * Reports whether the app is enrolled in production protection and the state of each protection object: the availability and latency SLOs, the health check, the account email channel, the alert rules and the availability release gate. The health check is run by the platform without billing its requests. An app created before protection was available reports state none.
+   * @returns AppProtectionResponse The app's production protection.
+   * @throws ApiError
+   */
+  public static getAppProtection({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppProtectionResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/protection',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Turn the app's production protection on or off
+   * on enrolls the app, including one created before protection was available, and sets up the protection objects after its next live production deploy. off deletes the protection objects the customer has not changed; changed objects, objects a kept alert rule or release gate still uses, and the account email channel stay.
+   * @returns AppProtectionResponse The app's production protection after the change.
+   * @throws ApiError
+   */
+  public static setAppProtection({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetAppProtectionRequest,
+  }): CancelablePromise<AppProtectionResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/protection',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        404: `code: not_found`,
       },
     });
   }
@@ -11008,7 +11065,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
+     * Severity floor: returns lines at this level or higher, so `warn` returns warn and error lines and `info` returns info, warn and error lines. A line's level comes from its structured `level` field (info, warn, or error) surfaced in each matching log event, or from common line markers when the line has no structured level; lines with no recognisable level are omitted whenever a level is set. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
      *
      */
     level?: 'info' | 'warn' | 'error',

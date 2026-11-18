@@ -45,6 +45,7 @@ func TestConfigFromEnv(t *testing.T) {
 		{name: "budget", edit: map[string]string{"FAAS_SECRETD_APPS_PER_NODE_HOUR": "250"}, wantBudget: 250},
 		{name: "bad budget", edit: map[string]string{"FAAS_SECRETD_APPS_PER_NODE_HOUR": "0"}, want: "positive integer"},
 		{name: "bad reference switch", edit: map[string]string{"FAAS_SECRETD_REQUIRE_REFERENCES": "maybe"}, want: "want true or false"},
+		{name: "bad build registry scope", edit: map[string]string{"FAAS_SECRETD_BUILD_REGISTRY_SCOPE": "strict"}, want: "want off, observe or enforce"},
 		{name: "unix listener", edit: map[string]string{"FAAS_SECRETD_LISTEN": "unix:///run/faas/secretd.sock"}, want: "want tcp://"},
 		{name: "no listener", edit: map[string]string{"FAAS_SECRETD_LISTEN": ""}, want: "want tcp://"},
 		{name: "no TLS", edit: map[string]string{"FAAS_SECRETD_TLS_CA_PATH": ""}, want: "mutual TLS only"},
@@ -154,6 +155,10 @@ func (ownedBy) JobRegistryCredential(context.Context, string, string) (string, [
 
 func (ownedBy) JobMaterializationLease(context.Context, string) (string, time.Time, error) {
 	return "", time.Time{}, secretd.ErrUnknownJob
+}
+
+func (ownedBy) BuildRunner(context.Context, string) (secretd.BuildRun, error) {
+	return secretd.BuildRun{}, secretd.ErrUnknownBuild
 }
 
 func (ownedBy) RecordJobOpen(context.Context, string, string, string) error { return nil }

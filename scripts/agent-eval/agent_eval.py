@@ -9,7 +9,8 @@ management MCP server at one toolset, then checks the result (HTTP response,
 serving release, untouched files, the agent's answer, the apps it created).
 It grades how the agent worked (features used, anti-patterns, traps hit),
 records success, turns, tool calls, tokens, cost and time per run, deletes
-every app and project the run created, and appends one JSON line per run.
+every app and project the run created, and appends one JSON line per run. It
+also reports files the agent wrote outside its run directory.
 
     agent_eval.py list
     agent_eval.py run --agents claude,codex,gemini,cursor --toolsets core,all,none [--tasks ID,...] [--repeat N]
@@ -24,6 +25,7 @@ and projects that appear in the account during a run are attributed to it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -44,7 +46,7 @@ AGENTS = ("claude", "codex", "gemini", "cursor")
 AGENT_BINARIES = {"claude": "claude", "codex": "codex", "gemini": "gemini", "cursor": "cursor-agent"}
 TOOLSETS = ("core", "release", "diagnose", "all", "none")
 SETUP_KINDS = ("deploy", "replace")
-CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps")
+CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps", "owner_response")
 FEATURE_KINDS = ("command", "file", "state")
 FEATURE_STATES = ("project_created",)
 DEFAULT_API = "https://api.gregale.dev"
@@ -54,7 +56,8 @@ DEFAULT_TRAPS = ("liveness_exhausted", "app_startup_timeout")
 ANTI_PATTERNS = {
     "raw_api_call": re.compile(r"\b(curl|wget|https?|xh)\b[^\n]*(api\.gregale\.dev|/v1/(apps|projects|deployments))"),
     "manual_tarball": re.compile(r"\btar\s+(-\S*c|c\S*\s)"),
-    "app_delete": re.compile(r"\bgregale\b[^\n|;&]*\b(app|apps|project)\s+(delete|rm)\b"),
+    # Reading `app delete --help` is not a deletion (2026-11-15 run).
+    "app_delete": re.compile(r"\bgregale\b[^\n|;&]*\b(app|apps|project)\s+(delete|rm)\b(?![^\n|;&]*\s(--help|-h)\b)"),
     "api_key_minted": re.compile(r"\bgregale\b[^\n|;&]*\bkey\s+create\b"),
 }
 REPEATED_COMMAND_LIMIT = 3
@@ -253,7 +256,7 @@ def _events(lines):
 
 def _metrics(cost) -> dict:
     return {"completed": False, "turns": 0, "cost_usd": cost, "input_tokens": 0, "output_tokens": 0,
-            "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "commands": [], "answer": "", "error": "", "session_id": ""}
+            "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "commands": [], "written_paths": [], "tool_inputs": [], "answer": "", "error": "", "session_id": ""}
 
 
 def merge_metrics(first: dict, second: dict) -> dict:
@@ -267,12 +270,22 @@ def merge_metrics(first: dict, second: dict) -> dict:
     for name, count in (second.get("tool_calls") or {}).items():
         merged["tool_calls"][name] = merged["tool_calls"].get(name, 0) + count
     merged["commands"] = list(first.get("commands") or []) + list(second.get("commands") or [])
+    merged["written_paths"] = list(first.get("written_paths") or []) + list(second.get("written_paths") or [])
+    merged["tool_inputs"] = list(first.get("tool_inputs") or []) + list(second.get("tool_inputs") or [])
     merged["first_answer"] = first.get("answer", "")
     return merged
 
 
 def _count(metrics: dict, name: str) -> None:
     metrics["tool_calls"][name] = metrics["tool_calls"].get(name, 0) + 1
+
+
+# Claude tools that write a file; their paths are checked against the run directory.
+FILE_WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+
+# Each agent's own config and memory; its writes there are not the task's.
+AGENT_OWN_DIRS = {"claude": (Path.home() / ".claude",), "codex": (Path.home() / ".codex",),
+                  "gemini": (Path.home() / ".gemini",), "cursor": (Path.home() / ".cursor",)}
 
 
 def parse_claude(lines) -> dict:
@@ -287,9 +300,13 @@ def parse_claude(lines) -> dict:
                 if block.get("type") == "tool_use":
                     name = block.get("name", "?")
                     _count(metrics, name)
+                    metrics["tool_inputs"].append(json.dumps(block.get("input") or {}))
                     command = (block.get("input") or {}).get("command")
                     if name == "Bash" and command:
                         metrics["commands"].append(command)
+                    path = (block.get("input") or {}).get("file_path") or (block.get("input") or {}).get("notebook_path")
+                    if name in FILE_WRITE_TOOLS and path:
+                        metrics["written_paths"].append(path)
                 elif block.get("type") == "text":
                     metrics["answer"] = block.get("text", "")
         elif kind == "result":
@@ -467,10 +484,12 @@ def _rows(value) -> list:
 class CliGregale(Gregale):
     """The caller's own logged-in CLI profile (`--cli-login`).
 
-    Reads go through `gregale --json` with the caller's credentials; nothing is
-    deleted. The account may hold other apps, so an app is the run's when it is
-    new or got a release after the run started. Apps another session deploys at
-    the same time are attributed to the run too; run when the account is quiet."""
+    Reads go through `gregale --json` with the caller's credentials. The account
+    may hold other apps, and other sessions may create apps while the run is
+    going, so an app is the run's only when it is new or got a release after the
+    run started AND the agent named it: in a command, a tool call or a file of
+    the project (see attribute). Cleanup deletes only the run's apps and
+    projects that did not exist before the run (see deletable)."""
 
     ROUTES = (
         (re.compile(r"^/v1/apps$"), lambda m: ["app", "list"]),
@@ -514,6 +533,120 @@ class CliGregale(Gregale):
 
 def created_since(before: dict, after: dict) -> dict:
     return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in ("apps", "projects")}
+
+
+# Project files read for the names of the apps a run deploys (Compose service
+# names, gregale.yaml), bounded so a large checkout stays cheap.
+EVIDENCE_FILE_GLOBS = ("*.yml", "*.yaml", "*.toml", "*.json")
+EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES = 200, 256 * 1024
+
+
+def run_evidence(metrics: dict, project: Path) -> str:
+    """Text the run's own apps are named in: the agent's commands and tool
+    inputs, and the project's config files. Tool results are left out: an
+    agent that lists the account sees every other app's name there."""
+    parts = list(metrics.get("commands") or []) + list(metrics.get("tool_inputs") or [])
+    files = 0
+    for pattern in EVIDENCE_FILE_GLOBS:
+        for path in sorted(project.rglob(pattern)) if project.is_dir() else []:
+            if files >= EVIDENCE_MAX_FILES or ".git" in path.parts or "node_modules" in path.parts:
+                continue
+            try:
+                if path.is_file() and path.stat().st_size <= EVIDENCE_MAX_BYTES:
+                    parts.append(path.read_text(errors="replace"))
+                    files += 1
+            except OSError:
+                continue
+    return "\n".join(parts)
+
+
+def _named(slug: str, evidence: str) -> bool:
+    return re.search(rf"(?<![a-z0-9-]){re.escape(slug)}(?![a-z0-9-])", evidence) is not None
+
+
+def attribute(gregale: "Gregale", touched: dict, evidence: str, slug: str | None = None) -> tuple[dict, dict]:
+    """Split what changed in the account into the run's and the rest. A
+    dedicated eval account has only the run in it; the caller's own account
+    (--cli-login) is shared with other sessions, so there an app or project is
+    the run's only if the agent named it (or it is the harness's own slug)."""
+    if not isinstance(gregale, CliGregale):
+        return touched, {"apps": [], "projects": []}
+    mine: dict = {"apps": [], "projects": []}
+    others: dict = {"apps": [], "projects": []}
+    for kind in ("apps", "projects"):
+        for name in touched.get(kind, []):
+            (mine if name == slug or _named(name, evidence) else others)[kind].append(name)
+    return mine, others
+
+
+def deletable(gregale: "Gregale", before: dict | None, created: dict, slug: str | None, evidence: str = "") -> tuple[dict, str | None]:
+    """What cleanup may delete. A dedicated eval account loses everything the
+    run touched; the caller's own account (--cli-login) loses only the run's
+    apps and projects (see attribute) that did not exist before the run, never
+    one it redeployed and never another session's."""
+    if not isinstance(gregale, CliGregale):
+        return created, slug
+    if before is None:
+        return {"apps": [], "projects": []}, None
+    new, _ = attribute(gregale, created_since(before, gregale.inventory()), evidence, slug)
+    return new, slug if slug in new["apps"] else None
+
+
+# Paths under HOME that agents, shells and the CLI write on their own; a write
+# there is not the agent's doing. Relative to HOME.
+HOME_WRITE_IGNORE = (".claude", ".claude.json", ".claude.json.backup", "Library", ".cache", ".config/gregale", ".gemini", ".codex",
+                     ".cursor", ".zsh_history", ".bash_history", ".zsh_sessions", ".python_history", ".lesshst", ".viminfo",
+                     ".Trash", ".DS_Store", ".npm", ".gocache-faas", "go", ".local/state")
+
+
+def home_writes(home: Path, since: float, run_dir: Path, max_depth: int = 2, limit: int = 20000) -> list[str]:
+    """Files under HOME modified after since, outside run_dir, at most max_depth
+    levels down (where dotfiles and per-tool config live). Bounded at limit
+    entries so a large home stays cheap. Other processes' writes can show up,
+    so this is a report, not a verdict."""
+    found, seen = [], 0
+    run_dir = run_dir.resolve()
+    stack = [(home, 0)]
+    while stack and seen < limit:
+        directory, depth = stack.pop()
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            continue
+        for entry in entries:
+            seen += 1
+            path = Path(entry.path)
+            rel = path.relative_to(home).as_posix()
+            if rel in HOME_WRITE_IGNORE or any(rel.startswith(i + "/") for i in HOME_WRITE_IGNORE):
+                continue
+            try:
+                resolved = path.resolve()
+                if resolved == run_dir or run_dir in resolved.parents:
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    if depth + 1 < max_depth:
+                        stack.append((path, depth + 1))
+                elif entry.stat(follow_symlinks=False).st_mtime > since:
+                    found.append(rel)
+            except OSError:
+                continue
+    return sorted(found)
+
+
+def writes_outside(paths: list[str], run_dir: Path, project: Path, ignore: tuple = ()) -> list[str]:
+    """File-tool writes that landed outside the run directory. Paths under
+    ignore (the agent's own config, such as Claude's auto memory in ~/.claude)
+    don't count."""
+    run_dir = run_dir.resolve()
+    ignore = tuple(Path(i).resolve() for i in ignore)
+    outside = []
+    for raw in paths:
+        path = Path(raw)
+        path = (path if path.is_absolute() else project / path).resolve()
+        inside = [run_dir, *ignore]
+        if not any(path == root or root in path.parents for root in inside):
+            outside.append(str(path))
+    return sorted(set(outside))
 
 
 def http_check(url: str, check: dict, deadline_s: float = 120, fetch=None) -> tuple[bool, str]:
@@ -561,7 +694,7 @@ def _app_evidence(gregale, slug: str, since: str = "") -> str:
 
 
 def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch=None, http_deadline_s: float = 120, created: dict | None = None,
-               since: str = "") -> list[dict]:
+               since: str = "", expected_app_id: str | None = None) -> list[dict]:
     created_apps = (created or {}).get("apps", [])
     results = []
     for check in task["checks"]:
@@ -575,6 +708,8 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
             elif kind == "http":
                 url = _app_url(gregale.get(f"/v1/apps/{slug}")) + check.get("path", "/")
                 ok, detail = http_check(url, check, deadline_s=http_deadline_s, fetch=fetch)
+            elif kind == "owner_response":
+                ok, detail = owner_response_check(gregale, slug, check, expected_app_id)
             elif kind == "serving":
                 health = gregale.get(f"/v1/apps/{slug}/health")
                 serving, latest = health.get("serving_deployment_ids") or [], health.get("latest_deployment_id", "")
@@ -598,10 +733,49 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 codes = check.get("codes") or list(DEFAULT_TRAPS)
                 hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_evidence(gregale, app, since)})
                 ok, detail = not hit, ",".join(hit)
-        except (OSError, KeyError, ValueError, urllib.error.URLError) as error:
+        except (OSError, KeyError, ValueError, subprocess.TimeoutExpired, urllib.error.URLError) as error:
             detail = f"check error: {error}"
         results.append({"kind": kind, "ok": ok, "detail": detail})
     return results
+
+
+def owner_response_check(gregale, slug: str, check: dict, expected_app_id: str | None = None) -> tuple[bool, str]:
+    """Grade a private app using the exact latest deployment, never a public URL.
+
+    The grader's own check is evidence of the final outcome, not a timestamp of
+    when the agent first verified it. It never records the private response body.
+    """
+    app = gregale.get(f"/v1/apps/{slug}")
+    if expected_app_id is not None and app.get("id") != expected_app_id:
+        return False, "the task replaced the original app identity"
+    if not app.get("require_authn"):
+        return False, "app did not retain required authentication"
+    rows = _rows(gregale.get(f"/v1/apps/{slug}/deployments?limit=20"))
+    release_ids = {row.get("id") for row in rows if row.get("id") and row.get("app_id") == app.get("id")}
+    if len(release_ids) < check.get("min_deployments", 1):
+        return False, "not enough accepted deployments for this task"
+    health = gregale.get(f"/v1/apps/{slug}/health")
+    latest = health.get("latest_deployment_id")
+    if latest not in (health.get("serving_deployment_ids") or []):
+        return False, "latest accepted deployment is not serving"
+    deployment = next((row for row in rows if row.get("id") == latest), None)
+    if not deployment or deployment.get("status") != "live" or deployment.get("app_id") != app.get("id"):
+        return False, "latest accepted deployment is not live for this app"
+    result = gregale.cli("release", "verify", latest, "--app", slug, "--path", check.get("path", "/"), timeout=60)
+    if result.returncode != 0:
+        return False, "owner-authorized verification failed"
+    evidence = json.loads(result.stdout)
+    if not isinstance(evidence, dict):
+        return False, "owner verification returned an unexpected document"
+    instance = str(evidence.get("instance_id", "")).replace("-", "")
+    body = evidence.get("body")
+    ok = (evidence.get("app_id") == app.get("id") and evidence.get("deployment_id") == latest
+          and evidence.get("scope") == "default" and not evidence.get("project_id") and not evidence.get("environment_id")
+          and re.fullmatch(r"[0-9a-f]{32}", instance) is not None and instance != "0" * 32
+          and evidence.get("verified") is True and evidence.get("public_access_verified") is False
+          and type(evidence.get("http_status")) is int and evidence["http_status"] == check.get("status", 200)
+          and isinstance(body, str) and len(body.encode("utf-8")) <= 4096 and check.get("contains", "") in body)
+    return ok, "private deployment response verified" if ok else "response identity, HTTP status or expected content did not match"
 
 
 # --- how the agent worked ---------------------------------------------------
@@ -684,15 +858,44 @@ def invoke(command: list[str], project: Path, env: dict, timeout: float, record:
         return _text(expired.stdout).splitlines()
 
 
+# The HTTP wait of the check that decides on a follow-up: long enough for a
+# cold wake, short next to the task's own 120 s check.
+FOLLOW_UP_HTTP_DEADLINE_S = 30
+
+
+def needs_follow_up(task: dict, metrics: dict, record: dict, slug: str | None, project: Path, gregale: Gregale, created: dict) -> bool:
+    """Answer the task's follow_up when the agent finished its turn but the task
+    is not done yet. A quick check decides; an empty app left by a refused
+    deploy no longer counts as done (2026-11-14 run)."""
+    if not task.get("follow_up") or not metrics["completed"] or record["timed_out"]:
+        return False
+    checks = run_checks(task, slug, project, metrics["answer"], gregale, http_deadline_s=FOLLOW_UP_HTTP_DEADLINE_S, created=created,
+                        since=record["started_at"])
+    return not all(check["ok"] for check in checks)
+
+
 def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> dict:
     slug = None if task.get("repo") else app_slug(task["id"])
     run_dir = Path(tempfile.mkdtemp(prefix=f"agent-eval-{task['id']}-"))
     project = run_dir / "project"
     record = {"task": task["id"], "agent": agent, "toolset": toolset, "app": slug, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    record["target"] = getattr(gregale, "api", None)
+    try:
+        with Path(gregale.binary).open("rb") as binary:
+            checksum = hashlib.sha256()
+            for chunk in iter(lambda: binary.read(1024 * 1024), b""):
+                checksum.update(chunk)
+            record["cli_sha256"] = checksum.hexdigest()
+    except OSError:
+        record["cli_sha256"] = None
     created: dict = {"apps": [], "projects": []}
-    before = None
+    before, evidence = None, ""
+    cleanup_allowed = False
     try:
         before = gregale.inventory()
+        if slug and slug in before.get("apps", set()):
+            raise EvalError("evaluation app name already exists; refusing to update an existing app")
+        cleanup_allowed = True
         if task.get("repo"):
             checkout(task["repo"]["url"], task["repo"]["commit"], project)
         else:
@@ -703,9 +906,14 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
             if step["kind"] == "replace":
                 replace_once(project / step["file"], step["old"], step["new"])
             elif step["kind"] == "deploy":
-                result = gregale.cli("deploy", "--path", str(project), "--name", slug, "--app", "--yes", cwd=project, timeout=1200)
+                flags = ("--require-authn", "--rollout", "immediate") if step.get("private") else ()
+                result = gregale.cli("deploy", "--path", str(project), "--name", slug, "--app", "--yes", *flags, cwd=project, timeout=1200)
                 if (result.returncode == 0) != (step.get("expect", "success") == "success"):
                     raise EvalError(f"setup deploy exit {result.returncode}: {result.stderr[-300:]}")
+        if task.get("retain_app_identity"):
+            record["initial_app_id"] = gregale.get(f"/v1/apps/{slug}").get("id")
+            if not record["initial_app_id"]:
+                raise EvalError("could not pin the existing app identity before the edit task")
         command, extra_env = agent_command(agent, task_prompt(task, slug, toolset), task, run_dir, project, gregale, toolset, options)
         env = {**gregale.env(), **extra_env}
         # The agent's shell `gregale` must be the binary under test.
@@ -720,13 +928,14 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         elif agent == "gemini" and env.get("GEMINI_API_KEY"):
             env["GEMINI_CLI_HOME"] = str(run_dir / "gemini-home")
             record["isolation"] = "fresh-config"
-        started = time.monotonic()
+        started, wall_started = time.monotonic(), time.time()
         lines = invoke(command, project, env, task["timeout_s"], record)
         (run_dir / f"{agent}.jsonl").write_text("\n".join(lines))
         metrics = PARSERS[agent](lines)
-        created = gregale.touched_since(before, record["started_at"])
-        if task.get("follow_up") and not created.get("apps") and metrics["completed"] and not record["timed_out"]:
-            # The agent stopped to ask; answer once, as the person would.
+        evidence = run_evidence(metrics, project)
+        created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
+        if needs_follow_up(task, metrics, record, slug, project, gregale, created):
+            # The agent stopped short (often to ask a question); answer once, as the person would.
             if agent in FOLLOW_UP_AGENTS and metrics.get("session_id"):
                 remaining = max(int(task["timeout_s"] - (time.monotonic() - started)), 60)
                 again = claude_command(task["follow_up"], run_dir, gregale.binary, toolset, task["budget_usd"], getattr(options, "claude_model", None),
@@ -735,27 +944,34 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
                 (run_dir / f"{agent}-follow-up.jsonl").write_text("\n".join(more))
                 metrics = merge_metrics(metrics, PARSERS[agent](more))
                 record["follow_ups"] = 1
-                created = gregale.touched_since(before, record["started_at"])
+                evidence = run_evidence(metrics, project)
+                created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
             else:
                 record["follow_ups"] = "unsupported"
         record["duration_s"] = round(time.monotonic() - started, 1)
-        record.update(metrics)
+        record.update({k: v for k, v in metrics.items() if k != "tool_inputs"})
         record["created"] = created
-        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"])
+        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"],
+                                      expected_app_id=record.get("initial_app_id"))
         record["success"] = all(check["ok"] for check in record["checks"])
         record.update(grade_features(task, metrics["commands"], project, created))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
+        record["wrote_outside_run"] = writes_outside(metrics.get("written_paths") or [], run_dir, project, AGENT_OWN_DIRS[agent])
+        if record["wrote_outside_run"]:
+            record["anti_patterns"].append("wrote_outside_run")
+        record["home_writes"] = home_writes(Path.home(), wall_started, run_dir)
         record["traps"] = [c["detail"] for c in record["checks"] if c["kind"] == "no_traps" and not c["ok"]]
     except (EvalError, subprocess.TimeoutExpired, OSError, ValueError, urllib.error.URLError) as error:
         record.update(success=False, error=str(error))
     finally:
-        if not options.keep_apps:
-            if before is not None and not created.get("apps") and not created.get("projects"):
-                try:
-                    created = gregale.touched_since(before, record["started_at"])
-                except (OSError, ValueError, urllib.error.URLError):
-                    pass
-            record["left_behind"] = cleanup(gregale, created, slug)
+        if not options.keep_apps and cleanup_allowed:
+            try:
+                if before is not None and not created.get("apps") and not created.get("projects"):
+                    created, _ = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
+                doomed, doomed_slug = deletable(gregale, before, created, slug, evidence)
+                record["left_behind"] = cleanup(gregale, doomed, doomed_slug)
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                record["left_behind"] = [f"cleanup: {error}"]
         if not options.keep_dirs:
             shutil.rmtree(run_dir, ignore_errors=True)
         else:
@@ -818,7 +1034,8 @@ def main(argv=None) -> int:
     run.add_argument("--no-mcp-writes", dest="mcp_writes", action="store_false", help="serve MCP without --allow-writes")
     run.add_argument("--keep-apps", action="store_true", help="do not delete the apps and projects the run created")
     run.add_argument("--keep-dirs", action="store_true", help="keep run directories and transcripts")
-    run.add_argument("--cli-login", action="store_true", help="use your own logged-in gregale CLI instead of GREGALE_EVAL_TOKEN; implies --keep-apps")
+    run.add_argument("--cli-login", action="store_true", help="use your own logged-in gregale CLI instead of GREGALE_EVAL_TOKEN; deletes only apps and projects the run created "
+                     "(--keep-apps keeps them)")
     summary = sub.add_parser("summarize", help="print a Markdown summary of a results file")
     summary.add_argument("results")
     options = parser.parse_args(argv)
@@ -835,7 +1052,7 @@ def main(argv=None) -> int:
         token = os.environ.get("GREGALE_EVAL_TOKEN", "")
         if not token and not options.cli_login:
             raise EvalError("set GREGALE_EVAL_TOKEN to an API key of a dedicated evaluation account; runs deploy and delete real apps "
-                            "(or pass --cli-login to use your own logged-in CLI, which never deletes)")
+                            "(or pass --cli-login to use your own logged-in CLI, which deletes only what the run created)")
         agents = _csv(options.agents, AGENTS, "agents")
         toolsets = _csv(options.toolsets, TOOLSETS, "toolsets")
         selected = [t for t in tasks if not options.tasks or t["id"] in options.tasks.split(",")]
@@ -849,7 +1066,6 @@ def main(argv=None) -> int:
                 raise EvalError(problem)
         if options.cli_login:
             gregale: Gregale = CliGregale(options.gregale)
-            options.keep_apps = True
         else:
             gregale = Gregale(options.gregale, os.environ.get("GREGALE_EVAL_API", DEFAULT_API), token)
         with open(options.out, "a") as out:

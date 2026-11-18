@@ -296,3 +296,15 @@ payment problem.
    stamp, and once when the stop transitions (`mail.QuotaStoppedBody`).
 3. The stop's `billing_past_due` notification keeps its channel for the
    dashboard and SSE consumers and adds `"kind":"quota_stop"`.
+
+## Amendment 2026-11-14 (billing review H17-4)
+
+Decision 4 parked apps outside the plan without telling anyone: the customer
+saw only the 403 on the next request. meterd now emails the billing subject,
+on the dunning interval, when its set of apps outside the plan changes. The
+email names each parked app and why (RAM above the plan's, or past the
+deployed-app count with the oldest kept) and what lets it wake. The plan and
+a digest of the app set last mailed are kept in `plan_fit_notices`, so one
+email goes out per set and plan, and the row is removed once the subject
+fits again. Parking stays immediate (owner decision 2026-11-14: notice, no
+grace).

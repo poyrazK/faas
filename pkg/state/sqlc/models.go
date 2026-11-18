@@ -158,6 +158,15 @@ type AccountEmailChange struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type AccountHeldLink struct {
+	AccountID     pgtype.UUID
+	HeldAccountID pgtype.UUID
+	HeldOrgID     pgtype.UUID
+	HeldReason    string
+	Signal        string
+	DetectedAt    pgtype.Timestamptz
+}
+
 type AccountMailThrottle struct {
 	AccountID       pgtype.UUID
 	Kind            string
@@ -508,6 +517,18 @@ type AgentRunUsage struct {
 	PeakPrivateMb       int64
 	ColdBoot            bool
 	RecordedAt          pgtype.Timestamptz
+}
+
+// ADR-20261116182615 gregale_browse links written by apid: the thread and tool call a finished sandbox task answers.
+type AgentSandboxTaskCall struct {
+	SandboxID   pgtype.UUID
+	AccountID   pgtype.UUID
+	EndpointID  pgtype.UUID
+	ThreadID    string
+	ToolCallID  string
+	IssuedAt    pgtype.Timestamptz
+	DeliveredAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
 }
 
 type AgentUndoRecord struct {
@@ -1705,6 +1726,27 @@ type AppPrivateNetworkAttachmentNode struct {
 	ObservedAt   pgtype.Timestamptz
 }
 
+type AppProtection struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	State           string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	NextReconcileAt pgtype.Timestamptz
+	LeaseUntil      pgtype.Timestamptz
+	HealthProbeAt   pgtype.Timestamptz
+}
+
+type AppProtectionObject struct {
+	AppID     pgtype.UUID
+	Item      string
+	Status    string
+	ObjectID  string
+	Reason    string
+	Written   []byte
+	CreatedAt pgtype.Timestamptz
+}
+
 type AppRegistryCredential struct {
 	ID                pgtype.UUID
 	AccountID         pgtype.UUID
@@ -2696,7 +2738,9 @@ type Build struct {
 	CancelledByDeploymentCascade bool
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
+	NotBefore                    pgtype.Timestamptz
 	CoalescedWith                pgtype.UUID
+	BuilderNodeName              pgtype.Text
 }
 
 type BuildExportPublication struct {
@@ -3077,15 +3121,17 @@ type CiWorkerHealth struct {
 }
 
 type CliAuthCode struct {
-	TokenHash  []byte
-	AccountID  pgtype.UUID
-	Status     string
-	ExpiresAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
-	DeviceHash []byte
-	OrgID      pgtype.UUID
-	ProjectIds []pgtype.UUID
+	TokenHash    []byte
+	AccountID    pgtype.UUID
+	Status       string
+	ExpiresAt    pgtype.Timestamptz
+	ConsumedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	DeviceHash   []byte
+	OrgID        pgtype.UUID
+	ProjectIds   []pgtype.UUID
+	VerifierHash []byte
+	RequesterIp  pgtype.Text
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -3159,6 +3205,10 @@ type CommitSource struct {
 	ContractVersion      int32
 	AllowTenantSelection bool
 	Destination          string
+	QueueName            pgtype.Text
+	ChangesFeeds         []byte
+	ManagedDatabaseID    pgtype.UUID
+	PollIntervalMs       int32
 }
 
 // Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).
@@ -3960,36 +4010,42 @@ type DataConnectionCheck struct {
 }
 
 type DataPipeline struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	Name                 string
-	SourceConnectionID   pgtype.UUID
-	DatabaseID           pgtype.UUID
-	Tables               []byte
-	ReadSubjects         []byte
-	DesiredState         string
-	State                string
-	Revision             int64
-	ObservedRevision     int64
-	Generation           int64
-	Reason               string
-	TablesReady          int32
-	RetainedWalBytes     pgtype.Int8
-	ObservedAt           pgtype.Timestamptz
-	Verification         string
-	VerifiedAt           pgtype.Timestamptz
-	Initialized          bool
-	VerifyRequested      bool
-	LeaseToken           string
-	LeaseUntil           pgtype.Timestamptz
-	RetryAt              pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	AppliedThroughAt     pgtype.Timestamptz
-	SchemaApproval       string
-	SchemaChange         []byte
-	VerificationProgress []byte
-	ReaderChange         []byte
-	WalRetention         []byte
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	Name                   string
+	SourceConnectionID     pgtype.UUID
+	DatabaseID             pgtype.UUID
+	Tables                 []byte
+	ReadSubjects           []byte
+	DesiredState           string
+	State                  string
+	Revision               int64
+	ObservedRevision       int64
+	Generation             int64
+	Reason                 string
+	TablesReady            int32
+	RetainedWalBytes       pgtype.Int8
+	ObservedAt             pgtype.Timestamptz
+	Verification           string
+	VerifiedAt             pgtype.Timestamptz
+	Initialized            bool
+	VerifyRequested        bool
+	LeaseToken             string
+	LeaseUntil             pgtype.Timestamptz
+	RetryAt                pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	AppliedThroughAt       pgtype.Timestamptz
+	SchemaApproval         string
+	SchemaChange           []byte
+	VerificationProgress   []byte
+	ReaderChange           []byte
+	WalRetention           []byte
+	ServingConfig          []byte
+	FreshnessTargetSeconds int64
+	IndexChange            []byte
+	EvolutionChange        []byte
+	WorkConfig             []byte
+	WorkStatus             []byte
 }
 
 type DataPipelineAlert struct {
@@ -4375,6 +4431,7 @@ type Deployment struct {
 	PromotedAt                 pgtype.Timestamptz
 	RollbackReleaseReview      []byte
 	BeforeCheckpointHook       pgtype.Bool
+	BuildRegistryScope         []string
 }
 
 type DeploymentAlias struct {
@@ -5054,6 +5111,16 @@ type EntityOutboxAcceptance struct {
 	AppID       pgtype.UUID
 	Fingerprint string
 	CreatedAt   pgtype.Timestamptz
+}
+
+type EnvironmentApiRoute struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	RouteTemplate string
+	FirstSeen     pgtype.Timestamptz
+	LastSeen      pgtype.Timestamptz
+	RequestCount  int64
 }
 
 type EnvironmentBindingReleaseReceipt struct {
@@ -6092,6 +6159,7 @@ type EventSubscription struct {
 	AcknowledgmentLeaseSeconds int32
 	DeploymentScope            string
 	EnvironmentID              pgtype.UUID
+	ClonePaused                bool
 }
 
 type EventSubscriptionCapacityCommand struct {
@@ -6619,6 +6687,80 @@ type FinancialUsageEvidence struct {
 	AdjustmentReason pgtype.Text
 }
 
+type FlagConversionDaily struct {
+	EnvironmentID pgtype.UUID
+	EventName     string
+	CustomerID    pgtype.UUID
+	Day           pgtype.Date
+	AccountID     pgtype.UUID
+	Count         int64
+	ValueSum      int64
+	FirstAt       pgtype.Timestamptz
+	LastAt        pgtype.Timestamptz
+}
+
+type FlagEventName struct {
+	EnvironmentID pgtype.UUID
+	Name          string
+	AccountID     pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type FlagEventUsage struct {
+	AccountID pgtype.UUID
+	Month     pgtype.Date
+	Accepted  int64
+	Dropped   int64
+}
+
+type FlagExperiment struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	Key                string
+	FlagKey            string
+	RuleID             string
+	Control            string
+	MetricEvent        string
+	MetricKind         string
+	Status             string
+	MixingLift         float64
+	Weights            []byte
+	MinPValues         []byte
+	TelemetryCursor    pgtype.Timestamptz
+	CreatedBy          string
+	CreatedAt          pgtype.Timestamptz
+	StartedAt          pgtype.Timestamptz
+	StoppedAt          pgtype.Timestamptz
+	Guardrails         []byte
+	LatencyThresholdMs pgtype.Int4
+	StopReason         string
+	Breach             []byte
+	ValueThroughDay    pgtype.Date
+}
+
+type FlagExperimentLatency struct {
+	ExperimentID pgtype.UUID
+	Variant      string
+	Bucket       int16
+	Requests     int64
+}
+
+type FlagExperimentUnit struct {
+	ExperimentID    pgtype.UUID
+	CustomerID      pgtype.UUID
+	Variant         string
+	FirstExposedAt  pgtype.Timestamptz
+	ConvertedAt     pgtype.Timestamptz
+	Crossed         bool
+	Requests        int64
+	Errors          int64
+	LatencyRequests int64
+	SlowRequests    int64
+	ValueSum        int64
+}
+
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
 type FleetSealDomainProbe struct {
 	ID         int16
@@ -6860,6 +7002,21 @@ type Honeytoken struct {
 	Label       string
 	PlantedAt   pgtype.Timestamptz
 	RetiredAt   pgtype.Timestamptz
+}
+
+type HostedTaskBindingQualification struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+type HostedTaskSourceIntent struct {
+	AccountID  pgtype.UUID
+	ID         string
+	Payload    []byte
+	Ciphertext []byte
+	ExpiresAt  pgtype.Timestamptz
 }
 
 type HostingAutomationCredential struct {
@@ -7611,6 +7768,8 @@ type InvocationSend struct {
 	SenderAppID     pgtype.UUID
 	OnCompleteAppID pgtype.UUID
 	CreatedAt       pgtype.Timestamptz
+	WorkflowRunID   pgtype.UUID
+	WorkflowOp      pgtype.Text
 }
 
 type InvocationWorkCancellation struct {
@@ -8722,6 +8881,22 @@ type ManagedPostgresCreationReceipt struct {
 	ProviderCreatedAt  pgtype.Timestamptz
 	RecordedAt         pgtype.Timestamptz
 	CleanupStartedAt   pgtype.Timestamptz
+}
+
+type ManagedPostgresCustomRole struct {
+	DatabaseID   pgtype.UUID
+	AccountID    pgtype.UUID
+	Name         string
+	BypassRls    bool
+	GrantedTo    []string
+	MemberOf     []string
+	State        string
+	Revision     int64
+	LastError    string
+	AttemptCount int32
+	RetryAt      pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type ManagedPostgresCutover struct {
@@ -9994,13 +10169,17 @@ type MeterGatewayUsageEvent struct {
 }
 
 type MeterNetworkCheckpoint struct {
-	InstanceID pgtype.UUID
-	NetTxBytes int64
-	NetRxBytes int64
-	NetTxValid bool
-	NetRxValid bool
-	ObservedAt pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
+	InstanceID          pgtype.UUID
+	NetTxBytes          int64
+	NetRxBytes          int64
+	NetTxValid          bool
+	NetRxValid          bool
+	ObservedAt          pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	InternalTxBytes     int64
+	InternalTxValid     bool
+	InternalTxPending   int64
+	ServiceReplyPending int64
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {
@@ -11436,11 +11615,107 @@ type OutboundAiPriceList struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type OutboundAiPrompt struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Name                string
+	Description         string
+	LiveVersion         pgtype.Int4
+	PreviousLiveVersion pgtype.Int4
+	LatestVersion       int32
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type OutboundAiPromptCanary struct {
+	PromptID                  pgtype.UUID
+	Version                   int32
+	Percent                   int16
+	MaxErrorRateIncrease      int16
+	MaxLatencyIncreasePercent pgtype.Int4
+	MinCalls                  int32
+	WindowMinutes             int16
+	State                     string
+	Reason                    pgtype.Text
+	StartedAt                 pgtype.Timestamptz
+	DecidedAt                 pgtype.Timestamptz
+}
+
+type OutboundAiPromptEvaluation struct {
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	PromptID                pgtype.UUID
+	BaselineVersion         int32
+	CandidateVersion        int32
+	Cases                   []byte
+	JudgeIntegrationID      pgtype.UUID
+	JudgeModel              string
+	MaxLossRate             int16
+	Canary                  []byte
+	State                   string
+	Verdict                 pgtype.Text
+	ErrorCode               pgtype.Text
+	CaseCount               int32
+	Wins                    int32
+	Ties                    int32
+	Losses                  int32
+	CandidateErrors         int32
+	JudgeErrors             int32
+	BaselineCostMillicents  int64
+	CandidateCostMillicents int64
+	BaselineTtfbMsTotal     int64
+	BaselineTtfbCalls       int32
+	CandidateTtfbMsTotal    int64
+	CandidateTtfbCalls      int32
+	CanaryStarted           bool
+	CreatedAt               pgtype.Timestamptz
+	StartedAt               pgtype.Timestamptz
+	FinishedAt              pgtype.Timestamptz
+}
+
+type OutboundAiPromptEvaluationItem struct {
+	EvaluationID            pgtype.UUID
+	CaseIndex               int16
+	Verdict                 string
+	BaselineStatus          pgtype.Int2
+	CandidateStatus         pgtype.Int2
+	BaselineCostMillicents  int64
+	CandidateCostMillicents int64
+	BaselineTtfbMs          pgtype.Int4
+	CandidateTtfbMs         pgtype.Int4
+	BaselineOutputText      string
+	CandidateOutputText     string
+}
+
 type OutboundAiPromptPrefix struct {
 	IntegrationID  pgtype.UUID
 	PrefixHash     []byte
 	SeenAt         pgtype.Timestamptz
 	PreviousSeenAt pgtype.Timestamptz
+}
+
+type OutboundAiPromptVersion struct {
+	PromptID      pgtype.UUID
+	Version       int32
+	Messages      []byte
+	Defaults      []byte
+	Params        []byte
+	RouteID       pgtype.UUID
+	IntegrationID pgtype.UUID
+	Model         pgtype.Text
+	Note          string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type OutboundAiPromptVersionMinute struct {
+	PromptID       pgtype.UUID
+	Version        int32
+	Minute         pgtype.Timestamptz
+	Calls          int64
+	Errors         int64
+	TtfbCalls      int64
+	TtfbMsTotal    int64
+	CostMillicents int64
 }
 
 type OutboundAiQualityAlert struct {
@@ -11531,6 +11806,8 @@ type OutboundAiRequestLog struct {
 	EvaluationState     pgtype.Text
 	EvaluationClaimedAt pgtype.Timestamptz
 	EvaluationScore     pgtype.Int2
+	PromptID            pgtype.UUID
+	PromptVersion       pgtype.Int4
 }
 
 type OutboundAiRoute struct {
@@ -11836,6 +12113,30 @@ type PgRatelimitCounter struct {
 	LastRefill pgtype.Timestamptz
 }
 
+// Last plan-fit email per billing subject: the plan and the sha256 of its over-plan app set. Written by meterd (billing review H17-4).
+type PlanFitNotice struct {
+	SubjectID  pgtype.UUID
+	Plan       string
+	AppsDigest string
+	NoticedAt  pgtype.Timestamptz
+}
+
+type PlatformAlertNotice struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Kind           string
+	SubjectID      string
+	Detail         []byte
+	CreatedAt      pgtype.Timestamptz
+	Status         string
+	Attempts       int32
+	NextAttemptAt  pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	LastError      string
+}
+
 type PlatformMailAgentRunCapture struct {
 	Namespace  string
 	ProducerID string
@@ -11939,6 +12240,14 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureSuccessRevision pgtype.Int8
 	DeploymentFailureAt              pgtype.Timestamptz
 	AgentDeliveryID                  pgtype.UUID
+}
+
+type PlatformProbeWake struct {
+	InstanceID  string
+	AppID       pgtype.UUID
+	WokeAt      pgtype.Timestamptz
+	ProbeDoneAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
 }
 
 // Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).
@@ -15575,6 +15884,37 @@ type SalesTask struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+// ADR-20261117065818 gregale_browser actions: written by apid, run and ended by agentd under the session lease.
+type SandboxAction struct {
+	ID              pgtype.UUID
+	SessionID       pgtype.UUID
+	AccountID       pgtype.UUID
+	Seq             int32
+	Kind            string
+	Args            []byte
+	EndpointID      pgtype.UUID
+	ThreadID        string
+	ToolCallID      string
+	IssuedAt        pgtype.Timestamptz
+	State           string
+	ExitCode        pgtype.Int4
+	Output          []byte
+	CreatedAt       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	DeliveredAt     pgtype.Timestamptz
+	ScreenshotKey   pgtype.Text
+	ScreenshotBytes pgtype.Int8
+}
+
+// ADR-20261117091026 account default web-mode domain policy, written by apid.
+type SandboxEgressPolicy struct {
+	AccountID  pgtype.UUID
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 // ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
@@ -15615,6 +15955,25 @@ type SandboxSession struct {
 	ImageJobID pgtype.UUID
 	// ADR-20261027090013: the sandbox template the session boots; NULL for a preset or image session, or once the template is deleted.
 	TemplateID pgtype.UUID
+	// ADR-20261116182615: the session boots with the sandbox browser running (gregale-browser) and CDP on port 9222.
+	Browser bool
+	// ADR-20261116182615: the sandbox task the session runs (browse), or NULL for an ordinary session.
+	TaskKind     pgtype.Text
+	TaskUrl      pgtype.Text
+	TaskMaxChars pgtype.Int4
+	TaskExitCode pgtype.Int4
+	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
+	TaskOutput  []byte
+	EgressAllow []string
+	EgressDeny  []string
+}
+
+// ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
+type SandboxSessionDomain struct {
+	SandboxID pgtype.UUID
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
 }
 
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.
@@ -15958,6 +16317,15 @@ type SecretOpenAudit struct {
 	JobID    pgtype.UUID
 }
 
+type SecretVerificationAudit struct {
+	ID           int64
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	CutoverID    pgtype.UUID
+	CredentialID pgtype.UUID
+	VerifiedAt   pgtype.Timestamptz
+}
+
 type ServiceCallerKey struct {
 	NodeID       string
 	KeyID        string
@@ -16027,8 +16395,10 @@ type Snapshot struct {
 	// CPU template of the capturing node; a templated snapshot restores on any node class the template supports.
 	CpuTemplate string
 	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
-	CpuModel string
-	StaleAt  pgtype.Timestamptz
+	CpuModel        string
+	StaleAt         pgtype.Timestamptz
+	SealedKey       []byte
+	SealedCaptureID pgtype.UUID
 }
 
 type SnapshotFanoutEvent struct {
@@ -16169,6 +16539,19 @@ type StatusObservationBucket struct {
 	BucketAt     pgtype.Timestamptz
 	Status       string
 	HasTelemetry bool
+}
+
+type StorageObjectDeletion struct {
+	StorageKey    string
+	Reason        string
+	RequestedBy   string
+	RequestedAt   pgtype.Timestamptz
+	State         string
+	NextAttemptAt pgtype.Timestamptz
+	Attempts      int32
+	LastError     string
+	DecidedAt     pgtype.Timestamptz
+	Generation    pgtype.Int8
 }
 
 type StoredWorkflow struct {
@@ -16333,6 +16716,31 @@ type SupportEvent struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type SupportGrant struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	AppIds             []pgtype.UUID
+	CreatedByAccountID pgtype.UUID
+	RequestID          pgtype.UUID
+	Reason             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RevokedByAccountID pgtype.UUID
+}
+
+type SupportGrantRequest struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	OperatorAccountID  pgtype.UUID
+	Reason             string
+	Status             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	DecidedAt          pgtype.Timestamptz
+	DecidedByAccountID pgtype.UUID
+}
+
 type SupportMessage struct {
 	ID        pgtype.UUID
 	Sequence  int64
@@ -16462,6 +16870,13 @@ type SyntheticCheckRun struct {
 	StatusCode int32
 	LatencyMs  int32
 	ErrorClass string
+}
+
+type TaskToolReleaseIntent struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
 }
 
 type TenantHostname struct {
@@ -17064,6 +17479,12 @@ type WorkflowRunResume struct {
 	PreviousError  pgtype.Text
 	ResumedSteps   []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type WorkflowRunStart struct {
+	RunID        pgtype.UUID
+	StarterAppID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
 }
 
 type WorkflowScheduleCursor struct {

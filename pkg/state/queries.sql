@@ -593,6 +593,21 @@ WITH candidate AS (
             AND notification_outbox_target_node(channel, payload) IN ('', sqlc.arg(node_id)::text)))
       AND ((state = 'pending' AND available_at <= now()) OR
            (state = 'processing' AND lease_until <= clock_timestamp()))
+      -- With app_owner set, an app_wake or runtime_config_restart row is
+      -- claimable only by the schedd that owns its app (an app with no node
+      -- is anyone's; a row whose app id is unreadable or gone is left to the
+      -- handler). Without it a peer claimed the row and deferred it, and the
+      -- owner could lose every replay (production 2026-11-16).
+      AND (sqlc.arg(app_owner)::text = '' OR channel NOT IN ('app_wake', 'runtime_config_restart') OR
+           NOT EXISTS (
+             SELECT 1 FROM apps a
+             -- Nested CASE fixes the evaluation order: a poison payload must
+             -- not fail every claim.
+             WHERE a.id = CASE WHEN pg_input_is_valid(payload, 'jsonb') THEN
+                            CASE WHEN pg_input_is_valid(payload::jsonb ->> 'app_id', 'uuid')
+                                 THEN (payload::jsonb ->> 'app_id')::uuid END END
+               AND a.node_id IS NOT NULL
+               AND a.node_id::text <> sqlc.arg(app_owner)::text))
     ORDER BY id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -694,6 +709,17 @@ SET state = 'pending', attempts = o.attempts - 1,
     claimed_by = NULL, claimed_at = NULL, lease_until = NULL
 FROM owned
 WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
+
+-- Undelivered durable handoffs per channel: how many, and the age of the
+-- oldest. The claim indexes cover exactly these states, so this reads only the
+-- live backlog, never the retained history.
+-- name: NotificationOutboxBacklog :many
+SELECT channel, count(*)::bigint AS undelivered,
+       COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(created_at))), 0)::double precision AS oldest_seconds
+FROM notification_outbox
+WHERE state IN ('pending', 'processing')
+GROUP BY channel
+ORDER BY channel;
 
 -- name: DeferNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
@@ -7871,6 +7897,40 @@ UPDATE crons SET enabled = true
 WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
 RETURNING id, app_id;
 
+-- name: ReadProjectEnvironmentCloneEventSubscriptions :many
+-- An app's event subscriptions in one environment (ADR-20261104120000
+-- amendment 2026-11-14). A subscription a clone paused counts as enabled:
+-- resuming it would.
+SELECT source, type, filter, (enabled OR clone_paused)::boolean AS enabled, enabled AS stored_enabled,
+       routing_retry_policy, schema_versions, acknowledgment_lease_seconds
+FROM event_subscriptions
+WHERE app_id = sqlc.arg(app_id)::uuid AND deployment_scope = sqlc.arg(scope)::text
+ORDER BY source, type, filter::text;
+
+-- name: CountProjectEnvironmentCloneUncapturedEventSubscriptions :one
+-- Event subscriptions of the source environment on project apps the clone
+-- does not copy.
+SELECT count(*)::bigint FROM event_subscriptions s JOIN apps a ON a.id = s.app_id
+WHERE a.project_id = sqlc.arg(project_id)::uuid AND a.status <> 'deleted'
+  AND s.deployment_scope = sqlc.arg(scope)::text AND NOT (s.app_id = ANY(sqlc.arg(app_ids)::uuid[]));
+
+-- name: InsertProjectEnvironmentCloneEventSubscription :exec
+-- A copied subscription starts disabled; clone_paused marks one the source
+-- ran. The scope guard resolves the stage's environment ID.
+INSERT INTO event_subscriptions(account_id, app_id, source, type, filter, enabled, clone_paused,
+    routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope)
+SELECT a.account_id, a.id, sqlc.arg(source)::text, sqlc.arg(type)::text, sqlc.arg(filter)::jsonb, false,
+    sqlc.arg(clone_paused)::boolean, sqlc.narg(routing_retry_policy)::jsonb, sqlc.arg(schema_versions)::text[],
+    sqlc.arg(acknowledgment_lease_seconds)::integer, sqlc.arg(scope)::text
+FROM apps a WHERE a.id = sqlc.arg(app_id)::uuid;
+
+-- name: ResumeEnvironmentClonePausedEventSubscriptions :many
+-- Enables the event subscriptions a clone paused in one environment; the
+-- enable clears clone_paused.
+UPDATE event_subscriptions SET enabled = true, updated_at = now()
+WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
+RETURNING id, app_id;
+
 -- name: ReadProjectEnvironmentCloneObjectMutationAuthority :one
 SELECT coalesce(attempt_count = 0 AND lease_token IS NULL, false)::boolean AS legacy_allowed,
        coalesce(lease_token = nullif(sqlc.arg(worker_token)::text, '')::uuid
@@ -8861,9 +8921,12 @@ WHERE app_id=sqlc.arg(app_id)::uuid
 GROUP BY source
 ORDER BY source;
 
--- name: SumAccountQueueBacklogBytes :one
+-- name: SumAccountBacklogBytes :one
+-- ADR-20261022105723 (amended 2026-11-13): the account's pending queue,
+-- async and delayed-task payload bytes, one pool against
+-- MaxQueueBacklogBytesPerAccount.
 SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
-WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
+WHERE account_id=sqlc.arg(account_id)::uuid AND source IN ('queue','async_invoke','delayed_task');
 
 -- name: ExpirePendingQueueMessages :many
 -- ADR-20261022105723: a pending queue message past its plan's retention
@@ -8873,33 +8936,54 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
 -- message replayed from the dead letter gets the whole retention again. A
 -- replay is never earlier than the send, so the created_at bound still
 -- narrows invocations_queue_pending_created_idx.
+-- ADR-20261112200000: the wait also restarts when a retry or a nack delay
+-- makes the message due again, so a back-off longer than the retention no
+-- longer turns the retry into an expiry.
+-- ADR-20261113180000 (R5-3, R6-3): a held owner (suspended, or under an abuse
+-- hold) keeps its messages: the sweep restarts their wait at half the
+-- retention instead of dead-lettering them, so after the hold lifts each has
+-- at least half the retention left (skipping them only deferred the expiry to
+-- the first sweep after reactivation). An expired message's push receipt
+-- moves to dead_letter with it; left pending it was never reaped, and a
+-- replay re-arms it from dead_letter.
 WITH plan_retention AS (
     SELECT unnest(sqlc.arg(plans)::text[]) AS plan, unnest(sqlc.arg(retention_seconds)::bigint[]) AS seconds
 ), batch AS (
-    SELECT i.id
+    SELECT i.id,
+        (coalesce(a.status, o.status) = 'suspended' OR coalesce(a.abuse_hold_at, o.abuse_hold_at) IS NOT NULL) AS held
     FROM invocations i
     LEFT JOIN accounts a ON a.id = i.account_id
     LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
-      AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => sqlc.arg(min_retention_seconds)::bigint)
-      -- ADR-20261112200000: the wait also restarts when a retry or a nack
-      -- delay makes the message due again, so a back-off longer than the
-      -- retention no longer turns the retry into an expiry; and a suspended
-      -- owner's messages wait for its reactivation instead of expiring.
-      AND greatest(coalesce(i.last_replayed_at, i.created_at), i.due_at) < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
-      AND coalesce(a.status, o.status) <> 'suspended'
+      AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => sqlc.arg(min_retention_seconds)::bigint / 2)
+      AND greatest(coalesce(i.last_replayed_at, i.created_at), i.due_at) < sqlc.arg(now_at)::timestamptz - make_interval(secs =>
+          CASE WHEN coalesce(a.status, o.status) = 'suspended' OR coalesce(a.abuse_hold_at, o.abuse_hold_at) IS NOT NULL
+               THEN r.seconds / 2 ELSE r.seconds END)
     ORDER BY i.created_at
     LIMIT sqlc.arg(batch_limit)::integer
     FOR UPDATE OF i SKIP LOCKED
+), refreshed AS (
+    UPDATE invocations i SET due_at = sqlc.arg(now_at)::timestamptz
+    FROM batch WHERE i.id = batch.id AND batch.held AND i.state = 'pending'
+    RETURNING i.id
+), expired AS (
+    UPDATE invocations i
+    SET state = 'dead_letter', outcome = 'dead_letter', completed_at = now(),
+        last_error = 'queue message expired: it waited longer than the plan retention',
+        outcome_code = 'queue_message_expired'
+    FROM batch
+    WHERE i.id = batch.id AND NOT batch.held AND i.state = 'pending'
+    RETURNING i.id, i.app_id
+), receipts AS (
+    UPDATE trigger_records r SET state = 'dead_letter', claim_expires_at = NULL,
+        last_error = 'queue message expired: it waited longer than the plan retention'
+    FROM expired e, triggers t
+    WHERE t.id = r.trigger_id AND t.app_id = e.app_id AND t.kind = 'queue' AND t.source = 'queue'
+      AND r.item_identifier = e.id::text AND r.state IN ('pending', 'retry', 'claimed')
+    RETURNING r.id
 )
-UPDATE invocations i
-SET state = 'dead_letter', outcome = 'dead_letter', completed_at = now(),
-    last_error = 'queue message expired: it waited longer than the plan retention',
-    outcome_code = 'queue_message_expired'
-FROM batch
-WHERE i.id = batch.id AND i.state = 'pending'
-RETURNING i.id::text AS id, i.app_id::text AS app_id;
+SELECT e.id::text AS id, e.app_id::text AS app_id FROM expired e;
 
 -- name: StampDefaultInvocationRetention :execrows
 -- ADR 20261019104819: finished rows whose producer set no horizon get the
@@ -8932,15 +9016,28 @@ SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source='queu
     AND work_policy_name=$2 AND work_key_digest=$3;
 
 -- name: ReadProductionQueueStateLive :one
+-- ADR-20261113180000 (R7-3): a named queue counts the messages sent under
+-- the name and those of the production binding that reads the name now, so
+-- a binding's backlog from before a queue_name rename still shows; leases
+-- and push claims already take it. The oldest pending message is the oldest
+-- one ready for delivery: a message waiting out a retry back-off made the
+-- queue look stalled.
 SELECT count(*) AS depth,
     count(*) FILTER(WHERE state='dispatching' AND lease_expires_at IS NOT NULL AND lease_expires_at>now()) AS in_flight,
-    min(created_at) FILTER(WHERE state='pending')::timestamptz AS oldest_pending_at
+    min(created_at) FILTER(WHERE state='pending' AND due_at<=now())::timestamptz AS oldest_pending_at
 FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state IN ('pending','dispatching')
-    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text);
+    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text OR queue_binding_id=(
+        SELECT b.id FROM queue_bindings b WHERE b.app_id=sqlc.arg(app_id)::uuid AND b.deployment_scope=''
+          AND b.queue_name=sqlc.arg(queue_name)::text ORDER BY b.created_at, b.id LIMIT 1));
 
 -- name: CountProductionQueueDeadLetter :one
-SELECT count(*) FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dead_letter'
-    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text);
+-- Counted up to row_limit (ADR-20261113180000, R7-3): every state read
+-- counted the whole dead letter.
+SELECT count(*) FROM (SELECT 1 FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dead_letter'
+    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text OR queue_binding_id=(
+        SELECT b.id FROM queue_bindings b WHERE b.app_id=sqlc.arg(app_id)::uuid AND b.deployment_scope=''
+          AND b.queue_name=sqlc.arg(queue_name)::text ORDER BY b.created_at, b.id LIMIT 1))
+    LIMIT sqlc.arg(row_limit)::integer) bounded;
 
 -- name: TrimCompletedQueuePayloads :execrows
 -- A completed queue message keeps its payload for a day after its ack, then
@@ -9016,9 +9113,22 @@ LEFT JOIN accounts a ON a.id = p.account_id
 LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
 WHERE p.id = sqlc.arg(id)::uuid AND p.source = 'queue' AND p.state = 'dead_letter';
 
+-- name: ReadWebhookReplayAdmission :one
+-- A dead webhook delivery replayed from the dead letter re-enters its
+-- account's outbox under the caps an explicit delivery meets (event-driven
+-- hunt #16). The plan resolves as ReadQueueReplayAdmission's does.
+SELECT d.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM app_webhook_deliveries d
+LEFT JOIN accounts a ON a.id = d.account_id
+LEFT JOIN orgs o ON o.id = d.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE d.id = sqlc.arg(id)::uuid AND d.status = 'dead';
+
 -- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
-    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code='',
+    -- ADR-20261113180000 (R6-1, R8-2): a replay settles anew; the dead
+    -- letter's result and retention horizon do not carry over.
+    result=NULL,result_retention_until=NULL
 FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1 AND i.account_id=$2 AND i.state='dead_letter' AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
 RETURNING i.*;
 
@@ -9059,7 +9169,10 @@ DELETE FROM dead_letter_events d USING production_dead_letter_events p WHERE p.i
 
 -- name: ReplayProductionDeadLetterInvocation :execrows
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
-    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code='',
+    -- ADR-20261113180000 (R6-1, R8-2): a replay settles anew; the dead
+    -- letter's result and retention horizon do not carry over.
+    result=NULL,result_retention_until=NULL
 FROM production_invocation_work p WHERE p.id=i.id AND i.id=sqlc.arg(invocation_id)::uuid
     AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND i.state='dead_letter' AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id);
 
@@ -9636,6 +9749,46 @@ WITH cur AS (
 SELECT EXISTS (SELECT 1 FROM cur) AS found,
        COALESCE((SELECT granted FROM upd), 0)::bigint AS granted,
        COALESCE((SELECT remaining FROM upd), (SELECT GREATEST(avail, 0) FROM cur), 0)::bigint AS remaining;
+
+-- name: ConsumeEventPublishTokens :one
+-- Event-driven hunt #16: the shared per-account event publish counter. Refill
+-- follows ConsumeTrafficRateTokens exactly, but the grant is all or nothing:
+-- a batch of n events takes n tokens or none.
+WITH cur AS (
+    SELECT LEAST(FLOOR(sqlc.arg(burst)::double precision)::bigint,
+               tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+                   * sqlc.arg(rps)::double precision)::bigint) AS avail,
+           tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * sqlc.arg(rps)::double precision)::bigint AS refilled,
+           FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * sqlc.arg(rps)::double precision) AS whole
+    FROM pg_ratelimit_counters
+    WHERE scope = 'event_publish' AND subject_id = sqlc.arg(subject_id)::uuid
+      AND plan = sqlc.arg(plan)::text
+    FOR UPDATE
+), upd AS (
+    UPDATE pg_ratelimit_counters c
+    SET tokens = cur.avail - sqlc.arg(n)::bigint,
+        last_refill = CASE
+            WHEN cur.refilled >= FLOOR(sqlc.arg(burst)::double precision)::bigint
+            THEN GREATEST(now(), c.last_refill)
+            ELSE c.last_refill + (cur.whole / sqlc.arg(rps)::double precision) * interval '1 second'
+        END
+    FROM cur
+    WHERE c.scope = 'event_publish' AND c.subject_id = sqlc.arg(subject_id)::uuid
+      AND c.plan = sqlc.arg(plan)::text AND cur.avail >= sqlc.arg(n)::bigint
+    RETURNING 1
+)
+SELECT EXISTS (SELECT 1 FROM cur) AS found, EXISTS (SELECT 1 FROM upd) AS granted;
+
+-- name: CreateEventPublishCounter :one
+-- The first publish creates the account's counter with its grant taken; the
+-- caller never asks for more than the burst.
+INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+VALUES ('event_publish', sqlc.arg(subject_id)::uuid, sqlc.arg(plan)::text,
+    FLOOR(sqlc.arg(burst)::double precision)::bigint - sqlc.arg(n)::bigint, now())
+ON CONFLICT (scope, subject_id, plan) DO NOTHING
+RETURNING tokens;
 
 -- name: CreateTrafficRateBatchCounter :one
 INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
@@ -13571,10 +13724,15 @@ where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(accoun
 
 -- name: QueueConsumerRetiredBindingForRevive :one
 -- ADR-20261112200000: the retired production binding a create with the same
--- name and queue name revives.
+-- name revives. ADR-20261113180000 (R5-2): the name alone selects it; the
+-- create's queue name then applies as an ordinary rename, so its held
+-- messages drain under the new name (leases and push claims select them by
+-- binding). Requiring the old queue name too left a binding re-created under
+-- a new queue name refused and its messages stranded.
 select * from queue_bindings
 where app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and environment_id is null
-  and name=sqlc.arg(name) and queue_name=sqlc.arg(queue_name) and retired_at is not null
+  and name=sqlc.arg(name) and retired_at is not null
+order by retired_at desc, id limit 1
 for update;
 
 -- name: QueueConsumerAuthorizeRevive :exec
@@ -13773,11 +13931,11 @@ SELECT app_id::text,deployment_id::text,started_at FROM instances WHERE id=sqlc.
 SELECT changed_at FROM app_runtime_config_changes WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model,sealed_key,sealed_capture_id)
 VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(fc_version)::text,sqlc.arg(base_image_version)::text,
  sqlc.arg(mem_bytes)::bigint,sqlc.arg(disk_bytes)::bigint,sqlc.arg(stored_bytes)::bigint,
  sqlc.arg(storage_key)::text,sqlc.arg(stale)::boolean,sqlc.arg(tier)::text,sqlc.narg(application_standard_capture_token)::uuid,sqlc.arg(recovery_generation)::bigint,
- sqlc.arg(cpu_template)::text,sqlc.arg(cpu_model)::text)
+ sqlc.arg(cpu_template)::text,sqlc.arg(cpu_model)::text,sqlc.narg(sealed_key)::bytea,sqlc.narg(sealed_capture_id)::uuid)
 RETURNING *;
 
 -- name: LatestSnapshot :one
@@ -14400,7 +14558,49 @@ select
       where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
         and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
-  ) first)::timestamptz as oldest_pending_at;
+  ) first)::timestamptz as oldest_pending_at,
+  -- Ordered work (ADR-20261112193306): due messages waiting behind an older
+  -- message of their key cannot run, so queue_depth scaling leaves them out.
+  (select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state='pending' and i.due_at <= now() and i.work_policy_name is not null
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+       and exists (select 1 from invocations older
+         where older.app_id=i.app_id and older.work_policy_name=i.work_policy_name
+           and older.work_key_digest=i.work_key_digest
+           and ((older.work_sequence<i.work_sequence and older.state='pending') or older.state='dispatching'))
+     limit sqlc.arg(row_limit)::integer) waiting)::bigint as waiting_behind_key,
+  -- A blocked lane's head has failed at least once and holds later messages
+  -- of its key until it succeeds or dead-letters.
+  (select count(*) from (
+     select 1 from invocations h, b
+     where h.app_id=sqlc.arg(app_id)::uuid and h.queue_binding_id=b.id and h.account_id=b.account_id
+       and h.source='queue' and h.state in ('pending','dispatching') and h.attempts > 0
+       and h.work_policy_name is not null
+       and (b.deployment_scope='' or h.deployment_scope=b.deployment_scope)
+       and not exists (select 1 from invocations older
+         where older.app_id=h.app_id and older.work_policy_name=h.work_policy_name
+           and older.work_key_digest=h.work_key_digest and older.work_sequence<h.work_sequence
+           and older.state in ('pending','dispatching'))
+       and exists (select 1 from invocations later
+         where later.app_id=h.app_id and later.work_policy_name=h.work_policy_name
+           and later.work_key_digest=h.work_key_digest and later.work_sequence>h.work_sequence
+           and later.state='pending')
+     limit sqlc.arg(row_limit)::integer) blocked)::bigint as blocked_lanes,
+  (select min(h.created_at) from invocations h, b
+   where h.app_id=sqlc.arg(app_id)::uuid and h.queue_binding_id=b.id and h.account_id=b.account_id
+     and h.source='queue' and h.state in ('pending','dispatching') and h.attempts > 0
+     and h.work_policy_name is not null
+     and (b.deployment_scope='' or h.deployment_scope=b.deployment_scope)
+     and not exists (select 1 from invocations older
+       where older.app_id=h.app_id and older.work_policy_name=h.work_policy_name
+         and older.work_key_digest=h.work_key_digest and older.work_sequence<h.work_sequence
+         and older.state in ('pending','dispatching'))
+     and exists (select 1 from invocations later
+       where later.app_id=h.app_id and later.work_policy_name=h.work_policy_name
+         and later.work_key_digest=h.work_key_digest and later.work_sequence>h.work_sequence
+         and later.state='pending'))::timestamptz as oldest_blocked_at;
 
 -- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations i
@@ -14455,6 +14655,22 @@ where i.id=sqlc.arg(id)::uuid and i.app_id=sqlc.arg(app_id)::uuid and i.source='
                     where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))))
  AND i.environment_id IS NULL AND NOT EXISTS (SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
 returning i.*;
+
+-- name: RefreshHeldQueueMessages :execrows
+-- ADR-20261113180000 (R5-5): a held push queue's due messages that have
+-- waited older_than restart their retention wait. due_at moves to now: the
+-- row stays due, and its state does not change, so no notification fires.
+UPDATE invocations i SET due_at = clock_timestamp()
+WHERE i.id IN (
+    SELECT c.id FROM invocations c
+    WHERE c.app_id = sqlc.arg(app_id)::uuid AND c.source = 'queue' AND c.state = 'pending' AND c.environment_id IS NULL
+      AND c.due_at <= clock_timestamp()
+      AND (c.queue_binding_id = sqlc.narg(binding_id)::uuid OR (c.queue_binding_id IS NULL AND c.queue_name = sqlc.arg(queue_name)::text))
+      AND greatest(coalesce(c.last_replayed_at, c.created_at), c.due_at) < clock_timestamp() - make_interval(secs => sqlc.arg(older_than_seconds)::bigint)
+    ORDER BY c.created_at
+    LIMIT sqlc.arg(batch_limit)::integer
+    FOR UPDATE SKIP LOCKED)
+  AND i.state = 'pending';
 
 -- name: QueueReleasePendingBatchClaims :exec
 -- A claim the poller hands back undelivered returns the attempt the claim
@@ -14537,9 +14753,14 @@ select i.id::text from invocations i cross join consumer
 
 
 -- name: RetryQueueDeadLetterInvocation :one
+-- ADR-20261113180000 (R6-1, R8-2): a replay starts a new delivery, so it
+-- also drops the dead letter's outcome code and its retention horizon. Kept,
+-- the horizon let the reaper delete the replayed message the moment it
+-- settled again, and the code reported the old expiry on a later success.
 update invocations set state='pending', attempts=0, last_error=null, outcome=null,
   due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
-  last_replayed_at=clock_timestamp(), completed_at=null, result=null
+  last_replayed_at=clock_timestamp(), completed_at=null, result=null,
+  outcome_code='', work_decision=null, quota_reserved=false, result_retention_until=null
 where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid and state='dead_letter'
   and operation_id IS NULL
   and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
@@ -14570,11 +14791,23 @@ WHERE r.id=sqlc.arg(id)::uuid
 FOR UPDATE OF r;
 
 -- name: ListDueExternalTriggerReplays :many
-SELECT r.* FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
-WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
- AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
- AND t.kind IN ('kafka','nats','redis_streams')
-ORDER BY r.next_fire_at,r.id LIMIT sqlc.arg(batch_limit)::integer;
+-- Two branches so each keeps its partial index: due replays
+-- (trigger_operator_replay_due_idx), and replays a dispatcher claimed and then
+-- lost, which return once the claim lapses (trigger_records_claim_expiry_idx):
+-- the broker already settled the original delivery and never hands it back.
+SELECT d.* FROM (
+  (SELECT r.* FROM trigger_records r
+    WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
+      AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
+    ORDER BY r.next_fire_at,r.id LIMIT sqlc.arg(batch_limit)::integer)
+  UNION ALL
+  (SELECT r.* FROM trigger_records r
+    WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
+      AND r.state='claimed' AND r.claim_expires_at<=clock_timestamp()
+    ORDER BY r.claim_expires_at,r.id LIMIT sqlc.arg(batch_limit)::integer)
+) d
+WHERE EXISTS (SELECT 1 FROM triggers t WHERE t.id=d.trigger_id AND t.kind IN ('kafka','nats','redis_streams'))
+ORDER BY d.next_fire_at,d.id LIMIT sqlc.arg(batch_limit)::integer;
 
 -- name: QueueFinishDeliveryClaims :many
 with targets as (
@@ -14666,9 +14899,12 @@ with claimed as (
 		 order by created_at asc, id asc;
 
 -- name: ReplayDeadLetterInvocation :execrows
+-- ADR-20261113180000 (R6-1, R8-2): the replay drops the dead letter's
+-- outcome code and retention horizon with its result.
 update invocations set state='pending', attempts=0, last_error=null, outcome=null,
   due_at=clock_timestamp(),lease_expires_at=null,instance_id=null,
-  last_replayed_at=clock_timestamp(),completed_at=null,result=null
+  last_replayed_at=clock_timestamp(),completed_at=null,result=null,
+  outcome_code='', work_decision=null, quota_reserved=false, result_retention_until=null
 where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid
   and app_id=sqlc.arg(app_id)::uuid and state='dead_letter'
   and operation_id IS NULL
@@ -14881,10 +15117,17 @@ ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED
 -- name: ObjectNotificationsCapture :execrows
 -- Notification recipients meet the same company reach as subscriptions
 -- (ADR-20261025211616): a rule cannot route a company bucket's events past it.
-UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot ||
- event_recipients_in_producer_reach(account_id, payload->>'producer', sqlc.arg(recipients)::jsonb)
-WHERE account_id=sqlc.arg(account_id)::uuid AND source='gregale.storage' AND event_id=sqlc.arg(event_id)::text
-AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification');
+-- enqueue_event_fanout keeps no row for a platform event without subscribers
+-- (ADR-614 amendment 2026-11-13), so the capture inserts it from the event
+-- envelope when it is missing and appends to it otherwise.
+INSERT INTO event_fanout_outbox AS o
+    (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)
+SELECT sqlc.arg(account_id)::uuid, 'gregale.storage', sqlc.arg(event_id)::text,
+    e.p->>'type', e.p->>'schemaversion', e.p->'data', e.p,
+    event_recipients_in_producer_reach(sqlc.arg(account_id)::uuid, e.p->>'producer', sqlc.arg(recipients)::jsonb)
+FROM (SELECT sqlc.arg(payload)::jsonb AS p) e
+ON CONFLICT (account_id, source, event_id) DO UPDATE SET recipient_snapshot = o.recipient_snapshot || EXCLUDED.recipient_snapshot
+WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r ? 'object_notification');
 
 -- name: ObjectNotificationTargetApp :one
 SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';
@@ -15275,6 +15518,12 @@ WHERE id=sqlc.arg(binding_id)::uuid AND state='ready' AND rotation_previous_gene
 
 -- App and binding locks serialize publication, retries and old-worker repair.
 -- Replay terminal handoffs under the same wake ID until retirement is proven.
+-- Like every runtime_config_restart, the row opens to replay only after the
+-- wake delay: every schedd's replay worker polls the outbox, and a row that
+-- opened at once could be claimed by a peer before the app's owner claimed the
+-- live notification. The owner's claim then found the row leased, and the
+-- peer's deferral returned it to a replay the owner never won (production
+-- 2026-11-16: a credential rotation's restart stayed pending for hours).
 -- name: QueueManagedPostgresRotationRefresh :exec
 WITH previous AS (
  SELECT id FROM notification_outbox WHERE channel='runtime_config_restart'
@@ -15282,12 +15531,13 @@ WITH previous AS (
  AND payload::jsonb->>'wake_id'=sqlc.arg(wake_id)::text
  ORDER BY (state IN ('pending','processing')) DESC,id DESC LIMIT 1 FOR UPDATE
 ), retried AS (
- UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp(),
+ UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp()+make_interval(secs=>sqlc.arg(wake_delay_seconds)::double precision),
  claimed_by=NULL,claimed_at=NULL,lease_until=NULL,delivered_at=NULL,last_error=NULL
  WHERE id IN (SELECT id FROM previous) AND state IN ('delivered','dead_letter') RETURNING id,payload
 ), inserted AS (
- INSERT INTO notification_outbox(channel,payload)
- SELECT 'runtime_config_restart',json_build_object('app_id',sqlc.arg(app_id)::text,'wake_id',sqlc.arg(wake_id)::text)::text
+ INSERT INTO notification_outbox(channel,payload,available_at)
+ SELECT 'runtime_config_restart',json_build_object('app_id',sqlc.arg(app_id)::text,'wake_id',sqlc.arg(wake_id)::text)::text,
+ clock_timestamp()+make_interval(secs=>sqlc.arg(wake_delay_seconds)::double precision)
  WHERE NOT EXISTS (SELECT 1 FROM previous) RETURNING id,payload
 )
 SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbox_id',id,'_notification_payload',payload)::text)
@@ -16531,7 +16781,7 @@ WITH locked AS MATERIALIZED (
 UPDATE managed_postgres_databases d SET lease_token=sqlc.arg(lease_token)::text,
     lease_until=clock_timestamp()+sqlc.arg(lease_milliseconds)::bigint*interval '1 millisecond'
 FROM locked l WHERE d.id=l.id
-    AND l.state=sqlc.arg(state)::text AND l.state IN ('ready','failed')
+    AND l.state=sqlc.arg(state)::text AND l.state IN ('ready','failed','updating')
     AND l.desired_generation=sqlc.arg(generation)::bigint
     AND l.backend_id=sqlc.arg(backend_id)::text AND l.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
     AND l.provider_resource_id=sqlc.arg(provider_resource_id)::text
@@ -16546,7 +16796,7 @@ WITH locked AS MATERIALIZED (
 )
 UPDATE managed_postgres_databases d SET lease_token=NULL,lease_until=NULL
 FROM locked l WHERE d.id=l.id AND l.lease_token=sqlc.arg(lease_token)::text
-    AND l.state IN ('ready','failed') AND l.lease_until>clock_timestamp();
+    AND l.state IN ('ready','failed','updating') AND l.lease_until>clock_timestamp();
 
 -- name: ReleaseManagedPostgresLifecycleLease :execrows
 UPDATE managed_postgres_databases SET state=sqlc.arg(next_state)::text,last_error_code=NULLIF(sqlc.arg(error_code)::text,''),
@@ -21593,9 +21843,9 @@ SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d
 -- name: CheckedRollbackCurrentMatches :one
 SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(current_id) AND d.app_id=sqlc.arg(app_id)
  AND d.deleted_at IS NULL
- AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.traffic_percent=100
+ AND d.scope=ANY(sqlc.arg(scopes)::text[]) AND d.status='live' AND d.traffic_percent=100
  AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps) AND d.rollout_state NOT IN ('pending','rolling_out'))
- AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope)
+ AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=sqlc.arg(app_id) AND d.scope=ANY(sqlc.arg(scopes)::text[])
  AND d.status='live' AND d.id<>sqlc.arg(current_id) AND d.id<>sqlc.arg(target_id)
  AND (d.traffic_percent>0 OR d.rollout_state IN ('pending','rolling_out')));
 
@@ -21676,7 +21926,7 @@ UPDATE deployments d SET traffic_percent=0,status=CASE WHEN EXISTS(SELECT 1 FROM
  JOIN project_release_sets rs ON rs.id=rm.release_id WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>clock_timestamp()))
  OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
  THEN 'live' ELSE 'superseded' END
- WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.id<>sqlc.arg(target_id);
+ WHERE d.app_id=sqlc.arg(app_id) AND d.scope=ANY(sqlc.arg(scopes)::text[]) AND d.status='live' AND d.id<>sqlc.arg(target_id);
 
 -- name: RetainCheckedRollbackPredecessor :exec
 INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
@@ -21717,7 +21967,7 @@ SELECT pg_notify('deployment_changed',jsonb_build_object('kind','service_rollout
  (SELECT status FROM deployments WHERE id=sqlc.arg(current_id)::uuid))::text);
 
 -- name: LockCheckedRollbackScope :many
-SELECT id FROM deployments WHERE app_id=sqlc.arg(app_id) AND scope=sqlc.arg(scope) ORDER BY id FOR UPDATE;
+SELECT id FROM deployments WHERE app_id=sqlc.arg(app_id) AND scope=ANY(sqlc.arg(scopes)::text[]) ORDER BY id FOR UPDATE;
 
 -- name: LockAlertRollbackFireApp :many
 SELECT a.id FROM apps a JOIN alert_rules r ON r.app_id=a.id AND r.account_id=a.account_id
@@ -28518,10 +28768,15 @@ DELETE FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc
 -- Every enabled check on a live public app, with its app slug and last run
 -- time; the runner decides which are due. The public edge does not serve an
 -- internal app, so its checks wait until it is public (ADR-20261031144636).
+-- A protection-baseline health check is probed by apid, unbilled, not here
+-- (ADR-20261116120000 §3).
 SELECT c.*, a.slug AS app_slug,
  (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
 FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
 WHERE c.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal'
+  AND NOT EXISTS (SELECT 1 FROM app_protection_objects o
+                   WHERE o.app_id = c.app_id AND o.item = 'health_check'
+                     AND o.status = 'created' AND o.object_id = c.id::text)
 ORDER BY c.id;
 
 -- name: InsertSyntheticCheckRun :exec
@@ -28840,6 +29095,31 @@ JOIN deployments d ON d.id = t.deployment_id
 WHERE target.id = sqlc.arg(target_id)::text::uuid AND target.app_id = sqlc.arg(app_id)::text::uuid
 ORDER BY t.started_at, t.id;
 
+-- name: ReleaseRunReplacing :many
+-- ADR-20261023181931 amendment: the release task of the deployment that
+-- replaced a rollback target, which ADR-1448 does not count as crossed
+-- because it started while the target served. It is the newest started
+-- release task of another deployment in the target's scope between the
+-- target's creation and the moment it last stopped serving, whose deployment
+-- still served at that moment: it is live, or it stopped serving no earlier
+-- than the target did. A release that served and was rolled back to the
+-- target before then stopped serving earlier, so it is not it.
+SELECT t.deployment_id::text AS deployment_id, d.revision, t.status, t.started_at::timestamptz AS started_at
+FROM deployments target
+JOIN app_tasks t ON t.app_id = target.app_id
+  AND t.kind = 'release'
+  AND t.started_at IS NOT NULL
+  AND t.deployment_id <> target.id
+  AND coalesce(nullif(t.deployment_scope, ''), 'default') = coalesce(nullif(target.scope, ''), 'default')
+  AND t.started_at > target.created_at
+  AND t.started_at <= target.serving_ended_at
+JOIN deployments d ON d.id = t.deployment_id
+  AND (d.status = 'live' OR d.serving_ended_at >= target.serving_ended_at)
+WHERE target.id = sqlc.arg(target_id)::text::uuid AND target.app_id = sqlc.arg(app_id)::text::uuid
+  AND target.serving_ended_at IS NOT NULL
+ORDER BY t.started_at DESC, t.id DESC
+LIMIT 1;
+
 -- name: UncertainReleaseTask :one
 -- ADR-1448 amendment 1: the newest release command of the app scope that
 -- started but ended without an exit code, which nobody has checked and no
@@ -29136,6 +29416,17 @@ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_i
  AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers p WHERE p.database_id=w.database_id
   AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'))
 GROUP BY u.database_id;
+
+-- name: ManagedPostgresRestoreSources :many
+-- Billing review 2026-11-13 (R6-1): every database of a subject that was made
+-- as a restore copy (a restore, branch or PR preview copy), with the database
+-- it was restored from, deleted rows included. A copy shares its root
+-- source's egress allowance: on Neon a copy is a branch of its source's
+-- project, and Neon's 500 GB transfer allowance is per project.
+SELECT d.id, d.restore_source_database_id
+FROM managed_postgres_databases d
+WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
+AND d.restore_source_database_id IS NOT NULL;
 
 -- name: ManagedPostgresFleetTotals :one
 -- ADR-20261028103115: the fleet database cap counts what reservation limits
@@ -30335,10 +30626,72 @@ WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.id = sqlc.arg(app_id)::uui
 
 -- name: InsertInvocationSend :exec
 -- ADR-20261112160000: the app that sent this invocation with send(), and the
--- app its completion goes to, written with the invocation row.
-INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
-VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid);
+-- app its completion goes to, written with the invocation row. A workflow
+-- call (ADR-20261113120824) names its run and operation instead.
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id, workflow_run_id, workflow_op)
+VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid,
+ sqlc.narg(workflow_run_id)::uuid, sqlc.narg(workflow_op)::text);
 
 -- name: GetInvocationSend :one
-SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id,
+ coalesce(workflow_run_id::text, '')::text AS workflow_run_id, coalesce(workflow_op, '')::text AS workflow_op
 FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;
+
+-- The environment a bucket's storage events belong to (ADR-20261104120000):
+-- a branch's copy bucket or a clone's target bucket is its stage's; every
+-- other bucket is production (''). A stage bucket whose environment is gone
+-- reports its clone operation's ID, which no subscription carries, so its
+-- events reach no one instead of production.
+-- name: ObjectBucketEventEnvironment :one
+SELECT COALESCE(
+    (SELECT bb.environment_id::text FROM project_environment_branch_buckets bb
+     WHERE bb.copy_bucket_id = b.id LIMIT 1),
+    (SELECT COALESCE(
+        (SELECT e.id::text FROM project_environment_clone_operations o
+         JOIN project_environments e ON e.project_id = o.project_id AND e.slug = o.target_environment
+         WHERE o.id = b.environment_clone_operation_id),
+        b.environment_clone_operation_id::text)
+     WHERE b.environment_clone_operation_id IS NOT NULL),
+    '')::text AS environment_id
+FROM object_buckets b
+WHERE b.id = sqlc.arg(bucket_id)::uuid;
+
+-- name: LockWorkflowRunForCallSettle :one
+-- ADR-20261113120824 §2: a call settles under the run lock, taken before the
+-- operation row, the order the engine takes them in.
+SELECT status FROM workflow_runs WHERE id = sqlc.arg(run_id)::uuid FOR UPDATE;
+
+-- name: SettleWorkflowCallOp :execrows
+UPDATE workflow_steps
+SET status = sqlc.arg(status)::text, output = sqlc.narg(output)::jsonb, error = sqlc.narg(error)::text,
+    finished_at = now()
+WHERE run_id = sqlc.arg(run_id)::uuid AND step_name = sqlc.arg(step_name)::text
+  AND status IN ('pending', 'awaiting_event')
+  AND input -> 'gregale_code_op' ->> 'invocation_id' = sqlc.arg(invocation_id)::text;
+
+-- name: InsertWorkflowRunStart :exec
+-- ADR-20261113120824 §3: the app that started a run with start().
+INSERT INTO workflow_run_starts (run_id, starter_app_id)
+VALUES (sqlc.arg(run_id)::uuid, sqlc.arg(starter_app_id)::uuid)
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: GetWorkflowRunStarter :one
+SELECT starter_app_id::text FROM workflow_run_starts WHERE run_id = sqlc.arg(run_id)::uuid;
+
+-- name: WakeWorkflowRunForCall :exec
+UPDATE workflow_runs SET status = 'pending', scheduled_for = now(), updated_at = now()
+WHERE id = sqlc.arg(run_id)::uuid AND status = 'awaiting_event';
+
+-- Plan-fit notices (billing review H17-4): the plan and over-plan app set a
+-- billing subject was last emailed about.
+-- name: GetPlanFitNotice :one
+SELECT plan, apps_digest FROM plan_fit_notices WHERE subject_id = $1;
+
+-- name: PutPlanFitNotice :exec
+INSERT INTO plan_fit_notices (subject_id, plan, apps_digest, noticed_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (subject_id) DO UPDATE
+   SET plan = EXCLUDED.plan, apps_digest = EXCLUDED.apps_digest, noticed_at = now();
+
+-- name: ClearPlanFitNotice :exec
+DELETE FROM plan_fit_notices WHERE subject_id = $1;

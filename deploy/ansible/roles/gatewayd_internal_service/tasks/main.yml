@@ -89,6 +89,25 @@
   when: faas_compute_durable_listeners | bool
   notify: restart faas-gatewayd-internal listeners
 
+# ADR-20261110120000 (amended 2026-11-15): with a TCP listener on this node,
+# gatewayd-internal and its durable socket (which binds before the service
+# runs) refuse to start until the host firewall is loaded. A change here only
+# reloads systemd and applies at the next start, so a rollout restarts nothing.
+- name: gatewayd_internal_service — render the host-firewall start guard
+  ansible.builtin.template:
+    src: 60-faas-require-host-firewall.conf.j2
+    dest: "/etc/systemd/system/{{ item.unit }}.d/60-faas-require-host-firewall.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    faas_unit_section: "{{ item.section }}"
+    faas_require_host_firewall_on: "{{ (faas_require_host_firewall | bool) and (faas_gateway_listen | default('off')) not in ['off', ''] }}"
+  loop:
+    - { unit: faas-gatewayd-internal.service, section: Service }
+    - { unit: faas-gatewayd-internal.socket, section: Socket }
+  notify: reload systemd for the host-firewall start guard
+
 - name: gatewayd_internal_service — remove the durable listener drop-ins when off
   ansible.builtin.file:
     path: "{{ item.dest }}"
@@ -588,6 +607,9 @@
     state: absent
   loop:
     - 60-faas-edge-local-first.conf
+    # 2026-11-14 hand override that turned local first off before the
+    # manifest did; 99-faas-role.conf now carries local_first: false.
+    - 99-zz-local-first-off.conf
     - 60-faas-request-journal-local.conf
     - 61-faas-request-telemetry-minute-collapse.conf
     - 63-faas-gateway-local-vmmd-socket.conf

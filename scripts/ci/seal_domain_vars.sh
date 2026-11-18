@@ -31,7 +31,16 @@
 #                  delivery, and faas_seal_domain_delivery_retired_on_compute:
 #                  true, once every compute node's schedd opens delivery
 #                  values through secretd
-#                  (SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE=true)
+#                  (SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE=true); nothing of
+#                  build, and faas_seal_domain_build_retired_on_compute: true,
+#                  once every compute node's imaged and builder VMs pull
+#                  private registries through secretd
+#                  (SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=true, slice 3g-3;
+#                  needs SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true); nothing of
+#                  control, and faas_seal_domain_control_retired_on_compute:
+#                  true, once every compute node's schedd asks secretd for
+#                  its tokens (SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE=true,
+#                  slice 3k-2)
 #
 # --identities ROLE prints, one per line, the domains whose private identity
 # ROLE's hosts get, so CD fetches only those from the key escrow.
@@ -113,6 +122,35 @@ case "${SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE:-}" in
     exit 1
     ;;
 esac
+# Slice 3g-3: nothing of the build domain once imaged and builder VMs pull
+# private registries through the control plane's secretd.
+build_retired=false
+case "${SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE:-}" in
+  "" | false) ;;
+  true)
+    build_retired=true
+    if [[ "${SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE:-}" != true ]]; then
+      echo "::error::SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=true needs SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true: secretd on the control plane is then the only opener of registry passwords" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "::error::SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE is '${SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE}'; want true or false" >&2
+    exit 1
+    ;;
+esac
+
+# Slice 3k-2: nothing of the control domain once every compute schedd asks
+# the control plane's secretd for internal-service and workflow tokens.
+control_retired=false
+case "${SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE:-}" in
+  "" | false) ;;
+  true) control_retired=true ;;
+  *)
+    echo "::error::SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE is '${SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE}'; want true or false" >&2
+    exit 1
+    ;;
+esac
 
 domains=(outbound source alerting storage control delivery account runtime build edge edge_tls neon)
 
@@ -170,14 +208,18 @@ staged() { # ROLE DOMAIN
       if ! $edge_retired; then echo identity; fi ;;
     compute/delivery)
       if ! $delivery_retired; then echo identity; fi ;;
-    compute/build | compute/edge_tls | compute/control | control-plane/control | control-plane/account | control-plane/neon)
+    compute/build)
+      if ! $build_retired; then echo identity; fi ;;
+    compute/control)
+      if ! $control_retired; then echo identity; fi ;;
+    compute/edge_tls | control-plane/control | control-plane/account | control-plane/neon)
       echo identity ;;
     compute/storage)
       if [[ "${SEAL_DOMAIN_STORAGE_ON_COMPUTE:-}" == true ]]; then echo identity; fi ;;
   esac
 }
 
-if ! $list_only && [[ -f "$vars" ]] && grep -qE '^(faas_seal_domains_managed|faas_seal_domain_(runtime|edge|delivery)_retired_on_compute|faas_seal_domain_[a-z_]+_(identity|recipient)_src):' "$vars"; then
+if ! $list_only && [[ -f "$vars" ]] && grep -qE '^(faas_seal_domains_managed|faas_seal_domain_(runtime|edge|delivery|build|control)_retired_on_compute|faas_seal_domain_[a-z_]+_(identity|recipient)_src):' "$vars"; then
   echo "::error::$vars sets seal-domain key variables; CD stages them from the SEAL_DOMAIN_* secrets, so remove them from the environment's Ansible variables" >&2
   exit 1
 fi
@@ -296,6 +338,12 @@ if [[ -n "$added" ]]; then
     fi
     if [[ "$role" == compute ]] && $delivery_retired; then
       printf 'faas_seal_domain_delivery_retired_on_compute: true\n'
+    fi
+    if [[ "$role" == compute ]] && $build_retired; then
+      printf 'faas_seal_domain_build_retired_on_compute: true\n'
+    fi
+    if [[ "$role" == compute ]] && $control_retired; then
+      printf 'faas_seal_domain_control_retired_on_compute: true\n'
     fi
     printf '%s' "$added"
   } >> "$vars"

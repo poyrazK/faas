@@ -42,7 +42,7 @@ func (b *Builderd) WithPipelineMetrics(reg prometheus.Registerer) *Builderd {
 			m.claims.WithLabelValues(source, outcome)
 		}
 	}
-	for _, outcome := range []string{"granted", "limit", "policy"} {
+	for _, outcome := range []string{"granted", "limit", "policy", "memory"} {
 		m.admission.WithLabelValues(outcome)
 	}
 	for _, reason := range []string{requeueNoSlot, requeueSource, requeueCancellation, requeueLookup, requeueIdenticalBuild} {

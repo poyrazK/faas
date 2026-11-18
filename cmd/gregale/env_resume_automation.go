@@ -5,11 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 )
 
-// envResumeAutomation enables the crons a full clone copied paused into a
-// stage (ADR-20261104120000): the ones the source ran. A cron the source had
-// disabled, or one changed since, stays as it is.
+// envResumeAutomation enables the crons and event subscriptions a full clone
+// copied paused into a stage (ADR-20261104120000): the ones the source ran.
+// One the source had disabled, or one changed since, stays as it is.
 func envResumeAutomation(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("env-resume-automation", flag.ContinueOnError)
@@ -33,13 +35,27 @@ func envResumeAutomation(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	switch resp.CronsResumed {
-	case 0:
-		fmt.Printf("No paused crons to resume in %s.\n", resp.Environment)
-	case 1:
-		fmt.Printf("Resumed 1 cron in %s.\n", resp.Environment)
-	default:
-		fmt.Printf("Resumed %d crons in %s.\n", resp.CronsResumed, resp.Environment)
-	}
+	fmt.Println(resumeAutomationSummary(resp.Environment, resp.CronsResumed, resp.EventSubscriptionsResumed))
 	return 0
+}
+
+func resumeAutomationSummary(environment string, crons, subscriptions int) string {
+	if crons == 0 && subscriptions == 0 {
+		return "No paused automation to resume in " + environment + "."
+	}
+	var parts []string
+	if crons > 0 {
+		parts = append(parts, resumeCount(crons, "cron", "crons"))
+	}
+	if subscriptions > 0 {
+		parts = append(parts, resumeCount(subscriptions, "event subscription", "event subscriptions"))
+	}
+	return "Resumed " + strings.Join(parts, " and ") + " in " + environment + "."
+}
+
+func resumeCount(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return strconv.Itoa(n) + " " + many
 }

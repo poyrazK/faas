@@ -47,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
+	"github.com/onebox-faas/faas/pkg/objectgc"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -344,6 +345,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("imaged: %w", err)
 	}
+	// ADR-20261115180000: in defer mode the shared store's deletes become
+	// requests the control plane's object GC decides.
+	if deferred, err := objectgc.DeferFromEnv(getenv, storageBackend, store, "imaged"); err != nil {
+		return fmt.Errorf("imaged: %w", err)
+	} else if deferred {
+		log.Info("imaged: shared-store deletes deferred to the control plane")
+	}
 	indexedSnapshots, err := reconcileSnapshotRepositoryIndex(ctx, store, storageBackend)
 	if err != nil {
 		return fmt.Errorf("imaged: reconcile snapshot repository index: %w", err)
@@ -357,6 +365,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged: storage backend = oci", "registry", envOr("FAAS_OCI_REGISTRY", ""))
 	case "gcs":
 		log.Info("imaged: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("imaged: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("imaged: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
@@ -379,15 +391,19 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("imaged: build signer: %w", err)
 		}
 		// ADR-20261109170000: v2 signatures bind each layer to its storage
-		// key. Operators turn them on once every verifier reads v2.
+		// key, so a signed layer copied over another app's key fails
+		// verification. Every verifier reads v2 since v0.1.18-rc.333, so v2
+		// is the default; v1 stays as an explicit rollback only.
+		v2 := true
 		switch format := os.Getenv("FAAS_ARTIFACT_SIGNATURE_FORMAT"); format {
-		case "", "v1":
-		case "v2":
-			signer.WithSignatureV2(true)
+		case "", "v2":
+		case "v1":
+			v2 = false
 		default:
 			return fmt.Errorf("imaged: FAAS_ARTIFACT_SIGNATURE_FORMAT=%q: want v1 or v2", format)
 		}
-		log.Info("imaged: artifact signature format", "v2", os.Getenv("FAAS_ARTIFACT_SIGNATURE_FORMAT") == "v2")
+		signer.WithSignatureV2(v2)
+		log.Info("imaged: artifact signature format", "v2", v2)
 		local = signer
 	}
 	layerSigner, closeSigner, err := artifactSignerFromEnv(ctx, os.Getenv, local, storageBackend, log)
@@ -549,6 +565,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
+		WithDeferredDeployScans().
 		WithReleasePrestage(prestageOnlyFromEnv(getenv)).
 		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
 		WithArtifactReplicator(artifactReplicator).
@@ -617,10 +634,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// ADR-20261020085706 amendment 13: an approved release held before its
 	// release command waits out the break-glass release pause.
 	h.WithReleasePause(startReleasePauseWatcher(ctx, store, pool, log))
-	// ADR-20261029174438: prepare several deployments at once, off by default.
-	parallelPrep, err := parseBoolEnv("FAAS_IMAGED_PARALLEL_PREP", getenv("FAAS_IMAGED_PARALLEL_PREP"))
+	// ADR-20261029174438: prepare several deployments at once, on unless
+	// FAAS_IMAGED_PARALLEL_PREP=false. db sizes imaged's direct pool from the
+	// same variable.
+	parallelPrep, err := db.ImagedParallelPrep(getenv(db.ImagedParallelPrepEnv))
 	if err != nil {
-		return err
+		return fmt.Errorf("imaged: %s must be a boolean", db.ImagedParallelPrepEnv)
 	}
 	prepWorkers := 1
 	if parallelPrep {
@@ -723,7 +742,19 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if registryProxy != nil {
 		h.WithRegistryProxy(registryProxy)
 	}
-	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
+	// ADR-20261110210000 slice 3g-3: a node whose build identity is retired
+	// holds nothing that opens a registry password, and reports no build
+	// domain, so FaasSealDomainIdentityMissing does not read it as a node
+	// that lost its identity.
+	buildRetired, err := buildRetiredFromEnv(getenv, registryProxy != nil)
+	if err != nil {
+		return err
+	}
+	if buildRetired {
+		log.Info("build identity retired on this node: private images pull through secretd")
+	} else {
+		sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
+	}
 	log.Info("build seal domain", "domain_identity", len(buildIdentities) > 0, "fleet_identity", len(legacyIdentities) > 0)
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either

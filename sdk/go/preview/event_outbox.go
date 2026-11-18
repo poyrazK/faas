@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 
@@ -19,6 +20,12 @@ import (
 //
 //go:embed event_outbox_schema.sql
 var EventOutboxSchema string
+
+// EventOutboxPayloadSchema upgrades existing application outboxes to permit
+// erasing a confirmed publication's payload. Apply explicitly in a migration.
+//
+//go:embed event_outbox_payload_schema.sql
+var EventOutboxPayloadSchema string
 
 var (
 	ErrEventOutboxCommitUnknown = errors.New("event outbox transaction commit outcome is unknown")
@@ -134,4 +141,17 @@ func GetEventOutboxStatus(ctx context.Context, db *sql.DB, accountID, appID, key
 		return zero, eventOutboxStoreError(ctx)
 	}
 	return s, nil
+}
+
+// Reject fields this worker cannot forward instead of silently dropping them.
+func decodeEventOutboxRequest(body string, request *AppPublishEventRequest) error {
+	decoder := json.NewDecoder(strings.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(request); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return ErrInvalidEventConsumerRequest
+	}
+	return request.Validate()
 }

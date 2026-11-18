@@ -68,7 +68,7 @@ func (s *server) postMCPInstanceProtocolProbe(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrValidation("host, endpoint, or protocol_version is invalid"))
 		return
 	}
-	method, valid := api.MCPProbeRPCMethod(probe.RPCRequest)
+	_, valid := api.MCPProbeRPCMethod(probe.RPCRequest)
 	if !valid || !api.MCPProbeRPCMatchesVersion(probe.RPCRequest, probe.ProtocolVersion) {
 		api.WriteProblem(w, api.ErrValidation("rpc_request must match protocol_version and use an allowlisted read-only MCP method"))
 		return
@@ -78,63 +78,65 @@ func (s *server) postMCPInstanceProtocolProbe(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrValidation("MCP probe bearer token contains invalid header characters or exceeds its limit"))
 		return
 	}
-	controlURL := s.gatewayControlURL(r.Context())
-	if controlURL == "" {
-		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
+	result, problem := s.probeMCPInstanceProtocol(r.Context(), app, deploymentID, instanceID, probe, token)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+// probeMCPInstanceProtocol shares the bounded gateway wire operation with
+// platform-held publication verification. Callers establish app/replica authority.
+func (s *server) probeMCPInstanceProtocol(ctx context.Context, app state.App, deploymentID, instanceID string, probe api.MCPInstanceProtocolProbeRequest, token string) (api.MCPInstanceProtocolProbeResponse, *api.Problem) {
+	controlURL := s.gatewayControlURL(ctx)
+	if controlURL == "" {
+		return api.MCPInstanceProtocolProbeResponse{}, api.ErrCapacity("gateway instance probe is unavailable")
 	}
 	endpoint, err := url.JoinPath(controlURL, "v1", "internal", "apps", app.Slug, "mcp-probe")
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
-		return
+		return api.MCPInstanceProtocolProbeResponse{}, api.ErrCapacity("gateway instance probe is unavailable")
 	}
 	query := url.Values{}
 	query.Set("deployment_id", deploymentID)
 	query.Set("instance_id", instanceID)
 	internalBody, err := json.Marshal(probe)
 	if err != nil {
-		api.WriteProblem(w, api.ErrValidation("MCP protocol probe request is invalid"))
-		return
+		return api.MCPInstanceProtocolProbeResponse{}, api.ErrValidation("MCP protocol probe request is invalid")
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint+"?"+query.Encode(), strings.NewReader(string(internalBody)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"?"+query.Encode(), strings.NewReader(string(internalBody)))
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
-		return
+		return api.MCPInstanceProtocolProbeResponse{}, api.ErrCapacity("gateway instance probe is unavailable")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("MCP-Probe-Authorization", token)
 	}
-	probeCtx, cancel := context.WithTimeout(r.Context(), mcpInstanceProtocolProbeTimeout)
+	probeCtx, cancel := context.WithTimeout(ctx, mcpInstanceProtocolProbeTimeout)
 	defer cancel()
 	req = req.WithContext(probeCtx)
-	resp, err := (&http.Client{Timeout: mcpInstanceProtocolProbeTimeout}).Do(req)
+	resp, err := (&http.Client{Timeout: mcpInstanceProtocolProbeTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
 	if err != nil {
 		if s.log != nil {
-			s.log.Warn("apid to gatewayd MCP protocol probe failed", "app_id", app.ID, "deployment_id", deploymentID, "instance_id", instanceID, "method", method, "err", err)
+			s.log.Warn("apid to gatewayd MCP protocol probe failed", "app_id", app.ID, "deployment_id", deploymentID, "instance_id", instanceID, "err", err)
 		}
-		api.WriteProblem(w, api.ErrCapacity("gateway could not reach the requested MCP instance"))
-		return
+		return api.MCPInstanceProtocolProbeResponse{}, api.ErrCapacity("gateway could not reach the requested MCP instance")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Instance changed", "instance stopped or changed deployment before the probe completed"))
-		return
+		return api.MCPInstanceProtocolProbeResponse{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Instance changed", "instance stopped or changed deployment before the probe completed")
 	}
 	if resp.StatusCode != http.StatusOK {
-		api.WriteProblem(w, api.ErrCapacity("gateway could not verify the requested MCP instance"))
-		return
+		return api.MCPInstanceProtocolProbeResponse{}, api.ErrCapacity("gateway could not verify the requested MCP instance")
 	}
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, mcpInstanceProtocolProbeMaxWire+1))
 	if err != nil || len(responseBody) > mcpInstanceProtocolProbeMaxWire {
-		api.WriteProblem(w, api.ErrCapacity("gateway MCP protocol probe response exceeded its size limit"))
-		return
+		return api.MCPInstanceProtocolProbeResponse{}, api.ErrCapacity("gateway MCP protocol probe response exceeded its size limit")
 	}
 	var result api.MCPInstanceProtocolProbeResponse
 	if json.Unmarshal(responseBody, &result) != nil || result.AppID != app.ID || result.DeploymentID != deploymentID || result.InstanceID != instanceID || result.HTTPStatus < 100 || result.HTTPStatus > 599 || len(result.Body) > api.MCPProbeMaxResponseBytes || len(result.ContentType) > 128 || len(result.ProtocolVersion) > 64 || len(result.SessionID) > 1024 {
-		api.WriteProblem(w, api.ErrCapacity("gateway MCP protocol probe identity or response was invalid"))
-		return
+		return api.MCPInstanceProtocolProbeResponse{}, api.ErrCapacity("gateway MCP protocol probe identity or response was invalid")
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, result)
+	return result, nil
 }

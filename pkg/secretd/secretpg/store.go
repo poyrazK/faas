@@ -123,20 +123,29 @@ func (s *Store) RecordOpen(ctx context.Context, nodeID, appID, via string, entri
 	return nil
 }
 
-// CaptureKey implements secretd.Store: a live sealed capture's app and key.
+// CaptureKey implements secretd.Store: a live sealed crash capture's app and
+// key, or a sealed park or warm snapshot's (ADR-20261110210000 slice 3d-3).
+// Both are keyed by a random capture id, so the two never collide.
 func (s *Store) CaptureKey(ctx context.Context, captureID string) (string, []byte, error) {
 	id, err := pgUUID(captureID)
 	if err != nil {
 		return "", nil, secretd.ErrUnknownCapture
 	}
 	row, err := s.q.CrashCaptureSealedKey(ctx, s.db, id)
+	if err == nil {
+		return uuid.UUID(row.AppID.Bytes).String(), row.SealedKey, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, fmt.Errorf("secretpg: capture key: %w", err)
+	}
+	snap, err := s.q.SnapshotSealedKey(ctx, s.db, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil, secretd.ErrUnknownCapture
 	}
 	if err != nil {
-		return "", nil, fmt.Errorf("secretpg: capture key: %w", err)
+		return "", nil, fmt.Errorf("secretpg: snapshot capture key: %w", err)
 	}
-	return uuid.UUID(row.AppID.Bytes).String(), row.SealedKey, nil
+	return uuid.UUID(snap.AppID.Bytes).String(), snap.SealedKey, nil
 }
 
 // SidecarEnv implements secretd.Store: the deployment must be appID's.
@@ -285,6 +294,29 @@ func (s *Store) JobMaterializationLease(ctx context.Context, jobID string) (stri
 		return "", time.Time{}, fmt.Errorf("secretpg: job lease: %w", err)
 	}
 	return row.Owner, row.Until.Time, nil
+}
+
+// BuildRunner implements secretd.Store.
+func (s *Store) BuildRunner(ctx context.Context, buildID string) (secretd.BuildRun, error) {
+	build, err := pgUUID(buildID)
+	if err != nil {
+		return secretd.BuildRun{}, secretd.ErrUnknownBuild
+	}
+	row, err := s.q.BuildRunner(ctx, s.db, build)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return secretd.BuildRun{}, secretd.ErrUnknownBuild
+	}
+	if err != nil {
+		return secretd.BuildRun{}, fmt.Errorf("secretpg: build runner: %w", err)
+	}
+	return secretd.BuildRun{
+		AppID:         uuid.UUID(row.AppID.Bytes).String(),
+		Running:       row.Status == "running",
+		StartedAt:     row.StartedAt.Time,
+		Node:          row.BuilderNodeName,
+		ScopeRecorded: row.ScopeRecorded,
+		Scope:         row.BuildRegistryScope,
+	}, nil
 }
 
 // RecordJobOpen implements secretd.Store.

@@ -128,6 +128,19 @@ func (s *PgStore) ObjectBucketOverlayTombstones(ctx context.Context, bucketID st
 	return out, mapErr(rows.Err())
 }
 
+func (s *PgStore) ObjectBucketOverlayTombstonesUnder(ctx context.Context, bucketID, prefix string) (bool, error) {
+	if !validUUID(bucketID) {
+		return false, nil
+	}
+	// starts_with, not a key range: the primary key's collation need not
+	// order keys by their bytes. The scan is bounded by the bucket's
+	// tombstones.
+	var deleted bool
+	err := s.pool.QueryRow(ctx, `select exists (select 1 from object_bucket_overlay_tombstones
+		where bucket_id = $1 and starts_with(key, $2))`, bucketID, prefix).Scan(&deleted)
+	return deleted, mapErr(err)
+}
+
 func (s *PgStore) DeleteObjectBucketOverlay(ctx context.Context, bucketID string) error {
 	if !validUUID(bucketID) {
 		return nil

@@ -468,6 +468,17 @@ func (tg *target) ok(t *testing.T, timeout time.Duration, args ...string) cliRes
 	return res
 }
 
+// runWithEnvOK is runWithEnv that fails the test on a non-zero exit.
+func (tg *target) runWithEnvOK(t *testing.T, extra []string, timeout time.Duration, args ...string) cliResult {
+	t.Helper()
+	res := tg.runWithEnv(t, extra, timeout, args...)
+	if res.exit != 0 {
+		t.Fatalf("gregale %s failed (exit %d): %s\nstdout: %s", strings.Join(args, " "), res.exit,
+			tg.redact(res.problem()), tg.redact(tail(string(res.stdout), 2000)))
+	}
+	return res
+}
+
 // objects decodes the CLI's JSON output: one document (scalars print
 // indented JSON) or NDJSON (slices print one object per line).
 func objects(t *testing.T, out []byte) []map[string]any {
@@ -547,6 +558,17 @@ func num(v any, path string) float64 {
 	default:
 		return 0
 	}
+}
+
+// isZeroNum reports whether path holds the number 0. objects decodes with
+// UseNumber, so comparing field() with float64(0) never matched a CLI value
+// (journeys 2026-11-16: HostedMCP budget_key failed on monthly_cents 0).
+func isZeroNum(v any, path string) bool {
+	switch field(v, path).(type) {
+	case json.Number, float64:
+		return num(v, path) == 0
+	}
+	return false
 }
 
 func compact(v any) string {

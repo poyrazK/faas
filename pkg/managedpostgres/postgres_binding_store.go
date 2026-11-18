@@ -86,6 +86,9 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 	if database.State != "ready" && database.State != "provisioning" {
 		return Binding{}, false, ErrConflict
 	}
+	if err := customRoleBindingFence(ctx, tx, binding, databaseID); err != nil {
+		return Binding{}, false, err
+	}
 
 	existing, err := queryBinding(ctx, tx,
 		`SELECT `+postgresBindingColumns+` FROM managed_postgres_bindings WHERE id = $1`,

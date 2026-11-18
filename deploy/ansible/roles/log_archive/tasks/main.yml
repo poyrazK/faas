@@ -103,6 +103,16 @@
     fail_msg: "{{ faas_log_archive_credentials_src }} must hold non-empty key_id and secret."
   when: log_archive_static_keys is defined
 
+- name: log_archive — write-only archive credentials are for compute nodes
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') == 'compute-only'
+    fail_msg: >-
+      faas_log_archive_write_only (ADR-20261110210000 slice 3l) is for
+      compute-only hosts: apid on the control plane reads, lists and deletes
+      archived logs, and its gateways serve archive read-back.
+  when: faas_log_archive_write_only | bool
+
 - name: log_archive — converge archive credential envelope
   ansible.builtin.copy:
     dest: /etc/faas/secrets/storage-box/archive-creds.json
@@ -118,7 +128,8 @@
       } | combine({
         'key_id': log_archive_static_keys.key_id,
         'secret': log_archive_static_keys.secret
-      } if log_archive_static_keys is defined else {})) | to_nice_json }}
+      } if log_archive_static_keys is defined else {})
+        | combine({'access': 'write-only'} if (faas_log_archive_write_only | bool) else {})) | to_nice_json }}
   when: faas_log_archive_bucket | trim | length > 0
   no_log: "{{ log_archive_static_keys is defined }}"
   notify:

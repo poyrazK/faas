@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   defineWorkflow, NonRetryableError, parseDuration, runWorkflowInvocation, runWorkflowLocally, serveWorkflows,
-  WORKFLOW_CODE_PROTOCOL, WORKFLOW_RESPONSE_MAX_BYTES, WorkflowStepError, type JournalEntry,
+  WORKFLOW_CODE_PROTOCOL, WORKFLOW_RESPONSE_MAX_BYTES, WorkflowCallError, WorkflowStepError, type JournalEntry,
 } from '../src/workflows.js';
 
 const request = (workflow: string, journal: JournalEntry[], input: unknown = {}) => ({
@@ -183,4 +183,31 @@ test('parseDuration accepts milliseconds and unit strings', () => {
   assert.equal(parseDuration('3d'), 259_200_000);
   assert.throws(() => parseDuration('soon'));
   assert.throws(() => parseDuration(-1));
+});
+
+// ADR-20261113120824 §2: wf.call reports a call operation and suspends; a
+// recorded call resolves with the callee's output or throws WorkflowCallError.
+test('wf.call parks on the callee and resumes with its output', async () => {
+  const signup = defineWorkflow('signup', async (input: { email: string }, wf) => {
+    const user = await wf.call<{ id: string }>('users', { email: input.email });
+    try {
+      await wf.call('billing', { user: user.id }, { name: 'charge' });
+    } catch (error) {
+      return { user: user.id, billing: (error as WorkflowCallError).code };
+    }
+    return { user: user.id };
+  });
+  const first = await runWorkflowInvocation(signup, request('signup', [], { email: 'a@b' }));
+  assert.deepEqual(first.ops, [{ seq: 0, name: 'users', kind: 'call', function: 'users', input: { email: 'a@b' } }]);
+  assert.equal(first.result.status, 'running');
+  const waiting = await runWorkflowInvocation(signup, request('signup', [{ seq: 0, name: 'users', kind: 'call', status: 'waiting' }]));
+  assert.deepEqual(waiting.ops, []);
+  const done = await runWorkflowInvocation(signup, request('signup', [
+    { seq: 0, name: 'users', kind: 'call', status: 'succeeded', output: { id: 'u1' } },
+    { seq: 1, name: 'charge', kind: 'call', status: 'failed', error: 'card declined' },
+  ]));
+  assert.deepEqual(done.result, { status: 'succeeded', output: { user: 'u1', billing: 'function_call_failed' } });
+
+  const local = await runWorkflowLocally(signup, { email: 'a@b' }, { functions: { users: (input) => ({ id: `u-${(input as { email: string }).email}` }) } });
+  assert.deepEqual(local.output, { user: 'u-a@b', billing: 'function_call_failed' });
 });

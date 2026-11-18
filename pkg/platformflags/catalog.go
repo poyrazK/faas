@@ -61,10 +61,20 @@ const (
 	// AppHealthMemory warns in app health when an app's guests ran short of
 	// memory (ADR-20261102124306) for the accounts it releases.
 	AppHealthMemory = "app_health_memory"
+	// PostgresChanges releases database-change workers (ADR-20261112140000):
+	// the postgres-changes API and the manifest block that captures Postgres
+	// row changes into a worker's queue.
+	PostgresChanges = "postgres_changes"
+	// QueueMessageGroups releases the group_key queue send field
+	// (ADR-20261112193306).
+	QueueMessageGroups = "queue_message_groups"
 	// PostgresPoolSizing stamps GREGALE_POSTGRES_POOL_MAX, the pool size an
 	// instance can use, on the deployments imaged builds for the accounts it
 	// releases (ADR-20261104141122).
 	PostgresPoolSizing = "postgres_pool_sizing"
+	// PostgresCustomRoles releases custom group roles on managed databases
+	// (ADR-20261116213000): the roles API and CLI.
+	PostgresCustomRoles = "postgres_custom_roles"
 
 	// QuietPauseUnbilled releases unbilled quiet pause (ADR-20261023171905)
 	// to accounts where meterd's quiet_pause_unbilled mode is on.
@@ -74,6 +84,10 @@ const (
 	// switch: on by default, an operator turns it off for an account or the
 	// platform when the fence itself refuses healthy traffic.
 	TrafficRevocationFence = "traffic_revocation_fence"
+
+	// SupportGrants releases customer-granted support access
+	// (ADR-20261116163508). Its kill switch refuses every grant at once.
+	SupportGrants = "support_grants"
 
 	// Edge rule features released by platform flags (ADR-20261023113721).
 	EdgeWAFBlocking = "edge_waf_blocking"
@@ -345,6 +359,35 @@ var catalog = []Spec{
 		RetireBy:    "2027-03-31",
 	},
 	{
+		Key:         PostgresChanges,
+		Capability:  "postgres-changes",
+		Label:       "Postgres change workers",
+		Description: "Capture Postgres row changes into a worker's queue: the postgres-changes API, CLI and gregale.yaml block, with Gregale installing capture on managed databases. Off, the API refuses and deploys skip the block, as before. schedd also needs FAAS_COMMIT_RELAY_ENABLED.",
+		ADR:         "ADR-20261112140000",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-06-30",
+	},
+	{
+		Key:         PostgresCustomRoles,
+		Capability:  "postgres-custom-roles",
+		Label:       "Postgres custom roles",
+		Description: "Declare NOLOGIN group roles on a managed database and grant them to its own logins, BYPASSRLS allowed except with Data API or Auth, so tools such as Windmill run with Gregale credentials. Off, the roles API refuses, as before.",
+		ADR:         "ADR-20261116213000",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-06-30",
+	},
+	{
+		Key:         QueueMessageGroups,
+		Label:       "Ordered queue message groups",
+		Description: "Accept group_key on queue sends: messages with the same key are delivered one at a time in send order, on push and pull consumers, through the built-in gregale-ordered work policy. Off, a send with group_key is refused, as before.",
+		ADR:         "ADR-20261112193306",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-06-30",
+	},
+	{
 		Key:         AppHealthMemory,
 		Label:       "Memory-pressure health",
 		Description: "Warn in app health when an app's guests ran short of memory in the last day (available memory at 15% or less), before an OOM kill, for the accounts it releases. Off, app health has no memory check, as before.",
@@ -371,6 +414,17 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan},
 		RetireBy:    "2027-01-31",
+	},
+	{
+		Key:   SupportGrants,
+		Label: "Support access grants",
+		Description: "Let organization owners and admins grant Gregale support time-limited access to deploy, roll back and restart their apps, " +
+			"and let support request it. Decided per organization. Off, customers cannot create or approve grants and every existing grant is refused; " +
+			"disabling the flag is the kill switch.",
+		ADR:        "ADR-20261116163508",
+		Consumers:  []string{"apid"},
+		Attributes: []Attribute{AttributeOrg},
+		RetireBy:   "2027-06-30",
 	},
 	{
 		Key:   QuietPauseUnbilled,

@@ -1,0 +1,146 @@
+{
+  "scope": {
+    "base_url": "https://api.example.test",
+    "account_id": "11111111-1111-4111-8111-111111111111",
+    "app_id": "22222222-2222-4222-8222-222222222222",
+    "app_slug": "imports"
+  },
+  "name": "import-events",
+  "subscription_id": "33333333-3333-4333-8333-333333333333",
+  "acceptance_id": "9007199254740993",
+  "event_contract": {
+    "version": 1,
+    "type": "import.requested",
+    "data": {
+      "type": "object",
+      "properties": {
+        "owner_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "label": {
+          "type": "string"
+        },
+        "Input": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "n"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "pipeline_contract": {
+    "version": 1,
+    "name": "event-pipeline",
+    "input": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "event_body": "{\"specversion\":\"1.0\",\"source\":\"urn:imports\",\"id\":\"import-17\",\"type\":\"import.requested\",\"data\":{\"owner_id\":\"alice\",\"n\":1,\"label\":\"café\",\"Input\":\"preserved\"}}",
+  "input": {
+    "n": 1
+  },
+  "output": {
+    "n": 4
+  },
+  "envelope": {
+    "version": 1,
+    "scope": {
+      "base_url": "https://api.example.test",
+      "account_id": "11111111-1111-4111-8111-111111111111",
+      "app_id": "22222222-2222-4222-8222-222222222222",
+      "app_slug": "imports"
+    },
+    "owner_id": "alice",
+    "contract_sha256": "d53915a0b5c7517357c01c42f0bd9fffe6c1fafcd72258fa7fe40b9a13df5325",
+    "input": {
+      "n": 1
+    },
+    "trigger": {
+      "version": 1,
+      "kind": "event",
+      "identity": "72e4a18e5806ad0828b603e1576bb4d48a1165e050de2805bef2b5e4ff4dd028"
+    }
+  },
+  "receipt": {
+    "intent": {
+      "version": 1,
+      "identity": "72e4a18e5806ad0828b603e1576bb4d48a1165e050de2805bef2b5e4ff4dd028",
+      "scope": {
+        "base_url": "https://api.example.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "name": "import-events",
+      "subscription_id": "33333333-3333-4333-8333-333333333333",
+      "acceptance_id": "9007199254740993",
+      "source": "urn:imports",
+      "event_id": "import-17",
+      "event_type": "import.requested",
+      "body_sha256": "8f9eeb4282c9660c11e2cffee0e561d0533ce50a5cdeaebb8934db7de47b6b4f",
+      "event_contract_sha256": "81e1ca1938e1d7df75c72aef7dd9fd24787bf1e80a262943f626481054d8d484",
+      "pipeline_sha256": "d53915a0b5c7517357c01c42f0bd9fffe6c1fafcd72258fa7fe40b9a13df5325",
+      "owner_id": "alice",
+      "input_sha256": "83bd20f18c24b8f2d11f1ed8fb6a5d9a34309cca5d39ad5967e787ec5569bdff",
+      "idempotency_key": "event-pipeline:72e4a18e5806ad0828b603e1576bb4d48a1165e050de2805bef2b5e4ff4dd028"
+    },
+    "checkpoint": {
+      "version": 1,
+      "scope": {
+        "base_url": "https://api.example.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "owner_id": "alice",
+      "contract_sha256": "d53915a0b5c7517357c01c42f0bd9fffe6c1fafcd72258fa7fe40b9a13df5325",
+      "input_sha256": "83bd20f18c24b8f2d11f1ed8fb6a5d9a34309cca5d39ad5967e787ec5569bdff",
+      "run_id": "44444444-4444-4444-8444-444444444444"
+    }
+  },
+  "generated_types": {
+    "typescript": "// Generated from a Gregale event contract.\nimport {EventContract} from \"@gregale/sdk-node/preview/events/runtime\";\nexport type Input = { readonly \"owner_id\": string; readonly \"n\": number; readonly \"label\"?: string; readonly \"Input\"?: string; };\nexport const contract = new EventContract<Input>({\"version\":1,\"type\":\"import.requested\",\"data\":{\"type\":\"object\",\"properties\":{\"owner_id\":{\"type\":\"string\",\"minLength\":1},\"n\":{\"type\":\"integer\",\"minimum\":0},\"label\":{\"type\":\"string\"},\"Input\":{\"type\":\"string\"}},\"required\":[\"owner_id\",\"n\"],\"additionalProperties\":false}} as const);\n",
+    "python": "# Generated from a Gregale event contract.\n# ruff: noqa: F401\nimport json\nfrom typing import Literal, NotRequired, TypeAlias, TypedDict\nfrom faas_sdk.preview.event_contract import EventContract\nInput = TypedDict(\"Input\", {\"owner_id\": str, \"n\": int, \"label\": NotRequired[str], \"Input\": NotRequired[str]})\ncontract: EventContract[Input] = EventContract(json.loads(\"{\\\"version\\\":1,\\\"type\\\":\\\"import.requested\\\",\\\"data\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"owner_id\\\":{\\\"type\\\":\\\"string\\\",\\\"minLength\\\":1},\\\"n\\\":{\\\"type\\\":\\\"integer\\\",\\\"minimum\\\":0},\\\"label\\\":{\\\"type\\\":\\\"string\\\"},\\\"Input\\\":{\\\"type\\\":\\\"string\\\"}},\\\"required\\\":[\\\"owner_id\\\",\\\"n\\\"],\\\"additionalProperties\\\":false}}\"))\n"
+  },
+  "event_types": {
+    "valid": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "com.acme.💾.created"
+    ],
+    "invalid": [
+      "",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "line\nbreak",
+      "nul\u0000byte"
+    ]
+  }
+}

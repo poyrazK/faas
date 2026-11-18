@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -1553,6 +1554,10 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			v := value.GetValue()
 			item.NetRxBytes = &v
 		}
+		if value := row.GetInternalTxBytes(); value != nil {
+			v := value.GetValue()
+			item.InternalTxBytes = &v
+		}
 		if value := row.GetDiskUsedBytes(); value != nil {
 			v := value.GetValue()
 			item.DiskUsedBytes = &v
@@ -1683,6 +1688,9 @@ func instanceStatsRowProto(r instancestats.InstanceStat) *scheddpb.InstanceStats
 		row.DiskUsedBytes = wrapperspb.Int64(r.DiskUsedBytes)
 		row.DiskCapacityBytes = wrapperspb.Int64(r.DiskCapacityBytes)
 	}
+	if r.InternalTXValid && r.InternalTXBytes <= math.MaxInt64 {
+		row.InternalTxBytes = wrapperspb.Int64(int64(r.InternalTXBytes))
+	}
 	return row
 }
 
@@ -1719,7 +1727,7 @@ func toProblem(err error) *api.Problem {
 		return api.NewProblem(api.StatusForCode(api.CodeValidation), api.CodeValidation,
 			"App does not serve requests",
 			"this app runs as a background worker or job and has no request listener; give the service a published port (compose ports:) or a request execution mode to serve HTTP").
-			WithDocs("https://gregale.dev/docs/event-driven#invocations")
+			WithDocs("https://gregale.dev/docs/event-driven#invocation-history-retention")
 	}
 	if errors.Is(err, sched.ErrAtCapacity) {
 		return api.NewProblem(api.StatusForCode(api.CodeCapacity), api.CodeCapacity,

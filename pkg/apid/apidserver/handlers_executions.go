@@ -365,7 +365,7 @@ func (s *server) writeExecutionCreateError(w http.ResponseWriter, acct state.Acc
 			"Execution concurrency limit reached",
 			fmt.Sprintf("the %s plan allows %d concurrent executions; %d would be active",
 				acct.Plan, quota.Limit, quota.Observed),
-		).WithLimit(int64(quota.Limit), int64(quota.Observed)).WithDocs("https://gregale.dev/docs/plans#executions"))
+		).WithLimit(int64(quota.Limit), int64(quota.Observed)).WithDocs("https://gregale.dev/docs/plans"))
 		return
 	}
 	api.WriteProblem(w, api.ErrInternal("could not persist execution admission"))

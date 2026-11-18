@@ -5,6 +5,7 @@
 import type { AccountAbuseHoldAction } from '../models/AccountAbuseHoldAction.js';
 import type { AccountAbuseHoldActionResponse } from '../models/AccountAbuseHoldActionResponse.js';
 import type { AccountCreditResponse } from '../models/AccountCreditResponse.js';
+import type { AccountRiskResponse } from '../models/AccountRiskResponse.js';
 import type { AdminRefundResponse } from '../models/AdminRefundResponse.js';
 import type { AdminSetGithubWebhookSecretRequest } from '../models/AdminSetGithubWebhookSecretRequest.js';
 import type { AdminSetGithubWebhookSecretResponse } from '../models/AdminSetGithubWebhookSecretResponse.js';
@@ -20,6 +21,7 @@ import type { DataRepairHealth } from '../models/DataRepairHealth.js';
 import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
+import type { HeldLinksResponse } from '../models/HeldLinksResponse.js';
 import type { ObsAlertCollectionHistory } from '../models/ObsAlertCollectionHistory.js';
 import type { ObsAlertRecurrence } from '../models/ObsAlertRecurrence.js';
 import type { ObsAlertResponseTimes } from '../models/ObsAlertResponseTimes.js';
@@ -29,10 +31,12 @@ import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js
 import type { ObsAlertWorkloadSummary } from '../models/ObsAlertWorkloadSummary.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
 import type { ObsInputHealth } from '../models/ObsInputHealth.js';
+import type { ObsNodeProbeNotifications } from '../models/ObsNodeProbeNotifications.js';
 import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
 import type { ObsRecordingCoverage } from '../models/ObsRecordingCoverage.js';
 import type { ObsRuleCoverage } from '../models/ObsRuleCoverage.js';
 import type { ObsRuleHealthResponse } from '../models/ObsRuleHealthResponse.js';
+import type { ObsRuntimeBuilds } from '../models/ObsRuntimeBuilds.js';
 import type { ObsServingHealth } from '../models/ObsServingHealth.js';
 import type { ObsWakeTimeline } from '../models/ObsWakeTimeline.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
@@ -469,6 +473,83 @@ export class AdminService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: admin_required — reading the flow log needs an operator session with MFA.`,
+      },
+    });
+  }
+  /**
+   * An account's abuse risk (operator-only).
+   * The account's abuse hold, sign-up record (country, network owner,
+   * email domain, disposable flag), links to and from abuse-held
+   * accounts, abuse strikes inside the hold window, and abuse events
+   * (holds, CPU signals, abuse scans, abuse recycles) of the last 30
+   * days, newest first.
+   *
+   * @returns AccountRiskResponse The account's abuse risk.
+   * @throws ApiError
+   */
+  public static getAccountRisk({
+    id,
+    includePii,
+  }: {
+    /**
+     * UUID of the account to review.
+     */
+    id: string,
+    /**
+     * Include email, sign-up address and user agent (audited).
+     */
+    includePii?: boolean,
+  }): CancelablePromise<AccountRiskResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/accounts/{id}/risk',
+      path: {
+        'id': id,
+      },
+      query: {
+        'include_pii': includePii,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — reading an account's abuse risk needs an operator session with MFA.`,
+        404: `code: not_found — no account with that id.`,
+      },
+    });
+  }
+  /**
+   * New accounts linked to abuse-held accounts (operator-only).
+   * Links detected in the last `since`, newest
+   * first, with the new account's sign-up country and email domain.
+   * Defaults to the last 24 hours and 200 rows.
+   *
+   * @returns HeldLinksResponse Recent held-account links.
+   * @throws ApiError
+   */
+  public static listHeldLinks({
+    since,
+    limit,
+  }: {
+    /**
+     * Window as a duration, e.g. 24h; at most 720h.
+     */
+    since?: string,
+    /**
+     * Maximum held-account links returned; defaults to 200.
+     */
+    limit?: number,
+  }): CancelablePromise<HeldLinksResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/held-links',
+      query: {
+        'since': since,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — the held-link review needs an operator session with MFA.`,
       },
     });
   }
@@ -1337,6 +1418,131 @@ export class AdminService {
         400: `Serving health accepts no query parameters.`,
         401: `code: unauthorized`,
         403: `Serving health read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect both direct notification channels for one expected node.
+   * Requires operator read scope, MFA and the operator allowlist. Accepts a
+   * stable node name with no query parameters. Reads independent inventory
+   * and then node-filtered notification recordings under one pinned time
+   * and shared three-second deadline. It does not filter the truncated
+   * fleet preview. Returns both channels when the node is expected, even
+   * when their outcomes are unknown. Missing or unconfigured inventory has
+   * expected null; fresh configured inventory without that node has
+   * expected false and not_applicable. This is monitoring intent, not proof
+   * of registry existence. No writes, direct probes, messages or credential
+   * reads occur. Historical submissions do not prove current reachability,
+   * provider processing or human receipt. Raw URLs, addresses, arbitrary
+   * source labels and provider text are excluded.
+   *
+   * @returns ObsNodeProbeNotifications Complete two-channel lookup, an explicit unknown assessment or no expectation for this node.
+   * @throws ApiError
+   */
+  public static getObsNodeProbeNotifications({
+    name,
+  }: {
+    /**
+     * Stable node name, excluding double-dot path segments.
+     */
+    name: string,
+  }): CancelablePromise<ObsNodeProbeNotifications> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/nodes/{name}/probe-notifications',
+      path: {
+        'name': name,
+      },
+      errors: {
+        400: `Invalid node name or any query parameter, including an empty query.`,
+        401: `code: unauthorized`,
+        403: `Node notification read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect advisory running-build evidence for selected critical daemons.
+   * Requires operator read scope, MFA and the operator allowlist. Read-only,
+   * advisory identity evidence; this does not qualify or attest a deployment.
+   * Select a versioned build profile explicitly. V1 profiles single-box-v1
+   * and control-plane-v1 preserve the original critical jobs. V2 profiles
+   * single-box-v2 and control-plane-v2 additionally inspect build and
+   * image workers. Single-box expects their static scrape targets; control-plane
+   * expects them on every active configured compute-registry member, using
+   * the existing discovery scope. Telemetry input-health roles stay v1.
+   * Without a role, no sources are read and the state is unknown. Selected
+   * build jobs do not cover every daemon in the fleet. Static
+   * jobs use scrape target membership and a minimum of one. Compute jobs
+   * compare exact node and node_id labels to the active configured compute
+   * registry, so replacement nodes cannot hide missing members behind equal
+   * counts. Draining inactive and unconfigured nodes are outside this scope.
+   * Strict queries pin scrape and build-info values and original sample
+   * timestamps to one evaluation time within three seconds, using at most eight
+   * fixed job readers. Down, missing,
+   * stale, future, pre-boundary, conflicting and unknown-revision evidence
+   * never counts as matching. Freshness is 120 seconds, with 30 seconds of
+   * clock skew at the boundary. Only complete lowercase 40-character commit
+   * SHAs are compared. Target addresses and raw labels, build-time strings
+   * and raw provider errors are excluded; target_id is a SHA-256 digest.
+   * Counts cover all inspected evidence, even beyond the 32-item preview.
+   * Mixed or mismatched revisions can coexist with incomplete inventory;
+   * inspect job availability and all counts. No cached success is returned.
+   *
+   * @returns ObsRuntimeBuilds Bounded advisory build evidence; unknown and incomplete states remain explicit.
+   * @throws ApiError
+   */
+  public static getObsRuntimeBuilds({
+    release,
+    after,
+    expectedRole,
+    compareAt,
+    diagnostics,
+  }: {
+    /**
+     * Requested full source revision to compare with observed builds.
+     */
+    release: string,
+    /**
+     * RFC3339 rollout evidence boundary; retained across retries.
+     */
+    after: string,
+    /**
+     * Explicit minimum role scope; does not discover deployment intent.
+     */
+    expectedRole?: 'single-box-v1' | 'control-plane-v1' | 'single-box-v2' | 'control-plane-v2',
+    /**
+     * Optional earlier evaluation time from the previous response; at most ten minutes old and within the evidence boundary. Compares all inspected targets before previewing.
+     */
+    compareAt?: string,
+    /**
+     * Optional advisory selection with an explicit expected_role. Omit to preserve existing collection; all selects every supported group, none collects only core identity, readiness, process and loop evidence. Otherwise give distinct comma-separated group names. V1 has no advisory jobs, so all and none preserve its core-only scope. Named groups require v2 and include builder_health, handoff_health, preparation_health, build_recovery_health, app_task_health, command_cron_health, command_cron_outcomes, http_cron_delivery, delayed_task_dispatch, command_cron_timing, app_task_results, app_task_operations, post_capture_health and snapshot_prime_health. Unknown, duplicate, unsupported or empty choices are rejected. Selection changes source reads, not verification gates. Selected but unavailable evidence remains distinct from groups intentionally not selected.
+     */
+    diagnostics?: string,
+  }): CancelablePromise<ObsRuntimeBuilds> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/runtime-builds',
+      query: {
+        'release': release,
+        'after': after,
+        'expected_role': expectedRole,
+        'compare_at': compareAt,
+        'diagnostics': diagnostics,
+      },
+      errors: {
+        400: `Missing or invalid release or boundary, or unknown, empty or repeated query keys.`,
+        401: `code: unauthorized`,
+        403: `Runtime build read denied by operator scope or MFA or allowlist policy.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

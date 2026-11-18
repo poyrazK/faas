@@ -133,8 +133,10 @@ func renderManTop(w io.Writer) {
 	manSection(w, "GLOBAL FLAGS", func(w io.Writer) {
 		_, _ = fmt.Fprintln(w, ".TP")
 		_, _ = fmt.Fprintln(w, `.BR \-\-http-timeout " DURATION"`)
-		_, _ = fmt.Fprintln(w, "API request timeout, such as 90s or 2m. Must be positive and precede the command.")
-		_, _ = fmt.Fprintln(w, "Overrides request and upload budgets; for streams, bounds the response-header wait only.")
+		_, _ = fmt.Fprintln(w, "API request timeout, such as 90s or 2m.")
+		_, _ = fmt.Fprintln(w, "Must be positive and precede the command.")
+		_, _ = fmt.Fprintln(w, "Overrides request and upload budgets;")
+		_, _ = fmt.Fprintln(w, "for streams, bounds the response-header wait only.")
 		_, _ = fmt.Fprintln(w, ".TP")
 		_, _ = fmt.Fprintln(w, `.BR \-\-profile " NAME"`)
 		_, _ = fmt.Fprintln(w, "Select a named connection. Place before the command;")
@@ -142,7 +144,8 @@ func renderManTop(w io.Writer) {
 		_, _ = fmt.Fprintln(w, ".TP")
 		_, _ = fmt.Fprintln(w, `.BR \-\-http-retries " N"`)
 		_, _ = fmt.Fprintln(w, "Add up to N retries for selected read-only API requests (0 to 5, default 0).")
-		_, _ = fmt.Fprintln(w, "Place before the command. Caller cancellation stops backoff and further attempts.")
+		_, _ = fmt.Fprintln(w, "Place before the command.")
+		_, _ = fmt.Fprintln(w, "Caller cancellation stops backoff and further attempts.")
 		_, _ = fmt.Fprintln(w, ".TP")
 		_, _ = fmt.Fprintln(w, `.BR \-\-debug-http`)
 		_, _ = fmt.Fprintln(w, "Write redacted HTTP metadata diagnostics to stderr. Place before the command;")
@@ -455,6 +458,14 @@ func escapeRoff(s string) string {
 // the common typos (`aps`, `appss`, `appsss`) without suggesting
 // across unrelated commands (`apps` → `mfa` is distance 4).
 func suggestCommand(query string) (string, bool) {
+	if query == "" {
+		return "", false
+	}
+	return suggestCommandFrom(query, completionCliCommands(), discoverableCliCommands())
+}
+
+// Accept prefiltered manifests so offline discovery never refreshes capabilities.
+func suggestCommandFrom(query string, completion, discoverable []cliCommand) (string, bool) {
 	const maxDist = 2
 	if query == "" {
 		return "", false
@@ -465,10 +476,10 @@ func suggestCommand(query string) (string, bool) {
 	// The command tree's names and the operator commands; an earlier name is
 	// never suggested (ADR-20261026145832).
 	var names []string
-	for _, c := range completionCliCommands() {
+	for _, c := range completion {
 		names = append(names, c.Name)
 	}
-	for _, c := range discoverableCliCommands() {
+	for _, c := range discoverable {
 		if c.Audience != cliAudienceCustomer && cliCommandAvailable(c.Name) {
 			names = append(names, c.Name)
 		}

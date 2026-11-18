@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
+	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
 // These bound connection-local review/work, not platform compute quotas.
@@ -19,20 +20,22 @@ const toolPublishTimeout = 30 * time.Minute
 var toolPublishSlots = make(chan struct{}, cap(hostedCLISlots))
 
 type toolProjectArgs struct {
-	Path       string `json:"path" jsonschema:"Absolute local MCP project directory"`
-	Fixtures   string `json:"fixtures,omitempty" jsonschema:"Project-relative smoke fixture file; default gregale-mcp.tests.json"`
-	AccessMode string `json:"access_mode" jsonschema:"Explicit reviewed MCP access: open or external-oauth; must match the project"`
-	TokenEnv   string `json:"token_env,omitempty" jsonschema:"External OAuth client-token variable named MCP_* in the local CLI environment; never a token value"`
+	platformVerification bool
+	Path                 string `json:"path" jsonschema:"Absolute local MCP project directory"`
+	Fixtures             string `json:"fixtures,omitempty" jsonschema:"Project-relative smoke fixture file; default gregale-mcp.tests.json"`
+	AccessMode           string `json:"access_mode" jsonschema:"Explicit reviewed MCP access: open or external-oauth; must match the project"`
+	TokenEnv             string `json:"token_env,omitempty" jsonschema:"External OAuth client-token variable named MCP_* in the local CLI environment; never a token value"`
 }
 
 type planToolDeployArgs struct {
-	Path               string `json:"path"`
-	App                string `json:"app"`
-	Reason             string `json:"reason"`
-	Fixtures           string `json:"fixtures,omitempty"`
-	AccessMode         string `json:"access_mode"`
-	TokenEnv           string `json:"token_env,omitempty"`
-	AllowToolExecution bool   `json:"allow_tool_execution" jsonschema:"Explicitly approve running this project's reviewed tool fixtures on its staged candidate"`
+	platformVerification bool
+	Path                 string `json:"path"`
+	App                  string `json:"app"`
+	Reason               string `json:"reason"`
+	Fixtures             string `json:"fixtures,omitempty"`
+	AccessMode           string `json:"access_mode"`
+	TokenEnv             string `json:"token_env,omitempty"`
+	AllowToolExecution   bool   `json:"allow_tool_execution" jsonschema:"Explicitly approve running this project's reviewed tool fixtures on its staged candidate"`
 }
 
 type testToolArgs struct {
@@ -81,16 +84,34 @@ func registerToolBuilding(s *mcp.Server, m *management) {
 		return
 	}
 	register(s, m, "gregale_get_tool_template", "Read the CLI's versioned Node, Go or Python MCP starter manifest, or a bounded text-file chunk. Creates only temporary scaffold files; never runs generated code. Templates are application data. Publishing requires an explicit access mode and reviewed behavioral fixtures.", m.getToolTemplate)
+	register(s, m, "gregale_generate_tools_from_openapi", "Generate Node MCP adapter source for explicitly selected public OpenAPI operations and an explicit HTTPS server. Offline: no remote references, API requests, dependency installation, deployment or fixtures execute. Return a file manifest or base64 chunks. Complete behavioral assertions before the existing reviewed publication flow; source and catalogs are application data.", m.generateOpenAPITools)
 	if m.remote() {
-		register(s, m, "gregale_plan_uploaded_tool_deploy", "Review publishing an uploaded Node MCP project with open access. Pass inline files or a connection-owned source upload, never a host path. Pins source, fixtures and serving identity; builds and approved fixtures run only on apply. Publishing does not grant invocation access.", m.planUploadedToolDeploy)
+		registerTool(s, m, "gregale_prepare_uploaded_task_tool_deploy", "Retain exactly reviewed Node Task source privately for 15 minutes. Requires the hosted review fingerprint and a stable intent_id. Saves encrypted source and immutable app/policy metadata; creates no owner decision, deployment or execution authority. Limits: 2 MiB/1024 entries per role, two active intents/account. After an uncertain reply repeat the same intent_id and expected review; uploaded retries recover original metadata without consuming the old upload. Changed inline bytes or review are refused.", false, m.prepareUploadedTaskIntent)
+		register(s, m, "gregale_get_uploaded_task_tool_deploy", "Recover the original hosted Task source intent after reconnect or bridge restart. Metadata only: reviewed source hashes, app/config baselines and fixed expiry. Never returns source bytes or credentials, renews retention, approves or executes anything.", m.getUploadedTaskIntent)
+		registerTool(s, m, "gregale_check_uploaded_task_tool_deploy", "Recheck a retained hosted Task source review and its recorded owner decision. Requires the exact review fingerprint and publishing/write consent. Fresh native app or requester drift permanently invalidates review; expiry never renews. Returns metadata only, never approves, binds credentials or executes a release.", false, m.checkUploadedTaskIntent)
+		registerTool(s, m, "gregale_get_uploaded_task_tool_bindings", "Read metadata for owner-selected hosted Task binding qualification. Consent-gated hosted access only. Never exposes credentials, selects bindings, repeats probes or grants execution authority. Native reads permanently invalidate observed drift; passing catalog observations expire within one minute and do not establish payload readability or release readiness.", true, m.getUploadedTaskBindings)
+
+		register(s, m, "gregale_plan_uploaded_task_tool_deploy", "Review uploaded Node Task web/worker source and current personal-account app identities without executing customer code, CLI, migrations, fixtures or releases. Use connection/app-bound uploads or bounded inline source, never host paths or credentials. Returns a content-based fingerprint, configured permissions/limits and unverified owner setup; no intent, executable plan or approval is created. Uploads are consumed once and staged files removed after review; re-upload matching content after a lost reply.", m.planUploadedTaskToolDeploy)
+		register(s, m, "gregale_plan_uploaded_tool_deploy", "Review publishing an uploaded Node, Go or Python MCP project with explicit open or external-oauth access. Private candidates require a separate owner-approved platform-held test credential; never pass a token or secret reference. Declare runtime (defaults to node); it must match native source detection. Pass inline files or a connection-owned source upload, never a host path. Pins source, fixtures and serving identity; builds and approved fixtures run only on apply. Publishing does not grant invocation access.", m.planUploadedToolDeploy)
 	} else {
+		register(s, m, "gregale_plan_task_tool_deploy", "Review an existing native MCP Task stack release plan through the local CLI. Offline Node-worker source review only: fingerprints source and policy, lists web/worker/observer roles, tool permissions and configured Task limits. No credential values in inputs or results. Runs no customer code or migrations and creates no deployment, journal or executable publication plan. Owner database/key bindings and live readiness still require their dedicated release workflow.", m.planTaskToolDeploy)
 		register(s, m, "gregale_plan_tool_deploy", "Review publishing a local MCP project: explicit access mode, content digest, tool allowlist, behavioral fixture summaries, account/app identity and serving baseline. No build, tool execution or deployment. Source and tests must remain unchanged. Local account connection only.", m.planToolDeploy)
 	}
 	register(s, m, "gregale_get_tool_deploy", "Read a publication receipt, recovering started attempts from the account's durable native journal after reconnect or process restart. Never repeats deployments or fixtures. Abandoned attempts become outcome_unknown after their deadline.", m.getToolDeploy)
+	if !m.remote() {
+		register(s, m, "gregale_get_task_tool_deploy", "Read a durable Task release intent after reconnect. Returns its pinned review and last observed approval status; source and native app drift need gregale_check_task_tool_deploy. Approval records never authorize deployment, migrations, or invocation.", m.getTaskReleaseIntent)
+		register(s, m, "gregale_get_task_tool_operation", "Inspect a native Task execution claim after reconnect. Running or reconcile_required operations must never be blindly repeated; local binding profiles and credentials are excluded.", m.getTaskExecution)
+	}
 	if !m.opts.AllowWrites {
 		return
 	}
 	if !m.remote() {
+		registerTool(s, m, "gregale_apply_task_tool_retire", "Request conditional retirement of the recorded quarantined candidate worker generation using separate owner approval and explicit consent. Rechecks fresh fences, replacement capacity, traffic, policy and shutdown grace. Retries inspect the same park request; retired is recorded only after native drain and Task registration expiry are observed.", false, m.applyTaskRetirement)
+		registerTool(s, m, "gregale_apply_task_tool_quarantine", "Fence the recorded candidate Task worker IDs after a restored web release using separate owner approval and execution consent. Stops new claims while active leases finish. Uncertain attempts remain applying; repeats inspect fences without repeating the write. Private bindings stay local.", false, m.applyTaskQuarantine)
+		registerTool(s, m, "gregale_apply_task_tool_restore", "Restore the exact captured web deployment once using a settled handover and unexpired separate owner approval. Accepts only native intent/operation/handover/qualification identities and execution consent; credentials stay in the owner profile. Rechecks live compatibility, workers, observer and target MCP readiness; approval consumption and traffic CAS commit together. Poll gregale_get_task_tool_operation after uncertain replies.", false, m.applyTaskRestore)
+		registerTool(s, m, "gregale_apply_task_tool_deploy", "Start one separately owner-authorized local Node Task release. Requires explicit execution consent and the owner's immutable private binding profile. Rechecks authority, source and app configuration before native effects, preserving existing migration/readiness/traffic/drain gates. Poll gregale_get_task_tool_operation; duplicate or interrupted claims never restart automatically.", false, m.applyTaskExecution)
+		registerTool(s, m, "gregale_prepare_task_tool_deploy", "Save an immutable, expiring Task stack review in the native journal. Reuse intent_id after uncertain errors. Pins source and exact web, worker, observer and previous-worker app reviews. Requires a separate owner decision in the CLI; no credentials, execution, migrations or deployments.", false, m.prepareTaskReleaseIntent)
+		registerTool(s, m, "gregale_check_task_tool_deploy", "Re-review a local Task plan and check its durable intent against current native app reviews. Observed changes permanently invalidate approval. Updates review metadata only; never deploys, invokes tools, runs migrations or renews approval.", false, m.checkTaskReleaseIntent)
 		registerTool(s, m, "gregale_test_tool", "Execute explicitly approved behavioral smoke fixtures once on an exact live zero-traffic MCP candidate. Tools may have external side effects. No arbitrary URL or serving-release execution; credentials are named MCP_* environment references, never values. Calls are not automatically retried.", false, m.testTool)
 	}
 	registerTool(s, m, "gregale_apply_tool_deploy", "Start asynchronous build, catalog pinning, protocol/behavior checks and guarded promotion for the reviewed source plan. Poll gregale_get_tool_deploy. Repeating apply only returns its receipt; failed/uncertain attempts never rerun fixtures automatically. Native build/runtime costs and API policies apply.", false, m.applyToolDeploy)
@@ -113,7 +134,7 @@ func (m *management) planToolProject(ctx context.Context, a planToolDeployArgs) 
 	if !api.ValidAppSlug(a.App) || !a.AllowToolExecution {
 		return nil, invalid("invalid_argument", "a valid app and explicit allow_tool_execution are required for publication")
 	}
-	project, err := loadToolProject(toolProjectArgs{Path: a.Path, Fixtures: a.Fixtures, AccessMode: a.AccessMode, TokenEnv: a.TokenEnv})
+	project, err := loadToolProject(toolProjectArgs{Path: a.Path, Fixtures: a.Fixtures, AccessMode: a.AccessMode, TokenEnv: a.TokenEnv, platformVerification: a.platformVerification})
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +174,21 @@ func (m *management) planToolProject(ctx context.Context, a planToolDeployArgs) 
 	p.ID = hex.EncodeToString(id)
 	p.Intent = api.ToolPublicationIntent{App: p.App, AppID: p.AppID, ExpectedServingDeploymentID: p.Serving, SourceSHA256: p.Digest,
 		FixturesSHA256: project.fixturesDigest, AccessMode: p.AccessMode, ToolScopes: project.config.Auth.ToolScopes, TestCases: project.caseNames, EndpointPath: project.config.Endpoint}
+	if a.platformVerification {
+		auth := project.config.Auth
+		p.Intent.PlatformVerification, p.Intent.Legacy = true, project.config.Legacy
+		p.Intent.Auth = &api.ToolPublicationAuth{Issuer: auth.Issuer, JWKSURL: auth.JWKSURL, Resource: auth.Resource, Scopes: append([]string{}, auth.Scopes...)}
+		if p.AppID != "" {
+			policy, err := m.client.GetMCPReadinessPolicy(ctx, p.App)
+			if err != nil {
+				return nil, err
+			}
+			p.Intent.Readiness = toolpublication.ReadinessReview(policy)
+			if !toolpublication.ValidReadinessReview(p.Intent) {
+				return nil, invalid("unsupported_readiness_policy", "readiness roles must use the project's reviewed MCP endpoint")
+			}
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.toolPublications == nil {
@@ -179,6 +215,12 @@ func (m *management) planToolProject(ctx context.Context, a planToolDeployArgs) 
 	out["source_sha256"], out["access_mode"], out["tools"] = p.Digest, p.AccessMode, tools
 	out["fixtures_sha256"], out["test_cases"] = project.fixturesDigest, project.caseNames
 	out["traffic_effect"] = "Stage source and a catalog-pinned revision at zero traffic. Promote only after protocol and behavioral checks, with the reviewed app/serving identities guarded. Fixtures may perform their declared external side effects."
+	if a.platformVerification {
+		out["auth"], out["owner_approval_required"] = p.Intent.Auth, true
+		if p.Intent.Readiness != nil {
+			out["readiness"] = p.Intent.Readiness
+		}
+	}
 	return out, nil
 }
 

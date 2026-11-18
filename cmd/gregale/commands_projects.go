@@ -21,7 +21,7 @@ import (
 
 func cmdProjects(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects <list|info|update|environments|rm|rollback|preview-secrets|import>", "projects")
+		PrintUsage(os.Stderr, "usage: gregale projects <list|info|update|environments|rm|rollback|preview-secrets|import|export>", "projects")
 		return 1
 	}
 	switch args[0] {
@@ -41,6 +41,15 @@ func cmdProjects(args []string) int {
 		return cmdProjectsPreviewSecrets(args[1:])
 	case "import":
 		return cmdProjectsImport(args[1:])
+	case "export":
+		return cmdProjectsExport(args[1:])
+	case subHealth, "wake", subRestart:
+		// `project health|wake|restart <project>` is `app <verb> --project`.
+		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+			PrintUsage(os.Stderr, "usage: gregale project "+args[0]+" <project> [flags]", "projects")
+			return 1
+		}
+		return cmdAppProject(append([]string{args[0], "--project", args[1]}, args[2:]...))
 	default:
 		printCommandValidation(os.Stderr, "unknown projects subcommand %q\n", args[0])
 		return unknownSubcommandChoices(os.Stderr, "projects", nestedCliCommand("projects"), args[0])
