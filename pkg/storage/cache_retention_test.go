@@ -23,7 +23,11 @@ func TestResolveCacheBudget(t *testing.T) {
 		mem, fs            int64
 		wantMax, wantFloor int64
 	}{
-		{"100 GiB node disk", 16 * gib, 100 * gib, 85 * gib, 15 * gib},
+		// ADR-20261118003000: a disk that hosts builds keeps a build drive
+		// free, above the 15% reserve.
+		{"100 GiB node disk keeps a build drive free", 16 * gib, 100 * gib, 76 * gib, api.ArtifactCacheBuildFreeBytes},
+		{"200 GiB node disk: 15% is above the build floor", 16 * gib, 200 * gib, 200*gib - 200*gib/100*15, 200 * gib / 100 * 15},
+		{"40 GiB disk is too small to host builds", 16 * gib, 40 * gib, 32 * gib, 8 * gib},
 		{"1.5 TiB disk", 64 * gib, 1536 * gib, 1536*gib - 1536*gib/100*15, 1536 * gib / 100 * 15},
 		{"small disk keeps the 8 GiB floor and the RAM budget", 16 * gib, 12 * gib, 8 * gib, 8 * gib},
 		{"unmeasured disk keeps the RAM budget", 16 * gib, 0, 8 * gib, api.ArtifactCacheMinFreeBytes},
