@@ -6,6 +6,7 @@ qualification.json/md and baseline.json/md are suitable for CI artifacts.
 """
 import argparse
 import hashlib
+from http.client import IncompleteRead
 import json
 import os
 import platform
@@ -17,7 +18,7 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -39,16 +40,25 @@ class QualificationError(Exception):
 
 def download(url, destination, limit):
     request = Request(url, headers={"User-Agent": "gregale-first-hour-qualification"})
-    try:
-        with urlopen(request, timeout=60) as response, destination.open("xb") as output:
-            size = 0
-            while chunk := response.read(1024 * 1024):
-                size += len(chunk)
-                if size > limit:
-                    raise QualificationError("download_too_large")
-                output.write(chunk)
-    except (URLError, TimeoutError) as error:
-        raise QualificationError("download_failed") from error
+    for delay in (1, 2, 0):
+        created = False
+        try:
+            with urlopen(request, timeout=60) as response, destination.open("xb") as output:
+                created = True
+                size = 0
+                while chunk := response.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > limit:
+                        raise QualificationError("download_too_large")
+                    output.write(chunk)
+            return
+        except (URLError, TimeoutError, ConnectionError, IncompleteRead) as error:
+            if created:
+                destination.unlink()
+            permanent = isinstance(error, HTTPError) and 400 <= error.code < 500 and error.code not in (408, 429)
+            if not delay or permanent:
+                raise QualificationError("download_failed") from error
+            time.sleep(delay)
 
 
 def github_json(resource, directory, name):

@@ -35,6 +35,17 @@ def archive_bytes(name="gregale", kind=tarfile.REGTYPE):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_download_retries_a_truncated_connection_without_reusing_partial_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            destination = Path(temp) / "release.json"
+            partial = mock.MagicMock()
+            partial.__enter__.return_value.read.side_effect = [b"partial", TimeoutError("fixture timeout")]
+            with mock.patch.object(qr, "urlopen", side_effect=[partial, io.BytesIO(b"complete")]) as open_url, \
+                    mock.patch.object(qr.time, "sleep"):
+                qr.download("https://example.test/release.json", destination, 64)
+            self.assertEqual(destination.read_bytes(), b"complete")
+            self.assertEqual(open_url.call_count, 2)
+
     def test_checksum_requires_one_exact_archive_record(self):
         name = "gregale_test.tar.gz"
         self.assertEqual(qr.checksum_for("c" * 64 + " *" + name, name), "c" * 64)
