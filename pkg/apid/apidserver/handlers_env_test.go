@@ -363,6 +363,7 @@ func TestEnv_InvalidKey_400(t *testing.T) {
 		key  string
 	}{
 		{"reserved_lowercase", "port"},
+		{"starts_with_underscore", "_FOO"},
 		{"starts_with_digit", "1FOO"},
 		{"contains_dash", "LOG-LEVEL"},
 		{"contains_dot", "LOG.LEVEL"},

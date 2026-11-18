@@ -354,7 +354,7 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			CodeUnsupportedByCLI,
 			"endpoint requires the dashboard session cookie",
 			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
-		).WithDocs(docsBase + "/cli#cookie-only-routes")
+		).WithDocs(docsBase + "/cli")
 	}
 	path, err := c.projectRoute(path)
 	if err != nil {

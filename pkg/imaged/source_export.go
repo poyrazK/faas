@@ -60,10 +60,12 @@ func (h *Handler) consumeSourceBuild(ctx context.Context, app state.App, dep sta
 		return fmt.Errorf("imaged: snapshot approved source export: %w", err)
 	}
 	defer func() { err = errors.Join(err, snapshot.Close()) }()
+	markLayerPhase(ctx, "export_snapshot")
 	binding, err := h.prepareSourceBuildRootfsBinding(ctx, app, dep, *approval)
 	if err != nil {
 		return err
 	}
+	markLayerPhase(ctx, "binding")
 	consumed := dep
 	consumed.RootfsPath = snapshot.Path()
 	if err := h.convertSourceBuild(ctx, app, consumed, acct, &binding); err != nil {

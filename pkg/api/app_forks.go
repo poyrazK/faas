@@ -156,7 +156,7 @@ func ErrPlanAppForksNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanAppForksNotAllowed,
 		"Production forks unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include production forks; upgrade to Pro or above.", p)).
-		WithDocs(docsBase + "/plans#forks")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrAppForkLimit names the full cap ("app" or "account") with the limit and

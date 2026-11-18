@@ -1,5 +1,11 @@
 # Quickstart
 
+Starting in an empty directory? [Deploy a private Node app on Free](#deploy-a-private-node-app-on-free).
+
+Using a coding agent with an existing FastAPI repo? Follow the
+[FastAPI agent quickstart](agents.md#agent-quickstart-for-an-existing-fastapi-repo)
+to check compatibility and verify the deployed release through MCP.
+
 Gregale deploys stateless APIs into isolated Firecracker microVMs. The fastest
 guided path from an existing project to a URL is:
 
@@ -92,6 +98,7 @@ verify the app; choose another GET path that reaches an application route.
 | Deployment ready | The deployment reached the platform's ready state. |
 | Application response verified | An application route returned 2xx from the accepted deployment. The output names the deployment and check method. |
 | Public access verified | A credential-free request reached that deployment through its public URL. An owner-authorized check alone does not establish this. |
+| Rollout complete | The accepted deployment reached 100% of traffic in its scope. Use `gregale release wait DEPLOYMENT_UUID --rollout` to wait for this separately. |
 
 `gregale start` checks the first response automatically. For a public app, it
 tries the deployment URL without account credentials. If the public response
@@ -137,6 +144,114 @@ looks up the project and environment identities from the deployment's app; pass
 never fall back to another deployment or scope. A redirect (3xx) is not
 verified: rerun with `--path` set to the route it leads to.
 
+## Deploy a private Node app on Free
+
+Start with an empty directory, a signed-in Gregale CLI, and an unused app slot.
+Free supports internal HTTP services, which have no public ingress. For this
+path, create an internal Compose service. The standalone `--require-authn`
+option requires a plan that supports edge authentication.
+
+### Create the source
+
+Choose an unused name in `APP`. Keep the same Compose service name and project
+name when you edit the app later.
+
+```bash
+APP=private-node
+
+cat > server.js <<'EOF'
+const { createServer } = require('node:http');
+
+createServer((request, response) => {
+  response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+
+  if (request.method === 'GET' && request.url === '/') {
+    response.end('Hello from private Node\n');
+    return;
+  }
+
+  if (request.method === 'GET' && request.url === '/healthz') {
+    response.end('ok');
+    return;
+  }
+
+  response.writeHead(404).end('Not found');
+}).listen(Number(process.env.PORT || 3000), '0.0.0.0');
+EOF
+
+cat > Dockerfile <<'EOF'
+FROM node:22-alpine3.23 AS runtime
+
+FROM alpine:3.23
+RUN apk add --no-cache libatomic libstdc++
+COPY --from=runtime /usr/local/bin/node /usr/local/bin/node
+WORKDIR /app
+COPY server.js ./
+ENV PORT=3000
+EXPOSE 3000
+CMD ["node", "server.js"]
+EOF
+
+cat > compose.yaml <<EOF
+services:
+  ${APP}:
+    build: .
+    ports:
+      - "127.0.0.1:3000:3000"
+EOF
+```
+
+The loopback port mapping makes this an **internal HTTP** service. A lone
+service with only `expose:` can be classified as a worker, which Free does
+not support. The Dockerfile copies Node into a matching Alpine image with its
+runtime libraries so this dependency-free example fits Free's filesystem
+limit. The full Node image can exceed the limit even for a small app.
+See [Compose visibility and ports](multi-service-apps.md#public-and-internal-services)
+and [Free plan limits](plans.md).
+
+### Deploy and verify
+
+Preview the deployment. Check that `can_apply` is true and the workload has
+`"class": "http"` and `"visibility": "internal"` before submitting it.
+
+```bash
+gregale --non-interactive --json deploy --project --path . --source=worktree --name "$APP" --dry-run
+gregale --non-interactive --json deploy --project --path . --source=worktree --name "$APP" --yes --no-wait
+```
+
+`--no-wait` returns after submission. Copy the `deployment_id` from the entry
+in the JSON receipt's `builds` array whose `slug` is your app. Set
+`DEPLOYMENT_ID` to that UUID, wait for readiness, then verify `GET /`.
+
+```bash
+gregale --non-interactive --json release wait "$DEPLOYMENT_ID" --app "$APP" --timeout 10m
+gregale --non-interactive --json release verify "$DEPLOYMENT_ID" --app "$APP" --path /
+```
+
+Expect the same `deployment_id`, `http_status: 200`, the greeting in `body`,
+and `verified: true`. An owner-authorized check has
+`public_access_verified: false`. The internal service stays private.
+
+### Edit and verify the next release
+
+Change the greeting in `server.js` and repeat the project deploy with the
+same name and `--no-wait`. Set `DEPLOYMENT_ID` to the **new** receipt UUID.
+Repeat the readiness wait and the exact-release verification. Check that the
+body contains the edited greeting.
+
+The new release can answer its exact response check as soon as it is live
+while the default canary is still shifting app traffic. To wait for the
+canary to finish, run this command with the new UUID.
+
+```bash
+gregale --non-interactive --json release wait "$DEPLOYMENT_ID" --app "$APP" --rollout --timeout 10m
+```
+
+The canary advances on its own. If a wait is interrupted, repeat it with the
+same UUID or follow progress with `gregale release traffic status "$APP"`.
+The project receipt's `resume_command` also checks the existing submission
+through rollout and configuration. See [progressive rollouts](rollouts.md).
+
 ## Keep building
 
 ```bash
@@ -145,8 +260,9 @@ gregale metric my-api
 gregale inspect my-api
 ```
 
-For scripts and coding agents, use the existing deployment commands instead of
-interactive Start:
+For scripts and coding agents with a standalone app, use the non-interactive
+deployment commands. To start with a private Node project on Free, follow the
+[internal Compose quickstart](#deploy-a-private-node-app-on-free).
 
 ```bash
 gregale --non-interactive --json deploy --path ./my-api --source=worktree --name my-api --yes

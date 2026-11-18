@@ -123,6 +123,10 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 					sourceBytes = 5
 				}
 				f := newGatewayRecoveryFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { object.serve(t, w, r) }), sourceBytes)
+				// Object events nobody subscribes to are not kept (PR 7226).
+				if _, _, err := state.NewPgStore(f.pool).UpsertEventSubscription(ctx, f.account.ID, f.app.ID, api.ObjectEventSource, "*", nil); err != nil {
+					t.Fatal(err)
+				}
 				var err error
 				if copyOrigin {
 					_, err = f.client.CopyObject(ctx, &awss3.CopyObjectInput{Bucket: aws.String("assets"), Key: aws.String("key"), CopySource: aws.String("assets/source")})

@@ -3065,7 +3065,7 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 			fmt.Sprintf("%s plan allows %d env+env_secrets entries per override; got %d (env=%d, env_secrets=%d).",
 				limits.Plan, limits.EnvVarsMax, totalEnv, len(o.Env), len(o.EnvSecrets))).
 			WithLimit(int64(limits.EnvVarsMax), int64(totalEnv)).
-			WithDocs(docsBase + "/deploy-overrides#env")
+			WithDocs(docsBase + "/deploy-overrides")
 	}
 
 	// env: key grammar + per-value byte cap. The same byte cap
@@ -5585,7 +5585,7 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *P
 			"Concurrency over plan limit",
 			fmt.Sprintf("%s plan caps max_concurrency at %d; requested %d.", l.Plan, l.MaxConcurrency, maxConcurrency)).
 			WithLimit(int64(l.MaxConcurrency), int64(maxConcurrency)).
-			WithDocs(docsBase + "/plans#concurrency")
+			WithDocs(docsBase + "/plans#at-a-glance")
 	}
 	if len(guestVCPU) > 0 && guestVCPU[0] != 0 {
 		if prob := ValidateAppCPURAMPair(l, ramMB, guestVCPU[0]); prob != nil {

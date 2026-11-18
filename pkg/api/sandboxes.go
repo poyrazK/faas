@@ -308,6 +308,84 @@ const SandboxImageDefaultRAMMB = 1024
 // SandboxNetwork is a session's egress (ADR-20261027090013 §6).
 type SandboxNetwork struct {
 	Mode string `json:"mode"`
+	// Allow and Deny narrow a web-mode session's domains
+	// (ADR-20261117091026 §2): rules added to the account's default
+	// policy, never widening it.
+	Allow []string `json:"allow,omitempty"`
+	Deny  []string `json:"deny,omitempty"`
+}
+
+// SandboxEgressPolicy is a web-mode domain policy (ADR-20261117091026 §1):
+// a name is granted when no deny rule matches it and either allow is empty
+// or an allow rule matches it. A rule matches its name and every name below.
+type SandboxEgressPolicy struct {
+	Allow []string `json:"allow"`
+	Deny  []string `json:"deny"`
+}
+
+// SandboxEgress is a session's egress record (ADR-20261117091026 §4): the
+// policy it was admitted under and the domains it was granted or refused.
+type SandboxEgress struct {
+	SandboxID string `json:"sandbox_id"`
+	Mode      string `json:"mode"`
+	SandboxEgressPolicy
+	Domains []SandboxEgressDomain `json:"domains"`
+}
+
+// SandboxEgressDomain is one entry of a session's domain log. A grant names
+// the registrable domain and has no Refused; a refusal says why: "policy"
+// (the session's policy), "budget" (the plan's distinct-domain limit) or
+// "platform" (a name Gregale never resolves for sessions, such as an
+// address or an internal name). A policy or platform refusal names the name
+// asked for.
+type SandboxEgressDomain struct {
+	Domain    string    `json:"domain"`
+	Refused   string    `json:"refused,omitempty"`
+	FirstSeen time.Time `json:"first_seen"`
+}
+
+// ValidSandboxEgressRule reports whether rule is a domain rule: a public
+// name SandboxWebHost allows, lowercase, without a trailing dot.
+func ValidSandboxEgressRule(rule string) bool {
+	return rule != "" && rule == strings.ToLower(rule) && !strings.HasSuffix(rule, ".") && SandboxWebHost(rule)
+}
+
+// SandboxEgressRuleMatches reports whether rule matches name: name is rule
+// or a name below it.
+func SandboxEgressRuleMatches(rule, name string) bool {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	return name == rule || strings.HasSuffix(name, "."+rule)
+}
+
+// SandboxEgressAllows reports whether a policy of allow and deny rules
+// grants name (ADR-20261117091026 §1). Deny wins; an empty allow allows
+// every name the platform does.
+func SandboxEgressAllows(allow, deny []string, name string) bool {
+	for _, rule := range deny {
+		if SandboxEgressRuleMatches(rule, name) {
+			return false
+		}
+	}
+	if len(allow) == 0 {
+		return true
+	}
+	for _, rule := range allow {
+		if SandboxEgressRuleMatches(rule, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// SandboxEgressRuleCovered reports whether rule falls under one of allow:
+// every name rule matches, some allow rule matches too.
+func SandboxEgressRuleCovered(rule string, allow []string) bool {
+	for _, a := range allow {
+		if SandboxEgressRuleMatches(a, rule) {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateSandboxRequest changes a live session's idle timeout, or its
@@ -409,7 +487,7 @@ type SandboxList struct {
 // ErrSandboxUnsupported refuses a request field sessions do not offer yet.
 func ErrSandboxUnsupported(field, detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeSandboxUnsupported, "Not supported for sandbox sessions",
-		fmt.Sprintf("%s: %s", field, detail)).WithDocs(docsBase + "/plans#agents")
+		fmt.Sprintf("%s: %s", field, detail)).WithDocs(docsBase + "/plans")
 }
 
 // IsSandboxDataPath reports a sandbox session's data-plane path
@@ -538,7 +616,7 @@ func NormalizeSandboxPreviewDomain(raw string) (string, error) {
 func ErrSandboxPublicPreviewGated(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated, "Plan doesn't include public previews",
 		fmt.Sprintf("the %s plan exposes sandbox ports privately only, behind a preview token; upgrade to Pro or higher for public previews.", p)).
-		WithDocs(docsBase + "/plans#agents")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrSandboxPreviewsOff answers port routes on an installation without a

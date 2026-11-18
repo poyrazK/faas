@@ -38,5 +38,5 @@ type AppSecretReferenceResponse struct {
 func ErrSecretReferenceSuppressionLimit() *Problem {
 	return NewProblem(http.StatusForbidden, "secret_reference_suppression_limit", "Suppression limit reached", "Set an explicit reference to re-enable a suppressed key before retaining more removals.").
 		WithLimit(EnvironmentSecretReferenceSuppressionsMaxPerApp, EnvironmentSecretReferenceSuppressionsMaxPerApp+1).
-		WithDocs(docsBase + "/env#secret-references")
+		WithDocs(docsBase + "/env")
 }

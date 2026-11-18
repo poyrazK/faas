@@ -158,6 +158,7 @@ type MemStore struct {
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
+	hostedTaskBindings             map[string]HostedTaskBindingRecord
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -170,8 +171,16 @@ type MemStore struct {
 	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
 	basicAuthVerifiers map[string]string
 	// platformAlertNotices mirror platform_alert_notices (ADR-20261115194000).
-	platformAlertNotices        []PlatformAlertNotice
-	platformAlertMeta           map[string]platformAlertNoticeMeta
+	platformAlertNotices []PlatformAlertNotice
+	platformAlertMeta    map[string]platformAlertNoticeMeta
+	// appProtection and appProtectionObjects mirror app_protection and
+	// app_protection_objects (ADR-20261116120000); allocated on first use.
+	appProtection              map[string]AppProtection
+	appProtectionObjects       map[string]map[AppProtectionItem]AppProtectionObject
+	appProtectionLeases        map[string]appProtectionLease
+	appProtectionHealthProbeAt map[string]time.Time
+	// platformProbeWakes mirror platform_probe_wakes (ADR-20261116120000).
+	platformProbeWakes          []PlatformProbeWake
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
@@ -25317,6 +25326,11 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, row := range m.hostedTaskSourceIntents {
 		if row.Record.AccountID == id {
 			delete(m.hostedTaskSourceIntents, key)
+		}
+	}
+	for key, record := range m.hostedTaskBindings {
+		if record.Public.AccountID == id {
+			delete(m.hostedTaskBindings, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

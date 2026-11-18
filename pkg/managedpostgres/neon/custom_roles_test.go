@@ -125,8 +125,16 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	executeSQL(t, migration, `GRANT ALL ON job TO `+f.wmAdmin)
 	executeSQL(t, migration, `INSERT INTO job (workspace, owner) VALUES ('w', 'alice'), ('w', 'bob')`)
 	executeSQL(t, migration, `DO $do$ BEGIN GRANT `+f.wmAdmin+` TO CURRENT_USER; EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'skip: %', SQLERRM; END $do$`)
+	// Migration 20260714230440 (wrap session gucs in rls policies) defines a
+	// pg_temp helper: the migration login needs TEMPORARY on the database.
+	executeSQL(t, migration, `CREATE FUNCTION pg_temp.wrap_session_gucs(expr text) RETURNS text AS $fn$ BEGIN RETURN expr; END $fn$ LANGUAGE plpgsql`)
+	executeSQL(t, migration, `SELECT pg_temp.wrap_session_gucs('x')`)
+	executeSQL(t, migration, `DROP FUNCTION pg_temp.wrap_session_gucs(text)`)
 
 	runtime := f.connect(t, f.runtime.name)
+	if !sqlPermissionDenied(ctx, runtime, "CREATE TEMP TABLE runtime_temp (id integer)") {
+		t.Fatal("runtime login created a temporary table")
+	}
 	count := func(role string) int {
 		t.Helper()
 		tx, err := runtime.Begin(ctx)

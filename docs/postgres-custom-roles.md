@@ -71,16 +71,51 @@ been granted.
    gregale postgres roles create windmill-db windmill_admin --bypass-rls --member-of windmill_user
    ```
 
-2. Bind the server and the workers with the `migration` access mode.
-   Windmill runs its schema migrations at every start, so its login needs
-   to create tables:
+2. Bind the server and the workers with `read_write`, and give the server a
+   `migration` binding as well. A running app never receives the `migration`
+   login; only release commands do:
 
    ```sh
-   gregale postgres attach windmill-db windmill --env DATABASE_URL --access migration
-   gregale postgres attach windmill-db windmill-worker --env DATABASE_URL --access migration
+   gregale postgres attach windmill-db windmill --env DATABASE_URL --access read_write
+   gregale postgres attach windmill-db windmill --env MIGRATION_DATABASE_URL --access migration
+   gregale postgres attach windmill-db windmill-worker --env DATABASE_URL --access read_write
    ```
 
-3. Deploy. Windmill's own role setup only notices that the roles exist, its
+3. Run Windmill's migrations in a release command. Windmill migrates its
+   schema when it starts, so the release command starts the server against
+   the `migration` login, waits until it answers, and stops it:
+
+   ```sh
+   #!/bin/sh
+   # migrate.sh
+   set -eu
+   DATABASE_URL="$MIGRATION_DATABASE_URL" PORT=8001 MODE=server windmill &
+   pid=$!
+   i=0
+   while [ "$i" -lt 600 ]; do
+     if curl -fsS http://127.0.0.1:8001/api/version >/dev/null 2>&1; then
+       kill "$pid"; wait "$pid" 2>/dev/null || true; exit 0
+     fi
+     kill -0 "$pid" 2>/dev/null || exit 1
+     sleep 1; i=$((i + 1))
+   done
+   kill "$pid"; exit 1
+   ```
+
+   ```yaml
+   # gregale.yaml
+   hosting:
+     port: 8000
+     health: /api/version
+   release:
+     command: /usr/src/app/migrate.sh
+   ```
+
+   The upstream Windmill images are larger than the app filesystem, so build
+   from a Dockerfile that copies only the `windmill` binary from
+   `ghcr.io/windmill-labs/windmill-slim` onto `debian:trixie-slim`.
+
+4. Deploy. Windmill's own role setup only notices that the roles exist, its
    migrations grant them their tables, and its requests switch to them with
    `SET LOCAL ROLE`, as they do on a database prepared with Windmill's
    `init-db-as-superuser.sql`.
