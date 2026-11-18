@@ -630,11 +630,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// ADR-20261020085706 amendment 13: an approved release held before its
 	// release command waits out the break-glass release pause.
 	h.WithReleasePause(startReleasePauseWatcher(ctx, store, pool, log))
-	// ADR-20261029174438: prepare several deployments at once, off by default.
-	// db sizes imaged's direct pool from the same variable.
-	parallelPrep, err := parseBoolEnv(db.ImagedParallelPrepEnv, getenv(db.ImagedParallelPrepEnv))
+	// ADR-20261029174438: prepare several deployments at once, on unless
+	// FAAS_IMAGED_PARALLEL_PREP=false. db sizes imaged's direct pool from the
+	// same variable.
+	parallelPrep, err := db.ImagedParallelPrep(getenv(db.ImagedParallelPrepEnv))
 	if err != nil {
-		return err
+		return fmt.Errorf("imaged: %s must be a boolean", db.ImagedParallelPrepEnv)
 	}
 	prepWorkers := 1
 	if parallelPrep {

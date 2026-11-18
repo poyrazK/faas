@@ -1,6 +1,7 @@
 # Errors
 
-Gregale errors use RFC 9457 JSON. The `code` is stable for automation;
+A Gregale API error response uses RFC 9457 Problem Details JSON
+(`Content-Type: application/problem+json`). The `code` is stable for automation;
 `detail` names the observed value or failing stage; `docs_url` points to the
 relevant recovery guide. CLI output preserves those fields and the next
 command when one is known. `type` defaults to `about:blank` when no specific

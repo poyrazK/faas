@@ -30,6 +30,9 @@ func (s *server) createDatabaseSwitch(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrDatabaseSwitchUnavailable("Managed PostgreSQL is not configured on this platform.", ""))
 		return
 	}
+	if !s.databaseSwitchCanVerify(w, r, app) {
+		return
+	}
 	if p, ok := principalFrom(r); !ok || !principalHasScope(p, api.ScopesManagedPostgresManageSurface) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Insufficient scope",
 			"a database switch restores and rebinds a managed PostgreSQL database; the key needs the postgres:manage scope as well"))

@@ -37,6 +37,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -224,16 +225,15 @@ func TestE2E_MirrorDispatch_HappyPath(t *testing.T) {
 		t.Fatalf("source response=%q, want source deployment response", got)
 	}
 
-	mirrorInstance := waitForMirrorInstance(t, f.store, f.app.ID, mirrorDeployment.ID, string(state.StateParked), 10*time.Second)
+	// A cold-booted mirror with no init snapshot stops instead of parking: its
+	// snapshot is recaptured from a clean boot, not its used memory.
+	mirrorInstance := waitForMirrorInstance(t, f.store, f.app.ID, mirrorDeployment.ID, 10*time.Second, string(state.StateParked), string(state.StateStopped))
 	if mirrorInstance.Mode != string(state.InstanceModeMirror) {
 		t.Fatalf("mirror instance mode=%q, want %q", mirrorInstance.Mode, state.InstanceModeMirror)
 	}
-	if mirrorInstance.State != string(state.StateParked) {
-		t.Fatalf("mirror instance state=%q, want %q", mirrorInstance.State, state.StateParked)
-	}
 }
 
-func waitForMirrorInstance(t *testing.T, store *state.PgStore, appID, deploymentID, wantState string, timeout time.Duration) state.Instance {
+func waitForMirrorInstance(t *testing.T, store *state.PgStore, appID, deploymentID string, timeout time.Duration, wantStates ...string) state.Instance {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var last []state.Instance
@@ -244,13 +244,13 @@ func waitForMirrorInstance(t *testing.T, store *state.PgStore, appID, deployment
 		}
 		last = instances
 		for _, instance := range instances {
-			if instance.DeploymentID == deploymentID && instance.Mode == string(state.InstanceModeMirror) && instance.State == wantState {
+			if instance.DeploymentID == deploymentID && instance.Mode == string(state.InstanceModeMirror) && slices.Contains(wantStates, instance.State) {
 				return instance
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("mirror instance for deployment %s did not reach %s within %s; instances=%+v", deploymentID, wantState, timeout, last)
+	t.Fatalf("mirror instance for deployment %s did not reach %v within %s; instances=%+v", deploymentID, wantStates, timeout, last)
 	return state.Instance{}
 }
 

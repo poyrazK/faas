@@ -469,9 +469,9 @@ func applyStatusIndicatorBreaches(snap *statusEvaluation) {
 		name      string
 	}
 	indicators := []indicator{
-		{snap.indicatorAvailable["api_availability"], float64Ptr(snap.legacy.APIAvailabilityPct), 99.9, func(v, target float64) bool { return v < target }, publicstatus.ComponentNetworking, "API availability"},
-		{snap.indicatorAvailable["wake_p95"], snap.legacy.WakeP95MS, 350, func(v, target float64) bool { return v > target }, publicstatus.ComponentNetworking, "platform wake p95"},
-		{snap.indicatorAvailable["build_success"], float64Ptr(snap.legacy.BuildSuccessPct), 99, func(v, target float64) bool { return v < target }, publicstatus.ComponentDeployments, "deployment success"},
+		{snap.indicatorAvailable["api_availability"], float64Ptr(snap.legacy.APIAvailabilityPct), api.StatusTargetAPIAvailabilityPct, func(v, target float64) bool { return v < target }, publicstatus.ComponentNetworking, "API availability"},
+		{snap.indicatorAvailable["wake_p95"], snap.legacy.WakeP95MS, api.StatusTargetWakeP95MS, func(v, target float64) bool { return v > target }, publicstatus.ComponentNetworking, "platform wake p95"},
+		{snap.indicatorAvailable["build_success"], float64Ptr(snap.legacy.BuildSuccessPct), api.StatusTargetDeploymentSuccessPct, func(v, target float64) bool { return v < target }, publicstatus.ComponentDeployments, "deployment success"},
 	}
 	for _, current := range indicators {
 		if !current.available || current.value == nil || !current.breached(*current.value, current.target) {

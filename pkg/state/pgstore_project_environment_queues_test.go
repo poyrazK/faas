@@ -98,10 +98,11 @@ func TestPgCloneQueueConfigurationIsFrozenAndLeased(t *testing.T) {
 		t.Fatalf("queue edit missing from source revision: %+v, %v", newer, err)
 	}
 	// A source stage with a complete pinned book ignores current production.
+	// Stage pull bindings stay disabled: leases serve production only (ADR-20261113180000).
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "source-stage"}); err != nil {
 		t.Fatal(err)
 	}
-	desired, err := state.UpsertEnvironmentQueueBinding(ctx, store, app, "source-stage", nil, state.ProjectEnvironmentQueueDefinition{Name: "isolated", QueueName: "orders", Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 2})
+	desired, err := state.UpsertEnvironmentQueueBinding(ctx, store, app, "source-stage", nil, state.ProjectEnvironmentQueueDefinition{Name: "isolated", QueueName: "orders", Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: false, MaxConcurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

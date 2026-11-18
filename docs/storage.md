@@ -3,6 +3,8 @@
 Apps on Gregale are stateless. Your code runs in an ephemeral microVM
 that wakes, executes, parks, and forgets. Keep state in
 [managed PostgreSQL](postgres.md) or in a provider you already use.
+Store user-uploaded files in object storage so they remain available
+after an instance parks or is replaced.
 
 Managed object storage is in preview and may not be enabled for your account.
 It does not add persistent VM disks or change runtime storage billing.

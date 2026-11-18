@@ -39,7 +39,7 @@ import (
 //
 // Include private Python module filenames, which directory embedding omits.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node agent-infinity-rust
+//go:embed hello-node hello-node-private hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node agent-infinity-rust
 //go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
@@ -69,6 +69,7 @@ var Names = []string{
 	"hello-node",
 	"hello-python",
 	"hello-go",
+	PrivateNode,
 	"cron-example",
 	"function-node",
 	"function-python",
@@ -527,7 +528,7 @@ func NameIsValid(name string) bool {
 // Adding a template means a new entry in BOTH Names AND this switch.
 func CategoryFor(name string) string {
 	switch name {
-	case "hello-node", "hello-python", "hello-go":
+	case "hello-node", PrivateNode, "hello-python", "hello-go":
 		return "hello"
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "function-rust", "cron-example":
 		return "function"
@@ -551,6 +552,7 @@ func CategoryFor(name string) string {
 // the interactive template picker. Every listed template needs one.
 var summaries = map[string]string{
 	"hello-node":                         "Express HTTP app with a JSON greeting and health check",
+	PrivateNode:                          "Internal Node.js HTTP app that fits the Free plan",
 	"hello-python":                       "Flask HTTP app served by gunicorn",
 	"hello-go":                           "Go HTTP app using only the standard library",
 	"cron-example":                       "Handler for a scheduled request",

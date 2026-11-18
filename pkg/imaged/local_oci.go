@@ -131,6 +131,7 @@ func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state
 			prepareErr = fmt.Errorf("imaged: load built OCI image: %w", err)
 			return nil, prepareErr
 		}
+		markLayerPhase(ctx, "load")
 		build.Layers = layersAsReaders(layers)
 		if runtime == "" {
 			return cleanup, nil
@@ -144,6 +145,7 @@ func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state
 		if shared.Reason != "" {
 			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason)
 		}
+		markLayerPhase(ctx, "split")
 		build.Layers = shared.layers
 		return func() { shared.cleanup(); cleanup() }, nil
 	}
@@ -826,6 +828,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
 		return fmt.Errorf("imaged: persist local OCI before_checkpoint hook: %w", err)
 	}
+	markLayerPhase(ctx, "manifest")
 
 	be, err := h.storageFor()
 	if err != nil {
@@ -872,6 +875,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		if err := h.ensureDeploymentRuntimeBase(ctx, selected); err != nil {
 			return err
 		}
+		markLayerPhase(ctx, "runtime_base")
 	}
 	if source == nil && runtime != "" {
 		// A signed build stamps the runner base with its source rootfs
@@ -890,6 +894,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err := h.replicateLayer(ctx, appsKey); err != nil {
 		return err
 	}
+	markLayerPhase(ctx, "publish_rootfs")
 	h.log.Info("imaged: build local OCI app layer", "app", app.Slug, "bytes", result.ContentBytes)
 	// Source deployments with companions need the same build and secret-scan
 	// gate as registry-image deployments before snapshot prime can consume them.
@@ -897,6 +902,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err != nil {
 		return err
 	}
+	markLayerPhase(ctx, "sidecars")
 	if len(scFindings) > 0 {
 		upsertDeploymentSecretFindings(ctx, h.store, dep.ID,
 			scFindings, layerSecretScanStatusCompleteWithRedactions,

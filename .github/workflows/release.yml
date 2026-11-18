@@ -582,25 +582,36 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          # The bundle reads history only through commits, trees and tags
+          # (reuse-release-guest-init.sh: merge-base, diff --name-only, log,
+          # tag --merged), so past file contents stay on the server. A full
+          # fetch took 142 s on rc.354.
+          filter: blob:none
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
 
-      - id: cache-date
-        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      - name: Restore main-branch Go build cache
+      # The canonical tarball builds with the release recipe (linux/amd64,
+      # CGO off, -trimpath -buildvcs=false, DAEMON_TAGS). The light tier's
+      # go-lint caches build with CGO on and no -trimpath, so none of their
+      # compile results matched, and this key also lacked their Go version
+      # segment: rc.354 compiled every daemon cold (595 s). release-units'
+      # warm-build-cache job fills go-unit-build-* on main with that recipe,
+      # one entry per base release (scripts/ci/warm_unit_build_cache.py);
+      # paths must match its save. Link results are never cached, so the
+      # version stamp still comes from this build.
+      - name: Restore the release-recipe Go build cache from main
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-            ~/.cache/golangci-lint
-          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-lint-${{ runner.os }}-
+            go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-
+            go-unit-build-${{ runner.os }}-
 
       - name: Install pinned release tooling
         env:

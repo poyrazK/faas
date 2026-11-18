@@ -104,7 +104,7 @@ func noLiveDeploymentLogs(ctx context.Context, client *Client, slug string) (cod
 		dep := page.Items[0]
 		switch {
 		case dep.Status == statusLive:
-			message = fmt.Sprintf("%s has no deployment receiving traffic, so it has no runtime logs. Deployment %s is live at 0%%: check it with `gregale inspect %s`.", slug, dep.ID, slug)
+			message = fmt.Sprintf("%s has no deployment receiving traffic, so it has no runtime logs. Deployment %s is live at 0%%: check it with `gregale app health %s --explain`.", slug, dep.ID, slug)
 		case isTerminalDeploymentStatus(dep.Status):
 			message = fmt.Sprintf("%s has no live deployment, so it has no runtime logs; waking it cannot help. Its latest deployment %s is %s: read why with `gregale logs %s --deployment %s`.", slug, dep.ID, dep.Status, slug, dep.ID)
 		default:

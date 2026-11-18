@@ -42,14 +42,19 @@ func approveCliCode(t *testing.T, srv *apidserver.Server, cookie *http.Cookie, a
 // Approving a CLI sign-in mints an admin key, so it needs what minting one
 // directly needs: a verified email and a fresh sign-in.
 func TestCliApprovalNeedsVerifiedEmailAndRecentSignIn(t *testing.T) {
-	srv, _, store := apidserver.V1AuthTestHarness(t)
+	srv, mailer, store := apidserver.V1AuthTestHarness(t)
 	mgr := *srv.Sessions()
 
 	unverified, _ := flowAccountKey(t, store, "cli-unverified@example.com", false)
+	cookie := flowSession(t, store, mgr, unverified.ID)
 	pendingCliCode(t, store, "a1b2c3d4")
-	if rec := approveCliCode(t, srv, flowSession(t, store, mgr, unverified.ID), unverified.ID, "a1b2c3d4"); !strings.Contains(rec.Body.String(), "Verify your email") {
-		t.Errorf("unverified approval = %d %q, want the verify-email page", rec.Code, rec.Header().Get("Location"))
+	recovery := approveCliCode(t, srv, cookie, unverified.ID, "a1b2c3d4")
+	body := recovery.Body.String()
+	if !strings.Contains(body, "Verify your email first") || !strings.Contains(body, "Email verified") ||
+		!strings.Contains(body, "<code>gregale login</code>") || strings.Contains(body, "already used or has expired") {
+		t.Fatalf("unverified approval = %d %q, want the email verification steps", recovery.Code, body)
 	}
+	checkVerificationResendForm(t, srv.Handler(), recovery, cookie, mailer)
 
 	owner, _ := flowAccountKey(t, store, "cli-owner@example.com", true)
 	session := flowSession(t, store, mgr, owner.ID)
@@ -61,6 +66,41 @@ func TestCliApprovalNeedsVerifiedEmailAndRecentSignIn(t *testing.T) {
 	if _, approver, err := store.PeekCliAuthCode(t.Context(), api.HashToken(mustHex(t, "a1b2c3d4"))); err != nil || approver != "" {
 		t.Fatalf("a refused approval claimed the code for %q (%v)", approver, err)
 	}
+}
+
+func checkVerificationResendForm(t *testing.T, handler http.Handler, recovery *httptest.ResponseRecorder, cookie *http.Cookie, mailer *apidserver.RecordingMailer) {
+	t.Helper()
+	const path = "/v1/auth/verify-email/resend"
+	token := flowFormToken(t, recovery.Body.String(), path)
+	post := func(csrfCookie *http.Cookie) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(url.Values{"csrf_token": {token}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "text/html")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.AddCookie(cookie)
+		if csrfCookie != nil {
+			req.AddCookie(csrfCookie)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post(nil); rec.Code != http.StatusForbidden || len(mailer.Snapshot()) != 0 {
+		t.Fatalf("resend without the form cookie = %d, want 403 and no mail", rec.Code)
+	}
+	for _, c := range recovery.Result().Cookies() {
+		if c.Value != token {
+			continue
+		}
+		rec := post(c)
+		messages := mailer.Snapshot()
+		if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), "Check your email") ||
+			len(messages) != 1 || len(messages[0].To) != 1 || messages[0].To[0] != "cli-unverified@example.com" {
+			t.Fatalf("CLI verification resend = %d, mails = %d: %s", rec.Code, len(messages), rec.Body.String())
+		}
+		return
+	}
+	t.Fatal("verification recovery page did not set its form cookie")
 }
 
 func TestCliApprovalFromRecentSignInClaimsTheCode(t *testing.T) {

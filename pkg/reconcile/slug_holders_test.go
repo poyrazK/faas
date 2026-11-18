@@ -47,7 +47,7 @@ func TestSlugHoldersExplainGlobalConflicts(t *testing.T) {
 	if !strings.Contains(reasons[0], `"foreign"`) || !strings.Contains(reasons[0], "already taken") {
 		t.Errorf("foreign reason = %q", reasons[0])
 	}
-	if !strings.Contains(reasons[1], "gregale apps restore tombstone") {
+	if !strings.Contains(reasons[1], "gregale app restore tombstone") {
 		t.Errorf("tombstone reason = %q, want the restore remedy", reasons[1])
 	}
 }

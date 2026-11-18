@@ -554,6 +554,11 @@ func writeObsOverviewHuman(w io.Writer, response api.ObsOverviewResponse) {
 	for _, failure := range response.RecentFailures1h {
 		_, _ = fmt.Fprintf(w, "  failure kind=%s count=%d\n", failure.Kind, failure.Count)
 	}
+	_, _ = fmt.Fprintf(w, "coding_agents=%d\n", len(response.CodingAgents))
+	for _, agent := range response.CodingAgents {
+		_, _ = fmt.Fprintf(w, "  agent name=%s deploys_24h=%d new_accounts_14d=%d new_accounts_serving_14d=%d new_accounts_paid_14d=%d\n",
+			agent.Agent, agent.Deploys24h, agent.NewAccounts14d, agent.NewAccountsServing14d, agent.NewAccountsPaid14d)
+	}
 }
 
 func writeObsCapacityHuman(w io.Writer, response api.ObsCapacityResponse) {
