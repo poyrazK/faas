@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Fresh published install -> browser login -> Free Node Start -> verified edit.
 
-Run locally on Unix with a browser. Terminal input is scripted; browser sign-in
-uses the normal product flow. Public reports never contain terminal output,
+Run on Unix with access to a browser. Terminal input is scripted; browser
+sign-in uses the normal product flow. Public reports never contain terminal output,
 login URLs, email, tokens, response bodies, or local paths.
 """
 import argparse
 import contextlib
 import hashlib
+import http.client
 import importlib.util
 import json
 import math
@@ -19,6 +20,7 @@ import sys
 import tempfile
 import time
 import uuid
+from urllib.parse import urlsplit
 
 import qualify_release as release
 
@@ -28,6 +30,9 @@ native = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(native)
 PHASES = ("isolated_environment", "published_install", "fresh_browser_login", "free_account_preflight",
           "start_node", "edit_same_app", "cleanup_app", "logout")
+PRIVATE_PHASES = (*PHASES[:6], "edited_release_rollout", *PHASES[6:])
+NODE = "hello-node"
+PRIVATE_NODE = "hello-node-private"
 INSTALLER = "https://get.gregale.dev"
 
 
@@ -85,7 +90,8 @@ def verify_response(document, session, greeting):
                    and document.get("app_id") == session["app_id"]
                    and document.get("deployment_id") == session["deployment_id"]
                    and native.identity(document.get("instance_id"))
-                   and not document.get("project_id") and not document.get("environment_id")
+                   and document.get("project_id") in (None, "", session.get("project_id"))
+                   and not document.get("environment_id")
                    and not document.get("body_truncated"), "response did not prove this exact deployment")
     body = document.get("body")
     native.require(isinstance(body, str) and len(body.encode()) <= 4096, "response exceeded the bounded greeting check")
@@ -96,14 +102,28 @@ def verify_response(document, session, greeting):
             "http_status": 200, "verified": True}
 
 
+def anonymous_status(url, slug):
+    target = urlsplit(url)
+    host = slug + ".gregale.dev"
+    native.require(target.scheme == "https" and target.netloc == host and target.path in ("", "/")
+                   and not target.query and not target.fragment, "unexpected production ingress URL for anonymous check")
+    with contextlib.closing(http.client.HTTPSConnection(host, timeout=15)) as connection:
+        connection.request("GET", "/")
+        with connection.getresponse() as response:
+            return response.status
+
+
 def validate(report):
     """A fixture, wrong plan, incomplete step, bad identity or cleanup cannot pass."""
     if report.get("provenance", {}).get("evidence_kind") != "deployed":
         return "fixture_only"
     phases, proof = report.get("phases", {}), report.get("proof", {})
-    if not all(phases.get(name, {}).get("status") == "passed" for name in PHASES):
+    template = report["provenance"].get("template", NODE)
+    native.require(template in (NODE, PRIVATE_NODE), "unexpected onboarding template")
+    required_phases = PRIVATE_PHASES if template == PRIVATE_NODE else PHASES
+    if not all(phases.get(name, {}).get("status") == "passed" for name in required_phases):
         return "incomplete"
-    native.require(all(seconds(phases[name].get("seconds")) for name in PHASES), "phase timings are missing or invalid")
+    native.require(all(seconds(phases[name].get("seconds")) for name in required_phases), "phase timings are missing or invalid")
     artifact, provenance = report["artifact"], report["provenance"]
     native.require(artifact.get("status") == "passed" and artifact.get("checksum_verified") is True
                    and artifact.get("release_verify_available") is True
@@ -131,6 +151,14 @@ def validate(report):
                    and proof.get("source_before_sha256") != proof.get("source_after_sha256")
                    and all(digest_value(proof.get(name)) for name in
                            ("source_before_sha256", "source_after_sha256")), "edit did not prove a new source revision of the same app")
+    if template == PRIVATE_NODE:
+        rollout = proof.get("edited_release_rollout", {})
+        native.require(artifact.get("private_starter_available") is True and proof.get("project_absent_before") is True
+                       and proof.get("project_absent_after") is True
+                       and digest_value(first.get("project_sha256")) and first["project_sha256"] == edited.get("project_sha256")
+                       and all(row.get("anonymous_http_status") == 404 for row in (first, edited))
+                       and rollout.get("deployment_sha256") == edited["deployment_sha256"] and rollout.get("traffic_percent") == 100,
+                       "private project, anonymous ingress or rollout evidence is incomplete")
     metrics = report.get("metrics", {})
     names = ("install_s", "browser_login_s", "first_response_from_start_s", "edit_to_response_s", "complete_s")
     native.require(all(seconds(metrics.get(name)) for name in names), "onboarding timings are missing or invalid")
@@ -154,12 +182,17 @@ def render(report):
               "Browser account signup/password entry, shell startup-file integration, other runtimes/platforms, and agent success remain unmeasured.",
               "Customer timing includes install and CLI browser authorization through the verified edit; cleanup is required and timed separately.",
               "One run is an observation, not a latency percentile or reliability estimate."]
+    if report["provenance"].get("template") == PRIVATE_NODE:
+        lines += ["", "Private verification checks both exact releases through the owner account and requires anonymous HTTP 404.",
+                  "The edited release's rollout to 100% traffic is checked and timed after the verified response."]
     return "\n".join(lines) + "\n"
 
 
 class Run:
     def __init__(self, args):
         self.args, self.out = args, args.out.resolve()
+        self.template = args.template
+        self.private_node = self.template == PRIVATE_NODE
         native.require(not self.out.exists(), "output must be a fresh directory")
         self.out.mkdir(parents=True, mode=0o700)
         self.private = self.out / "private"
@@ -177,8 +210,11 @@ class Run:
         self.started = time.monotonic()
         self.report = {"schema_version": 1, "status": "failed", "reason": "onboarding_interrupted",
                        "provenance": {"evidence_kind": "deployed", "target": self.api, "plan": "not_measured",
+                                      "template": self.template, "browser_flow": "device" if args.device_login else "default",
+                                      "credential_storage": "isolated_file" if args.file_credentials else "default",
                                       "interaction": "scripted_pty_and_browser", "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
-                       "phases": {name: {"status": "not_run", "seconds": None} for name in PHASES},
+                       "phases": {name: {"status": "not_run", "seconds": None}
+                                  for name in (PRIVATE_PHASES if self.private_node else PHASES)},
                        "artifact": {}, "proof": {}, "metrics": {}}
 
     @contextlib.contextmanager
@@ -202,15 +238,21 @@ class Run:
         native.save(self.out / "onboarding.json", self.report)
         (self.out / "onboarding.md").write_text(render(self.report))
 
-    def call(self, *arguments, expect=0):
+    def call(self, *arguments, expect=0, timeout=90):
         result = subprocess.run([str(self.cli), "--profile", self.profile, "--non-interactive", "--json", *arguments],
-                                cwd=self.workspace, env=self.env, capture_output=True, text=True, timeout=90)
+                                cwd=self.workspace, env=self.env, capture_output=True, text=True, timeout=timeout)
         if result.returncode != expect:
             path = self.private / "last-cli-failure.log"
             path.touch(mode=0o600, exist_ok=True)
             path.write_text((result.stdout + "\n" + result.stderr)[-1024 * 1024:])
             raise native.Failure("CLI check failed: " + arguments[0])
         return documents(result.stdout) if expect == 0 else result
+
+    def require_absent(self, resource):
+        missing = self.call(resource, "get", self.slug, expect=4)
+        problem = documents(missing.stderr)
+        native.require(len(problem) == 1 and problem[0].get("code") == "not_found",
+                       "generated " + resource + " name was not proven absent")
 
     @contextlib.contextmanager
     def terminal(self, label, arguments):
@@ -228,6 +270,8 @@ class Run:
             native.require(not self.cli.exists() and not self.source.exists(), "isolated install/source paths are not fresh")
             native.require(not any(key in self.env for key in ("FAAS_TOKEN", "FAAS_API", "GREGALE_PROFILE", "GREGALE_KEYRING")),
                            "inherited connection settings reached the clean environment")
+            if self.args.file_credentials:
+                self.env["GREGALE_KEYRING"] = "off"
         with self.phase("published_install"):
             start = time.monotonic()
             installer = self.private / "install.sh"
@@ -256,13 +300,22 @@ class Run:
                                    capture_output=True, timeout=30, check=False)
             native.require(added.returncode == 0, "could not create the isolated connection")
             self.profile_created = True
+            if self.private_node:
+                templates = self.call("init", "--list")
+                available = len(templates) == 1 and self.template in (templates[0].get("templates") or [])
+                self.report["artifact"]["private_starter_available"] = available
+                if not available:
+                    raise Blocked("default_installer_does_not_include_private_node_starter")
 
     def login(self):
         with self.phase("fresh_browser_login"):
             self.call("whoami", expect=2)
             self.report["proof"]["signed_out_before_login"] = True
             start = time.monotonic()
-            with self.terminal("login", ("--profile", self.profile, "login")) as terminal:
+            arguments = ("--profile", self.profile, "login")
+            if self.args.device_login:
+                arguments += ("--device",)
+            with self.terminal("login", arguments) as terminal:
                 terminal.expect_any(("Opening https://", "Open https://"), timeout=45)
                 # A private handoff receipt lets an observer open the normal
                 # approval page. Never put it in the public report/transcript.
@@ -274,7 +327,11 @@ class Run:
                     if match and "\n" in terminal.output[match.end():]:
                         url = match.group(1)
                 native.require(url is not None, "browser authorization URL was not observed")
-                native.save(self.private / "browser-handoff.json", {"url": url, "phase": "browser_login"})
+                handoff = {"url": url, "phase": "browser_login"}
+                if match := re.search(r"Your code: ([A-Z0-9-]+)\s", terminal.output):
+                    handoff["code"] = match.group(1)
+                native.require(not self.args.device_login or "code" in handoff, "browser device code was not observed")
+                native.save(self.private / "browser-handoff.json", handoff)
                 print("Complete the isolated CLI login in your browser; the acceptance is waiting for approval.", flush=True)
                 terminal.wait(0, timeout=360)
                 native.require("Logged in as " in terminal.output, "normal browser login did not complete")
@@ -296,9 +353,10 @@ class Run:
             if apps:
                 raise Blocked("free_account_requires_an_unused_app_slot")
             self.report["proof"]["initial_app_count"] = len(apps)
-            result = self.call("app", "get", self.slug, expect=4)
-            problem = documents(result.stderr)
-            native.require(len(problem) == 1 and problem[0].get("code") == "not_found", "test app name was not proven absent")
+            self.require_absent("app")
+            if self.private_node:
+                self.require_absent("project")
+                self.report["proof"]["project_absent_before"] = True
 
     def read_session(self):
         paths = list((Path(self.env["XDG_STATE_HOME"]) / "gregale/start").glob("*.json"))
@@ -306,14 +364,20 @@ class Run:
         session = json.loads(paths[0].read_text())
         native.require(session.get("api_base", "").rstrip("/") == self.api
                        and session.get("account_id") == self.account["id"]
-                       and session.get("app_slug") == self.slug and session.get("template") == "hello-node"
+                       and session.get("app_slug") == self.slug and session.get("template") == self.template
                        and Path(session.get("source_path", "")).resolve() == self.source.resolve()
                        and native.identity(session.get("app_id")) and native.identity(session.get("deployment_id"))
-                       and not session.get("project") and not session.get("environment")
+                       and not session.get("environment") and not session.get("environment_id")
                        and session.get("verified_deployment_id") == session["deployment_id"]
                        and session.get("status") == "live", "Start session did not prove the expected accepted and verified target")
+        if self.private_node:
+            native.require(session.get("project") == self.slug and native.identity(session.get("project_id")),
+                           "Start did not retain the private project identity")
+        else:
+            native.require(not session.get("project") and not session.get("project_id"), "Start selected an unexpected project")
         if self.session:
-            native.require(session["app_id"] == self.session["app_id"], "edit replaced the original app")
+            native.require(session["app_id"] == self.session["app_id"] and session.get("project_id") == self.session.get("project_id"),
+                           "edit replaced the original app or project")
         self.session = session
         native.save(self.private / "ownership.json", {key: session[key] for key in ("account_id", "app_slug", "app_id", "deployment_id")})
         return session
@@ -321,7 +385,24 @@ class Run:
     def response(self, session, greeting):
         rows = self.call("release", "verify", session["deployment_id"], "--app", self.slug, "--path", "/")
         native.require(len(rows) == 1, "response check did not return one evidence object")
-        return verify_response(rows[0], session, greeting)
+        proof = verify_response(rows[0], session, greeting)
+        if self.private_node:
+            apps = self.call("app", "get", self.slug)
+            native.require(len(apps) == 1 and apps[0].get("id") == session["app_id"]
+                           and apps[0].get("project_id") == session["project_id"] and apps[0].get("visibility") == "internal",
+                           "owner response did not come from the expected internal project app")
+            status = anonymous_status(apps[0]["url"], self.slug)
+            native.require(status == 404, "anonymous ingress did not return 404")
+            proof.update(project_sha256=fingerprint(session["project_id"]), anonymous_http_status=status)
+        return proof
+
+    @staticmethod
+    def private_review(terminal):
+        terminal.expect("Access   Internal only", timeout=120)
+        terminal.answer("Deploy this app (y/N) [n]: ", "y")
+        terminal.expect("Application response verified")
+        terminal.expect("owner-authorized check", timeout=15)
+        terminal.expect("Keep building in this project.", timeout=30)
 
     def start_and_edit(self):
         # Register the single random, previously absent name before approving
@@ -330,26 +411,43 @@ class Run:
         with self.terminal("start", ("--profile", self.profile, "start")) as terminal:
             with self.phase("start_node"):
                 terminal.answer("Choose [2]: ", "2")
-                terminal.answer("Choose [1]: ", "1")
+                if self.private_node:
+                    terminal.expect("Private Node.js HTTP app (Free plan)", timeout=30)
+                    choice = re.search(r"(?m)^\s*(\d+)\. Private Node\.js HTTP app \(Free plan\)", terminal.output)
+                    native.require(choice is not None, "private starter choice was not observed")
+                    terminal.answer("Choose [1]: ", choice[1])
+                else:
+                    terminal.answer("Choose [1]: ", "1")
                 terminal.answer("Starter directory [", str(self.source))
-                terminal.answer("Deploy this app (y/N) [n]: ", "y")
-                terminal.expect("New public greeting (Enter to finish): ", timeout=1200)
-                native.require("Application response verified" in terminal.output, "Start did not verify its first response")
+                if self.private_node:
+                    self.private_review(terminal)
+                else:
+                    terminal.answer("Deploy this app (y/N) [n]: ", "y")
+                    terminal.expect("New public greeting (Enter to finish): ", timeout=1200)
+                    native.require("Application response verified" in terminal.output, "Start did not verify its first response")
                 first = self.read_session()
-                source = self.source / "handler.js"
+                source = self.source / ("app/server.js" if self.private_node else "handler.js")
                 content = source.read_text()
-                greetings = re.findall(r'\bmessage\s*:\s*("(?:[^"\\]|\\.)*")', content)
+                greetings = list(re.finditer(r'\bmessage\s*:\s*("(?:[^"\\]|\\.)*")', content))
                 native.require(len(greetings) == 1, "Node starter greeting has an unexpected shape")
-                greeting = json.loads(greetings[0])
+                greeting = json.loads(greetings[0][1])
                 self.report["proof"]["source_before_sha256"] = release.digest(source)
                 self.report["proof"]["first_response"] = self.response(first, greeting)
                 self.report["metrics"]["first_response_from_start_s"] = round(time.monotonic() - self.started, 3)
             with self.phase("edit_same_app"):
                 start = time.monotonic()
                 changed = "first-hour-free-edit-" + uuid.uuid4().hex[:12]
-                os.write(terminal.master, (changed + "\n").encode())
-                terminal.answer("Apply this greeting and deploy a new revision (y/N) [n]: ", "y")
-                terminal.expect("You changed the code, deployed it, and saw the new greeting live.", timeout=1200)
+                if self.private_node:
+                    left, right = greetings[0].span(1)
+                    source.write_text(content[:left] + json.dumps(changed) + content[right:])
+                    terminal.expect("I've made changes — review and deploy again", timeout=30)
+                    terminal.answer("Choose [1]: ", "2")
+                    self.private_review(terminal)
+                    terminal.answer("Choose [1]: ", "1")
+                else:
+                    os.write(terminal.master, (changed + "\n").encode())
+                    terminal.answer("Apply this greeting and deploy a new revision (y/N) [n]: ", "y")
+                    terminal.expect("You changed the code, deployed it, and saw the new greeting live.", timeout=1200)
                 terminal.wait(0, timeout=30)
                 edited = self.read_session()
                 native.require(first["deployment_id"] != edited["deployment_id"], "edit did not create a distinct deployment")
@@ -363,6 +461,15 @@ class Run:
                 self.report["proof"].update(submitted_releases=2, live_app_count=len(apps))
                 self.report["metrics"]["edit_to_response_s"] = round(time.monotonic() - start, 3)
                 self.report["metrics"]["complete_s"] = round(time.monotonic() - self.started, 3)
+        if self.private_node:
+            with self.phase("edited_release_rollout"):
+                deployment = self.session["deployment_id"]
+                self.call("release", "wait", deployment, "--app", self.slug, "--rollout", "--timeout", "10m", timeout=630)
+                traffic = self.call("release", "traffic", "status", self.slug)
+                native.require(len(traffic) == 1 and traffic[0].get("total_percent") == 100
+                               and any(row.get("id") == deployment and row.get("traffic_percent") == 100
+                                       for row in traffic[0].get("deployments", [])), "edited release did not reach 100% traffic")
+                self.report["proof"]["edited_release_rollout"] = {"deployment_sha256": fingerprint(deployment), "traffic_percent": 100}
 
     def cleanup(self):
         errors = []
@@ -372,12 +479,24 @@ class Run:
                     apps = self.call("app", "list")
                     selected = [app for app in apps if app.get("slug") == self.slug]
                     native.require(len(selected) <= 1, "cleanup found ambiguous app ownership")
+                    if selected and self.session:
+                        native.require(selected[0].get("id") == self.session["app_id"], "cleanup refused a replaced app")
+                    if self.private_node:
+                        projects = self.call("project", "list")
+                        matches = [project for project in projects if project.get("slug") == self.slug]
+                        native.require(len(matches) <= 1, "cleanup found ambiguous project ownership")
+                        if matches:
+                            project_id = matches[0].get("id")
+                            native.require(native.identity(project_id)
+                                           and (not self.session or project_id == self.session["project_id"])
+                                           and (not selected or selected[0].get("project_id") == project_id),
+                                           "cleanup refused a replaced project")
+                            self.call("project", "delete", self.slug, "--yes")
+                        self.require_absent("project")
+                        self.report["proof"]["project_absent_after"] = True
                     if selected:
-                        if self.session:
-                            native.require(selected[0].get("id") == self.session["app_id"], "cleanup refused a replaced app")
                         self.call("app", "delete", self.slug, "--yes")
-                    missing = self.call("app", "get", self.slug, expect=4)
-                    native.require(any(row.get("code") == "not_found" for row in documents(missing.stderr)), "test app still resolves after cleanup")
+                    self.require_absent("app")
                     remaining = self.call("app", "list")
                     self.report["proof"]["final_app_count"] = len(remaining)
                     native.require(not remaining, "Free account still holds an app after the run")
@@ -400,6 +519,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api", required=True)
     parser.add_argument("--expected-email", default="", help="expected Free account; compared in memory and excluded from reports")
+    parser.add_argument("--template", choices=(NODE, PRIVATE_NODE), default=NODE)
+    parser.add_argument("--device-login", action="store_true", help="authorize the isolated CLI via a browser on another machine")
+    parser.add_argument("--file-credentials", action="store_true", help="use the isolated home for credentials on a headless system without a keyring")
     parser.add_argument("--install-only", action="store_true", help="check the installer only; leaves onboarding blocked and exits nonzero")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
