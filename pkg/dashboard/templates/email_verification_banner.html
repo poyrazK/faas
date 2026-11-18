@@ -1,5 +1,12 @@
 {{define "email-verification-banner"}}
   {{if .Account}}
+    {{if .Account.LegalNotice}}
+      <aside role="status" class="email-verification-banner">
+        <strong>Upcoming change to our terms.</strong>
+        {{.Account.LegalNotice}}
+        Read the <a href="/terms">Terms</a>, <a href="/privacy">Privacy Policy</a> and <a href="https://gregale.dev/docs/dpa">DPA</a>.
+      </aside>
+    {{end}}
     {{if not .Account.EmailVerified}}
       <aside role="status" class="email-verification-banner">
         <strong>Verify your email.</strong>

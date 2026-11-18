@@ -35,7 +35,11 @@ func TestAccountingDiagnosticReasonsAndBoundaries(t *testing.T) {
 		// completed window yet; one created earlier, or already deleted, does.
 		{"created this window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(3 * time.Minute)}, StateReady, false, []string{}},
 		{"created at window start", UsageProgress{CreatedAt: now.Truncate(time.Hour)}, StateReady, false, []string{}},
-		{"created last window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Nanosecond)}, StateReady, false, []string{"coverage_missing"}},
+		// ADR-20261115190000 amendment 1: created in the window that just
+		// closed, it owes only that window and waits on headroom; created
+		// before it, it owes a window the sweep should already have.
+		{"created last window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Nanosecond)}, StateReady, false, []string{"latest_window_pending"}},
+		{"created two windows ago", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Hour - time.Nanosecond)}, StateReady, false, []string{"coverage_missing"}},
 		// ADR-20261115190000: a resource created and deleted inside one window
 		// owes only that window; it waits on headroom, not on collection.
 		{"deleted this window", UsageProgress{CreatedAt: now.Truncate(time.Hour), Terminal: true, EndedAt: now}, StateDeleted, false, []string{"final_window_pending"}},
@@ -43,7 +47,10 @@ func TestAccountingDiagnosticReasonsAndBoundaries(t *testing.T) {
 		{"deleted after an unobserved window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Hour), Terminal: true, EndedAt: now}, StateDeleted, false, []string{"coverage_missing"}},
 		{"deleted unobserved past StaleAfter", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-5 * time.Hour), Terminal: true, EndedAt: now.Truncate(time.Hour).Add(-5 * time.Hour)}, StateDeleted, false, []string{"coverage_missing"}},
 		{"changed window", UsageProgress{Window: 24 * time.Hour, ObservedAt: now}, StateReady, false, []string{"window_mismatch"}},
-		{"backlog", UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-time.Hour)}, StateReady, false, []string{"coverage_incomplete"}},
+		// Amendment 1: the provider publishes the hour that just closed some
+		// minutes later; only an older gap blocks outright.
+		{"latest window uncollected", UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-time.Hour)}, StateReady, false, []string{"latest_window_pending"}},
+		{"backlog", UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-2 * time.Hour)}, StateReady, false, []string{"coverage_incomplete"}},
 		{"stale", UsageProgress{Window: time.Hour, ObservedAt: now.Add(-policy.StaleAfter - time.Nanosecond), CollectedUntil: now.Truncate(time.Hour)}, StateReady, false, []string{"observation_stale"}},
 		{"fresh at threshold", UsageProgress{Window: time.Hour, ObservedAt: now.Add(-policy.StaleAfter), CollectedUntil: now.Truncate(time.Hour)}, StateReady, false, []string{}},
 		{"shutdown absent", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true}, StateDeleted, false, []string{"shutdown_unconfirmed"}},
@@ -70,7 +77,7 @@ func TestAccountingDiagnosticReasonsAndBoundaries(t *testing.T) {
 			d := accountingDiagnostic(AccountingCoverage{DatabaseID: "d", State: tc.state, CreatedAt: good.CollectedFrom, Progress: tc.progress}, p, now)
 			hard := 0
 			for _, reason := range tc.reasons {
-				if reason != "final_window_pending" {
+				if reason != "final_window_pending" && reason != "latest_window_pending" {
 					hard++
 				}
 			}
@@ -88,15 +95,24 @@ func TestAccountingDiagnosticReasonsAndBoundaries(t *testing.T) {
 	}
 }
 
-// ADR-20261115190000: a deleted database's pending final window admits only
+// ADR-20261115190000: a deleted database's pending final window, and
+// (amendment 1) a live database's uncollected latest window, admit only
 // while recorded usage stays below 90% of every ceiling; a hard issue on any
 // other database still blocks.
 func TestFinalWindowPendingAdmitsOnlyWithHeadroom(t *testing.T) {
 	now := time.Date(2026, 10, 5, 12, 17, 0, 0, time.UTC)
 	policy := enabledUsagePolicy() // cost 100, compute 1000, egress 1 MiB
-	pending := UsageProgress{CreatedAt: now.Truncate(time.Hour), Terminal: true, EndedAt: now}
+	for name, pending := range map[string]UsageProgress{
+		"final window":  {CreatedAt: now.Truncate(time.Hour), Terminal: true, EndedAt: now},
+		"latest window": {Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-time.Hour)},
+	} {
+		t.Run(name, func(t *testing.T) { testPendingWindowHeadroom(t, policy, now, pending) })
+	}
+}
+
+func testPendingWindowHeadroom(t *testing.T, policy UsagePolicy, now time.Time, pending UsageProgress) {
 	fresh := UsageProgress{Window: time.Hour, CollectedUntil: now.Truncate(time.Hour), ObservedAt: now}
-	backlog := UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-time.Hour)}
+	backlog := UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-2 * time.Hour)}
 	for _, tc := range []struct {
 		name  string
 		snap  UsageSnapshot

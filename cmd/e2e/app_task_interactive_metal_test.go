@@ -147,8 +147,20 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
 	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImg))
+	// The deploy base carries the runtime bases' debug tools when the host has
+	// a static busybox (ADR-20261117070620); the shell app below is a
+	// scratch image with no shell, the case `app exec --debug` exists for.
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", "interactive")
+	busybox, busyboxErr := os.ReadFile(debugBusyboxPath())
+	if busyboxErr == nil {
+		deployBaseImg, _ = e2etest.DebugToolsBaseLayerImage("onebox-faas/deploy-base", "interactive", busybox,
+			"sh", "id", "ls", "grep", "sed", "touch", "cat")
+	}
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
+	// A host with real bases keeps them: its node refuses another generation
+	// of a base its shared storage already publishes. The debug subtests then
+	// skip when those bases predate the tools; pkg/fcvm's
+	// TestMetalAppTaskDebugSession covers that host with a private base.
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake,
@@ -169,9 +181,12 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
-	deployCtx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	// A fresh harness scans the host's real builder base before it serves
+	// this deploy; on the 2-vCPU acceptance host that scan alone ran past
+	// 4 minutes (2026-11-17), so the first deploy gets 10.
+	deployCtx, cancel := context.WithTimeout(context.Background(), 660*time.Second)
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, parseImageDeployment(t, body), 240*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, parseImageDeployment(t, body), 600*time.Second); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
 
@@ -297,6 +312,66 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 
 	// Task VMs are torn down by vmmd; the app's own serving instance must be
 	// parked so the harness does not leave it running for leakcheck.
+	t.Run("debug_session", func(t *testing.T) {
+		if busyboxErr != nil {
+			t.Skipf("no static busybox for the debug tools: %v", busyboxErr)
+		}
+		script := `echo "uid=$(id -u)"; echo "path=$PATH"; ls /hello-server; cat /app/hello.txt; ` +
+			`echo "self_mounts=$(grep -c ' /.gregale/debug ' /proc/self/mountinfo)"; ` +
+			`echo "pid1_mounts=$(grep -c ' /.gregale/debug ' /proc/1/mountinfo 2>/dev/null || echo unreadable)"; ` +
+			`if touch /.gregale/debug/probe 2>/dev/null; then echo tools=writable; else echo tools=readonly; fi`
+		task := createInteractiveTask(t, h, key, "shell-app", api.CreateAppTaskRequest{
+			Command: []string{api.AppTaskDebugCommand, "sh", "-c", script}, TimeoutSeconds: 300,
+		})
+		session, status := attachInteractiveTask(t, h, key, task, task.Attach.Token, "")
+		if session == nil {
+			t.Fatalf("attach status = %d", status)
+		}
+		defer session.conn.Close()
+		session.send(api.AppTaskAttachStdinClose, nil)
+		var out bytes.Buffer
+		terminal := session.drain(&out)
+		if terminal.Failure != nil && terminal.Failure.Code == "debug_tools_unavailable" {
+			t.Skip("this host's runtime base predates the debug tools")
+		}
+		t.Logf("debug session output:\n%s", out.String())
+		if terminal.ExitCode == nil || *terminal.ExitCode != 0 {
+			t.Fatalf("debug terminal = %s", describeTerminal(terminal))
+		}
+		got := out.String()
+		for _, want := range []string{":/.gregale/debug/bin\n", "/hello-server\n", "self_mounts=1\n", "tools=readonly\n"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("debug output lacks %q", want)
+			}
+		}
+		// The tools are attached only in the session's mount namespace.
+		if strings.Contains(got, "pid1_mounts=") && !strings.Contains(got, "pid1_mounts=0\n") && !strings.Contains(got, "pid1_mounts=unreadable\n") {
+			t.Errorf("guest-init's namespace sees the debug tools")
+		}
+	})
+
+	t.Run("debug_tools_not_in_image", func(t *testing.T) {
+		if busyboxErr != nil {
+			t.Skipf("no static busybox for the debug tools: %v", busyboxErr)
+		}
+		// A plain session runs in the image's own root, where the tools
+		// never exist.
+		task := createInteractiveTask(t, h, key, "shell-app", api.CreateAppTaskRequest{
+			Command: []string{"/.gregale/debug/bin/sh", "-c", "echo leaked"}, TimeoutSeconds: 120,
+		})
+		session, status := attachInteractiveTask(t, h, key, task, task.Attach.Token, "")
+		if session == nil {
+			t.Fatalf("attach status = %d", status)
+		}
+		defer session.conn.Close()
+		session.send(api.AppTaskAttachStdinClose, nil)
+		var out bytes.Buffer
+		terminal := session.drain(&out)
+		if strings.Contains(out.String(), "leaked") || terminal.ExitCode == nil || *terminal.ExitCode != 127 {
+			t.Fatalf("plain session reached the tools: %s output=%q", describeTerminal(terminal), out.String())
+		}
+	})
+
 	appID := mustGetAppID(t, h, key, "shell-app")
 	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/shell-app/park", nil); status != http.StatusNoContent {
 		t.Fatalf("cleanup park: status=%d", status)
@@ -346,4 +421,13 @@ func (w writerTo) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	return len(p), nil
+}
+
+// debugBusyboxPath is the static busybox the debug-tools base carries:
+// FAAS_TEST_DEBUG_BUSYBOX, else the host's /bin/busybox (busybox-static).
+func debugBusyboxPath() string {
+	if path := os.Getenv("FAAS_TEST_DEBUG_BUSYBOX"); path != "" {
+		return path
+	}
+	return "/bin/busybox"
 }

@@ -18,8 +18,14 @@
 #
 # Names are canonical database node names. A node in more than one list takes
 # the strongest. Turning a node back to off is safe: the next vmmd start
-# resumes nothing it did not pause. L3/L4 (idle_ladder_compress) stay off
-# until a metal run on a zswap node.
+# resumes nothing it did not pause.
+#
+# compress (needs on): L3/L4 also compress quiet-paused VMs' cold pages into
+# the zswap pool at 60 s and 180 s of quiet. Under kernel lockdown
+# (ADR-20261107220000, every production host) it goes through memory.reclaim
+# and keeps 50% and 25% of a VM's memory resident (ADR-20261107122928
+# amendment 1); a node needs the zswap role. Keep the list empty until a
+# release with amendment 1 runs on the node and its metal test passed.
 #
 # Step 1 (2026-11-12): observe on every compute node, to size L2 against this
 # week's booking peaks. Step 2: on for fsn-2.faas, then apps, then fsn-3.faas.
@@ -28,8 +34,10 @@ vmmd_idle_ladder_observe_nodes:
   - fsn-3.faas
 vmmd_idle_ladder_on_nodes: []
 vmmd_idle_ladder_apps_nodes: []
+vmmd_idle_ladder_compress_nodes: []
 vmmd_idle_ladder: >-
   {{ 'on' if (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_on_nodes
      else ('observe' if (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_observe_nodes
      else 'off') }}
 vmmd_idle_ladder_apps: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_apps_nodes }}"
+vmmd_idle_ladder_compress: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_compress_nodes }}"

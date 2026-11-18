@@ -44,14 +44,14 @@ that cannot be pooled: `LISTEN` and session advisory locks on the direct DSN
 (`faas_postgres_per_compute_direct_budget`, 5 database daemons ×
 `db.directHubOnMaxConns`, plus three for imaged's two concurrent deployment
 activations (activation lock and ADR-570 traffic guard each) and schedd's five
-prime locks: 18; the edge and the object gateway each add `db.directHubOnMaxConns` where they run).
+prime locks, and two for imaged's parallel image preparation (on by default): 20; the edge and the object gateway each add `db.directHubOnMaxConns` where they run).
 
 | Nodes | Unpooled | Pooled |
 |---|---|---|
 | 2 | 180 conns / 3.9 GB | 250 conns / 5.5 GB |
-| 12 | 640 conns / 14.7 GB | 490 conns / 11.2 GB |
-| 50 | 2,360 conns / 55.0 GB | 1,400 conns / 32.5 GB |
-| 100 | 4,620 conns / 107.9 GB | 2,600 conns / 60.6 GB |
+| 12 | 640 conns / 14.7 GB | 520 conns / 11.9 GB |
+| 50 | 2,360 conns / 55.0 GB | 1,530 conns / 35.6 GB |
+| 100 | 4,620 conns / 107.9 GB | 2,860 conns / 66.7 GB |
 
 The table leaves out the edge and the object gateway.
 

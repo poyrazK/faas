@@ -60,7 +60,7 @@ export class EnvService {
   /**
    * List env vars on an app.
    * Returns every env var key + timestamps on the app. The plaintext
-   * value NEVER appears in the response — guest-init reads the value
+   * value appears only with `?values=true`; guest-init reads it
    * at process start from `/etc/faas/env.json` inside the guest.
    *
    * **scope filter.** The optional `?scope=`
@@ -78,6 +78,7 @@ export class EnvService {
   public static listEnv({
     slug,
     scope,
+    values,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -93,6 +94,10 @@ export class EnvService {
      *
      */
     scope?: string,
+    /**
+     * `true` includes each variable's plaintext `value`. Variables are non-sensitive by contract; sealed secrets are listed separately and never carry a value.
+     */
+    values?: 'true',
   }): CancelablePromise<AppEnvListResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
@@ -102,6 +107,7 @@ export class EnvService {
       },
       query: {
         'scope': scope,
+        'values': values,
       },
       errors: {
         400: `code: env_scope_invalid — ?scope= failed the EnvScopePattern check (empty, too long, or out-of-shape slug). Applies to both env and secrets surfaces.`,

@@ -143,14 +143,21 @@ func TestE2E_ParkWakeCycle_RestoresTheSnapshotItJustWrote(t *testing.T) {
 		t.Fatalf("park instance: %v", err)
 	}
 
+	// With no init snapshot on the node, park recaptures one from a clean boot
+	// rather than the used instance's memory (PR 7364).
 	waitForWake(t, 30*time.Second, func() bool {
 		for _, c := range f.vmmd.SnapshotCalls() {
-			if c.GetInstance() == instance.ID {
+			if c.GetInstance() != instance.ID {
 				return true
 			}
 		}
 		return false
 	}, "park never captured; there was no snapshot to record, so the cycle cannot close")
+	for _, c := range f.vmmd.SnapshotCalls() {
+		if c.GetInstance() == instance.ID {
+			t.Fatal("park captured the used instance's memory; a missing init snapshot must come from a clean boot")
+		}
+	}
 
 	// The handoff. A capture that never becomes a row is worse than no capture
 	// at all: the bytes are on disk, the wake path cannot see them, and the

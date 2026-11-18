@@ -5,8 +5,8 @@ Deploy, diagnose and roll back Gregale apps from Claude Code. The plugin adds:
 - Gregale's hosted MCP server (`https://api.gregale.dev/mcp`). The first time
   Claude Code connects, it opens your browser: sign in to Gregale (or sign
   up), choose what the agent may do and which apps it may use, and connect;
-- `/gregale:deploy`, which deploys the current project, checks its URL and
-  rolls back a broken release with your approval;
+- `/gregale:deploy`, which deploys the current project, checks an application
+  response and rolls back a broken release with your approval;
 - `/gregale:diagnose`, which finds why an app is failing or slow.
 
 ## Install

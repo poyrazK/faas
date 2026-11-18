@@ -218,3 +218,14 @@ front, unchanged; so does any doubt, such as a failed producer lookup.
   running on its node.
 - The "per-deploy scan stamped" log carries `deferred` so the change can be
   read in production.
+
+### Amendment 2026-11-18: an organization's app keeps its scan in front
+
+An organization's app runs under application standards, and each of its
+instances captures the deployment's `scan_status` and `scan_result_hash` at
+admission (ADR-595). A deferred scan that landed during the snapshot prime
+changed those mirrors under the prime instance, and the caller-input check
+failed the deploy with "runtime inputs changed after admission: artifact".
+Production release acceptance hit this on every org-app deploy whose scan
+finished mid-prime. Such an app now scans before the handoff, as before the
+amendment above; apps without an organization keep the deferral.

@@ -53,7 +53,8 @@ using this YAML writer.
 
 ## Run HTTP apps on this machine
 
-From an existing Express, FastAPI, or Go HTTP project:
+To run your app locally, use `gregale dev --local` from an existing
+Express, FastAPI, or Go HTTP project:
 
 ```sh
 gregale dev --local

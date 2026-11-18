@@ -61,6 +61,20 @@ func ResolveCacheBudget(memTotalBytes, fsTotalBytes int64) (maxBytes, minFreeByt
 	return maxBytes, minFreeBytes
 }
 
+// OwnerMinFreeBytes is the free-space floor the cache's eviction owner holds
+// (ADR-20261118003000): on a disk that can host builds, at least one build
+// drive (api.ArtifactCacheBuildFreeBytes), because builderd cannot evict the
+// captures and layers the owner keeps; otherwise minFreeBytes. Only the owner
+// holds it: a process that may not evict captures and layers cannot reach it,
+// and on production-us (rc.352, 2026-11-18) imaged's pre-stage evicted the
+// sidecars it had just written trying to, and failed.
+func OwnerMinFreeBytes(fsTotalBytes, minFreeBytes int64) int64 {
+	if fsTotalBytes >= 2*api.ArtifactCacheBuildFreeBytes && minFreeBytes < api.ArtifactCacheBuildFreeBytes {
+		return api.ArtifactCacheBuildFreeBytes
+	}
+	return minFreeBytes
+}
+
 const (
 	// minCacheMaxBytes must hold at least one scale-plan app layer (2 GiB
 	// logical, far less on disk) plus its snapshot.

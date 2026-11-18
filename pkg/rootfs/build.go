@@ -92,6 +92,10 @@ func (b *Builder) WithSigner(s Signer) *Builder {
 
 // BuildInput is one app-layer build.
 type BuildInput struct {
+	// Phase, when set, is called as each step of Build ends with the step's
+	// name (extract, stage, sbom, mkfs, publish, sign) so the caller can
+	// time them. It must not block.
+	Phase func(name string)
 	// Layers are the above-base OCI layers for main, or all OCI layers for
 	// an independent sidecar, bottom-to-top and gzip-compressed.
 	Layers []io.Reader
@@ -314,6 +318,7 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 			return BuildResult{}, err
 		}
 	}
+	in.phase("extract")
 	guestInitDigest, err := injectGuestInitWithDigest(staging, in.GuestInitPath)
 	if err != nil {
 		return BuildResult{}, err
@@ -363,6 +368,7 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	if _, err := CheckCapForStaging(limits, stats); err != nil {
 		return BuildResult{}, err // *api.Problem naming cap + observed size
 	}
+	in.phase("stage")
 	// The public ephemeral_disk_max_mb contract is the logical capacity of
 	// drive1, including immutable app content and ext4 metadata. Build the
 	// filesystem at that stable plan capacity so a fresh guest has useful
@@ -389,6 +395,7 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		// imaged to populate the column for future builds.
 		_ = sbomErr
 	}
+	in.phase("sbom")
 	// drive1 is mounted at /overlay by guest-init and its /upper directory
 	// is used as overlayfs' writable layer. The ext4 artifact therefore must
 	// carry the assembled app tree under /upper; Linux cannot see drive1's
@@ -548,6 +555,7 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	if err != nil {
 		return 0, ArtifactIdentity{}, err
 	}
+	in.phase("mkfs")
 	// nolint:forbidigo // tmpPath is from os.MkdirTemp at the top of
 	// this function — a daemon-internal scratch file the builder just
 	// wrote via MkfsCommand. Not a customer path.
@@ -561,6 +569,7 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	if err != nil {
 		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
 	}
+	in.phase("publish")
 	// ADR-038: sign the published ext4 so schedd's cold-boot verify
 	// (pkg/cosign.LocalVerifier) can detect tampering. Signing
 	// failure is build-fatal — an unsigned layer cannot be cold-
@@ -572,7 +581,15 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	if err := b.signPublished(ctx, in.StorageKey, identity); err != nil {
 		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
 	}
+	in.phase("sign")
 	return sizeMB, identity, nil
+}
+
+// phase reports the end of a Build step to the caller's Phase hook.
+func (in BuildInput) phase(name string) {
+	if in.Phase != nil {
+		in.Phase(name)
+	}
 }
 
 // digestSigner is a Signer that can sign a layer whose SHA-256 the caller

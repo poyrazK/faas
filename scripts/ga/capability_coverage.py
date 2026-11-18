@@ -34,6 +34,8 @@ RULES = [
     (r"(^|/|-)customer-attention([/-]|$)", "Native customer support"),
     # Offline export tools belong to the existing CLI capability (row 156).
     (r"^export$", "`gregale` CLI"),
+    # Per-agent setup guides document driving the CLI from a coding agent.
+    (r"^(claude-code|codex|cursor|gemini-cli)$", "`gregale` CLI"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck|^mutate$", "TOOLING"),
@@ -49,6 +51,7 @@ RULES = [
     (r"image-run|interactive-run", "Image runs"),
     (r"wake-page", "Browser wake page"),
     (r"session-affinity", "Session affinity"),
+    (r"^/v1/apps/protection$|protection[-_]baseline|app[-_]protection|^production-protection$", "Production protection by default"),
     (r"synthetic", "Synthetic checks"),
     (r"app-cost|cost-trend|costs-overview", "Per-app costs"),
     (r"async-route|execution-mode", "Async routes at the edge"),

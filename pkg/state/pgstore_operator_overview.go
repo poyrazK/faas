@@ -31,6 +31,7 @@ func pgOperatorOverview(ctx context.Context, tx pgx.Tx, now time.Time) (api.ObsO
 	out := api.ObsOverviewResponse{
 		GeneratedAt: now, NodeHealth: []api.ObsOverviewNodeHealth{},
 		RecentFailures1h: []api.ObsOverviewFailureKind{}, TopRateLimitedAccounts24h: []api.ObsOverviewRateLimited{},
+		CodingAgents: []api.ObsCodingAgent{},
 	}
 	q := sqlc.New()
 	at := pgtype.Timestamptz{Time: now, Valid: true}
@@ -53,6 +54,14 @@ func pgOperatorOverview(ctx context.Context, tx pgx.Tx, now time.Time) (api.ObsO
 		WindowStartedAt: cohortSince.Time, AccountsCreated: int(funnel.AccountsCreated), EmailVerified: int(funnel.EmailVerified),
 		WithApp: int(funnel.WithApp), WithLiveDeployment: int(funnel.WithLiveDeployment), WithSuccessfulRequest: int(funnel.WithSuccessfulRequest),
 		SignupToFirstSuccessSamples: int(funnel.WithSuccessfulRequest), SignupToFirstSuccessP50Seconds: funnel.P50Seconds, SignupToFirstSuccessP95Seconds: funnel.P95Seconds,
+	}
+	agents, err := q.OperatorOverviewCodingAgents(ctx, tx, sqlc.OperatorOverviewCodingAgentsParams{AuditSince: auditSince, ObservedAt: at, CohortSince: cohortSince})
+	if err != nil {
+		return out, fmt.Errorf("operator overview coding agents: %w", err)
+	}
+	for _, agent := range agents {
+		out.CodingAgents = append(out.CodingAgents, api.ObsCodingAgent{Agent: agent.Agent, Deploys24h: int(agent.Deploys),
+			NewAccounts14d: int(agent.NewAccounts), NewAccountsServing14d: int(agent.NewAccountsServing), NewAccountsPaid14d: int(agent.NewAccountsPaid)})
 	}
 	nodes, err := q.OperatorOverviewNodes(ctx, tx)
 	if err != nil {

@@ -5835,7 +5835,7 @@ groups:
           and on (job, instance) (builderd_build_slots_in_use{job="builderd"} <= builderd_build_slots_limit{job="builderd"})
           and on (job, instance) (count by (job, instance) (builderd_build_claims_total{job="builderd",source=~"poll|notification",outcome=~"claimed|not_claimed|error|canceled"}) == 8)
           and on (job, instance) (count by (job, instance) (builderd_build_requeues_total{job="builderd",reason=~"no_slot|source_unavailable|context_canceled|lookup_failure",outcome=~"accepted|not_requeued|error|canceled"}) == 16)
-          and on (job, instance) (count by (job, instance) (builderd_build_slot_decisions_total{job="builderd",outcome=~"granted|limit|policy"}) == 3)
+          and on (job, instance) (count by (job, instance) (builderd_build_slot_decisions_total{job="builderd",outcome=~"granted|limit|policy|memory"}) == 4)
           and on (job, instance)
           (((builderd_build_worker_inflight{job="builderd"} == 1)
             and on (job, instance) (builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} > 0)

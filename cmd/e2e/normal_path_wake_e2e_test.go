@@ -394,9 +394,21 @@ func TestE2E_NormalPath_ParkCapturesOnlyWhatIsNotAlreadyDurable(t *testing.T) {
 			case before.State == string(state.StateWarm):
 				// Warm never captures; nothing to assert beyond the release above.
 			case tc.wantCapture:
-				waitForWake(t, 20*time.Second, captured,
-					"a cold-booted RUNNING instance was parked without capturing its memory; "+
-						"nothing was on disk to reuse, so the guest's state is now lost")
+				// With no init snapshot on the node, park recaptures one from a
+				// clean boot instead of the used instance's memory (PR 7364).
+				waitForWake(t, 20*time.Second, func() bool {
+					for _, call := range f.vmmd.SnapshotCalls() {
+						if call.GetInstance() != instance.ID {
+							return true
+						}
+					}
+					return false
+				}, "a cold-booted app was parked with no snapshot on disk and no clean "+
+					"recapture ran, so the next wake pays a cold boot again")
+				if captured() {
+					t.Error("park captured the used instance's memory; a missing init snapshot " +
+						"must come from a clean boot")
+				}
 			default:
 				if captured() {
 					t.Error("park re-captured a snapshot the app was already restored from; " +
