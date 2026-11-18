@@ -1,0 +1,6 @@
+# Agent egress blocklist (ADR-20261117185346 §4). One registrable domain per
+# line; a listed domain and every name below it are refused for every agent
+# VM. Fed by complaints: add the domain with the complaint's ticket in a
+# comment, open a PR, then converge the gateway
+# (make bootstrap-agent-egress-gateway). agentproxyd reloads it without a
+# restart.

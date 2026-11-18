@@ -2058,6 +2058,15 @@ type AppTaskAttachSession struct {
 	CreatedAt         pgtype.Timestamptz
 }
 
+// ADR-20261118070000 service-mesh caller identity of a running app task VM, written by schedd.
+type AppTaskNetwork struct {
+	TaskID     pgtype.UUID
+	NodeID     pgtype.UUID
+	HostIp     netip.Addr
+	LeaseToken pgtype.UUID
+	Active     bool
+}
+
 type AppTcpListener struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID

@@ -207,6 +207,7 @@ type Querier interface {
 	// writer's transaction for every change a wake depends on.
 	AppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	AppSLOForReleaseGate(ctx context.Context, db DBTX, arg AppSLOForReleaseGateParams) (AppSLOForReleaseGateRow, error)
+	AppTaskCallersByHostIP(ctx context.Context, db DBTX, arg AppTaskCallersByHostIPParams) ([]AppTaskCallersByHostIPRow, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
 	AppendMCPAdmissionEvidence(ctx context.Context, db DBTX, arg AppendMCPAdmissionEvidenceParams) (int64, error)
@@ -7126,6 +7127,8 @@ type Querier interface {
 	RecordAppSecretRuntimeReloadApplicationAck(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadApplicationAckParams) (int64, error)
 	RecordAppSecretRuntimeReloadObservation(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadObservationParams) (int64, error)
 	RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadSummaryParams) (int64, error)
+	// ADR-20261118070000: service-mesh caller identity of app task VMs.
+	RecordAppTaskNetwork(ctx context.Context, db DBTX, arg RecordAppTaskNetworkParams) (int64, error)
 	RecordApplicationStandardEgress(ctx context.Context, db DBTX, arg RecordApplicationStandardEgressParams) ([]byte, error)
 	RecordApplicationStandardLogDelivery(ctx context.Context, db DBTX, arg RecordApplicationStandardLogDeliveryParams) ([]byte, error)
 	RecordApplicationStandardLogHealth(ctx context.Context, db DBTX, arg RecordApplicationStandardLogHealthParams) ([]byte, error)
@@ -7742,6 +7745,7 @@ type Querier interface {
 	RetainedReleaseMemberDeploymentForUpdate(ctx context.Context, db DBTX, arg RetainedReleaseMemberDeploymentForUpdateParams) (pgtype.UUID, error)
 	RetainedReleaseTargetUsable(ctx context.Context, db DBTX, arg RetainedReleaseTargetUsableParams) (bool, error)
 	RetireAbortedPromotionCandidates(ctx context.Context, db DBTX, promotionID string) error
+	RetireAppTaskNetwork(ctx context.Context, db DBTX, taskID string) error
 	RetireAutoRollbackDeploymentSiblings(ctx context.Context, db DBTX, arg RetireAutoRollbackDeploymentSiblingsParams) error
 	RetireCheckedRollbackSiblings(ctx context.Context, db DBTX, arg RetireCheckedRollbackSiblingsParams) error
 	RetireCloneCheckpointCaptureSnapshot(ctx context.Context, db DBTX, arg RetireCloneCheckpointCaptureSnapshotParams) (int64, error)

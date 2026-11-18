@@ -1,6 +1,6 @@
 //go:build linux
 
-package gateway
+package origdst
 
 import (
 	"encoding/binary"
@@ -13,12 +13,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// TCPOriginalDestination returns the pre-DNAT destination of an accepted
+// TCP returns the pre-DNAT destination of an accepted
 // connection (ADR-576). The host prerouting chain DNATs a guest's
 // connection to a private service address onto the service TCP proxy;
 // conntrack in this namespace still records the address the guest dialed.
 // The lookup needs no capability, unlike an IP_TRANSPARENT listener.
-func TCPOriginalDestination(conn net.Conn) (netip.AddrPort, error) {
+func TCP(conn net.Conn) (netip.AddrPort, error) {
 	sc, ok := conn.(syscall.Conn)
 	if !ok {
 		return netip.AddrPort{}, errors.New("original destination: connection exposes no socket")
