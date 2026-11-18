@@ -139,11 +139,16 @@ func TestSourceStartPinMetal(t *testing.T) {
 
 			parkCtx, parkCancel := context.WithTimeout(context.Background(), 45*time.Second)
 			defer parkCancel()
-			if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusAccepted {
-				t.Fatalf("park %s: status=%d", slug, status)
-			}
-			if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, mustGetAppID(t, h, key, slug), state.StateParked, 40*time.Second); err != nil {
-				t.Fatalf("park %s: %v", slug, err)
+			// apid answers 204 once the instances have drained; 202 means the
+			// park was only queued.
+			switch body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status {
+			case http.StatusNoContent:
+			case http.StatusAccepted:
+				if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, mustGetAppID(t, h, key, slug), state.StateParked, 40*time.Second); err != nil {
+					t.Fatalf("park %s: %v", slug, err)
+				}
+			default:
+				t.Fatalf("park %s: status=%d body=%s", slug, status, body)
 			}
 		})
 	}
