@@ -181,3 +181,26 @@ the 20 s gate.
   cache export attaches the build's copy to the export VM only when the
   guest reported `buildkit_seeded`; otherwise the copy goes when the build
   ends.
+
+## Production canary finding (2026-11-17)
+
+The first production canary (compute-2, `FAAS_BUILD_BUILDKIT_SEED=1`)
+made a seed, and every build after it ran unseeded: builderd could not open
+the seed (`permission denied`). vmmd stages a builder's writable drives for
+its jail uid by chmodding the source 0600 and chowning it, on the
+assumption that builderd only removes the file afterwards. The seed run's
+drive is the one builderd keeps and reflinks for every build. The metal
+test ran as root, which reads any file, so it passed. The canary was rolled
+back the same day.
+
+- vmmd records a builder's BuildKit seed drive when it stages it and, once
+  the VM has exited and its binds are unmounted, gives the file back to the
+  owner and group of the directory builderd keeps it in (the build export
+  handoff does the same for exports). A failure is logged; it costs only
+  the seed.
+- builderd installs a seed only if it can open it, and drops a ready seed a
+  build cannot open, so the next idle slot makes one. With an older vmmd
+  the seed run therefore fails and backs off instead of installing a seed
+  no build can use.
+- The metal test checks that the installed seed has its directory's owner,
+  which fails without the handoff even as root.

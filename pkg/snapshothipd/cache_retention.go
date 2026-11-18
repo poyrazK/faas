@@ -168,5 +168,11 @@ func (r *Runner) sweepCache(ctx context.Context, now time.Time) {
 			r.log.Info("snapshothipd: node cache swept", "node_id", r.nodeID,
 				"snapshot_objects", captures, "runtime_release_bases", releases, "bytes", bytes)
 		}
+		// The other daemons sharing this cache leave live captures and layers
+		// to the eviction owner, so the owner holds the budget and the
+		// free-space floor here as well as on its own writes.
+		if err := cache.EnforceBudget(); err != nil {
+			r.log.Warn("snapshothipd: node cache budget enforcement failed", "node_id", r.nodeID, "err", err)
+		}
 	}
 }

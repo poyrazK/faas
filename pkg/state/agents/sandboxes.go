@@ -66,6 +66,10 @@ type Sandbox struct {
 	// Browser is a session created with the sandbox browser running
 	// (ADR-20261116182615 §1).
 	Browser bool
+	// EgressAllow and EgressDeny are the web-mode domain policy the session
+	// was admitted under (ADR-20261117091026 §2); empty is none.
+	EgressAllow []string
+	EgressDeny  []string
 }
 
 // SandboxAdmission is a session to admit. QueuedMax is the plan's
@@ -98,6 +102,10 @@ type SandboxAdmission struct {
 	Task *SandboxTask
 	// Ports are exposed with the session (ExposeSandboxPort's rows).
 	Ports []SandboxPort
+	// EgressAllow and EgressDeny are the session's effective web-mode domain
+	// policy (ADR-20261117091026 §2), fixed at admission.
+	EgressAllow []string
+	EgressDeny  []string
 }
 
 // SandboxFilter narrows a session listing. Before pages backwards from a
@@ -149,7 +157,8 @@ func (s *Store) insertSandbox(ctx context.Context, tx pgx.Tx, a SandboxAdmission
 	params := sqlc.InsertSandboxSessionParams{AccountID: a.AccountID, TenantID: optText(a.TenantID),
 		Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
 		ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID),
-		ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID), Browser: a.Browser}
+		ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID), Browser: a.Browser,
+		EgressAllow: optRules(a.EgressAllow), EgressDeny: optRules(a.EgressDeny)}
 	if a.Task != nil {
 		params.TaskKind, params.TaskUrl, params.TaskMaxChars = optText(a.Task.Kind), optText(a.Task.URL), optInt(a.Task.MaxChars)
 	}
@@ -268,7 +277,8 @@ func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 		ExpiresAt: row.ExpiresAt.Time.UTC(), OutcomeCode: row.OutcomeCode.String, OutcomeMessage: row.OutcomeMessage.String,
 		CloseRequestedAt: optTime(row.CloseRequestedAt), LastActivityAt: row.LastActivityAt.Time.UTC(),
 		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(), ClosedAt: optTime(row.ClosedAt),
-		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef, Browser: row.Browser}
+		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef, Browser: row.Browser,
+		EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny}
 	if err := json.Unmarshal(row.Labels, &sb.Labels); err != nil {
 		return Sandbox{}, fmt.Errorf("decode sandbox labels: %w", err)
 	}
@@ -280,4 +290,50 @@ func nonNilLabels(labels map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return labels
+}
+
+// optRules is a policy list as stored: NULL when empty, so a session
+// without a policy reads as one.
+func optRules(rules []string) []string {
+	if len(rules) == 0 {
+		return nil
+	}
+	return rules
+}
+
+// SandboxEgressPolicy is an account's default web-mode domain policy
+// (ADR-20261117091026 §2).
+type SandboxEgressPolicy struct {
+	Allow     []string
+	Deny      []string
+	UpdatedAt time.Time
+}
+
+// SandboxEgressPolicy reads the account's default policy; an account without
+// one has the empty policy.
+func (s *Store) SandboxEgressPolicy(ctx context.Context, accountID string) (SandboxEgressPolicy, error) {
+	row, err := s.q.GetSandboxEgressPolicy(ctx, s.pool, accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SandboxEgressPolicy{Allow: []string{}, Deny: []string{}}, nil
+	}
+	if err != nil {
+		return SandboxEgressPolicy{}, fmt.Errorf("read sandbox egress policy: %w", err)
+	}
+	return SandboxEgressPolicy{Allow: row.AllowRules, Deny: row.DenyRules, UpdatedAt: row.UpdatedAt.Time.UTC()}, nil
+}
+
+// PutSandboxEgressPolicy replaces the account's default policy. Sessions
+// already admitted keep theirs.
+func (s *Store) PutSandboxEgressPolicy(ctx context.Context, accountID string, allow, deny []string) (SandboxEgressPolicy, error) {
+	if allow == nil {
+		allow = []string{}
+	}
+	if deny == nil {
+		deny = []string{}
+	}
+	row, err := s.q.PutSandboxEgressPolicy(ctx, s.pool, sqlc.PutSandboxEgressPolicyParams{AccountID: accountID, AllowRules: allow, DenyRules: deny})
+	if err != nil {
+		return SandboxEgressPolicy{}, fmt.Errorf("put sandbox egress policy: %w", err)
+	}
+	return SandboxEgressPolicy{Allow: row.AllowRules, Deny: row.DenyRules, UpdatedAt: row.UpdatedAt.Time.UTC()}, nil
 }

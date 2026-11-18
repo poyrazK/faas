@@ -1324,6 +1324,15 @@ message SandboxRunStart {
   // task makes the session a sandbox task (ADR-20261116182615 §3); see
   // vmmd's RunSandboxTask.
   SandboxRunTask task = 14;
+  // egress_allow and egress_deny are a web-mode session's domain policy
+  // (ADR-20261117091026 §3): vmmd grants a name only when no deny rule
+  // matches it and allow is empty or an allow rule matches it.
+  repeated string egress_allow = 15;
+  repeated string egress_deny = 16;
+  // web_domain_log asks for the session's domain log (web_domains frames,
+  // ADR-20261117091026 §4). A sender sets it only when it reads them, since
+  // an older reader ends a session on a frame it does not know.
+  bool web_domain_log = 17;
 }
 
 // SandboxRunTask is a sandbox task, as vmmd's RunSandboxTask.
@@ -1406,7 +1415,22 @@ message SandboxRunEvent {
     SandboxRunTaskDone task_done = 10;
     // action_done ends a browser action (ADR-20261117065818 §2).
     SandboxRunActionDone action_done = 11;
+    // web_domains relays vmmd's domain log (ADR-20261117091026 §4).
+    SandboxRunWebDomains web_domains = 12;
   }
+}
+
+message SandboxRunWebDomains {
+  repeated SandboxRunWebDomain domains = 1;
+}
+
+message SandboxRunWebDomain {
+  // domain is the registrable domain of a grant or a budget refusal, or the
+  // name asked for of a policy or platform refusal.
+  string domain = 1;
+  // refused is empty for a grant, else "policy", "budget" or "platform".
+  string refused = 2;
+  int64 at_unix_ms = 3;
 }
 
 // SandboxRunActivity is vmmd's report of the session's calls.
@@ -1524,6 +1548,10 @@ message AgentRunBooted {
   // actions relays vmmd's RunSandboxBooted.actions for a sandbox session
   // (ADR-20261117065818 §2); an agent run leaves it unset.
   bool actions = 3;
+  // egress_policy is set by a vmmd that enforces a session's domain policy
+  // (ADR-20261117091026 §3); agentd closes a session with a policy that
+  // boots without it.
+  bool egress_policy = 4;
 }
 
 message AgentRunOutput {

@@ -210,6 +210,8 @@ func wrapWithCache(parent StorageBackend, kind string) (StorageBackend, error) {
 	}
 	cache.setMaxBytes(maxBytes)
 	cache.SetMinFreeBytes(minFree)
+	ownerMinFree := OwnerMinFreeBytes(fsTotal, minFree)
+	cache.SetOwnerMinFreeBytes(ownerMinFree)
 	if raw := strings.TrimSpace(os.Getenv("FAAS_STORAGE_DRIVE_DELTA")); raw != "" {
 		on, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -223,7 +225,7 @@ func wrapWithCache(parent StorageBackend, kind string) (StorageBackend, error) {
 	// infer it from the machine shape.
 	slog.Default().Info("storage: artifact cache budget resolved",
 		"dir", dir, "max_bytes", maxBytes, "source", source,
-		"min_free_bytes", minFree, "filesystem_bytes", fsTotal)
+		"min_free_bytes", minFree, "owner_min_free_bytes", ownerMinFree, "filesystem_bytes", fsTotal)
 	return cache, nil
 }
 

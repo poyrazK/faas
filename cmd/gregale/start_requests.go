@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -64,7 +65,7 @@ func (r *startRunner) captureDeployment(dep api.DeploymentResponse) {
 func (r *startRunner) suggestedRequestPath() string {
 	// The starter root returns the editable greeting. Existing projects get
 	// the detected/verified health endpoint rather than a likely root 404.
-	if startTemplateAllowed(r.session.Template) {
+	if startTemplateAllowed(r.session.Template) || r.session.Template == templates.PrivateNode {
 		return "/"
 	}
 	if validStartRequestPath(r.session.HealthPath) {
@@ -91,6 +92,9 @@ func (r *startRunner) sendTestRequest(path, expectedGreeting string) int {
 	r.requestFailure.logsAllowed = true
 	var result startRequestResult
 	internal := api.NormalizeAppVisibility(api.AppVisibility(app.Visibility)) == api.AppVisibilityInternal
+	if r.session.Template == templates.PrivateNode && (!internal || app.ProjectID != r.session.ProjectID) {
+		return printErr("Private app access changed", errors.New("restore the original internal project app before checking its response"))
+	}
 	if !internal && !app.RequireAuthn && (app.PublicAuth.Mode == "" || app.PublicAuth.Mode == api.AppPublicAuthModeOpen) {
 		result, err = r.requestPublic(app, path)
 		if err == nil && !result.edgeHealth && result.httpStatus >= 200 && result.httpStatus < 300 && result.servedDeployment == "" {
@@ -247,13 +251,13 @@ func (r *startRunner) renderRequestSuccess(result startRequestResult) {
 
 func (r *startRunner) renderRequestDetails(result startRequestResult, verified bool) {
 	if result.private {
-		label := "Private app"
+		label, target := "Private app", result.appURL
 		if result.internal {
-			label = "Internal app"
+			label, target = "Internal app", r.session.AppSlug
 		} else if result.publicDeploymentCheck {
 			label = "App"
 		}
-		_, _ = fmt.Fprintf(osStdout, "  %-13s %s\n  Deployment    %s\n  Request       GET %s · HTTP %d · %s · owner-authorized check\n", label, startResponseText(result.appURL), result.servedDeployment, result.path, result.httpStatus, result.elapsed.Round(time.Millisecond))
+		_, _ = fmt.Fprintf(osStdout, "  %-13s %s\n  Deployment    %s\n  Request       GET %s · HTTP %d · %s · owner-authorized check\n", label, startResponseText(target), result.servedDeployment, result.path, result.httpStatus, result.elapsed.Round(time.Millisecond))
 		PrintProgress(osStdout, "Public access has not been verified. Account credentials were not forwarded to the app.")
 		if result.internal {
 			PrintProgress(osStdout, "Internal apps have no public endpoint. This check uses your Gregale account.")

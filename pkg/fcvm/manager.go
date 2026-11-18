@@ -765,6 +765,14 @@ type Instance struct {
 	// was granted, which SandboxWebDistinctDomains bounds
 	// (ADR-20261112121456 §4).
 	webDomains map[string]struct{}
+	// webAllow and webDeny are the session's domain policy
+	// (ADR-20261117091026 §3); both empty is none.
+	webAllow, webDeny []string
+	// webLog holds the domains granted or refused since vmmd last drained
+	// them (ADR-20261117091026 §4); webRefusedLogged bounds the refused
+	// ones a session reports.
+	webLog           []SandboxWebDomain
+	webRefusedLogged map[string]bool
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -4104,6 +4112,11 @@ type WakeRequest struct {
 	// public-names resolver). Empty is no network.
 	sandboxID      string
 	sandboxNetwork string
+	// sandboxEgressAllow and sandboxEgressDeny are a web-mode session's
+	// domain policy (ADR-20261117091026 §3), set on the instance before it
+	// boots so no name escapes it.
+	sandboxEgressAllow []string
+	sandboxEgressDeny  []string
 	// sandboxManifest marks a session booted from an image: LayerKey is
 	// a full-rootfs job image, and vmmd stages sandbox.json on its private
 	// drive1 before boot (Lease.SandboxManifest). It holds that file.
@@ -5869,6 +5882,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
 		environmentBranch:      req.environmentBranch,
+		webAllow:               slices.Clone(req.sandboxEgressAllow),
+		webDeny:                slices.Clone(req.sandboxEgressDeny),
 		StaticEgressExcluded:   req.StaticEgressExcluded,
 		PrivateNetworkExcluded: req.privateNetworkExcluded,
 		WakeID:                 wakeID, NodeID: fields.NodeID,

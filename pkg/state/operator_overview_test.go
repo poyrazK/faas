@@ -402,3 +402,59 @@ func TestOperatorOverviewPostgresFailures(t *testing.T) {
 		t.Fatal("closed database returned success")
 	}
 }
+
+// TestOperatorOverviewCodingAgents pins the coding-agent rows on both stores:
+// deploys count distinct deployments in the audit window, new accounts come
+// from the cohort and count under every agent they used, and rows without
+// actor_agent, non-deploy kinds and pre-signup rows are ignored.
+func TestOperatorOverviewCodingAgents(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			f := newOverviewFixture(t, backend)
+			now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+			verified := now.Add(-48 * time.Hour)
+			freeNew := f.account(t, "agent-free", now.Add(-72*time.Hour), &verified, state.AccountActive)
+			paidNew := f.account(t, "agent-paid", now.Add(-48*time.Hour), &verified, state.AccountActive)
+			old := f.account(t, "agent-old", now.Add(-api.ObsOverviewCohortWindow-time.Hour), &verified, state.AccountActive)
+			if f.mem != nil {
+				a := (*f.mem.Accounts())[freeNew.ID]
+				a.Plan = api.PlanFree
+				(*f.mem.Accounts())[freeNew.ID] = a
+			} else if _, err := f.pool.Exec(f.ctx, "UPDATE accounts SET plan='free' WHERE id=$1", freeNew.ID); err != nil {
+				t.Fatal(err)
+			}
+			app, deployment := f.workload(t, "agent-served", freeNew, true)
+			f.request(t, app, deployment, now.Add(-time.Hour), state.StateRunning)
+
+			audit := func(account state.Account, kind string, at time.Time, data string) {
+				t.Helper()
+				id := uuid.MustParse(account.ID)
+				if err := f.store.InsertAuditLog(f.ctx, state.AuditLog{ID: uuid.New(), Kind: kind, AccountID: &id, ReceivedAt: at, Data: []byte(data)}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			audit(freeNew, "deploy.source_ref", now.Add(-48*time.Hour), `{"deployment_id":"d1","actor_agent":"claude-code"}`)
+			audit(freeNew, "app.deployed", now.Add(-time.Hour), `{"deployment_id":"d2","actor_agent":"claude-code"}`)
+			audit(freeNew, "upload.session_committed", now.Add(-3*time.Hour), `{"deployment_id":"d6","actor_agent":"codex"}`)
+			audit(freeNew, "deploy.local_tarball", now.Add(-2*time.Hour), `{"deployment_id":"d5"}`)
+			audit(freeNew, "app.created", now.Add(-2*time.Hour), `{"actor_agent":"gemini-cli"}`)
+			audit(freeNew, "deploy.source_ref", now.Add(-96*time.Hour), `{"deployment_id":"d0","actor_agent":"cursor"}`)
+			audit(paidNew, "upload.session_committed", now.Add(-30*time.Minute), `{"deployment_id":"d3","actor_agent":"codex"}`)
+			audit(paidNew, "deploy.local_tarball", now.Add(-30*time.Minute), `{"deployment_id":"d3","actor_agent":"codex"}`)
+			audit(old, "deploy.local_tarball", now.Add(-2*time.Hour), `{"deployment_id":"d4","actor_agent":"claude-code"}`)
+			audit(old, "deploy.source_ref", now.Add(time.Hour), `{"deployment_id":"d7","actor_agent":"claude-code"}`)
+
+			got, err := f.store.OperatorOverview(f.ctx, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []api.ObsCodingAgent{
+				{Agent: "codex", Deploys24h: 2, NewAccounts14d: 2, NewAccountsServing14d: 1, NewAccountsPaid14d: 1},
+				{Agent: "claude-code", Deploys24h: 2, NewAccounts14d: 1, NewAccountsServing14d: 1, NewAccountsPaid14d: 0},
+			}
+			if !reflect.DeepEqual(got.CodingAgents, want) {
+				t.Fatalf("coding agents =\n%+v\nwant\n%+v", got.CodingAgents, want)
+			}
+		})
+	}
+}

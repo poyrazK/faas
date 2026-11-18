@@ -15,7 +15,7 @@ import (
 // These bound one bridge's in-memory authorization state, not account quotas.
 const maxOAuthEntries = 256
 const maxRefreshHistory = 4096
-const oauthFlowTTL = 5 * time.Minute
+const oauthFlowTTL = api.MCPBrowserAuthorizationTTL
 const oauthCodeTTL = time.Minute
 const oauthAccessTTL = 15 * time.Minute
 const oauthGrantTTL = 8 * time.Hour

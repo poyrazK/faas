@@ -1275,9 +1275,11 @@
         that:
           - (vmmd_idle_ladder | default('off')) in ['off', 'observe', 'on']
           - not (vmmd_idle_ladder_apps | default(false) | bool) or (vmmd_idle_ladder | default('off')) == 'on'
+          - not (vmmd_idle_ladder_compress | default(false) | bool) or (vmmd_idle_ladder | default('off')) == 'on'
         fail_msg: >-
           vmmd_idle_ladder must be off, observe or on, and vmmd_idle_ladder_apps
-          needs vmmd_idle_ladder = on (group_vars/compute_nodes/vmmd_idle_ladder.yml).
+          and vmmd_idle_ladder_compress need vmmd_idle_ladder = on
+          (group_vars/compute_nodes/vmmd_idle_ladder.yml).
 
     - name: Install the idle ladder switches
       ansible.builtin.copy:
@@ -1292,6 +1294,9 @@
           {% endif %}
           {% if vmmd_idle_ladder_apps | default(false) | bool %}
           Environment=FAAS_IDLE_LADDER_APPS=1
+          {% endif %}
+          {% if vmmd_idle_ladder_compress | default(false) | bool %}
+          Environment=FAAS_IDLE_LADDER_COMPRESS=1
           {% endif %}
 
     # Restore speed-ups (group_vars/compute_nodes/vmmd_restore_speedups.yml),
@@ -1730,6 +1735,32 @@
       changed_when: false
       when: (faas_join_rollout_phase | default('full')) == 'activate'
 
+    # --activate-prepared starts above, so it also skipped the first play's
+    # compute-node lookup. The no-drain decision and the drain rescue read it:
+    # without it the adoption check never ran and every current-contract
+    # activation drained the node (rc.354: ~5.6 min per node, every live guest
+    # migrated), and a failed drain could not tell the node had been active
+    # (ADR-20261118060000). A run from the top keeps its earlier lookup.
+    - name: Look up the existing compute node skipped by --activate-prepared
+      delegate_to: "{{ faas_join_db_operator_host | default(inventory_hostname) }}"
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - show
+          - --node
+          - "{{ faas_join_database_node }}"
+          - --break-glass-db
+      register: faas_join_activate_existing_compute_node
+      changed_when: false
+      failed_when: faas_join_activate_existing_compute_node.rc not in [0, 3]
+      when: faas_join_existing_compute_node is not defined
+
+    - name: Use the activation's compute-node lookup
+      ansible.builtin.set_fact:
+        faas_join_existing_compute_node: "{{ faas_join_activate_existing_compute_node }}"
+      when: faas_join_existing_compute_node is not defined
+
     # --activate-prepared starts above, so it skipped the pre-stage check:
     # repeat it here for every mode. Its answer forces the drain, places the
     # deferred pre-stage behind the drain barrier, and guards the rescue's
@@ -1739,6 +1770,13 @@
         path: /opt/faas/current/bin/vmmd
         follow: true
       register: faas_join_serving_vmmd_binary
+
+    # The adoption check reads the active vmmd stat, which --activate-prepared
+    # skipped; this stat reads the same path (ADR-20261118060000).
+    - name: Use the serving vmmd stat when --activate-prepared skipped the earlier one
+      ansible.builtin.set_fact:
+        faas_join_active_vmmd: "{{ faas_join_serving_vmmd_binary }}"
+      when: faas_join_active_vmmd is not defined
 
     - name: Read the serving vmmd process before draining
       ansible.builtin.command:

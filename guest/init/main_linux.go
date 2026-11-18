@@ -91,22 +91,26 @@ func main() {
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
 	}
+	// Nor does a debug session's helper (ADR-20261117070620).
+	if len(os.Args) > 0 && os.Args[0] == appTaskDebugHelperArg0 && os.Getpid() != 1 {
+		os.Exit(runAppTaskDebugHelper(os.Args[1:]))
+	}
 	// Nor does the builder's dependency-cache check, run by the build shell.
 	if os.Getenv(dependencyInputsHelperEnv) == dependencyInputsHelperValue && os.Getpid() != 1 {
 		os.Exit(runDependencyCacheInputs(railpackFrontendRef, os.Args[1:], os.Stdout))
 	}
-	if err := boot(); err != nil {
-		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
-		drainConsole(os.Stderr)
-		os.Exit(1)
-	}
+	// vmmd reads the status (0 when boot returned nil, else 1) from the
+	// kernel's "Attempted to kill init! exitcode=" line.
+	os.Exit(finishBoot(boot(), os.Stderr, func() { drainConsole(os.Stderr) }))
 }
 
 // drainConsole waits until the console has transmitted what guest-init wrote
 // to f (tcdrain). PID 1's exit panics the kernel at once, and the panic dump
 // cut guest-init's reason line short on the serial console: "guest-init: app
 // [    3.600487] Kernel panic - not syncing: Attempted to kill init!" (Hunt 34
-// H34-35). Not a terminal: nothing to wait for.
+// H34-35, and the clean-exit line in the 2026-11-17 eval; see finishBoot).
+// stdout and stderr are the same console, so draining one drains both. Not a
+// terminal: nothing to wait for.
 func drainConsole(f *os.File) {
 	_ = unix.IoctlSetInt(int(f.Fd()), unix.TCSBRK, 1)
 }
@@ -163,6 +167,9 @@ func boot() error {
 		return fmt.Errorf("assemble overlay: %w", err)
 	}
 	guestStage("assemble-overlay")
+	// The runtime base is unreachable after the pivot; a debug session
+	// (ADR-20261117070620) needs its tools, so clone them first.
+	captureAppTaskDebugTools(slog.Default())
 	if err := pivotInto(root); err != nil {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
@@ -182,6 +189,9 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	if mode != modeAppTask {
+		releaseAppTaskDebugTools()
+	}
 	if mode == modeDataRepair {
 		return runDataRepairGuest(slog.Default())
 	}

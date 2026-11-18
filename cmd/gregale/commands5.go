@@ -979,6 +979,7 @@ func cmdAppScale(slug string, args []string) int {
 	if explicit["health-path"] {
 		v := *healthPath
 		req.HealthPath = &v
+		warnRootHealthPath(v)
 	}
 	if explicit["health-path-wakes"] {
 		v := true
@@ -1163,6 +1164,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppsUDP(slug, commandArgs)
 		case subStreamingCap:
 			return cmdAppsStreamingCap(slug, commandArgs)
+		case subProtection:
+			return cmdAppProtection(slug, commandArgs)
 		case subStaticEgressIP:
 			return cmdAppStaticEgressIP(slug, commandArgs)
 		}

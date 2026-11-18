@@ -30,6 +30,16 @@ func (d Deferrer) DeferDelete(ctx context.Context, key string) error {
 	return d.Requests.RequestStorageObjectDeletion(ctx, key, d.Reason)
 }
 
+// DeferRetireGeneration implements storage.GenerationRetireDeferrer
+// (slice 2): the control plane deletes exactly this generation.
+func (d Deferrer) DeferRetireGeneration(ctx context.Context, key string, generation int64) error {
+	r, ok := d.Requests.(state.StorageObjectRetirementRequester)
+	if !ok {
+		return errors.New("objectgc: this store cannot record generation retirements")
+	}
+	return r.RequestStorageObjectRetirement(ctx, key, generation, d.Reason)
+}
+
 const (
 	// DefaultInterval is how often the worker looks for due requests.
 	DefaultInterval = time.Minute
@@ -128,6 +138,19 @@ func (w *Worker) decide(ctx context.Context, d state.StorageObjectDeletion, now 
 		return w.outcome(ctx, d, class, OutcomeRefused, "still referenced after "+MaxReferencedAge.String())
 	case referenced:
 		return w.retry(ctx, d, class, now, "referenced")
+	}
+	if d.Generation > 0 {
+		// An exclusive artifact's retirement: only the acknowledged
+		// generation goes; a replacement under the key is left alone.
+		err := storage.DeleteGeneration(ctx, w.backend, d.StorageKey, d.Generation)
+		switch {
+		case errors.Is(err, storage.ErrArtifactReceiptMismatch):
+			w.log.Warn("objectgc: refused a retirement whose key holds another generation", "key", d.StorageKey, "generation", d.Generation, "requested_by", d.RequestedBy)
+			return w.outcome(ctx, d, class, OutcomeRefused, "the key holds another generation now")
+		case err != nil:
+			return w.retry(ctx, d, class, now, fmt.Sprintf("delete generation: %v", err))
+		}
+		return w.outcome(ctx, d, class, OutcomeDeleted, "")
 	}
 	if err := w.backend.Delete(ctx, d.StorageKey); err != nil && !storage.IsNotFound(err) {
 		return w.retry(ctx, d, class, now, fmt.Sprintf("delete: %v", err))
