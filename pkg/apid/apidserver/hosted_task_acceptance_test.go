@@ -103,9 +103,14 @@ func TestHostedTaskNativeAcceptance(t *testing.T) {
 
 	second := f.prepare(t, session, bridge, "rotation")
 	_, before := f.qualify(t, second)
-	// Rotate the delivered credential using the actual native secret writer.
+	// Record a new ready catalog generation, then deliver it through the native secret writer.
 	rotated := f.webSecret
 	rotated.ManagedCredentialGeneration++
+	rotated.ManagedCredentialRef = "binding:" + uuid.NewString()
+	_, err = f.pool.Exec(t.Context(), `UPDATE managed_postgres_bindings SET credential_generation=$3, credential_ref=$4
+        WHERE account_id=$1 AND id=$2`, f.account.ID, rotated.ManagedPostgresBindingID,
+		rotated.ManagedCredentialGeneration, rotated.ManagedCredentialRef)
+	mustHostedTaskAcceptance(t, err)
 	rotated.Ciphertext = f.seal(t, rotated.Key, strings.Replace(f.webDSN, "binding-fixture-only", "rotated-credential-sentinel", 1))
 	mustHostedTaskAcceptance(t, f.store.PutManagedPostgresSecret(t.Context(), rotated))
 	getHostedTaskTool(t, session, acceptanceGetBindings, map[string]any{"intent_id": second.ID}, &got)
