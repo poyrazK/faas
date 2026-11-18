@@ -494,6 +494,12 @@ const (
 // the method, country, network owner and email domain stay with the account.
 const SignupFactsPersonalRetention = 90 * 24 * time.Hour
 
+// MCPBrowserAuthorizationTTL bounds connection setup, including sign-in, MFA
+// and consent (ADR-20261117173000). It applies to the browser transaction and
+// purpose-bound native approval code and their form tokens, not the final
+// OAuth exchange code.
+const MCPBrowserAuthorizationTTL = time.Hour
+
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
 // extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
 // it was created. A connection unused for a week ends; every one ends within
@@ -11332,6 +11338,13 @@ var (
 	// it. A browser touches many domains per page, so it is above the per-run
 	// fetch limits of ADR-20261027090014 §4.7.
 	SandboxWebDistinctDomains = [4]int{0, 200, 1000, 5000}
+	// SandboxEgressRulesMax bounds each list of a web-mode domain policy
+	// (ADR-20261117091026 §1), an account's default and a session's own.
+	SandboxEgressRulesMax = 100
+	// SandboxEgressRefusedLogMax bounds the refused domains one session's
+	// log keeps (ADR-20261117091026 §4); its granted ones are bounded by
+	// SandboxWebDistinctDomains.
+	SandboxEgressRefusedLogMax = 1000
 	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
 	// command.
 	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}
@@ -18438,6 +18451,83 @@ const (
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
 var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
+
+// Production protection baseline (ADR-20261116120000): the objects apid
+// creates for an enrolled app. The objectives are deliberately loose, to
+// page when something is clearly wrong rather than to define the customer's
+// real objective; customers tighten them by editing the objects.
+const (
+	ProtectionBaselineAvailabilitySLOName       = "availability"
+	ProtectionBaselineLatencySLOName            = "latency"
+	ProtectionBaselineHealthCheckName           = "health"
+	ProtectionBaselineEmailChannelName          = "account-email"
+	ProtectionBaselineAvailabilityBurnAlertName = "availability-burn"
+	ProtectionBaselineLatencyBurnAlertName      = "latency-burn"
+	ProtectionBaselineHealthAlertName           = "health-failing"
+	ProtectionBaselineAvailabilityGateName      = "availability"
+
+	// ProtectionBaselineAvailabilityObjectivePct is the availability SLO.
+	ProtectionBaselineAvailabilityObjectivePct = 99.5
+	// ProtectionBaselineLatencyObjectivePct of requests finish within
+	// ProtectionBaselineLatencyThresholdMS.
+	ProtectionBaselineLatencyObjectivePct = 99.0
+	ProtectionBaselineLatencyThresholdMS  = 1000
+	ProtectionBaselineSLOWindowDays       = 30
+	// ProtectionBaselineHealthCheckIntervalSeconds: hourly, unbilled
+	// (ADR-20261116120000 §3).
+	ProtectionBaselineHealthCheckIntervalSeconds = 3600
+	// ProtectionBaselineBurnRate is the fast-burn alert threshold: a rate
+	// that spends 2% of a 30-day budget in one hour.
+	ProtectionBaselineBurnRate = 14.4
+	// ProtectionBaselineHealthFailures consecutive failed runs fire the
+	// health alert.
+	ProtectionBaselineHealthFailures = 2
+	// ProtectionBaselineBurnWindow is the burn alerts' evaluation window
+	// (docs/slos.md: 14.4 over 1h, with the 6h burn folded in).
+	ProtectionBaselineBurnWindow = "1h"
+	// ProtectionBaselineGateActor is the release gates' created_by.
+	ProtectionBaselineGateActor = "gregale-protection"
+)
+
+// Protection baseline reconciler (ADR-20261116120000 §4): apid sweeps every
+// ProtectionReconcileSweepInterval, leases up to ProtectionReconcileBatch
+// due apps for ProtectionReconcileLease, retries an app with work left after
+// ProtectionReconcileRetry and re-checks a finished one after
+// ProtectionReconcileRecheck.
+const (
+	ProtectionReconcileSweepInterval = 30 * time.Second
+	ProtectionReconcileBatch         = 20
+	ProtectionReconcileLease         = 2 * time.Minute
+	ProtectionReconcileRetry         = 15 * time.Minute
+	ProtectionReconcileRecheck       = 24 * time.Hour
+	// ProtectionHealthProbePoll is how often apid claims due baseline
+	// health checks, at most ProtectionHealthProbeBatch at a time, probing
+	// ProtectionHealthProbeWorkers at once.
+	ProtectionHealthProbePoll    = time.Minute
+	ProtectionHealthProbeBatch   = 20
+	ProtectionHealthProbeWorkers = 4
+	// ProtectionBaselineHealthComparison and Window configure the
+	// health-failing alert (docs/synthetic-checks.md: gte 2; the window is
+	// required but ignored for this metric).
+	ProtectionBaselineHealthComparison = "gte"
+	ProtectionBaselineHealthWindow     = "1h"
+)
+
+// Unbilled probe wakes (ADR-20261116120000 §3). schedd parks an instance a
+// baseline health probe alone woke once ProtectionProbeParkGrace has passed
+// since the probe with nothing in flight and no request later than the
+// probe's end plus ProtectionProbeActivitySlack; it reads wakes from the
+// last ProtectionProbeWakeLookback. meterd leaves [woke_at, probe_done_at +
+// ProtectionProbeUnbilledTail] unbilled: the grace, one 10 s reaper tick and
+// the park itself. Wakes are kept PlatformProbeWakeRetention.
+const (
+	ProtectionProbeParkGrace     = 5 * time.Second
+	ProtectionProbeActivitySlack = 2 * time.Second
+	ProtectionProbeWakeLookback  = 10 * time.Minute
+	ProtectionProbeUnbilledTail  = 30 * time.Second
+	PlatformProbeWakeRetention   = 7 * 24 * time.Hour
+	PlatformProbeWakeDeleteBatch = 1000
+)
 
 // Event substrate benchmark workload (spec Appendix D V12,
 // docs/ops/event-substrate-benchmark.md): disposable-database bench sizes,

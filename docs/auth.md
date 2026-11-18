@@ -102,13 +102,16 @@ accounts are always asked. See [account](account.md#profile-sign-in-and-sessions
 
 A password signup must verify its email address. Until it does, deploying,
 billing changes, creating API keys and organizations, and inviting members
-answer `email_verification_required`. The verification link works only in a
-browser signed in to that account: opened anywhere else, it asks you to sign
-in first and then verifies. (Someone who signed up with your address cannot
-verify their account by getting you to click the link; if you did not create
-the account, use **Forgot password** or a sign-in link instead, which claims
-it.) Send a new 24-hour link
-with `gregale account email verify` or the account page's button. After 30
+answer `email_verification_required`. Open the verification link in the browser
+signed in to that Gregale account, click **Verify email**, and wait for
+**Email verified**. If the browser is signed in to a different account, choose
+**Sign in with the correct account** to return to the confirmation page.
+Then run `gregale login` again if you were authorizing the CLI.
+
+If someone else signed up with your address, use **Forgot password** or
+request a sign-in link to claim the account. Send a new 24-hour verification
+link from the CLI verification prompt, the account page, or with
+`gregale account email verify`. After 30
 days unverified the account keeps its data, but password sign-in and existing
 sessions and keys only reach the account page, logout, deletion, the resend and
 the email change (so an address with a typo can be fixed); opening a

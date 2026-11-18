@@ -4370,6 +4370,8 @@ type Querier interface {
 	// Every enabled check on a live public app, with its app slug and last run
 	// time; the runner decides which are due. The public edge does not serve an
 	// internal app, so its checks wait until it is public (ADR-20261031144636).
+	// A protection-baseline health check is probed by apid, unbilled, not here
+	// (ADR-20261116120000 §3).
 	ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error)
 	ListRunningFlagExperiments(ctx context.Context, db DBTX, arg ListRunningFlagExperimentsParams) ([]ListRunningFlagExperimentsRow, error)
 	// ADR-20261114182830: every runtime release, and whether a compute node must
@@ -7475,7 +7477,8 @@ type Querier interface {
 	RequestSDKCrashCapture(ctx context.Context, db DBTX, arg RequestSDKCrashCaptureParams) (CrashCapture, error)
 	// ADR-20261115180000: object deletion moves to the control plane.
 	// A fresh request, whatever the row held before; the trigger stamps a
-	// per-node login's node.
+	// per-node login's node. generation (slice 2) conditions the delete on one
+	// object generation; NULL deletes whatever the key holds.
 	RequestStorageObjectDeletion(ctx context.Context, db DBTX, arg RequestStorageObjectDeletionParams) error
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.

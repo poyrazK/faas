@@ -15,11 +15,15 @@ const hostedCLIOutputLimit = 1 << 20
 // hostedCLISlots bounds the hosted bridge's concurrent CLI commands.
 var hostedCLISlots = make(chan struct{}, 4)
 
+// hostedCLIStateKey carries a bridge-owned state path for a staged deploy.
+type hostedCLIStateKey struct{}
+
 // HostedCLIRunner runs the gregale CLI at cliPath for one hosted grant
 // (ADR-20261026195952): with that grant's credential, and a fresh empty
 // private home and git configuration, so a command never reads the host's
 // profiles, saved login or a repository's config. The environment is built
-// from nothing but these values. The bridge runs the CLI rather than linking
+// from nothing but these values and a staged deploy's private checkpoint
+// directory, when present. The bridge runs the CLI rather than linking
 // it, so a CLI release changes what the tools run without restarting it.
 func HostedCLIRunner(cliPath, apiBase, uploadDir string) func(token string) LocalCLI {
 	return func(token string) LocalCLI {
@@ -48,6 +52,9 @@ func HostedCLIRunner(cliPath, apiBase, uploadDir string) func(token string) Loca
 				"GIT_CEILING_DIRECTORIES=" + home + ":" + uploadDir,
 				"FAAS_TOKEN=" + token,
 				"FAAS_API=" + apiBase,
+			}
+			if stateDir, ok := ctx.Value(hostedCLIStateKey{}).(string); ok {
+				command.Env = append(command.Env, "XDG_STATE_HOME="+stateDir)
 			}
 			return runHostedCLI(ctx, command, stdin)
 		}

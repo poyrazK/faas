@@ -183,6 +183,8 @@ export type { AppPrivateNetworkAttachment } from './AppPrivateNetworkAttachment.
 export type { AppPrivateNetworkAttachmentRequest } from './AppPrivateNetworkAttachmentRequest.js';
 export type { AppPrivateNetworkAttachmentResponse } from './AppPrivateNetworkAttachmentResponse.js';
 export type { AppPrivateNetworkNodeStatus } from './AppPrivateNetworkNodeStatus.js';
+export type { AppProtectionItemStatus } from './AppProtectionItemStatus.js';
+export type { AppProtectionResponse } from './AppProtectionResponse.js';
 export type { AppPublishEventRequest } from './AppPublishEventRequest.js';
 export type { AppPublishEventResponse } from './AppPublishEventResponse.js';
 export type { AppRegistryCredentialListResponse } from './AppRegistryCredentialListResponse.js';
@@ -3265,6 +3267,7 @@ export type { SessionInfo } from './SessionInfo.js';
 export type { SessionListResponse } from './SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './SessionsRevokeAllResponse.js';
 export type { SetAccountEgressAllowlistExtraRequest } from './SetAccountEgressAllowlistExtraRequest.js';
+export type { SetAppProtectionRequest } from './SetAppProtectionRequest.js';
 export type { SetAppStaticEgressIPRequest } from './SetAppStaticEgressIPRequest.js';
 export type { SetApplicationStandardLocalIntentRequest } from './SetApplicationStandardLocalIntentRequest.js';
 export type { SetBindingReleasePolicyRequest } from './SetBindingReleasePolicyRequest.js';

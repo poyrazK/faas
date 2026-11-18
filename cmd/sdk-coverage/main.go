@@ -359,6 +359,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/sandboxes/{id}/task":                               true,
 	"GET /v1/sandboxes/{id}/actions/{seq}":                      true,
 	"GET /v1/sandboxes/{id}/actions/{seq}/screenshot":           true,
+	"GET /v1/sandboxes/{id}/egress":                             true,
+	"GET /v1/sandbox-egress-policy":                             true,
+	"PUT /v1/sandbox-egress-policy":                             true,
 	"GET /v1/agents":                                            true,
 	"GET /v1/agents/{agent}":                                    true,
 	"DELETE /v1/agents/{agent}":                                 true,
@@ -2008,6 +2011,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/slos/{id}":    "GetSLO",
 	"DELETE /v1/apps/{slug}/slos/{id}": "DeleteSLO",
 	// ADR-748 synthetic checks are named after the resource noun.
+	"GET /v1/apps/{slug}/protection":                 "GetAppProtection",
+	"PUT /v1/apps/{slug}/protection":                 "SetAppProtection",
 	"GET /v1/apps/{slug}/synthetics":                 "ListSyntheticChecks",
 	"POST /v1/apps/{slug}/synthetics":                "CreateSyntheticCheck",
 	"GET /v1/apps/{slug}/synthetics/{id}":            "GetSyntheticCheck",

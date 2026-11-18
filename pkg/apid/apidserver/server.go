@@ -3273,6 +3273,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSLO)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteSLO)))
 	// ADR-748: synthetic HTTP checks.
+	mux.HandleFunc("GET /v1/apps/{slug}/protection", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppProtection)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/protection", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.setAppProtection)))
 	mux.HandleFunc("GET /v1/apps/{slug}/synthetics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listSyntheticChecks)))
 	mux.HandleFunc("POST /v1/apps/{slug}/synthetics", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSyntheticCheck))))
 	mux.HandleFunc("GET /v1/apps/{slug}/synthetics/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSyntheticCheck)))
@@ -3539,6 +3541,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/sandboxes/{id}/task", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).Task)))))
 	mux.HandleFunc("GET /v1/sandboxes/{id}/actions/{seq}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ActionResult)))))
 	mux.HandleFunc("GET /v1/sandboxes/{id}/actions/{seq}/screenshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ActionScreenshot)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/egress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).GetEgress)))))
+	mux.HandleFunc("GET /v1/sandbox-egress-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).GetEgressPolicy)))))
+	mux.HandleFunc("PUT /v1/sandbox-egress-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.sandboxRoute((*sandboxes.Handler).PutEgressPolicy))))))
 	// ADR-20261027090013 §11: exposed ports. Exposing or reading one port
 	// mints its preview token, so both need the write scope.
 	mux.HandleFunc("POST /v1/sandboxes/{id}/ports", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).ExposePort)))))

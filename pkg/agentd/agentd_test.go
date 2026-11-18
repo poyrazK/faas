@@ -68,7 +68,8 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 		"20261110153935627_sandbox_session_images.sql", "20261110153935666_sandbox_templates.sql",
 		"20261110153935695_sandbox_session_templates.sql", "20261110153935721_sandbox_session_usage.sql",
 		"20261117075028100_sandbox_sessions_browser.sql", "20261117075028200_sandbox_tasks.sql",
-		"20261117075028300_sandbox_actions.sql", "20261117084816832_sandbox_action_screenshots.sql"} {
+		"20261117075028300_sandbox_actions.sql", "20261117084816832_sandbox_action_screenshots.sql",
+		"20261117164722100_sandbox_egress_policies.sql", "20261117164722200_sandbox_session_domains.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

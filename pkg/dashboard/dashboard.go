@@ -77,11 +77,14 @@ type AccountView struct {
 	AppCount                   int
 	EmailVerified              bool
 	EmailVerificationGraceEnds string
-	DeployRateUsed             int
-	DeployRateLimit            int
-	DeployRateRemaining        int
-	DeployRateResetsAt         string
-	DeployRateResetsLabel      string
+	// LegalNotice is a pending legal change (pkg/legal ChangeNotice),
+	// shown in the account banner until it takes effect.
+	LegalNotice           string
+	DeployRateUsed        int
+	DeployRateLimit       int
+	DeployRateRemaining   int
+	DeployRateResetsAt    string
+	DeployRateResetsLabel string
 }
 
 // DPAView is the page-specific payload for the dashboard DPA route

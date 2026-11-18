@@ -22,6 +22,9 @@ type StorageObjectDeletion struct {
 	RequestedBy string
 	RequestedAt time.Time
 	Attempts    int
+	// Generation, when positive, is the one object generation to delete
+	// (an exclusive-artifact retirement, slice 2); 0 deletes the key.
+	Generation int64
 }
 
 // Outcomes of a decided object deletion request.
@@ -34,6 +37,12 @@ const (
 // compute side).
 type StorageObjectDeletionRequester interface {
 	RequestStorageObjectDeletion(ctx context.Context, key, reason string) error
+}
+
+// StorageObjectRetirementRequester records generation-conditioned retirements
+// of exclusive artifacts (ADR-20261115180000 slice 2).
+type StorageObjectRetirementRequester interface {
+	RequestStorageObjectRetirement(ctx context.Context, key string, generation int64, reason string) error
 }
 
 // StorageObjectDeletionStore is the control plane's side: due requests,
@@ -99,6 +108,20 @@ func (s *PgStore) RequestStorageObjectDeletion(ctx context.Context, key, reason 
 	return nil
 }
 
+func (s *PgStore) RequestStorageObjectRetirement(ctx context.Context, key string, generation int64, reason string) error {
+	if generation <= 0 {
+		return ErrInvalidArgument
+	}
+	if len(reason) > 200 {
+		reason = reason[:200]
+	}
+	if err := sqlc.New().RequestStorageObjectDeletion(ctx, s.pool, sqlc.RequestStorageObjectDeletionParams{StorageKey: key, Reason: reason,
+		Generation: pgtype.Int8{Int64: generation, Valid: true}}); err != nil {
+		return fmt.Errorf("state: request retirement of %q generation %d: %w", key, generation, mapErr(err))
+	}
+	return nil
+}
+
 func (s *PgStore) DueStorageObjectDeletions(ctx context.Context, now time.Time, limit int) ([]StorageObjectDeletion, error) {
 	rows, err := sqlc.New().DueStorageObjectDeletions(ctx, s.pool, sqlc.DueStorageObjectDeletionsParams{
 		Now: pgtype.Timestamptz{Time: now, Valid: true}, MaxRows: int32(limit)})
@@ -108,7 +131,7 @@ func (s *PgStore) DueStorageObjectDeletions(ctx context.Context, now time.Time, 
 	out := make([]StorageObjectDeletion, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, StorageObjectDeletion{StorageKey: r.StorageKey, Reason: r.Reason, RequestedBy: r.RequestedBy,
-			RequestedAt: r.RequestedAt.Time, Attempts: int(r.Attempts)})
+			RequestedAt: r.RequestedAt.Time, Attempts: int(r.Attempts), Generation: r.Generation.Int64})
 	}
 	return out, nil
 }

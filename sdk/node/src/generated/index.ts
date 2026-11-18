@@ -236,6 +236,8 @@ export type { AppPrivateNetworkAttachment } from './models/AppPrivateNetworkAtta
 export type { AppPrivateNetworkAttachmentRequest } from './models/AppPrivateNetworkAttachmentRequest.js';
 export type { AppPrivateNetworkAttachmentResponse } from './models/AppPrivateNetworkAttachmentResponse.js';
 export type { AppPrivateNetworkNodeStatus } from './models/AppPrivateNetworkNodeStatus.js';
+export type { AppProtectionItemStatus } from './models/AppProtectionItemStatus.js';
+export type { AppProtectionResponse } from './models/AppProtectionResponse.js';
 export type { AppPublishEventRequest } from './models/AppPublishEventRequest.js';
 export type { AppPublishEventResponse } from './models/AppPublishEventResponse.js';
 export type { AppRegistryCredentialListResponse } from './models/AppRegistryCredentialListResponse.js';
@@ -3269,6 +3271,7 @@ export type { SessionListResponse } from './models/SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './models/SessionsRevokeAllResponse.js';
 export type { SetAccountEgressAllowlistExtraRequest } from './models/SetAccountEgressAllowlistExtraRequest.js';
 export type { SetApplicationStandardLocalIntentRequest } from './models/SetApplicationStandardLocalIntentRequest.js';
+export type { SetAppProtectionRequest } from './models/SetAppProtectionRequest.js';
 export type { SetAppStaticEgressIPRequest } from './models/SetAppStaticEgressIPRequest.js';
 export type { SetBindingReleasePolicyRequest } from './models/SetBindingReleasePolicyRequest.js';
 export type { SetCanaryRouteGateRequest } from './models/SetCanaryRouteGateRequest.js';

@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func fullConfig(t *testing.T) Config {
@@ -201,6 +202,26 @@ func TestDPAHasNoPlaceholders(t *testing.T) {
 	for _, re := range []*regexp.Regexp{leftover, blank} {
 		if m := re.Find(raw); m != nil {
 			t.Errorf("docs/DPA.md contains placeholder %q", m)
+		}
+	}
+}
+
+func TestPendingNotice(t *testing.T) {
+	c := Config{EffectiveDate: "2026-12-20", ChangeNotice: " Terms change. "}
+	cases := []struct {
+		name string
+		cfg  Config
+		now  time.Time
+		want string
+	}{
+		{"before the effective date", c, time.Date(2026, 12, 19, 23, 0, 0, 0, time.UTC), "Terms change."},
+		{"on the effective date", c, time.Date(2026, 12, 20, 0, 0, 0, 0, time.UTC), ""},
+		{"no notice", Config{EffectiveDate: "2026-12-20"}, time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), ""},
+		{"bad date", Config{EffectiveDate: "soon", ChangeNotice: "x"}, time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), ""},
+	}
+	for _, tc := range cases {
+		if got := tc.cfg.PendingNotice(tc.now); got != tc.want {
+			t.Errorf("%s: PendingNotice = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

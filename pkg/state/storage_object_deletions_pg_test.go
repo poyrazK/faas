@@ -95,6 +95,42 @@ func TestStorageObjectDeletions(t *testing.T) {
 		t.Fatalf("state = %s, %v; want deleted", st, err)
 	}
 
+	// Slice 2: a node's exclusive retirement carries its generation; a
+	// later plain request for the key replaces it.
+	retired := "snap/" + uuid.NewString() + "/captures/" + uuid.NewString() + "/v2/vmstate"
+	if err := node.RequestStorageObjectRetirement(ctx, retired, 0, "vmmd"); err == nil {
+		t.Fatal("generation 0 accepted")
+	}
+	if err := node.RequestStorageObjectRetirement(ctx, retired, 1731800000123456, "vmmd"); err != nil {
+		t.Fatalf("node retirement: %v", err)
+	}
+	dueGeneration := func() int64 {
+		t.Helper()
+		all, err := store.DueStorageObjectDeletions(ctx, time.Now().Add(11*time.Minute), 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range all {
+			if d.StorageKey == retired {
+				return d.Generation
+			}
+		}
+		t.Fatalf("%s not due", retired)
+		return 0
+	}
+	if g := dueGeneration(); g != 1731800000123456 {
+		t.Fatalf("due generation = %d", g)
+	}
+	if err := owner.QueryRow(ctx, `select requested_by from storage_object_deletions where storage_key = $1`, retired).Scan(&by); err != nil || by != a.Name {
+		t.Fatalf("retirement requested_by = %q, %v", by, err)
+	}
+	if err := node.RequestStorageObjectDeletion(ctx, retired, "imaged"); err != nil {
+		t.Fatal(err)
+	}
+	if g := dueGeneration(); g != 0 {
+		t.Fatalf("plain request kept generation %d", g)
+	}
+
 	// References: a live snapshot keeps its whole capture; a live deployment
 	// keeps its layer; platform and unknown keys are never free.
 	acct, err := store.CreateAccount(ctx, "object-gc@example.com", api.PlanPro)

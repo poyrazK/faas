@@ -16060,11 +16060,10 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        A browser (Accept text/html) gets an HTML page whose button posts the
-        token back, and nothing is consumed, so a mail scanner that prefetches
-        the link cannot use up the token. Any other client consumes the
-        24-hour, single-use token here and the account email is marked
-        verified. No session is created.
+        A browser (Accept text/html) gets confirmation or sign-in guidance.
+        Opening the page does not consume the token. Other GET clients consume
+        the 24-hour, single-use token only with a live session for its account.
+        No session is created.
       parameters:
         - in: query
           name: token
@@ -16073,10 +16072,11 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: The confirmation page, or for a non-browser client the verified-email page.
+          description: Confirmation, sign-in guidance, or the verified-email page.
           content:
             text/html:
               schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '410':
           description: Verification link expired, invalid, or already used.
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -16085,9 +16085,10 @@ paths:
       operationId: confirmEmailVerification
       summary: Confirm an email verification from its confirmation page.
       description: |
-        The confirmation page's form posts the token here. It is consumed and
-        the account email marked verified; the HTML answer asks the customer
-        to sign in again rather than creating a session.
+        The confirmation page posts the token here. A live session for the
+        account is required to consume it and mark the address verified.
+        Other browser sessions receive instructions for signing into the
+        correct account. No session is created.
       requestBody:
         required: true
         content:
@@ -16101,10 +16102,11 @@ paths:
                   description: The verification token from the confirmation page's form.
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: Email verified or sign-in guidance for a browser.
           content:
             text/html:
               schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '410':
           description: The posted token is expired, unknown, or was already used.
@@ -16590,19 +16592,25 @@ paths:
         unverified, at most once a minute and five times an hour. Returns
         `already_verified` when there is nothing to send. Available after the
         30-day verification period ends, when other routes answer
-        `email_verification_required`.
+        `email_verification_required`. The browser forms also accept a
+        form-encoded CSRF token from the signed-in account and render HTML.
       responses:
         '200':
           description: The address is already verified.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EmailVerificationResendResponse' }
+            text/html:
+              schema: { type: string }
         '202':
           description: A link was sent, or held back by the per-account limit.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EmailVerificationResendResponse' }
+            text/html:
+              schema: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/auth/sessions/revoke_all:
@@ -24265,6 +24273,39 @@ paths:
       responses:
         '204':
           description: The SLO was deleted.
+  /v1/apps/{slug}/protection:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: getAppProtection
+      summary: Show the app's production protection
+      description: "Reports whether the app is enrolled in production protection and the state of each protection object: the availability and latency SLOs, the health check, the account email channel, the alert rules and the availability release gate. The health check is run by the platform without billing its requests. An app created before protection was available reports state none."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's production protection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppProtectionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: setAppProtection
+      summary: Turn the app's production protection on or off
+      description: "on enrolls the app, including one created before protection was available, and sets up the protection objects after its next live production deploy. off deletes the protection objects the customer has not changed; changed objects, objects a kept alert rule or release gate still uses, and the account email channel stay."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetAppProtectionRequest' }
+      responses:
+        '200':
+          description: The app's production protection after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppProtectionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/synthetics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25167,7 +25208,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25296,7 +25337,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25389,7 +25430,7 @@ paths:
                 status: 402
                 code: "plan_app_usage_summary_not_allowed"
                 detail: "the free plan does not include the per-app usage summary; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#usage-summary"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -27364,7 +27405,7 @@ paths:
                 status: 402
                 code: "plan_app_errors_not_allowed"
                 detail: "the free plan does not include per-app errors; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#app-errors"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -92540,7 +92581,7 @@ components:
         blocking: { type: boolean, description: This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled. }
         reasons:
           type: array
-          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending] }
+          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending, latest_window_pending] }
         collected_window_seconds: { type: integer, format: int64, minimum: 0 }
         required_from: { type: [string, "null"], format: date-time }
         required_until: { type: [string, "null"], format: date-time }
@@ -104179,6 +104220,54 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean, description: 'false pauses the check; true resumes it.' }
+    SetAppProtectionRequest:
+      description: 'Turns production protection on or off. on creates the baseline; off deletes the baseline objects you have not changed.'
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: ['on', 'off']
+          description: on enrolls the app; off removes the unchanged protection objects.
+    AppProtectionResponse:
+      description: 'An app''s production protection.'
+      type: object
+      required: [state, protected, items]
+      properties:
+        state:
+          type: string
+          enum: ['on', 'off', none]
+          description: 'on when the app is enrolled, off when its owner turned protection off, none when the app was never enrolled.'
+        protected:
+          type: boolean
+          description: 'True when the app is enrolled and every protection object is active.'
+        items:
+          type: array
+          description: 'Every protection object in a fixed order; empty when state is none.'
+          items: { $ref: '#/components/schemas/AppProtectionItemStatus' }
+    AppProtectionItemStatus:
+      description: 'One production protection object.'
+      type: object
+      required: [item, kind, name, state]
+      properties:
+        item:
+          type: string
+          enum: [availability_slo, latency_slo, health_check, email_channel, availability_burn_alert, latency_burn_alert, health_alert, availability_gate]
+        kind:
+          type: string
+          enum: [slo, synthetic_check, notification_channel, alert_rule, release_gate]
+        name: { type: string, example: availability }
+        state:
+          type: string
+          enum: [active, pending, skipped, removed]
+          description: 'active when the object was created and still exists; pending while the app waits for a live production deployment; skipped when it could not be created yet (see reason), retried automatically; removed when you deleted it, in which case it is not created again.'
+        object_id:
+          type: string
+          description: 'The created object''s id. Present when state is active or removed.'
+        reason:
+          type: string
+          enum: [plan, not_released, email_unverified, name_taken, limit_reached, needs_slo, needs_channel, needs_check, probes_unavailable]
+          description: 'Why a skipped object could not be created yet: the plan does not include it, the feature is not available to the account, the account email is not verified, you already have an object with this name, the app or account is at its limit, the SLO, email channel or health check it needs was not created, or free health probes are not running on this platform.'
     SyntheticCheckResponse:
       description: 'One synthetic check definition.'
       type: object

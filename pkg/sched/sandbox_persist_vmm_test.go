@@ -34,6 +34,9 @@ func (v *persistVmmd) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 	// Step 11: the session VM's usage is relayed too.
 	_ = stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Usage{Usage: &vmmdpb.AgentRunUsage{Method: 1, Samples: 2,
 		ExpectedSamples: 2, MeasuredMs: 2000, PausedMs: 900, FrozenMs: 400, BillableMbMs: 290_000, Final: true}}})
+	// ADR-20261117091026 §4: so is the domain log.
+	_ = stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_WebDomains{WebDomains: &vmmdpb.RunSandboxWebDomains{
+		Domains: []*vmmdpb.RunSandboxWebDomain{{Domain: "example.com", AtUnixMs: 7}, {Domain: "evil.example", Refused: "policy", AtUnixMs: 8}}}}})
 	_ = stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_PersistRequested{PersistRequested: &vmmdpb.RunSandboxPersistRequested{RequestId: "r1"}}})
 	msg, err := stream.Recv()
 	if err != nil || msg.GetPersistGrant() == nil {
@@ -70,7 +73,12 @@ func TestVMMClientRelaysAPersist(t *testing.T) {
 	control := make(chan sched.SandboxControl, 4)
 	var done sched.SandboxPersistDone
 	var usage sched.AgentRunUsage
+	var domains []sched.SandboxWebDomain
 	hooks := sched.SandboxHooks{
+		WebDomains: func(_ context.Context, d []sched.SandboxWebDomain) error {
+			domains = append(domains, d...)
+			return nil
+		},
 		Usage: func(_ context.Context, u sched.AgentRunUsage) error {
 			usage = u
 			return nil
@@ -88,12 +96,13 @@ func TestVMMClientRelaysAPersist(t *testing.T) {
 		},
 	}
 	spec := sched.SandboxSpec{Instance: "sandbox-1", SandboxID: "1", WorkspaceKey: "agents/workspaces/a/s.tar.gz", ImageKey: "jobs/j.ext4",
-		StartCmd: "serve", ReadyCmd: "probe", ReadyTimeout: 5 * time.Second}
+		StartCmd: "serve", ReadyCmd: "probe", ReadyTimeout: 5 * time.Second, WebDomainLog: true}
 	if err := sched.NewVMMClient(conn).RunSandbox(ctx, spec, hooks, control); err != nil {
 		t.Fatal(err)
 	}
 	if fake.start.GetWorkspaceKey() != spec.WorkspaceKey || fake.start.GetImageKey() != spec.ImageKey ||
-		fake.start.GetStartCmd() != "serve" || fake.start.GetReadyCmd() != "probe" || fake.start.GetReadyTimeoutMs() != 5000 {
+		fake.start.GetStartCmd() != "serve" || fake.start.GetReadyCmd() != "probe" || fake.start.GetReadyTimeoutMs() != 5000 ||
+		!fake.start.GetWebDomainLog() {
 		t.Fatalf("start %v", fake.start)
 	}
 	if g := fake.grant; g.GetRequestId() != "r1" || g.GetSnapshotId() != "snap" || g.GetStorageKey() != "k" || g.GetMaxBytes() != 9 || g.GetExpiresAtUnixMs() != 3 {
@@ -102,6 +111,10 @@ func TestVMMClientRelaysAPersist(t *testing.T) {
 	if want := (sched.AgentRunUsage{Method: 1, Samples: 2, ExpectedSamples: 2, MeasuredMillis: 2000, PausedMillis: 900, FrozenMillis: 400,
 		BillableMBMillis: 290_000, Final: true}); usage != want {
 		t.Fatalf("usage %+v, want %+v", usage, want)
+	}
+	if len(domains) != 2 || domains[0] != (sched.SandboxWebDomain{Domain: "example.com", At: time.UnixMilli(7)}) ||
+		domains[1].Refused != "policy" {
+		t.Fatalf("domains %+v", domains)
 	}
 	if done.RequestID != "r1" || done.Bytes != 7 || done.SHA256 != "ff" || !fake.recorded.GetRecorded() {
 		t.Fatalf("done %+v, recorded %v", done, fake.recorded)

@@ -114,5 +114,8 @@ func (c *Client) CheckDeploymentResponse(ctx context.Context, slug, deploymentID
 		return out, errors.New("valid app and exact deployment UUID are required")
 	}
 	endpoint := "/v1/apps/" + url.PathEscape(slug) + "/deployments/" + deploymentID + "/response-check"
-	return out, c.do(ctx, http.MethodPost, endpoint, request, &out)
+	// This ephemeral GET has no native replay receipt. An Idempotency-Key
+	// would mark the POST replayable to net/http after a lost connection,
+	// potentially executing the application GET twice.
+	return out, c.doWithoutIdempotencyKey(ctx, http.MethodPost, endpoint, request, &out)
 }

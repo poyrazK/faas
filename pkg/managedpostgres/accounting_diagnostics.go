@@ -100,6 +100,7 @@ func accountingDiagnostic(row AccountingCoverage, policy UsagePolicy, now time.T
 		{usageCoverageIncomplete, "coverage_incomplete"}, {usageObservationStale, "observation_stale"},
 		{usageFinalCorrectionPending, "final_correction_pending"},
 		{usageFinalWindowPending, "final_window_pending"},
+		{usageLatestWindowPending, "latest_window_pending"},
 	} {
 		if issues&reason.issue != 0 {
 			code := reason.code
@@ -112,7 +113,7 @@ func accountingDiagnostic(row AccountingCoverage, policy UsagePolicy, now time.T
 	return d
 }
 
-type usageIssues uint8
+type usageIssues uint16
 
 const (
 	usageIdentityUnknown usageIssues = 1 << iota
@@ -127,11 +128,21 @@ const (
 	// waits for it only when the account lacks headroom under every monthly
 	// ceiling (ADR-20261115190000).
 	usageFinalWindowPending
+	// usageLatestWindowPending: a live resource's only uncollected window is
+	// the most recent closed one, closed within StaleAfter. The provider
+	// publishes an hour's usage some minutes after it ends, so without it
+	// every hour began with the account paused. Like a final window, it
+	// blocks only an account without headroom (ADR-20261115190000
+	// amendment 1).
+	usageLatestWindowPending
+
+	// usageSoftIssues are admitted while the account has headroom.
+	usageSoftIssues = usageFinalWindowPending | usageLatestWindowPending
 )
 
 // hard reports an issue that blocks admission whatever the account's usage.
 func (i usageIssues) hard() bool {
-	return i&^usageFinalWindowPending != 0
+	return i&^usageSoftIssues != 0
 }
 
 // finalWindowOnSchedule reports a deleted resource whose only missing
@@ -180,6 +191,11 @@ func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIs
 		if !p.Terminal && !p.CreatedAt.IsZero() && !p.CreatedAt.Before(now.UTC().Truncate(policy.Window)) {
 			return 0
 		}
+		// Created in the window that just closed: that window is its first
+		// and only one owed (amendment 1).
+		if !p.Terminal && !p.CreatedAt.IsZero() && latestWindowOnSchedule(p.CreatedAt.UTC().Truncate(policy.Window), policy, now) {
+			return usageLatestWindowPending
+		}
 		// A resource created and deleted inside one window owes only that
 		// window (ADR-20261115190000).
 		if p.Terminal && !p.CreatedAt.IsZero() &&
@@ -219,7 +235,19 @@ func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIs
 		issues |= usageObservationStale
 	}
 	if p.CollectedUntil.Before(now.UTC().Truncate(policy.Window)) {
-		issues |= usageCoverageIncomplete
+		if latestWindowOnSchedule(p.CollectedUntil, policy, now) {
+			issues |= usageLatestWindowPending
+		} else {
+			issues |= usageCoverageIncomplete
+		}
 	}
 	return issues
+}
+
+// latestWindowOnSchedule reports a live resource whose coverage, collected up
+// to owedFrom, misses only the most recent closed window, and that window
+// closed no more than StaleAfter ago (ADR-20261115190000 amendment 1).
+func latestWindowOnSchedule(owedFrom time.Time, policy UsagePolicy, now time.Time) bool {
+	latestEnd := now.UTC().Truncate(policy.Window)
+	return !owedFrom.Before(latestEnd.Add(-policy.Window)) && now.Sub(latestEnd) <= policy.StaleAfter
 }

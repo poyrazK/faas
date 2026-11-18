@@ -39,7 +39,7 @@ func recoveryForError(p ToolError) Recovery {
 	case p.Status == http.StatusUnauthorized || p.Status == http.StatusForbidden:
 		action = "request_access"
 	case p.Code == "writes_disabled" || p.Code == "tool_build_access_denied" || p.Code == "job_access_denied" || p.Code == "capability_required" || p.Code == "approval_required" || p.Code == "account_changed" ||
-		p.Code == "app_access_denied" || p.Code == "request_access_denied":
+		p.Code == "app_access_denied" || p.Code == "environment_access_denied" || p.Code == "request_access_denied":
 		action = "request_access"
 	case p.Code == api.CodeEnvBatchRevisionConflict || p.Code == "plan_stale" || p.Code == "plan_expired" ||
 		p.Code == "invalid_plan":
@@ -202,6 +202,20 @@ func (m *management) toolErrorForCall(name string, args any, err error) *mcp.Cal
 	if p.Approval != nil {
 		// A person decides; the plan and its retry advice wait for them.
 		return result
+	}
+	if name == "gregale_verify_application_response" {
+		var target applicationResponseArgs
+		raw, _ := json.Marshal(args)
+		_ = json.Unmarshal(raw, &target)
+		if p.Recovery.Action != "request_access" && p.Code != "invalid_argument" && api.ValidDeploymentResponseCheckID(target.DeploymentID) {
+			// A GET can already have run after cancellation or an ambiguous
+			// failure. Inspect the selected release; never suggest replay.
+			p.Recovery = m.recoveryTool(Recovery{Action: "inspect"}, "gregale_get_deployment", map[string]any{"deployment_id": target.DeploymentID})
+			if p.Status >= 500 || p.Code == "timeout" || p.Code == "cancelled" || p.Code == "request_failed" {
+				p.Outcome = "outcome_unknown"
+			}
+		}
+		return errorResult(p)
 	}
 	if name == "gregale_invoke_tool" || name == "gregale_get_tool_invocation" || name == "gregale_cancel_tool_invocation" {
 		var invocation struct {

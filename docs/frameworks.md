@@ -124,12 +124,17 @@ gregale logs my-api
 ```
 
 A new app can be private: its URL answers `401` until you allow anonymous
-requests. Two settings control it, and a public app needs both:
+requests, and `gregale deploy` says so when it finishes. One command makes it
+public:
 
 ```bash
 gregale app update my-api --no-require-authn
-gregale app update my-api --public-auth open
 ```
+
+It removes the API key requirement, including the bearer check on the public
+URL that paid plans start with. Access you chose yourself (basic auth, an IP
+allowlist or internal only) stays; the command says so, and
+`--public-auth open` removes it.
 
 See [Quickstart](quickstart.md) for testing a private app without making it
 public.
