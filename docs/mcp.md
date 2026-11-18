@@ -54,7 +54,7 @@ still follows connection consent, including separate per-app diagnostic access:
 | Ask me for secrets | `gregale_request_secret`, `gregale_get_secret_request` |
 | Buckets | `gregale_plan_bucket` |
 | PostgreSQL | `gregale_plan_postgres` |
-| Query my databases (read-only) | `gregale_get_postgres_schema`, `gregale_query_postgres` (`postgres:query`), including on a read-only connection |
+| Read my app data | `gregale_get_postgres_schema`, `gregale_query_postgres`, and message and workflow payloads in queue and workflow tools (`data:read`), including on a read-only connection |
 
 Write access also covers running a command in the app
 (`gregale_plan_run_command`) and changing feature flags
@@ -205,7 +205,7 @@ gregale org agent policy set --org acme --agents deny
 ```
 
 The capabilities are `deploy:write`, `secrets:request`, `storage:manage`,
-`postgres:manage`, `env:write`, `usage:read` and `postgres:query`;
+`postgres:manage`, `env:write`, `usage:read` and `data:read`;
 `--capabilities ""` makes agents read-only. An organization
 that never set a policy allows agents with every capability. The policy
 applies to hosted MCP connections and to organization keys with the `agent`
@@ -7158,8 +7158,8 @@ stop; work it already did stays done.
 
 ## Query PostgreSQL
 
-With the "Query my databases (read-only)" consent, or an agent key with the
-`postgres:query` scope, two tools in the `diagnose` toolset read a managed
+With the "Read my app data" consent, or an agent key with the
+`data:read` scope, two tools in the `diagnose` toolset read a managed
 database bound to an app (ADR-20261117215858):
 
 - `gregale_get_postgres_schema` lists the tables and views of one schema
@@ -7177,6 +7177,30 @@ Writes, DDL and several statements are refused with PostgreSQL's error. One
 query per database runs at a time. A query wakes a suspended database and its
 compute is billed as usage. The audit log records a hash of each statement,
 never the SQL or rows. The same API is `POST /v1/postgres/databases/{id}/query`.
+
+## Queues, workflows and monitoring
+
+ADR-20261117232109. Reads (toolset `diagnose`): `gregale_get_queue_state`,
+`gregale_list_dead_letters`, `gregale_list_workflow_runs`,
+`gregale_get_workflow_run`, `gregale_list_workflow_attention`,
+`gregale_list_alerts`, `gregale_get_slo_status`, `gregale_list_synthetics`,
+`gregale_list_incidents` and `gregale_get_incident`. Message bodies and
+workflow inputs and outputs are replaced with their size unless the
+connection has "Read my app data" (`data:read`).
+
+Reviewed changes (toolset `operate`), applied with `gregale_apply_operation`:
+
+- `gregale_plan_dead_letter_replay`: up to 50 named dead letters, or the
+  oldest up to 500. A replay runs the app's code again on old input.
+- `gregale_plan_workflow_recovery`: `retry_step`, `resume` (fails if the run
+  was resumed since the plan), `cancel` or `cancel_queued`.
+- `gregale_plan_monitoring_change`: create an SLO; create, enable or disable a
+  synthetic check; create or update an alert rule that notifies existing
+  channels. Agents cannot add webhooks or alert actions, and cannot delete.
+
+`gregale_acknowledge_incident` and `gregale_add_incident_note` act at once.
+Replays and workflow recovery by an agent connection ask a person first
+(workflow run actions in every environment).
 
 ## Watch one rollout
 

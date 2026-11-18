@@ -101,15 +101,17 @@ Execution, all enforced in apid and the provider, not the MCP bridge:
   length of the SQL, row count and outcome. The SQL text and rows are not
   logged.
 
-Scope: new `postgres:query` (with `admin`). It is separate from
+Scope: new `data:read` (with `admin`). It is separate from
 `postgres:read`, which reads database metadata only: row data is a
 different kind of access. Added to the key scope vocabulary (migration
 `api_keys_scopes_vocab_v5_chk`), the org agent policy capabilities, and the
-connect page as "Query my databases (read-only)". App-bound deploy tokens
+connect page as "Query my databases (read-only)". Amended by ADR-20261117232109:
+the scope is `data:read`, "Read my app data", and also covers message and
+workflow payloads. App-bound deploy tokens
 cannot carry it.
 
 Tools (toolset `diagnose`, listed only for connections with
-`postgres:query`). Like `gregale_list_databases`, they name an app, and the
+`data:read`). Like `gregale_list_databases`, they name an app, and the
 database (ID or name) must be bound to it in the selected scope, so app
 consent bounds which databases an agent reads:
 
@@ -164,7 +166,7 @@ fallback its own code chose. Reviving a killed flag is a `PUT` and asks.
 - Agent keys that ran `gregale app exec` or changed flags with the CLI on
   production now ask a person first. `--approvals none` keys keep the old
   behavior unless their organization's floor says otherwise.
-- `postgres:query` is a new consent. Existing connections do not have it;
+- `data:read` is a new consent. Existing connections do not have it;
   the person reconnects or mints a key to grant it.
 - The query endpoint is the first API that returns customer row data to an
   API key. Its scope, audit and per-database concurrency limit are the

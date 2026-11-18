@@ -153,7 +153,7 @@ export class ManagedPostgresService {
   }
   /**
    * Run one read-only SQL statement.
-   * Requires the postgres:query scope (or admin) and MFA.
+   * Requires the data:read scope (or admin) and MFA.
    * Runs one statement as the database's agent
    * query login, a read-only login that reads the public schema, inside
    * a READ ONLY transaction with a 5 s statement timeout and a 1 s lock
@@ -166,7 +166,7 @@ export class ManagedPostgresService {
    * no-store.
    *
    * @returns ManagedPostgresQueryResponse The rows read.
-   * @returns Problem Missing sign-in, postgres:query scope or MFA, a database this account does not own, an invalid request, managed databases not configured, or the rate limit.
+   * @returns Problem Missing sign-in, data:read scope or MFA, a database this account does not own, an invalid request, managed databases not configured, or the rate limit.
    * @throws ApiError
    */
   public static queryManagedPostgresDatabase({

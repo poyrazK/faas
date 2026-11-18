@@ -80,7 +80,7 @@ def sync_detailed(
 ) -> Response[ManagedPostgresQueryResponse | Problem]:
     """Run one read-only SQL statement.
 
-     Requires the postgres:query scope (or admin) and MFA.
+     Requires the data:read scope (or admin) and MFA.
     Runs one statement as the database's agent
     query login, a read-only login that reads the public schema, inside
     a READ ONLY transaction with a 5 s statement timeout and a 1 s lock
@@ -124,7 +124,7 @@ def sync(
 ) -> ManagedPostgresQueryResponse | Problem | None:
     """Run one read-only SQL statement.
 
-     Requires the postgres:query scope (or admin) and MFA.
+     Requires the data:read scope (or admin) and MFA.
     Runs one statement as the database's agent
     query login, a read-only login that reads the public schema, inside
     a READ ONLY transaction with a 5 s statement timeout and a 1 s lock
@@ -163,7 +163,7 @@ async def asyncio_detailed(
 ) -> Response[ManagedPostgresQueryResponse | Problem]:
     """Run one read-only SQL statement.
 
-     Requires the postgres:query scope (or admin) and MFA.
+     Requires the data:read scope (or admin) and MFA.
     Runs one statement as the database's agent
     query login, a read-only login that reads the public schema, inside
     a READ ONLY transaction with a 5 s statement timeout and a 1 s lock
@@ -205,7 +205,7 @@ async def asyncio(
 ) -> ManagedPostgresQueryResponse | Problem | None:
     """Run one read-only SQL statement.
 
-     Requires the postgres:query scope (or admin) and MFA.
+     Requires the data:read scope (or admin) and MFA.
     Runs one statement as the database's agent
     query login, a read-only login that reads the public schema, inside
     a READ ONLY transaction with a 5 s statement timeout and a 1 s lock

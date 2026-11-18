@@ -1,6 +1,6 @@
--- filename: 20261117192513969_api_key_postgres_query_scope.sql
+-- filename: 20261117192513969_api_key_data_read_scope.sql
 -- migration-compat: expand
--- ADR-20261117215858: postgres:query runs read-only SQL on managed databases.
+-- ADR-20261117215858: data:read reads customer data: database rows, message bodies, workflow payloads.
 -- Keep the database check aligned with api.validScopes. The widened check
 -- replaces api_keys_scopes_vocab_v4_chk online under a new name,
 -- api_keys_scopes_vocab_v5_chk: added NOT VALID, validated, then the old one
@@ -20,7 +20,7 @@ DO $$ BEGIN
         'upstreams:write', 'metrics:write', 'delayed_tasks:read',
         'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume',
         'storage:manage', 'storage:read', 'storage:write', 'postgres:manage',
-        'postgres:read', 'postgres:query', 'github:manage', 'project_environments:read',
+        'postgres:read', 'data:read', 'github:manage', 'project_environments:read',
         'project_environments:qualify', 'runs:read', 'runs:write', 'agent'
     ]::text[] AND cardinality(scopes) > 0
   ) NOT VALID;
@@ -38,8 +38,8 @@ ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS api_keys_scopes_vocab_v4_chk;
 SET lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
- IF EXISTS (SELECT 1 FROM api_keys WHERE scopes && ARRAY['postgres:query']::text[]) THEN
-  RAISE EXCEPTION 'revoke postgres:query API keys before rolling back this migration';
+ IF EXISTS (SELECT 1 FROM api_keys WHERE scopes && ARRAY['data:read']::text[]) THEN
+  RAISE EXCEPTION 'revoke data:read API keys before rolling back this migration';
  END IF;
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'api_keys'::regclass AND conname = 'api_keys_scopes_vocab_v4_chk') THEN
   ALTER TABLE api_keys ADD CONSTRAINT api_keys_scopes_vocab_v4_chk CHECK (

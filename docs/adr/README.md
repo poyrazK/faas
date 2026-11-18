@@ -2485,5 +2485,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261117020000 · Observed delayed-task dispatch outcomes](20261117020000-observed-delayed-task-dispatch-outcomes.md)
 - [ADR-20261117070839: Owner review of retained hosted Task source](20261117070839-hosted-task-source-owner-review.md) — fixed-expiry source review decisions, separate from credential and execution authority.
-- [ADR-20261117215858: Agents run commands, query PostgreSQL and change feature flags](20261117215858-mcp-commands-postgres-queries-flag-changes.md) — MCP run-command plan/apply, read-only `postgres:query`, flag plan/apply with an unapproved kill.
+- [ADR-20261117215858: Agents run commands, query PostgreSQL and change feature flags](20261117215858-mcp-commands-postgres-queries-flag-changes.md) — MCP run-command plan/apply, read-only `data:read`, flag plan/apply with an unapproved kill.
 - [ADR-20261117173000: One bounded hour for MCP browser authorization](20261117173000-mcp-browser-authorization-window.md) — shared native-code and browser setup window for MFA and consent; final OAuth codes remain single-use and expire after one minute.
+- [ADR-20261117232109: Agents read queues, recover workflows and manage monitoring](20261117232109-mcp-queues-workflows-monitoring.md) — DLQ replay and workflow recovery plans, monitoring changes, incident notes; `postgres:query` becomes `data:read`.

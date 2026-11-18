@@ -18,11 +18,11 @@ var consentCapabilities = []struct{ scope, description string }{
 	{api.ScopeSecretsRequest, "ask you to enter secrets on a Gregale page; it never sees their values"},
 	{api.ScopeStorageManage, "create object storage buckets and bind them to apps"},
 	{api.ScopeManagedPostgresManage, "create managed PostgreSQL databases and bind them to apps (billed)"},
-	{api.ScopeManagedPostgresQuery, "run read-only SQL on your managed PostgreSQL databases and see the rows"},
+	{api.ScopeDataRead, "read your app data: rows of managed PostgreSQL databases (read-only SQL), queued and dead-lettered message bodies, and workflow inputs and outputs"},
 }
 
 // readCapabilities may accompany a read-only connection.
-var readCapabilities = []string{api.ScopeUsageRead, api.ScopeManagedPostgresQuery}
+var readCapabilities = []string{api.ScopeUsageRead, api.ScopeDataRead}
 
 // chosenCapabilities validates the capability checkboxes: known scopes,
 // once each; usage reads may also accompany a read-only connection.

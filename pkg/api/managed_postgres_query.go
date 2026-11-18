@@ -39,7 +39,7 @@ const (
 )
 
 // QueryManagedPostgresDatabase runs one read-only statement as the
-// database's agent query login. It needs the postgres:query scope.
+// database's agent query login. It needs the data:read scope.
 func (c *Client) QueryManagedPostgresDatabase(ctx context.Context, id string, req ManagedPostgresQueryRequest) (ManagedPostgresQueryResponse, error) {
 	var out ManagedPostgresQueryResponse
 	err := c.do(ctx, http.MethodPost, "/v1/postgres/databases/"+url.PathEscape(id)+"/query", req, &out)

@@ -3,6 +3,7 @@ from typing import Literal
 APIKeyResponseScopesItem = Literal[
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",
@@ -12,7 +13,6 @@ APIKeyResponseScopesItem = Literal[
     "github:manage",
     "metrics:write",
     "postgres:manage",
-    "postgres:query",
     "postgres:read",
     "project_environments:qualify",
     "project_environments:read",
@@ -34,6 +34,7 @@ APIKeyResponseScopesItem = Literal[
 API_KEY_RESPONSE_SCOPES_ITEM_VALUES: set[APIKeyResponseScopesItem] = {
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",
@@ -43,7 +44,6 @@ API_KEY_RESPONSE_SCOPES_ITEM_VALUES: set[APIKeyResponseScopesItem] = {
     "github:manage",
     "metrics:write",
     "postgres:manage",
-    "postgres:query",
     "postgres:read",
     "project_environments:qualify",
     "project_environments:read",

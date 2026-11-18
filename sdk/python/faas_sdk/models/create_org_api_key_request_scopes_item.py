@@ -3,6 +3,7 @@ from typing import Literal
 CreateOrgAPIKeyRequestScopesItem = Literal[
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",
@@ -12,7 +13,6 @@ CreateOrgAPIKeyRequestScopesItem = Literal[
     "github:manage",
     "metrics:write",
     "postgres:manage",
-    "postgres:query",
     "postgres:read",
     "project_environments:qualify",
     "project_environments:read",
@@ -34,6 +34,7 @@ CreateOrgAPIKeyRequestScopesItem = Literal[
 CREATE_ORG_API_KEY_REQUEST_SCOPES_ITEM_VALUES: set[CreateOrgAPIKeyRequestScopesItem] = {
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",
@@ -43,7 +44,6 @@ CREATE_ORG_API_KEY_REQUEST_SCOPES_ITEM_VALUES: set[CreateOrgAPIKeyRequestScopesI
     "github:manage",
     "metrics:write",
     "postgres:manage",
-    "postgres:query",
     "postgres:read",
     "project_environments:qualify",
     "project_environments:read",

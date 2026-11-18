@@ -63,11 +63,11 @@ func (f *queryFixture) serve(w http.ResponseWriter, r *http.Request) {
 func TestQueryPostgresNeedsConsentAndABoundDatabase(t *testing.T) {
 	m, _ := newQueryFixture(t, nil)
 	if m.toolNames["gregale_query_postgres"] {
-		t.Fatal("query tool listed without postgres:query")
+		t.Fatal("query tool listed without data:read")
 	}
-	m, f := newQueryFixture(t, []string{api.ScopeManagedPostgresQuery})
+	m, f := newQueryFixture(t, []string{api.ScopeDataRead})
 	if !m.toolNames["gregale_query_postgres"] || !m.toolNames["gregale_get_postgres_schema"] {
-		t.Fatal("query tools missing with postgres:query")
+		t.Fatal("query tools missing with data:read")
 	}
 	out, err := m.queryPostgres(t.Context(), postgresQueryArgs{App: "alpha", Database: "orders", SQL: "select id from orders", MaxRows: 5})
 	if err != nil {
@@ -85,7 +85,7 @@ func TestQueryPostgresNeedsConsentAndABoundDatabase(t *testing.T) {
 }
 
 func TestPostgresSchemaGroupsColumnsAndIndexes(t *testing.T) {
-	m, _ := newQueryFixture(t, []string{api.ScopeManagedPostgresQuery})
+	m, _ := newQueryFixture(t, []string{api.ScopeDataRead})
 	out, err := m.getPostgresSchema(t.Context(), postgresSchemaArgs{App: "alpha", Database: "db-1"})
 	if err != nil {
 		t.Fatal(err)

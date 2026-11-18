@@ -37,7 +37,7 @@ type postgresSchemaArgs struct {
 var schemaName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
 func registerPostgresQueries(s *mcp.Server, m *management) {
-	if !m.hasCapability(api.ScopeManagedPostgresQuery) {
+	if !m.hasCapability(api.ScopeDataRead) {
 		return
 	}
 	register(s, m, "gregale_get_postgres_schema", "List the tables and views of one schema (default public) of a database bound to the app: columns with types, NOT NULL and primary keys, and indexes. Read-only; wakes a suspended database (billed as usage).", m.getPostgresSchema)
