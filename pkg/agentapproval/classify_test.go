@@ -42,6 +42,11 @@ func TestClassify(t *testing.T) {
 		{"POST /v1/apps/{slug}/dlq:replay_all", api.AgentApprovalProduction, TargetApp},
 		{"POST /v1/workflows/runs/{id}/steps/{step}/retry", api.AgentApprovalProduction, TargetNone},
 		{"POST /v1/workflows/runs/{id}/resume", api.AgentApprovalProduction, TargetNone},
+		// ADR-20261118160000: subscription pauses, event recoveries, consumer spend caps.
+		{"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/apps/{slug}/event-recoveries", api.AgentApprovalProduction, TargetApp},
+		{"PUT /v1/apps/{slug}/consumers/{consumer_id}/spend-cap", api.AgentApprovalBilling, TargetNone},
+		{"PUT /v1/billing/budgets/{id}", api.AgentApprovalBilling, TargetNone},
 		// Deploy review 2026-11-10 (D3): project deploys, promotions,
 		// release sets and GitOps sources, in their ServeMux spelling.
 		// Apps/projects review 2026-11-10 (P10): production configuration

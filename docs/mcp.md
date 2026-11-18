@@ -7268,6 +7268,29 @@ ADR-20261118140000.
   `gregale_run_workflow_tests`, which runs a saved workflow's test cases (mocked
   simulations) against its current draft.
 
+## Events, audit trail, budgets and API consumers
+
+ADR-20261118160000.
+
+- Events (toolset `diagnose`): `gregale_list_event_subscriptions`,
+  `gregale_get_event_subscription_health`, `gregale_list_event_deliveries`
+  and `gregale_list_event_recoveries`. `gregale_plan_event_change` (toolset
+  `operate`) reviews pausing or resuming a subscription, recovering matched
+  events (the plan shows how many) or cancelling a recovery. On a production
+  app, pauses and recoveries ask a person first.
+- Audit (toolset `diagnose`): `gregale_list_audit_events` reads the account
+  audit log, or one app's events. A connection limited to some apps must name
+  an app.
+- Spend (toolset `operate`, needs "Read usage and billing"):
+  `gregale_get_spend_forecast`, `gregale_list_budgets`,
+  `gregale_plan_budget_change` and `gregale_apply_budget_change`. Agents create
+  and update only budgets that notify; enforcing budgets stay with people.
+  Every budget write asks a person first.
+- API consumers (toolset `operate`): `gregale_list_api_consumers`,
+  `gregale_get_api_consumer` and `gregale_plan_api_consumer_change` (create,
+  revoke, spend cap, plan). Keys are never shown or issued. Revoking, plans
+  and spend caps ask a person first.
+
 ## Watch one rollout
 
 `gregale_watch_rollout` accepts `app`, `deployment_id`, optional `project` and

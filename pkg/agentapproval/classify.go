@@ -162,6 +162,11 @@ var production = map[string]Target{
 	"POST /v1/workflows/runs/{}/resume":             TargetNone,
 	"POST /v1/workflows/runs/{}/steps/{}/retry":     TargetNone,
 
+	// Pausing a subscription stops event processing, and a recovery
+	// replays matched events through the app's code (ADR-20261118160000).
+	"POST /v1/apps/{}/event-subscriptions/{}/delivery-control/pause": TargetApp,
+	"POST /v1/apps/{}/event-recoveries":                              TargetApp,
+
 	// Flag publishes change what an environment's code does at its next
 	// request (ADR-20261117215858 §3). The kill route stays ungated: it
 	// only makes the app serve the fallback its own code chose.
@@ -201,6 +206,8 @@ var billing = map[string]bool{
 	"POST /v1/account/platform-tenants/{}/plan-assignments": true,
 	"POST /v1/apps/{}/consumers/{}/plan-assignments":        true,
 	"PUT /v1/apps/{}/consumer-billing-policy":               true,
+	// A consumer spend cap is a spending setting (ADR-20261118160000).
+	"PUT /v1/apps/{}/consumers/{}/spend-cap": true,
 }
 
 var billingPath = regexp.MustCompile(`(^|/)(billing|consumer-billing)(/|$)|/billing-[a-z-]+(/|$)|^/v1/billing/`)
