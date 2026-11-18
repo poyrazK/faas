@@ -118,12 +118,19 @@ func TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown(t *testing.T) {
 			assertHeld := func(e *sched.Engine) {
 				fresh, err := s.InstanceByID(ctx, i.ID)
 				mustSchedulerTeardown(t, err)
+				// The instance books its size's CPU (ADR-20261109172421), not
+				// the default ceiling: a 512 MB app holds 500 millicores.
+				wantCPU := sched.AppCPUBookingMillicores(app)
 				if fresh.State != string(initial) || !e.Ledger().ResidentFor(i.ID) ||
 					e.Ledger().ResidentRAMForNode(i.NodeID) != app.RAMMB+api.PerVMOverheadMB ||
 					e.Ledger().Concurrency(app.ID) != 1 || e.Ledger().ConcurrencyForDeployment(app.ID, dep.ID) != 1 ||
 					e.Ledger().UsedVCPUForNode(i.NodeID) != api.SizeVCPUs(app.RAMMB) ||
-					e.Ledger().UsedCPUMillicoresForNode(i.NodeID) != api.DefaultAppCPUMillicores {
-					t.Fatal("unconfirmed stop or scheduler restart lost resident accounting")
+					e.Ledger().UsedCPUMillicoresForNode(i.NodeID) != wantCPU {
+					t.Fatalf("unconfirmed stop or scheduler restart lost resident accounting: state=%s resident=%v ram=%d concurrency=%d/%d vcpu=%d cpu=%d (want %s, true, %d, 1/1, %d, %d)",
+						fresh.State, e.Ledger().ResidentFor(i.ID), e.Ledger().ResidentRAMForNode(i.NodeID),
+						e.Ledger().Concurrency(app.ID), e.Ledger().ConcurrencyForDeployment(app.ID, dep.ID),
+						e.Ledger().UsedVCPUForNode(i.NodeID), e.Ledger().UsedCPUMillicoresForNode(i.NodeID),
+						initial, app.RAMMB+api.PerVMOverheadMB, api.SizeVCPUs(app.RAMMB), wantCPU)
 				}
 				if err := e.Ledger().Admit(sched.Request{Instance: "replacement", AppID: app.ID, Plan: api.PlanPro,
 					RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB), MaxConcurrency: app.MaxConcurrency, NodeID: i.NodeID}); err == nil {
