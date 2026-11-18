@@ -117,5 +117,81 @@ if [[ "$validation_status" -ne 42 ]]; then
 fi
 grep -Fqx "manifest validate --file $OUT_A" "$VALIDATION_MARKER"
 
+# --- The release template pointer (deploy/manifest/production/release-template).
+RESOLVER="$REPO_ROOT/scripts/release-template.sh"
+POINTED=$(bash "$RESOLVER")
+[[ "$(dirname "$POINTED")" == "$REPO_ROOT/deploy/manifest/production" && -f "$POINTED" ]] || {
+  echo "release-template resolved outside the production directory: $POINTED" >&2
+  exit 1
+}
+OUT_DEFAULT="$TMP_DIR/production-manifest-default.yaml"
+OUT_POINTED="$TMP_DIR/production-manifest-pointed.yaml"
+bash "$SCRIPT" --git-sha "$SHA" --runtime-bases-env "$RUNTIME_BASES_ENV" --output "$OUT_DEFAULT" >/dev/null
+bash "$SCRIPT" --template "$POINTED" --git-sha "$SHA" --runtime-bases-env "$RUNTIME_BASES_ENV" --output "$OUT_POINTED" >/dev/null
+cmp -s "$OUT_DEFAULT" "$OUT_POINTED" || { echo "materializer default ignored the release-template pointer" >&2; exit 1; }
+
+POINTER_DIR="$TMP_DIR/pointer"
+mkdir -p "$POINTER_DIR"
+cp "$TEMPLATE" "$POINTER_DIR/next-live.template.yaml"
+printf '# comment\nnext-live.template.yaml\n' >"$POINTER_DIR/release-template"
+[[ "$(bash "$RESOLVER" "$POINTER_DIR/release-template")" == "$(cd "$POINTER_DIR" && pwd)/next-live.template.yaml" ]] || {
+  echo "release-template did not resolve beside the pointer" >&2
+  exit 1
+}
+for bad in '../gcp-live.template.yaml' '/etc/passwd' 'missing.template.yaml' 'notes.txt' $'a.template.yaml\nb.template.yaml' ''; do
+  printf '%s\n' "$bad" >"$POINTER_DIR/release-template"
+  if bash "$RESOLVER" "$POINTER_DIR/release-template" >/dev/null 2>&1; then
+    echo "release-template accepted pointer content: $bad" >&2
+    exit 1
+  fi
+done
+
+# --- Credentials never reach a published manifest. Fake values are built
+# at runtime so no credential-shaped literal sits in the repository.
+GUARD="$REPO_ROOT/scripts/check-manifest-credentials.sh"
+for template in "$REPO_ROOT"/deploy/manifest/production/*.template.yaml; do
+  bash "$GUARD" "$template" || { echo "checked-in template carries a credential: $template" >&2; exit 1; }
+done
+fakes=(
+  "    access_key_id: AKIA""IOSFODNN7EXAMPLE"
+  "  note: gh""p_$(printf 'a%.0s' {1..36})"
+  "-----BEGIN ""OPENSSH PRIVATE KEY-----"
+  "  recipient: AGE-SECRET-KEY-1""$(printf 'Q%.0s' {1..58})"
+  "  dsn: postgres://faas:hunter""2@db.example:5432/faas"
+  "    secret_access_key: wJalrXUtnFEMI""example"
+  "  password: hunter""2"
+  '  "private_key": "x"'
+  "  webhook: https://hooks.slack.com/services/""T0/B0/x"
+  "# token: abc""def"
+)
+for fake in "${fakes[@]}"; do
+  planted="$TMP_DIR/planted.yaml"
+  { cat "$TEMPLATE"; printf '%s\n' "$fake"; } >"$planted"
+  if bash "$GUARD" "$planted" 2>"$TMP_DIR/guard.err"; then
+    echo "credential guard accepted: ${fake:0:24}…" >&2
+    exit 1
+  fi
+  secret_part="${fake#*: }"
+  if [[ "$secret_part" != "$fake" ]] && grep -Fq -- "$secret_part" "$TMP_DIR/guard.err"; then
+    echo "credential guard echoed the credential it refused" >&2
+    exit 1
+  fi
+done
+allowed="$TMP_DIR/allowed.yaml"
+{
+  cat "$TEMPLATE"
+  printf '%s\n' '  credentials_src: /operator/secrets/log-archive-s3.json' \
+    '  token_ttl: 60s' '  secret: ""' '  password: ~' '  dsn: postgres://faas@db.example:5432/faas'
+} >"$allowed"
+bash "$GUARD" "$allowed" || { echo "credential guard refused credential-free lines" >&2; exit 1; }
+{ cat "$TEMPLATE"; printf '%s\n' "    access_key_id: AKIA""IOSFODNN7EXAMPLE"; } >"$TMP_DIR/leaky.template.yaml"
+if bash "$SCRIPT" --template "$TMP_DIR/leaky.template.yaml" --git-sha "$SHA" \
+  --runtime-bases-env "$RUNTIME_BASES_ENV" --output "$TMP_DIR/leaky.yaml" 2>/dev/null; then
+  echo "materializer published a template that carries a credential" >&2
+  exit 1
+fi
+[[ ! -e "$TMP_DIR/leaky.yaml" ]] || { echo "materializer wrote a manifest carrying a credential" >&2; exit 1; }
+
+
 go run "$REPO_ROOT/cmd/gregalectl" manifest validate --file "$OUT_A" >/dev/null
 echo "materialize-release-manifest: test passed"
