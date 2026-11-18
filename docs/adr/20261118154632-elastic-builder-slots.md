@@ -90,9 +90,10 @@ overrides:
   - They are never preempted.
   - The BuildKit seed run and warm builder captures use only reserved slots.
 - **Borrowed slots** are `max − reserved`:
-  - They run in a new slice, `faas.slice/faas-build-borrowed.slice`, beside
+  - They run in a new slice, `faas.slice/faas-borrowed.slice`, beside
     faas-cp.slice and faas-tenant.slice. It is not under faas-cp.slice, so the
-    control-plane fence does not move.
+    control-plane fence does not move. The unit is `faas-borrowed.slice`: a
+    dash in a slice name nests it, so the name carries only `faas-` in front.
   - No tenant capacity is set aside for them. They use memory the tenant
     slice may use but is not using, and give it back (§4).
   - A borrowed build never captures a warm builder snapshot, so its worst
@@ -108,7 +109,7 @@ the control plane. These are the inputs:
 
 - `T`: faas-tenant.slice `memory.current`
 - `Tmax`: faas-tenant.slice `memory.max`
-- `B`: faas-build-borrowed.slice `memory.current`
+- `B`: faas-borrowed.slice `memory.current`
 - `A`: `MemAvailable`
 
 **a. Admission (builderd).** A borrowed slot claims a build only when all of
@@ -162,30 +163,34 @@ refused admission or evicted.
 - **OOM requeue:** spec §4.5's "requeue once if `oom` and slot was
   opportunistic" applies to borrowed slots.
 
-### 6. CPU
+### 6. CPU and memory fences
 
 - **Borrowed slice:**
-  - faas-build-borrowed.slice runs at `cpu.weight = 10`, while tenants and the
+  - faas-borrowed.slice runs at `cpu.weight = 10`, while tenants and the
     control plane keep the default 100, so tenants win any CPU contention.
-  - Its `cpu.max` is 2 vCPU for each running borrowed builder.
+  - Each borrowed builder's own scope carries the builder fences every
+    builder has: `memory.max` = `BuilderMemoryMaxMB` and `cpu.max` = 2 vCPU.
+    The slice itself has no `MemoryMax` or `CPUQuota` for vmmd to keep in
+    step, so systemd's daemon-reload cannot undo one.
 - **Reserved builders:** keep faas-cp-build.slice's `CPUQuota=200%`.
 
 ### 7. Ownership and compatibility
 
 - **builderd** decides claims and runs the cooperative give-back.
 - **vmmd** is the only component that touches Firecracker. It:
-  - creates the borrowed slice;
-  - places borrowed builders in it;
-  - sets their `oom_score_adj` and the slice limits;
-  - runs the forced give-back.
+  - places borrowed builders in the borrowed slice, which ansible's
+    `systemd_slices` role creates with its §11 fence pin;
+  - sets their `oom_score_adj`;
+  - runs the forced give-back, finding borrowed builders from the slice's
+    scope directories, so a vmmd restart keeps it armed.
 - **Builder create RPC:** gains an optional `borrowed` field, a new proto
   field that old vmmd ignores. builderd opens borrowed slots only when its
   local vmmd advertises the capability. Release N beside N−1 therefore never
   places a borrowed build in the reserved slice, where its 5120M fence would
   kill it.
-- **vmmd restarts:** vmmd's adoption journal records each builder's kind. A
-  vmmd restart re-adopts borrowed builders into the right slice and re-arms
-  the forced give-back.
+- **vmmd restarts:** a lease rebuilt from vmmd's journal finds a borrowed
+  builder's scope in faas-borrowed.slice, and adoption and native recovery
+  accept that parent.
 - **leakcheck:** learns the new slice.
 
 ### 8. Observability
@@ -225,6 +230,8 @@ refused admission or evicted.
   scheduling logic.
 - **Turning it on:** needs metal and leakcheck, because vmmd starts placing
   VMs in a new cgroup and killing them under pressure.
+- **Implementation:** #7603 (limits, settings, `builds.preemptions`), #7604
+  (vmmd), #7606 (builderd), #7607 (alert, runbook, ops guide, spec).
 
 ## Steps
 
