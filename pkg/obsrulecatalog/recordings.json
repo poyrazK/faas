@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "32c2563ba82143af46cc5d6e38fb1984190fe5debd91175e671c52322ffc5920",
+      "revision": "a889b192389f5bc0a0953eb448d2295644ee6415dc6fe471b3f19b5bcd48a6dc",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "20887e41975409bd4289c5469ebff35157840e971bb9b22163bbf5f6f526600e",
+        "revision": "f461cc424714a661fbba58efb94f25cacd8c902fac1f06876269aa06db449693",
         "files": [
           "faas.rules.yml"
         ],
@@ -1434,11 +1434,11 @@
             "group_name": "faas_billing",
             "rule_name": "builderd_build_queue_observation_healthy",
             "definition": {
-              "expression_hash": "c103cd56787e134ed1d148df7528c80344667cc1d2091a0446f236240bc52f7b",
+              "expression_hash": "875308efb36d0ab0d3b326e0fedc0014699ea98c5102668ca495a1113c30c095",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "8c2736307a117333c2863940d88575643810f4dd595efd7637d873b423b08ac2"
+              "fingerprint": "5b1c676b51f86556e6523c5249800914bded71b8f2882be7ecdf776c65c39eca"
             }
           },
           {
@@ -1924,8 +1924,8 @@
           }
         ]
       },
-      "alert_set_revision": "fefc7d9eac640f2a8851ec7aa703ac851b9c3d047bf7afe27902268c0614d55b",
-      "alert_count": 571,
+      "alert_set_revision": "3d9a47bd5089f2c1d4336ae5629952665c3af44ba35e100f9499e8018995f3d7",
+      "alert_count": 572,
       "dependents": [
         {
           "rule_id": "0334e9dd652d8034eae35eed898be3ec03fb7548b2af3a4479360eee5f146041",
@@ -4285,10 +4285,10 @@
       ]
     },
     {
-      "revision": "1ea9ac05e477c5df58b13f57a0b2a36c943ba5aa0c52ad6b5d307eb243056b46",
+      "revision": "a07c68b82521c8c535edc3a5b356e03cae3b69db3d133eb6b7deb9fa9ff2006f",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "b0b64d7df43b746a5c22674c6208d0516fa62e7b04bd54119308a7f7e64618d1",
+        "revision": "e168e65b33710a28c740898e5c7eda129f8567bdc90f44057f0bc510dc70e1d6",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -5720,11 +5720,11 @@
             "group_name": "faas_billing",
             "rule_name": "builderd_build_queue_observation_healthy",
             "definition": {
-              "expression_hash": "c103cd56787e134ed1d148df7528c80344667cc1d2091a0446f236240bc52f7b",
+              "expression_hash": "875308efb36d0ab0d3b326e0fedc0014699ea98c5102668ca495a1113c30c095",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "8c2736307a117333c2863940d88575643810f4dd595efd7637d873b423b08ac2"
+              "fingerprint": "5b1c676b51f86556e6523c5249800914bded71b8f2882be7ecdf776c65c39eca"
             }
           },
           {
@@ -6210,8 +6210,8 @@
           }
         ]
       },
-      "alert_set_revision": "ee5720a72e10c6608113a56161e94a4b9676d6326a500cf808b0d2686470a4fc",
-      "alert_count": 595,
+      "alert_set_revision": "70655a50335c8d4ae571fba23cadaf936456afa16e47d3258e855bc26399521f",
+      "alert_count": 596,
       "dependents": [
         {
           "rule_id": "0334e9dd652d8034eae35eed898be3ec03fb7548b2af3a4479360eee5f146041",
