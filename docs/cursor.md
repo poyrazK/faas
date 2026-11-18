@@ -22,7 +22,14 @@ scoped key in the agent's environment as `FAAS_TOKEN` instead; see
 
 Cursor reads `AGENTS.md` in the project root. Projects made with
 `gregale init` include one with Gregale's deploy, check and rollback steps.
-For an existing project, add the section in
+
+For an existing project, run this in its root:
+
+```sh
+gregale init --agents --name my-api
+```
+
+It adds a Gregale section to `AGENTS.md`; see
 [Project instructions for agents](agents.md#project-instructions-for-agents).
 
 ## Deploy

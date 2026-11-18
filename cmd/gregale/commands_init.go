@@ -54,7 +54,7 @@ import (
 // initCmdUsage is the top-of-failure-line shown for `gregale init` errors.
 // Mirrors PrintUsage's docs URL convention (output.go:144) so the line
 // carries the stable docs site pointer.
-const initCmdUsage = "usage: gregale init --template <name> --path <dir> [--deploy] [--name <slug>] [--secrets-file <path>] | --list"
+const initCmdUsage = "usage: gregale init --template <name> --path <dir> [--deploy] [--name <slug>] [--secrets-file <path>] | --agents [--path <dir>] [--name <slug>] [--dry-run] | --list"
 
 // initReceipt is the machine-readable result of a successful scaffolding
 // operation. The path is absolute because that is what the CLI actually
@@ -85,11 +85,27 @@ func cmdInit(args []string) int {
 	secretsFile := fs.String("secrets-file", "", "read KEY=VALUE pairs and set them before the first deployment (requires --deploy)")
 	list := fs.Bool("list", false, "print available templates grouped by category and exit")
 	noMCP := fs.Bool("no-mcp", false, "do not write .mcp.json")
+	agents := fs.Bool("agents", false, "set up an existing project for coding agents instead of scaffolding one")
+	dryRun := fs.Bool("dry-run", false, "with --agents, show the changes without writing them")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
 		PrintUsage(os.Stderr, initCmdUsage, initCmdDocsTopic)
+		return 1
+	}
+	if *agents {
+		if *tpl != "" || *deploy || *secretsFile != "" || *list {
+			PrintUsage(os.Stderr, initCmdUsage+"\n  error: --agents takes only --path, --name and --dry-run", initCmdDocsTopic)
+			return 1
+		}
+		if *dest == "" {
+			*dest = "."
+		}
+		return runInitAgents(*dest, *name, *dryRun, osStdout)
+	}
+	if *dryRun {
+		PrintUsage(os.Stderr, initCmdUsage+"\n  error: --dry-run requires --agents", initCmdDocsTopic)
 		return 1
 	}
 	// --list is a discovery short-circuit. It runs before --template /
