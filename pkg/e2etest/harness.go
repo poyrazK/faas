@@ -3072,15 +3072,16 @@ func envBuilderBase(t *testing.T) string {
 // because they don't tag themselves 'faas-builderd'. Avoids the stderr-polling
 // race against startProc's bytes.Buffer (which the stop() path owns
 // exclusively).
+//
+// pg_stat_activity spans the whole cluster, and every e2e test shares it, so
+// the probe counts only sessions on the harness's own database (see
+// sessionListens).
 func (h *Harness) waitBuilderdListens(d time.Duration) error {
 	h.T.Helper()
 	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		var ready bool
-		if err := h.Pool.QueryRow(context.Background(),
-			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = 'faas-builderd')`,
-		).Scan(&ready); err == nil && ready {
+		if ready, err := sessionConnected(context.Background(), h.Pool, "faas-builderd"); err == nil && ready {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -3177,19 +3178,44 @@ func sessionListensSince(ctx context.Context, pool *pgxpool.Pool, appName string
 	err := pool.QueryRow(ctx,
 		`SELECT EXISTS (
 		   SELECT 1 FROM pg_stat_activity
-		    WHERE application_name = $1 AND query ILIKE 'LISTEN %' AND query_start >= $2
+		    WHERE application_name = $1 AND datname = current_database()
+		      AND query ILIKE 'LISTEN %' AND query_start >= $2
 		 )`, appName, since).Scan(&ok)
 	return ok, err
 }
 
+// sessionConnected reports whether a session with the given application_name
+// is connected to pool's database; sessionListens says why the database.
+func sessionConnected(ctx context.Context, pool *pgxpool.Pool, appName string) (bool, error) {
+	var ok bool
+	err := pool.QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM pg_stat_activity
+		    WHERE application_name = $1 AND datname = current_database()
+		 )`, appName).Scan(&ok)
+	return ok, err
+}
+
 // sessionListens reports whether a session with the given application_name
-// has issued a LISTEN — the shape of a daemon's notify subscription.
+// has issued a LISTEN on pool's database — the shape of a daemon's notify
+// subscription.
+//
+// pg_stat_activity lists every session in the cluster, and all e2e tests share
+// one cluster, each on its own database cloned from the migrated template.
+// Without the datname filter, another test's imaged, or one a killed run left
+// behind, satisfied the wait: TestBuildKitSeedMetal (gregale-internal-test-1,
+// 2026-11-17 22:31Z) saw "imaged subscribed after 1.929s" while its own imaged
+// staged the builder base for another ~40 s, and the first deploy failed on the
+// stale base's scan placeholder. In schema mode (pgtest.Open without
+// FAAS_PGTEST_TEMPLATE_DATABASE) tests share a database and this filter cannot
+// tell them apart.
 func sessionListens(ctx context.Context, pool *pgxpool.Pool, appName string) (bool, error) {
 	var ok bool
 	err := pool.QueryRow(ctx,
 		`SELECT EXISTS (
 		   SELECT 1 FROM pg_stat_activity
-		    WHERE application_name = $1 AND query ILIKE 'LISTEN %'
+		    WHERE application_name = $1 AND datname = current_database()
+		      AND query ILIKE 'LISTEN %'
 		 )`, appName).Scan(&ok)
 	return ok, err
 }
