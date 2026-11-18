@@ -43398,6 +43398,21 @@ CREATE TABLE public.hosted_task_binding_qualifications (
 
 
 --
+-- Name: hosted_task_rehearsal_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosted_task_rehearsal_plans (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    payload jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT hosted_task_rehearsal_plans_check CHECK ((((((payload -> 'Plan'::text) ->> 'account_id'::text) = (account_id)::text) AND (((payload -> 'Plan'::text) ->> 'intent_id'::text) = id) AND ((((payload -> 'Plan'::text) ->> 'expires_at'::text))::timestamp with time zone = expires_at) AND (((payload -> 'Plan'::text) ->> 'status'::text) = ANY (ARRAY['planned'::text, 'approved'::text, 'claimed'::text, 'revoked'::text, 'stale'::text, 'expired'::text])) AND ((payload -> 'Plan'::text) @> '{"no_traffic": true}'::jsonb)) IS TRUE)),
+    CONSTRAINT hosted_task_rehearsal_plans_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosted_task_rehearsal_plans_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 4096)))
+);
+
+
+--
 -- Name: hosted_task_source_intents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -68710,6 +68725,14 @@ ALTER TABLE ONLY public.honeytokens
 
 ALTER TABLE ONLY public.hosted_task_binding_qualifications
     ADD CONSTRAINT hosted_task_binding_qualifications_pkey PRIMARY KEY (account_id, id);
+
+
+--
+-- Name: hosted_task_rehearsal_plans hosted_task_rehearsal_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_rehearsal_plans
+    ADD CONSTRAINT hosted_task_rehearsal_plans_pkey PRIMARY KEY (account_id, id);
 
 
 --
@@ -103689,6 +103712,14 @@ ALTER TABLE ONLY public.gitlab_oauth_connections
 
 ALTER TABLE ONLY public.hosted_task_binding_qualifications
     ADD CONSTRAINT hosted_task_binding_qualifications_account_id_id_fkey FOREIGN KEY (account_id, id) REFERENCES public.hosted_task_source_intents(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosted_task_rehearsal_plans hosted_task_rehearsal_plans_account_id_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_rehearsal_plans
+    ADD CONSTRAINT hosted_task_rehearsal_plans_account_id_id_fkey FOREIGN KEY (account_id, id) REFERENCES public.hosted_task_binding_qualifications(account_id, id) ON DELETE CASCADE;
 
 
 --

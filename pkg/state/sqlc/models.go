@@ -7011,6 +7011,13 @@ type HostedTaskBindingQualification struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+type HostedTaskRehearsalPlan struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
 type HostedTaskSourceIntent struct {
 	AccountID  pgtype.UUID
 	ID         string

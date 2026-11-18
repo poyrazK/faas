@@ -262,6 +262,13 @@ func mcpCLICommand() cliCommand {
 				{Name: "observer-database-ref", Value: "REF", Short: "Observer read-only reference"},
 				{Name: "binding-sha256", Value: "DIGEST", Short: "Exact binding fingerprint for revocation"},
 			}, Examples: []string{"gregale mcp server tasks bind get --id INTENT", "gregale mcp server tasks bind revoke --id INTENT --binding-sha256 DIGEST"}},
+			{Name: "rehearsal", Short: "Plan or approve an isolated hosted Task rehearsal", Positionals: []string{"<plan|get|approve|revoke>"}, Notes: []string{"An unscoped personal administrator API key is required. A plan reserves a disposable target identity and expires with the passing binding evidence. Approval records one decision and creates no runtime resources."}, Flags: []cliFlag{
+				{Name: "id", Value: "INTENT", Short: "Retained source intent identity", Req: true},
+				{Name: "intent-sha256", Value: "DIGEST", Short: "Exact retained intent digest for plan"},
+				{Name: "review-sha256", Value: "DIGEST", Short: "Exact approved review digest for plan"},
+				{Name: "binding-sha256", Value: "DIGEST", Short: "Exact passing binding digest for plan"},
+				{Name: "plan-sha256", Value: "DIGEST", Short: "Exact rehearsal plan digest for a decision"},
+			}},
 			{Name: "source-review", Short: "Inspect or decide on retained hosted Task source", Positionals: []string{"<get|check|approve|reject|revoke>"}, Notes: []string{"Source is retained for the original fifteen-minute deadline. Review metadata is readable by its requester and owner; decisions require an unscoped personal owner. Approval binds the exact source review and grants no credential or execution authority. Checks permanently invalidate observed drift."}, Flags: []cliFlag{
 				{Name: "id", Short: "retained hosted source review identity", Value: "ID", Req: true},
 				{Name: "review-sha256", Short: "exact review fingerprint for checks and decisions", Value: "SHA256"},
