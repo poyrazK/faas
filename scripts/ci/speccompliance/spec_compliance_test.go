@@ -1034,6 +1034,7 @@ var dtoExclude = map[string]bool{
 	"ObsOverviewResponse":             true,
 	"ObsOverviewTotals":               true,
 	"ObsBetaFunnel":                   true,
+	"ObsCodingAgent":                  true,
 	"ObsOverviewRateLimited":          true,
 	"ObsOverviewNodeHealth":           true,
 	"ObsOverviewFailureKind":          true,
