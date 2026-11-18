@@ -657,6 +657,21 @@
       ]
     },
     {
+      "id": "production-protection-baseline",
+      "name": "Production protection by default",
+      "category": "observability",
+      "description": "A new public app is enrolled after its first live production deploy and gets SLOs, an hourly health check, email alerts and an SLO release gate as ordinary objects; customer objects are never overwritten, and the platform health check is neither billed nor counted as traffic (ADR-20261116120000).",
+      "capabilities": ["protection-baseline"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_app_protection_test.go::TestGetAppProtectionReportsBaselineItems"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/protection_reconciler_test.go::TestProtectionReconcilerCreatesBaseline"},
+        {"kind": "test", "locator": "pkg/gateway/route_probe_unbilled_test.go::TestUnbilledRouteProbeChallenge"},
+        {"kind": "test", "locator": "pkg/meter/sampler_probe_wake_test.go::TestSamplerLeavesPlatformProbeWakesUnbilled"},
+        {"kind": "runbook", "locator": "docs/production-protection.md"}
+      ]
+    },
+    {
       "id": "request-diagnosis",
       "name": "Request diagnosis",
       "category": "observability",

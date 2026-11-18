@@ -271,6 +271,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 139 | Operational summary | `operational-summary` | **MISSING** | — | internal |
 | 140 | Per-app costs and cost trend | dashboard `app_costs_*` | **MISSING** | — | GA |
 | 141 | Public status page and incidents | `/v1/status` (active and resolved incidents), `/v1/status/incidents/{public_id}` | **MISSING** | — | GA |
+| 173 | Production protection by default: SLOs, an hourly health check, email alerts and an SLO release gate created for new public apps | `/v1/apps/{slug}/protection`, `app_protection` | `protection-baseline` preview | `pf: protection_baseline` | preview |
 
 ## H. Account, teams and billing
 

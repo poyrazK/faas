@@ -22210,5 +22210,43 @@
       "variant"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "app_protection",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "health_probe_at",
+      "lease_until",
+      "next_reconcile_at",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_protection_objects",
+    "columns": [
+      "app_id",
+      "created_at",
+      "item",
+      "object_id",
+      "reason",
+      "status",
+      "written"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_probe_wakes",
+    "columns": [
+      "app_id",
+      "created_at",
+      "instance_id",
+      "probe_done_at",
+      "woke_at"
+    ],
+    "kind": "operational"
   }
 ]
