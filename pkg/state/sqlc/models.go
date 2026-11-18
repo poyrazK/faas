@@ -16762,6 +16762,7 @@ type SupportGrant struct {
 	ExpiresAt          pgtype.Timestamptz
 	RevokedAt          pgtype.Timestamptz
 	RevokedByAccountID pgtype.UUID
+	SummarySentAt      pgtype.Timestamptz
 }
 
 type SupportGrantRequest struct {
@@ -16774,6 +16775,9 @@ type SupportGrantRequest struct {
 	ExpiresAt          pgtype.Timestamptz
 	DecidedAt          pgtype.Timestamptz
 	DecidedByAccountID pgtype.UUID
+	AppIds             []pgtype.UUID
+	TtlSeconds         pgtype.Int4
+	ExtendsGrantID     pgtype.UUID
 }
 
 type SupportMessage struct {

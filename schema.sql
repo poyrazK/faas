@@ -61457,6 +61457,9 @@ CREATE TABLE public.support_grant_requests (
     expires_at timestamp with time zone NOT NULL,
     decided_at timestamp with time zone,
     decided_by_account_id uuid,
+    app_ids uuid[],
+    ttl_seconds integer,
+    extends_grant_id uuid,
     CONSTRAINT support_grant_requests_decision_check CHECK (((status = 'open'::text) = (decided_at IS NULL))),
     CONSTRAINT support_grant_requests_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '24:00:00'::interval)))),
     CONSTRAINT support_grant_requests_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 400))),
@@ -61479,6 +61482,7 @@ CREATE TABLE public.support_grants (
     expires_at timestamp with time zone NOT NULL,
     revoked_at timestamp with time zone,
     revoked_by_account_id uuid,
+    summary_sent_at timestamp with time zone,
     CONSTRAINT support_grants_apps_check CHECK (((app_ids IS NULL) OR ((cardinality(app_ids) >= 1) AND (cardinality(app_ids) <= 100)))),
     CONSTRAINT support_grants_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '7 days'::interval)))),
     CONSTRAINT support_grants_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 400))),
@@ -76855,11 +76859,27 @@ ALTER TABLE ONLY public.support_events
 
 
 --
+-- Name: support_grant_requests support_grant_requests_apps_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_apps_check CHECK (((app_ids IS NULL) OR ((cardinality(app_ids) >= 1) AND (cardinality(app_ids) <= 100)))) NOT VALID;
+
+
+--
 -- Name: support_grant_requests support_grant_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.support_grant_requests
     ADD CONSTRAINT support_grant_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_grant_requests support_grant_requests_ttl_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_ttl_check CHECK (((ttl_seconds IS NULL) OR ((ttl_seconds >= 3600) AND (ttl_seconds <= 604800)))) NOT VALID;
 
 
 --
@@ -113297,6 +113317,14 @@ ALTER TABLE ONLY public.support_events
 
 ALTER TABLE ONLY public.support_grant_requests
     ADD CONSTRAINT support_grant_requests_decided_by_account_id_fkey FOREIGN KEY (decided_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_grant_requests support_grant_requests_extends_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_grant_requests
+    ADD CONSTRAINT support_grant_requests_extends_fkey FOREIGN KEY (extends_grant_id) REFERENCES public.support_grants(id) ON DELETE SET NULL NOT VALID;
 
 
 --
