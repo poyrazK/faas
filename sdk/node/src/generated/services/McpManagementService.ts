@@ -311,12 +311,12 @@ export class McpManagementService {
       },
       errors: {
         400: `The retained source identity is malformed.`,
-        401: `Authenticate with a personal administrator API key.`,
-        403: `Hosted Task rehearsal plans require an unscoped personal administrator API key and account MFA policy.`,
-        404: `The rehearsal plan or its native source identity is not visible to this owner.`,
+        401: `A personal administrator key must authenticate this inspection.`,
+        403: `Only an unscoped personal administrator can inspect retained rehearsal metadata.`,
+        404: `The hosted Task rehearsal plan is absent or inaccessible to the current account.`,
         409: `The plan could not be refreshed atomically.`,
-        429: `Hosted Task rehearsal plan requests are currently rate limited.`,
-        503: `The native rehearsal planning journal is unavailable.`,
+        429: `Owner reads are currently rate limited for hosted Task rehearsal metadata.`,
+        503: `Native rehearsal state cannot be inspected while the journal is unavailable.`,
       },
     });
   }
@@ -346,12 +346,12 @@ export class McpManagementService {
       mediaType: 'application/json',
       errors: {
         400: `The source or binding digests are malformed.`,
-        401: `Authenticate with a personal administrator API key.`,
-        403: `Hosted Task rehearsal plans require an unscoped personal administrator API key and account MFA policy.`,
-        404: `The rehearsal plan or its native source identity is not visible to this owner.`,
+        401: `Authenticate the personal administrator reserving the rehearsal target.`,
+        403: `The caller lacks personal administrator authority to reserve this rehearsal target.`,
+        404: `No retained source or native binding observation is visible to this personal account.`,
         409: `The source or binding observation is unavailable, stale, or differs from the immutable rehearsal plan.`,
-        429: `Hosted Task rehearsal plan requests are currently rate limited.`,
-        503: `The native rehearsal planning journal is unavailable.`,
+        429: `Rehearsal plan preparation exceeds the owner request budget.`,
+        503: `Planning admission or its source and binding prerequisites are disabled, or the journal is unavailable.`,
       },
     });
   }
@@ -366,7 +366,7 @@ export class McpManagementService {
     requestBody,
   }: {
     /**
-     * Immutable retained source identity for the contained rehearsal plan.
+     * Retained source identity whose rehearsal plan receives the owner decision.
      */
     id: string,
     requestBody: HostedTaskRehearsalDecision,
@@ -381,12 +381,12 @@ export class McpManagementService {
       mediaType: 'application/json',
       errors: {
         400: `The plan digest or decision is malformed.`,
-        401: `Authenticate with a personal administrator API key.`,
-        403: `Hosted Task rehearsal plans require an unscoped personal administrator API key and account MFA policy.`,
-        404: `The rehearsal plan or its native source identity is not visible to this owner.`,
+        401: `Authenticate the personal administrator recording the rehearsal decision.`,
+        403: `The current key cannot approve or revoke this disposable rehearsal plan.`,
+        404: `No plan matching this retained source identity is visible to the deciding owner.`,
         409: `The digest differs from the retained plan or a different owner key already approved it.`,
-        429: `Hosted Task rehearsal plan requests are currently rate limited.`,
-        503: `The native rehearsal planning journal is unavailable.`,
+        429: `The account decision requests for hosted Task rehearsals are rate limited.`,
+        503: `Approval admission is disabled or the native decision cannot be persisted.`,
       },
     });
   }

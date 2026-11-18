@@ -714,17 +714,17 @@ paths:
         '400':
           description: The retained source identity is malformed.
         '401':
-          description: Authenticate with a personal administrator API key.
+          description: A personal administrator key must authenticate this inspection.
         '403':
-          description: Hosted Task rehearsal plans require an unscoped personal administrator API key and account MFA policy.
+          description: Only an unscoped personal administrator can inspect retained rehearsal metadata.
         '404':
-          description: The rehearsal plan or its native source identity is not visible to this owner.
+          description: The hosted Task rehearsal plan is absent or inaccessible to the current account.
         '409':
           description: The plan could not be refreshed atomically.
         '429':
-          description: Hosted Task rehearsal plan requests are currently rate limited.
+          description: Owner reads are currently rate limited for hosted Task rehearsal metadata.
         '503':
-          description: The native rehearsal planning journal is unavailable.
+          description: Native rehearsal state cannot be inspected while the journal is unavailable.
     put:
       operationId: prepareHostedTaskRehearsal
       summary: Plan a contained hosted Task rehearsal
@@ -742,17 +742,17 @@ paths:
         '400':
           description: The source or binding digests are malformed.
         '401':
-          description: Authenticate with a personal administrator API key.
+          description: Authenticate the personal administrator reserving the rehearsal target.
         '403':
-          description: Hosted Task rehearsal plans require an unscoped personal administrator API key and account MFA policy.
+          description: The caller lacks personal administrator authority to reserve this rehearsal target.
         '404':
-          description: The rehearsal plan or its native source identity is not visible to this owner.
+          description: No retained source or native binding observation is visible to this personal account.
         '409':
           description: The source or binding observation is unavailable, stale, or differs from the immutable rehearsal plan.
         '429':
-          description: Hosted Task rehearsal plan requests are currently rate limited.
+          description: Rehearsal plan preparation exceeds the owner request budget.
         '503':
-          description: The native rehearsal planning journal is unavailable.
+          description: Planning admission or its source and binding prerequisites are disabled, or the journal is unavailable.
       requestBody:
         required: true
         content:
@@ -767,7 +767,7 @@ paths:
       schema:
         type: string
         pattern: ^[0-9a-f]{64}$
-      description: Immutable retained source identity for the contained rehearsal plan.
+      description: Retained source identity whose rehearsal plan receives the owner decision.
     put:
       operationId: decideHostedTaskRehearsal
       summary: Approve or revoke a hosted Task rehearsal plan
@@ -785,17 +785,17 @@ paths:
         '400':
           description: The plan digest or decision is malformed.
         '401':
-          description: Authenticate with a personal administrator API key.
+          description: Authenticate the personal administrator recording the rehearsal decision.
         '403':
-          description: Hosted Task rehearsal plans require an unscoped personal administrator API key and account MFA policy.
+          description: The current key cannot approve or revoke this disposable rehearsal plan.
         '404':
-          description: The rehearsal plan or its native source identity is not visible to this owner.
+          description: No plan matching this retained source identity is visible to the deciding owner.
         '409':
           description: The digest differs from the retained plan or a different owner key already approved it.
         '429':
-          description: Hosted Task rehearsal plan requests are currently rate limited.
+          description: The account decision requests for hosted Task rehearsals are rate limited.
         '503':
-          description: The native rehearsal planning journal is unavailable.
+          description: Approval admission is disabled or the native decision cannot be persisted.
       requestBody:
         required: true
         content:
