@@ -97,7 +97,8 @@ func projectEnvironmentBranchCopiesAutomationPaused(t *testing.T, s contractTest
 		t.Fatalf("resume subscriptions = %+v, %v", resumedSubs, err)
 	}
 	resumed, err := s.ResumeEnvironmentClonePausedCrons(ctx, acct.ID, project.ID, "pr-7")
-	if err != nil || len(resumed) != 1 || resumed[0].Path != "/nightly" || !resumed[0].Enabled {
+	// The PG resume returns each cron's identity, not its whole row.
+	if err != nil || len(resumed) != 1 || resumed[0].ID != branchCrons["/nightly"].ID || !resumed[0].Enabled {
 		t.Fatalf("resume crons = %+v, %v", resumed, err)
 	}
 	// The parent's own automation is untouched.
