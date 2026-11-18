@@ -1854,8 +1854,14 @@ func parseServiceDiscoveryIP(bridgeIP string) (netip.Addr, error) {
 
 const serviceDiscoveryResolverMode os.FileMode = 0o644
 
+// serviceDiscoveryResolverContents searches svc.gregale, so a Compose
+// service's bare name (`http://orders:8080`, ORDERS_HOST=orders, or a host
+// hard-coded in application.yml) resolves as orders.svc.gregale; with
+// private service addresses (ADR-576) its declared ports answer too
+// (retail-store feedback A2, 2026-11-17). Names with a dot are tried as
+// written first (ndots:1), so external hosts are unaffected.
 func serviceDiscoveryResolverContents(ip netip.Addr) []byte {
-	return fmt.Appendf(nil, "# Gregale tenant service resolver\nnameserver %s\noptions timeout:2 attempts:2\n", ip)
+	return fmt.Appendf(nil, "# Gregale tenant service resolver\nnameserver %s\nsearch svc.gregale\noptions ndots:1 timeout:2 attempts:2\n", ip)
 }
 
 // applyPreBootCgroupFence installs the host-side memory/CPU fence after
