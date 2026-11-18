@@ -35520,6 +35520,7 @@ CREATE TABLE public.builds (
     not_before timestamp with time zone,
     coalesced_with uuid,
     builder_node_name text,
+    preemptions integer DEFAULT 0 NOT NULL,
     CONSTRAINT builds_cache_key_sha256_check CHECK (((cache_key_sha256 IS NULL) OR (cache_key_sha256 ~ '^[a-f0-9]{64}$'::text))),
     CONSTRAINT builds_cache_status_check CHECK (((cache_status IS NULL) OR (cache_status = ANY (ARRAY['hit'::text, 'miss'::text, 'invalidated'::text])))),
     CONSTRAINT builds_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['oom'::text, 'timeout'::text, 'user_error'::text, 'infra'::text])))),
@@ -65228,6 +65229,14 @@ ALTER TABLE public.builds
 
 ALTER TABLE ONLY public.builds
     ADD CONSTRAINT builds_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: builds builds_preemptions_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.builds
+    ADD CONSTRAINT builds_preemptions_check CHECK ((preemptions >= 0)) NOT VALID;
 
 
 --

@@ -2750,6 +2750,7 @@ type Build struct {
 	NotBefore                    pgtype.Timestamptz
 	CoalescedWith                pgtype.UUID
 	BuilderNodeName              pgtype.Text
+	Preemptions                  int32
 }
 
 type BuildExportPublication struct {

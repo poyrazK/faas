@@ -723,6 +723,9 @@ type MemStore struct {
 	// buildCoalescedWith maps a deferred build to the identical build it waits
 	// for (builds.coalesced_with, ADR-20261102100000).
 	buildCoalescedWith map[string]string
+	// buildPreemptions counts the times borrowed builder slots gave a build
+	// back to the queue (builds.preemptions, ADR-20261118154632).
+	buildPreemptions map[string]int
 	// ADR-740 developer live patches; allocated on first use.
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
@@ -1875,6 +1878,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		// Starts empty; CreateBuildProvenance fills it.
 		buildProvenance:    map[string]BuildProvenance{},
 		buildCoalescedWith: map[string]string{},
+		buildPreemptions:   map[string]int{},
 		// issue #72 / ADR-125: mirror-rules and mirror-results
 		// stores. Empty until the first create; the per-app count
 		// in CreateMirrorRuleIfUnderQuota walks the map.

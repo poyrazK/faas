@@ -94457,7 +94457,7 @@ components:
         label: { type: string }
         description: { type: string }
         category: { type: string }
-        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups, platform_flag_opt_ins] }
+        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups, platform_flag_opt_ins, builder_slots] }
         default_value: {}
         desired_value: {}
         effective_value: {}

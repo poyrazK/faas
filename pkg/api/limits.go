@@ -4320,6 +4320,89 @@ const (
 	SnapshotCleanRecaptureMaxAttempts = 3
 )
 
+// Elastic builder slots (ADR-20261118154632). `builder_elastic_slots` is off
+// (builderd keeps its fixed two-slot allocator and the static build slices)
+// or on (each node's `builder_slots` entry sets its reserved and total slots,
+// and slots above the reserved ones borrow idle tenant memory and give it
+// back under pressure).
+const (
+	BuilderElasticSlotsOff = "off"
+	BuilderElasticSlotsOn  = "on"
+	// DefaultBuilderElasticSlots is the compiled `builder_elastic_slots`.
+	DefaultBuilderElasticSlots = BuilderElasticSlotsOff
+
+	// BuilderSlotsDefaultReserved and BuilderSlotsDefaultMax are a node's
+	// slots when `builder_slots` names neither it nor a default: today's
+	// one guaranteed slot and two slots in all.
+	BuilderSlotsDefaultReserved = 1
+	BuilderSlotsDefaultMax      = 2
+	// BuilderReservedSlotsMax bounds a node's reserved slots. A reserved
+	// slot is funded out of tenant sizing (ADR-203's BuilderSlotReserveMB),
+	// and nodes size for exactly one until vmmd re-derives sizing live
+	// (ADR-20261118154632 step 7), so 1 is the only accepted value.
+	BuilderReservedSlotsMin = 1
+	BuilderReservedSlotsMax = 1
+	// BuilderSlotsMax bounds a node's total slots, reserved plus borrowed.
+	BuilderSlotsMax = 16
+	// BuilderSlotsNodeEntriesMax bounds how many nodes `builder_slots` names.
+	BuilderSlotsNodeEntriesMax = 64
+
+	// BorrowedBuildNeedMB is the memory one borrowed build must find before
+	// it starts: its cgroup fence (BuilderMemoryMaxMB of a BuildVMRAMMB
+	// guest; borrowed builders never capture a warm snapshot) plus
+	// BuilderSecondSlotHeadroomMB.
+	BorrowedBuildNeedMB = BuildVMRAMMB + BuildVMOverheadMB + BuilderSecondSlotHeadroomMB
+	// BuilderBorrowAdmitPct: a borrowed slot claims a build only while
+	// tenant memory, borrowed builders and the new build together stay
+	// within this percentage of the tenant slice's memory.max.
+	BuilderBorrowAdmitPct = 70
+	// BuilderBorrowGiveBackPct: above this percentage builderd cancels the
+	// newest borrowed build and returns it to the queue.
+	BuilderBorrowGiveBackPct = 85
+	// BuilderBorrowForcePct: above this percentage for
+	// BuilderBorrowForceSustain vmmd destroys the newest borrowed builder
+	// itself, covering a builderd that is stuck or restarting.
+	BuilderBorrowForcePct = 92
+	// BuilderBorrowHostFloorMB: builderd gives a borrowed build back when
+	// the host's MemAvailable drops below this, and admits one only with
+	// this much left after BorrowedBuildNeedMB.
+	BuilderBorrowHostFloorMB = 1_024
+	// BuilderBorrowHostCriticalMB: vmmd destroys the newest borrowed builder
+	// when MemAvailable stays below this for BuilderBorrowForceSustain.
+	BuilderBorrowHostCriticalMB = 512
+	// BuilderBorrowCheckInterval is how often builderd and vmmd read the
+	// node's memory while a borrowed builder runs.
+	BuilderBorrowCheckInterval = 250 * time.Millisecond
+	// BuilderBorrowForceSustain is how long vmmd's force condition must
+	// hold before it destroys a borrowed builder.
+	BuilderBorrowForceSustain = time.Second
+	// BuilderBorrowCooldown: after a give-back, the node admits no borrowed
+	// build for this long, so a node near its watermark does not start and
+	// cancel builds in a loop.
+	BuilderBorrowCooldown = 60 * time.Second
+	// BuildMaxPreemptions: a build given back this many times runs only on a
+	// reserved slot, so it cannot bounce between borrowed slots forever.
+	BuildMaxPreemptions = 2
+	// BuildPreemptionsAlertPerHour: FaasBuildPreemptionsHigh fires when a
+	// node gives back more builds than this in an hour; its `max` is too
+	// high for its tenant load.
+	BuildPreemptionsAlertPerHour = 6
+	// BorrowedBuilderCPUWeight is faas-borrowed.slice's cpu.weight;
+	// tenants and the control plane keep the default 100, so they win CPU
+	// contention with borrowed builds.
+	BorrowedBuilderCPUWeight = 10
+	// BorrowedBuilderOOMScoreAdj is every borrowed builder's Firecracker
+	// oom_score_adj: if the host still runs out of memory, the kernel kills
+	// a borrowed build before any tenant VM or daemon.
+	BorrowedBuilderOOMScoreAdj = 1000
+)
+
+// ValidBuilderElasticSlots reports whether v is a valid
+// `builder_elastic_slots`.
+func ValidBuilderElasticSlots(v string) bool {
+	return v == BuilderElasticSlotsOff || v == BuilderElasticSlotsOn
+}
+
 // ValidSnapshotCleanRecapture reports whether v is a valid
 // `snapshot_clean_recapture`.
 func ValidSnapshotCleanRecapture(v string) bool {

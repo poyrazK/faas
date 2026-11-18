@@ -339,6 +339,9 @@ type Querier interface {
 	BootstrapObjectStorageTimeline(ctx context.Context, db DBTX) error
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
+	// ADR-20261118154632: elastic builder slots.
+	// How many times borrowed slots gave this build back to the queue.
+	BuildPreemptions(ctx context.Context, db DBTX, buildID pgtype.UUID) (int32, error)
 	// Builder time this UTC month of the account that pays for an app
 	// (ADR-20261104132753): every build of that payer's apps that started at or
 	// after month_start, each capped at the build timeout (a running one counts up to now). A coalesced build ran
@@ -7612,6 +7615,11 @@ type Querier interface {
 	RequestTelemetrySharedRouteLatency(ctx context.Context, db DBTX, arg RequestTelemetrySharedRouteLatencyParams) (RequestTelemetrySharedRouteLatencyRow, error)
 	RequeueFailedWorkflowStepForRetry(ctx context.Context, db DBTX, arg RequeueFailedWorkflowStepForRetryParams) (int64, error)
 	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	// Returns a running claim to the queue after a borrowed slot gave its memory
+	// back to tenants, and counts the give-back. Fenced like RequeueBuildIfClaim:
+	// a stale worker cannot requeue a newer claim. enqueued_at is untouched, so
+	// the build keeps its place in the queue.
+	RequeuePreemptedBuild(ctx context.Context, db DBTX, arg RequeuePreemptedBuildParams) (int64, error)
 	RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg RequeueWorkflowRunForRetryParams) (WorkflowRun, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
 	ReserveBillingUsageIntent(ctx context.Context, db DBTX, arg ReserveBillingUsageIntentParams) (int64, error)
