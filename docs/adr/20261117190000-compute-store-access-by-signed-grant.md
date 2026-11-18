@@ -1,6 +1,6 @@
 # ADR-20261117190000: Compute reaches the shared store only through per-object signed grants
 
-- Status: Accepted (slices 1 and 2 implemented, off by default)
+- Status: Accepted (slices 1–3 implemented, off by default)
 - Date: 2026-11-17
 - Amends: ADR-054 (compute nodes read and write the shared artifact store
   with bucket-wide credentials)
@@ -80,8 +80,24 @@ Owner decisions (2026-11-17):
      signed URLs. The backend keeps its envelope (compression, metadata,
      exclusive receipts), and the cache, router and deferral wrap it
      unchanged.
-   - `List` is unsupported in that mode. Listing for GC belongs to the
-     control plane (ADR-20261115180000).
+   - `List` reports nothing in that mode: a node cannot list the bucket.
+     The compute-side sweeps that list (imaged's superseded job artifacts,
+     builderd's expired sources) stop on granted nodes; until the control
+     plane sweeps those prefixes, the objects stay (storage cost only).
+   - `Put` probes the key's generation and writes create-only or
+     replace-that-generation, so a node never overwrites blindly.
+   - Read grants are cached per key until 30 s before expiry; a store
+     refusal renews once. builderd's 500 ms source poll asks secretd once
+     per grant, not per poll.
+   - Sandbox sessions record the node schedd placed them on
+     (`sandbox_sessions.placed_node_id`) before boot, because the node reads
+     the session's image and snapshot while booting; `node_id` still means
+     "the VM is up". A session node may also read its template app's layer
+     and its job image.
+   - Operations: `faas_storage_grants: true` per compute node installs one
+     drop-in for imaged, builderd and vmmd (defer deletes, grants, the
+     node's secretd client leaf); each daemon picks it up at its next
+     restart.
    - Deletes must already be deferred: secretd mode refuses to start
      without `FAAS_STORAGE_DELETE_MODE=defer`.
 5. **Then compute loses the role (operations).** Once every node runs
@@ -107,6 +123,6 @@ Owner decisions (2026-11-17):
 |---|---|
 | 1 | `pkg/storagegrant`: keyspace resolver, signer interface, GCS V4 and S3 presign signers (implemented) |
 | 2 | secretd `GrantStorageObjects`: placement checks, `storage_grant_audit`, `faas_secretd_storage_grants_total`, budget; `FAAS_SECRETD_STORAGE_GRANTS=off\|gcs\|s3` (implemented, off by default) |
-| 3 | Compute: signed-grant `gcsArtifactStore`, `FAAS_STORAGE_ACCESS=secretd` in imaged, vmmd and builderd; compute-side listing GC skipped. Also: agentd records a sandbox session's node at placement (today only at boot, after the node already read its image), and a session node may read its template layer |
+| 3 | Compute: signed-grant `gcsArtifactStore` (`storage.UseGrants`), `FAAS_STORAGE_ACCESS=secretd` in imaged, vmmd and builderd (builderd also defers deletes now), `build` key class for `sources/`, `placed_node_id` recorded by agentd, template and job-image reads for session nodes, `faas_storage_grants` drop-in (implemented, off by default). Left: a control-plane sweep of `jobs/` and `sources/` |
 | 4 | S3 artifact backend on grants (with the OVH S3 store) |
 | 5 | Operations: remove compute's bucket role; runbook check that a direct read is refused |

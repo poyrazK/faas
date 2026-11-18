@@ -34,8 +34,11 @@ type StorageGrantStore interface {
 	// NodeRunsSandboxOf reports whether nodeID runs a live sandbox session
 	// of accountID.
 	NodeRunsSandboxOf(ctx context.Context, accountID, nodeID string) (bool, error)
+	// NodeRunsSandboxTemplateOf reports whether nodeID runs a live sandbox
+	// session whose template appID builds.
+	NodeRunsSandboxTemplateOf(ctx context.Context, appID, nodeID string) (bool, error)
 	// NodeRunsJob reports whether nodeID runs a task instance of jobID that
-	// is not over.
+	// is not over, or a live sandbox session that boots its image.
 	NodeRunsJob(ctx context.Context, jobID, nodeID string) (bool, error)
 	// RecordStorageGrant appends one audit row.
 	RecordStorageGrant(ctx context.Context, r StorageGrantRecord) error
@@ -184,7 +187,7 @@ func (s *Server) admitStorage(ctx context.Context, name, nodeID string, sub stor
 		if err != nil {
 			return lookupFailed("deployment", err)
 		}
-		ok, err := s.deploymentPlaced(ctx, name, nodeID, appID, sub.subject.ID)
+		ok, err := s.deploymentPlaced(ctx, name, nodeID, appID, sub.subject.ID, sub.access)
 		if err != nil {
 			return lookupFailed("placement", err)
 		}
@@ -237,9 +240,10 @@ func (s *Server) admitStorage(ctx context.Context, name, nodeID string, sub stor
 }
 
 // deploymentPlaced: the node owns the app or holds a grant for it, runs an
-// instance of it, prepares one of its images, or runs a build of this
-// deployment.
-func (s *Server) deploymentPlaced(ctx context.Context, name, nodeID, appID, deploymentID string) (bool, error) {
+// instance of it, prepares one of its images, runs a build of this
+// deployment, or (reads only) runs a sandbox session of a template the app
+// builds.
+func (s *Server) deploymentPlaced(ctx context.Context, name, nodeID, appID, deploymentID, access string) (bool, error) {
 	if target, err := s.store.AppTarget(ctx, appID); err == nil {
 		if _, err := s.authorize(ctx, appID, nodeID, target); err == nil {
 			return true, nil
@@ -250,6 +254,12 @@ func (s *Server) deploymentPlaced(ctx context.Context, name, nodeID, appID, depl
 	}
 	if ok, err := s.store.PreparesImage(ctx, appID, name, s.now().Add(-imagePreparationWindow)); err != nil || ok {
 		return ok, err
+	}
+	if access == accessRead {
+		// A sandbox session boots its template app's layer.
+		if ok, err := s.storage.store.NodeRunsSandboxTemplateOf(ctx, appID, nodeID); err != nil || ok {
+			return ok, err
+		}
 	}
 	return s.storage.store.NodeBuildsDeployment(ctx, deploymentID, name, s.now().Add(-buildRunWindow))
 }

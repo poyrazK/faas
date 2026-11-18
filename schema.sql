@@ -59791,6 +59791,7 @@ CREATE TABLE public.sandbox_sessions (
     task_output bytea,
     egress_allow text[],
     egress_deny text[],
+    placed_node_id text,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_image_ref_check CHECK (((image_ref IS NULL) OR ((char_length(image_ref) >= 1) AND (char_length(image_ref) <= 512)))),
@@ -75823,6 +75824,14 @@ ALTER TABLE public.sandbox_sessions
 
 ALTER TABLE ONLY public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_placed_node_id_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_placed_node_id_check CHECK (((placed_node_id IS NULL) OR ((char_length(placed_node_id) >= 1) AND (char_length(placed_node_id) <= 128)))) NOT VALID;
 
 
 --

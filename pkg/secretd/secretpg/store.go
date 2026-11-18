@@ -406,6 +406,19 @@ func (s *Store) NodeRunsJob(ctx context.Context, jobID, nodeID string) (bool, er
 	return ok, nil
 }
 
+// NodeRunsSandboxTemplateOf implements secretd.StorageGrantStore.
+func (s *Store) NodeRunsSandboxTemplateOf(ctx context.Context, appID, nodeID string) (bool, error) {
+	app, err := pgUUID(appID)
+	if err != nil || nodeID == "" {
+		return false, nil //nolint:nilerr // a malformed id runs nothing
+	}
+	ok, err := s.q.NodeRunsSandboxTemplateOf(ctx, s.db, sqlc.NodeRunsSandboxTemplateOfParams{AppID: app, NodeID: nodeID})
+	if err != nil {
+		return false, fmt.Errorf("secretpg: node runs sandbox template: %w", err)
+	}
+	return ok, nil
+}
+
 // NodeBuildsDeployment implements secretd.StorageGrantStore.
 func (s *Store) NodeBuildsDeployment(ctx context.Context, deploymentID, nodeName string, since time.Time) (bool, error) {
 	dep, err := pgUUID(deploymentID)

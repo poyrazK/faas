@@ -325,11 +325,16 @@ func (q *Queries) NodeRunsApp(ctx context.Context, db DBTX, arg NodeRunsAppParam
 }
 
 const nodeRunsJob = `-- name: NodeRunsJob :one
-SELECT EXISTS (
+SELECT (EXISTS (
     SELECT 1 FROM instances
      WHERE job_id = $1::uuid AND node_id = $2::uuid
        AND state NOT IN ('stopped', 'failed', 'evicting_account_deleting')
-) AS runs
+) OR EXISTS (
+    SELECT 1 FROM sandbox_sessions
+     WHERE image_job_id = $1::uuid
+       AND (node_id = $2::text OR placed_node_id = $2::text)
+       AND state IN ('starting', 'ready', 'frozen')
+))::boolean AS runs
 `
 
 type NodeRunsJobParams struct {
@@ -337,7 +342,8 @@ type NodeRunsJobParams struct {
 	NodeID pgtype.UUID
 }
 
-// A task instance of the job on the node that is not over.
+// A task instance of the job on the node that is not over, or a live
+// sandbox session on the node that boots the job's image.
 func (q *Queries) NodeRunsJob(ctx context.Context, db DBTX, arg NodeRunsJobParams) (bool, error) {
 	row := db.QueryRow(ctx, nodeRunsJob, arg.JobID, arg.NodeID)
 	var runs bool
@@ -348,7 +354,8 @@ func (q *Queries) NodeRunsJob(ctx context.Context, db DBTX, arg NodeRunsJobParam
 const nodeRunsSandboxOf = `-- name: NodeRunsSandboxOf :one
 SELECT EXISTS (
     SELECT 1 FROM sandbox_sessions
-     WHERE account_id = $1::uuid AND node_id = $2::text
+     WHERE account_id = $1::uuid
+       AND (node_id = $2::text OR placed_node_id = $2::text)
        AND state IN ('starting', 'ready', 'frozen')
 ) AS runs
 `
@@ -361,6 +368,29 @@ type NodeRunsSandboxOfParams struct {
 // A live sandbox session of the account placed on the node.
 func (q *Queries) NodeRunsSandboxOf(ctx context.Context, db DBTX, arg NodeRunsSandboxOfParams) (bool, error) {
 	row := db.QueryRow(ctx, nodeRunsSandboxOf, arg.AccountID, arg.NodeID)
+	var runs bool
+	err := row.Scan(&runs)
+	return runs, err
+}
+
+const nodeRunsSandboxTemplateOf = `-- name: NodeRunsSandboxTemplateOf :one
+SELECT EXISTS (
+    SELECT 1 FROM sandbox_sessions s JOIN sandbox_templates t ON t.id = s.template_id
+     WHERE t.app_id = $1::uuid
+       AND (s.node_id = $2::text OR s.placed_node_id = $2::text)
+       AND s.state IN ('starting', 'ready', 'frozen')
+) AS runs
+`
+
+type NodeRunsSandboxTemplateOfParams struct {
+	AppID  pgtype.UUID
+	NodeID string
+}
+
+// A live sandbox session on the node whose template is built by the app:
+// the session boots that app's layer (reads only).
+func (q *Queries) NodeRunsSandboxTemplateOf(ctx context.Context, db DBTX, arg NodeRunsSandboxTemplateOfParams) (bool, error) {
+	row := db.QueryRow(ctx, nodeRunsSandboxTemplateOf, arg.AppID, arg.NodeID)
 	var runs bool
 	err := row.Scan(&runs)
 	return runs, err

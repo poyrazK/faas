@@ -129,10 +129,18 @@ type ManagedPostgresDatabase struct {
 }
 
 type SandboxSession struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	NodeID    pgtype.Text
-	State     string
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	NodeID       pgtype.Text
+	PlacedNodeID pgtype.Text
+	State        string
+	TemplateID   pgtype.UUID
+	ImageJobID   pgtype.UUID
+}
+
+type SandboxTemplate struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
 }
 
 type SecretGrant struct {

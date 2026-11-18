@@ -51,7 +51,7 @@ func (c Client) GrantObjects(ctx context.Context, requests []storagegrant.Reques
 	}
 	out := make([]storagegrant.Grant, len(requests))
 	for i, g := range resp.GetGrants() {
-		if g.GetKey() != requests[i].Key {
+		if g.GetKey() != requests[i].Key { //nolint:gosec // lengths checked equal above
 			return nil, fmt.Errorf("secretd answered grant %d for another key", i)
 		}
 		expires, err := time.Parse(time.RFC3339, g.GetExpiresAt())

@@ -132,11 +132,27 @@ SELECT EXISTS (
 ) AS runs;
 
 -- name: NodeRunsJob :one
--- A task instance of the job on the node that is not over.
-SELECT EXISTS (
+-- A task instance of the job on the node that is not over, or a live
+-- sandbox session on the node that boots the job's image.
+SELECT (EXISTS (
     SELECT 1 FROM instances
      WHERE job_id = sqlc.arg(job_id)::uuid AND node_id = sqlc.arg(node_id)::uuid
        AND state NOT IN ('stopped', 'failed', 'evicting_account_deleting')
+) OR EXISTS (
+    SELECT 1 FROM sandbox_sessions
+     WHERE image_job_id = sqlc.arg(job_id)::uuid
+       AND (node_id = sqlc.arg(node_id)::text OR placed_node_id = sqlc.arg(node_id)::text)
+       AND state IN ('starting', 'ready', 'frozen')
+))::boolean AS runs;
+
+-- name: NodeRunsSandboxTemplateOf :one
+-- A live sandbox session on the node whose template is built by the app:
+-- the session boots that app's layer (reads only).
+SELECT EXISTS (
+    SELECT 1 FROM sandbox_sessions s JOIN sandbox_templates t ON t.id = s.template_id
+     WHERE t.app_id = sqlc.arg(app_id)::uuid
+       AND (s.node_id = sqlc.arg(node_id)::text OR s.placed_node_id = sqlc.arg(node_id)::text)
+       AND s.state IN ('starting', 'ready', 'frozen')
 ) AS runs;
 
 -- name: NodeBuildsDeployment :one

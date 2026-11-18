@@ -30,6 +30,7 @@ type fakeStorageStore struct {
 	builds      map[[2]string]bool // {deployment, node name}
 	sandboxes   map[[2]string]bool // {account, node id}
 	jobs        map[[2]string]bool // {job, node id}
+	templates   map[[2]string]bool // {app, node id}
 	records     []secretd.StorageGrantRecord
 	failRecord  bool
 }
@@ -48,6 +49,9 @@ func (f *fakeStorageStore) NodeBuildsDeployment(_ context.Context, dep, name str
 }
 func (f *fakeStorageStore) NodeRunsSandboxOf(_ context.Context, account, node string) (bool, error) {
 	return f.sandboxes[[2]string{account, node}], nil
+}
+func (f *fakeStorageStore) NodeRunsSandboxTemplateOf(_ context.Context, app, node string) (bool, error) {
+	return f.templates[[2]string{app, node}], nil
 }
 func (f *fakeStorageStore) NodeRunsJob(_ context.Context, job, node string) (bool, error) {
 	return f.jobs[[2]string{job, node}], nil
@@ -76,7 +80,7 @@ func storageFixture(t *testing.T) (*fixture, *fakeStorageStore, *fakeSigner) {
 	st := &fakeStorageStore{
 		deployments: map[string]string{depA: "app-a", depB: "app-b"},
 		runsApp:     map[[2]string]bool{}, builds: map[[2]string]bool{},
-		sandboxes: map[[2]string]bool{}, jobs: map[[2]string]bool{},
+		sandboxes: map[[2]string]bool{}, jobs: map[[2]string]bool{}, templates: map[[2]string]bool{},
 	}
 	sig := &fakeSigner{}
 	f.server.WithStorageGrants(st, sig)
@@ -136,6 +140,8 @@ func TestGrantStorageObjects_PlacementDecides(t *testing.T) {
 		"no node writes sources": {caller: "peer-node", setup: func(_ *fakeStorageStore, f *fixture) {
 			f.store.builds = map[string]secretd.BuildRun{jobJ: {AppID: "app-a", Running: true, StartedAt: f.now, Node: "peer-node"}}
 		}, objs: []*secretdpb.StorageObjectRequest{create("sources/" + jobJ + ".tar.gz")}, want: codes.PermissionDenied},
+		"session reads its template layer":    {caller: "peer-node", setup: func(s *fakeStorageStore, _ *fixture) { s.templates[[2]string{"app-a", "n-peer"}] = true }, objs: []*secretdpb.StorageObjectRequest{get("apps/tpl/" + depA + ".ext4")}, want: codes.OK},
+		"session cannot write the template":   {caller: "peer-node", setup: func(s *fakeStorageStore, _ *fixture) { s.templates[[2]string{"app-a", "n-peer"}] = true }, objs: []*secretdpb.StorageObjectRequest{create("apps/tpl/" + depA + ".ext4")}, want: codes.PermissionDenied},
 		"job task on the node":                {caller: "peer-node", setup: func(s *fakeStorageStore, _ *fixture) { s.jobs[[2]string{jobJ, "n-peer"}] = true }, objs: []*secretdpb.StorageObjectRequest{get("jobs/" + jobJ + ".ext4")}, want: codes.OK},
 		"unknown key class":                   {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{get("sbom/x.json")}, want: codes.InvalidArgument},
 		"delete is not an operation":          {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{{Key: snapA, Op: "delete"}}, want: codes.InvalidArgument},

@@ -175,7 +175,14 @@ CREATE TABLE sandbox_sessions (
     account_id uuid NOT NULL,
     node_id    text,
     placed_node_id text,
-    state      text NOT NULL
+    state      text NOT NULL,
+    template_id  uuid,
+    image_job_id uuid
+);
+
+CREATE TABLE sandbox_templates (
+    id     uuid NOT NULL PRIMARY KEY,
+    app_id uuid NOT NULL
 );
 
 CREATE TABLE storage_grant_audit (

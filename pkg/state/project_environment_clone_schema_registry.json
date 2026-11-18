@@ -18222,6 +18222,7 @@
       "node_id",
       "outcome_code",
       "outcome_message",
+      "placed_node_id",
       "preset",
       "ram_mb",
       "state",

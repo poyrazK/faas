@@ -15963,9 +15963,10 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput  []byte
-	EgressAllow []string
-	EgressDeny  []string
+	TaskOutput   []byte
+	EgressAllow  []string
+	EgressDeny   []string
+	PlacedNodeID pgtype.Text
 }
 
 // ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
