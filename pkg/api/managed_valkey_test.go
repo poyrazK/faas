@@ -78,7 +78,7 @@ func TestManagedValkeyURL(t *testing.T) {
 }
 
 func TestManagedValkeyHandoffCommand(t *testing.T) {
-	argv := ManagedValkeyHandoffCommand("sessions", 256, "allkeys-lru", 1_900_000_000)
+	argv := ManagedValkeyHandoffCommand(ManagedValkeyHost("sessions"), 256, "allkeys-lru", 1_900_000_000)
 	if len(argv) != 3 || argv[0] != "/bin/sh" || argv[1] != "-c" {
 		t.Fatalf("argv = %q", argv)
 	}

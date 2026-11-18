@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -191,6 +192,9 @@ func (s *server) createRedisCacheApp(r *http.Request, acct state.Account, req ap
 	app.MaxConcurrency = 1
 	app.MinInstances = 0
 	app.Manifest.Port = api.ManagedValkeyPort
+	// The handoff opens port 6379 only after replication catches up, so
+	// a resize or upgrade gets the plan's whole startup window.
+	app.Manifest.StartupDeadlineS = limits.MaxStartupDeadlineS
 	app.Manifest.Ports = []api.WorkloadPort{{Name: "redis", Port: api.ManagedValkeyPort, Protocol: api.WorkloadPortTCP, Internal: true}}
 	app.NodeID = ""
 	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
@@ -335,7 +339,7 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	s.createImageDeployment(rec, r, acct, app, api.MustLimitsFor(acct.Plan), api.CreateDeploymentRequest{
 		Image: api.ManagedValkeyImage,
 		Overrides: &api.CreateDeploymentOverrides{
-			Entrypoint: api.ManagedValkeyHandoffCommand(app.Slug, cache.MemoryMB, cache.EvictionPolicy, until),
+			Entrypoint: api.ManagedValkeyHandoffCommand(s.redisHandoffSource(r.Context(), app), cache.MemoryMB, cache.EvictionPolicy, until),
 			Port:       api.ManagedValkeyPort,
 		},
 	}, false)
@@ -437,4 +441,18 @@ func redisCacheResponse(app state.App, cache state.ManagedValkeyCache) api.Redis
 		Status:         string(app.Status),
 		CreatedAt:      cache.CreatedAt,
 	}
+}
+
+// redisHandoffSource is the address a handoff replicates from: the cache's
+// private service IP, so the copy does not depend on guest DNS, or its
+// service name when the address cannot be read.
+func (s *server) redisHandoffSource(ctx context.Context, app state.App) string {
+	index, err := s.store.AppServiceAddressIndex(ctx, app.ID)
+	if err == nil {
+		if addr, ok := api.ServiceAddressForIndex(index); ok {
+			return addr.String()
+		}
+	}
+	s.log.Warn("apid: redis handoff falls back to the service name", "app_id", app.ID, "err", err)
+	return api.ManagedValkeyHost(app.Slug)
 }

@@ -214,8 +214,11 @@ func managedValkeyServerArgs(memoryMB int, policy, port string) string {
 // ready, the rollout fails, and the running VM keeps serving (its pause is
 // lifted, or expires). After the window the script starts an empty cache,
 // as any cold boot does; inside the window a cold boot fails until it ends.
-func ManagedValkeyHandoffCommand(name string, memoryMB int, policy string, handoffUntil int64) []string {
-	source := ManagedValkeyHost(name)
+//
+// source is the running cache's private address: apid passes its service IP
+// so the handoff does not depend on guest DNS, which failed under load in
+// native run redis-20261118T073206, and falls back to ManagedValkeyHost.
+func ManagedValkeyHandoffCommand(source string, memoryMB int, policy string, handoffUntil int64) []string {
 	port := strconv.Itoa(ManagedValkeyPort)
 	script := strings.Join([]string{
 		`if [ "$(date +%s)" -ge ` + strconv.FormatInt(handoffUntil, 10) + ` ]; then exec ` + managedValkeyServerArgs(memoryMB, policy, port) + `; fi`,
