@@ -7,6 +7,10 @@ CLI, the CLI's automation contract, running the MCP server locally, the
 Claude Code plugin, project instructions, and documentation an agent can read
 directly.
 
+Starting with an empty directory and a Free account? Follow the
+[private Node quickstart](quickstart.md#deploy-a-private-node-app-on-free)
+for a small internal HTTP app and a CLI deploy, verify, and edit loop.
+
 ## Agent quickstart for an existing FastAPI repo
 
 Check compatibility before signing in, then use hosted MCP to deploy a copy
@@ -511,10 +515,17 @@ forwarded to the app, and its own authentication still applies. For named
 scopes the CLI looks up `--project-id` and `--environment-id` from the app's
 project when they are omitted. Interrupting the check exits 130.
 
-A deploy writes a receipt with the deployment `id`, its `status` and the
-`app_url`. If `timed_out` is true, run the receipt's `resume_command` instead
-of deploying again. After a temporary failure, the server may already have
-accepted the deploy: check `gregale release get <id> --app <slug>` first.
+A standalone deploy receipt includes the deployment `id`, `status`, and
+`app_url`. A project deploy lists each accepted `deployment_id` in `builds`.
+With `--no-wait`, use the accepted UUID to wait for readiness and verify the
+application response. Use `gregale release wait DEPLOYMENT_UUID --rollout`
+when you also need the replacement to serve 100% of traffic. A response
+check can pass while the canary is still running.
+
+If `timed_out` is true, run the receipt's `resume_command` when available.
+After a temporary failure, the server may already have accepted the deploy.
+Inspect the existing deployment with `gregale release get <id> --app <slug>`
+before submitting another build.
 
 Commands that delete or replace something need explicit approval, such as
 `--yes` for app deletion. Preview them with `--dry-run` first. Missing
