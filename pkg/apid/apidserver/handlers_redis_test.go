@@ -119,6 +119,9 @@ func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := e.store.UpdateDeploymentStatus(ctx, created.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := e.store.CreateInstanceWithMode(ctx, app.ID, created.ID, string(state.StateRunning), app.RAMMB, "", "wake-1", string(state.InstanceModeNormal)); err != nil {
 		t.Fatal(err)
 	}
