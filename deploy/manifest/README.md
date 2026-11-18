@@ -15,6 +15,11 @@ CI gate both consume this directory's contents.
   its provider-neutral `private_dns: managed_hosts` adapter derives private
   addresses from Ansible host facts. Release CI materializes the release tuple
   and publishes the final `production-manifest.yaml` beside the signed bundle.
+- `production/ovh-live.template.yaml` — the OVHcloud bare-metal fleet the
+  public release moves to (`docs/runbooks/GcpToOvhMigration.md`). A copy of the
+  GCP template that changes only the hosts, the vRack overlay, the log archive
+  and the app entry; `pkg/renderer/ovh_production_manifest_test.go` fails if
+  the sections both share drift apart. Release CI does not materialize it yet.
 
 ## Layout
 
@@ -22,7 +27,8 @@ CI gate both consume this directory's contents.
 deploy/manifest/
 ├── README.md           (this file)
 ├── production/
-│   └── gcp-live.template.yaml
+│   ├── gcp-live.template.yaml
+│   └── ovh-live.template.yaml
 └── examples/
     └── splitbox.example.yaml
 ```
