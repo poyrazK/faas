@@ -87,6 +87,7 @@ var adoptionStateInventory = map[string]map[string]string{
 	"JailerVMM": {
 		"bindMounts":               "rebuilt",
 		"bindSourceModes":          "rebuilt",
+		"buildkitSeedSources":      "bootonly", // seed-run builders are killed at adoption, never adopted
 		"characterizationReceipts": "bootonly", // awaited only during a boot
 		"clients":                  "rebuilt",  // created on first use
 		"cpuBoostTails":            "reset",    // adoption writes the steady fence instead

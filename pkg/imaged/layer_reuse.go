@@ -405,6 +405,7 @@ func (h *Handler) layerReuseKeyFor(app state.App, in layerReuseInputs) string {
 func (h *Handler) buildOrReuseAppLayer(ctx context.Context, key string, app state.App, dep state.Deployment, in rootfs.BuildInput, prepare func(*rootfs.BuildInput) (func(), error)) (rootfs.BuildResult, error) {
 	if key != "" {
 		if result, ok := h.reuseAppLayer(ctx, key, app, dep, in); ok {
+			markLayerPhase(ctx, "reuse")
 			return result, nil
 		}
 	}

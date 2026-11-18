@@ -85,6 +85,21 @@ on the command line; the flag in the file alone is ignored.
 
 ## How a rollout proceeds
 
+An exact application response check can pass as soon as the new deployment
+is live, while older revisions still serve part of the traffic. Use the
+accepted deployment UUID from the deploy receipt for each milestone.
+
+```bash
+gregale release wait DEPLOYMENT_UUID --app my-api
+gregale release verify DEPLOYMENT_UUID --app my-api --path /
+gregale release wait DEPLOYMENT_UUID --app my-api --rollout --timeout 10m
+```
+
+The final wait follows the canary to 100% traffic. Direct traffic promotion
+is blocked while the canary is active. Use `gregale release traffic status my-api`
+to see the current step or repeat the wait with the same UUID after an
+interruption.
+
 
 Instead of moving all traffic at once, shift it in stages and let the platform
 promote only while the app stays healthy. `--rollout` picks how a release
