@@ -102,7 +102,7 @@ func (p *Postgres) resourceNames(r rehearsalpg.Resource) bool {
 	return e == nil && r.BackendSHA256 == p.identity && p.identity != "" && r.DatabaseName == "grpg_"+strings.ReplaceAll(u.String(), "-", "") && r.RoleName == r.DatabaseName
 }
 
-func execFormatted(ctx context.Context, c *pgx.Conn, command string, err error) error {
+func execFormatted(ctx context.Context, c sqlc.DBTX, command string, err error) error {
 	if err != nil {
 		return ErrFixture
 	}

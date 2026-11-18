@@ -26,6 +26,8 @@ class ScenarioManagedWorkParticipant:
     workload: str
     async_: bool | Unset = UNSET
     postgres: ScenarioManagedWorkParticipantPostgres | Unset = UNSET
+    """Access to the disposable PostgreSQL fixture. Task roles require seeded Task tables and a sole read_write
+    primary."""
     objects: ScenarioManagedWorkParticipantObjects | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

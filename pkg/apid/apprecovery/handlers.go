@@ -29,6 +29,11 @@ type Handler struct {
 	OnRestored          func(context.Context, *http.Request, state.Account, state.App)
 	Response            func(context.Context, state.App, api.Plan) api.AppResponse
 	ParkedRef           func(context.Context, api.AppResponse, state.App) api.AppResponse
+	// PurgeNow permanently removes a deleted app whose restore window has
+	// ended (pkg/grace PurgeApp). Nil leaves the purge to the grace sweep.
+	PurgeNow func(ctx context.Context, appID, actor string) error
+	// OnPurgeRequested records the closed restore window (audit).
+	OnPurgeRequested func(context.Context, *http.Request, state.Account, state.App)
 }
 
 type deletedAppCursor struct {
@@ -238,6 +243,83 @@ func (s Handler) Restore(w http.ResponseWriter, r *http.Request, acct state.Acco
 	// RestoreApp/RestoreAppWithActivity conditionally mutate this exact ID and
 	// recheck grace, purge claim, quota and capacity at the mutation boundary.
 	s.restoreOwnedApp(w, r, acct, app)
+}
+
+// Purge ends one exact deleted app's restore window now and removes it, so
+// its owner can reuse the slug at once (a Compose project redeployed after
+// a teardown). It cannot be undone. A purge something still blocks answers
+// 202 with the reason; the grace sweep finishes it once that clears.
+func (s Handler) Purge(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !validDeletedAppQuery(r, false) {
+		api.WriteProblem(w, api.ErrValidation("purge does not accept environment or other query scope"))
+		return
+	}
+	var body *struct{}
+	err := httpkit.DecodeJSONSized(r, &body, 4096)
+	if !errors.Is(err, io.EOF) && (err != nil || body == nil) {
+		api.WriteProblem(w, api.ErrValidation("purge accepts no fields; use an empty body"))
+		return
+	}
+	row, ok := s.readDeletedApp(w, r, acct)
+	if !ok {
+		return
+	}
+	app, err := s.Store.AppByID(r.Context(), row.ID)
+	if errors.Is(err, state.ErrNotFound) || (err == nil && app.AccountID != acct.ID) {
+		httpkit.NotFound(w, "no such deleted app")
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not recheck deleted app"))
+		return
+	}
+	if app.ID != row.ID || app.Slug != row.Slug || app.Status != state.AppDeleted {
+		writeRestoreIdentityConflict(w)
+		return
+	}
+	expired, err := s.Store.EndAppDeleteGrace(r.Context(), app.ID)
+	switch {
+	case errors.Is(err, state.ErrConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppNotPurgeable, "App not purgeable",
+			"the deleted app still has object storage buckets; restore it and delete its buckets first"))
+		return
+	case errors.Is(err, state.ErrNotFound):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppNotPurgeable, "App not purgeable",
+			"the deleted app has no purge deadline; contact support"))
+		return
+	case err != nil:
+		api.WriteProblem(w, api.ErrCapacity("could not close the restore window"))
+		return
+	}
+	if s.OnPurgeRequested != nil {
+		s.OnPurgeRequested(r.Context(), r, acct, expired)
+	}
+	out := api.DeletedAppPurgeResponse{AccountID: acct.ID, ID: app.ID, Slug: app.Slug}
+	purgeErr := errors.New("the grace sweep purges it within a few minutes")
+	if s.PurgeNow != nil {
+		purgeErr = s.PurgeNow(r.Context(), app.ID, "customer:"+acct.ID)
+	}
+	if purgeErr == nil {
+		out.Purged = true
+		httpkit.WriteJSON(w, http.StatusOK, out)
+		return
+	}
+	out.PendingReason = purgePendingReason(purgeErr)
+	httpkit.WriteJSON(w, http.StatusAccepted, out)
+}
+
+// purgePendingReason names what still holds a purged app, in the closed
+// vocabulary of state.AppPurgeBlocked* where the store typed it.
+func purgePendingReason(err error) string {
+	var blocked *state.AppPurgeBlockedError
+	switch {
+	case errors.As(err, &blocked):
+		return blocked.Reason
+	case errors.Is(err, state.ErrConflict):
+		return "retained_resources"
+	default:
+		return "retry_pending"
+	}
 }
 
 func writeRestoreIdentityConflict(w http.ResponseWriter) {

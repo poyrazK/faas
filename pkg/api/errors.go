@@ -1850,6 +1850,9 @@ const (
 	CodeAccountDeletionPending = "account_deletion_pending"
 	CodeAccountNotRestorable   = "account_not_restorable"
 	CodeAppNotRestorable       = "app_not_restorable"
+	// CodeAppNotPurgeable (409): POST /v1/deleted-apps/{id}/purge refused
+	// before closing the restore window; the detail names what to fix.
+	CodeAppNotPurgeable = "app_not_purgeable"
 
 	// CodeAccountDeletionManagedPostgres (409): the account still owns live
 	// managed PostgreSQL databases, which must be deleted before the account

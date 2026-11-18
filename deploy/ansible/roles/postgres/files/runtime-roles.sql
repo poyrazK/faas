@@ -214,6 +214,17 @@ BEGIN
 	END LOOP;
 END
 $$;
+-- meterd keeps request_telemetry and log_events partitioned through two
+-- owner-run functions (migration 20261118162630014); EXECUTE is revoked from
+-- PUBLIC, so only meterd's login may call them. Absent before that migration.
+DO $$
+BEGIN
+	IF to_regrole('faas_meterd') IS NOT NULL AND to_regprocedure('public.monthly_partitions_ensure(regclass)') IS NOT NULL THEN
+		GRANT EXECUTE ON FUNCTION public.monthly_partitions_ensure(regclass) TO faas_meterd;
+		GRANT EXECUTE ON FUNCTION public.monthly_partitions_drop_expired(regclass) TO faas_meterd;
+	END IF;
+END
+$$;
 -- Objects the next migrations create carry the same grants. Only objects the
 -- owner creates are covered, which is every object: migrations run as faas.
 ALTER DEFAULT PRIVILEGES FOR ROLE faas IN SCHEMA public

@@ -17,9 +17,48 @@ SELECT pg_catalog.format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATED
 -- name: FormatCreateParticipant :one
 SELECT pg_catalog.format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT CONNECTION LIMIT 16 IN ROLE %I',sqlc.arg(role_name)::text,sqlc.arg(password)::text,sqlc.arg(owner_role)::text)::text;
 -- name: ParticipantRoles :many
-SELECT r.rolname::text FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_auth_members m ON m.member=r.oid
- JOIN pg_catalog.pg_roles owner ON owner.oid=m.roleid
-WHERE owner.rolname=sqlc.arg(owner_role)::text AND r.rolname::text ~ '^grpw_[a-f0-9]{40}$' ORDER BY r.rolname LIMIT 16;
+SELECT r.rolname::text FROM pg_catalog.pg_roles r
+WHERE (r.rolname::text ~ '^grpw_[a-f0-9]{40}$' AND EXISTS (
+ SELECT 1 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles owner ON owner.oid=m.roleid
+ WHERE m.member=r.oid AND owner.rolname=sqlc.arg(owner_role)::text))
+ OR r.rolname::text ~ ('^grpt_' || substr(sqlc.arg(owner_role)::text,6) || '_[a-f0-9]{24}$')
+ORDER BY r.rolname LIMIT 16;
+
+-- name: ConfigureTaskGrantTransaction :exec
+SELECT pg_catalog.set_config('search_path','pg_catalog',true);
+
+-- name: TaskGrantTablesReady :one
+SELECT count(*)=cardinality(sqlc.arg(table_names)::text[])
+FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+JOIN pg_catalog.pg_roles owner ON owner.oid=c.relowner
+WHERE n.nspname='public' AND c.relkind='r' AND c.relpersistence='p'
+ AND owner.rolname=sqlc.arg(owner_role)::text AND c.relname::text=ANY(sqlc.arg(table_names)::text[]);
+
+-- name: FormatConfigureTaskSchema :one
+SELECT pg_catalog.format(
+ 'ALTER SCHEMA public OWNER TO %1$I;
+  REVOKE ALL ON SCHEMA public FROM PUBLIC;
+  REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+  REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+  REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA public FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public REVOKE EXECUTE ON ROUTINES FROM PUBLIC',
+ sqlc.arg(owner_role)::text)::text;
+
+-- name: FormatGrantTaskConnect :one
+SELECT pg_catalog.format('GRANT CONNECT ON DATABASE %I TO %I; GRANT USAGE ON SCHEMA public TO %I',
+ sqlc.arg(database_name)::text,sqlc.arg(role_name)::text,sqlc.arg(role_name)::text)::text;
+
+-- name: FormatGrantTaskTables :one
+SELECT (pg_catalog.format('GRANT SELECT ON TABLE %s TO %I',
+ (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest(sqlc.arg(read_tables)::text[]) AS name),
+ sqlc.arg(role_name)::text) ||
+ CASE WHEN cardinality(sqlc.arg(write_tables)::text[])>0 THEN
+ pg_catalog.format('; GRANT INSERT,UPDATE,DELETE ON TABLE %s TO %I',
+ (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest(sqlc.arg(write_tables)::text[]) AS name),
+ sqlc.arg(role_name)::text) ELSE '' END)::text;
 -- name: FormatCreateDatabase :one
 SELECT pg_catalog.format('CREATE DATABASE %I TEMPLATE template0 ENCODING ''UTF8''',sqlc.arg(database_name)::text)::text;
 -- name: FormatConfigureDatabase :one

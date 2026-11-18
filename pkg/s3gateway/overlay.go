@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/objectoverlay"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -239,184 +240,55 @@ func decodeOverlayListCursor(token string) (string, bool) {
 	return string(raw), true
 }
 
-// overlayListEntry is one key or common prefix of a listing page, in the
-// single lexicographic order S3 lists them in.
-type overlayListEntry struct {
-	key    string
-	prefix bool
-	object objectstorage.Object
-}
-
-// after is the start-after boundary past this entry. Past a common prefix
-// it is the largest key the prefix can hold, so the next page does not roll
-// the same prefix up again.
-func (e overlayListEntry) after() string {
-	if e.prefix {
-		return e.key + string(utf8.MaxRune)
-	}
-	return e.key
-}
-
-func overlayListEntries(page objectstorage.ObjectPage) []overlayListEntry {
-	out := make([]overlayListEntry, 0, len(page.Items)+len(page.CommonPrefixes))
-	i, j := 0, 0
-	for i < len(page.Items) || j < len(page.CommonPrefixes) {
-		if j >= len(page.CommonPrefixes) || i < len(page.Items) && page.Items[i].Key < page.CommonPrefixes[j] {
-			out = append(out, overlayListEntry{key: page.Items[i].Key, object: page.Items[i]})
-			i++
-			continue
+// overlayCounter counts each provider request against the branch bucket; a
+// refused request has already written its response.
+func overlayCounter(countRequest func() bool) objectoverlay.Counter {
+	return func() error {
+		if !countRequest() {
+			return errOverlayListAnswered
 		}
-		out = append(out, overlayListEntry{key: page.CommonPrefixes[j], prefix: true})
-		j++
+		return nil
 	}
-	return out
 }
 
-// listOverlayObjects lists one merged page of a branch bucket and its
-// source. Both lists start after the same boundary; the branch's entry wins
-// a key both hold, a tombstoned source key is skipped, and the page stops at
-// the first truncated list's last entry so that no key is skipped. A source
-// common prefix the branch does not hold lists only when it holds a key the
-// branch reads (overlayPrefixVisible); a page that has checked
-// overlayPrefixProbes of them ends before the next.
+// listOverlayObjects lists one merged page of a branch bucket and its source
+// (objectoverlay.List). Its continuation token is the gateway's own: the
+// start-after boundary of the next page.
 func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req, through requestContext, list objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error) {
-	list.Cursor = ""
-	if !h.recordProviderRequest(w, r, req) {
-		return objectstorage.ObjectPage{}, errOverlayListAnswered
-	}
-	branchPage, err := listProviderObjects(r.Context(), req.provider, req.bucket.PhysicalName, list)
-	if err != nil {
-		return objectstorage.ObjectPage{}, err
-	}
-	branch := overlayListEntries(branchPage)
-	source, sourceHorizon, err := h.overlaySourceEntries(w, r, req, through, list)
-	if err != nil {
-		return objectstorage.ObjectPage{}, err
-	}
-	var keys []string
-	for _, e := range source {
-		if !e.prefix {
-			keys = append(keys, e.key)
-		}
-	}
-	store, _ := h.store.(state.ObjectBucketOverlayStore)
-	hidden, err := overlayTombstones(r, store, req.bucket.ID, keys)
-	if err != nil {
-		return objectstorage.ObjectPage{}, objectstorage.ErrUnavailable
-	}
-	var horizon *overlayListEntry
-	if branchPage.NextCursor != "" {
-		if len(branch) == 0 {
-			return objectstorage.ObjectPage{}, objectstorage.ErrUnavailable
-		}
-		last := branch[len(branch)-1]
-		horizon = &last
-	}
-	if sourceHorizon != nil && (horizon == nil || sourceHorizon.key < horizon.key) {
-		horizon = sourceHorizon
-	}
-	var out []overlayListEntry
-	var last *overlayListEntry // the last entry decided, emitted or not
-	i, j, full, cut, probes := 0, 0, false, false, 0
-	for i < len(branch) || j < len(source) {
-		var e overlayListEntry
-		sourceOnly := false
-		if j >= len(source) || i < len(branch) && branch[i].key <= source[j].key {
-			e = branch[i]
-			if j < len(source) && source[j].key == e.key {
-				j++
-			}
-			i++
-		} else {
-			e = source[j]
-			j++
-			sourceOnly = true
-			if !e.prefix && hidden[e.key] {
-				last = &e
-				continue
-			}
-		}
-		if horizon != nil && e.key > horizon.key {
-			break
-		}
-		if len(out) == int(list.Limit) {
-			full = true
-			break
-		}
-		if sourceOnly && e.prefix {
-			if probes == overlayPrefixProbes {
-				cut = true
-				break
-			}
-			probes++
-			visible, err := h.overlayPrefixVisible(w, r, req, through, e.key)
-			if err != nil {
+	count := overlayCounter(func() bool { return h.recordProviderRequest(w, r, req) })
+	lister := func(p objectstorage.Provider, bucket string) objectoverlay.Lister {
+		return func(ctx context.Context, l objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error) {
+			if err := count(); err != nil {
 				return objectstorage.ObjectPage{}, err
 			}
-			if !visible {
-				last = &e
-				continue
-			}
+			return listProviderObjects(ctx, p, bucket, l)
 		}
-		out = append(out, e)
-		last = &e
+	}
+	source := objectoverlay.Source{List: lister(through.provider, through.bucket.PhysicalName),
+		Bucket: through.bucket.PhysicalName, At: through.overlayAsOf, Count: count}
+	if !through.overlayAsOf.IsZero() {
+		source.Versions = through.provider.(objectstorage.ObjectVersionLister)
+	}
+	store, _ := h.store.(state.ObjectBucketOverlayStore)
+	merged, err := objectoverlay.List(r.Context(), objectoverlay.Listing{
+		Branch: lister(req.provider, req.bucket.PhysicalName), Source: source,
+		Store: store, BucketID: req.bucket.ID, Request: list,
+	})
+	if err != nil {
+		return objectstorage.ObjectPage{}, err
 	}
 	page := objectstorage.ObjectPage{}
-	for _, e := range out {
-		if e.prefix {
-			page.CommonPrefixes = append(page.CommonPrefixes, e.key)
+	for _, e := range merged.Entries {
+		if e.Prefix {
+			page.CommonPrefixes = append(page.CommonPrefixes, e.Key)
 		} else {
-			page.Items = append(page.Items, e.object)
+			page.Items = append(page.Items, e.Object)
 		}
 	}
-	// A full page resumes after its last entry; a page cut at the horizon has
-	// considered every entry up to it, emitted or tombstoned.
-	switch {
-	case full:
-		page.NextCursor = encodeOverlayListCursor(out[len(out)-1].after())
-	case cut:
-		// Every entry up to last is decided; the next page starts after it.
-		page.NextCursor = encodeOverlayListCursor(last.after())
-	case horizon != nil:
-		page.NextCursor = encodeOverlayListCursor(horizon.after())
+	if merged.Next != "" {
+		page.NextCursor = encodeOverlayListCursor(merged.Next)
 	}
 	return page, nil
-}
-
-// overlaySourceEntries lists the source side of a merged page: the source's
-// current objects, or for an as_of overlay its objects at the branch point.
-// horizon is set when the source has more: no source entry past it was read.
-func (h *Handler) overlaySourceEntries(w http.ResponseWriter, r *http.Request, req, through requestContext, list objectstorage.ObjectListRequest) ([]overlayListEntry, *overlayListEntry, error) {
-	if through.overlayAsOf.IsZero() {
-		if !h.recordProviderRequest(w, r, req) {
-			return nil, nil, errOverlayListAnswered
-		}
-		page, err := listProviderObjects(r.Context(), through.provider, through.bucket.PhysicalName, list)
-		if err != nil {
-			return nil, nil, err
-		}
-		entries := overlayListEntries(page)
-		if page.NextCursor == "" {
-			return entries, nil, nil
-		}
-		if len(entries) == 0 {
-			return nil, nil, objectstorage.ErrUnavailable
-		}
-		last := entries[len(entries)-1]
-		return entries, &last, nil
-	}
-	lister := through.provider.(objectstorage.ObjectVersionLister)
-	listing, err := listAsOf(r.Context(), lister, through.bucket.PhysicalName, list, through.overlayAsOf,
-		func() bool { return h.recordProviderRequest(w, r, req) })
-	if err != nil {
-		return nil, nil, err
-	}
-	if listing.horizon == "" {
-		return listing.entries, nil, nil
-	}
-	// The horizon is already a start-after boundary: a plain key entry's
-	// after() is its key.
-	return listing.entries, &overlayListEntry{key: listing.horizon}, nil
 }
 
 // errOverlayListAnswered means the listing already wrote its error response.

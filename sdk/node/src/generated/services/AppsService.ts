@@ -86,6 +86,7 @@ import type { DebugStatusResponse } from '../models/DebugStatusResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeletedAppListResponse } from '../models/DeletedAppListResponse.js';
+import type { DeletedAppPurgeResponse } from '../models/DeletedAppPurgeResponse.js';
 import type { DeletedAppSummary } from '../models/DeletedAppSummary.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
@@ -2317,6 +2318,59 @@ export class AppsService {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deleted-apps/{id}/restore',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Permanently remove a deleted app now, freeing its slug.
+   * Ends the app's restore window at once and removes the app and its stored
+   * artifacts, so the same account can reuse the slug (for example to redeploy
+   * a Compose project after a teardown). This cannot be undone. Requires
+   * deploy-write, MFA completion and trusted browser origin for cookie
+   * authentication. Refused with 409 app_not_purgeable, before the window
+   * closes, while the app still has object storage buckets. When something
+   * else still holds the app the response is 202 with pending_reason; the
+   * window stays closed and the grace sweep finishes the purge.
+   *
+   * @returns DeletedAppPurgeResponse The app is gone and its slug is free for this account.
+   * @throws ApiError
+   */
+  public static purgeDeletedApp({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Exact account-owned deleted-app ID to remove permanently, from the deleted-app inventory.
+     */
+    id: string,
+    /**
+     * Optional empty object; no fields are accepted.
+     */
+    requestBody?: Record<string, any>,
+  }): CancelablePromise<DeletedAppPurgeResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/deleted-apps/{id}/purge',
       path: {
         'id': id,
       },

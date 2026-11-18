@@ -1,4 +1,4 @@
--- filename: 20261118150000100_sandbox_sessions_placed_node.sql
+-- filename: 20261118174647200_sandbox_sessions_placed_node.sql
 -- migration-compat: expand
 -- ADR-20261117190000 slice 3: a compute node reads a sandbox session's image
 -- and snapshot through grants secretd signs only for sessions placed on it.
