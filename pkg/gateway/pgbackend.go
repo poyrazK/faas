@@ -368,6 +368,9 @@ type PGBackend struct {
 	// crashCaptureRequest records an ADR-733 crash capture request; nil
 	// when crash snapshots are disabled on this node.
 	crashCaptureRequest func(ctx context.Context, appID, instanceID string, statusCode int, route string)
+	// probeWakeRecorder writes the ADR-20261116120000 probe wake ledger;
+	// nil leaves unbilled health probes billed like route probes.
+	probeWakeRecorder PlatformProbeWakeRecorder
 	// liveTargetHydration coalesces cache-reconciliation reads for the same
 	// app. A gateway restart can receive a burst before the first request has
 	// populated the process-local picker; those requests must share one

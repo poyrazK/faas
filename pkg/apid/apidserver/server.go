@@ -3273,6 +3273,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSLO)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteSLO)))
 	// ADR-748: synthetic HTTP checks.
+	mux.HandleFunc("GET /v1/apps/{slug}/protection", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppProtection)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/protection", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.setAppProtection)))
 	mux.HandleFunc("GET /v1/apps/{slug}/synthetics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listSyntheticChecks)))
 	mux.HandleFunc("POST /v1/apps/{slug}/synthetics", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSyntheticCheck))))
 	mux.HandleFunc("GET /v1/apps/{slug}/synthetics/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSyntheticCheck)))

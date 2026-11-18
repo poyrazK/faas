@@ -170,8 +170,16 @@ type MemStore struct {
 	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
 	basicAuthVerifiers map[string]string
 	// platformAlertNotices mirror platform_alert_notices (ADR-20261115194000).
-	platformAlertNotices        []PlatformAlertNotice
-	platformAlertMeta           map[string]platformAlertNoticeMeta
+	platformAlertNotices []PlatformAlertNotice
+	platformAlertMeta    map[string]platformAlertNoticeMeta
+	// appProtection and appProtectionObjects mirror app_protection and
+	// app_protection_objects (ADR-20261116120000); allocated on first use.
+	appProtection              map[string]AppProtection
+	appProtectionObjects       map[string]map[AppProtectionItem]AppProtectionObject
+	appProtectionLeases        map[string]appProtectionLease
+	appProtectionHealthProbeAt map[string]time.Time
+	// platformProbeWakes mirror platform_probe_wakes (ADR-20261116120000).
+	platformProbeWakes          []PlatformProbeWake
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
