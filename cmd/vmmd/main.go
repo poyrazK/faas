@@ -66,6 +66,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
@@ -932,6 +933,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("vmmd: %w", err)
 	} else if deferred {
 		log.Info("vmmd: shared-store deletes deferred to the control plane")
+	}
+	// ADR-20261117190000: with FAAS_STORAGE_ACCESS=secretd the node holds no
+	// store credential; each object is reached through a secretd grant.
+	if _, closeGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, storageBackend, "vmmd", log); err != nil {
+		return err
+	} else {
+		defer closeGrants()
 	}
 	// issue #517 / PR-C / ADR-064 — Ops constructed ABOVE the
 	// Manager wiring so the wake-timeline fan-out (vmmd's canonical

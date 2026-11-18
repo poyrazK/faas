@@ -174,6 +174,7 @@ CREATE TABLE sandbox_sessions (
     id         uuid NOT NULL PRIMARY KEY,
     account_id uuid NOT NULL,
     node_id    text,
+    placed_node_id text,
     state      text NOT NULL
 );
 

@@ -151,7 +151,8 @@ SELECT EXISTS (
 -- A live sandbox session of the account placed on the node.
 SELECT EXISTS (
     SELECT 1 FROM sandbox_sessions
-     WHERE account_id = sqlc.arg(account_id)::uuid AND node_id = sqlc.arg(node_id)::text
+     WHERE account_id = sqlc.arg(account_id)::uuid
+       AND (node_id = sqlc.arg(node_id)::text OR placed_node_id = sqlc.arg(node_id)::text)
        AND state IN ('starting', 'ready', 'frozen')
 ) AS runs;
 
