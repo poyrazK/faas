@@ -28,7 +28,18 @@ type FlagEvent struct {
 	CustomerID string    `json:"customer_id"`
 	Value      int64     `json:"value,omitempty"`
 	At         time.Time `json:"at,omitempty"`
+	// Subject, Properties and Flags are product analytics (ADR
+	// 20261117084505 §1): an opaque end-user subject, stored only as a
+	// hash; up to AnalyticsEventMaxProperties string properties; and the
+	// flag decisions of the event's request, flag key to served value.
+	Subject    string            `json:"subject,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
+	Flags      map[string]string `json:"flags,omitempty"`
 }
+
+// FlagSDKTrackV2Capability marks a runtime SDK whose track() events carry
+// subjects, properties and flag decisions (ADR 20261117084505 §4).
+const FlagSDKTrackV2Capability = "track-v2"
 
 // FlagEventsRequest is POST /v1/runtime/flags/events.
 type FlagEventsRequest struct {

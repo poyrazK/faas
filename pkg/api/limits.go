@@ -2830,6 +2830,45 @@ const (
 	FlagsMaxOwnerBytes = 128
 )
 
+// Product analytics bounds (ADR 20261117084505). Retention is per plan:
+// Limits.AnalyticsRetentionDays; events share Limits.FlagEventsPerMonth.
+const (
+	// AnalyticsEventMaxProperties bounds an event's string properties.
+	AnalyticsEventMaxProperties = 10
+	// AnalyticsPropertyValueMaxBytes bounds one property value.
+	AnalyticsPropertyValueMaxBytes = 256
+	// AnalyticsPropertyKeysMaxPerEnvironment bounds distinct property keys
+	// per environment; a new key over the bound is dropped from the event.
+	AnalyticsPropertyKeysMaxPerEnvironment = 50
+	// AnalyticsEventMaxFlags bounds the flag decisions an event carries,
+	// the same bound as a propagated decision set.
+	AnalyticsEventMaxFlags = 32
+	// AnalyticsSubjectMaxBytes bounds an opaque end-user subject.
+	AnalyticsSubjectMaxBytes = 128
+	// AnalyticsQueryMaxDays bounds a query's range, inside the plan's
+	// retention.
+	AnalyticsQueryMaxDays = 90
+	// AnalyticsQueryMaxUnits bounds the units a funnel or retention query
+	// reads; results say when they were truncated.
+	AnalyticsQueryMaxUnits = 200_000
+	// AnalyticsMaxBreakdownValues bounds breakdown values; the rest are
+	// reported as (other).
+	AnalyticsMaxBreakdownValues = 20
+	// AnalyticsFunnelMinSteps and AnalyticsFunnelMaxSteps bound a funnel.
+	AnalyticsFunnelMinSteps = 2
+	AnalyticsFunnelMaxSteps = 6
+	// AnalyticsFunnelMinWindow and AnalyticsFunnelMaxWindow bound a
+	// funnel's conversion window.
+	AnalyticsFunnelMinWindow = time.Hour
+	AnalyticsFunnelMaxWindow = 30 * 24 * time.Hour
+	// AnalyticsRetentionMaxPeriods bounds a retention query's periods.
+	AnalyticsRetentionMaxPeriods = 12
+	// AnalyticsQueryTimeout bounds one analytics query.
+	AnalyticsQueryTimeout = 15 * time.Second
+	// AnalyticsSweepBatch bounds the events one sweep statement deletes.
+	AnalyticsSweepBatch = 10_000
+)
+
 // Flag experiment bounds (ADR 20261115163113). The monthly conversion event
 // quota is per plan: Limits.FlagEventsPerMonth.
 const (
@@ -6586,6 +6625,11 @@ type Limits struct {
 	// and counted, never billed. Provisional until the financial model
 	// carries it.
 	FlagEventsPerMonth int64
+	// AnalyticsRetentionDays is how long raw product analytics events are
+	// kept (ADR 20261117084505 §2): Free 0 (off), Hobby 30, Pro 90, Scale
+	// 365. Analytics events share FlagEventsPerMonth. Provisional until the
+	// financial model carries analytics storage.
+	AnalyticsRetentionDays int
 	// DebugTelemetryRequestsPerMinute (ADR-127) is the per-account
 	// rate cap on the IncrementRequestTelemetry ingest RPC. The
 	// recorder publisher reads this at startup; per-record
@@ -7188,6 +7232,7 @@ var planLimits = map[Plan]Limits{
 		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
 		FlagEventsPerMonth:              0,
+		AnalyticsRetentionDays:          0,
 		DebugTelemetryRequestsPerMinute: 0,
 		APIRequestsPerMinute:            600,
 		DebugGuestLogExportsPerMinute:   0,
@@ -7637,6 +7682,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     3,
 		FlagEventsPerMonth:              100_000,
+		AnalyticsRetentionDays:          30,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
 		APIRequestsPerMinute:            1200,
@@ -8054,6 +8100,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     7,
 		FlagEventsPerMonth:              1_000_000,
+		AnalyticsRetentionDays:          90,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
 		APIRequestsPerMinute:            3000,
@@ -8500,6 +8547,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     14,
 		FlagEventsPerMonth:              10_000_000,
+		AnalyticsRetentionDays:          365,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
 		APIRequestsPerMinute:            6000,
@@ -12743,6 +12791,16 @@ func (p Plan) DebugTelemetryRetentionDays() int {
 		return 0
 	}
 	return l.DebugTelemetryRetentionDays
+}
+
+// AnalyticsRetentionDays returns how long the plan keeps raw product
+// analytics events (ADR 20261117084505 §2); 0 on unknown plans and Free.
+func (p Plan) AnalyticsRetentionDays() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.AnalyticsRetentionDays
 }
 
 // FlagEventsPerMonth returns the plan's monthly flag conversion event quota
