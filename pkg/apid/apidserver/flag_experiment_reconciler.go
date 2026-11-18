@@ -70,6 +70,9 @@ func (r *flagExperimentReconciler) warn(ctx context.Context, msg string, err err
 }
 
 func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
+	// Retention holds whatever the flags say: raw analytics events past
+	// their plan's retention go even while analytics or flags are off.
+	r.sweepAnalytics(ctx, now)
 	if !r.server.platformFlagOn(platformflags.CustomerFlags) {
 		return
 	}
@@ -100,6 +103,25 @@ func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
 			r.warn(ctx, "flag experiments: guardrail check failed", err, "experiment", x.ID)
 		}
 		cancel()
+	}
+}
+
+// analyticsSweepBatches bounds the delete statements one pass runs per plan.
+const analyticsSweepBatches = 20
+
+// sweepAnalytics deletes product analytics events past each plan's
+// analytics retention (ADR 20261117084505 §2).
+func (r *flagExperimentReconciler) sweepAnalytics(ctx context.Context, now time.Time) {
+	store, ok := r.server.store.(state.AnalyticsStore)
+	if !ok {
+		return
+	}
+	retention := map[string]int{}
+	for _, p := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		retention[string(p)] = p.AnalyticsRetentionDays()
+	}
+	if _, err := store.SweepAnalyticsEvents(ctx, now, retention, api.AnalyticsSweepBatch, analyticsSweepBatches); err != nil {
+		r.warn(ctx, "product analytics: retention sweep failed", err)
 	}
 }
 

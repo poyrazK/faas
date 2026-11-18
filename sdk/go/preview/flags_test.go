@@ -540,7 +540,7 @@ func newTestFlagsServer(t *testing.T, now func() time.Time, apiHandler http.Hand
 			http.Error(w, "missing workload auth or cache controls", http.StatusUnauthorized)
 			return
 		}
-		if r.Header.Get("X-Faas-Flags-Capabilities") != "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1" {
+		if r.Header.Get("X-Faas-Flags-Capabilities") != "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2" {
 			http.Error(w, "missing Flags capability advertisement", http.StatusBadRequest)
 			return
 		}

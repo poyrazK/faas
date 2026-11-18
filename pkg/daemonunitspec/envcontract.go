@@ -816,6 +816,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH", Owners: []string{"outboundd"}, Source: EnvSourceDropin, Note: "workload-identity JWKS the relay verifies assertions against (ADR-989, ADR-1141); control_plane_service 99-faas-outbound-relay.conf sets it with the relay and it overrides workload_identity_jwks_path in outboundd.toml"},
 	{Name: "FAAS_OVERLAY_INTERFACE", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_OVERLAY_IP", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled"},
+	{Name: "FAAS_OWNER_BALANCE", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "ADR-20261118160000: the control plane's schedd moves parked, long-idle apps toward the least owned node; on by default, `off` turns the balance off"},
 	{Name: "FAAS_OWNER_CACHE", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch for the ADR-1741 schedd owner cache (wake inputs cached per app, writes guarded by the app runtime generation); production default is off"},
 	{Name: "FAAS_PADDLE_API_KEY", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_PADDLE_SANDBOX", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
