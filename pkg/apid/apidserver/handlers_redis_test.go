@@ -113,6 +113,15 @@ func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
 	app, _ := e.store.AppBySlug(ctx, "sessions")
+	// The handoff copies from a running VM, so a resize first wakes the
+	// cache; here the cache is already running.
+	created, err := e.store.LatestDeployment(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateInstanceWithMode(ctx, app.ID, created.ID, string(state.StateRunning), app.RAMMB, "", "wake-1", string(state.InstanceModeNormal)); err != nil {
+		t.Fatal(err)
+	}
 
 	if rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{MemoryMB: 128}, map[string]string{"Idempotency-Key": "shrink"}); rec.Code != http.StatusConflict {
 		t.Fatalf("shrink without evict: %d %s", rec.Code, rec.Body.String())

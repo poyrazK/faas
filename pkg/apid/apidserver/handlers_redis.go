@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -319,6 +320,14 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 			s.log.Warn("apid: redis cache change rollback", "app_id", app.ID, "err", err)
 		}
 	}
+	// The handoff copies from the running VM. A parked cache's snapshot has
+	// the old RAM shape and cannot restore once the app's RAM changes, so it
+	// would cold-boot empty and the copy would be empty (native run
+	// redis-20261118T095202). Wake it first, while the RAM still matches.
+	if problem := s.redisEnsureRunning(r.Context(), acct, app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	ram := api.ManagedValkeyVMRAMMB(next.MemoryMB)
 	if ram != app.RAMMB {
 		updated, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{RAMMB: &ram})
@@ -455,4 +464,38 @@ func (s *server) redisHandoffSource(ctx context.Context, app state.App) string {
 	}
 	s.log.Warn("apid: redis handoff falls back to the service name", "app_id", app.ID, "err", err)
 	return api.ManagedValkeyHost(app.Slug)
+}
+
+// redisWakeWait bounds how long a resize or upgrade waits for a parked cache
+// to wake before it hands off. Tests shorten it.
+var redisWakeWait = 60 * time.Second
+
+// redisEnsureRunning wakes the cache and waits until it has a running
+// instance. A cache that does not wake in time is left unchanged.
+func (s *server) redisEnsureRunning(ctx context.Context, acct state.Account, app state.App) *api.Problem {
+	if _, err := s.store.RunningInstanceForApp(ctx, app.ID); err == nil {
+		return nil
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return api.ErrCapacity("could not read the Redis cache's running instance")
+	}
+	dep, problem := s.explicitWakeDeployment(ctx, app)
+	if problem != nil {
+		return problem
+	}
+	if _, err := s.enqueueExplicitAppWakeFor(ctx, acct, app, s.frozenInstanceToResume(ctx, app.ID, dep.ID)); err != nil {
+		return api.ErrCapacity("could not wake the Redis cache")
+	}
+	deadline := time.Now().Add(redisWakeWait)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return api.ErrCapacity("request ended while the Redis cache was waking")
+		case <-time.After(250 * time.Millisecond):
+		}
+		if _, err := s.store.RunningInstanceForApp(ctx, app.ID); err == nil {
+			return nil
+		}
+	}
+	return api.NewProblem(http.StatusServiceUnavailable, "cache_waking", "Redis cache is waking",
+		"the cache did not wake in time; it is unchanged, retry the command")
 }
