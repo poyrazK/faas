@@ -1230,7 +1230,7 @@ The response's `title` and `detail` describe the failure.
 
 ### `insights_query_timeout`
 
-HTTP 503 · Analytics query timed out
+HTTP 503 Service Unavailable · Analytics query timed out
 
 ### `instance_busy`
 
