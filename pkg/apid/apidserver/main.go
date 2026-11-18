@@ -2437,6 +2437,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runRouteProbeWorker(ctx)
 	go srv.runWorkflowReadinessSubscriptionWorker(ctx)
 	go srv.runWorkflowReadinessReminderWorker(ctx)
+	go srv.runSupportAccessSummaries(ctx)
 	go srv.runApplicationStandardWorker(ctx)
 	go srv.runMigrationVerificationWorker(ctx)
 	go srv.runMigrationCutoverWorker(ctx)

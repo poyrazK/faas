@@ -89,16 +89,48 @@ func supportGrantLifecycle(t *testing.T, store state.Store) {
 		t.Fatalf("revoked grant = %+v, %v", got, err)
 	}
 
+	// An ended grant is claimed for its summary exactly once; a live one never.
+	claimed, err := grants.ClaimEndedSupportGrants(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotRevoked := false
+	for _, c := range claimed {
+		gotRevoked = gotRevoked || c.ID == g.ID
+		if c.ID == dev.ID {
+			t.Fatal("a live grant was claimed for its summary")
+		}
+	}
+	if !gotRevoked {
+		t.Fatalf("the revoked grant was not claimed: %+v", claimed)
+	}
+	again, err := grants.ClaimEndedSupportGrants(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range again {
+		if c.ID == g.ID {
+			t.Fatal("a grant was claimed for its summary twice")
+		}
+	}
+
 	// Requests: three open at most, decided once.
 	var requests []state.SupportGrantRequest
 	for range api.SupportGrantMaxOpenRequests {
-		req, err := grants.CreateSupportGrantRequest(ctx, f.org.ID, operator.Account.ID, "your build fails")
+		req, err := grants.CreateSupportGrantRequest(ctx, state.NewSupportGrantRequest{OrgID: f.org.ID, OperatorID: operator.Account.ID, Reason: "your build fails",
+			AppIDs: []string{f.app.ID}, TTL: 2 * time.Hour, ExtendsGrantID: dev.ID})
 		if err != nil {
 			t.Fatal(err)
 		}
+		if len(req.AppIDs) != 1 || req.AppIDs[0] != f.app.ID || req.TTL != 2*time.Hour || req.ExtendsGrantID != dev.ID {
+			t.Fatalf("request = %+v, want its apps, time and extended grant", req)
+		}
 		requests = append(requests, req)
 	}
-	if _, err := grants.CreateSupportGrantRequest(ctx, f.org.ID, operator.Account.ID, "one more"); !errors.Is(err, state.ErrSupportRequestLimit) {
+	if _, err := grants.CreateSupportGrantRequest(ctx, state.NewSupportGrantRequest{OrgID: f.org.ID, OperatorID: operator.Account.ID, Reason: "too short", TTL: time.Minute}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("one-minute request = %v, want ErrInvalidArgument", err)
+	}
+	if _, err := grants.CreateSupportGrantRequest(ctx, state.NewSupportGrantRequest{OrgID: f.org.ID, OperatorID: operator.Account.ID, Reason: "one more"}); !errors.Is(err, state.ErrSupportRequestLimit) {
 		t.Fatalf("fourth open request = %v, want ErrSupportRequestLimit", err)
 	}
 	approved, err := grants.ApproveSupportGrantRequest(ctx, requests[0].ID, state.NewSupportGrant{OrgID: f.org.ID, CreatedBy: f.owner.ID, Reason: "your build fails", TTL: time.Hour})
@@ -114,6 +146,11 @@ func supportGrantLifecycle(t *testing.T, store state.Store) {
 	listed, err := grants.ListSupportGrantRequests(ctx, f.org.ID)
 	if err != nil || len(listed) != 3 {
 		t.Fatalf("requests = %d, %v", len(listed), err)
+	}
+	for _, l := range listed {
+		if l.TTL != 2*time.Hour || len(l.AppIDs) != 1 || l.ExtendsGrantID != dev.ID {
+			t.Fatalf("listed request = %+v, want its apps, time and extended grant", l)
+		}
 	}
 	live, err := grants.ListLiveSupportGrants(ctx)
 	if err != nil {
@@ -142,7 +179,7 @@ func supportGrantLifecycle(t *testing.T, store state.Store) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := grants.CreateSupportGrantRequest(ctx, busy.ID, operator.Account.ID, "concurrent ask"); err == nil {
+			if _, err := grants.CreateSupportGrantRequest(ctx, state.NewSupportGrantRequest{OrgID: busy.ID, OperatorID: operator.Account.ID, Reason: "concurrent ask"}); err == nil {
 				mu.Lock()
 				created++
 				mu.Unlock()
