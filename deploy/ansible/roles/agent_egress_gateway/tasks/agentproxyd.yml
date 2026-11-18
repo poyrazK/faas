@@ -114,6 +114,18 @@
         force: true
       notify: restart faas-agentproxyd
 
+- name: agentproxyd — bound the connection log's journal namespace
+  ansible.builtin.template:
+    src: journald-agentproxyd.conf.j2
+    dest: /etc/systemd/journald@agentproxyd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  # A journal restart drops the proxy's log stream, so the proxy restarts too.
+  notify:
+    - restart agentproxyd journal
+    - restart faas-agentproxyd
+
 - name: agentproxyd — install the unit
   ansible.builtin.template:
     src: faas-agentproxyd.service.j2

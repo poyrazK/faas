@@ -100,7 +100,7 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 	reg := prometheus.NewRegistry()
 	p := &agentproxy.Proxy{Registry: registry, Blocklist: blocklist, Addresses: cfg.addresses,
 		OriginalDestination: origdst.TCP, Dial: dialFrom, PeekTimeout: time.Duration(api.AgentEgressPeekTimeoutSec) * time.Second,
-		Log: log, Metrics: agentproxy.NewMetrics(reg, registry)}
+		ConnLog: log, Metrics: agentproxy.NewMetrics(reg, registry)}
 	p.Configure(agentproxy.Caps{PerVM: api.AgentEgressConnsPerVM, PerAccountDomain: api.AgentEgressConnsPerAccountDomain,
 		PerDomainFleet: api.AgentEgressConnsPerDomainFleet})
 

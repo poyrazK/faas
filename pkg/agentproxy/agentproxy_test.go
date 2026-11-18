@@ -9,12 +9,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -157,6 +160,13 @@ func TestBlocklist(t *testing.T) {
 // upstream that echoes the first line of what it receives.
 func proxyHarness(t *testing.T, dst netip.AddrPort, caps Caps, block string) (dial func() net.Conn, registry *Registry) {
 	t.Helper()
+	dial, registry, _ = proxyHarnessLog(t, dst, caps, block)
+	return dial, registry
+}
+
+// proxyHarnessLog is proxyHarness with the connection log's lines.
+func proxyHarnessLog(t *testing.T, dst netip.AddrPort, caps Caps, block string) (dial func() net.Conn, registry *Registry, lines func() []map[string]any) {
+	t.Helper()
 	upstream, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -177,8 +187,9 @@ func proxyHarness(t *testing.T, dst netip.AddrPort, caps Caps, block string) (di
 	}()
 	now := time.Now()
 	registry = testRegistry(&now)
-	registry.regs[netip.MustParseAddr("127.0.0.1")] = Registration{Addr: netip.MustParseAddr("127.0.0.1"), AccountID: "acct",
-		SandboxID: "sb", Expires: now.Add(time.Hour)}
+	registry.regs[netip.MustParseAddr("127.0.0.1")] = Registration{Addr: netip.MustParseAddr("127.0.0.1"),
+		Node: netip.MustParseAddr("10.78.8.1"), AccountID: "acct", SandboxID: "sb", Expires: now.Add(time.Hour)}
+	logBuf := &lockedBuffer{}
 	blocklist := &Blocklist{}
 	_ = blocklist.Load(strings.NewReader(block))
 	p := &Proxy{Registry: registry, Blocklist: blocklist, Addresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")},
@@ -187,7 +198,7 @@ func proxyHarness(t *testing.T, dst netip.AddrPort, caps Caps, block string) (di
 			var d net.Dialer
 			return d.DialContext(ctx, "tcp", upstream.Addr().String())
 		},
-		PeekTimeout: 2 * time.Second}
+		PeekTimeout: 2 * time.Second, ConnLog: slog.New(slog.NewJSONHandler(logBuf, nil))}
 	p.Configure(caps)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -197,13 +208,88 @@ func proxyHarness(t *testing.T, dst netip.AddrPort, caps Caps, block string) (di
 	t.Cleanup(cancel)
 	go func() { _ = p.Serve(ctx, ln) }()
 	return func() net.Conn {
-		c, err := net.Dial("tcp", ln.Addr().String())
-		if err != nil {
-			t.Fatal(err)
+			c, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+			return c
+		}, registry, func() []map[string]any {
+			var out []map[string]any
+			for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+				if line == "" {
+					continue
+				}
+				var m map[string]any
+				if err := json.Unmarshal([]byte(line), &m); err != nil {
+					t.Fatalf("log line %q: %v", line, err)
+				}
+				out = append(out, m)
+			}
+			return out
 		}
-		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
-		return c
-	}, registry
+}
+
+// lockedBuffer is a bytes.Buffer the proxy's goroutines write and the test
+// reads.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// adr: 20261117185346 §5 — every connection, carried or refused, leaves one
+// line naming the account, sandbox, destination, agent address and bytes,
+// so an abuse report on an address and a time maps to one session.
+func TestConnectionLogMapsEachConnectionToASession(t *testing.T) {
+	dst := netip.MustParseAddrPort("93.184.216.34:80")
+	dial, _, lines := proxyHarnessLog(t, dst, Caps{PerVM: 4, PerAccountDomain: 4, PerDomainFleet: 4}, "blocked.example\n")
+	req := "GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"
+	got := roundTrip(t, dial(), req)
+	_ = roundTrip(t, dial(), "GET / HTTP/1.1\r\nHost: blocked.example\r\n\r\n")
+	var logged []map[string]any
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if logged = lines(); len(logged) == 2 {
+			break
+		}
+	}
+	if len(logged) != 2 {
+		t.Fatalf("logged %d lines: %v", len(logged), logged)
+	}
+	byOutcome := map[string]map[string]any{}
+	for _, l := range logged {
+		if l["msg"] != ConnLogMessage {
+			t.Fatalf("msg = %v", l["msg"])
+		}
+		byOutcome[l["outcome"].(string)] = l
+	}
+	ok := byOutcome[OutcomeAccepted]
+	want := map[string]any{"account_id": "acct", "sandbox_id": "sb", "node": "10.78.8.1", "host": "www.example.com",
+		"dest": "93.184.216.34", "port": float64(80), "egress": "127.0.0.1",
+		"bytes_up": float64(len(req)), "bytes_down": float64(len(got))}
+	for k, v := range want {
+		if ok[k] != v {
+			t.Errorf("accepted %s = %v, want %v", k, ok[k], v)
+		}
+	}
+	if !strings.HasPrefix(ok["source"].(string), "127.0.0.1:") || ok["start"] == nil || ok["duration_ms"] == nil {
+		t.Errorf("accepted line lacks source, start or duration: %v", ok)
+	}
+	blocked := byOutcome[OutcomeBlocklist]
+	if blocked["account_id"] != "acct" || blocked["host"] != "blocked.example" || blocked["egress"] != nil {
+		t.Errorf("blocked line = %v", blocked)
+	}
 }
 
 func roundTrip(t *testing.T, c net.Conn, req string) string {
