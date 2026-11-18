@@ -3961,14 +3961,32 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// A managed cache's capture holds its data, so the newest one
 			// always replaces the live row (ADR-20261116192126).
 			cacheCapture := h.isManagedCacheDeployment(ctx, snapshot.DeploymentID)
-			if (unrestorable || otherFC || cacheCapture) && state.SnapshotDriveKey(snap) != "" {
+			if cacheCapture && !unrestorable && !otherFC && state.SnapshotDriveKey(snap) != "" {
+				// Swap in one transaction: a wake between a retire and a
+				// separate publish found no row and cold-booted the cache
+				// empty (native run redis-20261118T230904).
+				replaced := stored.ID
+				stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(state.WithReplacedSnapshot(ctx, replaced), snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt)
+				if errors.Is(createErr, state.ErrSnapshotRuntimeStale) || errors.Is(createErr, state.ErrDeploymentActivationStale) {
+					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
+					h.log.Info("imaged: discarded stale managed cache capture", "deployment", snapshot.DeploymentID,
+						"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
+					return h.discardStaleSnapshotCapture(ctx, snap)
+				} else if createErr != nil {
+					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
+					return fmt.Errorf("imaged: replace managed cache snapshot %s: %w", replaced, createErr)
+				}
+				h.log.Info("imaged: managed cache capture replaced the live snapshot",
+					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "replaced", replaced, "snapshot", stored.ID)
+				created = true
+			} else if (unrestorable || otherFC) && state.SnapshotDriveKey(snap) != "" {
 				if markErr := h.store.MarkSnapshotStale(ctx, stored.ID); markErr != nil {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 					return fmt.Errorf("imaged: retire unrestorable snapshot %s: %w", stored.ID, markErr)
 				}
 				h.log.Info("imaged: retired unrestorable snapshot for a new capture",
 					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID,
-					"missing_drive", unrestorable, "managed_cache", cacheCapture, "retired_fc_version", stored.FCVersion,
+					"missing_drive", unrestorable, "retired_fc_version", stored.FCVersion,
 					"capture_fc_version", snap.FCVersion)
 				retired := stored.ID
 				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) || errors.Is(createErr, state.ErrDeploymentActivationStale) {
