@@ -87,7 +87,7 @@ func Normalize(p Plan, workloads []string) ([]byte, string, error) {
 		return nil, "", errors.New("managed_work needs a primary and at least one async worker")
 	}
 	if taskRoles && (primary.Postgres != PostgresReadWrite || otherOwners || p.PostgresFault != nil) {
-		return nil, "", errors.New("Task PostgreSQL participants require one primary migration owner and no other owners or PostgreSQL fault")
+		return nil, "", errors.New("managed_work Task PostgreSQL roles require a sole read_write primary and no postgres_fault")
 	}
 	if f := p.WorkerTermination; f != nil {
 		worker, found := p.Participant(f.Workload)
