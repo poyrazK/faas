@@ -261,7 +261,7 @@ native_e2e_assert_phase_partition() {
 # its selected tests are blocking independently of the full matrix's phases.
 # customer-http-operations-only derives every ordinary HTTP Operations scenario
 # (ADR-521); it is the native gate before a customer preview cohort opens.
-NATIVE_E2E_LANES=(smoke containers exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
+NATIVE_E2E_LANES=(smoke containers app-task-interactive-only exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -294,6 +294,13 @@ native_e2e_lane_tests() {
       ;;
     containers)
       native_e2e_inventory "$root" --files 'direct_oci_fullrootfs_metal_test.go,direct_oci_port_metal_test.go,direct_oci_autoscale_metal_test.go,deploy_healthcheck_metal_test.go,after_restore_metal_test.go,before_checkpoint_metal_test.go,tcp_ingress_metal_test.go,udp_ingress_metal_test.go,streaming_metal_test.go,sec11_memory_max_e2e_test.go,sec11_seccomp_e2e_test.go'
+      ;;
+    app-task-interactive-only)
+      # ADR-1037 sessions and ADR-20261117070620 debug sessions, for changes
+      # to guest-init's app-task path that need metal without the whole
+      # deploy phase.
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/app_task_interactive_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
       ;;
     financial-system)
       grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/financial_system_metal_test.go" |

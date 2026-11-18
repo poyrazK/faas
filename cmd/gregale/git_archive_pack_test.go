@@ -28,15 +28,15 @@ func TestPackGitArchive_RedactsAndExcludes(t *testing.T) {
 		t.Fatalf("packGitArchive: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Remove(outPath) })
-	if count != 4 {
-		t.Fatalf("regular file count = %d, want 4 (ignored file and node_modules subtree omitted)", count)
+	if count != 3 {
+		t.Fatalf("regular file count = %d, want 3 (.env, ignored file and node_modules subtree omitted)", count)
 	}
-	if len(findings) != 2 {
-		t.Fatalf("findings = %d, want 2: %+v", len(findings), findings)
+	if len(findings) != 1 {
+		t.Fatalf("findings = %d, want 1: %+v", len(findings), findings)
 	}
 
 	entries := readGitArchiveFixture(t, outPath)
-	for _, omitted := range []string{"ignored.txt", "node_modules/hidden.txt"} {
+	for _, omitted := range []string{".env", "ignored.txt", "node_modules/hidden.txt"} {
 		if _, ok := entries[omitted]; ok {
 			t.Errorf("filtered archive contains omitted entry %q", omitted)
 		}
@@ -49,11 +49,49 @@ func TestPackGitArchive_RedactsAndExcludes(t *testing.T) {
 	if got := string(entries["tail.txt"]); got != "tail survives\n" {
 		t.Errorf("tail.txt = %q, want original bytes", got)
 	}
-	if got := string(entries[".env"]); !strings.Contains(got, "<REDACTED") {
-		t.Errorf(".env was not redacted: %q", got)
-	}
 	if got := string(entries["config.txt"]); !strings.Contains(got, "REDACTED secret detected") {
 		t.Errorf("config.txt was not redacted: %q", got)
+	}
+}
+
+// A committed .env stays local on a HEAD deploy (prod finding #42), unless a
+// negated .gregaleignore rule ships it; a committed template still ships.
+func TestPackGitArchive_LeavesCommittedEnvFilesOut(t *testing.T) {
+	inPath := writeGitArchiveFixture(t, map[string]string{
+		"checkout/.env":       "TEST=testing123\n",
+		"orders/.env.local":   "A=1\n",
+		"cart/.env.example":   "A=\n",
+		"ui/.env":             "B=2\n",
+		".gregaleignore":      "!ui/.env\n",
+		"checkout/Dockerfile": "FROM scratch\n",
+	})
+	outPath, _, _, err := packGitArchive(inPath, defaultZeroConfigSourceCapMB, modeWarn, nil, false)
+	if err != nil {
+		t.Fatalf("packGitArchive: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(outPath) })
+	entries := readGitArchiveFixture(t, outPath)
+	for _, omitted := range []string{"checkout/.env", "orders/.env.local"} {
+		if _, ok := entries[omitted]; ok {
+			t.Errorf("archive ships committed env file %q", omitted)
+		}
+	}
+	for _, kept := range []string{"cart/.env.example", "ui/.env", "checkout/Dockerfile"} {
+		if _, ok := entries[kept]; !ok {
+			t.Errorf("archive lost %q", kept)
+		}
+	}
+}
+
+func TestUncommittedBuildFilesNamesDockerfilesUnderTheSource(t *testing.T) {
+	porcelain := " M src/cart/Dockerfile\n?? src/ui/Dockerfile.dev\n M README.md\n M other/Dockerfile\n M src/orders/.dockerignore\n"
+	got := uncommittedBuildFiles(porcelain, "/repo", "/repo/src")
+	want := []string{"src/cart/Dockerfile", "src/ui/Dockerfile.dev", "src/orders/.dockerignore"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("uncommittedBuildFiles = %v, want %v", got, want)
+	}
+	if suffix := dirtyBuildFilesSuffix(got); !strings.Contains(suffix, "src/cart/Dockerfile") {
+		t.Fatalf("suffix %q does not name the Dockerfile", suffix)
 	}
 }
 

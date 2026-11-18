@@ -188,11 +188,27 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		} else {
 			profile.ConfigFile = "gregale.yml"
 		}
+		if profile.HealthFromConfig && profile.HealthPath == "/" {
+			profile.Warnings = append(profile.Warnings, rootHealthPathWarning(profile.ConfigFile))
+		}
 	}
 	profile.Warnings = append(profile.Warnings, loopbackWarnings(fsys)...)
 	profile.Inferred = profile.StartCommand != "" && profile.Framework != string(markers.FrameworkUnknown)
 	profile.HealthDefaulted = !healthInferred && !profile.HealthFromConfig
 	return profile, nil
+}
+
+// rootHealthPathWarning flags hosting.health: /. Gregale answers GET and
+// HEAD on an app's health path at its edge without running the app (unless
+// health_path_wakes is on), so with "/" every visitor to the home page got
+// {"status":"ok","source":"edge"} and never reached the app. Coding agents
+// set it when an app had no health route (agent eval baseline 2026-11-17).
+func rootHealthPathWarning(configFile string) Warning {
+	return Warning{
+		Code:    "health_path_root",
+		Message: `hosting.health is "/": Gregale answers the health path at its edge, so visitors to / get {"status":"ok"} instead of the app's page. Add a small route such as /healthz and name it instead.`,
+		Sources: []string{configFile},
+	}
 }
 
 func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {

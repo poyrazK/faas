@@ -7,6 +7,10 @@ CLI, the CLI's automation contract, running the MCP server locally, the
 Claude Code plugin, project instructions, and documentation an agent can read
 directly.
 
+To set up one agent step by step, see
+[Deploy with Claude Code](claude-code.md), [Deploy with Codex](codex.md),
+[Deploy with Cursor](cursor.md) or [Deploy with Gemini CLI](gemini-cli.md).
+
 Starting with an empty directory and a Free account? Follow the
 [private Node quickstart](quickstart.md#deploy-a-private-node-app-on-free)
 for a small internal HTTP app and a CLI deploy, verify, and edit loop.
@@ -789,9 +793,28 @@ install it and log in or set `FAAS_TOKEN` first.
 ## Project instructions for agents
 
 `gregale init` writes an `AGENTS.md` into each new project. It tells coding
-agents how to deploy, check and roll back that project. Claude Code, Codex,
-Cursor and other agents read it automatically. Edit it like any other project
-file; the CLI never overwrites an existing one.
+agents how to deploy, check and roll back that project. Edit it like any other
+project file; the CLI never overwrites an existing one.
+
+For an existing project, add a section like this to its `AGENTS.md`, with
+your app's name:
+
+```markdown
+## Deploying
+
+This project deploys to Gregale as `my-api`.
+
+- Check first: `gregale deploy --dry-run`
+- Deploy: `gregale --non-interactive --json deploy --name my-api`
+- After a failed deploy: `gregale --non-interactive --json app health my-api --errors`,
+  then `gregale logs my-api --since 15m`
+- If a deploy exits 3, run the `resume_command` from its output; don't deploy again.
+- Don't make the app public or change secrets unless asked.
+```
+
+Codex and Cursor read `AGENTS.md` on their own. Claude Code and Gemini CLI
+need a line of setup; see [Deploy with Claude Code](claude-code.md) and
+[Deploy with Gemini CLI](gemini-cli.md).
 
 ## Documentation for agents
 

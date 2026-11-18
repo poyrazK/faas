@@ -91,9 +91,15 @@ type VMRequest struct {
 	// keeps the builder fully ephemeral; developer sessions set it so matching
 	// BuildKit layers can cross otherwise-isolated builder VM lifetimes.
 	DependencyCacheKey string
-	LogPath            string // build log appended by the VM
-	RAMMB              int    // from the plan's BuildVMRAMMB (spec §1, §4.5)
-	TimeoutSec         int    // wall-clock build budget (0 ⇒ pkg/api/limits.go default)
+	// DependencyCacheSeedKey names the account's cache family
+	// (dependencyCacheFamilyKey). When DependencyCacheKey has no cache yet,
+	// the build starts from the family's latest published cache instead of
+	// cold; it still publishes only to DependencyCacheKey. Empty for builds
+	// with build secrets or registry credentials.
+	DependencyCacheSeedKey string
+	LogPath                string // build log appended by the VM
+	RAMMB                  int    // from the plan's BuildVMRAMMB (spec §1, §4.5)
+	TimeoutSec             int    // wall-clock build budget (0 ⇒ pkg/api/limits.go default)
 	// Plan is the owning account's plan tier. vmmd validates it on
 	// CreateColdBoot (issue #301 / ADR-043) and routes the builder VM
 	// into the per-plan cgroup sub-slice. Empty = legacy path that
@@ -144,6 +150,7 @@ type BuildHandle struct {
 	TimeoutSec              int       // wall-clock budget the caller selected
 	StartedAt               time.Time // when Spawn returned; for log lines / metrics
 	DependencyCacheKey      string    // cache generation to publish after success
+	DependencyCacheSeedKey  string    // cache family to record DependencyCacheKey under after publish
 	DependencyCacheRestored bool      // a prior BuildKit cache was staged into drive1
 	WarmScopeKey            string    // scope bound to a retained warm drive
 	// BuilderSliceOOMKillsAtStart snapshots the parent builder slice's

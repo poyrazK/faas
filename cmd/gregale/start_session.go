@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const startSessionVersion = 2
+const startProjectSessionVersion = 3
 
 // startSession contains only recovery metadata. Tokens, secret values and
 // secret-file paths belong to the credential/secrets workflows, never here.
@@ -43,6 +45,7 @@ type startSession struct {
 	HealthPath                string                  `json:"health_path,omitempty"`
 	UpdatedAt                 string                  `json:"updated_at"`
 	PendingSubmission         *startPendingSubmission `json:"pending_submission,omitempty"`
+	ProjectSessionID          string                  `json:"project_session_id,omitempty"`
 }
 
 // canonicalStartScope resolves dir through symlinks so one directory keys one
@@ -88,7 +91,7 @@ func loadStartSession(path string) (startSession, bool, error) {
 	if err := json.Unmarshal(data, &session); err != nil {
 		return session, true, fmt.Errorf("decode start session: %w", err)
 	}
-	if (session.Version != 1 && session.Version != startSessionVersion) || session.APIBase == "" || session.AccountID == "" || session.ScopePath == "" || session.SourcePath == "" || !api.ValidAppSlug(session.AppSlug) {
+	if (session.Version != 1 && session.Version != startSessionVersion && session.Version != startProjectSessionVersion) || session.APIBase == "" || session.AccountID == "" || session.ScopePath == "" || session.SourcePath == "" || !api.ValidAppSlug(session.AppSlug) {
 		return session, true, errors.New("start session has an unsupported or incomplete format")
 	}
 	if session.Project != "" && !api.ValidProjectSlug(session.Project) || session.Environment != "" && (session.Project == "" || !api.ValidProjectEnvironmentSlug(session.Environment)) {
@@ -97,6 +100,13 @@ func loadStartSession(path string) (startSession, bool, error) {
 	if pending := session.PendingSubmission; pending != nil {
 		if session.Version != startSessionVersion || session.AppID == "" || pending.Key == "" || validateDeployIdempotencyKey(pending.Key) != nil || pending.TotalSize <= 0 || (pending.Transport != "resumable" && pending.Transport != "multipart") {
 			return session, true, errors.New("start session has an invalid pending submission")
+		}
+	}
+	if session.Version == startProjectSessionVersion || session.ProjectSessionID != "" {
+		if session.Version != startProjectSessionVersion || !validDeploySessionID(session.ProjectSessionID) ||
+			session.PendingSubmission != nil || session.Template != templates.PrivateNode ||
+			session.Project != session.AppSlug || session.Environment != "" {
+			return session, true, errors.New("start session has an invalid pending project submission")
 		}
 	}
 	return session, true, nil
@@ -108,6 +118,9 @@ func saveStartSession(path string, session startSession) error {
 	session.Version = 1
 	if session.PendingSubmission != nil {
 		session.Version = startSessionVersion
+	}
+	if session.ProjectSessionID != "" {
+		session.Version = startProjectSessionVersion
 	}
 	session.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	data, err := json.MarshalIndent(session, "", "  ")

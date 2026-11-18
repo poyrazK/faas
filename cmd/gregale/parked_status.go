@@ -61,8 +61,8 @@ func writeParkedNotice(w io.Writer, app api.AppResponse) {
 	}
 	switch inspectParkedReason(app) {
 	case "liveness_exhausted":
-		_, _ = fmt.Fprintf(w, "! %s is parked: its instances repeatedly failed liveness checks or crashed, so callers get errors or timeouts. Run `gregale inspect %s`.\n", app.Slug, app.Slug)
+		_, _ = fmt.Fprintf(w, "! %s is parked: its instances repeatedly failed liveness checks or crashed, so callers get errors or timeouts. Run `gregale app health %s --explain`.\n", app.Slug, app.Slug)
 	case "security_scan_regressed":
-		_, _ = fmt.Fprintf(w, "! %s is parked: its image failed a security re-scan. Run `gregale inspect %s`.\n", app.Slug, app.Slug)
+		_, _ = fmt.Fprintf(w, "! %s is parked: its image failed a security re-scan. Run `gregale app health %s --explain`.\n", app.Slug, app.Slug)
 	}
 }

@@ -151,6 +151,23 @@ Free supports internal HTTP services, which have no public ingress. For this
 path, create an internal Compose service. The standalone `--require-authn`
 option requires a plan that supports edge authentication.
 
+With a CLI that lists `hello-node-private` in `gregale init --list`, scaffold
+the same internal project and start the guided deploy.
+
+```bash
+gregale init --template hello-node-private --path ./my-private-node
+gregale start ./my-private-node
+```
+
+Choose a directory with an unused app name, or give `init` a name with
+`--name`. The starter uses that name for both the project and its app.
+
+From an empty directory, you can also run `gregale start` and pick **Private
+Node.js HTTP app (Free plan)**. The launch review shows **Internal only**.
+After the first verified response, edit the greeting in `app/server.js`
+and choose **I've made changes — review and deploy again**. Start checks
+the exact new deployment through your Gregale account.
+
 ### Create the source
 
 Choose an unused name in `APP`. Keep the same Compose service name and project

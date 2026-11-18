@@ -55,10 +55,10 @@ type StorageBackend interface {
 
 // IsRemoteBackendKind reports whether kind selects a shared remote artifact
 // store. Callers use this instead of hard-coding OCI so local-path shortcuts
-// can never bypass publication when the canonical store is GCS.
+// can never bypass publication when the canonical store is GCS or S3.
 func IsRemoteBackendKind(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "oci", "gcs":
+	case "oci", "gcs", "s3":
 		return true
 	default:
 		return false
