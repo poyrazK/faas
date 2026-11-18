@@ -241,7 +241,7 @@ body contains the edited greeting.
 
 The new release can answer its exact response check as soon as it is live
 while the default canary is still shifting app traffic. To wait for the
-canary to finish, use the new UUID:
+canary to finish, run this command with the new UUID.
 
 ```bash
 gregale --non-interactive --json release wait "$DEPLOYMENT_ID" --app "$APP" --rollout --timeout 10m
