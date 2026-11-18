@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-MANIFEST_TEMPLATE="${1:-$REPO_ROOT/deploy/manifest/production/gcp-live.template.yaml}"
+MANIFEST_TEMPLATE="${1:-$(bash "$REPO_ROOT/scripts/release-template.sh")}"
 CURRENT_GIT_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD)
 RUNTIME_BASES_ENV="${RUNTIME_BASES_ENV:-}"
 MANIFEST_PATH=$(mktemp "${TMPDIR:-/tmp}/gregale-production-manifest.XXXXXX.yaml")
