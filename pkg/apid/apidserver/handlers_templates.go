@@ -52,8 +52,6 @@ func templateDescription(name string) string {
 		return "Node.js durable entity with local development, typed clients and object-storage-backed state"
 	case "hello-node":
 		return "minimal Node.js HTTP server — first-touch smoke test"
-	case templates.PrivateNode:
-		return "internal Node.js HTTP app that fits the Free plan"
 	case "hello-python":
 		return "minimal Python 3.12 HTTP server — first-touch smoke test"
 	case "hello-go":
