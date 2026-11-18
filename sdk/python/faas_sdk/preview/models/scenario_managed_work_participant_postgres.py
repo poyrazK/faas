@@ -1,9 +1,11 @@
 from typing import Literal
 
-ScenarioManagedWorkParticipantPostgres = Literal["read_write"]
+ScenarioManagedWorkParticipantPostgres = Literal["read_write", "task_observer", "task_runtime"]
 
 SCENARIO_MANAGED_WORK_PARTICIPANT_POSTGRES_VALUES: set[ScenarioManagedWorkParticipantPostgres] = {
     "read_write",
+    "task_observer",
+    "task_runtime",
 }
 
 

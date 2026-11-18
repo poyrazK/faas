@@ -20,6 +20,10 @@ const (
 	MaxJobs         = 64
 	MaxAttempts     = 32
 	MaxPayloadBytes = 8192
+
+	PostgresReadWrite    = "read_write"
+	PostgresTaskRuntime  = "task_runtime"
+	PostgresTaskObserver = "task_observer"
 )
 
 var runPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -66,18 +70,24 @@ func Normalize(p Plan, workloads []string) ([]byte, string, error) {
 		names[n] = true
 	}
 	seen, workers := map[string]bool{}, 0
+	var taskRoles, otherOwners bool
 	for _, v := range p.Participants {
-		if !names[v.Workload] || seen[v.Workload] || (v.Postgres != "" && v.Postgres != "read_write") || (v.Objects != "" && v.Objects != "read" && v.Objects != "read_write") {
+		if !names[v.Workload] || seen[v.Workload] || (v.Postgres != "" && !PostgresAccess(v.Postgres)) || (v.Objects != "" && v.Objects != "read" && v.Objects != "read_write") {
 			return nil, "", errors.New("invalid managed-work participant or resource permission")
 		}
 		if v.Async {
 			workers++
 		}
+		taskRoles = taskRoles || TaskPostgresAccess(v.Postgres)
+		otherOwners = otherOwners || v.Workload != p.Primary && v.Postgres == PostgresReadWrite
 		seen[v.Workload] = true
 	}
 	primary, ok := p.Participant(p.Primary)
 	if !ok || primary.Async || workers == 0 {
 		return nil, "", errors.New("managed_work needs a primary and at least one async worker")
+	}
+	if taskRoles && (primary.Postgres != PostgresReadWrite || otherOwners || p.PostgresFault != nil) {
+		return nil, "", errors.New("Task PostgreSQL participants require one primary migration owner and no other owners or PostgreSQL fault")
 	}
 	if f := p.WorkerTermination; f != nil {
 		worker, found := p.Participant(f.Workload)
@@ -126,6 +136,26 @@ func ObjectCredentials(secret, app string) (string, string) {
 
 func PostgresRole(resource, app string) string {
 	return "grpw_" + Hash([]byte(resource + ":" + app))[:40]
+}
+
+// PostgresAccess recognizes the native PostgreSQL participant permissions.
+func PostgresAccess(access string) bool {
+	return access == PostgresReadWrite || TaskPostgresAccess(access)
+}
+
+// TaskPostgresAccess identifies schema-restricted, non-member Task roles.
+func TaskPostgresAccess(access string) bool {
+	return access == PostgresTaskRuntime || access == PostgresTaskObserver
+}
+
+// PostgresParticipantRole binds a login to a fixture and a single workload.
+// Task roles have no membership in the migration owner. Their resource prefix
+// lets cleanup find them even after the database itself has already been dropped.
+func PostgresParticipantRole(resource, app, access string) string {
+	if TaskPostgresAccess(access) {
+		return "grpt_" + strings.ReplaceAll(resource, "-", "") + "_" + Hash([]byte(app))[:24]
+	}
+	return PostgresRole(resource, app)
 }
 
 type Binding struct {

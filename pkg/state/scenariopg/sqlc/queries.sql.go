@@ -82,32 +82,43 @@ func (q *Queries) Get(ctx context.Context, db DBTX, arg GetParams) (ScenarioPost
 }
 
 const getForApp = `-- name: GetForApp :one
-SELECT f.id, f.account_id, f.run_id, f.app_id, f.owner_id, f.database_name, f.role_name, f.status, f.spec, f.initial_snapshot, f.evidence, f.expires_at, f.backend_sha256 FROM scenario_postgres_fixtures f JOIN scenario_test_action_policies p ON p.app_id=$1::uuid
+SELECT f.id, f.account_id, f.run_id, f.app_id, f.owner_id, f.database_name, f.role_name, f.status, f.spec, f.initial_snapshot, f.evidence, f.expires_at, f.backend_sha256, COALESCE(part.access,'')::text AS participant_access
+FROM scenario_postgres_fixtures f JOIN scenario_test_action_policies p ON p.app_id=$1::uuid
  JOIN apps a ON a.id=p.app_id AND a.status<>'deleted' AND a.preview_expires_at>now()
+ LEFT JOIN LATERAL (
+  SELECT v->>'postgres' AS access FROM jsonb_array_elements(p.managed_work_plan->'participants') v
+  WHERE v->>'workload'=p.workload_name LIMIT 1
+ ) part ON true
 WHERE f.account_id=p.account_id AND f.run_id=p.run_id AND p.network_mode='contained'
  AND p.simulation_plan IS NOT NULL AND NOT p.simulation_failed AND p.sealed_at IS NULL AND NOT p.recorder_closing
  AND f.status='ready' AND f.expires_at>now()
- AND ((p.managed_work_plan IS NULL AND f.app_id=p.app_id) OR
-  (p.managed_work_plan IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements(p.managed_work_plan->'participants') v WHERE v->>'workload'=p.workload_name AND v->>'postgres'='read_write')))
+ AND ((p.managed_work_plan IS NULL AND f.app_id=p.app_id)
+   OR part.access IN ('read_write','task_runtime','task_observer'))
 `
 
-func (q *Queries) GetForApp(ctx context.Context, db DBTX, appID pgtype.UUID) (ScenarioPostgresFixture, error) {
+type GetForAppRow struct {
+	ScenarioPostgresFixture ScenarioPostgresFixture
+	ParticipantAccess       string
+}
+
+func (q *Queries) GetForApp(ctx context.Context, db DBTX, appID pgtype.UUID) (GetForAppRow, error) {
 	row := db.QueryRow(ctx, getForApp, appID)
-	var i ScenarioPostgresFixture
+	var i GetForAppRow
 	err := row.Scan(
-		&i.ID,
-		&i.AccountID,
-		&i.RunID,
-		&i.AppID,
-		&i.OwnerID,
-		&i.DatabaseName,
-		&i.RoleName,
-		&i.Status,
-		&i.Spec,
-		&i.InitialSnapshot,
-		&i.Evidence,
-		&i.ExpiresAt,
-		&i.BackendSha256,
+		&i.ScenarioPostgresFixture.ID,
+		&i.ScenarioPostgresFixture.AccountID,
+		&i.ScenarioPostgresFixture.RunID,
+		&i.ScenarioPostgresFixture.AppID,
+		&i.ScenarioPostgresFixture.OwnerID,
+		&i.ScenarioPostgresFixture.DatabaseName,
+		&i.ScenarioPostgresFixture.RoleName,
+		&i.ScenarioPostgresFixture.Status,
+		&i.ScenarioPostgresFixture.Spec,
+		&i.ScenarioPostgresFixture.InitialSnapshot,
+		&i.ScenarioPostgresFixture.Evidence,
+		&i.ScenarioPostgresFixture.ExpiresAt,
+		&i.ScenarioPostgresFixture.BackendSha256,
+		&i.ParticipantAccess,
 	)
 	return i, err
 }
