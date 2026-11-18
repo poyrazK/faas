@@ -2042,6 +2042,10 @@ func cmdDeployTarball(args []string) int {
 // behavior below.
 type deployExecution struct {
 	projectRetry     map[string]string
+	projectPlan      func(context.Context, *Client, api.PlanResponse) error
+	confirmProject   func(api.PlanResponse) (bool, error)
+	onProjectAttempt func(string) error
+	onProjectApply   func(api.ApplyResponse) error
 	onQueued         func(api.DeploymentResponse)
 	onSubmission     func(deploySubmission) error
 	onUploadSession  func(deployUploadIdentity) error
@@ -2732,6 +2736,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *templateName != "" {
 		if !templateAvailable(*templateName) {
 			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.ListedNames(), ", ")))
+		}
+		if *templateName == templates.PrivateNode {
+			return printErr("Scaffold the private Node project first", errors.New("run gregale init --template hello-node-private --path ./my-api, then gregale start ./my-api"))
 		}
 		// The data-api template is the bare runtime: it cannot start without a
 		// database binding and token settings, and its copy in this CLI may be
@@ -4059,7 +4066,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 
 		plan = withProvidedEnvKeys(plan, deploySecrets)
-		if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
+		if execution.projectPlan != nil && plan.CanApply {
+			if err := execution.projectPlan(ctx, client, plan); err != nil {
+				return printErr("Could not review project target", err)
+			}
+		}
+		if execution.confirmProject != nil && plan.CanApply {
+			ok, err := execution.confirmProject(plan)
+			if err != nil {
+				return startInputExit(err)
+			}
+			if !ok {
+				return 0
+			}
+		} else if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
 			return code
 		}
 		approvalToken := ""
@@ -4091,6 +4111,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not save project submission attempt; no apply was submitted", saveErr)
 		}
 		defer func() { _ = projectLock.Close() }()
+		if execution.onProjectAttempt != nil {
+			if err := execution.onProjectAttempt(projectSession.record.ID); err != nil {
+				return printErr("Could not save the guided project session", err)
+			}
+		}
 		projectSession.addWarning(localSourceWarning)
 		applyCtx = api.ContextWithDeploymentAttempt(applyCtx, projectSession.record.Project.AttemptID)
 		apply, err := client.ApplyProjectPlanWithInitialSecrets(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
@@ -4115,6 +4140,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if saveErr := projectSession.rememberProjectApply(apply); saveErr != nil {
 			return renderProjectDeployReceipt(plan, apply, projectSession, false, saveErr)
+		}
+		if execution.onProjectApply != nil {
+			if err := execution.onProjectApply(apply); err != nil {
+				return projectSubmissionFailure(projectSession, err)
+			}
 		}
 		if len(execution.projectRetry) > 0 {
 			if err := validateProjectRetryAcceptance(execution.projectRetry, apply); err != nil {
