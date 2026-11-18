@@ -58,7 +58,18 @@ func runAppTaskInteractive(ctx context.Context, session *apptaskproto.Interactiv
 		}
 		return runAppTaskCopyOut(ctx, session, runtime, req.Command[1])
 	}
-	cmd, credential, failure := prepareAppTaskCommand(session.Request, runtime.manifest, runtime.secrets, runtime.apiEnv)
+	var (
+		cmd        *exec.Cmd
+		credential *syscall.Credential
+	)
+	if api.IsAppTaskDebugCommand(req.Command) {
+		if !api.ValidAppTaskDebugCommand(req.Command, true, req.CommandShell) {
+			return appTaskInfraFailure("builtin_invalid", "the debug session was called with invalid arguments", 2), nil
+		}
+		cmd, credential, failure = prepareAppTaskDebugCommand(req, runtime)
+	} else {
+		cmd, credential, failure = prepareAppTaskCommand(session.Request, runtime.manifest, runtime.secrets, runtime.apiEnv)
+	}
 	if failure != nil {
 		return *failure, nil
 	}
@@ -83,7 +94,7 @@ func runAppTaskTTY(ctx context.Context, session *apptaskproto.InteractiveSession
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	// The slave is the child's fd 0; Setsid + Setctty make it the controlling
 	// terminal of a new session whose process group is the child's pid.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0, Credential: credential}
+	cmd.SysProcAttr = appTaskProcAttr(cmd, syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}, credential)
 	startErr := cmd.Start()
 	_ = slave.Close()
 	if startErr != nil {
@@ -131,7 +142,7 @@ func runAppTaskPipes(ctx context.Context, session *apptaskproto.InteractiveSessi
 	}
 	cmd.Stdout = session.Stdout
 	cmd.Stderr = session.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Credential: credential}
+	cmd.SysProcAttr = appTaskProcAttr(cmd, syscall.SysProcAttr{Setpgid: true}, credential)
 	if err := cmd.Start(); err != nil {
 		return appTaskStartFailure(err), nil
 	}

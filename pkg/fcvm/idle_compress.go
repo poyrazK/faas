@@ -11,7 +11,10 @@ package fcvm
 //     generation but the youngest IdleLadderCold1KeepGenerations, and at
 //     IdleLadderColdAge2Seconds (L4) every one but the youngest
 //     IdleLadderCold2KeepGenerations. Each app's ceiling adds generations to
-//     keep.
+//     keep. Where kernel lockdown closes the debugfs interface, aging is
+//     the kernel's own and L3/L4 keep IdleLadderCold1KeepPercent and
+//     IdleLadderCold2KeepPercent of the VM's memory resident instead
+//     (amendment 1); each ceiling step keeps IdleLadderExtraKeepPercent more.
 //   - A request resumes the guest as at L1/L2. The pages it touches fault
 //     back from zswap, and vmmd charges that wake the resume plus
 //     IdleLadderFaultMicrosPerPage for each refault until the next pause.
@@ -39,8 +42,12 @@ const DefaultIdleCompressTick = time.Second
 // coldPager is the JailerVMM side of cold-page compression.
 type coldPager interface {
 	ColdPagesReady(l Lease) bool
+	// ColdPagesByGeneration is true when compression goes through the
+	// multi-gen LRU's debugfs interface and keeps generations; false when
+	// it goes through memory.reclaim and keeps a share of the VM's memory.
+	ColdPagesByGeneration() bool
 	AgeVMMemory(l Lease) error
-	EvictColdVMMemory(l Lease, keep int, stop func() bool) (VMMemoryReclaim, error)
+	EvictColdVMMemory(l Lease, keep ColdKeep, stop func() bool) (VMMemoryReclaim, error)
 	VMRefaultPages(l Lease) (int64, error)
 	SetFrozenSwap(l Lease, frozen bool) error
 }
@@ -99,8 +106,15 @@ func (m *Manager) RunIdleLadderCompress(ctx context.Context) {
 	if !m.idleCompressOn {
 		return
 	}
-	if _, ok := m.vmm.(coldPager); !ok {
+	pager, ok := m.vmm.(coldPager)
+	if !ok {
 		return
+	}
+	if pager.ColdPagesByGeneration() {
+		m.log.Info("idle ladder compression through the multi-gen LRU (ADR-20261107122928)")
+	} else {
+		m.log.Info("idle ladder compression through memory.reclaim: the multi-gen LRU's debugfs interface does not open, as under kernel lockdown (ADR-20261107122928 amendment 1)",
+			"l3_keep_percent", api.IdleLadderCold1KeepPercent, "l4_keep_percent", api.IdleLadderCold2KeepPercent)
 	}
 	ticker := time.NewTicker(DefaultIdleCompressTick)
 	defer ticker.Stop()
@@ -266,12 +280,8 @@ func (m *Manager) compressTo(pager coldPager, st *quietState, c coldCandidate, e
 	}
 	cs.tried = target
 	cs.mu.Unlock()
-	keep := api.IdleLadderCold1KeepGenerations
-	if target == IdleCold2 {
-		keep = api.IdleLadderCold2KeepGenerations
-	}
-	keep += m.coldExtra(c.appID)
-	if keep >= lruGenMaxGens {
+	keep := coldKeepFor(target, m.coldExtra(c.appID))
+	if keep.ceiling(pager.ColdPagesByGeneration()) {
 		m.idleCompressMetrics.observe(target, "ceiling")
 		return
 	}
@@ -297,8 +307,30 @@ func (m *Manager) compressTo(pager coldPager, st *quietState, c coldCandidate, e
 	cs.level, cs.compressed = target, cs.compressed+max(r.BeforeBytes-r.AfterBytes, 0)
 	cs.mu.Unlock()
 	m.idleCompressMetrics.observe(target, "compressed")
-	m.log.Debug("idle ladder: compressed cold pages", "instance", c.id, "level", target.String(), "keep", keep,
+	m.log.Debug("idle ladder: compressed cold pages", "instance", c.id, "level", target.String(),
+		"keep_generations", keep.Generations, "keep_percent", keep.Percent,
 		"before_bytes", r.BeforeBytes, "after_bytes", r.AfterBytes, "ms", time.Since(started).Milliseconds())
+}
+
+// coldKeepFor is what a compression to target leaves resident for an app
+// whose ceiling keeps extra steps more.
+func coldKeepFor(target IdleLevel, extra int) ColdKeep {
+	keep := ColdKeep{Generations: api.IdleLadderCold1KeepGenerations, Percent: api.IdleLadderCold1KeepPercent}
+	if target == IdleCold2 {
+		keep = ColdKeep{Generations: api.IdleLadderCold2KeepGenerations, Percent: api.IdleLadderCold2KeepPercent}
+	}
+	keep.Generations += extra
+	keep.Percent += extra * api.IdleLadderExtraKeepPercent
+	return keep
+}
+
+// ceiling reports whether keep leaves nothing to compress: every generation
+// the kernel holds, or all of the VM's memory.
+func (k ColdKeep) ceiling(byGeneration bool) bool {
+	if byGeneration {
+		return k.Generations >= lruGenMaxGens
+	}
+	return k.Percent >= 100
 }
 
 // setColdSwap opens or closes the scope's swap for a compression.

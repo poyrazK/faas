@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	factsql "github.com/onebox-faas/faas/pkg/state/signupfacts/sqlc"
 )
 
@@ -19,8 +19,8 @@ var (
 )
 
 var (
-	signupMethodPattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
-	signupCountryPattern = regexp.MustCompile(`^[A-Z]{2}$`)
+	signupMethodPattern  = lazyregexp.New(`^[a-z][a-z0-9_]{0,31}$`)
+	signupCountryPattern = lazyregexp.New(`^[A-Z]{2}$`)
 )
 
 // Bounds mirrored from the account_signup_facts CHECK constraints.

@@ -593,6 +593,9 @@ func run(args []string) (status int) {
 	case "park":
 		return cmdPark(args[1:])
 	case "wake":
+		if isAppProjectCommand(args) {
+			return cmdAppProject(args)
+		}
 		return cmdWake(args[1:])
 	case "wake-ahead":
 		return cmdWakeAhead(args[1:])

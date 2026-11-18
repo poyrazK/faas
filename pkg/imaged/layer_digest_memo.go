@@ -104,6 +104,9 @@ func (h *Handler) buildAppLayer(ctx context.Context, in rootfs.BuildInput) (root
 	} else {
 		imageProgressf(ctx, "building the filesystem")
 	}
+	if in.Phase == nil {
+		in.Phase = func(name string) { markLayerPhase(ctx, name) }
+	}
 	result, err := h.builder.Build(ctx, in)
 	if err != nil {
 		imageProgressf(ctx, "failed after %s", progressElapsed(start))

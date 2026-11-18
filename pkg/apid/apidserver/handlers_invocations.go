@@ -631,9 +631,13 @@ func (s *server) appMessageTemplate(ctx context.Context, acct state.Account, app
 		Headers:          traceHeaders,
 		DueAt:            time.Now().UTC(),
 		RetryPolicyJSON:  effectiveQueueRetryPolicy(app, selection.Binding, retryPolicy, limits.MaxQueueAttempts),
-		// The store counts and inserts under one app lock, so concurrent
-		// senders cannot overshoot; keep_latest replacement is net zero.
+		// Counted from the backlog counters without the app's admission
+		// lock, so an app's sends never serialize on it (2026-11-12 prod
+		// throughput test: ~30 msg/s per app). Concurrent senders may pass
+		// the cap by the messages they insert at once (ADR-20261022105723
+		// amendment 2026-11-17); keep_latest replacement is net zero.
 		AdmissionMaxPending: limits.MaxQueueDepth,
+		AdmissionUnlocked:   true,
 		// ADR-20261022105723: the account's pending queue bytes. Apps of
 		// one account do not share a lock, so concurrent senders to
 		// different apps may pass the cap by their own messages.

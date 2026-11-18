@@ -101,6 +101,7 @@ func TestDeployScanGatesHandoff(t *testing.T) {
 		{"warn defers", deferring, func(a *state.App) { a.SecurityPolicy = api.AppSecurityPolicyWarn }, false},
 		{"enforce gates", deferring, func(a *state.App) { a.SecurityPolicy = api.AppSecurityPolicyEnforce }, true},
 		{"signed images gate", deferring, func(a *state.App) { a.RequireSigned = true }, true},
+		{"an organization's app gates", deferring, func(a *state.App) { a.OrgID = "00000000-0000-4000-8000-000000000001" }, true},
 		{"an unanswered producer lookup gates", deferring, func(a *state.App) { a.AccountID = "" }, true},
 		{"without deferral every scan gates", serial, func(*state.App) {}, true},
 	} {

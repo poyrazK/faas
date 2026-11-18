@@ -7,6 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_env_list_response import AppEnvListResponse
+from ...models.list_env_values import ListEnvValues
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -14,10 +15,17 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
+    values: ListEnvValues | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    json_values: str | Unset = UNSET
+    if not isinstance(values, Unset):
+        json_values = values
+
+    params["values"] = json_values
 
     params["scope"] = scope
 
@@ -83,12 +91,13 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    values: ListEnvValues | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppEnvListResponse | Problem]:
     """List env vars on an app.
 
      Returns every env var key + timestamps on the app. The plaintext
-    value NEVER appears in the response — guest-init reads the value
+    value appears only with `?values=true`; guest-init reads it
     at process start from `/etc/faas/env.json` inside the guest.
 
     **scope filter.** The optional `?scope=`
@@ -102,6 +111,7 @@ def sync_detailed(
 
     Args:
         slug (str):
+        values (ListEnvValues | Unset):
         scope (str | Unset):
 
     Raises:
@@ -114,6 +124,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        values=values,
         scope=scope,
     )
 
@@ -128,12 +139,13 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    values: ListEnvValues | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppEnvListResponse | Problem | None:
     """List env vars on an app.
 
      Returns every env var key + timestamps on the app. The plaintext
-    value NEVER appears in the response — guest-init reads the value
+    value appears only with `?values=true`; guest-init reads it
     at process start from `/etc/faas/env.json` inside the guest.
 
     **scope filter.** The optional `?scope=`
@@ -147,6 +159,7 @@ def sync(
 
     Args:
         slug (str):
+        values (ListEnvValues | Unset):
         scope (str | Unset):
 
     Raises:
@@ -160,6 +173,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        values=values,
         scope=scope,
     ).parsed
 
@@ -168,12 +182,13 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    values: ListEnvValues | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppEnvListResponse | Problem]:
     """List env vars on an app.
 
      Returns every env var key + timestamps on the app. The plaintext
-    value NEVER appears in the response — guest-init reads the value
+    value appears only with `?values=true`; guest-init reads it
     at process start from `/etc/faas/env.json` inside the guest.
 
     **scope filter.** The optional `?scope=`
@@ -187,6 +202,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
+        values (ListEnvValues | Unset):
         scope (str | Unset):
 
     Raises:
@@ -199,6 +215,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        values=values,
         scope=scope,
     )
 
@@ -211,12 +228,13 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    values: ListEnvValues | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppEnvListResponse | Problem | None:
     """List env vars on an app.
 
      Returns every env var key + timestamps on the app. The plaintext
-    value NEVER appears in the response — guest-init reads the value
+    value appears only with `?values=true`; guest-init reads it
     at process start from `/etc/faas/env.json` inside the guest.
 
     **scope filter.** The optional `?scope=`
@@ -230,6 +248,7 @@ async def asyncio(
 
     Args:
         slug (str):
+        values (ListEnvValues | Unset):
         scope (str | Unset):
 
     Raises:
@@ -244,6 +263,7 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            values=values,
             scope=scope,
         )
     ).parsed

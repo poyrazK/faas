@@ -149,7 +149,15 @@ func (h *Handler) resumeImagePreparation(ctx context.Context, images state.Deplo
 	return nil
 }
 
-func (h *Handler) prepareImageLayer(ctx context.Context, images state.DeploymentImagePreparationStore, app state.App, dep state.Deployment, p state.ImagePreparation) error {
+func (h *Handler) prepareImageLayer(ctx context.Context, images state.DeploymentImagePreparationStore, app state.App, dep state.Deployment, p state.ImagePreparation) (err error) {
+	ctx, timing := withLayerTiming(ctx)
+	defer func() {
+		if err == nil && h.log != nil {
+			h.log.Info("imaged: layer timing", append([]any{
+				"deployment", dep.ID, "app", app.Slug, "kind", dep.Kind,
+			}, timing.attrs()...)...)
+		}
+	}()
 	input := dep
 	input.RootfsPath, input.RootfsKey, input.RootfsBytes = p.InputPath, p.InputKey, p.InputBytes
 	lease, exported, err := buildexport.AcquireArtifact(input.RootfsPath)
@@ -174,6 +182,7 @@ func (h *Handler) prepareImageLayer(ctx context.Context, images state.Deployment
 	if err != nil {
 		return err
 	}
+	markLayerPhase(ctx, "open")
 	publication := &imagePublication{deploymentID: dep.ID}
 	buildCtx := context.WithValue(ctx, imagePublicationKey{}, publication)
 	if err := h.buildSnapshotBootLayer(buildCtx, app, input, acct); err != nil {
@@ -185,6 +194,7 @@ func (h *Handler) prepareImageLayer(ctx context.Context, images state.Deployment
 	if err := h.publishPreparedImage(ctx, images, p, publication); err != nil {
 		return imageRecoveryError(err)
 	}
+	markLayerPhase(ctx, "checkpoint")
 	h.handoffMetrics.commit("layer_published")
 	return nil
 }

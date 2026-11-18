@@ -283,6 +283,13 @@ type SandboxAction struct {
 	ScreenshotBytes pgtype.Int8
 }
 
+type SandboxEgressPolicy struct {
+	AccountID  pgtype.UUID
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
 	AccountID  pgtype.UUID
@@ -319,12 +326,21 @@ type SandboxSession struct {
 	TemplateID          pgtype.UUID
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.UUID
+	EgressAllow         []string
+	EgressDeny          []string
 	Browser             bool
 	TaskKind            pgtype.Text
 	TaskUrl             pgtype.Text
 	TaskMaxChars        pgtype.Int4
 	TaskExitCode        pgtype.Int4
 	TaskOutput          []byte
+}
+
+type SandboxSessionDomain struct {
+	SandboxID pgtype.UUID
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
 }
 
 type SandboxSessionUsage struct {

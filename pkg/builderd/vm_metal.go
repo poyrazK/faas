@@ -358,7 +358,12 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	if cachePath == "" {
 		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, req.SourceSHA256, "", nil)
 	} else {
-		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, req.SourceSHA256, cachePath,
+		// A new app with no cache of its own starts from its account's
+		// family cache (retail-store feedback A4); it publishes to its own.
+		d.dependencyCacheMu.Lock()
+		stagePath := dependencyCacheStagePath(d.driveDir, cachePath, req.DependencyCacheSeedKey, req.DependencyCacheKey)
+		d.dependencyCacheMu.Unlock()
+		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, req.SourceSHA256, stagePath,
 			func(src, dst string, maxBytes int64) error {
 				d.dependencyCacheMu.Lock()
 				defer d.dependencyCacheMu.Unlock()
@@ -382,6 +387,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		TimeoutSec:                  timeoutSec,
 		StartedAt:                   time.Now(),
 		DependencyCacheKey:          req.DependencyCacheKey,
+		DependencyCacheSeedKey:      req.DependencyCacheSeedKey,
 		DependencyCacheRestored:     cacheRestored,
 		WarmScopeKey:                req.WarmScopeKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
@@ -500,6 +506,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 		TimeoutSec:                  timeoutSec,
 		StartedAt:                   time.Now(),
 		DependencyCacheKey:          req.DependencyCacheKey,
+		DependencyCacheSeedKey:      req.DependencyCacheSeedKey,
 		DependencyCacheRestored:     true,
 		WarmScopeKey:                req.WarmScopeKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
@@ -841,6 +848,11 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 				touchErr := os.Chtimes(cachePath, now, now)
 				d.dependencyCacheMu.Unlock()
 				_ = os.RemoveAll(cacheSource)
+				if os.IsNotExist(touchErr) {
+					// It ran on a family cache it did not change; the
+					// next build seeds from the family again.
+					touchErr = nil
+				}
 				if touchErr != nil {
 					res.DependencyCacheStoreError = touchErr.Error()
 				}
@@ -849,6 +861,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 				shared, cacheErr := publishDependencyCache(cacheSource, cachePath, dependencyCacheMaxBytes, d.platformLayers)
 				res.DependencyCacheSharedBytes = shared
 				if cacheErr == nil {
+					recordDependencyCacheFamily(d.driveDir, h.DependencyCacheSeedKey, h.DependencyCacheKey)
 					cacheErr = sweepDependencyCaches(d.driveDir, time.Now())
 				}
 				d.dependencyCacheMu.Unlock()
@@ -915,6 +928,7 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (Bui
 		TimeoutSec:                  manifest.TimeoutSec,
 		StartedAt:                   time.Now(),
 		DependencyCacheKey:          h.DependencyCacheKey,
+		DependencyCacheSeedKey:      h.DependencyCacheSeedKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
 		BuilderSliceOOMCounterValid: oomCounterErr == nil,
 		HostSeedDrive:               seedDrive,

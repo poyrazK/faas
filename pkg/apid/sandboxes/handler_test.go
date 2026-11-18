@@ -37,8 +37,10 @@ type fakeStore struct {
 	now      func() time.Time
 	sessions []agentstore.Sandbox
 	admitted agentstore.SandboxAdmission
-	queued   int // queued agent runs, which share the cap
-	err      error
+	// egress is the account's default egress policy.
+	egress agentstore.SandboxEgressPolicy
+	queued int // queued agent runs, which share the cap
+	err    error
 	// snapshots are persisted workspaces, newest first.
 	snapshots []agentstore.SandboxSnapshot
 	// ports are exposed ports by session.
@@ -52,6 +54,8 @@ type fakeStore struct {
 	openArgs agentstore.SandboxActionArgs
 	// actionResults are gregale_browser actions by "<session>/<seq>".
 	actionResults map[string]agentstore.SandboxActionResult
+	// domains are sessions' domain logs by session.
+	domains map[string][]agentstore.SandboxDomain
 }
 
 func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmission) (agentstore.Sandbox, error) {
@@ -76,7 +80,7 @@ func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmissi
 	sb := agentstore.Sandbox{ID: fmt.Sprintf("00000000-0000-0000-0000-%012d", len(f.sessions)+1), AccountID: a.AccountID, TenantID: a.TenantID,
 		Kind: a.Kind, Preset: a.Preset, RAMMB: a.RAMMB, NetworkMode: a.NetworkMode, State: agentstore.SandboxQueued,
 		IdleTimeoutSec: a.IdleTimeoutSec, ExpiresAt: a.ExpiresAt, Labels: a.Labels, CreatedAt: now, UpdatedAt: now, LastActivityAt: now,
-		WorkspaceSnapshotID: a.WorkspaceSnapshotID, ImageRef: a.ImageRef}
+		WorkspaceSnapshotID: a.WorkspaceSnapshotID, ImageRef: a.ImageRef, EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny}
 	f.admitted = a
 	f.sessions = append([]agentstore.Sandbox{sb}, f.sessions...)
 	if len(a.Ports) > 0 {
