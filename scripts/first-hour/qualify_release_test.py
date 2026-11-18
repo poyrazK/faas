@@ -102,8 +102,9 @@ class ArtifactTests(unittest.TestCase):
 
         def github(resource, directory, name):
             if rate_limited:
-                raise qr.QualificationError("download_failed") from qr.HTTPError(
-                    "https://api.github.com", 403, "Rate limited", {"X-RateLimit-Remaining": "0"}, None)
+                with qr.HTTPError("https://api.github.com", 403, "Rate limited",
+                                  {"X-RateLimit-Remaining": "0"}, io.BytesIO()) as response:
+                    raise qr.QualificationError("download_failed") from response
             if resource.startswith("releases/"):
                 return {"tag_name": RELEASE, "draft": False, "published_at": "2026-11-17T12:11:51Z",
                         "assets": [{"name": n, "state": "uploaded"} for n in (f"gregale_{RELEASE[1:]}_linux_amd64.tar.gz", "CLI-SHA256SUMS")]}
