@@ -2110,6 +2110,7 @@ type deployExecution struct {
 	confirmProject   func(api.PlanResponse) (bool, error)
 	onProjectAttempt func(string) error
 	onProjectApply   func(api.ApplyResponse) error
+	skipProjectLink  bool // The guided session persists its own verified source context.
 	onQueued         func(api.DeploymentResponse)
 	onSubmission     func(deploySubmission) error
 	onUploadSession  func(deployUploadIdentity) error
@@ -4238,7 +4239,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return waitForSafeProjectRelease(ctx, client, projectSession, time.Duration(*waitTimeoutSeconds)*time.Second)
 			}
 		}
-		if !explicit["tarball"] && *templateName == "" && *environment == "" {
+		if !execution.skipProjectLink && !explicit["tarball"] && *templateName == "" && *environment == "" {
 			linkCheckoutAfterProjectDeploy(osStderr, contextDir, *projectSlug, jsonOutput)
 		}
 		var projectWaitTimeouts []projectWaitTimeout
