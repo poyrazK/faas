@@ -4,9 +4,59 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+// A helper on another filesystem than the chroots is copied beside them once,
+// not on every launch: per-launch copies held the fork lock on every wake and
+// cost the metal park/wake cycle about 65 ms each.
+func TestLocalMountHelperIsCopiedOncePerSource(t *testing.T) {
+	base := t.TempDir()
+	v := &JailerVMM{chrootBase: base}
+	src := filepath.Join(t.TempDir(), "vmmd")
+	if err := os.WriteFile(src, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := v.localMountHelper(src)
+	if err != nil {
+		t.Fatalf("localMountHelper: %v", err)
+	}
+	if filepath.Dir(first) != base {
+		t.Fatalf("copy at %s, want it in the chroot base %s", first, base)
+	}
+	before, err := os.Stat(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := v.localMountHelper(src)
+	if err != nil {
+		t.Fatalf("localMountHelper again: %v", err)
+	}
+	after, err := os.Stat(again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != first || !os.SameFile(before, after) {
+		t.Fatalf("second call made a new copy (%s), want the first one reused", again)
+	}
+	if after.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("copy mode %v is not executable", after.Mode())
+	}
+
+	other := filepath.Join(t.TempDir(), "vmmd")
+	if err := os.WriteFile(other, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.localMountHelper(other); err != nil {
+		t.Fatalf("localMountHelper(other): %v", err)
+	}
+	if got, err := os.ReadFile(first); err != nil || string(got) != "#!/bin/sh\nexit 0\n" {
+		t.Fatalf("a different source did not replace the copy: %q, %v", got, err)
+	}
+}
 
 // A child forked while writeExecutable's file is open would inherit the write
 // descriptor and make exec'ing the file fail with ETXTBSY, so a process start

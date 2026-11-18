@@ -119,6 +119,13 @@ type JailerVMM struct {
 	// the executable across filesystems on every wake. Older bundles use vmmd.
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
+	// mountHelperLocal is one copy, beside the chroots, of a mountHelperPath
+	// that lives on another filesystem (the metal tests point it at the test
+	// vmmd in /tmp). Launches hard-link it, as they do the production helper,
+	// instead of copying the executable each time. mountHelperLocalFrom is the
+	// path it was copied from.
+	mountHelperLocal     string
+	mountHelperLocalFrom string
 	// resident holds verified copies of the jailer and firecracker executables
 	// on the jail tmpfs (ADR-20261105100000), launched in place of the
 	// installed ones so a wake after an idle spell reads nothing from disk.
@@ -6288,11 +6295,19 @@ func (v *JailerVMM) stageMountHelper(root string) error {
 	}
 	dst := filepath.Join(root, "faas-mount-helper")
 	_ = os.Remove(dst)
-	if err := os.Link(shared, dst); err == nil {
+	linkErr := os.Link(shared, dst)
+	if linkErr == nil {
 		return nil
 	}
-	// Defensive fallback for non-production tests/configurations where the
-	// chroot base and instance root do not share a filesystem.
+	if errors.Is(linkErr, syscall.EXDEV) {
+		// The helper is on another filesystem than the chroots. Copy it once
+		// beside them and link that copy from now on.
+		if local, err := v.localMountHelper(shared); err == nil && os.Link(local, dst) == nil {
+			return nil
+		}
+	}
+	// Defensive fallback for configurations where even the chroot base and
+	// the instance root do not share a filesystem.
 	if err := writeExecutable(func() error { return copyFile(shared, dst) }); err != nil {
 		return fmt.Errorf("vmm: stage mount helper: %w", err)
 	}
@@ -6320,10 +6335,40 @@ func (v *JailerVMM) ensureMountHelper() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(v.chrootBase, 0o700); err != nil {
-		return "", fmt.Errorf("vmm: create mount helper root: %w", err)
-	}
 	shared := filepath.Join(v.chrootBase, ".faas-mount-helper")
+	if err := publishMountHelper(v.chrootBase, exe, shared); err != nil {
+		return "", err
+	}
+	v.mountHelperPath = shared
+	return shared, nil
+}
+
+// localMountHelper returns a copy of helper in the chroot base, making it the
+// first time: helper is on another filesystem than the chroots, so they cannot
+// hard-link it.
+func (v *JailerVMM) localMountHelper(helper string) (string, error) {
+	v.mountHelperMu.Lock()
+	defer v.mountHelperMu.Unlock()
+	if v.mountHelperLocal != "" && v.mountHelperLocalFrom == helper {
+		if info, err := os.Stat(v.mountHelperLocal); err == nil && info.Mode().IsRegular() {
+			return v.mountHelperLocal, nil
+		}
+	}
+	local := filepath.Join(v.chrootBase, ".faas-mount-helper-local")
+	if err := publishMountHelper(v.chrootBase, helper, local); err != nil {
+		return "", err
+	}
+	v.mountHelperLocal, v.mountHelperLocalFrom = local, helper
+	return local, nil
+}
+
+// publishMountHelper copies src to dst in dir: written to a temporary name
+// under writeExecutable, so no child holds it open for writing, then renamed
+// into place, so no launch ever execs a partial copy.
+func publishMountHelper(dir, src, dst string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("vmm: create mount helper root: %w", err)
+	}
 	var tmpPath string
 	defer func() {
 		if tmpPath != "" {
@@ -6331,7 +6376,7 @@ func (v *JailerVMM) ensureMountHelper() (string, error) {
 		}
 	}()
 	if err := writeExecutable(func() error {
-		tmp, err := os.CreateTemp(v.chrootBase, ".faas-mount-helper-*")
+		tmp, err := os.CreateTemp(dir, filepath.Base(dst)+"-*")
 		if err != nil {
 			return fmt.Errorf("vmm: create shared mount helper: %w", err)
 		}
@@ -6339,21 +6384,20 @@ func (v *JailerVMM) ensureMountHelper() (string, error) {
 		if err := tmp.Close(); err != nil {
 			return fmt.Errorf("vmm: close shared mount helper: %w", err)
 		}
-		if err := copyFile(exe, tmpPath); err != nil {
+		if err := copyFile(src, tmpPath); err != nil {
 			return fmt.Errorf("vmm: copy shared mount helper: %w", err)
 		}
 		return nil
 	}); err != nil {
-		return "", err
+		return err
 	}
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
-		return "", fmt.Errorf("vmm: chmod shared mount helper: %w", err)
+		return fmt.Errorf("vmm: chmod shared mount helper: %w", err)
 	}
-	if err := os.Rename(tmpPath, shared); err != nil {
-		return "", fmt.Errorf("vmm: publish shared mount helper: %w", err)
+	if err := os.Rename(tmpPath, dst); err != nil {
+		return fmt.Errorf("vmm: publish shared mount helper: %w", err)
 	}
-	v.mountHelperPath = shared
-	return shared, nil
+	return nil
 }
 
 // bindTunSourceForOwner carries the real host TUN device into the jail before
