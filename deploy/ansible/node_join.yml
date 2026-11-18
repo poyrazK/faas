@@ -1275,9 +1275,11 @@
         that:
           - (vmmd_idle_ladder | default('off')) in ['off', 'observe', 'on']
           - not (vmmd_idle_ladder_apps | default(false) | bool) or (vmmd_idle_ladder | default('off')) == 'on'
+          - not (vmmd_idle_ladder_compress | default(false) | bool) or (vmmd_idle_ladder | default('off')) == 'on'
         fail_msg: >-
           vmmd_idle_ladder must be off, observe or on, and vmmd_idle_ladder_apps
-          needs vmmd_idle_ladder = on (group_vars/compute_nodes/vmmd_idle_ladder.yml).
+          and vmmd_idle_ladder_compress need vmmd_idle_ladder = on
+          (group_vars/compute_nodes/vmmd_idle_ladder.yml).
 
     - name: Install the idle ladder switches
       ansible.builtin.copy:
@@ -1292,6 +1294,9 @@
           {% endif %}
           {% if vmmd_idle_ladder_apps | default(false) | bool %}
           Environment=FAAS_IDLE_LADDER_APPS=1
+          {% endif %}
+          {% if vmmd_idle_ladder_compress | default(false) | bool %}
+          Environment=FAAS_IDLE_LADDER_COMPRESS=1
           {% endif %}
 
     # Restore speed-ups (group_vars/compute_nodes/vmmd_restore_speedups.yml),
