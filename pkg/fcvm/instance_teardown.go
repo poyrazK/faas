@@ -160,6 +160,10 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	delete(m.waking, lease.Instance)
 	delete(m.bootingEgress, lease.Instance)
 	delete(m.live, lease.Instance)
+	if m.agentEgress.cfg != nil {
+		delete(m.agentEgress.starting, lease.Instance)
+		m.agentEgress.releaseLocked(lease.Instance)
+	}
 	delete(m.functionStarting, lease.Instance)
 	if m.functionActivity != nil {
 		m.functionActivity.Forget(lease.Instance)

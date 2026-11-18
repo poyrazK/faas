@@ -62,9 +62,9 @@ func exerciseHostedTaskRehearsal(t *testing.T, store state.Store, pool *pgxpool.
 		if err != nil {
 			t.Fatal(err)
 		}
-		req := httptest.NewRequestWithContext(ctx, method, "/v1/task-tool-source-intents/"+id+"/rehearsal"+suffix, bytes.NewReader(raw))
+		requestContext := middleware.WithPrincipal(ctx, f.account, key, nil)
+		req := httptest.NewRequestWithContext(requestContext, method, "/v1/task-tool-source-intents/"+id+"/rehearsal"+suffix, bytes.NewReader(raw))
 		req.SetPathValue("id", id)
-		req = req.WithContext(middleware.WithPrincipal(req.Context(), f.account, key, nil))
 		w := httptest.NewRecorder()
 		executor.HostedTaskRehearsal()(w, req, f.account)
 		return w

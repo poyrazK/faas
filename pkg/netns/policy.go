@@ -37,6 +37,12 @@ import (
 // sources. A host policy-routing rule uses it to bypass the shared gateway.
 const StaticEgressRoutingMark = uint32(0x40000000)
 
+// AgentEgressRoutingMark is set on bridged traffic from live agent VMs
+// (ADR-20261117185346). vmmd routes it to the agent tunnel's table and drops
+// it when that table has no route, so agent traffic never takes the tenant
+// gateway or the node's own address.
+const AgentEgressRoutingMark = uint32(0x20000000)
+
 // HostPolicy is the parameter set for rendering the host nftables ruleset.
 // Fields map 1:1 to spec §11 + §7 concepts. The export is on this type (not a
 // package-level constructor) so tests can vary individual fields and assert
@@ -207,6 +213,14 @@ type HostPolicy struct {
 	// have no static-egress-pinned apps.
 	StaticEgressRules []StaticEgressRule
 
+	// AgentEgressIface is the agent tunnel's interface (wg-agent,
+	// ADR-20261117185346); empty keeps agent VMs on the tenant path.
+	// AgentEgressRules are its live agent VMs: each one's bridged traffic
+	// is marked, accepted only out of AgentEgressIface, dropped anywhere
+	// else, and source-NATed to the VM's own agent tunnel address.
+	AgentEgressIface string
+	AgentEgressRules []AgentEgressRule
+
 	// SMTPAllowlistRules is the host-layer exception list for outbound
 	// submission traffic. Each rule is scoped to one VM host-side source
 	// address and an explicit destination CIDR set. Rules are rendered
@@ -340,6 +354,15 @@ func (p *ServiceTCPHostPolicy) validate(masquerade netip.Prefix, overlays []stri
 // trailing comment so `nft list ruleset` is self-documenting
 // for operators and the future nagios/metric panels. The
 // renderer does not branch on them.
+// AgentEgressRule is one live agent VM on the agent tunnel: its host-side
+// lease address and its own address in this node's slice.
+type AgentEgressRule struct {
+	PerVMHostIP netip.Addr
+	AgentIP     netip.Addr
+	AccountID   string
+	SandboxID   string
+}
+
 type StaticEgressRule struct {
 	PerVMHostIP netip.Addr
 	CustomerIP  netip.Addr
@@ -610,6 +633,14 @@ func (h HostPolicy) Render() string {
 			panic(fmt.Sprintf("netns: HostPolicy.Render: StaticEgressRules has invalid PerVMHostIP for app=%s account=%s", r.AppID, r.AccountID))
 		}
 	}
+	if len(h.AgentEgressRules) > 0 && h.AgentEgressIface == "" {
+		panic("netns: HostPolicy.Render: AgentEgressRules without AgentEgressIface")
+	}
+	for _, r := range h.AgentEgressRules {
+		if !r.PerVMHostIP.Is4() || !r.AgentIP.Is4() {
+			panic(fmt.Sprintf("netns: HostPolicy.Render: AgentEgressRules has an invalid address for sandbox=%s account=%s", r.SandboxID, r.AccountID))
+		}
+	}
 	for _, r := range h.SMTPAllowlistRules {
 		if !r.SourceIP.IsValid() || !r.SourceIP.Is4() {
 			panic(fmt.Sprintf("netns: HostPolicy.Render: SMTPAllowlistRules has invalid IPv4 SourceIP for app=%s account=%s", r.AppID, r.AccountID))
@@ -684,6 +715,14 @@ func (h HostPolicy) Render() string {
 		b.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
 		for _, r := range h.StaticEgressRules {
 			fmt.Fprintf(&b, "    iifname %q ip saddr %s meta mark set meta mark | %#x\n", h.BridgeName, r.PerVMHostIP, StaticEgressRoutingMark)
+		}
+		b.WriteString("  }\n")
+	}
+	if len(h.AgentEgressRules) > 0 {
+		b.WriteString("  chain agent_egress_route {\n")
+		b.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
+		for _, r := range h.AgentEgressRules {
+			fmt.Fprintf(&b, "    iifname %q ip saddr %s meta mark set meta mark | %#x\n", h.BridgeName, r.PerVMHostIP, AgentEgressRoutingMark)
 		}
 		b.WriteString("  }\n")
 	}
@@ -830,6 +869,16 @@ func (h HostPolicy) Render() string {
 			h.BridgeName, r.SourceIP.String(), strings.Join(v4, ","), comment)
 	}
 	fmt.Fprintf(&b, "    tcp dport { %s } drop\n", denyPorts)
+	// ADR-20261117185346: an agent VM leaves only through the agent tunnel.
+	// After the deny block, so every deny still applies to it, and before
+	// the overlay and tenant accepts, so none of them can carry it.
+	if len(h.AgentEgressRules) > 0 {
+		fmt.Fprintf(&b, "    iifname %q oifname %q tcp flags syn tcp option maxseg size set rt mtu\n", h.BridgeName, h.AgentEgressIface)
+	}
+	for _, r := range h.AgentEgressRules {
+		fmt.Fprintf(&b, "    iifname %q ip saddr %s oifname %q accept\n", h.BridgeName, r.PerVMHostIP, h.AgentEgressIface)
+		fmt.Fprintf(&b, "    iifname %q ip saddr %s drop comment %q\n", h.BridgeName, r.PerVMHostIP, "faas agent egress only via the agent tunnel")
+	}
 	// Mega-PR-B Commit 2: per-overlay accept rules emitted AFTER the
 	// per-CIDR deny block and BEFORE the broad bridged-tenant allow.
 	// The deny-set stays identical (lateral-movement contract intact);
@@ -898,6 +947,12 @@ func (h HostPolicy) Render() string {
 		}
 		fmt.Fprintf(&b, "    ip saddr %s oifname %q snat to %s%s\n",
 			r.PerVMHostIP.String(), h.PublicIface, r.CustomerIP.String(), comment)
+	}
+	// Each agent VM keeps its own agent tunnel address, so the agent gateway
+	// can tell VMs apart (ADR-20261117185346 §2).
+	for _, r := range h.AgentEgressRules {
+		fmt.Fprintf(&b, "    ip saddr %s oifname %q snat to %s     # account=%s sandbox=%s\n",
+			r.PerVMHostIP, h.AgentEgressIface, r.AgentIP, r.AccountID, r.SandboxID)
 	}
 	tenantOut := h.PublicIface
 	if h.TenantEgressIface != "" {

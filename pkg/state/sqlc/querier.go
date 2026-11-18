@@ -180,6 +180,7 @@ type Querier interface {
 	// writer's transaction for every change a wake depends on.
 	AppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	AppSLOForReleaseGate(ctx context.Context, db DBTX, arg AppSLOForReleaseGateParams) (AppSLOForReleaseGateRow, error)
+	AppTaskCallersByHostIP(ctx context.Context, db DBTX, arg AppTaskCallersByHostIPParams) ([]AppTaskCallersByHostIPRow, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
 	AppendMCPAdmissionEvidence(ctx context.Context, db DBTX, arg AppendMCPAdmissionEvidenceParams) (int64, error)
@@ -5784,10 +5785,18 @@ type Querier interface {
 	OperatorInsertAuditLog(ctx context.Context, db DBTX, arg OperatorInsertAuditLogParams) error
 	OperatorNodeHasLiveInstances(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	OperatorOverviewActivity(ctx context.Context, db DBTX, auditSince pgtype.Timestamptz) (OperatorOverviewActivityRow, error)
+	// Deploys and new accounts by the coding agent the Gregale CLI reported
+	// (ADR-20261112223000 amendment 1: audit_log.data->>'actor_agent'). Deploys
+	// read the audit window through audit_log_received_at_idx; new accounts start
+	// from the beta funnel cohort and reach their audit rows through
+	// audit_log_account_idx, so neither scans the whole log. A deployment emits
+	// one of these kinds; DISTINCT deployment_id keeps a repeat from counting twice.
+	OperatorOverviewCodingAgents(ctx context.Context, db DBTX, arg OperatorOverviewCodingAgentsParams) ([]OperatorOverviewCodingAgentsRow, error)
 	OperatorOverviewFailures(ctx context.Context, db DBTX, arg OperatorOverviewFailuresParams) ([]OperatorOverviewFailuresRow, error)
 	// last_request_at retains successful-request evidence, including terminal
 	// instances and deleted apps. It is not an immutable first-ever timestamp.
 	OperatorOverviewFunnel(ctx context.Context, db DBTX, arg OperatorOverviewFunnelParams) (OperatorOverviewFunnelRow, error)
+	// new_accounts, deploys, agent
 	OperatorOverviewNodes(ctx context.Context, db DBTX) ([]OperatorOverviewNodesRow, error)
 	OperatorOverviewRateLimited(ctx context.Context, db DBTX, arg OperatorOverviewRateLimitedParams) ([]OperatorOverviewRateLimitedRow, error)
 	OperatorOverviewTotals(ctx context.Context, db DBTX, arg OperatorOverviewTotalsParams) (OperatorOverviewTotalsRow, error)
@@ -7083,6 +7092,8 @@ type Querier interface {
 	RecordAppSecretRuntimeReloadApplicationAck(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadApplicationAckParams) (int64, error)
 	RecordAppSecretRuntimeReloadObservation(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadObservationParams) (int64, error)
 	RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadSummaryParams) (int64, error)
+	// ADR-20261118070000: service-mesh caller identity of app task VMs.
+	RecordAppTaskNetwork(ctx context.Context, db DBTX, arg RecordAppTaskNetworkParams) (int64, error)
 	RecordApplicationStandardEgress(ctx context.Context, db DBTX, arg RecordApplicationStandardEgressParams) ([]byte, error)
 	RecordApplicationStandardLogDelivery(ctx context.Context, db DBTX, arg RecordApplicationStandardLogDeliveryParams) ([]byte, error)
 	RecordApplicationStandardLogHealth(ctx context.Context, db DBTX, arg RecordApplicationStandardLogHealthParams) ([]byte, error)
@@ -7699,6 +7710,7 @@ type Querier interface {
 	RetainedReleaseMemberDeploymentForUpdate(ctx context.Context, db DBTX, arg RetainedReleaseMemberDeploymentForUpdateParams) (pgtype.UUID, error)
 	RetainedReleaseTargetUsable(ctx context.Context, db DBTX, arg RetainedReleaseTargetUsableParams) (bool, error)
 	RetireAbortedPromotionCandidates(ctx context.Context, db DBTX, promotionID string) error
+	RetireAppTaskNetwork(ctx context.Context, db DBTX, taskID string) error
 	RetireAutoRollbackDeploymentSiblings(ctx context.Context, db DBTX, arg RetireAutoRollbackDeploymentSiblingsParams) error
 	RetireCheckedRollbackSiblings(ctx context.Context, db DBTX, arg RetireCheckedRollbackSiblingsParams) error
 	RetireCloneCheckpointCaptureSnapshot(ctx context.Context, db DBTX, arg RetireCloneCheckpointCaptureSnapshotParams) (int64, error)

@@ -34,6 +34,8 @@ RULES = [
     (r"(^|/|-)customer-attention([/-]|$)", "Native customer support"),
     # Offline export tools belong to the existing CLI capability (row 156).
     (r"^export$", "`gregale` CLI"),
+    # Per-agent setup guides document driving the CLI from a coding agent.
+    (r"^(claude-code|codex|cursor|gemini-cli)$", "`gregale` CLI"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck|^mutate$", "TOOLING"),
@@ -96,6 +98,8 @@ RULES = [
     (r"/v1/status|status-incident", "Public status page"),
     (r"/v1/synthesize|synth", "INFRA"),
     (r"/v1/internal/(apps|services)/", "INFRA"),
+    # agentproxyd's registration API, reached by vmmd over wg-agent (ADR-20261117185346 §4).
+    (r"^/v1/registrations/", "INFRA"),
     (r"/v1/apps/\{slug\}/diff|^diff$", "Affected-workload preview"),
     (r"apps/\{slug\}/env/|app-envs?$", "Env vars:"),
     (r"health/history|^apps/status status$|^conditions$", "App health assessment"),

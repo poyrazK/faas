@@ -576,6 +576,8 @@ from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScop
 from .delete_financial_budget_request import DeleteFinancialBudgetRequest
 from .delete_secret_prefer import DeleteSecretPrefer
 from .deleted_app_list_response import DeletedAppListResponse
+from .deleted_app_purge_response import DeletedAppPurgeResponse
+from .deleted_app_purge_response_pending_reason import DeletedAppPurgeResponsePendingReason
 from .deleted_app_summary import DeletedAppSummary
 from .deleted_app_summary_restore_blocker import DeletedAppSummaryRestoreBlocker
 from .deploy_dev_source_body import DeployDevSourceBody
@@ -1100,6 +1102,7 @@ from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_env_values import ListEnvValues
 from .list_environment_git_releases_request import ListEnvironmentGitReleasesRequest
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -2049,6 +2052,7 @@ from .public_status_update import PublicStatusUpdate
 from .public_status_update_components_item import PublicStatusUpdateComponentsItem
 from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
+from .purge_deleted_app_body import PurgeDeletedAppBody
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_reference_request import PutAppSecretReferenceRequest
@@ -3294,6 +3298,8 @@ __all__ = (
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
     "DeletedAppListResponse",
+    "DeletedAppPurgeResponse",
+    "DeletedAppPurgeResponsePendingReason",
     "DeletedAppSummary",
     "DeletedAppSummaryRestoreBlocker",
     "DeleteDeploymentScopeExclusionResponse200",
@@ -3802,6 +3808,7 @@ __all__ = (
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
     "ListEnvironmentGitReleasesRequest",
+    "ListEnvValues",
     "ListInstancesResponse",
     "ListInvocationsResponse",
     "ListJobRunsResponse",
@@ -4626,6 +4633,7 @@ __all__ = (
     "PublicStatusUpdateComponentsItem",
     "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
+    "PurgeDeletedAppBody",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
     "PutAppSecretReferenceRequest",

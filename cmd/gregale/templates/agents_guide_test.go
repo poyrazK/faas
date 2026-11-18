@@ -19,10 +19,15 @@ func TestMaterializeWritesAgentsGuideForEveryTemplate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"`" + name + "` starter", "--non-interactive --json", "resume_command", "FAAS_TOKEN", "https://gregale.dev/docs/agents",
-				// The app is private by default on paid plans and a JSON deploy is
-				// silent while it waits (CLI journey 2026-11-05, #6628, #6634).
-				"invocation run <app> --method GET --path /", "--wait --timeout 2m", "`124`", "`130`", "recovery.invocation_id", "recovery.resume_command", "--no-wait", "answers from Gregale's edge"} {
+			required := []string{"`" + name + "` starter", "--non-interactive --json", "resume_command", "FAAS_TOKEN", "https://gregale.dev/docs/agents", "--no-wait"}
+			if name == PrivateNode {
+				required = append(required, "deploy --project", "release verify <deployment-id>", "release wait <deployment-id> --rollout")
+			} else {
+				// The standalone deploy guide includes async invocation recovery.
+				required = append(required, "invocation run <app> --method GET --path /", "--wait --timeout 2m", "`124`", "`130`",
+					"recovery.invocation_id", "recovery.resume_command", "answers from Gregale's edge")
+			}
+			for _, want := range required {
 				if !strings.Contains(string(guide), want) {
 					t.Errorf("AGENTS.md lacks %q", want)
 				}

@@ -1,0 +1,22 @@
+---
+# ADR-20261117185346: compute-node half of the agent egress gateway. The
+# manifest generator sets faas_agent_egress_* only when egress.agent_gateway
+# is declared; with them unset this role removes any earlier tunnel.
+faas_agent_egress_iface: ''
+faas_agent_egress_gateway_endpoint: ''
+faas_agent_egress_gateway_public_key: ''
+faas_agent_egress_tunnel_cidr: ''
+# This node's slice of the agent tunnel, and its own address in it. vmmd
+# gives each agent VM another address of the slice.
+faas_agent_egress_node_slice: ''
+faas_agent_egress_node_address: ''
+# The gateway's tunnel address, routed over the tunnel for vmmd's
+# registrations, and the proxy's registration URL when
+# egress.agent_gateway.proxy is on (empty while it is off).
+faas_agent_egress_gateway_address: ''
+faas_agent_egress_proxy_url: ''
+# Policy-routing table for agent VMs' traffic. vmmd marks that traffic and
+# installs the rules that send it here, and the rule that drops it when the
+# tunnel is gone, so the tunnel's presence never decides fail-closed.
+faas_agent_egress_route_table: 51821
+faas_agent_egress_mtu: 1420

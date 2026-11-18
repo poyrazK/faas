@@ -150,6 +150,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app list", "apps"},
 	{"app delete", "apps rm"},
 	{"app restore", "apps restore"},
+	{"app purge", "apps purge"},
 	{"app instances", "ps"},
 	{"app park", "park"},
 	{"app wake", "wake"},
@@ -921,14 +922,15 @@ func rewriteAppPath(args []string) ([]string, error) {
 	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 		return args, nil
 	}
+	if isAppProjectCommand(args[1:]) {
+		// `app restart|health|update|wake --project P` runs per project
+		// app; checked before the aliases, which send `app wake` to `wake`.
+		return args, nil
+	}
 	if alias, used, ok := matchCliTreeAlias(args); ok {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
-	if isAppProjectCommand(args[1:]) {
-		// `app restart|health|update --project P` runs per project app.
-		return args, nil
-	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}

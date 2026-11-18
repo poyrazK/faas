@@ -1049,6 +1049,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			},
 			Audit: srv.audit, // issue #755 / PR-5.5: emit account.deleted from the sweep
 		})
+		srv.purgeDeletedApp = graceLoop.PurgeApp
 		go func() { _ = graceLoop.Run(ctx) }()
 		// Login-token cleanup (issue #165 PR #2, ADR-032). The
 		// login_tokens table backs password-reset (15-min TTL) and

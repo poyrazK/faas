@@ -221,6 +221,19 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 			return publisher.RecordScenarioCommandNetwork(ctx, identity, placement.NodeID, *task.LeaseToken, out.HostIP)
 		}
 	}
+	var retire func(context.Context) error
+	if networks, ok := e.store.(state.AppTaskNetworkStore); ok && runID == "" && task.LeaseToken != nil {
+		// The task VM calls the app's services as the app
+		// (ADR-20261118070000): record its address under the restoring
+		// lease for gatewayd-internal's caller lookup.
+		lease := *task.LeaseToken
+		publish = func(ctx context.Context, out *AppTaskRestoreOutcome) error {
+			return networks.RecordAppTaskNetwork(ctx, request.ID, placement.NodeID, lease, out.HostIP)
+		}
+		retire = func(ctx context.Context) error {
+			return networks.RetireAppTaskNetwork(context.WithoutCancel(ctx), request.ID)
+		}
+	}
 	var commands state.FinancialPreviewCommandStore
 	if app.PreviewOfSlug != "" {
 		var ok bool
@@ -239,6 +252,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	return ResolvedAppTaskRuntime{
 		publish:   publish,
+		retire:    retire,
 		NodeID:    placement.NodeID,
 		RuntimeID: runtimeID,
 		Spec: AppTaskRestoreSpec{Instance: runtimeID, DeploymentID: dep.ID, App: spec,

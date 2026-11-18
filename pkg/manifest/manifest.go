@@ -358,6 +358,11 @@ type Egress struct {
 	// traffic leaves from the gateway's address instead of the nodes'.
 	// Absent keeps each node's direct path.
 	TenantGateway *TenantEgressGateway `yaml:"tenant_gateway,omitempty"`
+
+	// AgentGateway (ADR-20261117185346) carries every agent VM's egress
+	// through its own WireGuard tunnel and public addresses, apart from
+	// customer apps'. Absent keeps agent VMs on the tenant path.
+	AgentGateway *AgentEgressGateway `yaml:"agent_gateway,omitempty"`
 }
 
 // TenantEgressGateway describes the operator-provisioned egress gateway.
@@ -476,6 +481,7 @@ func TenantTunnelAddress(tunnelCIDR, nodeName string) (netip.Prefix, error) {
 // the row-level mirror of this gate.
 func (e *Egress) validate(overlayCIDR string) Errors {
 	errs := e.TenantGateway.validate(overlayCIDR)
+	errs = append(errs, e.AgentGateway.validate(overlayCIDR, e.TenantGateway)...)
 	if !e.DangerAcceptRFC1918LateralMovement && len(e.OverlayExceptions) == 0 {
 		// Quiet default — no flag, no exceptions. Nothing to do.
 		return errs

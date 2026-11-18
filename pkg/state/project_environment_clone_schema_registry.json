@@ -19502,6 +19502,17 @@
     "kind": "operational"
   },
   {
+    "table": "app_task_networks",
+    "columns": [
+      "active",
+      "host_ip",
+      "lease_token",
+      "node_id",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_command_networks",
     "columns": [
       "active",
@@ -22082,6 +22093,16 @@
   },
   {
     "table": "hosted_task_binding_qualifications",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_rehearsal_plans",
     "columns": [
       "account_id",
       "expires_at",

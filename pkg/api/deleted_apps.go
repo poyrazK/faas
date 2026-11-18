@@ -52,6 +52,27 @@ func (c *Client) GetDeletedApp(ctx context.Context, id string) (DeletedAppSummar
 	return out, c.do(ctx, "GET", "/v1/deleted-apps/"+url.PathEscape(id), nil, &out)
 }
 
+// DeletedAppPurgeResponse reports POST /v1/deleted-apps/{id}/purge. The
+// restore window is closed either way. Purged is true once the app and its
+// stored artifacts are gone and the slug is free for this account; otherwise
+// PendingReason says what still holds it and the grace sweep finishes the
+// purge on its own.
+type DeletedAppPurgeResponse struct {
+	AccountID     string `json:"account_id"`
+	ID            string `json:"id"`
+	Slug          string `json:"slug"`
+	Purged        bool   `json:"purged"`
+	PendingReason string `json:"pending_reason,omitempty"`
+}
+
+// PurgeDeletedApp permanently removes one deleted app now instead of at the
+// end of its restore window, freeing its slug for the same account. It cannot
+// be undone.
+func (c *Client) PurgeDeletedApp(ctx context.Context, id string) (DeletedAppPurgeResponse, error) {
+	var out DeletedAppPurgeResponse
+	return out, c.doWithoutIdempotencyKey(ctx, "POST", "/v1/deleted-apps/"+url.PathEscape(id)+"/purge", nil, &out)
+}
+
 // RestoreDeletedApp uses the dedicated ID route, with no legacy slug fallback.
 // The server does not offer idempotent replay. After an uncertain response,
 // reconcile exact-ID inventory/app reads instead of automatically retrying.
