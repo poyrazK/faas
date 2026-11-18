@@ -154,8 +154,9 @@ func (r *startRunner) deployPrivateNode() (int, bool) {
 		"--no-wait", "--idempotency-key", uuid.NewString())
 	submitted := false
 	code := r.deploy(r.ctx, args, false, deployExecution{
-		projectPlan:    r.reviewPrivateNodePlan,
-		confirmProject: r.confirmPrivateNodePlan,
+		projectPlan:     r.reviewPrivateNodePlan,
+		confirmProject:  r.confirmPrivateNodePlan,
+		skipProjectLink: true,
 		onProjectAttempt: func(id string) error {
 			next := r.session
 			next.ProjectSessionID = id

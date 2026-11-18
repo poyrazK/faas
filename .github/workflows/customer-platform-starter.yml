@@ -33,9 +33,10 @@ jobs:
   acceptance:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    # Cold builds of the complete API/state suite need around thirty minutes;
-    # leave room for the full tests and container cleanup.
-    timeout-minutes: 45
+    # Cold builds of the complete API/state suite now need about forty
+    # minutes (39 on a passing run, 2026-11-18); a slower runner hit 45 twice
+    # while still compiling. Leave room for the full tests and cleanup.
+    timeout-minutes: 60
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

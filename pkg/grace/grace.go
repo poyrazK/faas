@@ -366,77 +366,22 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 		if g.backingOff(app.ID, now) {
 			continue
 		}
-		if app.DeleteGraceUntil != nil {
-			if err := g.p.Store.ClaimAppDeletion(ctx, app.ID); err != nil {
-				if !errors.Is(err, state.ErrNotFound) {
-					g.metrics.failure("claim_tombstone")
-					g.p.Log.Warn("grace: claim app deletion failed", "app", app.ID, "err", err)
-				}
-				continue
-			}
-		}
-		artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
-		if err != nil {
-			g.metrics.failure("list_artifacts")
-			g.p.Log.Warn("grace: list app deletion artifacts failed", "app", app.ID, "err", err)
-			if app.DeleteGraceUntil == nil {
-				missingDeadlines++
-			}
-			continue
-		}
-		var appArtifactBytes int64
-		for _, artifact := range artifacts {
-			if artifact.Bytes > 0 {
-				appArtifactBytes += artifact.Bytes
-			}
-		}
 		if app.DeleteGraceUntil == nil {
 			missingDeadlines++
+			artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
+			if err != nil {
+				g.metrics.failure("list_artifacts")
+				g.p.Log.Warn("grace: list app deletion artifacts failed", "app", app.ID, "err", err)
+				continue
+			}
+			appArtifactBytes := artifactBytes(artifacts)
 			retainedArtifactBytes += appArtifactBytes
 			g.p.Log.Error("grace: quarantined deleted app without purge deadline",
 				"app", app.ID, "slug", app.Slug, "artifact_bytes", appArtifactBytes)
 			continue
 		}
-		if len(artifacts) != 0 && g.p.Artifacts == nil {
-			retainedArtifactBytes += appArtifactBytes
-			g.metrics.failure("artifact_backend_missing")
-			g.p.Log.Error("grace: refusing app purge without artifact backend",
-				"app", app.ID, "artifact_count", len(artifacts), "artifact_bytes", appArtifactBytes)
-			continue
-		}
-		artifactFailed := false
-		for _, artifact := range artifacts {
-			if err := g.p.Artifacts.Delete(ctx, artifact.Key); err != nil && !storage.IsNotFound(err) {
-				artifactFailed = true
-				if artifact.Bytes > 0 {
-					retainedArtifactBytes += artifact.Bytes
-				}
-				g.metrics.failure("delete_artifact")
-				g.p.Log.Warn("grace: app artifact delete failed", "app", app.ID,
-					"key", artifact.Key, "bytes", artifact.Bytes, "err", err)
-			}
-		}
-		if artifactFailed {
-			continue
-		}
-		if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
-			g.purgeRefused(ctx, app, err, now)
-			continue
-		}
-		delete(g.blocked, app.ID)
-		g.metrics.deleted.Inc()
-		// Reuse the existing lifecycle channel so schedd's cleanup path
-		// gets a durable redelivery signal. The app row has already been
-		// removed, so consumers treat a missing row as an idempotent no-op.
-		payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "slug": app.Slug})
-		if err := g.p.Notif(ctx, db.NotifyAppDelete, string(payload)); err != nil {
-			g.p.Log.Warn("grace: app delete notify failed", "app", app.ID, "err", err)
-		}
-		appID := app.AccountID
-		g.p.Audit.Emit(ctx, "app.deleted", &appID, map[string]any{
-			"app_id": app.ID, "slug": app.Slug, "actor": "grace-sweep",
-		})
-		g.p.Log.Info("grace: app hard-deleted", "app", app.ID, "slug", app.Slug)
+		retained, _ := g.purgeExpired(ctx, app, now, "grace-sweep")
+		retainedArtifactBytes += retained
 	}
 	g.recordBlocked(listed)
 	g.metrics.missingDeadlines.Set(float64(missingDeadlines))
