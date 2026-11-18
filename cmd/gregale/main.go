@@ -626,6 +626,8 @@ func run(args []string) (status int) {
 		return cmdSites(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
+	case "insights":
+		return cmdInsights(args[1:])
 	case "flags":
 		return cmdFlags(args[1:])
 	case "product":
