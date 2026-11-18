@@ -56,6 +56,8 @@ func TestResolve(t *testing.T) {
 		storagekey.JobLayer(job):                                             jobSubject,
 		storagekey.JobLayerAttempt(job, other):                               jobSubject,
 		storagekey.SandboxScreenshot(acct, other, job):                       sandbox,
+		"sources/" + job + ".tar.gz":                                         {Class: storagegrant.ClassBuild, ID: job},
+		"sources/" + job + ".tar":                                            unknown,
 		"snap/" + dep + "/captures/" + capture + "/v2/mem":                   deployment,
 		"snap/" + dep + "/captures/" + capture + "/v2/mem.age":               deployment,
 		"snap/" + dep + "/warm/captures/" + capture + "/v2/drive":            deployment,

@@ -13,7 +13,7 @@ SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS storage_grant_audit (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     node_id uuid NOT NULL,
-    subject_class text NOT NULL CHECK (subject_class IN ('deployment', 'sandbox_account', 'job')),
+    subject_class text NOT NULL CHECK (subject_class IN ('deployment', 'sandbox_account', 'job', 'build')),
     subject_id uuid NOT NULL,
     app_id uuid,
     access text NOT NULL CHECK (access IN ('read', 'write')),

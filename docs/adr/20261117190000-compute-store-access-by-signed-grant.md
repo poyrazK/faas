@@ -54,6 +54,7 @@ Owner decisions (2026-11-17):
    | `snap/<deployment>/…`, `apps/<slug>/<deployment>[-<sidecar>].ext4`, `layers/<deployment>.ext4` | deployment |
    | `snap/sandbox[-template]-<account>/captures/…`, `sandbox-screenshots/<account>/…` | sandbox account |
    | `jobs/<job>[__<artifact>].ext4` | job |
+   | `sources/<build>.tar.gz` | build |
    | anything else | refused |
 
 3. **The subject must be placed on the caller.**
@@ -67,6 +68,8 @@ Owner decisions (2026-11-17):
      account.
    - Job: the node holds the job's materialization lease, or runs one of
      its tasks.
+   - Build: the node claimed the running build (`builds.builder_node_name`),
+     within the build's run window. Sources are read-only for nodes.
    - Platform keys are read-only.
    - Every grant counts against the per-node distinct-app budget, is
      audited (`secret_open_audit`, via `storage_get`/`storage_put`) and is

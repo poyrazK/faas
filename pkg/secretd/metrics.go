@@ -97,7 +97,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		}, []string{"result"}),
 		storage: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "faas_secretd_storage_grants_total",
-			Help: "Shared-store object grants secretd decided (ADR-20261117190000), by subject class (platform, deployment, sandbox_account, job), access (read, write) and outcome (granted, refused).",
+			Help: "Shared-store object grants secretd decided (ADR-20261117190000), by subject class (platform, deployment, sandbox_account, job, build), access (read, write) and outcome (granted, refused).",
 		}, []string{"class", "access", "outcome"}),
 	}
 	for _, c := range []prometheus.Collector{m.opens, m.refusals, m.buildScope, m.storage} {
@@ -113,7 +113,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			m.refusals.WithLabelValues(rpc, reason)
 		}
 	}
-	for _, class := range []string{"platform", "deployment", "sandbox_account", "job"} {
+	for _, class := range []string{"platform", "deployment", "sandbox_account", "job", "build"} {
 		for _, access := range []string{accessRead, accessWrite} {
 			for _, outcome := range []string{"granted", "refused"} {
 				m.storage.WithLabelValues(class, access, outcome)

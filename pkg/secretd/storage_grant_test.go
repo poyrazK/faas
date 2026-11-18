@@ -127,6 +127,15 @@ func TestGrantStorageObjects_PlacementDecides(t *testing.T) {
 		"expired job lease": {caller: "peer-node", setup: func(_ *fakeStorageStore, f *fixture) {
 			f.store.jobLeases = map[string]fakeJobLease{jobJ: {owner: "peer-node/claim", until: f.now.Add(-time.Minute)}}
 		}, objs: []*secretdpb.StorageObjectRequest{get("jobs/" + jobJ + ".ext4")}, want: codes.PermissionDenied},
+		"builder reads its source": {caller: "peer-node", setup: func(_ *fakeStorageStore, f *fixture) {
+			f.store.builds = map[string]secretd.BuildRun{jobJ: {AppID: "app-a", Running: true, StartedAt: f.now, Node: "peer-node"}}
+		}, objs: []*secretdpb.StorageObjectRequest{get("sources/" + jobJ + ".tar.gz")}, want: codes.OK},
+		"another node's build source": {caller: "other-node", setup: func(_ *fakeStorageStore, f *fixture) {
+			f.store.builds = map[string]secretd.BuildRun{jobJ: {AppID: "app-a", Running: true, StartedAt: f.now, Node: "peer-node"}}
+		}, objs: []*secretdpb.StorageObjectRequest{get("sources/" + jobJ + ".tar.gz")}, want: codes.PermissionDenied},
+		"no node writes sources": {caller: "peer-node", setup: func(_ *fakeStorageStore, f *fixture) {
+			f.store.builds = map[string]secretd.BuildRun{jobJ: {AppID: "app-a", Running: true, StartedAt: f.now, Node: "peer-node"}}
+		}, objs: []*secretdpb.StorageObjectRequest{create("sources/" + jobJ + ".tar.gz")}, want: codes.PermissionDenied},
 		"job task on the node":                {caller: "peer-node", setup: func(s *fakeStorageStore, _ *fixture) { s.jobs[[2]string{jobJ, "n-peer"}] = true }, objs: []*secretdpb.StorageObjectRequest{get("jobs/" + jobJ + ".ext4")}, want: codes.OK},
 		"unknown key class":                   {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{get("sbom/x.json")}, want: codes.InvalidArgument},
 		"delete is not an operation":          {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{{Key: snapA, Op: "delete"}}, want: codes.InvalidArgument},

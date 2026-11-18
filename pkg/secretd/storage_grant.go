@@ -201,6 +201,21 @@ func (s *Server) admitStorage(ctx context.Context, name, nodeID string, sub stor
 			return refuse("the caller runs no sandbox session of the object's account")
 		}
 		budgetKey = "sandbox:" + sub.subject.ID
+	case storagegrant.ClassBuild:
+		if sub.access == accessWrite {
+			return refuse("no node writes build sources")
+		}
+		run, err := s.store.BuildRunner(ctx, sub.subject.ID)
+		if errors.Is(err, ErrUnknownBuild) {
+			return refuse("the object's build does not exist")
+		}
+		if err != nil {
+			return lookupFailed("build", err)
+		}
+		if !run.Running || run.Node == "" || run.Node != name || !s.now().Before(run.StartedAt.Add(buildRunWindow)) {
+			return refuse("the caller is not running the object's build")
+		}
+		appID, budgetKey = run.AppID, run.AppID
 	case storagegrant.ClassJob:
 		ok, err := s.jobPlaced(ctx, name, nodeID, sub.subject.ID)
 		if err != nil {

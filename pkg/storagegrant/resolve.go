@@ -27,6 +27,8 @@ const (
 	ClassSandboxAccount Class = "sandbox_account"
 	// ClassJob keys belong to one job.
 	ClassJob Class = "job"
+	// ClassBuild keys (a build's uploaded source) belong to one build.
+	ClassBuild Class = "build"
 	// ClassUnknown keys are refused.
 	ClassUnknown Class = "unknown"
 )
@@ -73,6 +75,10 @@ func Resolve(key string) Subject {
 		job, artifact, attempt := strings.Cut(name, "__")
 		if canonicalUUID(job) && (!attempt || canonicalUUID(artifact)) {
 			return Subject{Class: ClassJob, ID: job}
+		}
+	case "sources":
+		if build, ok := strings.CutSuffix(rest, ".tar.gz"); ok && canonicalUUID(build) {
+			return Subject{Class: ClassBuild, ID: build}
 		}
 	case "sandbox-screenshots":
 		parts := strings.Split(rest, "/")

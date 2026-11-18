@@ -98,8 +98,8 @@ func TestMetricsCountOpensAndRefusalsByReason(t *testing.T) {
 	if n, err := testutil.GatherAndCount(reg, "faas_secretd_refusals_total"); err != nil || n != 108 {
 		t.Fatalf("refusal series = %d, %v", n, err)
 	}
-	// ADR-20261117190000: 4 subject classes x 2 accesses x 2 outcomes.
-	if n, err := testutil.GatherAndCount(reg, "faas_secretd_storage_grants_total"); err != nil || n != 16 {
+	// ADR-20261117190000: 5 subject classes x 2 accesses x 2 outcomes.
+	if n, err := testutil.GatherAndCount(reg, "faas_secretd_storage_grants_total"); err != nil || n != 20 {
 		t.Fatalf("storage grant series = %d, %v", n, err)
 	}
 	// Slice 3j-4: the three build registry scope results are pre-created.
