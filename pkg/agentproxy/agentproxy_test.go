@@ -280,3 +280,60 @@ func TestRegistrationAPI(t *testing.T) {
 		t.Fatal("still registered")
 	}
 }
+
+// adr: 20261117185346 §1 — a VM leaves from one agent address whatever the
+// port: the proxy's choice is the gateway NAT's low-bits map.
+func TestAddressForMatchesTheGatewayNATMap(t *testing.T) {
+	addrs := []netip.Addr{netip.MustParseAddr("198.51.100.7"), netip.MustParseAddr("198.51.100.8"),
+		netip.MustParseAddr("198.51.100.9")}
+	// size 4: low bits 0,1,2,3 → addresses 0,1,2,0 (agent-egress-gw.nft.j2).
+	for last, want := range map[byte]int{8: 0, 9: 1, 10: 2, 11: 0, 12: 0, 255: 0, 254: 2} {
+		vm := netip.AddrFrom4([4]byte{10, 78, 8, last})
+		if got := AddressFor(addrs, vm); got != addrs[want] {
+			t.Errorf("AddressFor(%s) = %s, want %s", vm, got, addrs[want])
+		}
+	}
+	one := addrs[:1]
+	if got := AddressFor(one, netip.MustParseAddr("10.78.8.77")); got != one[0] {
+		t.Errorf("single address = %s", got)
+	}
+}
+
+// adr: 20261117185346 §4 — vmmd's client registers and removes a VM through
+// the registration API, and surfaces a refusal.
+func TestClientRegistersThroughTheAPI(t *testing.T) {
+	reg := NewRegistry(Slices{Tunnel: netip.MustParsePrefix("10.78.0.0/16"), NodePrefix: 22}, time.Minute, nil)
+	h := Handler(reg)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = "10.78.8.1:40000" // node fsn-2's tunnel address
+		h.ServeHTTP(w, r)
+	}))
+	srv.Start()
+	defer srv.Close()
+	c, err := NewClient(srv.URL, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm := netip.MustParseAddr("10.78.8.2")
+	if err := c.Register(t.Context(), vm, "acct", "sb-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reg.Lookup(vm); !ok || got.AccountID != "acct" || got.SandboxID != "sb-1" {
+		t.Fatalf("registration = %+v, %v", got, ok)
+	}
+	if err := c.Register(t.Context(), netip.MustParseAddr("10.78.12.2"), "acct", "sb-1"); err == nil ||
+		!strings.Contains(err.Error(), "403") {
+		t.Fatalf("another node's slice: %v", err)
+	}
+	if err := c.Unregister(t.Context(), vm); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Lookup(vm); ok {
+		t.Fatal("still registered after removal")
+	}
+	for _, bad := range []string{"https://10.78.0.1:15081", "http://gw.example:15081", "http://10.78.0.1", "http://10.78.0.1:15081/x"} {
+		if _, err := NewClient(bad, nil); err == nil {
+			t.Errorf("NewClient(%q) accepted", bad)
+		}
+	}
+}

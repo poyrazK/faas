@@ -159,3 +159,17 @@
     name: wg-quick@{{ faas_agent_egress_iface }}
     enabled: true
     state: started
+
+- name: agent_egress_gateway — converge agentproxyd
+  ansible.builtin.include_tasks: agentproxyd.yml
+  when: faas_agentproxyd_enabled | bool
+
+# With the proxy off the firewall no longer redirects to it; stop a proxy an
+# earlier converge started.
+- name: agent_egress_gateway — stop agentproxyd while the proxy is off
+  ansible.builtin.systemd_service:
+    name: faas-agentproxyd.service
+    enabled: false
+    state: stopped
+  failed_when: false
+  when: not (faas_agentproxyd_enabled | bool)

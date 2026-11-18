@@ -12,3 +12,25 @@ faas_agent_egress_listen_port: 51821
 faas_agent_egress_addresses: []
 faas_agent_egress_gateway_public_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
 faas_agent_egress_mtu: 1420
+
+# agentproxyd, the politeness proxy (ADR-20261117185346 §4). The manifest
+# generator sets faas_agentproxyd_enabled from egress.agent_gateway.proxy.
+# Off, the gateway forwards agent traffic directly and nodes register
+# nothing.
+faas_agentproxyd_enabled: false
+faas_agentproxyd_registration_port: 15081
+# Where nftables redirects agent TCP 80 and 443, on the gateway's tunnel
+# address.
+faas_agentproxyd_http_port: 15080
+faas_agentproxyd_tls_port: 15443
+faas_agentproxyd_metrics_listen: 127.0.0.1:9473
+faas_agent_egress_node_prefix: 22
+
+# Release carrying agentproxyd. Paths on the Ansible controller: the signed
+# release tarball, its cosign bundle and the release's git SHA, as for a
+# database node. Empty keeps the release already installed.
+faas_agent_egress_release_tarball: ""
+faas_agent_egress_release_signature: ""
+faas_agent_egress_release_git_sha: ""
+# cosign binary on the controller, installed to verify the release.
+faas_agent_egress_cosign_source: ""

@@ -3,10 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/netip"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/agentproxy"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
@@ -31,6 +33,17 @@ func agentEgressConfigFromEnv(getenv func(string) string) (fcvm.AgentEgressConfi
 	if err != nil {
 		return fcvm.AgentEgressConfig{}, fmt.Errorf("vmmd: FAAS_AGENT_EGRESS_SLICE %q invalid: %w", rawSlice, err)
 	}
-	return fcvm.AgentEgressConfig{Iface: iface, Slice: slice, Table: agentEgressRouteTable,
-		HandshakeMaxAge: time.Duration(api.AgentEgressHandshakeMaxAgeSec) * time.Second}, nil
+	cfg := fcvm.AgentEgressConfig{Iface: iface, Slice: slice, Table: agentEgressRouteTable,
+		HandshakeMaxAge: time.Duration(api.AgentEgressHandshakeMaxAgeSec) * time.Second}
+	// ADR-20261117185346 §4: with the gateway's proxy on, every agent VM is
+	// registered with it before boot and renewed at a third of its TTL.
+	if raw := strings.TrimSpace(getenv("FAAS_AGENT_EGRESS_PROXY_URL")); raw != "" {
+		client, err := agentproxy.NewClient(raw, &http.Client{Timeout: 10 * time.Second})
+		if err != nil {
+			return fcvm.AgentEgressConfig{}, fmt.Errorf("vmmd: FAAS_AGENT_EGRESS_PROXY_URL: %w", err)
+		}
+		cfg.Proxy = client
+		cfg.ProxyRenewEvery = time.Duration(api.AgentEgressRegistrationTTLSec) * time.Second / 3
+	}
+	return cfg, nil
 }

@@ -47,7 +47,7 @@ func parseFlags(args []string) (config, error) {
 	httpListen := fs.String("http-listen", "127.0.0.1:15080", "where nftables redirects agent TCP 80")
 	tlsListen := fs.String("tls-listen", "127.0.0.1:15443", "where nftables redirects agent TCP 443")
 	registration := fs.String("registration-listen", "", "the gateway's tunnel address and port for vmmd's registrations")
-	metrics := fs.String("metrics-listen", "127.0.0.1:9471", "the loopback Prometheus listener")
+	metrics := fs.String("metrics-listen", "127.0.0.1:9473", "the loopback Prometheus listener")
 	blocklist := fs.String("blocklist", "", "the blocklist file, one domain per line; reloaded on SIGHUP")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err

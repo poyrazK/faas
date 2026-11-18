@@ -1149,6 +1149,18 @@ func renderAgentEgressGatewayVars(g *manifest.AgentEgressGateway, nodeName strin
 	fmt.Fprintf(&b, "faas_agent_egress_tunnel_cidr: %q\n", g.TunnelCIDR)
 	fmt.Fprintf(&b, "faas_agent_egress_node_slice: %q\n", slice.String())
 	fmt.Fprintf(&b, "faas_agent_egress_node_address: %q\n", addr.String()+"/32")
+	gw, err := manifest.AgentGatewayAddress(g.TunnelCIDR)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(&b, "faas_agent_egress_gateway_address: %q\n", gw.Addr().String())
+	proxyURL := ""
+	if g.Proxy {
+		if proxyURL, err = manifest.AgentProxyURL(g.TunnelCIDR); err != nil {
+			return "", err
+		}
+	}
+	fmt.Fprintf(&b, "faas_agent_egress_proxy_url: %q\n", proxyURL)
 	return b.String(), nil
 }
 
@@ -1167,6 +1179,9 @@ func renderAgentEgressGatewayHostVars(g *manifest.AgentEgressGateway) (string, e
 	fmt.Fprintf(&b, "faas_agent_egress_tunnel_cidr: %q\n", g.TunnelCIDR)
 	fmt.Fprintf(&b, "faas_agent_egress_gateway_address: %q\n", addr.String())
 	fmt.Fprintf(&b, "faas_agent_egress_listen_port: %d\n", g.ListenPort())
+	fmt.Fprintf(&b, "faas_agent_egress_node_prefix: %d\n", g.Prefix())
+	fmt.Fprintf(&b, "faas_agentproxyd_enabled: %t\n", g.Proxy)
+	fmt.Fprintf(&b, "faas_agentproxyd_registration_port: %d\n", manifest.AgentProxyRegistrationPort)
 	b.WriteString("faas_agent_egress_addresses:\n")
 	for _, a := range g.Addresses {
 		fmt.Fprintf(&b, "  - %q\n", a)

@@ -192,3 +192,164 @@ func TestAgentEgressConfigAndHandshakeParsing(t *testing.T) {
 		t.Fatalf("broadcast = %s", last)
 	}
 }
+
+// fakeAgentProxy records registration calls; failRegister refuses them.
+type fakeAgentProxy struct {
+	mu           sync.Mutex
+	calls        []string
+	failRegister bool
+	unregistered chan netip.Addr
+}
+
+func (p *fakeAgentProxy) Register(_ context.Context, addr netip.Addr, accountID, sandboxID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls = append(p.calls, "PUT "+addr.String()+" "+accountID+" "+sandboxID)
+	if p.failRegister {
+		return errors.New("proxy unreachable")
+	}
+	return nil
+}
+
+func (p *fakeAgentProxy) Unregister(_ context.Context, addr netip.Addr) error {
+	p.mu.Lock()
+	p.calls = append(p.calls, "DELETE "+addr.String())
+	p.mu.Unlock()
+	if p.unregistered != nil {
+		p.unregistered <- addr
+	}
+	return nil
+}
+
+func (p *fakeAgentProxy) log() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.calls...)
+}
+
+func withAgentProxy(t *testing.T, m *Manager, p *fakeAgentProxy) {
+	t.Helper()
+	cfg := *m.agentEgress.cfg
+	cfg.Proxy, cfg.ProxyRenewEvery = p, time.Minute
+	now := m.agentEgress.now
+	if err := m.SetAgentEgress(cfg); err != nil {
+		t.Fatal(err)
+	}
+	m.agentEgress.now = now
+}
+
+// adr: 20261117185346 §4 — vmmd registers each agent VM with the proxy
+// before it boots, and the address stays held until the proxy has
+// forgotten it, so the next VM never inherits the old identity.
+func TestAgentEgressRegistersWithTheProxyBeforeBoot(t *testing.T) {
+	m, _, _, _, _ := agentEgressTestManager(t, "10.78.8.0/22")
+	proxy := &fakeAgentProxy{unregistered: make(chan netip.Addr, 2)}
+	withAgentProxy(t, m, proxy)
+
+	req, lease := agentWake("vm-9")
+	undo, err := m.prepareAgentEgressWake(t.Context(), req, lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := proxy.log(); len(got) != 1 || got[0] != "PUT 10.78.8.2 acct sb-vm-9" {
+		t.Fatalf("calls before boot = %v", got)
+	}
+	m.mu.Lock()
+	_, registered := m.agentEgress.registered[netip.MustParseAddr("10.78.8.2")]
+	m.mu.Unlock()
+	if !registered {
+		t.Fatal("the registration was not recorded for renewal")
+	}
+
+	// The boot failed: the address is released, but not reused until the
+	// proxy has dropped it.
+	m.mu.Lock()
+	m.agentEgress.regMu.Lock() // hold the removal back
+	m.mu.Unlock()
+	undo()
+	m.mu.Lock()
+	owner, held := m.agentEgress.addrs[netip.MustParseAddr("10.78.8.2")]
+	m.mu.Unlock()
+	if !held || owner != "" {
+		t.Fatalf("released address before removal: held=%v owner=%q", held, owner)
+	}
+	m.mu.Lock()
+	next, ok := m.agentEgress.allocateLocked("vm-10")
+	m.agentEgress.releaseLocked("vm-10")
+	m.mu.Unlock()
+	if !ok || next.String() != "10.78.8.3" {
+		t.Fatalf("next VM got %v while the old address awaited removal", next)
+	}
+	m.agentEgress.regMu.Unlock()
+	removed := map[string]bool{}
+	for range 2 {
+		select {
+		case addr := <-proxy.unregistered:
+			removed[addr.String()] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("released addresses never removed from the proxy: %v", removed)
+		}
+	}
+	if !removed["10.78.8.2"] || !removed["10.78.8.3"] {
+		t.Fatalf("removed %v", removed)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		m.mu.Lock()
+		_, held = m.agentEgress.addrs[netip.MustParseAddr("10.78.8.2")]
+		m.mu.Unlock()
+		if !held {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the address stayed held after the proxy dropped it")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// adr: 20261117185346 §3 — a VM the proxy cannot register does not boot,
+// and leaves no rules behind.
+func TestAgentEgressRefusesBootTheProxyCannotRegister(t *testing.T) {
+	m, _, _, _, _ := agentEgressTestManager(t, "10.78.8.0/22")
+	proxy := &fakeAgentProxy{failRegister: true, unregistered: make(chan netip.Addr, 1)}
+	withAgentProxy(t, m, proxy)
+	req, lease := agentWake("vm-9")
+	_, err := m.prepareAgentEgressWake(t.Context(), req, lease)
+	if !errors.Is(err, errAgentEgressUnavailable) {
+		t.Fatalf("err = %v, want errAgentEgressUnavailable", err)
+	}
+	if rules := netns.ActiveHostPolicyForRender().AgentEgressRules; len(rules) != 0 {
+		t.Fatalf("rules after a refused boot = %+v", rules)
+	}
+	select {
+	case <-proxy.unregistered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refused VM's address was never cleared at the proxy")
+	}
+}
+
+// adr: 20261117185346 §4 — live registrations are renewed; a released one
+// is not.
+func TestAgentEgressRenewsLiveRegistrationsOnly(t *testing.T) {
+	m, _, _, _, _ := agentEgressTestManager(t, "10.78.8.0/22")
+	proxy := &fakeAgentProxy{unregistered: make(chan netip.Addr, 1)}
+	withAgentProxy(t, m, proxy)
+	for _, id := range []string{"vm-9", "vm-10"} {
+		req, lease := agentWake(id)
+		if _, err := m.prepareAgentEgressWake(t.Context(), req, lease); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.mu.Lock()
+	delete(m.agentEgress.starting, "vm-10")
+	m.agentEgress.releaseLocked("vm-10")
+	m.mu.Unlock()
+	<-proxy.unregistered
+	before := len(proxy.log())
+	m.renewAgentEgress(t.Context())
+	got := proxy.log()[before:]
+	if len(got) != 1 || got[0] != "PUT 10.78.8.2 acct sb-vm-9" {
+		t.Fatalf("renewals = %v", got)
+	}
+}

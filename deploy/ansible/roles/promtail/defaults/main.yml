@@ -81,6 +81,7 @@ promtail_journal_units:
   - faas-internal-pki-metrics.service
   - faas-tenant-egress-firewall.service
   - faas-agent-egress-firewall.service
+  - faas-agentproxyd.service
   - faas-overlay-tailscale.service
   - faas-overlay-wireguard.service
   - faas-rsyslog-rotate.service

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -508,11 +509,25 @@ func TestRenderManifestAnsibleFiles_TenantEgressGateway(t *testing.T) {
 // gateway host its own listener and public addresses; the control plane
 // gets none.
 func TestRenderManifestAnsibleFiles_AgentEgressGateway(t *testing.T) {
+	for _, proxy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("proxy=%t", proxy), func(t *testing.T) { testRenderAgentEgressGateway(t, proxy) })
+	}
+}
+
+// adr: 20261117185346 §4 — with proxy on, the gateway runs agentproxyd and
+// every node's vmmd gets its registration URL; off, neither.
+func testRenderAgentEgressGateway(t *testing.T, proxy bool) {
+	t.Helper()
 	yaml := strings.Replace(validManifestYAML,
 		"    - name: fsn-1\n      role: control-plane\n",
 		"    - name: fsn-1\n      role: control-plane\n      address: fsn-1.gregale.dev:7100\n    - name: fsn-2\n      role: compute-only\n      address: fsn-2.gregale.dev:50051\n", 1)
 	yaml += "egress:\n  agent_gateway:\n    endpoint: egress-gw.gregale.dev:51821\n    public_key: " +
 		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n    tunnel_cidr: 10.78.0.0/16\n    addresses: [198.51.100.7, 198.51.100.8]\n"
+	proxyURL := ""
+	if proxy {
+		yaml += "    proxy: true\n"
+		proxyURL = "http://10.78.0.1:15081"
+	}
 	m, err := manifest.Parse([]byte(yaml))
 	if err != nil {
 		t.Fatalf("manifest.Parse: %v", err)
@@ -543,6 +558,8 @@ func TestRenderManifestAnsibleFiles_AgentEgressGateway(t *testing.T) {
 		`faas_agent_egress_tunnel_cidr: "10.78.0.0/16"`,
 		`faas_agent_egress_node_slice: "10.78.8.0/22"`,
 		`faas_agent_egress_node_address: "10.78.8.1/32"`,
+		`faas_agent_egress_gateway_address: "10.78.0.1"` + "\n",
+		fmt.Sprintf("faas_agent_egress_proxy_url: %q\n", proxyURL),
 	} {
 		if !strings.Contains(computeVars, want) {
 			t.Errorf("compute host vars missing %s:\n%s", want, computeVars)
@@ -558,6 +575,9 @@ func TestRenderManifestAnsibleFiles_AgentEgressGateway(t *testing.T) {
 		`ansible_host: "egress-gw.gregale.dev"`,
 		`faas_agent_egress_gateway_address: "10.78.0.1/16"`,
 		`faas_agent_egress_listen_port: 51821`,
+		"faas_agent_egress_node_prefix: 22\n",
+		fmt.Sprintf("faas_agentproxyd_enabled: %t\n", proxy),
+		"faas_agentproxyd_registration_port: 15081\n",
 		"faas_agent_egress_addresses:\n  - \"198.51.100.7\"\n  - \"198.51.100.8\"\n",
 	} {
 		if !strings.Contains(gatewayVars, want) {

@@ -8,3 +8,16 @@
     name: faas-agent-egress-firewall
     state: restarted
     daemon_reload: true
+
+- name: restart faas-agentproxyd
+  ansible.builtin.systemd:
+    name: faas-agentproxyd
+    state: restarted
+    daemon_reload: true
+  when: faas_agentproxyd_binary is defined and faas_agentproxyd_binary.stat.exists
+
+- name: reload faas-agentproxyd blocklist
+  ansible.builtin.systemd:
+    name: faas-agentproxyd
+    state: reloaded
+  when: faas_agentproxyd_binary is defined and faas_agentproxyd_binary.stat.exists

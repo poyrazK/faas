@@ -35,6 +35,25 @@ type AgentEgressGateway struct {
 	// SSHHost is the address Ansible uses to converge the gateway. Empty
 	// means the endpoint host.
 	SSHHost string `yaml:"ssh_host,omitempty"`
+	// Proxy puts agentproxyd, the politeness proxy, in the path of agent
+	// TCP 80 and 443 (ADR-20261117185346 §4), and has every node's vmmd
+	// register its agent VMs with it. Off, the gateway forwards agent
+	// traffic directly. The gateway needs a release with agentproxyd
+	// installed before this is turned on.
+	Proxy bool `yaml:"proxy,omitempty"`
+}
+
+// AgentProxyRegistrationPort is agentproxyd's registration listener on the
+// gateway's tunnel address, which nodes' vmmd calls over wg-agent.
+const AgentProxyRegistrationPort = 15081
+
+// AgentProxyURL is the registration API's base URL for the nodes' vmmd.
+func AgentProxyURL(tunnelCIDR string) (string, error) {
+	gw, err := AgentGatewayAddress(tunnelCIDR)
+	if err != nil {
+		return "", err
+	}
+	return "http://" + netip.AddrPortFrom(gw.Addr(), AgentProxyRegistrationPort).String(), nil
 }
 
 // AgentNodePrefixDefault is a node slice's length when the manifest names
