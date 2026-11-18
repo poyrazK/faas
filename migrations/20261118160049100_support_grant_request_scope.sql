@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261117194056562_support_grant_request_scope.sql
+-- filename: 20261118160049100_support_grant_request_scope.sql
 
 -- +goose Up
 -- Support access requests say what support asks for (ADR-20261116163508
