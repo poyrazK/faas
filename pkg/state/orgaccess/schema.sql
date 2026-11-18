@@ -16,8 +16,15 @@ CREATE TABLE oidc_exchanged_tokens (
     id uuid PRIMARY KEY, account_id uuid NOT NULL, expires_at timestamptz NOT NULL
 );
 CREATE TABLE accounts (
-    id uuid PRIMARY KEY, mfa_enrolled_at timestamptz
+    id uuid PRIMARY KEY, mfa_enrolled_at timestamptz, status text NOT NULL
 );
 CREATE TABLE org_security_policies (
     org_id uuid PRIMARY KEY, require_mfa boolean NOT NULL
+);
+CREATE TABLE orgs (
+    id uuid PRIMARY KEY, personal_org boolean NOT NULL, personal_owner_account_id uuid
+);
+CREATE TABLE support_grants (
+    id uuid PRIMARY KEY, org_id uuid NOT NULL, created_by_account_id uuid NOT NULL,
+    expires_at timestamptz NOT NULL, revoked_at timestamptz
 );

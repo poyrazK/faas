@@ -167,7 +167,8 @@ func TestClient_DoReq_CompletionCacheRefresh_Mega4(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "t")
-	cache := NewCompletionCache()
+	// Keep this parallel test independent of the user's configuration cache.
+	cache := newTestCache(t)
 	c.SetCompletionCache(cache)
 	// First call: the path's completion entry should be populated.
 	if _, err := c.ListApps(context.Background()); err != nil {

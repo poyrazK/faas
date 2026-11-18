@@ -65,7 +65,7 @@ func (s *Sink) Put(ctx context.Context, binding managedpostgres.Binding, materia
 	if err := s.store.PutManagedPostgresSecret(ctx, state.AppSecret{
 		AccountID: binding.AccountID, AppID: binding.AppID, Scope: binding.Scope, Key: binding.EnvironmentKey,
 		Ciphertext: sealed.Ciphertext, Kid: sealed.Kid, ValueHash: sealed.ValueHash,
-		ManagedPostgresBindingID: binding.ID, ManagedPostgresAccess: string(binding.Access),
+		ManagedPostgresBindingID: binding.ID, ManagedPostgresDatabaseID: binding.DatabaseID, ManagedPostgresAccess: string(binding.Access),
 		ManagedCredentialRef: sealed.Ref, ManagedCredentialGeneration: binding.CredentialGeneration,
 	}); err != nil {
 		return "", normalizeCredentialSinkError(err)
@@ -82,7 +82,7 @@ func (s *Sink) PublishSealed(ctx context.Context, binding managedpostgres.Bindin
 	return normalizeCredentialSinkError(s.store.PutManagedPostgresSecret(ctx, state.AppSecret{
 		AccountID: binding.AccountID, AppID: binding.AppID, Scope: binding.Scope, Key: binding.EnvironmentKey,
 		Ciphertext: sealed.Ciphertext, Kid: sealed.Kid, ValueHash: sealed.ValueHash,
-		ManagedPostgresBindingID: binding.ID, ManagedPostgresAccess: string(binding.Access),
+		ManagedPostgresBindingID: binding.ID, ManagedPostgresDatabaseID: binding.DatabaseID, ManagedPostgresAccess: string(binding.Access),
 		ManagedCredentialRef: sealed.Ref, ManagedCredentialGeneration: binding.CredentialGeneration,
 	}))
 }

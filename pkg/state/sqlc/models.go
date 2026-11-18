@@ -519,6 +519,18 @@ type AgentRunUsage struct {
 	RecordedAt          pgtype.Timestamptz
 }
 
+// ADR-20261116182615 gregale_browse links written by apid: the thread and tool call a finished sandbox task answers.
+type AgentSandboxTaskCall struct {
+	SandboxID   pgtype.UUID
+	AccountID   pgtype.UUID
+	EndpointID  pgtype.UUID
+	ThreadID    string
+	ToolCallID  string
+	IssuedAt    pgtype.Timestamptz
+	DeliveredAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 type AgentUndoRecord struct {
 	ID                pgtype.UUID
 	ActivityID        pgtype.UUID
@@ -1712,6 +1724,27 @@ type AppPrivateNetworkAttachmentNode struct {
 	RouteStatus  string
 	RouteDetail  string
 	ObservedAt   pgtype.Timestamptz
+}
+
+type AppProtection struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	State           string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	NextReconcileAt pgtype.Timestamptz
+	LeaseUntil      pgtype.Timestamptz
+	HealthProbeAt   pgtype.Timestamptz
+}
+
+type AppProtectionObject struct {
+	AppID     pgtype.UUID
+	Item      string
+	Status    string
+	ObjectID  string
+	Reason    string
+	Written   []byte
+	CreatedAt pgtype.Timestamptz
 }
 
 type AppRegistryCredential struct {
@@ -6681,34 +6714,51 @@ type FlagEventUsage struct {
 }
 
 type FlagExperiment struct {
-	ID              pgtype.UUID
-	AccountID       pgtype.UUID
-	ProjectID       pgtype.UUID
-	EnvironmentID   pgtype.UUID
-	Key             string
-	FlagKey         string
-	RuleID          string
-	Control         string
-	MetricEvent     string
-	MetricKind      string
-	Status          string
-	MixingLift      float64
-	Weights         []byte
-	MinPValues      []byte
-	TelemetryCursor pgtype.Timestamptz
-	CreatedBy       string
-	CreatedAt       pgtype.Timestamptz
-	StartedAt       pgtype.Timestamptz
-	StoppedAt       pgtype.Timestamptz
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	Key                string
+	FlagKey            string
+	RuleID             string
+	Control            string
+	MetricEvent        string
+	MetricKind         string
+	Status             string
+	MixingLift         float64
+	Weights            []byte
+	MinPValues         []byte
+	TelemetryCursor    pgtype.Timestamptz
+	CreatedBy          string
+	CreatedAt          pgtype.Timestamptz
+	StartedAt          pgtype.Timestamptz
+	StoppedAt          pgtype.Timestamptz
+	Guardrails         []byte
+	LatencyThresholdMs pgtype.Int4
+	StopReason         string
+	Breach             []byte
+	ValueThroughDay    pgtype.Date
+}
+
+type FlagExperimentLatency struct {
+	ExperimentID pgtype.UUID
+	Variant      string
+	Bucket       int16
+	Requests     int64
 }
 
 type FlagExperimentUnit struct {
-	ExperimentID   pgtype.UUID
-	CustomerID     pgtype.UUID
-	Variant        string
-	FirstExposedAt pgtype.Timestamptz
-	ConvertedAt    pgtype.Timestamptz
-	Crossed        bool
+	ExperimentID    pgtype.UUID
+	CustomerID      pgtype.UUID
+	Variant         string
+	FirstExposedAt  pgtype.Timestamptz
+	ConvertedAt     pgtype.Timestamptz
+	Crossed         bool
+	Requests        int64
+	Errors          int64
+	LatencyRequests int64
+	SlowRequests    int64
+	ValueSum        int64
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
@@ -6952,6 +7002,13 @@ type Honeytoken struct {
 	Label       string
 	PlantedAt   pgtype.Timestamptz
 	RetiredAt   pgtype.Timestamptz
+}
+
+type HostedTaskBindingQualification struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
 }
 
 type HostedTaskSourceIntent struct {
@@ -12185,6 +12242,14 @@ type PlatformMailProducerOutbox struct {
 	AgentDeliveryID                  pgtype.UUID
 }
 
+type PlatformProbeWake struct {
+	InstanceID  string
+	AppID       pgtype.UUID
+	WokeAt      pgtype.Timestamptz
+	ProbeDoneAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 // Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).
 type PlatformReleaseActivation struct {
 	ID                pgtype.UUID
@@ -15819,6 +15884,37 @@ type SalesTask struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+// ADR-20261117065818 gregale_browser actions: written by apid, run and ended by agentd under the session lease.
+type SandboxAction struct {
+	ID              pgtype.UUID
+	SessionID       pgtype.UUID
+	AccountID       pgtype.UUID
+	Seq             int32
+	Kind            string
+	Args            []byte
+	EndpointID      pgtype.UUID
+	ThreadID        string
+	ToolCallID      string
+	IssuedAt        pgtype.Timestamptz
+	State           string
+	ExitCode        pgtype.Int4
+	Output          []byte
+	CreatedAt       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	DeliveredAt     pgtype.Timestamptz
+	ScreenshotKey   pgtype.Text
+	ScreenshotBytes pgtype.Int8
+}
+
+// ADR-20261117091026 account default web-mode domain policy, written by apid.
+type SandboxEgressPolicy struct {
+	AccountID  pgtype.UUID
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 // ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
@@ -15859,6 +15955,25 @@ type SandboxSession struct {
 	ImageJobID pgtype.UUID
 	// ADR-20261027090013: the sandbox template the session boots; NULL for a preset or image session, or once the template is deleted.
 	TemplateID pgtype.UUID
+	// ADR-20261116182615: the session boots with the sandbox browser running (gregale-browser) and CDP on port 9222.
+	Browser bool
+	// ADR-20261116182615: the sandbox task the session runs (browse), or NULL for an ordinary session.
+	TaskKind     pgtype.Text
+	TaskUrl      pgtype.Text
+	TaskMaxChars pgtype.Int4
+	TaskExitCode pgtype.Int4
+	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
+	TaskOutput  []byte
+	EgressAllow []string
+	EgressDeny  []string
+}
+
+// ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
+type SandboxSessionDomain struct {
+	SandboxID pgtype.UUID
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
 }
 
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.
@@ -16436,6 +16551,7 @@ type StorageObjectDeletion struct {
 	Attempts      int32
 	LastError     string
 	DecidedAt     pgtype.Timestamptz
+	Generation    pgtype.Int8
 }
 
 type StoredWorkflow struct {
@@ -16598,6 +16714,31 @@ type SupportEvent struct {
 	Kind      string
 	Data      []byte
 	CreatedAt pgtype.Timestamptz
+}
+
+type SupportGrant struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	AppIds             []pgtype.UUID
+	CreatedByAccountID pgtype.UUID
+	RequestID          pgtype.UUID
+	Reason             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RevokedByAccountID pgtype.UUID
+}
+
+type SupportGrantRequest struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	OperatorAccountID  pgtype.UUID
+	Reason             string
+	Status             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	DecidedAt          pgtype.Timestamptz
+	DecidedByAccountID pgtype.UUID
 }
 
 type SupportMessage struct {

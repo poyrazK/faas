@@ -315,6 +315,29 @@ const (
 	UnverifiedAccountExpiryBatch = 100
 )
 
+// Customer-granted support access (ADR-20261116163508). A grant lasts
+// SupportGrantDefaultTTL unless its owner or admin picks another duration,
+// at most SupportGrantMaxTTL, and names at most SupportGrantMaxApps apps. A
+// support request waits SupportGrantRequestTTL for a decision, and one
+// organization has at most SupportGrantMaxOpenRequests open at once. Owners
+// and admins get at most one "support changed something" mail per
+// SupportActionMailInterval; the activity log records every action.
+const (
+	SupportGrantDefaultTTL      = 24 * time.Hour
+	SupportGrantMaxTTL          = 7 * 24 * time.Hour
+	SupportGrantMaxApps         = 100
+	SupportGrantRequestTTL      = 24 * time.Hour
+	SupportGrantMaxOpenRequests = 3
+	SupportActionMailInterval   = 10 * time.Minute
+	// SupportGrantHistoryLimit is how many ended grants an organization's
+	// support-access view lists after every live one.
+	SupportGrantHistoryLimit = 50
+	// SupportReasonMinChars and SupportReasonMaxChars bound a grant's or a
+	// request's reason, in characters.
+	SupportReasonMinChars = 3
+	SupportReasonMaxChars = 400
+)
+
 // EmailChangeRevertWindow is how long after a confirmed sign-in email
 // change an operator can move the account back to the previous address
 // (`gregalectl accounts revert-email`, ADR 20261110100000).
@@ -470,6 +493,12 @@ const (
 // user agent are kept (ADR-20261113160000). Afterwards meterd clears them;
 // the method, country, network owner and email domain stay with the account.
 const SignupFactsPersonalRetention = 90 * 24 * time.Hour
+
+// MCPBrowserAuthorizationTTL bounds connection setup, including sign-in, MFA
+// and consent (ADR-20261117173000). It applies to the browser transaction and
+// purpose-bound native approval code and their form tokens, not the final
+// OAuth exchange code.
+const MCPBrowserAuthorizationTTL = time.Hour
 
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
 // extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
@@ -1039,6 +1068,23 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// ImagedVerifiedBaseFiles bounds how many base artifacts one imaged remembers
+// verifying from its node cache (ADR-595 amendment 2026-11-17). One entry per
+// base key: the runtime matrix has about ten bases per architecture.
+const ImagedVerifiedBaseFiles = 64
+
+// Deploy scans deferred past the snapshot handoff (ADR-075 amendment
+// 2026-11-17). One runs at a time, so deferral never runs more Grype
+// processes than the serial scans it replaced. A full queue drops the
+// scan; the live-deployment rescan sweep picks it up. The timeout frees
+// the worker from a hung scanner: production's slowest scan in two days
+// was 4.5 minutes.
+const (
+	ImagedDeferredScanWorkers = 1
+	ImagedDeferredScanQueue   = 64
+	ImagedDeferredScanTimeout = 15 * time.Minute
+)
+
 // BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
 // builderd remembers the digest of, so a cache hit skips re-reading the
 // artifact to check it. A node's cache holds a few hundred entries.
@@ -1050,7 +1096,10 @@ const BuilderdVerifiedCacheArtifacts = 1024
 const ImagedLayerReuseMaxRecords = 4096
 
 // ImagedLayerReuseRecordMaxBytes bounds one reuse index record imaged reads.
-const ImagedLayerReuseRecordMaxBytes = 4096
+// A record carries the layer's input and final app manifests so a runtime
+// settings change can patch the manifest instead of rebuilding; a record
+// over the bound reads as a miss.
+const ImagedLayerReuseRecordMaxBytes = 256 << 10
 
 // ImagedLayerReuseSBOMMaxBytes bounds the SBOM imaged copies for a reused app
 // layer; syft's CycloneDX JSON for a large image is a few MB.
@@ -2806,6 +2855,23 @@ const (
 	// FlagExperimentMaxUnitsPerPass bounds new units one reconciler pass adds
 	// to one experiment.
 	FlagExperimentMaxUnitsPerPass = 50000
+	// FlagExperimentMixingEffect is the default mixing standard deviation of
+	// mean metrics, as a standardized effect size (ADR 20261116190208 §2).
+	FlagExperimentMixingEffect = 0.1
+	// FlagExperimentGuardrailErrorTolerance and
+	// FlagExperimentGuardrailLatencyTolerance are the default guardrail
+	// tolerances: the absolute increase over control in the server error
+	// rate, and in the share of requests slower than control's p95
+	// (ADR 20261116190208 §1).
+	FlagExperimentGuardrailErrorTolerance   = 0.005
+	FlagExperimentGuardrailLatencyTolerance = 0.02
+	// FlagExperimentGuardrailAlpha is the guardrails' confidence level; it is
+	// stricter than results' because a breach acts on its own.
+	FlagExperimentGuardrailAlpha = 0.01
+	// FlagExperimentGuardrailMinRequests is the requests each arm needs
+	// before a guardrail can breach, and that control needs before its p95
+	// latency is fixed as the latency threshold.
+	FlagExperimentGuardrailMinRequests = 1000
 )
 
 // Progressive rollout controls are structural bounds, not plan allowances.
@@ -3813,6 +3879,15 @@ const (
 	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
 	// the filesystem has less than this free.
 	ArtifactCacheMinFreeBytes int64 = 8 << 30
+	// ArtifactCacheBuildFreeBytes is the free-space floor on a cache disk
+	// large enough to host builds (at least twice this): one build drive
+	// (builderd.BuildDriveMinFreeBytes, 20 GiB) plus a capture of the largest
+	// plan. Since ADR-20261114182830's owner-only eviction, builderd can no
+	// longer evict captures and app layers to make room for a build, so the
+	// eviction owner must keep this much free itself; rc.351 on production-us
+	// (2026-11-18) failed fsn-3's canary build with 18.3 GB free against the
+	// old 15% floor (16.1 GB) (ADR-20261118003000).
+	ArtifactCacheBuildFreeBytes int64 = 24 << 30
 	// SnapshotReplicaRefetchMinMargin and SnapshotReplicaRefetchCooldown
 	// bound how snapshothipd takes back a live snapshot the node cache evicted
 	// (ADR-20261115140000): only while the cache keeps this margin (or a tenth
@@ -8523,6 +8598,22 @@ const (
 	IdleLadderFaultMicrosPerPage      = 21
 	IdleLadderMaxExtraKeepGenerations = 2
 	IdleLadderCeilingRelaxWakes       = 5
+	// Kernel lockdown (ADR-20261107220000) closes the multi-gen LRU's
+	// debugfs interface, so on a locked-down host vmmd compresses through
+	// the VM cgroup's memory.reclaim and the kernel picks the coldest pages
+	// (ADR-20261107122928 amendment 1): L3 keeps IdleLadderCold1KeepPercent
+	// of the VM's memory resident, L4 IdleLadderCold2KeepPercent, and each
+	// step of an app's ceiling keeps IdleLadderExtraKeepPercent more. A
+	// level that would keep 100% compresses nothing.
+	IdleLadderCold1KeepPercent = 50
+	IdleLadderCold2KeepPercent = 25
+	IdleLadderExtraKeepPercent = 25
+	// IdleLadderColdLevel is the idle_ladder_level vmmd reports for L3 (L4
+	// reports one more). Measured admission charges an instance at L3 or L4
+	// its latest resident sample, as it does a frozen one, so the memory a
+	// compression frees reaches admission with the next sample
+	// (ADR-20261107122928 amendment 1).
+	IdleLadderColdLevel = 3
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
@@ -11236,11 +11327,49 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxBrowserRAMMBMin is the least RAM a session created with
+	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
+	// 1 GB for ordinary pages.
+	SandboxBrowserRAMMBMin = 1024
+	// SandboxTaskTimeoutSec bounds a sandbox task's command
+	// (ADR-20261116182615 §3), beyond its session's boot.
+	SandboxTaskTimeoutSec = [4]int{0, 60, 120, 120}
+	// SandboxTaskOutputMaxBytes caps the output a sandbox task returns.
+	SandboxTaskOutputMaxBytes = 256 << 10
+	// SandboxBrowseMaxChars bounds the page text gregale_browse returns;
+	// SandboxBrowseDefaultChars is its default.
+	SandboxBrowseMaxChars     = 100_000
+	SandboxBrowseDefaultChars = 20_000
+	// Interactive browser sessions (ADR-20261117065818). A session gregale_browser
+	// opens closes after SandboxBrowserIdleCloseSec with no action, and at
+	// SandboxBrowserLifetimeSec at the latest; it runs at most
+	// SandboxBrowserActionsMax actions, each within
+	// SandboxBrowserActionTimeoutSec. A snapshot's page text defaults to
+	// SandboxBrowserSnapshotDefaultChars, and type enters at most
+	// SandboxBrowserTypeMaxChars.
+	SandboxBrowserIdleCloseSec         = [4]int{0, 300, 600, 600}
+	SandboxBrowserLifetimeSec          = [4]int{0, 1800, 3600, 3600}
+	SandboxBrowserActionsMax           = [4]int{0, 200, 500, 500}
+	SandboxBrowserActionTimeoutSec     = [4]int{0, 30, 30, 30}
+	SandboxBrowserSnapshotDefaultChars = 4000
+	SandboxBrowserTypeMaxChars         = 2048
+	// SandboxScreenshotMaxBytes caps one gregale_browser screenshot; a larger
+	// one is not kept. SandboxScreenshotRetentionSec is how long a session's
+	// screenshots outlive it (ADR-20261117065818 §5).
+	SandboxScreenshotMaxBytes     = 1 << 20
+	SandboxScreenshotRetentionSec = 86_400
 	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
 	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
 	// it. A browser touches many domains per page, so it is above the per-run
 	// fetch limits of ADR-20261027090014 §4.7.
 	SandboxWebDistinctDomains = [4]int{0, 200, 1000, 5000}
+	// SandboxEgressRulesMax bounds each list of a web-mode domain policy
+	// (ADR-20261117091026 §1), an account's default and a session's own.
+	SandboxEgressRulesMax = 100
+	// SandboxEgressRefusedLogMax bounds the refused domains one session's
+	// log keeps (ADR-20261117091026 §4); its granted ones are bounded by
+	// SandboxWebDistinctDomains.
+	SandboxEgressRefusedLogMax = 1000
 	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
 	// command.
 	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}
@@ -11770,6 +11899,48 @@ func execCmd(name string, args ...string) ([]byte, error) {
 func LimitsFor(p Plan) (Limits, bool) {
 	l, ok := planLimits[p]
 	return l, ok
+}
+
+// ResidentGBPerCustomerWarnFactor is how far a plan's resident GB per paying
+// customer may run above PlannedResidentGBPerCustomer before
+// FaasResidentGbPerCustomerHigh warns. Validation V7 accepts telemetry within
+// 1.5× of plan (spec Appendix D, ADR-20261117070932).
+const ResidentGBPerCustomerWarnFactor = 1.5
+
+// PlannedResidentConcurrency is the financial model's expected resident
+// concurrency for a plan: how many of one customer's instances run at once on
+// average (spec §1 "Expected resident concurrency (planning)", V7). It is a
+// telemetry comparison only, never an admission or billing input.
+func PlannedResidentConcurrency(p Plan) (float64, bool) {
+	switch p {
+	case PlanFree:
+		return 0.02, true
+	case PlanHobby:
+		return 0.15, true
+	case PlanPro:
+		return 0.60, true
+	case PlanScale:
+		return 3.00, true
+	}
+	return 0, false
+}
+
+// PlannedResidentGBPerCustomer is the resident GB per paying customer the
+// financial model expects of a plan: its planned resident concurrency times
+// the billable size of the plan's largest instance (RAMMB + PerVMOverheadMB).
+// meterd exports it beside the measured value so FaasResidentGbPerCustomerHigh
+// compares each plan with its own model; the §12 0.305 GB target is the blend
+// across the plan mix and says nothing about one plan (ADR-20261117070932).
+func PlannedResidentGBPerCustomer(p Plan) (float64, bool) {
+	concurrency, ok := PlannedResidentConcurrency(p)
+	if !ok {
+		return 0, false
+	}
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0, false
+	}
+	return concurrency * float64(BillableRAMMB(l.RAMMB)) / 1024, true
 }
 
 // OutboundRequestsPerDayMaxForPlan returns the maximum customer-selected
@@ -14455,6 +14626,12 @@ const (
 	// Qualification changes share a separate report-wide history budget.
 	ObsPostDeployEvidenceEventsMax       = 16
 	ObsPostDeployEvidenceHistoryBytesMax = 16 << 10
+	// ADR-20261115100001: build history records aggregate advisory changes.
+	ObsPostDeployBuildEventsMax       = 16
+	ObsPostDeployBuildHistoryBytesMax = 16 << 10
+	// ADR-20261116110000: lossless history details have an independent decoded
+	// ceiling; the encoded event array still uses the unchanged 16 KiB budget.
+	ObsPostDeployBuildHistoryDecodedBytesMax = ObsRuntimeBuildResponseMaxBytes
 
 	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
 	// expose only a bounded, unhealthy-first metadata preview.
@@ -14467,23 +14644,57 @@ const (
 	ObsRuleCoverageBudget = 3 * time.Second
 	// Critical input diagnostics pin reads to one time and bound work to six
 	// jobs, one always-instantiated readiness gauge each, and strict vectors.
-	ObsInputHealthBudget              = 3 * time.Second
-	ObsInputHealthMaxAge              = 120 * time.Second
-	ObsInputHealthLookback            = 10 * time.Minute
-	ObsInputHealthStep                = 15 * time.Second
-	ObsInputHealthJobsMax             = 6
-	ObsInputHealthTargetsMax          = 4096
-	ObsRuleCoverageItemsMax           = 200
-	ObsRuleCoverageExpectedSetsMax    = 8
-	ObsRuleCoverageExpectedFilesMax   = 8
-	ObsRuleCoverageExpressionMaxBytes = 16 * 1024
-	ObsRuleCoverageLabelsMax          = 64
-	ObsRuleCoverageLabelNameMaxBytes  = 128
-	ObsRuleCoverageLabelValueMaxBytes = 2048
-	ObsRuleCatalogMaxBytes            = 4 << 20
-	ObsRecordingDependentAlertsMax    = 5
-	ObsRecordingUnknownAlertsMax      = 5
-	ObsRecordingDependencyLinksMax    = 16384
+	ObsInputHealthBudget     = 3 * time.Second
+	ObsInputHealthMaxAge     = 120 * time.Second
+	ObsInputHealthLookback   = 10 * time.Minute
+	ObsInputHealthStep       = 15 * time.Second
+	ObsInputHealthJobsMax    = 6
+	ObsInputHealthTargetsMax = 4096
+	// ADR-20261115080000: advisory identity uses selected critical jobs only.
+	ObsRuntimeBuildBudget = 3 * time.Second
+	// ADR-20261115110000: v2 build profiles add builderd and imaged.
+	ObsRuntimeBuildJobsMax          = 8
+	ObsRuntimeBuildSamplesMax       = 4096
+	ObsRuntimeBuildNodesMax         = 1000
+	ObsRuntimeBuildPreviewMax       = 32
+	ObsRuntimeBuildVersionMaxBytes  = 128
+	ObsRuntimeBuildResponseMaxBytes = 64 << 10
+	// ADR-20261115160001: exact integer telemetry, without summing overlapping
+	// imaged recovery scopes. This is a wire safety bound, not an admission quota.
+	ObsRuntimeHandoffPendingMax int64 = 1<<53 - 1
+	// ADR-20261115170001: same exact-integer bound for preparation checkpoints.
+	ObsRuntimePreparationPendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115180001: exact integers for scheduler snapshot attempt evidence.
+	ObsRuntimeSnapshotPrimePendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115190001: exact integers for per-replica post-capture evidence.
+	ObsRuntimePostCapturePendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115200000: exact integers for fleet build recovery observations.
+	ObsRuntimeBuildRecoveryCountMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115210001: exact-integer wire safety for app-task evidence.
+	ObsRuntimeAppTaskPendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261116080000: exact-integer wire bound for scoped cron schedules.
+	ObsRuntimeCommandCronSchedulesMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261116090001: exact-integer bounds for local operation counters.
+	ObsRuntimeAppTaskOperationCounterMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115120001: ten closed wire readiness classes, including zeroes.
+	// ADR-20261115130000: stateless comparison of sampled daemon uptime.
+	ObsRuntimeProcessLookback           = 10 * time.Minute
+	ObsRuntimeProcessUptimeMax          = 10 * 365 * 24 * time.Hour
+	ObsRuntimeProcessStartTolerance     = ObsHealthClockSkewTolerance + time.Second
+	ObsRuntimeProcessResetTolerance     = time.Second
+	ObsRuntimeReadinessReasonsMax       = 10
+	ObsRuntimeReadinessReasonSamplesMax = ObsRuntimeBuildSamplesMax * ObsRuntimeReadinessReasonsMax
+	ObsRuleCoverageItemsMax             = 200
+	ObsRuleCoverageExpectedSetsMax      = 8
+	ObsRuleCoverageExpectedFilesMax     = 8
+	ObsRuleCoverageExpressionMaxBytes   = 16 * 1024
+	ObsRuleCoverageLabelsMax            = 64
+	ObsRuleCoverageLabelNameMaxBytes    = 128
+	ObsRuleCoverageLabelValueMaxBytes   = 2048
+	ObsRuleCatalogMaxBytes              = 4 << 20
+	ObsRecordingDependentAlertsMax      = 5
+	ObsRecordingUnknownAlertsMax        = 5
+	ObsRecordingDependencyLinksMax      = 16384
 
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
@@ -15081,6 +15292,11 @@ func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Du
 // whose setting is above one; the adapter then advertises that many slots
 // per worker.
 const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
+
+// FunctionWorkflowEnv marks a workflow function's build
+// (ADR-20261113120824 amendment 1): its adapter answers every request that is
+// not a workflow call with a 404 problem.
+const FunctionWorkflowEnv = "FAAS_FUNCTION_WORKFLOW"
 
 // PostgresPoolMaxEnv tells an app how many database connections one of its
 // instances can use (ADR-20261104141122). imaged stamps it at build time for
@@ -18261,6 +18477,83 @@ const (
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
 var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
 
+// Production protection baseline (ADR-20261116120000): the objects apid
+// creates for an enrolled app. The objectives are deliberately loose, to
+// page when something is clearly wrong rather than to define the customer's
+// real objective; customers tighten them by editing the objects.
+const (
+	ProtectionBaselineAvailabilitySLOName       = "availability"
+	ProtectionBaselineLatencySLOName            = "latency"
+	ProtectionBaselineHealthCheckName           = "health"
+	ProtectionBaselineEmailChannelName          = "account-email"
+	ProtectionBaselineAvailabilityBurnAlertName = "availability-burn"
+	ProtectionBaselineLatencyBurnAlertName      = "latency-burn"
+	ProtectionBaselineHealthAlertName           = "health-failing"
+	ProtectionBaselineAvailabilityGateName      = "availability"
+
+	// ProtectionBaselineAvailabilityObjectivePct is the availability SLO.
+	ProtectionBaselineAvailabilityObjectivePct = 99.5
+	// ProtectionBaselineLatencyObjectivePct of requests finish within
+	// ProtectionBaselineLatencyThresholdMS.
+	ProtectionBaselineLatencyObjectivePct = 99.0
+	ProtectionBaselineLatencyThresholdMS  = 1000
+	ProtectionBaselineSLOWindowDays       = 30
+	// ProtectionBaselineHealthCheckIntervalSeconds: hourly, unbilled
+	// (ADR-20261116120000 §3).
+	ProtectionBaselineHealthCheckIntervalSeconds = 3600
+	// ProtectionBaselineBurnRate is the fast-burn alert threshold: a rate
+	// that spends 2% of a 30-day budget in one hour.
+	ProtectionBaselineBurnRate = 14.4
+	// ProtectionBaselineHealthFailures consecutive failed runs fire the
+	// health alert.
+	ProtectionBaselineHealthFailures = 2
+	// ProtectionBaselineBurnWindow is the burn alerts' evaluation window
+	// (docs/slos.md: 14.4 over 1h, with the 6h burn folded in).
+	ProtectionBaselineBurnWindow = "1h"
+	// ProtectionBaselineGateActor is the release gates' created_by.
+	ProtectionBaselineGateActor = "gregale-protection"
+)
+
+// Protection baseline reconciler (ADR-20261116120000 §4): apid sweeps every
+// ProtectionReconcileSweepInterval, leases up to ProtectionReconcileBatch
+// due apps for ProtectionReconcileLease, retries an app with work left after
+// ProtectionReconcileRetry and re-checks a finished one after
+// ProtectionReconcileRecheck.
+const (
+	ProtectionReconcileSweepInterval = 30 * time.Second
+	ProtectionReconcileBatch         = 20
+	ProtectionReconcileLease         = 2 * time.Minute
+	ProtectionReconcileRetry         = 15 * time.Minute
+	ProtectionReconcileRecheck       = 24 * time.Hour
+	// ProtectionHealthProbePoll is how often apid claims due baseline
+	// health checks, at most ProtectionHealthProbeBatch at a time, probing
+	// ProtectionHealthProbeWorkers at once.
+	ProtectionHealthProbePoll    = time.Minute
+	ProtectionHealthProbeBatch   = 20
+	ProtectionHealthProbeWorkers = 4
+	// ProtectionBaselineHealthComparison and Window configure the
+	// health-failing alert (docs/synthetic-checks.md: gte 2; the window is
+	// required but ignored for this metric).
+	ProtectionBaselineHealthComparison = "gte"
+	ProtectionBaselineHealthWindow     = "1h"
+)
+
+// Unbilled probe wakes (ADR-20261116120000 §3). schedd parks an instance a
+// baseline health probe alone woke once ProtectionProbeParkGrace has passed
+// since the probe with nothing in flight and no request later than the
+// probe's end plus ProtectionProbeActivitySlack; it reads wakes from the
+// last ProtectionProbeWakeLookback. meterd leaves [woke_at, probe_done_at +
+// ProtectionProbeUnbilledTail] unbilled: the grace, one 10 s reaper tick and
+// the park itself. Wakes are kept PlatformProbeWakeRetention.
+const (
+	ProtectionProbeParkGrace     = 5 * time.Second
+	ProtectionProbeActivitySlack = 2 * time.Second
+	ProtectionProbeWakeLookback  = 10 * time.Minute
+	ProtectionProbeUnbilledTail  = 30 * time.Second
+	PlatformProbeWakeRetention   = 7 * 24 * time.Hour
+	PlatformProbeWakeDeleteBatch = 1000
+)
+
 // Event substrate benchmark workload (spec Appendix D V12,
 // docs/ops/event-substrate-benchmark.md): disposable-database bench sizes,
 // never customer quotas. Events spread over accounts so each subscription
@@ -19708,3 +20001,21 @@ const (
 	DataPipelineWorkQueryMinMillis       = int64(50)
 	DataPipelineMinutesPerDay            = 24 * 60
 )
+
+// Hosted Task binding verification inherits source-intent admission bounds.
+const (
+	HostedTaskBindingRequestMaxBytes   = 16 << 10
+	HostedTaskBindingRecordMaxBytes    = 32 << 10
+	HostedTaskBindingNamespaceMaxBytes = 128
+	HostedTaskBindingSecretMaxBytes    = 32 << 10
+	HostedTaskBindingMaxPins           = 40
+	HostedTaskBindingCatalogMaxTables  = 128
+	HostedTaskBindingPreviousKeysMax   = 16
+	HostedTaskBindingOwnerKeyMinBytes  = 32
+	HostedTaskBindingProbeTimeout      = 15 * time.Second
+	HostedTaskBindingSQLTimeout        = 5 * time.Second
+	HostedTaskBindingCleanupTimeout    = time.Second
+	HostedTaskBindingEvidenceTTL       = time.Minute
+)
+
+const HostedTaskBindingKeyIDMaxBytes = 64

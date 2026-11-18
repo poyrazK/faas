@@ -107,6 +107,40 @@ func TestFrozenInstancesSkipThePeakHold(t *testing.T) {
 	}
 }
 
+// adr: 20261107122928 — amendment 1: an instance vmmd holds compressed at
+// the idle ladder's L3 or L4 is charged its latest sample like a frozen one,
+// and its L2 frozen-floor charge; once it resumes, the window's p95 is back.
+func TestCompressedLadderInstancesSkipThePeakHold(t *testing.T) {
+	r := NewReader()
+	p := &Poller{Reader: r}
+	t0 := time.Unix(1_800_000_000, 0)
+	tick := func(at time.Time, mb float64, level int32) {
+		p.publishMemoryShadow([]state.Instance{
+			{ID: "a", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+		}, []InstanceStat{{InstanceID: "a", RSSMB: mb, IdleLadderLevel: level}}, at)
+	}
+	step := time.Duration(api.MeasuredChargeSampleSeconds) * time.Second
+	tick(t0, 400, 0)
+	at := t0.Add(2 * step)
+	tick(at, 100, api.IdleLadderFreezeLevel)
+	// L2 alone keeps the window's p95: 400 x 1.25 = 500.
+	if mb, _, ok := r.MeasuredMB("n1", at); !ok || mb != 500 {
+		t.Fatalf("at L2 MeasuredMB = %d, %v; want 500", mb, ok)
+	}
+	at = at.Add(2 * step)
+	tick(at, 100, api.IdleLadderColdLevel)
+	// L3: its latest sample, 100 x 1.25 = 125.
+	if mb, _, ok := r.MeasuredMB("n1", at); !ok || mb != 125 {
+		t.Fatalf("at L3 MeasuredMB = %d, %v; want 125", mb, ok)
+	}
+	at = at.Add(2 * step)
+	tick(at, 120, 0)
+	// Resumed: the window's p95 (400) again.
+	if mb, _, ok := r.MeasuredMB("n1", at); !ok || mb != 500 {
+		t.Fatalf("after the resume MeasuredMB = %d, %v; want 500", mb, ok)
+	}
+}
+
 // adr: 20261101091815 — an instance that misses samples keeps its recent
 // charge for MeasuredChargeHoldSeconds instead of its full reservation, so a
 // stream gap does not refuse every wake on a node booked past its ceiling; the

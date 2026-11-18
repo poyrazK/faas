@@ -133,5 +133,5 @@ func ErrOutboundAIEvaluationLimit(observed int64) *Problem {
 	return NewProblem(http.StatusTooManyRequests, "outbound_ai_evaluation_limit", "AI evaluation limit reached",
 		"A route can run at most 20 evaluations per UTC day.").
 		WithLimit(OutboundAIEvaluationsPerDay, observed).
-		WithDocs(docsBase + "/cli#outbound")
+		WithDocs(docsBase + "/cli")
 }

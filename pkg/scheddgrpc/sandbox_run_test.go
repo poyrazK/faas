@@ -42,7 +42,7 @@ func (f *fakeSandboxRunner) RunSandbox(ctx context.Context, a sched.SandboxAdmis
 		return err
 	}
 	close(f.booted)
-	_ = hooks.Booted(ctx, "WAKE_COLD_BOOT", 700)
+	_ = hooks.Booted(ctx, sched.SandboxBooted{Method: "WAKE_COLD_BOOT", BootMs: 700})
 	_ = hooks.Activity(ctx, sched.SandboxActivity{LastCallEnded: time.UnixMilli(1_800_000_000_000)})
 	if f.persist {
 		_ = hooks.PersistRequested(ctx, "req-1")
@@ -54,7 +54,9 @@ func (f *fakeSandboxRunner) RunSandbox(ctx context.Context, a sched.SandboxAdmis
 		case req := <-control:
 			switch req.Op {
 			case sched.SandboxOpClose:
-				// vmmd's final usage record goes up before the stream ends.
+				// vmmd's last domain log and final usage record go up
+				// before the stream ends.
+				_ = hooks.WebDomains(ctx, []sched.SandboxWebDomain{{Domain: "example.com", Refused: "budget", At: time.UnixMilli(9)}})
 				_ = hooks.Usage(ctx, sched.AgentRunUsage{Method: 1, Samples: 3, ExpectedSamples: 3, MeasuredMillis: 3000,
 					PausedMillis: 1500, FrozenMillis: 1000, BillableMBMillis: 396_000, Final: true})
 				return nil
@@ -104,7 +106,9 @@ func TestRunSandboxWaitsForProceedAndRelays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.Send(sandboxRunStart()); err != nil {
+	start := sandboxRunStart()
+	start.GetStart().WebDomainLog = true
+	if err := stream.Send(start); err != nil {
 		t.Fatal(err)
 	}
 	ev, err := stream.Recv()
@@ -143,13 +147,18 @@ func TestRunSandboxWaitsForProceedAndRelays(t *testing.T) {
 	}
 	send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Close{Close: &scheddpb.SandboxRunClose{}}})
 	ev, err = stream.Recv()
+	if d := ev.GetWebDomains().GetDomains(); err != nil || len(d) != 1 || d[0].GetDomain() != "example.com" ||
+		d[0].GetRefused() != "budget" || d[0].GetAtUnixMs() != 9 {
+		t.Fatalf("after close: %v, %v; want the domain log", ev, err)
+	}
+	ev, err = stream.Recv()
 	if u := ev.GetUsage(); err != nil || !u.GetFinal() || u.GetMeasuredMs() != 3000 || u.GetFrozenMs() != 1000 || u.GetBillableMbMs() != 396_000 {
 		t.Fatalf("after close: %v, %v; want the final usage", ev, err)
 	}
 	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
 		t.Fatalf("close ended with %v, want a clean end", err)
 	}
-	if runner.admission.RAMMB != 1024 || runner.admission.Plan != api.PlanPro {
+	if runner.admission.RAMMB != 1024 || runner.admission.Plan != api.PlanPro || !runner.admission.WebDomainLog {
 		t.Fatalf("admission = %+v", runner.admission)
 	}
 }

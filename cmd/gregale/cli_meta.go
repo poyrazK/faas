@@ -1842,6 +1842,17 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<app>", "KEY=VALUE..."}},
 				{Name: "unset", Short: "Remove labels", Positionals: []string{"<app>", "KEY..."}},
 			}},
+			{Name: subProtection, Short: "Show or change the app's production protection (preview)", Positionals: []string{"<app>"},
+				Notes: []string{
+					"New public apps get availability and latency SLOs, an hourly health check, email alerts and a rollback gate as ordinary objects you can edit or delete.",
+					"The health check's requests and the wakes it alone causes are not billed.",
+					"off deletes the protection objects you have not changed; on creates the missing ones after the next live production deploy.",
+				},
+				Examples: []string{"gregale app protection my-api", "gregale app protection off my-api", "gregale app protection on my-api"},
+				Subcommands: []cliSub{
+					{Name: "on", Short: "Turn protection on, also for an app created before it existed", Positionals: []string{"<app>"}},
+					{Name: "off", Short: "Turn protection off and delete its unchanged objects", Positionals: []string{"<app>"}},
+				}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
 				{Name: "project", Short: "check every app of this project instead of one", Value: "PROJECT"},
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
@@ -2981,6 +2992,7 @@ var cliCommands = []cliCommand{
 			"gregale deployment latest --app my-api",
 		},
 		Subcommands: []cliSub{
+			{Name: "verify", Short: "Verify an application response from an exact live deployment", Positionals: []string{"<deployment-uuid>"}, Notes: []string{"Available on every plan with deployment-write access. Sends an owner-authorized GET; public access is not verified."}, Examples: []string{"gregale release verify DEPLOYMENT_UUID --app my-api --path /", "gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "path", Value: "PATH", Short: "app-relative GET path (default /)"}, {Name: "project-id", Value: "UUID", Short: "project identity for a named environment (looked up when omitted)"}, {Name: "environment-id", Value: "UUID", Short: "environment identity for a named environment (looked up when omitted)"}}},
 			{Name: "retry-hold", Positionals: []string{"<ID|vN>"}, Short: "Schedule an MCP promotion hold retry with all activation checks", Examples: []string{"gregale deployment retry-hold v42 --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "runtime", Positionals: []string{"<ID|vN>"}, Short: "Inspect runtime identity or preview a published runtime change", Examples: []string{"gregale release runtime v42 --app my-function", "gregale release runtime v42 --app my-function --target RELEASE_ID --json"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug for a vN revision"}, {Name: "target", Value: "RELEASE_ID", Short: "published runtime release to preview without applying"}}},
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
@@ -3756,14 +3768,15 @@ var cliCommands = []cliCommand{
 			{Name: "set", Short: "Change a flag's default, description, owner or expiry", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "default", Short: "default value", Value: "value"}, {Name: "description", Short: "flag description", Value: "TEXT"}, {Name: "owner", Short: "who decides about the flag: a team or an email", Value: "TEXT"}, {Name: "expires", Short: "expiry date, or never to clear", Value: "YYYY-MM-DD"}}},
 			{Name: "on", Short: "Enable a flag", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 			{Name: "off", Short: "Disable a flag (a boolean flag's default becomes false)", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
-			{Name: "experiments", Short: "Compare the variants of a weighted rule by customer conversion", Subcommands: []cliSub{
+			{Name: "experiments", Short: "Compare a weighted rule's variants by conversion or mean value", Subcommands: []cliSub{
 				{Name: "list", Short: "List the environment's experiments", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
-				{Name: "create", Short: "Create an experiment on a variant flag's weighted rule", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "flag", Short: "the variant flag", Value: "KEY", Req: true}, {Name: "rule", Short: "the flag's weighted rule ID", Value: "ID", Req: true}, {Name: "control", Short: "the baseline variant", Value: "VARIANT", Req: true}, {Name: "metric", Short: "the conversion event name", Value: "EVENT", Req: true}, {Name: "mixing-lift", Short: "sequential test mixing lift, absolute (default 0.02)", Value: "N"}, {Name: "start", Short: "start at once"}}},
+				{Name: "create", Short: "Create an experiment on a variant flag's weighted rule", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "flag", Short: "the variant flag", Value: "KEY", Req: true}, {Name: "rule", Short: "the flag's weighted rule ID", Value: "ID", Req: true}, {Name: "control", Short: "the baseline variant", Value: "VARIANT", Req: true}, {Name: "metric", Short: "the metric event name", Value: "EVENT", Req: true}, {Name: "metric-kind", Short: "conversion (default) or mean: the mean event value per customer", Value: "KIND"}, {Name: "mixing-lift", Short: "sequential test mixing lift: absolute (default 0.02), standardized for mean (default 0.1)", Value: "N"}, {Name: "max-error-increase", Short: "server error rate guardrail tolerance (default 0.005)", Value: "N"}, {Name: "max-slow-increase", Short: "p95 latency guardrail tolerance: share of requests slower than control's p95 (default 0.02)", Value: "N"}, {Name: "no-guardrails", Short: "turn both guardrails off"}, {Name: "start", Short: "start at once"}}},
 				{Name: "get", Short: "Show one experiment", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 				{Name: "start", Short: "Start a draft experiment", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 				{Name: "stop", Short: "Stop a running experiment and freeze its results", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+				{Name: "ship", Short: "Serve one variant to every customer and stop the experiment", Positionals: []string{"<key>", "<variant>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 				{Name: "delete", Short: "Delete an experiment that is not running", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
-				{Name: "results", Short: "Show each variant's conversion, lift and significance", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+				{Name: "results", Short: "Show variant lift, significance, guardrails and a recommendation", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 			}},
 			{Name: "stale", Short: "List flags that are expired, stale, unused or without an owner", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "all", Short: "list every flag"}}},
 			{Name: "kill", Short: "Serve the code fallback for a flag from the next request", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
@@ -5182,11 +5195,12 @@ var cliCommands = []cliCommand{
 		DocSlug:     "link",
 		Short:       "Link this checkout to a Gregale project",
 		Positionals: []string{"[<project-slug>]"},
-		Examples:    []string{"gregale link --interactive", "gregale link my-project --interactive", "gregale link my-project --app my-api --env staging"},
+		Examples:    []string{"gregale link --interactive", "gregale link my-project --interactive", "gregale link my-project --app my-api --env staging", "gregale link --app my-api"},
 		Flags: []cliFlag{
 			{Name: "interactive", Short: "choose project, app, and environment, review defaults, and confirm saving", Bool: true},
-			{Name: "app", Short: "workload/app slug for app-scoped commands", Value: "slug"},
+			{Name: "app", Short: "workload/app slug for app-scoped commands; alone, links the app (and its project, if any)", Value: "slug"},
 			{Name: "environment", Short: "default project environment scope", Value: "environment"},
+			{Name: "env", Short: "alias for --environment", Value: "environment"},
 			{Name: "no-gitignore", Short: "do not add .gregale/ to .gitignore"},
 		},
 	},
@@ -5535,6 +5549,12 @@ var cliCommands = []cliCommand{
 					orgSlugFlag,
 					{Name: "label", Short: "new label (empty keeps the current one)", Value: "TEXT"},
 				}},
+			}},
+			{Name: "support-access", Short: "See and revoke support access to the org's apps; reject requests", Notes: []string{"Support access lets Gregale support deploy the production branch, retry, cancel, roll back and restart the org's apps for a limited time. It never reaches secrets, configuration, members, keys or billing.", "Granting and approving need a signed-in browser: use the dashboard's Support access page."}, Subcommands: []cliSub{
+				{Name: "list", Short: "List support grants and open requests", Flags: []cliFlag{orgSlugFlag, {Name: "json", Short: "Print JSON", Bool: true}}, Examples: []string{"gregale org support list --org acme"}},
+				{Name: "revoke", Short: "End a support grant now", Positionals: []string{"GRANT_ID"}, Notes: []string{"Owners and admins only. An API key may revoke: taking access away is always safe."}, Flags: []cliFlag{orgSlugFlag}, Examples: []string{"gregale org support revoke --org acme 3f2a…"}},
+				{Name: "reject", Short: "Reject a support access request", Positionals: []string{"REQUEST_ID"}, Notes: []string{"Owners and admins only."}, Flags: []cliFlag{orgSlugFlag}},
+				{Name: "approve", Short: "Print the dashboard page that grants or approves support access", Flags: []cliFlag{orgSlugFlag}},
 			}},
 			{Name: "agent-policy", Short: "Show or set whether agents may act in the org", Notes: []string{"The policy also caps the capabilities agents may hold beyond inspection."}, Subcommands: []cliSub{
 				{Name: "get", Short: "Show the org's agent policy", Flags: []cliFlag{orgSlugFlag}},

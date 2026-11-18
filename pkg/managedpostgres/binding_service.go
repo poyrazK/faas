@@ -616,3 +616,22 @@ func bindingRequestNamespace(r CreateBindingRequest) string {
 	}
 	return r.AccountID
 }
+
+// CutoverVerifier is implemented by a credential sink that can report whether
+// it can verify a credential staged for a database switch.
+type CutoverVerifier interface {
+	CanVerifyCutoverCredentials() bool
+}
+
+// CanVerifyCutoverCredentials reports whether a database switch staged now
+// could pass its verification phase. A sink that does not say is trusted, as
+// before.
+func (s *BindingService) CanVerifyCutoverCredentials() bool {
+	if s == nil {
+		return false
+	}
+	if v, ok := s.sink.(CutoverVerifier); ok {
+		return v.CanVerifyCutoverCredentials()
+	}
+	return true
+}

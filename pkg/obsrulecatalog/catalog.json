@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "2f39068d4f86ce760ffdd2568f92ae33b759d48b8057c1ac5221af1b98df2784",
+      "revision": "fefc7d9eac640f2a8851ec7aa703ac851b9c3d047bf7afe27902268c0614d55b",
       "files": [
         "faas.rules.yml"
       ],
@@ -54,11 +54,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasResidentGbPerCustomerHigh",
           "definition": {
-            "expression_hash": "e296b319042a76099753e2a41a86c31aa5d0e5a577069f28cf275d9b64dafed7",
+            "expression_hash": "f52244faadcb86d942da698698d3a130a94cbfe0512c7717fd07e938a3b976ce",
             "labels_hash": "31b64f8538eda7c137ba4dea12241d2783f8bd18cee13f2470f508072fe52462",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f1bb515b6509b1b22c9795ac727f3cf44176ad99de34af91f00ccd6e8887d3ff"
+            "fingerprint": "6ddc9bc3375d10f7496bb77900982e5acdb607ecd5110d0108470490019cc6ff"
           }
         },
         {
@@ -2087,6 +2087,19 @@
             "for_seconds": 7200,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b092beee3328300ab3c80a7bb7ab6196af94415c6c8e9a68b1bdbfd227c33b0c"
+          }
+        },
+        {
+          "id": "42535689b36762c84cd9893f997efa0d4a2566ddd42eef2e9ee1c28bf823db67",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasDBPermissionDenied",
+          "definition": {
+            "expression_hash": "82674a8087aa23d8dbca2f1582764b31d643ffa7bd3f5c6f5a44df2ee4fadd2d",
+            "labels_hash": "556dfcf51668a371a95219f47f5c52c294066eaf0fa59d44c5c08b264b8d8518",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9a1cf309152323676a65de9ff4e592c83140eab2ea5493e49662013348a69b69"
           }
         },
         {
@@ -4950,6 +4963,19 @@
           }
         },
         {
+          "id": "a747ad81e261bd3c84f7bd101b2a35b92284bc6eba481acb2bf7f5fbf3d6fad6",
+          "file_name": "faas.rules.yml",
+          "group_name": "durable_background_workers",
+          "rule_name": "FaasNotificationOutboxStuck",
+          "definition": {
+            "expression_hash": "f9fc7a8f845cbb5b3d882cc049c4cb95d43e30564784385e421a0bea487e882c",
+            "labels_hash": "e2e7610eb87c7f1920bce6c8521cfeca7700d6d906820f4fc3f7946083cb4a11",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "44feb8decb338208a93a2fea01ddc826bdc067a1023cc3b822fc72c30e3a5595"
+          }
+        },
+        {
           "id": "a8a1b8a373545a907e12c751c45f7af910488774cf1d31d79a015cfcfc41f950",
           "file_name": "faas.rules.yml",
           "group_name": "app_owner_authority",
@@ -7410,7 +7436,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "aba7bf8ca2be1c6a32962b0dcb40f25f7bc25db37f68429a3ea48a1034583cbe",
+      "revision": "ee5720a72e10c6608113a56161e94a4b9676d6326a500cf808b0d2686470a4fc",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7477,11 +7503,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasResidentGbPerCustomerHigh",
           "definition": {
-            "expression_hash": "e296b319042a76099753e2a41a86c31aa5d0e5a577069f28cf275d9b64dafed7",
+            "expression_hash": "f52244faadcb86d942da698698d3a130a94cbfe0512c7717fd07e938a3b976ce",
             "labels_hash": "31b64f8538eda7c137ba4dea12241d2783f8bd18cee13f2470f508072fe52462",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f1bb515b6509b1b22c9795ac727f3cf44176ad99de34af91f00ccd6e8887d3ff"
+            "fingerprint": "6ddc9bc3375d10f7496bb77900982e5acdb607ecd5110d0108470490019cc6ff"
           }
         },
         {
@@ -9575,6 +9601,19 @@
             "for_seconds": 7200,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b092beee3328300ab3c80a7bb7ab6196af94415c6c8e9a68b1bdbfd227c33b0c"
+          }
+        },
+        {
+          "id": "42535689b36762c84cd9893f997efa0d4a2566ddd42eef2e9ee1c28bf823db67",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasDBPermissionDenied",
+          "definition": {
+            "expression_hash": "82674a8087aa23d8dbca2f1582764b31d643ffa7bd3f5c6f5a44df2ee4fadd2d",
+            "labels_hash": "556dfcf51668a371a95219f47f5c52c294066eaf0fa59d44c5c08b264b8d8518",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9a1cf309152323676a65de9ff4e592c83140eab2ea5493e49662013348a69b69"
           }
         },
         {
@@ -12565,6 +12604,19 @@
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
             "fingerprint": "53e44c4206190771e4660bdec7705fbe094d1145ab063be57624efba839e57c7"
+          }
+        },
+        {
+          "id": "a747ad81e261bd3c84f7bd101b2a35b92284bc6eba481acb2bf7f5fbf3d6fad6",
+          "file_name": "faas.rules.yml",
+          "group_name": "durable_background_workers",
+          "rule_name": "FaasNotificationOutboxStuck",
+          "definition": {
+            "expression_hash": "f9fc7a8f845cbb5b3d882cc049c4cb95d43e30564784385e421a0bea487e882c",
+            "labels_hash": "e2e7610eb87c7f1920bce6c8521cfeca7700d6d906820f4fc3f7946083cb4a11",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "44feb8decb338208a93a2fea01ddc826bdc067a1023cc3b822fc72c30e3a5595"
           }
         },
         {

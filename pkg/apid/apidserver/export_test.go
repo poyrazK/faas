@@ -928,6 +928,9 @@ func (r *appSecretCredentialSink) Identities() *func() []*age.X25519Identity { r
 func (r *appSecretCredentialSink) Probe() *func(context.Context, string, managedpostgres.CredentialAccess, int) error {
 	return &r.probe
 }
+func (r *appSecretCredentialSink) CutoverProbe() *func(context.Context, managedpostgres.Cutover, managedpostgres.CutoverCredential, managedpostgres.Database) error {
+	return &r.cutoverProbe
+}
 
 // Members of auditor
 func (r *auditor) CloseSignal() *chan struct{}    { return &r.closeSignal }
@@ -2378,6 +2381,13 @@ var ReleasePhaseEnabledFromEnv = releasePhaseEnabledFromEnv
 var MintMCPAuthCodeForTest = mintMCPAuthCode
 var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
 var MCPCodeScopesForTest = mcpCodeScopes
+
+var NewCLIAuthTestServerForTest = newCliAuthTestServer
+var RenderCLIAuthForTestAs = renderCliAuthForTestAs
+
+func (h *cliAuthTestServer) SessionCookieForTest(csrf string) *http.Cookie {
+	return &http.Cookie{Name: sessionCookie, Value: h.sessionCookies[csrf]}
+}
 
 var ALookupFunc = &aLookupFunc
 var AAAALookupFunc = &aaaaLookupFunc

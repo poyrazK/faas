@@ -484,7 +484,7 @@ func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egressp
 				}
 				return true
 			}
-			if frame.GetBytes() > math.MaxInt64 || frame.GetRequests() > math.MaxInt32 || frame.GetColdBoots() > math.MaxInt32 || frame.GetServiceReplyBytes() > math.MaxInt64 {
+			if frame.GetBytes() > math.MaxInt64 || frame.GetRequests() > math.MaxInt32 || frame.GetColdBoots() > math.MaxInt32 {
 				if log != nil {
 					log.Error("gatewayEgressAdapter: replay frame counters overflow", "event_id", frame.GetEventId())
 				}
@@ -1162,8 +1162,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		fleetEgress := &fleetGatewayEgressAdapter{
 			nodes: store, store: store, tlsCfg: gwEgressTLS, dialFn: dialGatewayEgressStream,
 			now: deps.now, log: log, metrics: egressMetrics,
-			active:               make(map[string]*fleetEgressEntry),
-			serviceReplyUnbilled: mc != nil && mc.InternalEgressUnbilled,
+			active: make(map[string]*fleetEgressEntry),
 		}
 		gwEgress = fleetEgress
 		go fleetEgress.Run(ctx)
@@ -1363,6 +1362,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261023171905: the quiet pause ledger keeps
 	// api.QuietPauseLedgerRetentionDays.
 	go meter.QuietPauseRetentionLoop(ctx, store, mc.RetentionInterval, log)
+	// ADR-20261116120000: probe wakes are kept api.PlatformProbeWakeRetention.
+	go meter.PlatformProbeWakeRetentionLoop(ctx, store, mc.RetentionInterval, log)
 	// ADR-371: egress flow log rows are kept api.EgressFlowLogRetentionDays.
 	go meter.RetentionLoopEgressFlowLog(ctx, poolAdapter{pool}, time.Hour, log)
 	// ADR-20261113160000: sign-up addresses and user agents are kept

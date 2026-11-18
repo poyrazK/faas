@@ -291,3 +291,42 @@ func TestTruncateDocsMarkdownCutsAtLines(t *testing.T) {
 		}
 	}
 }
+
+func TestDocsTermsSplitLettersFromDigits(t *testing.T) {
+	tests := []struct {
+		text string
+		want []string
+	}{
+		{"python313 runtime", []string{"python", "313", "runtime"}},
+		{"node24 and HTTP2", []string{"node", "24", "http", "2"}},
+		{"plan_limit_apps", []string{"plan", "limit", "app"}},
+		{"42", []string{"42"}},
+	}
+	for _, tt := range tests {
+		if got := docsTerms(tt.text); !slices.Equal(got, tt.want) {
+			t.Errorf("docsTerms(%q) = %q, want %q", tt.text, got, tt.want)
+		}
+	}
+}
+
+func TestDocsQueryCodes(t *testing.T) {
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{"deploy failed with `env_var_missing`", []string{"env_var_missing"}},
+		{"api_rate_limited 429 and plan_limit_apps?", []string{"api_rate_limited", "plan_limit_apps"}},
+		{"canary rollout", nil},
+		{"_leading and trailing_", nil},
+	}
+	for _, tt := range tests {
+		var got []string
+		for code := range docsQueryCodes(tt.query) {
+			got = append(got, code)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("docsQueryCodes(%q) = %q, want %q", tt.query, got, tt.want)
+		}
+	}
+}

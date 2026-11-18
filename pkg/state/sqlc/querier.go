@@ -93,6 +93,9 @@ type Querier interface {
 	// Registers an event name while the environment holds fewer than max_names.
 	AddFlagEventName(ctx context.Context, db DBTX, arg AddFlagEventNameParams) (int64, error)
 	AddFlagEventUsage(ctx context.Context, db DBTX, arg AddFlagEventUsageParams) (AddFlagEventUsageRow, error)
+	// Adds the experiment rule's requests in (from, until] to each variant's
+	// latency histogram (5% log buckets, flags.LatencyBucket).
+	AddFlagExperimentLatency(ctx context.Context, db DBTX, arg AddFlagExperimentLatencyParams) error
 	// A customer seen with another variant than its first is marked crossed and
 	// left out of results.
 	// The arrays are parallel: the select list unnests them in step.
@@ -2280,9 +2283,26 @@ type Querier interface {
 	FlagEventNamesKnown(ctx context.Context, db DBTX, arg FlagEventNamesKnownParams) ([]string, error)
 	FlagExperimentArms(ctx context.Context, db DBTX, experimentID pgtype.UUID) ([]FlagExperimentArmsRow, error)
 	FlagExperimentCrossedUnits(ctx context.Context, db DBTX, experimentID pgtype.UUID) (int64, error)
-	// First and last exposure per verified customer and variant to the
-	// experiment's rule in request telemetry received in (from, until].
+	// First exposure and guardrail request counts per verified customer and
+	// variant to the experiment's rule in request telemetry received in
+	// (from, until]. A request is latency-tested once the experiment has a
+	// latency threshold (latency_threshold_ms >= 0); platform refusals are not
+	// server errors (ADR 20261116190208 §1).
 	FlagExperimentExposures(ctx context.Context, db DBTX, arg FlagExperimentExposuresParams) ([]FlagExperimentExposuresRow, error)
+	// Per-variant sums the delta method needs for the server error rate
+	// (errors over requests) and the slow request share (slow over
+	// latency-tested requests), with customers as units.
+	FlagExperimentGuardrailArms(ctx context.Context, db DBTX, experimentID pgtype.UUID) ([]FlagExperimentGuardrailArmsRow, error)
+	FlagExperimentLatency(ctx context.Context, db DBTX, experimentID pgtype.UUID) ([]FlagExperimentLatencyRow, error)
+	// Per-variant count, non-zero count, sum and sum of squares of unit values
+	// (folded closed days plus open days from open_from_day), clamped to the
+	// 1st and 99th percentile once there are min_units units
+	// (ADR 20261116190208 §2).
+	FlagExperimentMeanArms(ctx context.Context, db DBTX, arg FlagExperimentMeanArmsParams) ([]FlagExperimentMeanArmsRow, error)
+	// Adds the metric event's values of closed days (from_day..through_day) to
+	// each unit, counting a day when it ends at or after the unit's first
+	// exposure.
+	FoldFlagExperimentValues(ctx context.Context, db DBTX, arg FoldFlagExperimentValuesParams) (int64, error)
 	// ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
 	// ticket, so any change after it moves the generation the guarded thaw
 	// compares. selected is true when the thaw a ticket would allow is the one
@@ -4350,6 +4370,8 @@ type Querier interface {
 	// Every enabled check on a live public app, with its app slug and last run
 	// time; the runner decides which are due. The public edge does not serve an
 	// internal app, so its checks wait until it is public (ADR-20261031144636).
+	// A protection-baseline health check is probed by apid, unbilled, not here
+	// (ADR-20261116120000 §3).
 	ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error)
 	ListRunningFlagExperiments(ctx context.Context, db DBTX, arg ListRunningFlagExperimentsParams) ([]ListRunningFlagExperimentsRow, error)
 	// ADR-20261114182830: every runtime release, and whether a compute node must
@@ -5255,6 +5277,10 @@ type Querier interface {
 	// and those bound for the organization the key acts in (§3).
 	NotificationChannelsForAgentApproval(ctx context.Context, db DBTX, arg NotificationChannelsForAgentApprovalParams) ([]NotificationChannel, error)
 	NotificationClaimAttempts(ctx context.Context, db DBTX, arg NotificationClaimAttemptsParams) (int32, error)
+	// Undelivered durable handoffs per channel: how many, and the age of the
+	// oldest. The claim indexes cover exactly these states, so this reads only the
+	// live backlog, never the retained history.
+	NotificationOutboxBacklog(ctx context.Context, db DBTX) ([]NotificationOutboxBacklogRow, error)
 	NotifyAlertRollbackTraffic(ctx context.Context, db DBTX, arg NotifyAlertRollbackTrafficParams) error
 	NotifyAlertServiceRollback(ctx context.Context, db DBTX, arg NotifyAlertServiceRollbackParams) error
 	NotifyApplicationStandardControlsChanged(ctx context.Context, db DBTX, appID string) error
@@ -7451,7 +7477,8 @@ type Querier interface {
 	RequestSDKCrashCapture(ctx context.Context, db DBTX, arg RequestSDKCrashCaptureParams) (CrashCapture, error)
 	// ADR-20261115180000: object deletion moves to the control plane.
 	// A fresh request, whatever the row held before; the trigger stamps a
-	// per-node login's node.
+	// per-node login's node. generation (slice 2) conditions the delete on one
+	// object generation; NULL deletes whatever the key holds.
 	RequestStorageObjectDeletion(ctx context.Context, db DBTX, arg RequestStorageObjectDeletionParams) error
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.
@@ -8136,6 +8163,8 @@ type Querier interface {
 	// longer declares; rolling the deploy back enables them again.
 	SetEventSubscriptionEnabled(ctx context.Context, db DBTX, arg SetEventSubscriptionEnabledParams) (int64, error)
 	SetExclusiveCaptureBarrier(ctx context.Context, db DBTX, arg SetExclusiveCaptureBarrierParams) error
+	SetFlagExperimentLatencyThreshold(ctx context.Context, db DBTX, arg SetFlagExperimentLatencyThresholdParams) error
+	SetFlagExperimentValueThrough(ctx context.Context, db DBTX, arg SetFlagExperimentValueThroughParams) error
 	SetFunctionMigrationCapturePermission(ctx context.Context, db DBTX, arg SetFunctionMigrationCapturePermissionParams) (int64, error)
 	SetFunctionMigrationDestination(ctx context.Context, db DBTX, arg SetFunctionMigrationDestinationParams) (int64, error)
 	SetFunctionMigrationRecoveryPermission(ctx context.Context, db DBTX, arg SetFunctionMigrationRecoveryPermissionParams) (int64, error)

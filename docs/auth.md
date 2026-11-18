@@ -98,17 +98,114 @@ days**: that browser then skips the code at sign-in (not for sensitive
 actions) until it expires or you forget it on the account page. Operator
 accounts are always asked. See [account](account.md#profile-sign-in-and-sessions).
 
+## API keys
+
+An API key lets a script, CI job or agent act for your account. Create one
+with the narrowest scope that does the job; the key is shown once:
+
+```bash
+gregale key create ci-deploy --scopes deploy:write
+gregale key list                 # ID, label, status, created, expires
+gregale key delete KEY_ID        # revoke it now
+```
+
+Without `--scopes` the key gets `admin`, which can do everything your account
+can. Common scopes:
+
+| Scope | Allows |
+|---|---|
+| `admin` | Everything, including billing, key management and deleting the account. |
+| `apps:read` | Read apps, deployments, logs, instances, crons, domains and audit events. |
+| `deploy:write` | Create, change and delete apps, deploy, roll back, invoke, wake and park. |
+| `secrets:read` / `secrets:write` | Read or change secrets. |
+| `env:read` / `env:write` | Read or change configuration variables. |
+| `usage:read` | Read usage and cost. |
+| `runs:read` / `runs:write` | Inspect, or submit and cancel, disposable runs. |
+| `agent` | Open the hosted MCP server; see [headless agents](mcp.md#headless-agents-with-an-agent-key). |
+
+The number of keys an account can hold depends on the plan: 3 on Free, 10 on
+Hobby, 50 on Pro and 200 on Scale. Keys still inside a rotation grace window
+count. Past the limit, creating a key fails with `409 api_key_limit_exceeded`.
+For keys an organization owns, see
+[organization API keys](account.md#organization-api-keys).
+
+### Expiry and rotation
+
+Every new key expires one year after it is made. Agent keys expire after 90
+days, and the keys a browser-approved `gregale login` makes after 30 days. The
+EXPIRES column of `gregale key list` shows when. A request with an expired key
+fails with `401 api_key_expired`, and a revoked key with `401 api_key_revoked`.
+
+Rotate a key before it expires. Rotation returns a new key and keeps the old
+one working for the account's grace window, 7 days unless you change it, so
+you can update every place that uses it:
+
+```bash
+gregale key rotate KEY_ID                  # old key works for the grace window
+gregale key rotate KEY_ID --revoke-old     # the key leaked: old key stops now
+gregale key grace-window set --days 3      # 0 to 30 days, for future rotations
+```
+
+Creating or rotating a key emails you, so a key you did not make is noticed.
+
+## App access control
+
+By default an app's public URL answers anyone; on some plans a new app starts
+private (see [Test a private app](quickstart.md#test-a-private-app)).
+`--public-auth` picks who gets through:
+
+```bash
+gregale app update my-api --public-auth bearer
+gregale app update my-api --public-auth basic --basic-user team --basic-pass "$PASS"
+gregale app update my-api --public-auth ip_allowlist --ip-allowlist 203.0.113.0/24 --ip-allowlist 198.51.100.7/32
+gregale app update my-api --public-auth open
+```
+
+| Mode | Who gets through | Plans |
+|---|---|---|
+| `open` | Anyone. | All |
+| `bearer` | Requests with `Authorization: Bearer KEY`, where KEY is an API key of the app's account with `apps:read` or `admin`. A key from another account gets `403`. | Hobby, Pro, Scale |
+| `basic` | Requests with HTTP basic auth matching the username and password you set. | Pro, Scale |
+| `ip_allowlist` | Requests from the CIDR ranges you list. Others get `403`. | Pro, Scale |
+| `internal_only` | Only Gregale itself, for example to run the app's crons. | All |
+
+Refused requests never reach your app. Each mode replaces the previous one,
+and `--public-auth open` removes it. On a plan without the mode, the change
+fails with `403 plan_public_auth_bearer_not_allowed`,
+`plan_public_auth_basic_not_allowed` or
+`plan_public_auth_ip_allowlist_not_allowed`.
+
+- **Basic auth:** the username is 1 to 128 bytes and the password 12 to 256
+  bytes. Gregale stores them encrypted. After 10 wrong passwords in a minute
+  from one network (an IPv4 /24 or IPv6 /64), that network gets `429` until
+  the minute is over.
+- **IP allowlist:** each entry is a CIDR such as `203.0.113.0/24`; a single
+  address is `/32` (IPv4) or `/128` (IPv6). A `/0` range is refused. Pro apps
+  can list 16 ranges and Scale apps 64; more fails with
+  `400 public_auth_ip_allowlist_too_long`. The check uses the caller's
+  address as Gregale's edge sees it, so list your office or VPN egress
+  addresses, not private ones.
+
+`gregale app update my-api --no-require-authn` drops the API key requirement a
+private app starts with and opens a `bearer` URL. It leaves `basic`,
+`ip_allowlist` and `internal_only` in place. To block or rate-limit callers
+by path, header or country while staying public, use
+[edge rules](edge-rules.md).
+
 ## Email verification
 
 A password signup must verify its email address. Until it does, deploying,
 billing changes, creating API keys and organizations, and inviting members
-answer `email_verification_required`. The verification link works only in a
-browser signed in to that account: opened anywhere else, it asks you to sign
-in first and then verifies. (Someone who signed up with your address cannot
-verify their account by getting you to click the link; if you did not create
-the account, use **Forgot password** or a sign-in link instead, which claims
-it.) Send a new 24-hour link
-with `gregale account email verify` or the account page's button. After 30
+answer `email_verification_required`. Open the verification link in the browser
+signed in to that Gregale account, click **Verify email**, and wait for
+**Email verified**. If the browser is signed in to a different account, choose
+**Sign in with the correct account** to return to the confirmation page.
+Then run `gregale login` again if you were authorizing the CLI.
+
+If someone else signed up with your address, use **Forgot password** or
+request a sign-in link to claim the account. Send a new 24-hour verification
+link from the CLI verification prompt, the account page, or with
+`gregale account email verify`. After 30
 days unverified the account keeps its data, but password sign-in and existing
 sessions and keys only reach the account page, logout, deletion, the resend and
 the email change (so an address with a typo can be fixed); opening a

@@ -51,7 +51,9 @@ var toolsetOf = map[string]string{
 	"gregale_test_tool":                         ToolsetBuildTools,
 	"gregale_plan_uploaded_task_tool_deploy":    ToolsetBuildTools,
 	"gregale_prepare_uploaded_task_tool_deploy": ToolsetBuildTools,
+	"gregale_get_uploaded_task_tool_bindings":   ToolsetBuildTools,
 	"gregale_get_uploaded_task_tool_deploy":     ToolsetBuildTools,
+	"gregale_check_uploaded_task_tool_deploy":   ToolsetBuildTools,
 	"gregale_plan_task_tool_deploy":             ToolsetBuildTools,
 	"gregale_prepare_task_tool_deploy":          ToolsetBuildTools,
 	"gregale_check_task_tool_deploy":            ToolsetBuildTools,
@@ -118,6 +120,7 @@ var toolsetOf = map[string]string{
 	"gregale_list_app_deployments":              ToolsetCore,
 	"gregale_get_deployment":                    ToolsetCore,
 	"gregale_wait_deployment":                   ToolsetCore,
+	"gregale_verify_application_response":       ToolsetCore,
 	"gregale_get_logs":                          ToolsetCore,
 	"gregale_get_metrics":                       ToolsetCore,
 	"gregale_get_health":                        ToolsetCore,
@@ -151,6 +154,8 @@ var toolsetOf = map[string]string{
 	"gregale_get_rollout":                 ToolsetRelease,
 	"gregale_watch_rollout":               ToolsetRelease,
 	"gregale_list_environments":           ToolsetRelease,
+	"gregale_list_flag_experiments":       ToolsetRelease,
+	"gregale_get_flag_experiment_results": ToolsetRelease,
 	"gregale_get_environment":             ToolsetRelease,
 	"gregale_plan_environment_promotion":  ToolsetRelease,
 	"gregale_apply_environment_promotion": ToolsetRelease,
@@ -198,6 +203,8 @@ func toolsetIncludes(name, selected string) bool {
 		return true
 	}
 	switch name {
+	case "gregale_verify_application_response":
+		return selected == ToolsetRelease
 	case "gregale_create_source_upload":
 		return selected == ToolsetBuildTools
 	case "gregale_list_actions", "gregale_get_action":

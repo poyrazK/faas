@@ -593,6 +593,21 @@ WITH candidate AS (
             AND notification_outbox_target_node(channel, payload) IN ('', sqlc.arg(node_id)::text)))
       AND ((state = 'pending' AND available_at <= now()) OR
            (state = 'processing' AND lease_until <= clock_timestamp()))
+      -- With app_owner set, an app_wake or runtime_config_restart row is
+      -- claimable only by the schedd that owns its app (an app with no node
+      -- is anyone's; a row whose app id is unreadable or gone is left to the
+      -- handler). Without it a peer claimed the row and deferred it, and the
+      -- owner could lose every replay (production 2026-11-16).
+      AND (sqlc.arg(app_owner)::text = '' OR channel NOT IN ('app_wake', 'runtime_config_restart') OR
+           NOT EXISTS (
+             SELECT 1 FROM apps a
+             -- Nested CASE fixes the evaluation order: a poison payload must
+             -- not fail every claim.
+             WHERE a.id = CASE WHEN pg_input_is_valid(payload, 'jsonb') THEN
+                            CASE WHEN pg_input_is_valid(payload::jsonb ->> 'app_id', 'uuid')
+                                 THEN (payload::jsonb ->> 'app_id')::uuid END END
+               AND a.node_id IS NOT NULL
+               AND a.node_id::text <> sqlc.arg(app_owner)::text))
     ORDER BY id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -694,6 +709,17 @@ SET state = 'pending', attempts = o.attempts - 1,
     claimed_by = NULL, claimed_at = NULL, lease_until = NULL
 FROM owned
 WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
+
+-- Undelivered durable handoffs per channel: how many, and the age of the
+-- oldest. The claim indexes cover exactly these states, so this reads only the
+-- live backlog, never the retained history.
+-- name: NotificationOutboxBacklog :many
+SELECT channel, count(*)::bigint AS undelivered,
+       COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(created_at))), 0)::double precision AS oldest_seconds
+FROM notification_outbox
+WHERE state IN ('pending', 'processing')
+GROUP BY channel
+ORDER BY channel;
 
 -- name: DeferNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
@@ -28742,10 +28768,15 @@ DELETE FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc
 -- Every enabled check on a live public app, with its app slug and last run
 -- time; the runner decides which are due. The public edge does not serve an
 -- internal app, so its checks wait until it is public (ADR-20261031144636).
+-- A protection-baseline health check is probed by apid, unbilled, not here
+-- (ADR-20261116120000 §3).
 SELECT c.*, a.slug AS app_slug,
  (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
 FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
 WHERE c.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal'
+  AND NOT EXISTS (SELECT 1 FROM app_protection_objects o
+                   WHERE o.app_id = c.app_id AND o.item = 'health_check'
+                     AND o.status = 'created' AND o.object_id = c.id::text)
 ORDER BY c.id;
 
 -- name: InsertSyntheticCheckRun :exec

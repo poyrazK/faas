@@ -158,6 +158,7 @@ type MemStore struct {
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
+	hostedTaskBindings             map[string]HostedTaskBindingRecord
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -170,8 +171,16 @@ type MemStore struct {
 	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
 	basicAuthVerifiers map[string]string
 	// platformAlertNotices mirror platform_alert_notices (ADR-20261115194000).
-	platformAlertNotices        []PlatformAlertNotice
-	platformAlertMeta           map[string]platformAlertNoticeMeta
+	platformAlertNotices []PlatformAlertNotice
+	platformAlertMeta    map[string]platformAlertNoticeMeta
+	// appProtection and appProtectionObjects mirror app_protection and
+	// app_protection_objects (ADR-20261116120000); allocated on first use.
+	appProtection              map[string]AppProtection
+	appProtectionObjects       map[string]map[AppProtectionItem]AppProtectionObject
+	appProtectionLeases        map[string]appProtectionLease
+	appProtectionHealthProbeAt map[string]time.Time
+	// platformProbeWakes mirror platform_probe_wakes (ADR-20261116120000).
+	platformProbeWakes          []PlatformProbeWake
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
@@ -1172,6 +1181,8 @@ type MemStore struct {
 	oauthLinks map[string]OAuthLink
 	// accountFlow holds email changes and display names (account_flow.go).
 	accountFlow memAccountFlow
+	// supportGrants holds customer-granted support access (support_grants.go).
+	supportGrants memSupportGrants
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -20637,7 +20648,7 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 }
 
 // AppendNetworkUsageObservationExcludingInternal mirrors PgStore (billing
-// review R8-2). MemStore keeps no gateway service reply queue.
+// review R8-2).
 func (m *MemStore) AppendNetworkUsageObservationExcludingInternal(_ context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internalCumulative int64) (int64, int64, int64, error) {
 	if internalCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
@@ -20667,6 +20678,7 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 
 	billingAccountID := m.usage[usageIndex].AccountID
 	checkpoint := m.networkUsageCheckpoints[instanceID]
+	previousTxValid := checkpoint.netTxValid
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
 		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
@@ -20692,7 +20704,7 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 	if internal != nil {
 		var nextPending int64
 		excluded, nextPending = internalEgressStep(checkpoint.internalTx, checkpoint.internalTxValid,
-			checkpoint.internalTxPending, 0, *internal, netTxDelta)
+			previousTxValid, checkpoint.internalTxPending, *internal, netTxDelta)
 		netTxDelta -= excluded
 		checkpoint.internalTx = *internal
 		checkpoint.internalTxValid = true
@@ -25314,6 +25326,11 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, row := range m.hostedTaskSourceIntents {
 		if row.Record.AccountID == id {
 			delete(m.hostedTaskSourceIntents, key)
+		}
+	}
+	for key, record := range m.hostedTaskBindings {
+		if record.Public.AccountID == id {
+			delete(m.hostedTaskBindings, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

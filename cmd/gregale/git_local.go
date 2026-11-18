@@ -14,7 +14,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -368,6 +367,12 @@ var (
 	gitPipeWaitDelay = 2 * time.Second
 )
 
+// ErrLocalGitTimeout marks a local git call that ran past its bound. It is
+// deliberately not context.DeadlineExceeded: printErr classifies that as a
+// transport failure, so rc.349 reported a hung local `git` as "Could not
+// reach Gregale … the request timed out" (retail-store GREG-03 follow-up).
+var ErrLocalGitTimeout = errors.New("local git command timed out")
+
 func gitCommandTimeout(args []string) time.Duration {
 	if len(args) > 0 && args[0] == "archive" {
 		return gitArchiveTimeout
@@ -410,7 +415,7 @@ func runGitCmd(gitDir string, args ...string) (string, error) {
 	kill.Stop()
 	if timedOut.Load() {
 		return "", fmt.Errorf("%s did not finish within %s in %s; check that `%s` works there (a stuck core.fsmonitor daemon, a network filesystem or a very large untracked tree can stall it), or deploy from a copy outside the repository: %w",
-			command, timeout, gitDir, command, context.DeadlineExceeded)
+			command, timeout, gitDir, command, ErrLocalGitTimeout)
 	}
 	if err != nil {
 		return "", fmt.Errorf("%s: %s: %w", command, strings.TrimSpace(out.String()), err)

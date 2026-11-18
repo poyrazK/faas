@@ -102,6 +102,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release attempt retry", "deploy retry"},
 	{"release logs", "deploys logs"},
 	{"release wait", "deployment wait"},
+	{"release verify", "deployment verify"},
 	{"release status", "deployment status"},
 	{"release cancel", "deploys cancel"},
 	{"release retry", "deploys retry"},
@@ -206,6 +207,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag experiment get", "flags experiments get"},
 	{"flag experiment start", "flags experiments start"},
 	{"flag experiment stop", "flags experiments stop"},
+	{"flag experiment promote", "flags experiments ship"},
 	{"flag experiment delete", "flags experiments delete"},
 	{"flag experiment result get", "flags experiments results"},
 	{"flag", "flags"},
@@ -357,6 +359,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"account mfa", "mfa"},
 	{"account", "account"},
 	{"org agent policy", "orgs agent-policy"},
+	{"org support", "orgs support-access"},
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},
@@ -502,6 +505,9 @@ var cliTreeAliases = []cliTreeAlias{
 	// pinned review) and guarded execution take their action as an argument.
 	{"mcp server tasks review", "mcp tasks intent"},
 	{"mcp server tasks run", "mcp tasks execution"},
+	// Retained hosted Task source review takes its action as an argument too.
+	{"mcp server tasks audit", "mcp tasks source-review"},
+	{"mcp server tasks bind", "mcp tasks bindings"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},

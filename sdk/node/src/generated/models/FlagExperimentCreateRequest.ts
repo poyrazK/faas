@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FlagExperimentGuardrailsRequest } from './FlagExperimentGuardrailsRequest.js';
 /**
  * A flag experiment to create.
  */
@@ -20,13 +21,18 @@ export type FlagExperimentCreateRequest = {
    */
   control: string;
   /**
-   * The conversion event.
+   * The metric event.
    */
   metric_event: string;
   /**
-   * mSPRT mixing standard deviation as an absolute conversion-rate lift; default 0.02.
+   * conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer.
+   */
+  metric_kind?: 'conversion' | 'mean';
+  /**
+   * mSPRT mixing standard deviation: an absolute conversion-rate lift (default 0.02), or a standardized effect size for mean metrics (default 0.1).
    */
   mixing_lift?: number;
+  guardrails?: FlagExperimentGuardrailsRequest;
   /**
    * Start the experiment at once.
    */

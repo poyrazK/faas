@@ -420,6 +420,275 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HostedTaskSourceIntent'
+  /v1/task-tool-source-intents/{id}/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Retained hosted source identity to observe for drift
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+    post:
+      operationId: checkHostedTaskSourceIntent
+      summary: Recheck retained hosted Task source review
+      description: Revalidates the original personal requester and locked native app configuration and serving pins.
+        Observed drift permanently makes the review stale. Source expiry cannot renew. The original publisher or
+        personal owner may check; this creates no owner decision, credential binding or execution authority.
+        HTTP response idempotency caching is excluded so every call rechecks current facts.
+      tags:
+      - mcp-management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskSourceCheck'
+      responses:
+        '200':
+          description: Current hosted source review observation, including permanently stale or expired outcomes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskSourceIntent'
+        '400':
+          description: The hosted source freshness check fingerprint is invalid.
+        '401':
+          description: Authenticate before rechecking the retained hosted source review.
+        '403':
+          description: Hosted source freshness checks require personal publishing authority and the account MFA policy.
+        '404':
+          description: The retained hosted review is not visible to this checking requester.
+        '409':
+          description: The retained hosted source review cannot be checked against this request.
+        '429':
+          description: Hosted source freshness observations are currently rate-limited.
+        '503':
+          description: The native source review freshness journal is temporarily unavailable.
+  /v1/task-tool-source-intents/{id}/decision:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Exact retained hosted source identity named by its personal owner
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+    put:
+      operationId: decideHostedTaskSourceIntent
+      summary: Record an owner decision on hosted Task source
+      description: An authenticated personal owner or fresh unscoped non-agent personal administrator approves,
+        rejects or revokes the exact retained intent and review digests. Agent and MCP-login credentials cannot decide.
+        Approval requires enabled source retention and rechecks retained source availability, original requester authority
+        and native app baselines atomically. Rejection and revocation do not require live requester or app facts;
+        stale and expired reviews stay terminal. Exact retries preserve the first decision timestamp and fixed deadline.
+        Approval is only a source review; readiness, credential verification and execution authorization remain absent.
+        Native journal idempotency rechecks authority on every call instead of replaying an HTTP response cache.
+      tags:
+      - mcp-management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskSourceDecision'
+      responses:
+        '200':
+          description: Recorded hosted source owner review or a terminal stale or expired review that cannot be approved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskSourceIntent'
+        '400':
+          description: The hosted source owner decision or its digest selectors are malformed.
+        '401':
+          description: Authenticate the personal owner before deciding this retained source review.
+        '403':
+          description: A hosted source decision requires personal non-agent owner authority and the account MFA policy.
+        '404':
+          description: The source review or current deciding owner is unavailable within this account.
+        '409':
+          description: The hosted source decision targets a different digest or conflicts with its retained terminal state.
+        '429':
+          description: Owner decisions for hosted source reviews are currently rate-limited.
+        '503':
+          description: Source review approval is disabled or the owner review journal is temporarily unavailable.
+  /v1/task-tool-source-intents/{id}/bindings:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Immutable retained source identity whose native Task binding selection is being inspected or set.
+    get:
+      operationId: getHostedTaskBindings
+      summary: Inspect hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: Fresh original requester or personal owner reads qualification metadata only. Native source, app,
+        credential and authority drift permanently invalidates previously observed evidence. This read can persist
+        terminal invalidation but never opens credentials or repeats probes. Passing evidence expires within one minute,
+        ends at the original source deadline and grants no readiness or execution authority.
+      responses:
+        '200':
+          description: Closed qualification metadata with current terminal invalidation and no source, references
+            or credential values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The retained source identity supplied for metadata inspection is malformed.
+        '401':
+          description: Authenticate the inspecting requester or personal owner before reading qualification metadata.
+        '403':
+          description: This caller lacks permission to inspect the selected source binding metadata.
+        '404':
+          description: No qualification for this source is visible to the current account or reader.
+        '409':
+          description: Qualification metadata could not be refreshed atomically; inspect the same source identity
+            again.
+        '429':
+          description: Metadata reads for this retained Task source are currently rate limited.
+        '503':
+          description: The native qualification journal is temporarily unavailable for metadata inspection.
+    put:
+      operationId: selectHostedTaskBindings
+      summary: Select owner-reviewed native Task bindings
+      tags:
+      - mcp-management
+      description: An authenticated account owner or fresh unscoped non-agent, non-MCP-login personal administrator
+        selects existing native managed PostgreSQL references under the account MFA policy. Both verification and
+        source-retention opt-ins and independent sealing identities are required. Selection immutably pins the approved
+        source digests, queue namespace, app baselines and secret versions for one ready account-owned database with
+        distinct runtime, migration and observer roles. Retries preserve the original non-renewable source deadline;
+        selection starts neither probes nor execution.
+      responses:
+        '200':
+          description: New or identically replayed native-reference selection metadata with its fixed source deadline;
+            no checks or execution are started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The binding selection contains malformed source digests, namespace or native secret references.
+        '401':
+          description: Authenticate the selecting personal owner before recording native binding references.
+        '403':
+          description: Selecting Task bindings requires personal owner authority and satisfaction of the account MFA
+            policy.
+        '404':
+          description: The retained source or selecting owner is unavailable within this account.
+        '409':
+          description: The source approval, selected references or pinned native facts differ from the immutable qualification.
+        '429':
+          description: Owner requests to select hosted Task bindings are currently rate limited.
+        '503':
+          description: New binding selection, source retention or the required independent seal identities are unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingSelection'
+  /v1/task-tool-source-intents/{id}/bindings/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity for the one-time personal-owner binding probe.
+    post:
+      operationId: checkHostedTaskBindings
+      summary: Probe selected hosted Task bindings once
+      tags:
+      - mcp-management
+      description: A fresh personal owner claims the exact selected fingerprint once and runs bounded read-only catalog
+        qualification under the account MFA policy. Native authority and pins are checked before and after the attempt.
+        Validated public destinations, verified TLS and sequential role connections keep credentials private. Concurrent
+        calls and restarts cannot repeat the claim. Success records at most one minute of historical evidence, clamped
+        to source expiry, without proving retained payload readability, migration compatibility, VM connectivity or
+        permission to apply.
+      responses:
+        '200':
+          description: Recorded one-time catalog results or the existing in-progress or terminal receipt for that
+            same immutable selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The probe request must name a valid source identity and lowercase SHA256 qualification fingerprint.
+        '401':
+          description: Authenticate the personal owner before requesting a one-time catalog probe.
+        '403':
+          description: Probing selected bindings requires fresh personal owner authority and the account MFA policy.
+        '404':
+          description: The source, selected qualification or current probing owner cannot be found in this account.
+        '409':
+          description: The probe fingerprint conflicts with the selection or all bounded private workers are occupied.
+        '429':
+          description: Personal-owner qualification probe requests are currently rate limited.
+        '503':
+          description: Owner probing, retained source admission or the required unseal configuration is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
+  /v1/task-tool-source-intents/{id}/bindings/revoke:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity whose selected binding evidence is being revoked.
+    post:
+      operationId: revokeHostedTaskBindings
+      summary: Revoke hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: A fresh personal owner permanently revokes the exact selected qualification under the account MFA
+        policy. Revocation remains available while new admission is disabled and does not require the old requester
+        or native app baseline to remain live. Revoked evidence cannot be revived and previously observed passing
+        checks never supply execution authority.
+      responses:
+        '200':
+          description: Terminal revocation metadata for the exact selected qualification fingerprint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The revocation request contains an invalid source identity or qualification fingerprint.
+        '401':
+          description: Authenticate the personal owner before revoking selected binding evidence.
+        '403':
+          description: Revoking binding evidence requires personal owner authority and compliance with the account
+            MFA policy.
+        '404':
+          description: The retained source, selected qualification or current revoking owner is unavailable in this
+            account.
+        '409':
+          description: Revocation names a fingerprint different from the immutable selected qualification.
+        '429':
+          description: Owner revocations of hosted Task qualifications are currently rate limited.
+        '503':
+          description: The native qualification journal cannot currently record binding revocations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
   /v1/task-tool-release-intents/{id}:
     parameters:
     - name: id
@@ -15967,11 +16236,10 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        A browser (Accept text/html) gets an HTML page whose button posts the
-        token back, and nothing is consumed, so a mail scanner that prefetches
-        the link cannot use up the token. Any other client consumes the
-        24-hour, single-use token here and the account email is marked
-        verified. No session is created.
+        A browser (Accept text/html) gets confirmation or sign-in guidance.
+        Opening the page does not consume the token. Other GET clients consume
+        the 24-hour, single-use token only with a live session for its account.
+        No session is created.
       parameters:
         - in: query
           name: token
@@ -15980,10 +16248,11 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: The confirmation page, or for a non-browser client the verified-email page.
+          description: Confirmation, sign-in guidance, or the verified-email page.
           content:
             text/html:
               schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '410':
           description: Verification link expired, invalid, or already used.
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -15992,9 +16261,10 @@ paths:
       operationId: confirmEmailVerification
       summary: Confirm an email verification from its confirmation page.
       description: |
-        The confirmation page's form posts the token here. It is consumed and
-        the account email marked verified; the HTML answer asks the customer
-        to sign in again rather than creating a session.
+        The confirmation page posts the token here. A live session for the
+        account is required to consume it and mark the address verified.
+        Other browser sessions receive instructions for signing into the
+        correct account. No session is created.
       requestBody:
         required: true
         content:
@@ -16008,10 +16278,11 @@ paths:
                   description: The verification token from the confirmation page's form.
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: Email verified or sign-in guidance for a browser.
           content:
             text/html:
               schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '410':
           description: The posted token is expired, unknown, or was already used.
@@ -16497,19 +16768,25 @@ paths:
         unverified, at most once a minute and five times an hour. Returns
         `already_verified` when there is nothing to send. Available after the
         30-day verification period ends, when other routes answer
-        `email_verification_required`.
+        `email_verification_required`. The browser forms also accept a
+        form-encoded CSRF token from the signed-in account and render HTML.
       responses:
         '200':
           description: The address is already verified.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EmailVerificationResendResponse' }
+            text/html:
+              schema: { type: string }
         '202':
           description: A link was sent, or held back by the per-account limit.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EmailVerificationResendResponse' }
+            text/html:
+              schema: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/auth/sessions/revoke_all:
@@ -24172,6 +24449,39 @@ paths:
       responses:
         '204':
           description: The SLO was deleted.
+  /v1/apps/{slug}/protection:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: getAppProtection
+      summary: Show the app's production protection
+      description: "Reports whether the app is enrolled in production protection and the state of each protection object: the availability and latency SLOs, the health check, the account email channel, the alert rules and the availability release gate. The health check is run by the platform without billing its requests. An app created before protection was available reports state none."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's production protection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppProtectionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: setAppProtection
+      summary: Turn the app's production protection on or off
+      description: "on enrolls the app, including one created before protection was available, and sets up the protection objects after its next live production deploy. off deletes the protection objects the customer has not changed; changed objects, objects a kept alert rule or release gate still uses, and the account email channel stay."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetAppProtectionRequest' }
+      responses:
+        '200':
+          description: The app's production protection after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppProtectionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/synthetics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25074,7 +25384,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25203,7 +25513,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25296,7 +25606,7 @@ paths:
                 status: 402
                 code: "plan_app_usage_summary_not_allowed"
                 detail: "the free plan does not include the per-app usage summary; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#usage-summary"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -27271,7 +27581,7 @@ paths:
                 status: 402
                 code: "plan_app_errors_not_allowed"
                 detail: "the free plan does not include per-app errors; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#app-errors"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -60502,6 +60812,75 @@ paths:
         '403': { description: Node notification read denied by operator scope or MFA or allowlist policy. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/admin/obs/runtime-builds:
+    get:
+      tags: [admin]
+      operationId: getObsRuntimeBuilds
+      summary: Inspect advisory running-build evidence for selected critical daemons.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Read-only,
+        advisory identity evidence; this does not qualify or attest a deployment.
+        Select a versioned build profile explicitly. V1 profiles single-box-v1
+        and control-plane-v1 preserve the original critical jobs. V2 profiles
+        single-box-v2 and control-plane-v2 additionally inspect build and
+        image workers. Single-box expects their static scrape targets; control-plane
+        expects them on every active configured compute-registry member, using
+        the existing discovery scope. Telemetry input-health roles stay v1.
+        Without a role, no sources are read and the state is unknown. Selected
+        build jobs do not cover every daemon in the fleet. Static
+        jobs use scrape target membership and a minimum of one. Compute jobs
+        compare exact node and node_id labels to the active configured compute
+        registry, so replacement nodes cannot hide missing members behind equal
+        counts. Draining inactive and unconfigured nodes are outside this scope.
+        Strict queries pin scrape and build-info values and original sample
+        timestamps to one evaluation time within three seconds, using at most eight
+        fixed job readers. Down, missing,
+        stale, future, pre-boundary, conflicting and unknown-revision evidence
+        never counts as matching. Freshness is 120 seconds, with 30 seconds of
+        clock skew at the boundary. Only complete lowercase 40-character commit
+        SHAs are compared. Target addresses and raw labels, build-time strings
+        and raw provider errors are excluded; target_id is a SHA-256 digest.
+        Counts cover all inspected evidence, even beyond the 32-item preview.
+        Mixed or mismatched revisions can coexist with incomplete inventory;
+        inspect job availability and all counts. No cached success is returned.
+      parameters:
+        - name: release
+          in: query
+          required: true
+          description: Requested full source revision to compare with observed builds.
+          schema: { type: string, pattern: '^[0-9a-f]{40}$' }
+        - name: after
+          in: query
+          required: true
+          description: RFC3339 rollout evidence boundary; retained across retries.
+          schema: { type: string, format: date-time }
+        - name: expected_role
+          in: query
+          required: false
+          description: Explicit minimum role scope; does not discover deployment intent.
+          schema: { type: string, enum: [single-box-v1, control-plane-v1, single-box-v2, control-plane-v2] }
+        - name: compare_at
+          in: query
+          required: false
+          description: Optional earlier evaluation time from the previous response; at most ten minutes old and within the evidence boundary. Compares all inspected targets before previewing.
+          schema: { type: string, format: date-time }
+        - name: diagnostics
+          in: query
+          required: false
+          description: Optional advisory selection with an explicit expected_role. Omit to preserve existing collection; all selects every supported group, none collects only core identity, readiness, process and loop evidence. Otherwise give distinct comma-separated group names. V1 has no advisory jobs, so all and none preserve its core-only scope. Named groups require v2 and include builder_health, handoff_health, preparation_health, build_recovery_health, app_task_health, command_cron_health, command_cron_outcomes, http_cron_delivery, delayed_task_dispatch, command_cron_timing, app_task_results, app_task_operations, post_capture_health and snapshot_prime_health. Unknown, duplicate, unsupported or empty choices are rejected. Selection changes source reads, not verification gates. Selected but unavailable evidence remains distinct from groups intentionally not selected.
+          schema: { type: string }
+          example: http_cron_delivery
+      responses:
+        '200':
+          description: Bounded advisory build evidence; unknown and incomplete states remain explicit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsRuntimeBuilds' }
+        '400': { description: 'Missing or invalid release or boundary, or unknown, empty or repeated query keys.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Runtime build read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/admin/obs/input-health:
     get:
       tags: [admin]
@@ -63174,6 +63553,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship:
+    post:
+      tags: [flags]
+      operationId: shipProjectFlagExperiment
+      summary: Serve one variant to every customer of an experiment's rule.
+      description: "Publishes the flag configuration with the experiment's rule serving the variant, and stops the experiment if it is still running. The previous configuration version can be restored."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { $ref: '#/components/parameters/FlagExperimentKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagExperimentShipRequest' }
+      responses:
+        '200':
+          description: The experiment and the published configuration version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentShipResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/experiments/{key}/results:
@@ -74724,8 +75131,8 @@ components:
     HostedTaskSourceIntent:
       type: object
       additionalProperties: false
-      description: Immutable source intent metadata. Not an owner decision or execution plan. Expired ciphertext cannot
-        be renewed under the same identity.
+      description: Immutable hosted source identity and last observed owner review metadata. Source review approval
+        does not grant credential or execution authority. Expired ciphertext cannot be renewed under the same identity.
       required:
       - version
       - id
@@ -74773,15 +75180,225 @@ components:
           enum:
           - retained
           - expired
+        review_status:
+          type: string
+          description: Last recorded hosted source review state; absent on older receipts means pending until source expiry.
+          enum:
+          - pending
+          - approved
+          - rejected
+          - revoked
+          - stale
+          - expired
+        decided_at:
+          type: string
+          format: date-time
+          description: Original hosted source owner decision time, retained unchanged by exact repeats.
         ready_to_apply:
           type: boolean
-          description: False because retained source alone has no owner execution authorization.
+          description: False because approval of a retained hosted source review is not permission to execute it.
         bindings_verified:
           type: boolean
           description: False because storing authored Task source does not verify runtime credential bindings.
         owner_authorization_required:
           type: boolean
-          description: True because a separate owner decision is required before any retained Task source can execute.
+          description: True until separate owner-controlled execution authorization and runtime credential qualification exist.
+    HostedTaskSourceCheck:
+      type: object
+      additionalProperties: false
+      description: Freshness observation for the exact retained hosted Task source review, without an owner decision.
+      required:
+      - review_sha256
+      properties:
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: Hosted source-review fingerprint to compare with current native facts.
+    HostedTaskSourceDecision:
+      type: object
+      additionalProperties: false
+      description: Personal-owner source review decision bound to both immutable hosted source digests.
+      required:
+      - intent_sha256
+      - review_sha256
+      - decision
+      properties:
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: Complete hosted source intent digest explicitly reviewed by the personal owner.
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: Exact retained hosted source-review fingerprint included in this owner decision.
+        decision:
+          type: string
+          enum:
+          - approve
+          - reject
+          - revoke
+          description: Owner verdict on this hosted source review, independent of future execution authorization.
+    HostedTaskBindingSelection:
+      type: object
+      additionalProperties: false
+      required:
+      - intent_sha256
+      - review_sha256
+      - namespace
+      - web_database_ref
+      - worker_database_ref
+      - migration_database_ref
+      - observer_database_ref
+      properties:
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        namespace:
+          type: string
+          maxLength: 128
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:/-]*$
+        web_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Existing read_write native managed PostgreSQL secret reference on the reviewed web app; never
+            a credential value.
+        worker_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Existing read_write native managed PostgreSQL secret reference on the reviewed worker app sharing
+            the selected queue.
+        migration_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Worker app reference for its separate migration-only PostgreSQL role; qualification never runs
+            a migration.
+        observer_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Native read_only PostgreSQL secret reference on the reviewed observer app, isolated from runtime
+            and migration roles.
+      description: Personal-owner selection of native Task binding references for one approved retained source intent,
+        never plaintext credentials.
+    HostedTaskBindingCheck:
+      type: object
+      additionalProperties: false
+      required:
+      - binding_sha256
+      properties:
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+      description: Exact immutable qualification fingerprint supplied by a personal owner for a check or revocation.
+    HostedTaskBindingResult:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - status
+      properties:
+        name:
+          type: string
+          enum:
+          - namespace
+          - owner_keys
+          - configured_payload_keys
+          - database_schema
+          - runtime_roles
+          - migration_owner
+          - observer_read_only
+        status:
+          type: string
+          enum:
+          - not_checked
+          - passed
+          - failed
+      description: One fixed-name bounded qualification outcome containing no native database facts or secret material.
+    HostedTaskBindingVerification:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - account_id
+      - intent_id
+      - intent_sha256
+      - review_sha256
+      - binding_sha256
+      - status
+      - checks
+      - created_at
+      - expires_at
+      - ready_to_apply
+      - bindings_verified
+      - owner_authorization_required
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        account_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        status:
+          type: string
+          enum:
+          - selected
+          - verifying
+          - passed
+          - failed
+          - stale
+          - revoked
+          - expired
+        checks:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/HostedTaskBindingResult'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        checked_at:
+          type: string
+          format: date-time
+        valid_until:
+          type: string
+          format: date-time
+        ready_to_apply:
+          type: boolean
+          enum:
+          - false
+        bindings_verified:
+          type: boolean
+          enum:
+          - false
+        owner_authorization_required:
+          type: boolean
+          enum:
+          - true
+      description: Historical private-binding qualification metadata only. No credential values, references, source,
+        database facts, owner decisions or execution authority.
     TaskToolReleaseIntent:
       type: object
       additionalProperties: false
@@ -89555,9 +90172,53 @@ components:
         flag: { type: string, description: The variant flag. }
         rule_id: { type: string, description: "The flag's weighted rule." }
         control: { type: string, description: The baseline variant. }
-        metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: The conversion event. }
-        mixing_lift: { type: number, exclusiveMinimum: 0, maximum: 1, description: "mSPRT mixing standard deviation as an absolute conversion-rate lift; default 0.02." }
+        metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: The metric event. }
+        metric_kind: { type: string, enum: [conversion, mean], description: "conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer." }
+        mixing_lift: { type: number, exclusiveMinimum: 0, maximum: 1, description: "mSPRT mixing standard deviation: an absolute conversion-rate lift (default 0.02), or a standardized effect size for mean metrics (default 0.1)." }
+        guardrails: { $ref: '#/components/schemas/FlagExperimentGuardrailsRequest' }
         start: { type: boolean, description: Start the experiment at once. }
+    FlagExperimentGuardrailRequest:
+      description: Turns one guardrail off or sets its tolerance.
+      type: object
+      additionalProperties: false
+      properties:
+        disabled: { type: boolean, description: Turn the guardrail off. }
+        max_increase: { type: number, exclusiveMinimum: 0, maximum: 1, description: Absolute increase over control that breaches the guardrail. }
+    FlagExperimentGuardrailsRequest:
+      description: "Changes the default guardrails; both are on unless turned off."
+      type: object
+      additionalProperties: false
+      properties:
+        server_error_rate: { $ref: '#/components/schemas/FlagExperimentGuardrailRequest' }
+        p95_latency: { $ref: '#/components/schemas/FlagExperimentGuardrailRequest' }
+    FlagExperimentGuardrailSetting:
+      description: One guardrail as configured.
+      type: object
+      required: [enabled, max_increase]
+      properties:
+        enabled: { type: boolean }
+        max_increase: { type: number, description: Tolerance as an absolute rate increase over control. }
+    FlagExperimentGuardrailSettings:
+      description: An experiment's guardrails.
+      type: object
+      required: [server_error_rate, p95_latency]
+      properties:
+        server_error_rate: { $ref: '#/components/schemas/FlagExperimentGuardrailSetting' }
+        p95_latency: { $ref: '#/components/schemas/FlagExperimentGuardrailSetting' }
+    FlagExperimentShipRequest:
+      description: The variant to ship.
+      type: object
+      additionalProperties: false
+      required: [variant]
+      properties:
+        variant: { type: string, description: A variant of the experiment's flag. }
+    FlagExperimentShipResponse:
+      description: A shipped experiment.
+      type: object
+      required: [experiment, config_version]
+      properties:
+        experiment: { $ref: '#/components/schemas/FlagExperiment' }
+        config_version: { type: integer, format: int64, description: The flag configuration version that serves the variant. }
     FlagExperiment:
       description: A flag experiment.
       type: object
@@ -89568,7 +90229,7 @@ components:
         rule_id: { type: string }
         control: { type: string }
         metric_event: { type: string }
-        metric_kind: { type: string, enum: [conversion] }
+        metric_kind: { type: string, enum: [conversion, mean] }
         status: { type: string, enum: [draft, running, stopped] }
         mixing_lift: { type: number }
         weights: { type: object, additionalProperties: { type: integer } }
@@ -89577,6 +90238,10 @@ components:
         started_at: { type: string, format: date-time }
         stopped_at: { type: string, format: date-time }
         analyzed_until: { type: string, format: date-time, description: End of the request telemetry the results cover. }
+        guardrails: { $ref: '#/components/schemas/FlagExperimentGuardrailSettings' }
+        latency_threshold_ms: { type: integer, description: "Control's p95 latency, fixed once control has enough requests." }
+        stop_reason: { type: string, enum: [manual, guardrail_breach, shipped] }
+        breach: { type: object, additionalProperties: true, description: The guardrail breach that stopped the experiment. }
     FlagExperimentList:
       description: An environment's flag experiments.
       type: object
@@ -89584,7 +90249,7 @@ components:
       properties:
         experiments: { type: array, items: { $ref: '#/components/schemas/FlagExperiment' } }
     FlagExperimentArm:
-      description: One variant's exposed and converted customers.
+      description: "One variant's exposed customers; rate is the conversion rate, or the mean value per customer for mean metrics."
       type: object
       required: [variant, exposed, converted, rate]
       properties:
@@ -89616,6 +90281,49 @@ components:
         sample_ratio_p_value: { type: number }
         sample_ratio_mismatch: { type: boolean }
         crossed_units: { type: integer, format: int64, description: Customers that saw more than one variant and are left out. }
+        guardrails: { type: array, items: { $ref: '#/components/schemas/FlagExperimentGuardrail' } }
+        latency: { type: array, items: { $ref: '#/components/schemas/FlagExperimentLatency' } }
+        recommendation: { $ref: '#/components/schemas/FlagExperimentRecommendation' }
+    FlagExperimentGuardrail:
+      description: One guardrail across the variants.
+      type: object
+      required: [name, tolerance, status, variants]
+      properties:
+        name: { type: string, enum: [server_error_rate, p95_latency] }
+        tolerance: { type: number }
+        status: { type: string, enum: [ok, breached, insufficient_data] }
+        variants: { type: array, items: { $ref: '#/components/schemas/FlagExperimentGuardrailVariant' } }
+    FlagExperimentGuardrailVariant:
+      description: "One variant's guardrail rate against control's; difference is variant minus control, bounded by a 99% confidence sequence."
+      type: object
+      required: [variant, control_rate, variant_rate, control_units, variant_units, status]
+      properties:
+        variant: { type: string }
+        control_rate: { type: number }
+        variant_rate: { type: number }
+        control_units: { type: integer, format: int64 }
+        variant_units: { type: integer, format: int64 }
+        difference: { type: number }
+        low: { type: number }
+        high: { type: number }
+        status: { type: string, enum: [ok, breached, insufficient_data] }
+    FlagExperimentLatency:
+      description: "One variant's p95 latency, from a histogram with 5% buckets."
+      type: object
+      required: [variant, requests, p95_ms]
+      properties:
+        variant: { type: string }
+        requests: { type: integer, format: int64 }
+        p95_ms: { type: integer, format: int64 }
+    FlagExperimentRecommendation:
+      description: "What to do with the results; commands carry it out. Gregale never ships a variant on its own."
+      type: object
+      required: [action, summary]
+      properties:
+        action: { type: string, enum: [rolled_back, fix_allocation, ship_variant, keep_control, keep_running, decide] }
+        variant: { type: string, description: The variant to ship for ship_variant. }
+        summary: { type: string }
+        commands: { type: array, items: { type: string } }
     FlagEvent:
       description: One conversion event a runtime SDK reports for experiments.
       type: object
@@ -92210,7 +92918,7 @@ components:
         blocking: { type: boolean, description: This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled. }
         reasons:
           type: array
-          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending] }
+          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending, latest_window_pending] }
         collected_window_seconds: { type: integer, format: int64, minimum: 0 }
         required_from: { type: [string, "null"], format: date-time }
         required_until: { type: [string, "null"], format: date-time }
@@ -95577,6 +96285,1614 @@ components:
           description: Changed fields in expression then for then keep_firing_for then labels order; empty unless comparison is known changed.
           items: { type: string, enum: [expression, for, keep_firing_for, labels] }
 
+    ObsRuntimeBuilds:
+      type: object
+      description: Advisory sampled identity evidence; full-set counts and a bounded item preview.
+      required: [generated_at, scope, expected_role, requested_release, evidence_after, state, max_age_seconds, counts, jobs, items, omitted_items, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, enum: [selected_critical_daemon_builds] }
+        expected_role: { type: string, enum: ['', single-box-v1, control-plane-v1, single-box-v2, control-plane-v2] }
+        requested_release: { type: string, pattern: '^[0-9a-f]{40}$' }
+        evidence_after: { type: string, format: date-time }
+        state: { type: string, enum: [unknown, incomplete, matching, mismatched, mixed] }
+        reason: { type: string }
+        max_age_seconds: { type: integer, enum: [120] }
+        counts: { $ref: '#/components/schemas/ObsRuntimeBuildCounts' }
+        readiness: { $ref: '#/components/schemas/ObsRuntimeReadiness' }
+        process: { $ref: '#/components/schemas/ObsRuntimeProcess' }
+        loop_health: { $ref: '#/components/schemas/ObsRuntimeLoopHealth' }
+        builder_health: { $ref: '#/components/schemas/ObsRuntimeBuilderHealth' }
+        handoff_health: { $ref: '#/components/schemas/ObsRuntimeHandoffHealth' }
+        preparation_health: { $ref: '#/components/schemas/ObsRuntimePreparationHealth' }
+        snapshot_prime_health: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeHealth' }
+        command_cron_outcomes: { $ref: '#/components/schemas/ObsRuntimeCommandCronOutcomes' }
+        command_cron_timing: { $ref: '#/components/schemas/ObsRuntimeCommandCronTiming' }
+        diagnostics: { $ref: '#/components/schemas/ObsRuntimeDiagnostics' }
+        http_cron_delivery: { $ref: '#/components/schemas/ObsRuntimeHTTPCronDelivery' }
+        delayed_task_dispatch: { $ref: '#/components/schemas/ObsRuntimeDelayedTaskDispatch' }
+        app_task_results: { $ref: '#/components/schemas/ObsRuntimeAppTaskResults' }
+        app_task_operations: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperations' }
+        app_task_health: { $ref: '#/components/schemas/ObsRuntimeAppTaskHealth' }
+        command_cron_health: { $ref: '#/components/schemas/ObsRuntimeCommandCronHealth' }
+        post_capture_health: { $ref: '#/components/schemas/ObsRuntimePostCaptureHealth' }
+        build_recovery_health: { $ref: '#/components/schemas/ObsRuntimeBuildRecoveryHealth' }
+        jobs:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ObsRuntimeBuildJob' }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeBuildItem' }
+        omitted_items: { type: integer, minimum: 0 }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsRuntimeBuildCounts:
+      type: object
+      description: State counts partition all inspected items; expected, observed, unexpected and distinct_revisions overlap these counts. Unavailable jobs can have unknown expected counts; inspect jobs.
+      required: [expected, observed, matching, mismatched, missing, stale, unavailable, unexpected, distinct_revisions]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        matching: { type: integer, minimum: 0 }
+        mismatched: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+        distinct_revisions: { type: integer, minimum: 0 }
+    ObsRuntimeBuildJob:
+      type: object
+      description: Independent selected-job inventory and source availability.
+      required: [job, daemon, inventory_source, state, expected]
+      properties:
+        job: { type: string }
+        daemon: { type: string }
+        inventory_source: { type: string, enum: [scrape_targets_minimum, active_configured_compute_registry] }
+        state: { type: string, enum: [available, unknown] }
+        reason: { type: string }
+        expected: { type: integer, minimum: 0, maximum: 1000 }
+    ObsRuntimeBuildItem:
+      type: object
+      description: Sanitized target observation or missing expectation; a SHA is present only on fresh unambiguous build evidence.
+      required: [job, daemon, state]
+      properties:
+        job: { type: string }
+        daemon: { type: string }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        state: { type: string, enum: [matching, mismatched, missing, stale, unavailable] }
+        reason: { type: string }
+        unexpected: { type: boolean }
+        git_sha: { type: string, pattern: '^[0-9a-f]{40}$' }
+        version: { type: string, maxLength: 128 }
+        observed_at: { type: string, format: date-time }
+        scrape_observed_at: { type: string, format: date-time }
+        readiness: { $ref: '#/components/schemas/ObsRuntimeReadinessItem' }
+        process: { $ref: '#/components/schemas/ObsRuntimeProcessItem' }
+    ObsRuntimeReadiness:
+      type: object
+      description: Advisory readiness for the same inspected targets; independent of revision matching and qualification. Omitted by older servers.
+      required: [state, counts, reasons]
+      properties:
+        state: { type: string, enum: [ready, not_ready, incomplete, unknown] }
+        reason: { type: string, enum: [fresh_not_ready, incomplete_readiness_evidence, readiness_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimeReadinessCounts' }
+        reasons:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/ObsRuntimeReadinessReasonCount' }
+    ObsRuntimeReadinessCounts:
+      type: object
+      description: Readiness states partition the full inspected set before preview truncation.
+      required: [ready, not_ready, missing, stale, conflicting, unavailable]
+      properties:
+        ready: { type: integer, minimum: 0 }
+        not_ready: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+    ObsRuntimeReadinessReasonCount:
+      type: object
+      description: Counts only fresh unambiguous ready or not-ready evidence; no raw readiness text.
+      required: [reason, count]
+      properties:
+        reason: { type: string, enum: [ready, draining, database, vmmd, grpc, storage, credentials, stale, process, other] }
+        count: { type: integer, minimum: 1 }
+    ObsRuntimeReadinessItem:
+      type: object
+      description: Original readiness and active reason sample clocks; ready requires a fresh successful scrape and complete consistent one-hot reasons.
+      required: [state, reason]
+      properties:
+        state: { type: string, enum: [ready, not_ready, missing, stale, conflicting, unavailable] }
+        reason: { type: string, enum: [ready, draining, database, vmmd, grpc, storage, credentials, stale, process, other, expected_target_missing, readiness_missing, scrape_stale, readiness_stale, conflicting_targets, conflicting_readiness, source_unavailable, invalid_evidence, invalid_sample_time, scrape_before_boundary, scrape_down, readiness_before_boundary] }
+        observed_at: { type: string, format: date-time }
+        reason_observed_at: { type: string, format: date-time }
+    ObsRuntimeProcess:
+      type: object
+      description: Advisory sampled process continuity at two evaluation times; an observed change does not prove a crash or count every restart between samples.
+      required: [state, counts, incomplete]
+      properties:
+        state: { type: string, enum: [baseline, changed, unchanged, incomplete, unknown] }
+        reason: { type: string, enum: [awaiting_comparison, observed_process_change, incomplete_continuity_evidence, process_evidence_unavailable] }
+        comparison_at: { type: string, format: date-time }
+        counts: { $ref: '#/components/schemas/ObsRuntimeProcessCounts' }
+        incomplete: { type: boolean }
+    ObsRuntimeProcessCounts:
+      type: object
+      description: Sample states partition current inspected targets. Comparison counts cover fresh samples; removed targets belong to the prior observation and overlap no current partition.
+      required: [fresh, missing, stale, conflicting, unavailable, compared, changed, unchanged, same_revision_changes, different_revision_changes, unknown_revision_changes, new_targets, removed_targets, repeated_samples, comparison_unavailable]
+      properties:
+        fresh: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        compared: { type: integer, minimum: 0 }
+        changed: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        same_revision_changes: { type: integer, minimum: 0 }
+        different_revision_changes: { type: integer, minimum: 0 }
+        unknown_revision_changes: { type: integer, minimum: 0 }
+        new_targets: { type: integer, minimum: 0 }
+        removed_targets: { type: integer, minimum: 0 }
+        repeated_samples: { type: integer, minimum: 0 }
+        comparison_unavailable: { type: integer, minimum: 0 }
+    ObsRuntimeProcessItem:
+      type: object
+      description: Original uptime and sample clocks; comparison uses the same complete target identity and permits clock skew. Optional fields are absent for unavailable evidence.
+      required: [state]
+      properties:
+        state: { type: string, enum: [fresh, missing, stale, conflicting, unavailable] }
+        reason: { type: string, enum: [source_unavailable, invalid_evidence, invalid_sample_time, scrape_stale, scrape_before_boundary, scrape_down, expected_target_missing, conflicting_targets, uptime_missing, conflicting_uptime, uptime_stale, uptime_before_boundary, invalid_uptime] }
+        uptime_seconds: { type: number, minimum: 0, maximum: 315360000 }
+        observed_at: { type: string, format: date-time }
+        comparison: { type: string, enum: [baseline, changed, unchanged, new_target, repeated_sample, unavailable] }
+        comparison_reason: { type: string, enum: [unexpected_target, previous_evidence_unavailable, sample_clock_regressed, start_estimate_regressed] }
+        previous_uptime_seconds: { type: number, minimum: 0, maximum: 315360000 }
+        previous_observed_at: { type: string, format: date-time }
+        revision_relation: { type: string, enum: [same, different, unknown] }
+    ObsRuntimeLoopHealth:
+      type: object
+      description: Advisory reports from expected runtime and work loops; fresh reported stalls remain visible when age evidence is incomplete. Counts cover all inspected target-loop pairs before the bounded preview.
+      required: [state, counts, incomplete, items, omitted_items]
+      properties:
+        state: { type: string, enum: [stalled, no_reported_stall, incomplete, unknown] }
+        reason: { type: string, enum: [reported_loop_stall, incomplete_loop_evidence, loop_evidence_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimeLoopCounts' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeLoopItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeLoopCounts:
+      type: object
+      description: State counts partition inspected target-loop pairs. Expected and observed counts overlap the partition; reported_stalls includes fresh stall reports with incomplete age evidence.
+      required: [expected, observed, no_reported_stall, stalled, missing, stale, conflicting, unavailable, reported_stalls, unexpected]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        no_reported_stall: { type: integer, minimum: 0 }
+        stalled: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        reported_stalls: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+    ObsRuntimeLoopItem:
+      type: object
+      description: Sanitized loop observation with original scrape and metric clocks; loop names are selected explicitly per daemon. Age is diagnostic and the producer owns its stall budget.
+      required: [job, daemon, loop, state]
+      properties:
+        job: { type: string }
+        daemon: { type: string }
+        loop: { type: string, enum: [runtime, main, sweep] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        state: { type: string, enum: [no_reported_stall, stalled, missing, stale, conflicting, unavailable] }
+        reason: { type: string, enum: [expected_target_missing, source_unavailable, invalid_evidence, conflicting_targets, conflicting_loop_series, invalid_sample_time, scrape_stale, scrape_before_boundary, scrape_down, loop_stall_missing, loop_age_missing, loop_sample_stale, loop_sample_before_boundary, invalid_stall_value, invalid_loop_age] }
+        reported_stalled: { type: boolean }
+        age_seconds: { type: number, minimum: 0, maximum: 315360000 }
+        scrape_observed_at: { type: string, format: date-time }
+        stall_observed_at: { type: string, format: date-time }
+        age_observed_at: { type: string, format: date-time }
+    ObsRuntimeBuilderHealth:
+      type: object
+      description: Advisory build worker progress and process-local queue/slot pressure for explicit v2 profiles. Counts cover every inspected target before previewing. A fresh overdue worker remains visible with incomplete queue/slot evidence; saturation does not establish a build failure.
+      required: [state, counts, incomplete, items, omitted_items]
+      properties:
+        state: { type: string, enum: [observed, overdue, incomplete, unknown] }
+        reason: { type: string, enum: [worker_progress_overdue, incomplete_builder_evidence, builder_evidence_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimeBuilderCounts' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeBuilderItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeBuilderCounts:
+      type: object
+      description: Complete/missing/stale/conflicting/unavailable partition target observations. Worker states, waiting queues and saturated slot allocators overlap that partition and retain independently usable component evidence. These are process-local observations, not fleet capacity or successful builds.
+      required: [expected, observed, complete, missing, stale, conflicting, unavailable, unexpected, overdue_workers, waiting_workers, working_workers, draining_workers, waiting_queues, saturated_slots]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        complete: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+        overdue_workers: { type: integer, minimum: 0 }
+        waiting_workers: { type: integer, minimum: 0 }
+        working_workers: { type: integer, minimum: 0 }
+        draining_workers: { type: integer, minimum: 0 }
+        waiting_queues: { type: integer, minimum: 0 }
+        saturated_slots: { type: integer, minimum: 0 }
+    ObsRuntimeBuilderItem:
+      type: object
+      description: Sanitized observations of one selected builder target, with independently validated worker, slot and notification queue components.
+      required: [state, worker, slots, queues]
+      properties:
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        worker: { $ref: '#/components/schemas/ObsRuntimeBuilderWorker' }
+        slots: { $ref: '#/components/schemas/ObsRuntimeBuilderSlots' }
+        queues:
+          type: array
+          description: Exactly the build and cancel queues, in that order.
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/ObsRuntimeBuilderQueue' }
+    ObsRuntimeBuilderEvidenceReason:
+      type: string
+      description: Closed diagnostic reason for missing, stale, conflicting or unusable builder evidence.
+      enum: [expected_target_missing, metric_missing, scrape_stale, metric_stale, conflicting_targets, conflicting_series, source_unavailable, invalid_evidence, invalid_sample_time, scrape_before_boundary, scrape_down, metric_before_boundary, invalid_value]
+    ObsRuntimeBuilderWorker:
+      type: object
+      description: Waiting/working/draining/overdue describe usable sampled poller evidence, not successful builds. Observed_at is the oldest original sample clock among this component's required gauges. Invalid or incomplete components omit values.
+      required: [state]
+      properties:
+        state: { type: string, enum: [waiting, working, draining, overdue, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeBuilderEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeBuilderWorkerValues' }
+    ObsRuntimeBuilderWorkerValues:
+      type: object
+      description: Configured poll and in-flight allowances with the existing 60-second scrape/evaluation margin. Completed iterations include idle/error returns. Initialization is the origin before any completion. Intentional drain never establishes resumed work.
+      required: [enabled, inflight, started_at, interval_seconds, busy_allowance_seconds, progress_age_seconds, progress_allowance_seconds]
+      properties:
+        enabled: { type: boolean }
+        inflight: { type: boolean }
+        started_at: { type: string, format: date-time }
+        last_attempt_at: { type: string, format: date-time }
+        last_completed_at: { type: string, format: date-time }
+        interval_seconds: { type: number, exclusiveMinimum: 0, maximum: 315360000 }
+        busy_allowance_seconds: { type: number, exclusiveMinimum: 0, maximum: 315360000 }
+        progress_age_seconds: { type: number, minimum: 0, maximum: 315360000 }
+        progress_allowance_seconds: { type: number, minimum: 0, maximum: 315360000 }
+    ObsRuntimeBuilderSlots:
+      type: object
+      description: Process-local reserved build slots; zero usage does not establish free host capacity. Observed_at is the oldest original sample clock of the two gauges.
+      required: [state]
+      properties:
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeBuilderEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeBuilderSlotValues' }
+    ObsRuntimeBuilderSlotValues:
+      type: object
+      description: Current reserved slots and the enforced process-local limit; equality describes saturation.
+      required: [used, limit]
+      properties:
+        used: { type: integer, minimum: 0, maximum: 4096 }
+        limit: { type: integer, minimum: 1, maximum: 4096 }
+    ObsRuntimeBuilderQueue:
+      type: object
+      description: Notification hints local to this process, excluding durable fleet backlog. Waiting plus active may reach capacity plus workers because of dispatch handoffs. Observed_at is the oldest original clock among the queue's required gauges.
+      required: [state, queue]
+      properties:
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeBuilderEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        queue: { type: string, enum: [build, cancel] }
+        values: { $ref: '#/components/schemas/ObsRuntimeBuilderQueueValues' }
+    ObsRuntimeBuilderQueueValues:
+      type: object
+      description: One notification queue's enabled flag, bounded counts and oldest waiting hint age; zero waiting omits the enqueue clock.
+      required: [enabled, waiting, active, capacity, workers, oldest_wait_seconds]
+      properties:
+        enabled: { type: boolean }
+        waiting: { type: integer, minimum: 0, maximum: 4096 }
+        active: { type: integer, minimum: 0, maximum: 4096 }
+        capacity: { type: integer, minimum: 0, maximum: 4096 }
+        workers: { type: integer, minimum: 1, maximum: 4096 }
+        oldest_enqueued_at: { type: string, format: date-time }
+        oldest_wait_seconds: { type: number, minimum: 0, maximum: 315360000 }
+    ObsRuntimeBuildRecoveryHealth:
+      type: object
+      description: Advisory running build claims and durable VM cleanup obligations as independently collected API replica views of the shared fleet. Compare views without summing build or cleanup counts. Cleanup age begins at obligation creation and survives retries; evidence is not a VM liveness or deployment-readiness verdict.
+      required: [scope, state, counts, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [replica_observations_of_shared_fleet] }
+        state: { type: string, enum: [nonempty, empty, incomplete, unknown] }
+        reason: { type: string, enum: [build_recovery_evidence_observed, incomplete_build_recovery_evidence, build_recovery_evidence_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimeBuildRecoveryCounts' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeBuildRecoveryItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeBuildRecoveryCounts:
+      type: object
+      description: Complete/missing/stale/conflicting/unavailable partition replica observations. Remaining counts overlap that partition and count views, never builds or obligations. Running and cleanup views may overlap; nonempty is their union, empty requires both components observed empty, and retried cleanup views are a subset of cleanup views.
+      required: [expected, observed, complete, missing, stale, conflicting, unavailable, unexpected, nonempty_views, empty_views, running_views, cleanup_views, retried_cleanup_views, unsuccessful_collections]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        complete: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+        nonempty_views: { type: integer, minimum: 0 }
+        empty_views: { type: integer, minimum: 0 }
+        running_views: { type: integer, minimum: 0 }
+        cleanup_views: { type: integer, minimum: 0 }
+        retried_cleanup_views: { type: integer, minimum: 0 }
+        unsuccessful_collections: { type: integer, minimum: 0 }
+    ObsRuntimeBuildRecoveryItem:
+      type: object
+      description: One sanitized API replica view. Collection status, running claims and cleanup obligations are independently checked against source and original clocks. Successful fresh collection is a prerequisite for both work components; valid partial positives survive another component gap.
+      required: [job, state, collection, running, cleanup]
+      properties:
+        job: { type: string, enum: [apid] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        collection: { $ref: '#/components/schemas/ObsRuntimeHandoffCollection' }
+        running: { $ref: '#/components/schemas/ObsRuntimeBuildRecoveryRunning' }
+        cleanup: { $ref: '#/components/schemas/ObsRuntimeBuildRecoveryCleanup' }
+    ObsRuntimeBuildRecoveryRunning:
+      type: object
+      description: Running build-claim evidence requires fresh successful collection after the evidence boundary and coherent original scrape clocks. Missing or failed collection never becomes an empty set.
+      required: [state]
+      properties:
+        state: { type: string, enum: [nonempty, empty, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeBuildRecoveryRunningValues' }
+    ObsRuntimeBuildRecoveryRunningValues:
+      type: object
+      description: Current running claims in the shared fleet view. Positive counts require oldest start and age; empty sets omit both timing fields. Claim age may precede the rollout and does not establish current VM activity or a new stall deadline. Count ceiling is exact-integer wire safety, not an admission quota.
+      required: [count]
+      properties:
+        count: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        oldest_started_at: { type: string, format: date-time }
+        oldest_age_seconds: { type: number, minimum: 0 }
+    ObsRuntimeBuildRecoveryCleanup:
+      type: object
+      description: Durable outstanding VM cleanup obligations, including live claims and retries. Usable values require successful fresh collection and coherent source clocks. Nonempty evidence is advisory and does not prove a VM is still alive.
+      required: [state]
+      properties:
+        state: { type: string, enum: [nonempty, empty, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeBuildRecoveryCleanupValues' }
+    ObsRuntimeBuildRecoveryCleanupValues:
+      type: object
+      description: Pending durable obligations include claimed and retrying rows. Retried is the subset with a recorded failed attempt, including later live claims; it is not an attempt count or retry rate. Age starts at the oldest obligation creation and survives retries. Positive pending requires oldest creation and age; empty sets omit both timing fields.
+      required: [pending, retried]
+      properties:
+        pending: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        retried: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        oldest_created_at: { type: string, format: date-time }
+        oldest_age_seconds: { type: number, minimum: 0 }
+    ObsRuntimeCommandCronTiming:
+      type: object
+      description: Advisory process-local command-cron admission timing for v2 scheduler jobs. Timed observations measure returned occurrence CreatedAt minus nominal ScheduledFor, including catch-up history and policy dispositions. This is not database commit time, execution-start or continuous eligibility latency. The eleven cumulative histogram buckets and count require complete coherent snapshots and coherent interval distributions. The unknown-timestamp counter is independent. Exact differences require unchanged sampled process proof, fresh matching original scrape clocks and uptime advance within the existing one-second tolerance. Baselines, missing evidence, restarts and resets establish no timing delta. No observations does not establish zero lag. No percentile, unique task count or deployment gate is inferred.
+      required: [scope, state, counts, signals, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [process_local_counter_observations] }
+        state: { type: string, enum: [increased, unchanged, baseline, incomplete, unknown] }
+        reason: { type: string, enum: [cron_timing_increases_observed, comparison_not_requested, incomplete_cron_timing_evidence, cron_timing_evidence_unavailable] }
+        comparison_at: { type: string, format: date-time }
+        counts: { $ref: '#/components/schemas/ObsRuntimeCommandCronTimingCounts' }
+        signals:
+          type: array
+          minItems: 13
+          maxItems: 13
+          items: { $ref: '#/components/schemas/ObsRuntimeCommandCronTimingSignalSummary' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeCommandCronTimingItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeCommandCronTimingCounts:
+      type: object
+      description: Full-set counter-signal coverage before clipping, with 13 signals per scheduler target. Increased, unchanged, baseline, missing, stale, conflicting and unavailable partition inspected signals. Observed counts usable current points, including unknown comparisons. These counts classify signals, not delay magnitudes or unique occurrences.
+      required: [expected, observed, increased, unchanged, baseline, missing, stale, conflicting, unavailable, unexpected]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+    ObsRuntimeCommandCronTimingName:
+      type: string
+      description: Fixed cumulative upper-bound buckets in seconds, followed by the histogram count (timed) and an independent unknown-timestamp counter. le_inf equals timed. Buckets overlap and must not be summed.
+      enum: [le_1_seconds, le_5_seconds, le_15_seconds, le_30_seconds, le_60_seconds, le_120_seconds, le_300_seconds, le_600_seconds, le_1800_seconds, le_3600_seconds, le_inf, timed, unknown_timestamps]
+    ObsRuntimeCommandCronTimingSignalSummary:
+      type: object
+      description: Full-set target classifications for one closed timing signal; counts are independent of preview clipping.
+      required: [signal, increased, unchanged, baseline, unknown]
+      properties:
+        signal: { $ref: '#/components/schemas/ObsRuntimeCommandCronTimingName' }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0 }
+    ObsRuntimeCommandCronTimingSignal:
+      type: object
+      description: One fixed timing counter comparison with original sample clocks. Cumulative buckets and count form a coherent histogram group; unknown timestamps are independent. Only comparable intervals retain an exact nonnegative delta, including zero.
+      required: [signal, state]
+      properties:
+        signal: { $ref: '#/components/schemas/ObsRuntimeCommandCronTimingName' }
+        state: { type: string, enum: [baseline, increased, unchanged, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationReason' }
+        current: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        previous: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        delta: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+    ObsRuntimeCommandCronTimingItem:
+      type: object
+      description: Sanitized scheduler process proof and 13 ordered timing signals. Exact target deltas count timed observations, cumulative delay buckets and unknown timestamps separately. Details yield first under the shared response cap; full-set signal coverage and explicit omissions survive. No cron, command, occurrence, task or app identity or raw target address is exposed.
+      required: [job, process, signals]
+      properties:
+        job: { type: string, enum: [schedd, schedd-compute] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        process: { $ref: '#/components/schemas/ObsRuntimeProcessItem' }
+        signals:
+          type: array
+          minItems: 13
+          maxItems: 13
+          items: { $ref: '#/components/schemas/ObsRuntimeCommandCronTimingSignal' }
+    ObsRuntimeDiagnosticGroup:
+      type: string
+      description: Closed advisory group; core build identity, readiness, process and loop evidence are always collected. V1 has no selectable groups; v2 supports these names.
+      enum: [builder_health, handoff_health, build_recovery_health, app_task_health, command_cron_health, command_cron_outcomes, http_cron_delivery, delayed_task_dispatch, command_cron_timing, app_task_results, app_task_operations, post_capture_health, snapshot_prime_health, preparation_health]
+    ObsRuntimeDiagnostics:
+      type: object
+      description: Explicit source-side selection acknowledgement. Absent on default requests to preserve compatibility. Selected and not_selected are disjoint canonical subsequences partitioning the groups supported by the role. A selected group can still be unavailable; a not_selected group is intentionally omitted. Selection never suppresses core identity, readiness, process or loop evidence, expands a budget, or changes a deployment gate.
+      required: [scope, selected, not_selected]
+      properties:
+        scope: { type: string, enum: [selected_runtime_diagnostics] }
+        selected:
+          type: array
+          maxItems: 14
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/ObsRuntimeDiagnosticGroup' }
+        not_selected:
+          type: array
+          maxItems: 14
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/ObsRuntimeDiagnosticGroup' }
+    ObsRuntimeDelayedTaskDispatch:
+      type: object
+      description: Advisory settled delayed-task dispatch attempt counters for v2 scheduler jobs. The four ordered outcomes are success, retry, failed and dead_letter. Failed includes application errors and does not identify a platform incident. Retry does not establish its cause or final result, and success does not prove unique or exactly-once execution. Exact differences require fresh original sample clocks, unchanged sampled process proof and coherent uptime advance within the existing one-second tolerance. Baselines, resets, changed processes and incomplete evidence establish no delta. No deployment gate or failure-rate threshold is inferred.
+      required: [scope, state, counts, outcomes, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [process_local_counter_observations] }
+        state: { type: string, enum: [increased, unchanged, baseline, incomplete, unknown] }
+        reason: { type: string, enum: [delayed_task_dispatch_increases_observed, comparison_not_requested, incomplete_delayed_task_dispatch_evidence, delayed_task_dispatch_evidence_unavailable] }
+        comparison_at: { type: string, format: date-time }
+        counts: { $ref: '#/components/schemas/ObsRuntimeDelayedTaskDispatchCounts' }
+        outcomes:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: { $ref: '#/components/schemas/ObsRuntimeDelayedTaskDispatchOutcomeSummary' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeDelayedTaskDispatchItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeDelayedTaskDispatchCounts:
+      type: object
+      description: Full-set signal coverage before preview clipping, with four counters per scheduler target. Increased, unchanged, baseline, missing, stale, conflicting and unavailable partition inspected signals. Observed counts usable current points, including unknown comparisons. These are signal classifications, not delta magnitudes or unique tasks.
+      required: [expected, observed, increased, unchanged, baseline, missing, stale, conflicting, unavailable, unexpected]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+    ObsRuntimeDelayedTaskDispatchName:
+      type: string
+      description: Closed producer disposition for a settled dispatch attempt. Failed includes application errors; retry does not distinguish a cause or establish a final result. Dead-letter classification remains separate. These are process-local attempts, not unique tasks or deliveries.
+      enum: [success, retry, failed, dead_letter]
+    ObsRuntimeDelayedTaskDispatchOutcomeSummary:
+      type: object
+      description: Full-set target classifications for one ordered dispatch outcome, independent of preview clipping. Later quiet observations do not erase earlier increased categories from retained progress.
+      required: [outcome, increased, unchanged, baseline, unknown]
+      properties:
+        outcome: { $ref: '#/components/schemas/ObsRuntimeDelayedTaskDispatchName' }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0 }
+    ObsRuntimeDelayedTaskDispatchSignal:
+      type: object
+      description: One process-local delayed-task dispatch counter. First usable points are baselines. Comparable points retain exact nonnegative differences including zero. Resets, changed processes, stale or missing samples and uncertain windows omit delta; missing values are never zero. Other outcomes remain independently usable.
+      required: [outcome, state]
+      properties:
+        outcome: { $ref: '#/components/schemas/ObsRuntimeDelayedTaskDispatchName' }
+        state: { type: string, enum: [baseline, increased, unchanged, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationReason' }
+        current: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        previous: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        delta: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+    ObsRuntimeDelayedTaskDispatchItem:
+      type: object
+      description: Sanitized scheduler process proof and four ordered dispatch counters. Preview details yield first under the shared response cap, preserving full-set summaries and explicit omissions. No task, invocation, app, account, response body, raw target address or provider error is exposed.
+      required: [job, process, signals]
+      properties:
+        job: { type: string, enum: [schedd, schedd-compute] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        process: { $ref: '#/components/schemas/ObsRuntimeProcessItem' }
+        signals:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: { $ref: '#/components/schemas/ObsRuntimeDelayedTaskDispatchSignal' }
+    ObsRuntimeHTTPCronDelivery:
+      type: object
+      description: Advisory settled HTTP cron delivery attempts for v2 scheduler jobs, including scheduled fires and manual runs. The five ordered outcomes are success, retry, app_error, failed and dead_letter. Application errors remain separate from producer-classified delivery failures. Retry does not establish its cause or final result, and success does not prove unique or exactly-once execution. Exact counter differences require fresh original sample clocks, unchanged sampled process proof and coherent uptime advance within the existing one-second tolerance. Baselines, resets, process changes and incomplete evidence establish no delta. No deployment gate or failure-rate threshold is inferred.
+      required: [scope, state, counts, outcomes, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [process_local_counter_observations] }
+        state: { type: string, enum: [increased, unchanged, baseline, incomplete, unknown] }
+        reason: { type: string, enum: [http_cron_delivery_increases_observed, comparison_not_requested, incomplete_http_cron_delivery_evidence, http_cron_delivery_evidence_unavailable] }
+        comparison_at: { type: string, format: date-time }
+        counts: { $ref: '#/components/schemas/ObsRuntimeHTTPCronDeliveryCounts' }
+        outcomes:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ObsRuntimeHTTPCronDeliveryOutcomeSummary' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeHTTPCronDeliveryItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeHTTPCronDeliveryCounts:
+      type: object
+      description: Full-set coverage before preview clipping, with five counter signals per scheduler target. Increased, unchanged, baseline, missing, stale, conflicting and unavailable partition inspected signals. Observed counts usable current points, including unknown comparisons. These are signal classifications, not delta magnitudes, unique schedules or deliveries.
+      required: [expected, observed, increased, unchanged, baseline, missing, stale, conflicting, unavailable, unexpected]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+    ObsRuntimeHTTPCronDeliveryName:
+      type: string
+      description: Closed producer outcome. success is a settled successful attempt; retry is a retry disposition without a final result; app_error is an application-error classification. failed and dead_letter remain distinct delivery-failure classifications. Scheduled fires and manual runs share this metric.
+      enum: [success, retry, app_error, failed, dead_letter]
+    ObsRuntimeHTTPCronDeliveryOutcomeSummary:
+      type: object
+      description: Full-set target classifications for one ordered HTTP delivery outcome, independent of preview clipping. A later quiet sample does not erase an earlier increase from retained progress.
+      required: [outcome, increased, unchanged, baseline, unknown]
+      properties:
+        outcome: { $ref: '#/components/schemas/ObsRuntimeHTTPCronDeliveryName' }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0 }
+    ObsRuntimeHTTPCronDeliverySignal:
+      type: object
+      description: One process-local HTTP delivery outcome counter. First usable points are baselines. Comparable points retain exact nonnegative differences including zero. Resets, process changes, stale or missing samples and uncertain windows omit delta; missing values are never zero. Other outcomes can remain usable independently.
+      required: [outcome, state]
+      properties:
+        outcome: { $ref: '#/components/schemas/ObsRuntimeHTTPCronDeliveryName' }
+        state: { type: string, enum: [baseline, increased, unchanged, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationReason' }
+        current: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        previous: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        delta: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+    ObsRuntimeHTTPCronDeliveryItem:
+      type: object
+      description: Sanitized scheduler process proof and five ordered delivery outcome counters. Preview details yield first under the shared response cap, preserving full-set summaries and explicit omissions. No app, cron, invocation, path, response body, raw target address or provider error is exposed.
+      required: [job, process, signals]
+      properties:
+        job: { type: string, enum: [schedd, schedd-compute] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        process: { $ref: '#/components/schemas/ObsRuntimeProcessItem' }
+        signals:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ObsRuntimeHTTPCronDeliverySignal' }
+    ObsRuntimeCommandCronOutcomes:
+      type: object
+      description: Advisory process-local cron sweep, scheduling-decision and admission-return counters for v2 scheduler jobs. The 29 fixed source/outcome signals are independent. Sweep success covers a shared scan including inline HTTP work and does not prove every command was admitted. Decisions are not unique due occurrences; queued, exclusive_pending and coalesced returns do not prove command execution or delivery. Baselines, changed processes, resets, stale or missing evidence establish no delta. Exact differences require unchanged sampled process proof, matching original scrape clocks and uptime advance within the existing one-second tolerance. Sampled continuity cannot exclude every intervening restart. No scheduling policy, rate or deployment gate is inferred.
+      required: [scope, state, counts, outcomes, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [process_local_counter_observations] }
+        state: { type: string, enum: [increased, unchanged, baseline, incomplete, unknown] }
+        reason: { type: string, enum: [cron_outcome_increases_observed, comparison_not_requested, incomplete_cron_outcome_evidence, cron_outcome_evidence_unavailable] }
+        comparison_at: { type: string, format: date-time }
+        counts: { $ref: '#/components/schemas/ObsRuntimeCommandCronOutcomeCounts' }
+        outcomes:
+          type: array
+          minItems: 29
+          maxItems: 29
+          items: { $ref: '#/components/schemas/ObsRuntimeCommandCronOutcomeSummary' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeCommandCronOutcomeItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeCommandCronOutcomeCounts:
+      type: object
+      description: Full-set counter-signal coverage before clipping, with 29 signals per scheduler target. Increased, unchanged, baseline, missing, stale, conflicting and unavailable partition inspected signals. Observed counts usable current points, including unknown comparisons. Counts measure signals, not delta magnitudes, unique schedules, tasks or deliveries.
+      required: [expected, observed, increased, unchanged, baseline, missing, stale, conflicting, unavailable, unexpected]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+    ObsRuntimeCommandCronOutcomeSource:
+      type: string
+      description: Fixed metric family. Sweep records shared scan returns; decision records pre-admission and legacy-path decisions; admission records actual occurrence calls and their returned dispositions. These scopes are not combined as unique occurrences.
+      enum: [sweep, decision, admission]
+    ObsRuntimeCommandCronOutcomeName:
+      type: string
+      description: Closed producer outcome. Each source has its own ordered subset. Expected scheduling policy, rejected admission, cancellation, stale returns, unavailable deployments, lookup/store errors and sweep or admission errors remain distinct. The admission outcome unknown is an actual returned classification, separate from missing telemetry. A rejected return is not automatically an infrastructure fault.
+      enum: [success, error, canceled, disabled, not_due, account_held, plan_limit, replacement_wait, not_owned, invalid_schedule, lookup_error, store_unavailable, no_live_deployment, legacy_queued, legacy_skipped, legacy_stale, legacy_error, queued, exclusive_pending, coalesced, skipped_overlap, missed_deadline, stale, deployment_unavailable, rejected, unknown]
+    ObsRuntimeCommandCronOutcomeSummary:
+      type: object
+      description: Coverage for one ordered source/outcome across all inspected scheduler processes. Sweep has success, error, canceled. Decision has disabled, not_due, account_held, plan_limit, replacement_wait, not_owned, invalid_schedule, lookup_error, store_unavailable, no_live_deployment, canceled, legacy_queued, legacy_skipped, legacy_stale, legacy_error. Admission has queued, exclusive_pending, coalesced, skipped_overlap, missed_deadline, stale, deployment_unavailable, rejected, error, canceled, unknown. Counts describe signals with observed changes, not numbers of unique occurrences or calls.
+      required: [source, outcome, increased, unchanged, baseline, unknown]
+      properties:
+        source: { $ref: '#/components/schemas/ObsRuntimeCommandCronOutcomeSource' }
+        outcome: { $ref: '#/components/schemas/ObsRuntimeCommandCronOutcomeName' }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0 }
+    ObsRuntimeCommandCronOutcomeSignal:
+      type: object
+      description: One fixed source/outcome comparison. Baselines retain a current point without reporting historical events as new. Compared points require fresh evidence at both pinned times, unchanged sampled process proof, matching original scrape clocks and coherent uptime advance. Comparable signals retain an exact nonnegative delta including zero; unknown comparisons omit delta and may retain usable points. Missing values are never zero; sibling positives survive gaps.
+      required: [source, outcome, state]
+      properties:
+        source: { $ref: '#/components/schemas/ObsRuntimeCommandCronOutcomeSource' }
+        outcome: { $ref: '#/components/schemas/ObsRuntimeCommandCronOutcomeName' }
+        state: { type: string, enum: [baseline, increased, unchanged, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationReason' }
+        current: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        previous: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        delta: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+    ObsRuntimeCommandCronOutcomeItem:
+      type: object
+      description: Sanitized scheduler process proof and 29 ordered source/outcome signals. The comparison clock matches the core process section. Preview details yield first under the shared response limit, preserving aggregate coverage and explicit omissions. No cron, command, occurrence, task or app identity, raw target address, output, token or provider error is exposed.
+      required: [job, process, signals]
+      properties:
+        job: { type: string, enum: [schedd, schedd-compute] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        process: { $ref: '#/components/schemas/ObsRuntimeProcessItem' }
+        signals:
+          type: array
+          minItems: 29
+          maxItems: 29
+          items: { $ref: '#/components/schemas/ObsRuntimeCommandCronOutcomeSignal' }
+    ObsRuntimeAppTaskResults:
+      type: object
+      description: Advisory sampled completion acknowledgements and recovery sweep changes for v2 scheduler processes. Completion uses the returned durable status by release, manual or cron kind; queued means a policy retry. Recovery reports only requeued_restores, failed_runs and cancelled from successful sweeps. Failed running tasks can have uncertain command outcomes. These are process-local counter observations, not unique tasks, delivery acknowledgements, infrastructure fault rates or deployment gates. Baselines, resets, changed processes, stale or missing samples establish no delta. Comparisons require unchanged sampled process proof, matching original scrape clocks and uptime advance within the existing one-second tolerance. Sampled continuity cannot rule out every intervening restart.
+      required: [scope, state, counts, outcomes, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [process_local_counter_observations] }
+        state: { type: string, enum: [increased, unchanged, baseline, incomplete, unknown] }
+        reason: { type: string, enum: [result_increases_observed, comparison_not_requested, incomplete_result_evidence, result_evidence_unavailable] }
+        comparison_at: { type: string, format: date-time }
+        counts: { $ref: '#/components/schemas/ObsRuntimeAppTaskResultCounts' }
+        outcomes:
+          type: array
+          minItems: 18
+          maxItems: 18
+          items: { $ref: '#/components/schemas/ObsRuntimeAppTaskResultOutcome' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeAppTaskResultItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeAppTaskResultCounts:
+      type: object
+      description: Full-set signal coverage before clipping. Each scheduler contributes 15 completion kind/status signals and three recovery signals. Increased, unchanged, baseline, missing, stale, conflicting and unavailable partition inspected signals. Observed counts usable current points, including unknown comparisons. These counts describe signals, not cumulative counters, delta magnitudes or unique tasks.
+      required: [expected, observed, increased, unchanged, baseline, missing, stale, conflicting, unavailable, unexpected]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+    ObsRuntimeAppTaskResultSource:
+      type: string
+      description: Completion acknowledges the returned durable row, including queued policy retries. Recovery counts only existing sweep result fields and excludes inferred retries.
+      enum: [completion, recovery]
+    ObsRuntimeAppTaskResultName:
+      type: string
+      description: Ordered bounded outcome. Completion uses succeeded, failed, timed_out, cancelled or queued. Recovery uses requeued_restores, failed_runs or cancelled. A failed acknowledgement is not independently an infrastructure failure; failed_runs can have uncertain command outcomes.
+      enum: [succeeded, failed, timed_out, cancelled, queued, requeued_restores, failed_runs]
+    ObsRuntimeAppTaskResultOutcome:
+      type: object
+      description: Full-set coverage for one fixed source/kind/outcome. Ordered completion kinds are release, manual, cron, each with succeeded, failed, timed_out, cancelled, queued, followed by recovery requeued_restores, failed_runs, cancelled. Kind is required for completion and absent for recovery. Counts describe signals, not numbers of tasks or acknowledged calls.
+      required: [source, outcome, increased, unchanged, baseline, unknown]
+      properties:
+        source: { $ref: '#/components/schemas/ObsRuntimeAppTaskResultSource' }
+        kind: { $ref: '#/components/schemas/ObsRuntimeAppTaskKindName' }
+        outcome: { $ref: '#/components/schemas/ObsRuntimeAppTaskResultName' }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0 }
+    ObsRuntimeAppTaskResultSignal:
+      type: object
+      description: One ordered completion or recovery counter comparison. Kind is required for completion and absent for recovery. First valid points are baselines; compared points require fresh evidence at both pinned times, matching original uptime clocks and unchanged sampled process continuity. Comparable signals retain an exact nonnegative delta including zero. Unknown comparisons omit delta and may retain usable points. Missing evidence is never synthesized as zero; sibling positives survive gaps.
+      required: [source, outcome, state]
+      properties:
+        source: { $ref: '#/components/schemas/ObsRuntimeAppTaskResultSource' }
+        kind: { $ref: '#/components/schemas/ObsRuntimeAppTaskKindName' }
+        outcome: { $ref: '#/components/schemas/ObsRuntimeAppTaskResultName' }
+        state: { type: string, enum: [baseline, increased, unchanged, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationReason' }
+        current: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        previous: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        delta: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+    ObsRuntimeAppTaskResultItem:
+      type: object
+      description: Sanitized scheduler process proof and 18 ordered completion/recovery signals. Comparison time matches the core process section. Preview details yield before existing evidence under the shared response limit; aggregate counts and omissions survive. No command, task, app identity, output, lease token, raw target address or provider error is exposed.
+      required: [job, process, signals]
+      properties:
+        job: { type: string, enum: [schedd, schedd-compute] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        process: { $ref: '#/components/schemas/ObsRuntimeProcessItem' }
+        signals:
+          type: array
+          minItems: 18
+          maxItems: 18
+          items: { $ref: '#/components/schemas/ObsRuntimeAppTaskResultSignal' }
+    ObsRuntimeAppTaskOperations:
+      type: object
+      description: Advisory observed operation counter changes for v2 scheduler jobs. Counters belong to individual processes. Five operations and seven outcomes are inspected without treating missing capacity series as zero. First samples are baselines, not newly observed failures. Deltas require unchanged sampled process identity, fresh points at both pinned times and matching original scrape clocks. Uptime advance must match elapsed scrape time within the existing one-second reset tolerance. Sampled continuity cannot rule out every intervening restart. These are observed sample differences, not rates, exact event times or command verdicts.
+      required: [scope, state, counts, operations, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [process_local_counter_observations] }
+        state: { type: string, enum: [increased, unchanged, baseline, incomplete, unknown] }
+        reason: { type: string, enum: [operation_increases_observed, comparison_not_requested, incomplete_operation_evidence, operation_evidence_unavailable] }
+        comparison_at: { type: string, format: date-time }
+        counts: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationCounts' }
+        operations:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationSummary' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeAppTaskOperationCounts:
+      type: object
+      description: Signal coverage over all inspected scheduler targets before preview clipping. Each target contributes 35 operation/outcome signals. Increased, unchanged, baseline, missing, stale, conflicting and unavailable partition inspected signals. Observed counts usable current points, including unknown comparisons. Counts describe signals, not returned calls or unique tasks. Missing capacity series stay missing.
+      required: [expected, observed, increased, unchanged, baseline, missing, stale, conflicting, unavailable, unexpected]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+    ObsRuntimeAppTaskOperationSummary:
+      type: object
+      description: Coverage for one ordered operation across all inspected targets and seven outcomes. Category fields count signals with a positive observed delta, not delta magnitudes. Error returns, cancellation, lease loss and capacity refusal remain distinct. Execute success may include a customer command verdict and does not establish successful delivery or completion.
+      required: [operation, increased, unchanged, baseline, unknown, error_increases, cancellations, lease_losses, capacity_refusals]
+      properties:
+        operation: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationName' }
+        increased: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        baseline: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0 }
+        error_increases: { type: integer, minimum: 0 }
+        cancellations: { type: integer, minimum: 0 }
+        lease_losses: { type: integer, minimum: 0 }
+        capacity_refusals: { type: integer, minimum: 0 }
+    ObsRuntimeAppTaskOperationName:
+      type: string
+      description: Fixed operation calls included in this advisory comparison. Destroy measures cleanup calls, not confirmed VM absence; complete measures acknowledgements, not successful commands.
+      enum: [restore, renew, execute, destroy, complete]
+    ObsRuntimeAppTaskOperationOutcome:
+      type: string
+      description: Bounded producer return classification. Capacity and lease loss are separate from operation errors. Success refers to a returned call, not a customer command outcome. Capacity series can be absent until first observed and must not be synthesized as zero.
+      enum: [success, error, canceled, lease_lost, empty, cancellation_pending, capacity]
+    ObsRuntimeAppTaskOperationReason:
+      type: string
+      description: Closed source or comparison diagnostic. Previous-source reasons refer to the pinned earlier read. Changed process, repeated samples, resets and clock mismatches establish no delta.
+      enum: [source_unavailable, invalid_evidence, invalid_sample_time, scrape_before_boundary, scrape_down, metric_before_boundary, invalid_value, expected_target_missing, conflicting_targets, metric_missing, metric_stale, conflicting_series, conflicting_sample_times, scrape_stale, previous_source_unavailable, previous_invalid_evidence, previous_invalid_sample_time, previous_scrape_before_boundary, previous_scrape_down, previous_metric_before_boundary, previous_invalid_value, previous_expected_target_missing, previous_conflicting_targets, previous_metric_missing, previous_metric_stale, previous_conflicting_series, previous_conflicting_sample_times, previous_scrape_stale, process_evidence_unavailable, process_changed, new_target, repeated_process_sample, process_comparison_unavailable, sample_clock_mismatch, process_window_uncertain, counter_reset]
+    ObsRuntimeAppTaskOperationPoint:
+      type: object
+      description: One finite exact nonnegative counter sample with its original scrape timestamp. A cumulative current value alone is not recent activity. The integer ceiling is wire safety, not an admission quota.
+      required: [value, observed_at]
+      properties:
+        value: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        observed_at: { type: string, format: date-time }
+    ObsRuntimeAppTaskOperationSignal:
+      type: object
+      description: One ordered operation/outcome comparison. Baseline has only a current point. Increased and unchanged require both points, unchanged process proof and an explicit exact delta, including zero. Unknown comparisons omit delta and may retain usable points. Counter decreases are resets, never negative activity. Partial positives survive sibling gaps.
+      required: [operation, outcome, state]
+      properties:
+        operation: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationName' }
+        outcome: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationOutcome' }
+        state: { type: string, enum: [baseline, increased, unchanged, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationReason' }
+        current: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        previous: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationPoint' }
+        delta: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+    ObsRuntimeAppTaskOperationItem:
+      type: object
+      description: One sanitized scheduler process observation. Retains current scrape evidence, sampled process continuity proof and 35 ordered operation/outcome signals. No command, task, app, raw target address or provider error is exposed. Root comparison time must match the identity section.
+      required: [job, process, signals]
+      properties:
+        job: { type: string, enum: [schedd, schedd-compute] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        process: { $ref: '#/components/schemas/ObsRuntimeProcessItem' }
+        signals:
+          type: array
+          minItems: 35
+          maxItems: 35
+          items: { $ref: '#/components/schemas/ObsRuntimeAppTaskOperationSignal' }
+    ObsRuntimeAppTaskHealth:
+      type: object
+      description: Advisory release, manual and cron task evidence for v2 scheduler jobs. Each scheduler observes the shared fleet independently. Compare views without summing task counts. Local worker slots do not measure fleet tasks or VMs. No deployment health or eligibility verdict is inferred.
+      required: [scope, state, counts, classes, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [replica_observations_of_shared_fleet] }
+        state: { type: string, enum: [nonempty, empty, incomplete, unknown] }
+        reason: { type: string, enum: [app_task_evidence_observed, incomplete_app_task_evidence, app_task_evidence_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimeAppTaskCounts' }
+        classes:
+          type: array
+          minItems: 27
+          maxItems: 27
+          items: { $ref: '#/components/schemas/ObsRuntimeAppTaskClassCounts' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeAppTaskItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeAppTaskCounts:
+      type: object
+      description: Replica-view coverage and task evidence across the full inspected set before clipping. Nonempty means any positive task class; empty requires all 27 kind/class observations empty. Observer expectation and local dispatcher activity are independent. Running and stopped runner views partition dispatch-enabled views; occupied and saturated views describe local handler slots.
+      required: [expected, observed, complete, missing, stale, conflicting, unavailable, unexpected, nonempty_views, empty_views, unknown_age_views, unsuccessful_collections, enabled_views, disabled_views, dispatch_enabled_views, dispatch_disabled_views, runner_running_views, runner_stopped_views, occupied_views, saturated_views]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        complete: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+        nonempty_views: { type: integer, minimum: 0 }
+        empty_views: { type: integer, minimum: 0 }
+        unknown_age_views: { type: integer, minimum: 0 }
+        unsuccessful_collections: { type: integer, minimum: 0 }
+        enabled_views: { type: integer, minimum: 0 }
+        disabled_views: { type: integer, minimum: 0 }
+        dispatch_enabled_views: { type: integer, minimum: 0 }
+        dispatch_disabled_views: { type: integer, minimum: 0 }
+        runner_running_views: { type: integer, minimum: 0 }
+        runner_stopped_views: { type: integer, minimum: 0 }
+        occupied_views: { type: integer, minimum: 0 }
+        saturated_views: { type: integer, minimum: 0 }
+    ObsRuntimeAppTaskClassName:
+      type: string
+      description: Closed durable task class. Restoring, retry_wait, held and unknown require all ages unknown. Running duration and held evidence do not establish an outage or bypass admission.
+      enum: [queued, retry_wait, held, deadline_overdue, restoring, running, cancellation_pending, lease_expired, unknown]
+    ObsRuntimeAppTaskClassCounts:
+      type: object
+      description: Replica-view counts for one ordered kind/class pair. These describe views of shared fleet data, not unique tasks or completion acknowledgements.
+      required: [kind, class, nonempty_views, empty_views, unknown_age_views]
+      properties:
+        kind: { $ref: '#/components/schemas/ObsRuntimeAppTaskKindName' }
+        class: { $ref: '#/components/schemas/ObsRuntimeAppTaskClassName' }
+        nonempty_views: { type: integer, minimum: 0 }
+        empty_views: { type: integer, minimum: 0 }
+        unknown_age_views: { type: integer, minimum: 0 }
+    ObsRuntimeAppTaskItem:
+      type: object
+      description: One sanitized scheduler replica. Collection status, observer expectation, local dispatcher and 27 ordered kind/class observations are validated independently. No task, app, command or output identifiers are exposed.
+      required: [job, state, collection, observation, dispatch, classes]
+      properties:
+        job: { type: string, enum: [schedd, schedd-compute] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        collection: { $ref: '#/components/schemas/ObsRuntimeHandoffCollection' }
+        observation: { $ref: '#/components/schemas/ObsRuntimeAppTaskObservation' }
+        dispatch: { $ref: '#/components/schemas/ObsRuntimeAppTaskDispatch' }
+        classes:
+          type: array
+          minItems: 27
+          maxItems: 27
+          items: { $ref: '#/components/schemas/ObsRuntimeAppTaskClass' }
+    ObsRuntimeAppTaskObservation:
+      type: object
+      description: Whether durable task observation is expected, independently of collection success, dispatch configuration and runner activity. Disabled observation does not imply drained tasks.
+      required: [state]
+      properties:
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeAppTaskObservationValues' }
+    ObsRuntimeAppTaskObservationValues:
+      type: object
+      description: Explicit observer expectation, including false on shutdown. It does not establish task completion or worker idleness.
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    ObsRuntimeAppTaskClass:
+      type: object
+      description: One ordered kind/class observation. Values require successful fresh collection after the evidence boundary and coherent original sample clocks. Valid partial positives survive sibling gaps.
+      required: [kind, class, state]
+      properties:
+        kind: { $ref: '#/components/schemas/ObsRuntimeAppTaskKindName' }
+        class: { $ref: '#/components/schemas/ObsRuntimeAppTaskClassName' }
+        state: { type: string, enum: [nonempty, empty, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeAppTaskClassValues' }
+    ObsRuntimeAppTaskClassValues:
+      type: object
+      description: Durable task counts in one shared fleet view. Unknown age is included in pending. Known timing exists only when pending exceeds unknown_age. Restoring, retry_wait, held and unknown have only unknown ages. Known boundaries are queued admission timestamps, running start, cancellation request, lease expiry or missed start deadline, not continuous class residence or a new health threshold. Empty or entirely unknown timing omits both age fields. Integer ceiling is wire safety, not an admission quota.
+      required: [pending, unknown_age]
+      properties:
+        pending: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        unknown_age: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        oldest_boundary_at: { type: string, format: date-time }
+        oldest_known_age_seconds: { type: number, minimum: 0 }
+    ObsRuntimeAppTaskKindName:
+      type: string
+      description: Closed durable task kind, separating release commands, manual tasks and cron tasks.
+      enum: [release, manual, cron]
+    ObsRuntimeAppTaskDispatch:
+      type: object
+      description: Local dispatcher activity independent of durable task collection. Disabled means opted out; stopped means dispatch enabled but runner inactive. Running does not prove progress. Slot occupancy includes restore, execution and teardown, not fleet tasks or VMs. Busy handlers need not claim work. No new stall threshold is inferred.
+      required: [state]
+      properties:
+        state: { type: string, enum: [disabled, running, stopped, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeAppTaskDispatchValues' }
+    ObsRuntimeAppTaskDispatchValues:
+      type: object
+      description: Explicit local dispatch and running bits and configured/occupied handler slots. Last claim success includes empty results; last sweep success includes empty sweeps. Both clocks are absent before success. They are not task completion or delivery acknowledgements.
+      required: [enabled, running, slots_configured, slots_in_use]
+      properties:
+        enabled: { type: boolean }
+        running: { type: boolean }
+        slots_configured: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        slots_in_use: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        last_claim_success_at: { type: string, format: date-time }
+        last_sweep_success_at: { type: string, format: date-time }
+    ObsRuntimeCommandCronHealth:
+      type: object
+      description: Advisory command-cron schedule and sweep evidence for v2 scheduler jobs. Ownership scopes may overlap; compare scopes without summing schedules. Nonempty includes intentional inactive schedules. Due evidence describes an unconsumed nominal boundary, not a health, eligibility, admission or execution verdict.
+      required: [scope, state, counts, classes, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [scheduler_ownership_scopes] }
+        state: { type: string, enum: [nonempty, empty, incomplete, unknown] }
+        reason: { type: string, enum: [command_cron_evidence_observed, incomplete_command_cron_evidence, command_cron_evidence_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimeCommandCronCounts' }
+        classes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items: { $ref: '#/components/schemas/ObsRuntimeCommandCronClassCounts' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeCommandCronItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeCommandCronCounts:
+      type: object
+      description: Full-set scheduler-scope coverage, including overlapping scopes. Nonempty requires any observed schedule, including disabled or not-due intent; empty requires all ten classes observed empty. Due scopes contain any first-five class schedules; inactive scopes contain disabled, suspended, account-held or not-due schedules. Those categories can overlap. Sweep categories describe observed scan activity, not command delivery.
+      required: [expected, observed, complete, missing, stale, conflicting, unavailable, unexpected, nonempty_scopes, empty_scopes, unknown_age_scopes, unsuccessful_collections, enabled_scopes, disabled_scopes, due_scopes, inactive_scopes, sweep_running_scopes, sweep_idle_scopes, sweep_never_started_scopes, sweep_never_succeeded_scopes]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        complete: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+        nonempty_scopes: { type: integer, minimum: 0 }
+        empty_scopes: { type: integer, minimum: 0 }
+        unknown_age_scopes: { type: integer, minimum: 0 }
+        unsuccessful_collections: { type: integer, minimum: 0 }
+        enabled_scopes: { type: integer, minimum: 0 }
+        disabled_scopes: { type: integer, minimum: 0 }
+        due_scopes: { type: integer, minimum: 0 }
+        inactive_scopes: { type: integer, minimum: 0 }
+        sweep_running_scopes: { type: integer, minimum: 0 }
+        sweep_idle_scopes: { type: integer, minimum: 0 }
+        sweep_never_started_scopes: { type: integer, minimum: 0 }
+        sweep_never_succeeded_scopes: { type: integer, minimum: 0 }
+    ObsRuntimeCommandCronClassName:
+      type: string
+      description: Closed schedule observation class. Disabled, suspended, account_held, not_due and unknown require all ages unknown. Due, overlap_due, replacement_wait, deployment_missing and exclusive_due report nominal due evidence without predicting committed admission outcomes.
+      enum: [due, overlap_due, replacement_wait, deployment_missing, exclusive_due, disabled, suspended, account_held, not_due, unknown]
+    ObsRuntimeCommandCronClassCounts:
+      type: object
+      description: Scope counts for one ordered class across all inspected scheduler targets before clipping. Ownership scopes can overlap; these are not unique schedules, occurrences or successful deliveries.
+      required: [class, nonempty_scopes, empty_scopes, unknown_age_scopes]
+      properties:
+        class: { $ref: '#/components/schemas/ObsRuntimeCommandCronClassName' }
+        nonempty_scopes: { type: integer, minimum: 0 }
+        empty_scopes: { type: integer, minimum: 0 }
+        unknown_age_scopes: { type: integer, minimum: 0 }
+    ObsRuntimeCommandCronItem:
+      type: object
+      description: One sanitized scheduler ownership scope, identified by selected job and target. Collection, observer expectation, live scan activity and ten durable schedule classes remain distinct. No schedule, app, account, command or payload identity is exposed.
+      required: [job, state, collection, observation, sweep, classes]
+      properties:
+        job: { type: string, enum: [schedd, schedd-compute] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        collection: { $ref: '#/components/schemas/ObsRuntimeHandoffCollection' }
+        observation: { $ref: '#/components/schemas/ObsRuntimeCommandCronObservation' }
+        sweep: { $ref: '#/components/schemas/ObsRuntimeCommandCronSweep' }
+        classes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items: { $ref: '#/components/schemas/ObsRuntimeCommandCronClass' }
+    ObsRuntimeCommandCronObservation:
+      type: object
+      description: Whether the loop expects independent schedule observation. False on shutdown does not imply empty schedules, disabled cron intent or completed work.
+      required: [state]
+      properties:
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeCommandCronObservationValues' }
+    ObsRuntimeCommandCronObservationValues:
+      type: object
+      description: Explicit loop observation expectation, including false on cancellation or return. This is separate from each schedule being enabled.
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    ObsRuntimeCommandCronClass:
+      type: object
+      description: One ordered schedule class. Usable values require fresh successful collection after the evidence boundary and matching original scrape clocks. Valid partial positives survive sibling gaps.
+      required: [class, state]
+      properties:
+        class: { $ref: '#/components/schemas/ObsRuntimeCommandCronClassName' }
+        state: { type: string, enum: [nonempty, empty, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeCommandCronClassValues' }
+    ObsRuntimeCommandCronClassValues:
+      type: object
+      description: Schedules in this ownership scope and included unknown-age subset. Known due timing is required only when schedules exceeds unknown_age; otherwise both timing fields are absent. Disabled, suspended, account-held, not-due and unknown classes have entirely unknown ages. Age starts at the first unconsumed nominal boundary using canonical timezone and DST rules; it is not continuous eligibility, command execution delay or a new stall threshold. Integer ceiling is wire safety, not an admission quota.
+      required: [schedules, unknown_age]
+      properties:
+        schedules: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        unknown_age: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        oldest_due_at: { type: string, format: date-time }
+        oldest_known_due_age_seconds: { type: number, minimum: 0 }
+    ObsRuntimeCommandCronSweep:
+      type: object
+      description: Live shared cron-scan activity, independent of durable schedule collection. A successful scan confirms enumeration and owner lookup, not admission of every command. The scan can include inline HTTP work, so activity alone cannot identify a command-runner failure.
+      required: [state]
+      properties:
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeCommandCronSweepValues' }
+    ObsRuntimeCommandCronSweepValues:
+      type: object
+      description: Explicit scan-in-progress bit, last actual scan start and last scan that completed listing and owner lookups successfully, including empty scans. Start and success are absent before observation. Running requires an observed start. An idle scan does not imply success or disabled cron intent; no new progress deadline is inferred.
+      required: [running]
+      properties:
+        running: { type: boolean }
+        last_started_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+    ObsRuntimePostCaptureHealth:
+      type: object
+      description: Advisory post-capture activation evidence for image workers in v2 profiles. Each replica reads the shared fleet independently; compare its view without summing deployment counts or inferring consensus. Gate classifications and ages are retained evidence, not a new eligibility or health verdict.
+      required: [scope, state, counts, classes, incomplete, items, omitted_items]
+      properties:
+        scope: { type: string, enum: [replica_observations_of_shared_fleet] }
+        state: { type: string, enum: [nonempty, empty, incomplete, unknown] }
+        reason: { type: string, enum: [post_capture_evidence_observed, incomplete_post_capture_evidence, post_capture_evidence_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimePostCaptureCounts' }
+        classes:
+          type: array
+          minItems: 8
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ObsRuntimePostCaptureClassCounts' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimePostCaptureItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimePostCaptureCounts:
+      type: object
+      description: Complete/missing/stale/conflicting/unavailable partition replica observations. Other counts overlap the partition and count replica views, not deployments. Nonempty means any reported durable class evidence; empty requires all eight classes observed empty. Complete component evidence can contain unknown ages. Conflicting means inconsistent source series, not disagreement between replicas.
+      required: [expected, observed, complete, missing, stale, conflicting, unavailable, unexpected, nonempty_views, empty_views, unknown_age_views, unsuccessful_collections, enabled_views, disabled_views]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        complete: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+        nonempty_views: { type: integer, minimum: 0 }
+        empty_views: { type: integer, minimum: 0 }
+        unknown_age_views: { type: integer, minimum: 0 }
+        unsuccessful_collections: { type: integer, minimum: 0 }
+        enabled_views: { type: integer, minimum: 0 }
+        disabled_views: { type: integer, minimum: 0 }
+    ObsRuntimePostCaptureClassName:
+      type: string
+      description: Closed durable post-capture evidence class. Holds and overdue gates describe retained dependency, compatibility or verification evidence. They do not independently determine present deployment eligibility. Unknown class counts always have unknown ages.
+      enum: [publication_pending, activation_pending, dependency_held, compatibility_held, hosting_verifying, hosting_retry, gate_overdue, unknown]
+    ObsRuntimePostCaptureClassCounts:
+      type: object
+      description: Replica-view counts for one ordered class over all inspected targets before clipping. Views share fleet data; these are neither unique deployment counts nor completion counters.
+      required: [class, nonempty_views, empty_views, unknown_age_views]
+      properties:
+        class: { $ref: '#/components/schemas/ObsRuntimePostCaptureClassName' }
+        nonempty_views: { type: integer, minimum: 0 }
+        empty_views: { type: integer, minimum: 0 }
+        unknown_age_views: { type: integer, minimum: 0 }
+    ObsRuntimePostCaptureItem:
+      type: object
+      description: One sanitized image worker replica view of the shared fleet, retaining job and target identity. Collection status, observer expectation and eight class observations are independently validated. No customer, app or deployment identity is exposed.
+      required: [job, state, collection, observation, classes]
+      properties:
+        job: { type: string, enum: [imaged] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        collection: { $ref: '#/components/schemas/ObsRuntimeHandoffCollection' }
+        observation: { $ref: '#/components/schemas/ObsRuntimePostCaptureObservation' }
+        classes:
+          type: array
+          minItems: 8
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ObsRuntimePostCaptureClass' }
+    ObsRuntimePostCaptureObservation:
+      type: object
+      description: Whether post-capture observation is expected, independently of collection success and class evidence. A disabled observer can retain a fresh nonempty view.
+      required: [state]
+      properties:
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimePostCaptureObservationValues' }
+    ObsRuntimePostCaptureObservationValues:
+      type: object
+      description: Reported observer expectation bit, including explicit false on shutdown. It does not establish worker idleness, drained work or completed deployment.
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    ObsRuntimePostCaptureClass:
+      type: object
+      description: One ordered post-capture evidence class. Values require fresh successful collection after the evidence boundary, fresh scrape evidence and original class clocks matching collection metadata. Valid positive evidence survives gaps in other classes.
+      required: [class, state]
+      properties:
+        class: { $ref: '#/components/schemas/ObsRuntimePostCaptureClassName' }
+        state: { type: string, enum: [nonempty, empty, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimePostCaptureClassValues' }
+    ObsRuntimePostCaptureClassValues:
+      type: object
+      description: Durable snapshot-flow evidence in this replica view. Unknown age is included in pending. Known boundary timing is required only when pending exceeds unknown_age; otherwise both timing fields are absent. A boundary can be capture park time, init publication or retained gate/verification evidence and may precede the rollout. Age is not continuous residence in a class, an execution deadline or proof of deployment readiness. The unknown class requires pending equal to unknown_age. The integer ceiling is a wire bound, not an admission quota.
+      required: [pending, unknown_age]
+      properties:
+        pending: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        unknown_age: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        oldest_boundary_at: { type: string, format: date-time }
+        oldest_known_age_seconds: { type: number, minimum: 0 }
+    ObsRuntimeSnapshotPrimeHealth:
+      type: object
+      description: Advisory snapshot-priming evidence for scheduler jobs selected by v2 profiles. Ownership scopes may overlap; never sum attempt counts across replicas. Active or recorded snapshots do not establish deployment readiness.
+      required: [state, counts, classes, incomplete, items, omitted_items]
+      properties:
+        state: { type: string, enum: [nonempty, empty, incomplete, unknown] }
+        reason: { type: string, enum: [snapshot_attempts_observed, incomplete_snapshot_prime_evidence, snapshot_prime_evidence_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeCounts' }
+        classes:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeClassCounts' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeSnapshotPrimeCounts:
+      type: object
+      description: Complete/missing/stale/conflicting/unavailable partition inspected scheduler targets. Other counts overlap this partition and describe observation scopes. Nonempty scopes have any current attempts, including active or snapshot-recorded classes; empty requires all six classes known empty. Full component availability can include unknown ages.
+      required: [expected, observed, complete, missing, stale, conflicting, unavailable, unexpected, nonempty_scopes, empty_scopes, unknown_age_scopes, unsuccessful_collections, enabled_scopes, disabled_scopes]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        complete: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+        nonempty_scopes: { type: integer, minimum: 0 }
+        empty_scopes: { type: integer, minimum: 0 }
+        unknown_age_scopes: { type: integer, minimum: 0 }
+        unsuccessful_collections: { type: integer, minimum: 0 }
+        enabled_scopes: { type: integer, minimum: 0 }
+        disabled_scopes: { type: integer, minimum: 0 }
+    ObsRuntimeSnapshotPrimeClassName:
+      type: string
+      description: Closed current snapshot_prepare classification. These are durable evidence classes, not a new eligibility or health verdict. Unknown class counts always have unknown ages.
+      enum: [waiting, release_blocked, active, publication_pending, snapshot_recorded, unknown]
+    ObsRuntimeSnapshotPrimeClassCounts:
+      type: object
+      description: Observation scope counts for one closed class across the full inspected set before clipping. These are neither unique attempt totals nor completion counters.
+      required: [class, nonempty_scopes, empty_scopes, unknown_age_scopes]
+      properties:
+        class: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeClassName' }
+        nonempty_scopes: { type: integer, minimum: 0 }
+        empty_scopes: { type: integer, minimum: 0 }
+        unknown_age_scopes: { type: integer, minimum: 0 }
+    ObsRuntimeSnapshotPrimeItem:
+      type: object
+      description: One sanitized scheduler ownership scope, identified by its selected job and target. Independent collection status, observer expectation and six ordered class observations contain no app or deployment identities.
+      required: [job, state, collection, observation, classes]
+      properties:
+        job: { type: string, enum: [schedd, schedd-compute] }
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        collection: { $ref: '#/components/schemas/ObsRuntimeHandoffCollection' }
+        observation: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeObservation' }
+        classes:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeClass' }
+    ObsRuntimeSnapshotPrimeObservation:
+      type: object
+      description: Whether snapshot-prime observation is expected, independently of collection success and attempt evidence. Disabled observation can coexist with nonempty classes.
+      required: [state]
+      properties:
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeObservationValues' }
+    ObsRuntimeSnapshotPrimeObservationValues:
+      type: object
+      description: Reported observer expectation bit, including explicit false on shutdown. It does not imply worker idleness or drained work.
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    ObsRuntimeSnapshotPrimeClass:
+      type: object
+      description: One ordered snapshot-prime class. Usable values require successful fresh collection after the evidence boundary and the same original scrape clock as collection metadata. Incomplete classes never become empty.
+      required: [class, state]
+      properties:
+        class: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeClassName' }
+        state: { type: string, enum: [nonempty, empty, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeSnapshotPrimeClassValues' }
+    ObsRuntimeSnapshotPrimeClassValues:
+      type: object
+      description: Current attempts in this scheduler scope. Unknown age is included in pending. Oldest known timing is required only when pending exceeds unknown_age, otherwise both timing fields are absent. The attempt boundary accounts for stage start, release completion, runtime invalidation and known instance activity; it is not continuous idle time. The unknown class requires pending equal to unknown_age. Counts have an exact-integer wire ceiling, not an admission quota.
+      required: [pending, unknown_age]
+      properties:
+        pending: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        unknown_age: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        oldest_attempt_at: { type: string, format: date-time }
+        oldest_known_age_seconds: { type: number, minimum: 0 }
+    ObsRuntimePreparationHealth:
+      type: object
+      description: Advisory durable image-preparation evidence for image workers in v2 profiles. Counts describe observation scopes, which may overlap across replicas. Positive phase evidence survives gaps in other components. No execution deadline or deployment success is inferred.
+      required: [state, counts, phases, incomplete, items, omitted_items]
+      properties:
+        state: { type: string, enum: [waiting, empty, incomplete, unknown] }
+        reason: { type: string, enum: [pending_preparations_observed, incomplete_preparation_evidence, preparation_evidence_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimePreparationCounts' }
+        phases:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { $ref: '#/components/schemas/ObsRuntimePreparationPhaseCounts' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimePreparationItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimePreparationCounts:
+      type: object
+      description: Complete/missing/stale/conflicting/unavailable partition targets. Remaining counts overlap that partition. Complete means usable components; historical ages may still be unknown. Waiting scopes have any observed pending phase; empty scopes have all three phases known empty. Disabled observation never implies drained work.
+      required: [expected, observed, complete, missing, stale, conflicting, unavailable, unexpected, waiting_scopes, empty_scopes, unknown_age_scopes, unsuccessful_collections, enabled_scopes, disabled_scopes]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        complete: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+        waiting_scopes: { type: integer, minimum: 0 }
+        empty_scopes: { type: integer, minimum: 0 }
+        unknown_age_scopes: { type: integer, minimum: 0 }
+        unsuccessful_collections: { type: integer, minimum: 0 }
+        enabled_scopes: { type: integer, minimum: 0 }
+        disabled_scopes: { type: integer, minimum: 0 }
+    ObsRuntimePreparationPhaseName:
+      type: string
+      description: Durable preparation checkpoint phase, ordered preparing, layer_published, scan_complete. This is the last committed phase, including time waiting to resume, not the currently executing substep.
+      enum: [preparing, layer_published, scan_complete]
+    ObsRuntimePreparationPhaseCounts:
+      type: object
+      description: Observation scope counts for one closed phase, retained over the complete inspected set before preview clipping. These are not checkpoint totals or completion counters.
+      required: [phase, waiting_scopes, empty_scopes, unknown_age_scopes]
+      properties:
+        phase: { $ref: '#/components/schemas/ObsRuntimePreparationPhaseName' }
+        waiting_scopes: { type: integer, minimum: 0 }
+        empty_scopes: { type: integer, minimum: 0 }
+        unknown_age_scopes: { type: integer, minimum: 0 }
+    ObsRuntimePreparationItem:
+      type: object
+      description: One sanitized image worker recovery scope. Collection status, observation expectation and three ordered phase observations are validated independently; no build, app, or deployment identity is exposed.
+      required: [state, collection, observation, phases]
+      properties:
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        collection: { $ref: '#/components/schemas/ObsRuntimeHandoffCollection' }
+        observation: { $ref: '#/components/schemas/ObsRuntimePreparationObservation' }
+        phases:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { $ref: '#/components/schemas/ObsRuntimePreparationPhase' }
+    ObsRuntimePreparationObservation:
+      type: object
+      description: Whether the preparation observer is expected, independently of collection success and pending work. A false enabled bit can coexist with pending checkpoints.
+      required: [state]
+      properties:
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimePreparationObservationValues' }
+    ObsRuntimePreparationObservationValues:
+      type: object
+      description: Reported observer expectation bit, including explicit false on shutdown. It is not worker activity, cancellation completion, or proof of no work.
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    ObsRuntimePreparationPhase:
+      type: object
+      description: One ordered durable phase. Usable values require successful fresh collection after the evidence boundary and the same original scrape clock as collection metadata. Missing or expired snapshots never become empty.
+      required: [phase, state]
+      properties:
+        phase: { $ref: '#/components/schemas/ObsRuntimePreparationPhaseName' }
+        state: { type: string, enum: [waiting, empty, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimePreparationPhaseValues' }
+    ObsRuntimePreparationPhaseValues:
+      type: object
+      description: Pending active or recoverable checkpoints in this scope. Unknown age is included in pending. When pending exceeds unknown_age, oldest known timing is required; otherwise both optional timing fields are absent. Phase start may precede the rollout and includes time waiting to resume. Counts obey an exact-integer wire bound, not an admission quota.
+      required: [pending, unknown_age]
+      properties:
+        pending: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        unknown_age: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        oldest_phase_started_at: { type: string, format: date-time }
+        oldest_known_age_seconds: { type: number, minimum: 0 }
+    ObsRuntimeHandoffHealth:
+      type: object
+      description: Advisory build-to-image handoff evidence for selected image workers in v2 profiles. Replica recovery scopes can overlap; pending values are never summed into a fleet total. Positive waiting evidence survives incomplete recovery metadata.
+      required: [state, counts, incomplete, items, omitted_items]
+      properties:
+        state: { type: string, enum: [waiting, empty, incomplete, unknown] }
+        reason: { type: string, enum: [pending_handoffs_observed, incomplete_handoff_evidence, handoff_evidence_unavailable] }
+        counts: { $ref: '#/components/schemas/ObsRuntimeHandoffCounts' }
+        incomplete: { type: boolean }
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsRuntimeHandoffItem' }
+        omitted_items: { type: integer, minimum: 0 }
+    ObsRuntimeHandoffCounts:
+      type: object
+      description: Complete/missing/stale/conflicting/unavailable partition inspected targets. Backlog and recovery counts overlap that partition and count observation scopes, not unique builds. Unsuccessful collections count fresh zero success reports, including observers without any successful read yet.
+      required: [expected, observed, complete, missing, stale, conflicting, unavailable, unexpected, waiting_scopes, empty_scopes, unsuccessful_collections, working_recovery_scopes, waiting_recovery_scopes, stopping_recovery_scopes, not_started_recovery_scopes]
+      properties:
+        expected: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+        complete: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        conflicting: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unexpected: { type: integer, minimum: 0 }
+        waiting_scopes: { type: integer, minimum: 0 }
+        empty_scopes: { type: integer, minimum: 0 }
+        unsuccessful_collections: { type: integer, minimum: 0 }
+        working_recovery_scopes: { type: integer, minimum: 0 }
+        waiting_recovery_scopes: { type: integer, minimum: 0 }
+        stopping_recovery_scopes: { type: integer, minimum: 0 }
+        not_started_recovery_scopes: { type: integer, minimum: 0 }
+    ObsRuntimeHandoffItem:
+      type: object
+      description: One sanitized image worker's collection, pending-work snapshot and recovery activity. Each component is independently validated against the same original scrape target.
+      required: [state, collection, backlog, recovery]
+      properties:
+        node: { type: string, maxLength: 128 }
+        target_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        unexpected: { type: boolean }
+        scrape_observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        collection: { $ref: '#/components/schemas/ObsRuntimeHandoffCollection' }
+        backlog: { $ref: '#/components/schemas/ObsRuntimeHandoffBacklog' }
+        recovery: { $ref: '#/components/schemas/ObsRuntimeHandoffRecovery' }
+    ObsRuntimeHandoffEvidenceReason:
+      type: string
+      description: Closed reason for incomplete or unusable handoff evidence; collection prerequisites apply to backlog observations.
+      enum: [expected_target_missing, metric_missing, scrape_stale, metric_stale, conflicting_targets, conflicting_series, conflicting_sample_times, source_unavailable, invalid_evidence, invalid_sample_time, scrape_before_boundary, scrape_down, metric_before_boundary, invalid_value, collection_failed, collection_not_observed, collection_stale, collection_before_boundary]
+    ObsRuntimeHandoffCollection:
+      type: object
+      description: Freshness and shape of the collection-status gauges. Available metadata can report unsuccessful or expired collection; that never establishes an empty backlog.
+      required: [state]
+      properties:
+        state: { type: string, enum: [available, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeHandoffCollectionValues' }
+    ObsRuntimeHandoffCollectionValues:
+      type: object
+      description: The reported collection-success bit and start of the last successful snapshot read, frozen on failure. A zero success report can also precede the first successful read.
+      required: [success]
+      properties:
+        success: { type: boolean }
+        last_success_at: { type: string, format: date-time }
+    ObsRuntimeHandoffBacklog:
+      type: object
+      description: Waiting or known-empty snapshot evidence requires successful fresh collection after the evidence boundary and coherent original sample clocks. Missing evidence never becomes zero work.
+      required: [state]
+      properties:
+        state: { type: string, enum: [waiting, empty, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeHandoffBacklogValues' }
+    ObsRuntimeHandoffBacklogValues:
+      type: object
+      description: Eligible succeeded builds without an image-preparation checkpoint in this instance's recovery scope. Oldest finish time can precede the rollout. Zero work omits that time; ages allow the existing clock skew and never imply a stalled worker or a ready deployment.
+      required: [pending, oldest_wait_seconds]
+      properties:
+        pending: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        oldest_finished_at: { type: string, format: date-time }
+        oldest_wait_seconds: { type: number, minimum: 0, maximum: 315360000 }
+    ObsRuntimeHandoffRecovery:
+      type: object
+      description: Sampled recovery-pass activity with no new progress timeout. Synchronous image work can legitimately occupy a long pass; stopping can retain an in-flight pass and does not prove drained work.
+      required: [state]
+      properties:
+        state: { type: string, enum: [waiting, working, stopping, not_started, missing, stale, conflicting, unavailable] }
+        reason: { $ref: '#/components/schemas/ObsRuntimeHandoffEvidenceReason' }
+        observed_at: { type: string, format: date-time }
+        values: { $ref: '#/components/schemas/ObsRuntimeHandoffRecoveryValues' }
+    ObsRuntimeHandoffRecoveryValues:
+      type: object
+      description: Whether recovery is expected and inside a pass, with its latest attempt/return clocks. Returning includes failed and no-op passes and does not prove a committed checkpoint, successful preparation or deployment readiness.
+      required: [enabled, inflight]
+      properties:
+        enabled: { type: boolean }
+        inflight: { type: boolean }
+        last_attempt_at: { type: string, format: date-time }
+        last_completed_at: { type: string, format: date-time }
     ObsInputHealth:
       type: object
       description: Critical telemetry sample evidence for a selected minimum deployment role expectation.
@@ -102241,6 +104557,54 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean, description: 'false pauses the check; true resumes it.' }
+    SetAppProtectionRequest:
+      description: 'Turns production protection on or off. on creates the baseline; off deletes the baseline objects you have not changed.'
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: ['on', 'off']
+          description: on enrolls the app; off removes the unchanged protection objects.
+    AppProtectionResponse:
+      description: 'An app''s production protection.'
+      type: object
+      required: [state, protected, items]
+      properties:
+        state:
+          type: string
+          enum: ['on', 'off', none]
+          description: 'on when the app is enrolled, off when its owner turned protection off, none when the app was never enrolled.'
+        protected:
+          type: boolean
+          description: 'True when the app is enrolled and every protection object is active.'
+        items:
+          type: array
+          description: 'Every protection object in a fixed order; empty when state is none.'
+          items: { $ref: '#/components/schemas/AppProtectionItemStatus' }
+    AppProtectionItemStatus:
+      description: 'One production protection object.'
+      type: object
+      required: [item, kind, name, state]
+      properties:
+        item:
+          type: string
+          enum: [availability_slo, latency_slo, health_check, email_channel, availability_burn_alert, latency_burn_alert, health_alert, availability_gate]
+        kind:
+          type: string
+          enum: [slo, synthetic_check, notification_channel, alert_rule, release_gate]
+        name: { type: string, example: availability }
+        state:
+          type: string
+          enum: [active, pending, skipped, removed]
+          description: 'active when the object was created and still exists; pending while the app waits for a live production deployment; skipped when it could not be created yet (see reason), retried automatically; removed when you deleted it, in which case it is not created again.'
+        object_id:
+          type: string
+          description: 'The created object''s id. Present when state is active or removed.'
+        reason:
+          type: string
+          enum: [plan, not_released, email_unverified, name_taken, limit_reached, needs_slo, needs_channel, needs_check, probes_unavailable]
+          description: 'Why a skipped object could not be created yet: the plan does not include it, the feature is not available to the account, the account email is not verified, you already have an object with this name, the app or account is at its limit, the SLO, email channel or health check it needs was not created, or free health probes are not running on this platform.'
     SyntheticCheckResponse:
       description: 'One synthetic check definition.'
       type: object

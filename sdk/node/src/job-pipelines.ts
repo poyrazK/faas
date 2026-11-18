@@ -2,7 +2,7 @@
 import { defineWorkflow, type WorkflowDefinition } from './workflows.js';
 import { JobContract, jobHash, jobValueHash, jobSnapshot, jobScope, jobInputId, prepareJobInput, type JobInput, type JobStore } from './job-runtime.js';
 import type { TypedJob, JobProgress } from './typed-jobs.js';
-import { PipelineError, parsePipelineLineage, pipelineScope, pipelineName, pipelineJobIdentity, parsePipelineJobReceipt, matchPipelineJob, type PipelineScope, type PipelineEnvelope, type PipelineResultEnvelope, type PipelineJobStore, type PipelineJobIntent, type PipelineJobReceipt } from './pipeline-state.js';
+import { PipelineError, parsePipelineTrigger, parsePipelineLineage, pipelineScope, pipelineName, pipelineJobIdentity, parsePipelineJobReceipt, matchPipelineJob, type PipelineScope, type PipelineEnvelope, type PipelineResultEnvelope, type PipelineJobStore, type PipelineJobIntent, type PipelineJobReceipt } from './pipeline-state.js';
 export * from './pipeline-state.js';
 import { PipelineChildren, PipelineChildrenError, type PipelineChild } from './pipeline-children.js';
 import type { PipelineChildPolicy, PipelineBatchResult, PipelineChildView } from './pipeline-children-types.js';
@@ -67,6 +67,7 @@ export function defineJobPipeline<I, O, J extends Jobs>(contract: JobContract<I,
   const definition = defineWorkflow<PipelineEnvelope<I>, PipelineResultEnvelope<O>>(contract.spec.name, async (envelope, wf) => {
     if (!envelope || envelope.version !== 1 || envelope.contract_sha256 !== contract.sha256 || !pipelineName(envelope.owner_id) || jobValueHash(envelope.scope) !== jobValueHash(scope)) throw new PipelineError('scope_mismatch');
     if (envelope.lineage !== undefined) parsePipelineLineage(envelope.lineage);
+    if (envelope.trigger !== undefined) parsePipelineTrigger(envelope.trigger);
     const input = contract.input(envelope.input), owner = envelope.owner_id, used = new Set<string>();
     let count = 0, journalBytes = 0, pendingGates = 0, blocked = false;
     const canSubmit = () => { if (pendingGates || blocked) throw new PipelineGateError('blocked'); };

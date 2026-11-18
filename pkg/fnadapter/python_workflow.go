@@ -16,6 +16,17 @@ def _workflow_headers(request):
 def _is_workflow_call(request):
     return _workflow_headers(request).get("x-faas-workflow-mode") == "code"
 
+# A workflow function (FAAS_FUNCTION_WORKFLOW=1, stamped by imaged) runs
+# only through workflow runs; any other request gets a 404 problem instead of
+# handler(event, ctx), which would reach wf.call on the ctx and answer 500.
+_IS_WORKFLOW_FUNCTION = os.environ.get("FAAS_FUNCTION_WORKFLOW", "") == "1"
+
+def _workflow_plain_call_problem(request):
+    if not _IS_WORKFLOW_FUNCTION or _is_workflow_call(request):
+        return None
+    return _workflow_problem(404, "workflow_function_not_invocable",
+                             "this function is a workflow: start a run with functions.<name>.start() or gregale workflow run")
+
 def _workflow_problem(status, code, detail):
     docs = "https://gregale.dev/docs/errors#" + code
     return _whole(status, {"content-type": "application/problem+json"},

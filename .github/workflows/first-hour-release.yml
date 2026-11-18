@@ -1,0 +1,84 @@
+name: First-hour released CLI qualification
+
+on:
+  # The release pipeline creates releases with GITHUB_TOKEN, so release:
+  # published would not start a second workflow. Run after its publication
+  # attempt, including partial failures; only published CLI assets qualify.
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Exact published CLI tag (vX.Y.Z or vX.Y.Z-rc.N)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: first-hour-release-qualification
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: first-hour-acceptance
+    steps:
+      # Always use the trusted acceptance harness from main. The released
+      # executable is downloaded separately, never rebuilt from this checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Qualify published archive and deployed first hour
+        env:
+          RELEASE_TAG: ${{ inputs.release || github.event.workflow_run.head_branch }}
+          ACCEPTANCE_API: ${{ vars.GREGALE_ACCEPTANCE_API_URL }}
+          ACCEPTANCE_PLAN: ${{ vars.GREGALE_ACCEPTANCE_PLAN }}
+          QUALIFICATION_TOKEN: ${{ secrets.GREGALE_ACCEPTANCE_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          token_file="$RUNNER_TEMP/first-hour-acceptance.token"
+          trap 'rm -f "$token_file"' EXIT
+          printf '%s' "$QUALIFICATION_TOKEN" > "$token_file"
+          unset QUALIFICATION_TOKEN
+          python3 scripts/first-hour/qualify_release.py \
+            --release "$RELEASE_TAG" --api "$ACCEPTANCE_API" \
+            --token-file "$token_file" --plan "${ACCEPTANCE_PLAN:-unknown}" \
+            --out "$RUNNER_TEMP/first-hour-release"
+      - name: Record qualification summary
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/first-hour-release/qualification.md" ]; then
+            cat "$RUNNER_TEMP/first-hour-release/qualification.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$RUNNER_TEMP/first-hour-release/baseline.md" ]; then
+            cat "$RUNNER_TEMP/first-hour-release/baseline.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload sanitized qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: first-hour-release-${{ github.run_id }}-${{ github.run_attempt }}
+          # Never upload private/, metadata, raw Go output or journey.log.
+          path: |
+            ${{ runner.temp }}/first-hour-release/qualification.json
+            ${{ runner.temp }}/first-hour-release/qualification.md
+            ${{ runner.temp }}/first-hour-release/baseline.json
+            ${{ runner.temp }}/first-hour-release/baseline.md
+          if-no-files-found: warn
+          retention-days: 30

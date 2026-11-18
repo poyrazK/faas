@@ -1348,7 +1348,7 @@
           [Service]
           Environment=FAAS_IMAGED_LAYER_REUSE={{ '1' if (imaged_app_layer_reuse | default(false) | bool) else '0' }}
 
-    - name: Install builderd's shared platform blobs and BuildKit seed switches
+    - name: Install builderd's shared platform blobs, BuildKit seed and deferred cache export switches
       ansible.builtin.copy:
         dest: /etc/systemd/system/faas-builderd.service.d/zz-faas-perf-switches.conf
         owner: root
@@ -1358,6 +1358,20 @@
           [Service]
           Environment=FAAS_BUILD_SHARED_PLATFORM_BLOBS={{ '1' if (builderd_shared_platform_blobs | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_BUILDKIT_SEED={{ '1' if (builderd_buildkit_seed | default(false) | bool) else '0' }}
+          Environment=FAAS_BUILD_DEFER_CACHE_EXPORT={{ '1' if (builderd_defer_cache_export | default(false) | bool) else '0' }}
+
+    # ADR-20261109170000: refuse v1 layer signatures, which do not name their
+    # storage key and can be replayed onto another app's layer. Only true once
+    # `gregalectl artifact resign` has converted every stored layer.
+    - name: Install schedd's v2-only artifact signature switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-artifact-signatures.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2={{ '1' if (artifact_signature_require_v2 | default(false) | bool) else '0' }}
 
     # The 2026-11-15 trial set these switches, and the edge's binary hop (now
     # manifest hot_path.edge_binary_hop), by hand; fsn-2 also kept its
@@ -1716,6 +1730,32 @@
       changed_when: false
       when: (faas_join_rollout_phase | default('full')) == 'activate'
 
+    # --activate-prepared starts above, so it also skipped the first play's
+    # compute-node lookup. The no-drain decision and the drain rescue read it:
+    # without it the adoption check never ran and every current-contract
+    # activation drained the node (rc.354: ~5.6 min per node, every live guest
+    # migrated), and a failed drain could not tell the node had been active
+    # (ADR-20261118060000). A run from the top keeps its earlier lookup.
+    - name: Look up the existing compute node skipped by --activate-prepared
+      delegate_to: "{{ faas_join_db_operator_host | default(inventory_hostname) }}"
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - show
+          - --node
+          - "{{ faas_join_database_node }}"
+          - --break-glass-db
+      register: faas_join_activate_existing_compute_node
+      changed_when: false
+      failed_when: faas_join_activate_existing_compute_node.rc not in [0, 3]
+      when: faas_join_existing_compute_node is not defined
+
+    - name: Use the activation's compute-node lookup
+      ansible.builtin.set_fact:
+        faas_join_existing_compute_node: "{{ faas_join_activate_existing_compute_node }}"
+      when: faas_join_existing_compute_node is not defined
+
     # --activate-prepared starts above, so it skipped the pre-stage check:
     # repeat it here for every mode. Its answer forces the drain, places the
     # deferred pre-stage behind the drain barrier, and guards the rescue's
@@ -1725,6 +1765,13 @@
         path: /opt/faas/current/bin/vmmd
         follow: true
       register: faas_join_serving_vmmd_binary
+
+    # The adoption check reads the active vmmd stat, which --activate-prepared
+    # skipped; this stat reads the same path (ADR-20261118060000).
+    - name: Use the serving vmmd stat when --activate-prepared skipped the earlier one
+      ansible.builtin.set_fact:
+        faas_join_active_vmmd: "{{ faas_join_serving_vmmd_binary }}"
+      when: faas_join_active_vmmd is not defined
 
     - name: Read the serving vmmd process before draining
       ansible.builtin.command:

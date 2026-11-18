@@ -59,5 +59,5 @@ func (h *Handler) checkContainerBase(ctx context.Context, base state.BaseImagePr
 	if err != nil {
 		return err
 	}
-	return checkStoredBaseArtifact(ctx, be, base.Input.Artifact)
+	return h.checkCachedBaseArtifact(ctx, be, base.Input.Artifact)
 }

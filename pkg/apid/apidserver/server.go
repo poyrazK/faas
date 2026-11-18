@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/apid/sales"
 	"github.com/onebox-faas/faas/pkg/apid/support"
+	"github.com/onebox-faas/faas/pkg/apid/supportaccess"
 
 	"github.com/onebox-faas/faas/pkg/apid/storedworkflowconsole"
 
@@ -576,8 +577,12 @@ type server struct {
 	// preflight handler (GET /v1/preflight). It is built on first use so the
 	// egress-guarded HTTP client and verdict cache are not allocated on
 	// deployments that never receive a check.
-	preflightOnce      sync.Once
-	preflightHandler   *preflight.Handler
+	preflightOnce    sync.Once
+	preflightHandler *preflight.Handler
+	// supportAccessOnce guards lazy construction of the support-access
+	// service (ADR-20261116163508), shared by every request.
+	supportAccessOnce  sync.Once
+	supportAccessSvc   *supportaccess.Service
 	statusMetrics      *statusMetrics
 	idempotencyMetrics *idempotencyMetrics
 	signupMetrics      *signupMetrics
@@ -2229,6 +2234,17 @@ func (s *server) handler() http.Handler {
 	// ADR-20261114170352: an owner can require two-factor authentication.
 	mux.HandleFunc("GET /v1/orgs/{slug}/security-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgSecurityPolicy)))))
 	mux.HandleFunc("PUT /v1/orgs/{slug}/security-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.putOrgSecurityPolicy))))))
+	// ADR-20261116163508: owners and admins grant Gregale support access.
+	// Granting and approving need a signed-in browser and the ownership-transfer
+	// step-up rule; revoking and declining work with a key, since taking access
+	// away is always safe. Dark behind the support_grants platform flag.
+	mux.HandleFunc("GET /v1/orgs/{slug}/support-access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.supportAccess(supportaccess.HTTP.Overview))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/support-access/grants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.supportAccess(supportaccess.HTTP.Grant)))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/support-access/grants/{id}/revoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.supportAccess(supportaccess.HTTP.Revoke))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/support-access/requests/{id}/approve", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.supportAccess(supportaccess.HTTP.Approve)))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/support-access/requests/{id}/decline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.supportAccess(supportaccess.HTTP.Decline))))))
+	mux.HandleFunc("POST /v1/admin/support-access/requests", s.authLimited(s.requireAdminMutation(s.supportAccess(supportaccess.HTTP.OperatorRequest))))
+	mux.HandleFunc("GET /v1/admin/support-access/grants", s.authLimited(s.requireOperatorSessionRead(s.supportAccess(supportaccess.HTTP.OperatorGrants))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgMembers)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.loadOrg(s.inviteOrgMember))))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.changeOrgMemberRole)))))
@@ -2432,6 +2448,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/experiments/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteFlagExperiment))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startFlagExperiment))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.stopFlagExperiment))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.shipFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentResults)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rollbackFeatureFlags))))
 	// ADR-20261104120000: enable the crons a full clone copied paused into a stage.
@@ -3140,6 +3157,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/tool-publications/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Handler(s.store, os.Getenv("FAAS_MCP_PRIVATE_TOOL_PUBLICATION") == "1"))))
 	mux.HandleFunc("GET /v1/task-tool-source-intents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.privateTools.HostedTaskSourceIntent())))
 	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.HostedTaskSourceIntent()))))
+	// Review changes recheck authority and pins in their own journal transaction;
+	// a generic Idempotency-Key response replay must never bypass those checks.
+	mux.HandleFunc("POST /v1/task-tool-source-intents/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.HostedTaskSourceIntent()))))
+	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/decision", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskSourceIntent()))))
+	mux.HandleFunc("GET /v1/task-tool-source-intents/{id}/bindings", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.privateTools.HostedTaskBindings())))
+	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskBindings()))))
+	mux.HandleFunc("POST /v1/task-tool-source-intents/{id}/bindings/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskBindings()))))
+	mux.HandleFunc("POST /v1/task-tool-source-intents/{id}/bindings/revoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskBindings()))))
+
 	mux.HandleFunc("GET /v1/task-tool-release-intents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.privateTools.TaskReleaseIntent())))
 	mux.HandleFunc("PUT /v1/task-tool-release-intents/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.TaskReleaseIntent()))))
 	mux.HandleFunc("POST /v1/task-tool-release-intents/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.TaskReleaseIntent()))))
@@ -3252,6 +3278,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSLO)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteSLO)))
 	// ADR-748: synthetic HTTP checks.
+	mux.HandleFunc("GET /v1/apps/{slug}/protection", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppProtection)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/protection", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.setAppProtection)))
 	mux.HandleFunc("GET /v1/apps/{slug}/synthetics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listSyntheticChecks)))
 	mux.HandleFunc("POST /v1/apps/{slug}/synthetics", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSyntheticCheck))))
 	mux.HandleFunc("GET /v1/apps/{slug}/synthetics/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSyntheticCheck)))
@@ -3515,6 +3543,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Get)))))
 	mux.HandleFunc("PATCH /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Update)))))
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Close)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/task", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).Task)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/actions/{seq}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ActionResult)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/actions/{seq}/screenshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ActionScreenshot)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/egress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).GetEgress)))))
+	mux.HandleFunc("GET /v1/sandbox-egress-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).GetEgressPolicy)))))
+	mux.HandleFunc("PUT /v1/sandbox-egress-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.sandboxRoute((*sandboxes.Handler).PutEgressPolicy))))))
 	// ADR-20261027090013 §11: exposed ports. Exposing or reading one port
 	// mints its preview token, so both need the write scope.
 	mux.HandleFunc("POST /v1/sandboxes/{id}/ports", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).ExposePort)))))
@@ -4822,6 +4856,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireOperatorRead(s.obsRuleCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireOperatorRead(s.obsRecordingCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireOperatorRead(s.obsInputHealth)))
+	mux.HandleFunc("GET /v1/admin/obs/runtime-builds", s.authLimited(s.requireOperatorRead(s.obsRuntimeBuilds)))
 	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
 		s.authLimited(s.requireOperatorSessionRead(s.getOperatorDataRepairHealth)))
 	// Unified incident inbox. This is a read-only correlation projection over
@@ -5548,6 +5583,12 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/releases/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderReleasePage))))
 	mux.Handle("GET /dashboard/apps/{slug}/custom-metrics", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomMetricsDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
+	// ADR-20261116163508: the Support access page.
+	mux.Handle("GET /dashboard/support-access", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderSupportAccessDashboard))))
+	mux.Handle("POST /dashboard/support-access/{org}/grants", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardSupportAccessPost)))))
+	mux.Handle("POST /dashboard/support-access/{org}/grants/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSupportAccessPost))))
+	mux.Handle("POST /dashboard/support-access/{org}/requests/{id}/approve", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardSupportAccessPost)))))
+	mux.Handle("POST /dashboard/support-access/{org}/requests/{id}/decline", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSupportAccessPost))))
 
 	// PR-B bind picker UX (handlers_install_github.go). Both routes
 	// are cookie-session-authenticated (NOT API-key auth — the

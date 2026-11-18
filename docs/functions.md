@@ -536,6 +536,11 @@ In Python, write `async def handler(input, wf)` with the same operations
   (`@gregale/sdk-node` in `package.json`, `gregale-sdk` in
   `requirements.txt` or `pyproject.toml`); `gregale deploy` refuses it
   otherwise. Workflows are available on Hobby and higher plans.
+- A workflow function runs only through workflow runs. A plain request to
+  its URL, or a sibling's `call()`, answers `404`
+  `workflow_function_not_invocable`; start a run with
+  `functions.<name>.start()` or `gregale workflow run`. Its deploy checks
+  that its route answers rather than calling the handler.
 
 `gregale dev --local` drives workflow functions in process: steps and
 `wf.call` really run against the local functions, sleeps finish at once

@@ -99,18 +99,18 @@ func main() {
 	if os.Getenv(dependencyInputsHelperEnv) == dependencyInputsHelperValue && os.Getpid() != 1 {
 		os.Exit(runDependencyCacheInputs(railpackFrontendRef, os.Args[1:], os.Stdout))
 	}
-	if err := boot(); err != nil {
-		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
-		drainConsole(os.Stderr)
-		os.Exit(1)
-	}
+	// vmmd reads the status (0 when boot returned nil, else 1) from the
+	// kernel's "Attempted to kill init! exitcode=" line.
+	os.Exit(finishBoot(boot(), os.Stderr, func() { drainConsole(os.Stderr) }))
 }
 
 // drainConsole waits until the console has transmitted what guest-init wrote
 // to f (tcdrain). PID 1's exit panics the kernel at once, and the panic dump
 // cut guest-init's reason line short on the serial console: "guest-init: app
 // [    3.600487] Kernel panic - not syncing: Attempted to kill init!" (Hunt 34
-// H34-35). Not a terminal: nothing to wait for.
+// H34-35, and the clean-exit line in the 2026-11-17 eval; see finishBoot).
+// stdout and stderr are the same console, so draining one drains both. Not a
+// terminal: nothing to wait for.
 func drainConsole(f *os.File) {
 	_ = unix.IoctlSetInt(int(f.Fd()), unix.TCSBRK, 1)
 }

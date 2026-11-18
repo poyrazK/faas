@@ -282,6 +282,7 @@ touch them. The tables below map each earlier name.
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
 | `gregale deployment timeline` | `gregale release timeline` |
+| `gregale deployment verify` | `gregale release verify` |
 | `gregale deployment wait` | `gregale release wait` |
 | `gregale deployments alias` | `gregale release alias` |
 | `gregale deploys cancel` | `gregale release cancel` |
@@ -391,6 +392,7 @@ touch them. The tables below map each earlier name.
 | `gregale flags experiments get` | `gregale flag experiment get` |
 | `gregale flags experiments list` | `gregale flag experiment list` |
 | `gregale flags experiments results` | `gregale flag experiment result get` |
+| `gregale flags experiments ship` | `gregale flag experiment promote` |
 | `gregale flags experiments start` | `gregale flag experiment start` |
 | `gregale flags experiments stop` | `gregale flag experiment stop` |
 | `gregale flags kill` | `gregale flag kill set` |
@@ -459,10 +461,12 @@ touch them. The tables below map each earlier name.
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
 | `gregale mcp task-wait` | `gregale mcp client wait` |
+| `gregale mcp tasks bindings` | `gregale mcp server tasks bind` |
 | `gregale mcp tasks execution` | `gregale mcp server tasks run` |
 | `gregale mcp tasks intent` | `gregale mcp server tasks review` |
 | `gregale mcp tasks observer` | `gregale mcp observer` |
 | `gregale mcp tasks release` | `gregale mcp server tasks deploy` |
+| `gregale mcp tasks source-review` | `gregale mcp server tasks audit` |
 | `gregale mcp tools` | `gregale mcp client tools` |
 | `gregale openapi dry-run` | `gregale api spec import --dry-run` |
 | `gregale openapi preview` | `gregale api spec apply --dry-run` |
@@ -478,6 +482,7 @@ touch them. The tables below map each earlier name.
 | `gregale orgs standards local-intent` | `gregale org standards local set` |
 | `gregale orgs standards operation abort` | `gregale org standards operation cancel` |
 | `gregale orgs standards reviews preview` | `gregale org standards reviews approve --dry-run` |
+| `gregale orgs support-access` | `gregale org support` |
 | `gregale orgs transfer-ownership` | `gregale org owner set` |
 | `gregale pipeline access` | `gregale pipeline access approve` |
 | `gregale pipeline access` | `gregale pipeline access check` |

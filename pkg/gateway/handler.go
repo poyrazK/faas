@@ -6674,7 +6674,7 @@ haveApp:
 		return
 	}
 	if routeProbe {
-		r = r.WithContext(withRouteProbe(r.Context(), probeDeploymentID, probeToken))
+		r = r.WithContext(withRouteProbe(r.Context(), probeDeploymentID, probeToken, h.routeProbeUnbilled(app, probeDeploymentID, probeToken)))
 	}
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
@@ -8628,6 +8628,9 @@ haveApp:
 	// already in flight. The latter is cold on the pinned path but admitted
 	// nothing, so it carries no method of its own.
 	waitedOnWake := cold || !platformWakeStart.IsZero()
+	if cold && wakeMethod != WakeMethodUnspecified {
+		h.recordPlatformProbeWake(r, app.ID, target.InstanceID, wakeStart)
+	}
 	if waitedOnWake && h.metrics != nil {
 		// Wake latency is "request-received to first upstream byte". The
 		// wake-timing RoundTripper stamps the inbound request's recorder at

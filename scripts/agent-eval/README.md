@@ -20,6 +20,25 @@ Tasks live in `tasks.json`:
 | `rollback-bad-release` | Restore service after a release that returns 500, without editing files |
 | `diagnose-failure` | Name the root cause of a failed deploy, changing nothing |
 | `deploy-retail-store` | Deploy `aws-containers/retail-store-sample-app` (five services, Compose) from the owner's own words |
+| `deploy-voting-app` | Deploy `dockersamples/example-voting-app` (Python, Node, .NET worker, Redis, Postgres) from the owner's own words |
+| `deploy-express-render` | Deploy Render's Express example |
+| `migrate-fastapi-render` | Move Render's FastAPI example; its start command is only in `render.yaml` |
+| `deploy-flask-render` | Deploy Render's Flask example |
+| `migrate-django-heroku` | Move Heroku's Django getting-started app; its `ALLOWED_HOSTS` opens only when Heroku's `DYNO` is set, so Gregale's smoke request gets 400 until the agent fixes it, and it asks for Python 3.15 |
+| `deploy-go-heroku` | Deploy Heroku's Go getting-started app; its Procfile starts `go-getting-started`, a binary only Heroku's buildpack makes |
+
+The five framework tasks follow the framework and migration guides
+(`docs/frameworks.md`, `docs/deploy-*.md`, `docs/migrate-from-*.md`): each
+passes when the app serves its page, and its features record whether the
+agent checked first (`--dry-run`), diagnosed with Gregale, and made the
+framework's fix in the repository. Run them for a baseline after a docs or
+CLI change:
+
+```sh
+python3 scripts/agent-eval/agent_eval.py run --agents claude,codex --toolsets none \
+  --tasks deploy-express-render,migrate-fastapi-render,deploy-flask-render,migrate-django-heroku,deploy-go-heroku \
+  --gregale ./bin/gregale
+```
 
 ### Foreign-repository tasks (ADR-20261112223000)
 
@@ -119,3 +138,11 @@ agent ran (`commands`), which the graders read.
 
 `make agent-eval-test` runs the harness's unit tests. It uses recorded
 transcript shapes and starts no agent.
+
+## First-hour tasks
+
+`first-hour-private` grades a private app through `release verify`, retaining the
+exact app/release/instance identity and actual application status.
+`first-hour-edit` starts with a private deployment and grades the changed source
+on a new release of the same app. Select these with `fix-failed-deploy` for the
+first-hour agent lane. See [the acceptance and baseline guide](../../docs/first-hour-acceptance.md).

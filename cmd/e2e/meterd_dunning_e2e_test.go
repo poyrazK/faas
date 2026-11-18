@@ -37,13 +37,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestDunning_PastDue7d_AdvancesToSuspended is the dunning transition
-// acceptance gate (audit finding #2). Seeds an account in past_due
-// with past_due_at 8 days old, polls for the row's status to flip to
-// suspended, then asserts a ParkInstance call was made (the
-// schedd→vmmd wire is covered by the metal tests; this proves only
-// the meterd→schedd boundary).
-func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
+// TestDunning_PastDue7d_MovesToFree is the dunning transition acceptance
+// gate (audit finding 2, as amended by billing review R9-1). Seeds an account
+// in past_due with past_due_at 8 days old and a running instance, and polls
+// for the account to move to the Free plan and become active again.
+func TestDunning_PastDue7d_MovesToFree(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
@@ -89,8 +87,7 @@ func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, defaultLocalNodeID, "")
-	if err != nil {
+	if _, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, defaultLocalNodeID, ""); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
@@ -107,7 +104,9 @@ func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
 		t.Fatalf("backdate past_due_at: %v", err)
 	}
 
-	// Poll for the suspended transition.
+	// Poll for the move to Free (billing review R9-1): non-payment past the
+	// 7-day grace moves the account to the Free plan and keeps it active;
+	// nothing is suspended or parked for non-payment.
 	deadline := time.Now().Add(dunningInterval + 5*time.Second)
 	for {
 		got, err := store.AccountByID(ctx, acct.ID)
@@ -115,48 +114,24 @@ func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
 			t.Fatalf("AccountByID: %v", err)
 		}
 		if got.Status == state.AccountSuspended {
+			t.Fatal("non-payment suspended the account; it must move to Free (R9-1)")
+		}
+		if got.Status == state.AccountActive && got.Plan == api.PlanFree {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("account.status = %s after %s; want suspended (dunning tick did not advance the row)",
-				got.Status, dunningInterval+5*time.Second)
+			t.Fatalf("account status=%s plan=%s after %s; want active on Free (dunning tick did not advance the row)",
+				got.Status, got.Plan, dunningInterval+5*time.Second)
 		}
 		time.Sleep(100 * time.Millisecond)
-	}
-
-	// Verify the instance was parked (the meterd→schedd.ParkInstance
-	// boundary). schedd's ParkInstance is idempotent — the instance
-	// must transition off RUNNING, regardless of which terminal state
-	// the snapshot path lands in (PARKED on happy path, STOPPED on
-	// snapshot-fail fallback, SNAPSHOTTING on in-progress).
-	instDeadline := time.Now().Add(2 * dunningInterval)
-	var instGot state.Instance
-	for {
-		instGot, err = store.InstanceByID(ctx, ins.ID)
-		if err != nil {
-			t.Fatalf("InstanceByID: %v", err)
-		}
-		if state.State(instGot.State) != state.StateRunning {
-			break
-		}
-		if time.Now().After(instDeadline) {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	switch state.State(instGot.State) {
-	case state.StateParked, state.StateStopped, state.StateSnapshotting:
-		// pass — dunning→ParkInstance wire landed
-	default:
-		t.Errorf("instance.state = %s after %s; want parked/stopped/snapshotting",
-			instGot.State, 2*dunningInterval)
 	}
 }
 
-// TestDunning_Suspended21d_AdvancesToDeletedPending is the second half
-// of audit-finding #2: the suspended → deleted_pending transition
-// fires after 21 days total from past_due_at.
-func TestDunning_Suspended21d_AdvancesToDeletedPending(t *testing.T) {
+// TestDunning_Suspended21d_MovesToFree is the second half of audit-finding
+// 2, as amended by billing review R9-1: non-payment never deletes. An account
+// the old ladder suspended past the 21-day mark moves to the Free plan and is
+// active again.
+func TestDunning_Suspended21d_MovesToFree(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
@@ -193,7 +168,7 @@ func TestDunning_Suspended21d_AdvancesToDeletedPending(t *testing.T) {
 		t.Fatalf("backdate past_due_at: %v", err)
 	}
 
-	// Poll for the deleted_pending transition.
+	// Poll for the move to Free.
 	deadline := time.Now().Add(dunningInterval + 5*time.Second)
 	for {
 		got, err := store.AccountByID(ctx, acct.ID)
@@ -201,11 +176,14 @@ func TestDunning_Suspended21d_AdvancesToDeletedPending(t *testing.T) {
 			t.Fatalf("AccountByID: %v", err)
 		}
 		if got.Status == state.AccountDeletedPending {
+			t.Fatal("non-payment moved the account to deleted_pending; it must move to Free (R9-1)")
+		}
+		if got.Status == state.AccountActive && got.Plan == api.PlanFree {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("account.status = %s after %s; want deleted_pending",
-				got.Status, dunningInterval+5*time.Second)
+			t.Fatalf("account status=%s plan=%s after %s; want active on Free",
+				got.Status, got.Plan, dunningInterval+5*time.Second)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
