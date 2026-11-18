@@ -53,7 +53,10 @@ func TestPostgresUsageFreshDatabaseDoesNotHideUnmeteredDatabase(t *testing.T) {
 		Meter: MeterComputeUnitSeconds, Quantity: 1, CostMillicents: 1}}); err != nil {
 		t.Fatal(err)
 	}
-	err := enabledUsagePolicy().Admit(ctx, store, account, now)
+	// One window later the unmetered database owes two windows, past the
+	// latest-window grace (ADR-20261115190000 amendment 1), while the fresh
+	// one owes only the latest.
+	err := enabledUsagePolicy().Admit(ctx, store, account, now.Add(time.Hour))
 	if !errors.Is(err, ErrUsageStale) {
 		t.Fatalf("account with unmetered ready database admitted: %v", err)
 	}
@@ -139,7 +142,10 @@ func TestUsageRecoveryResumesAcrossCollectorRestartAndMonthBoundary(t *testing.T
 		if snapshotErr != nil {
 			t.Fatal(snapshotErr)
 		}
-		if snapshot.Stale(registry.UsagePolicy(), now) != (sweep < 2) {
+		// The second sweep leaves only the window that just closed, which
+		// an account with headroom is admitted through (ADR-20261115190000
+		// amendment 1).
+		if snapshot.Stale(registry.UsagePolicy(), now) != (sweep < 1) {
 			t.Fatalf("sweep %d freshness: %+v", sweep, snapshot)
 		}
 	}
@@ -292,8 +298,10 @@ func TestPostgresRestoreUsageCoverageFollowsSource(t *testing.T) {
 	if err := store.RecordSharedUsage(ctx, account, target.ID, source.ID, time.Hour); err != nil {
 		t.Fatal(err)
 	}
+	// The unmetered source owes its creation window; one window later it owes
+	// two, past the latest-window grace (ADR-20261115190000 amendment 1).
 	snapshot, err := store.UsageSnapshot(ctx, account, now)
-	if err != nil || !snapshot.Stale(enabledUsagePolicy(), now) {
+	if err != nil || !snapshot.Stale(enabledUsagePolicy(), now.Add(time.Hour)) {
 		t.Fatalf("unmetered source admitted: %+v, %v", snapshot, err)
 	}
 	if err := store.RecordUsage(ctx, []UsageRecord{{AccountID: account, DatabaseID: source.ID, BackendID: source.BackendID,
@@ -305,7 +313,7 @@ func TestPostgresRestoreUsageCoverageFollowsSource(t *testing.T) {
 	if err != nil || snapshot.ReadyDatabases != 2 || snapshot.ComputeUnitSeconds != 60 || snapshot.Stale(enabledUsagePolicy(), now) {
 		t.Fatalf("shared source = %+v, %v", snapshot, err)
 	}
-	if !snapshot.Stale(enabledUsagePolicy(), now.Add(time.Hour)) {
+	if !snapshot.Stale(enabledUsagePolicy(), now.Add(2*time.Hour)) {
 		t.Fatal("shared source hid a missing window")
 	}
 }

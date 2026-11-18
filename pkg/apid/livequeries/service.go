@@ -32,7 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/livekeys"
 )
 
-const docsURL = "https://gregale.dev/docs/managed-postgres#live-queries"
+const docsURL = "https://gregale.dev/docs/managed-postgres"
 
 // Databases is the managed Postgres service as live queries use it.
 type Databases interface {

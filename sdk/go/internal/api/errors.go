@@ -535,7 +535,7 @@ func ErrPlanLimitApps(l Limits, observed int) *Problem {
 		"App limit reached",
 		fmt.Sprintf("%s plan allows %d deployed app(s); you have %d.", l.Plan, l.DeployedApps, observed)).
 		WithLimit(int64(l.DeployedApps), int64(observed)).
-		WithDocs(docsBase + "/plans#apps")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 // ErrPlanLimitRAM is returned when a requested ram_mb exceeds the plan cap.
@@ -544,7 +544,7 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		"RAM over plan limit",
 		fmt.Sprintf("%s plan caps %d MB/app; requested %d MB.", l.Plan, l.RAMMB, requestedMB)).
 		WithLimit(int64(l.RAMMB), int64(requestedMB)).
-		WithDocs(docsBase + "/plans#ram")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 // ErrAppLayerTooLarge is returned when the built app layer (deps + code) would
@@ -566,7 +566,7 @@ func ErrPlanLimitConcurrency(l Limits, observed int) *Problem {
 		"Concurrency limit reached",
 		fmt.Sprintf("%s plan allows %d concurrent instance(s) per app; %d already live.", l.Plan, l.MaxConcurrency, observed)).
 		WithLimit(int64(l.MaxConcurrency), int64(observed)).
-		WithDocs(docsBase + "/plans#concurrency")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 // ErrCapacity is returned when admission is refused for lack of box capacity
@@ -583,7 +583,7 @@ func ErrAppConcurrencyReached(l Limits, observed int) *Problem {
 		"App concurrency reached",
 		fmt.Sprintf("%s plan allows %d concurrent instance(s) per app; %d already live.", l.Plan, l.MaxConcurrency, observed)).
 		WithLimit(int64(l.MaxConcurrency), int64(observed)).
-		WithDocs(docsBase + "/plans#concurrency")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 func ErrCapacity(detail string) *Problem {
@@ -616,7 +616,7 @@ func ErrDomainNotVerified(domain string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDomainNotVerified,
 		"Domain not verified",
 		fmt.Sprintf("TXT challenge for %q not yet satisfied; publish the required TXT record and retry.", domain)).
-		WithDocs(docsBase + "/domains#verify")
+		WithDocs(docsBase + "/domains#verification")
 }
 
 // ErrCronInvalid is returned for malformed cron expressions.
@@ -649,7 +649,7 @@ func ErrNoRollbackTarget() *Problem {
 	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
 		"No previous deployment",
 		"there's no superseded deployment to roll back to; deploy at least twice.").
-		WithDocs(docsBase + "/deploys#rollback")
+		WithDocs(docsBase + "/deploys#revisions")
 }
 
 // ErrPlanLimitSecrets is returned when a secret PUT would exceed the plan's
@@ -659,7 +659,7 @@ func ErrPlanLimitSecrets(l Limits, observed int) *Problem {
 		"Secret count limit reached",
 		fmt.Sprintf("%s plan allows %d secret(s) per app; you have %d.", l.Plan, l.SecretCountMax, observed)).
 		WithLimit(int64(l.SecretCountMax), int64(observed)).
-		WithDocs(docsBase + "/secrets#limits")
+		WithDocs(docsBase + "/secrets")
 }
 
 // ErrSecretInvalidKey is returned when a secret key fails the
@@ -669,7 +669,7 @@ func ErrSecretInvalidKey(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSecretInvalidKey,
 		"Invalid secret key",
 		fmt.Sprintf("secret keys must match %s; %s", SecretKeyPattern, detail)).
-		WithDocs(docsBase + "/secrets#keys")
+		WithDocs(docsBase + "/secrets")
 }
 
 // ErrSecretValueTooLarge is returned when a PUT value exceeds
@@ -681,7 +681,7 @@ func ErrSecretValueTooLarge(l Limits, observedBytes int) *Problem {
 		"Secret value too large",
 		fmt.Sprintf("%s plan caps secret values at %d bytes; got %d.", l.Plan, l.SecretValueMaxBytes, observedBytes)).
 		WithLimit(int64(l.SecretValueMaxBytes), int64(observedBytes)).
-		WithDocs(docsBase + "/secrets#limits")
+		WithDocs(docsBase + "/secrets")
 }
 
 // ErrSecretNotFound is returned by DELETE /v1/apps/{slug}/secrets/{key} when
@@ -703,7 +703,7 @@ func ErrPlanMinInstancesNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanMinInstancesNotAllowed,
 		"Plan doesn't allow a min-instances floor",
 		fmt.Sprintf("the %s plan always scales to zero; upgrade to Pro or Scale to keep instances warm.", p)).
-		WithDocs(docsBase + "/plans#min-instances")
+		WithDocs(docsBase + "/scale-to-zero#opting-out-keep-n-instances-warm-pro-scale")
 }
 
 // ErrInvalidMinInstances is returned when the requested min_instances
@@ -714,7 +714,7 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 		"Invalid min_instances",
 		fmt.Sprintf("min_instances must be in [0, %d] (plan max_concurrency); got %d.", maxConcur, got)).
 		WithLimit(int64(maxConcur), int64(got)).
-		WithDocs(docsBase + "/apps#min-instances")
+		WithDocs(docsBase + "/scale-to-zero#opting-out-keep-n-instances-warm-pro-scale")
 }
 
 // ErrPlanEgressAllowlistNotAllowed (ADR-031) is returned when a Free
@@ -727,7 +727,7 @@ func ErrPlanEgressAllowlistNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanEgressAllowlistNotAllowed,
 		"Plan doesn't allow an egress allowlist",
 		fmt.Sprintf("the %s plan cannot pin an egress IP allowlist; upgrade to Pro or Scale to unlock this operator surface.", p)).
-		WithDocs(docsBase + "/apps#egress-allowlist")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrEgressAllowlistTooLong (ADR-031) is returned when the PATCH carries more
@@ -739,7 +739,7 @@ func ErrEgressAllowlistTooLong(got, maxSize int) *Problem {
 		"Egress allowlist too long",
 		fmt.Sprintf("egress_allowlist has %d entries; plan caps it at %d.", got, maxSize)).
 		WithLimit(int64(maxSize), int64(got)).
-		WithDocs(docsBase + "/apps#egress-allowlist")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrInvalidEgressAllowlist (ADR-031 + ADR-032) is a 400 for
@@ -752,7 +752,7 @@ func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidEgressAllowlist,
 		"Invalid egress allowlist entry",
 		fmt.Sprintf("entry %q is not a valid v4 or v6 CIDR (non-/0): %v.", entry, reason)).
-		WithDocs(docsBase + "/apps#egress-allowlist")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrAccountEgressAllowlistExtraOutOfRange (issue #679 / PR-B /
@@ -765,7 +765,7 @@ func ErrAccountEgressAllowlistExtraOutOfRange(got, maxExtra int) *Problem {
 		"egress_allowlist_extra out of range",
 		fmt.Sprintf("extra=%d is outside [0, %d]; clear with extra=0 to fall back to the plan cap.", got, maxExtra)).
 		WithLimit(int64(maxExtra), int64(got)).
-		WithDocs(docsBase + "/account#egress-allowlist-extra")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrValidation is a 400 fallback for malformed request bodies. Used by
@@ -799,7 +799,7 @@ func ErrPlanSourceBytes(limit int, observed int64) *Problem {
 		"Invocation payload too large",
 		fmt.Sprintf("this plan caps each invocation at %d bytes; observed %d.", limit, observed)).
 		WithLimit(int64(limit), observed).
-		WithDocs(docsBase + "/event-driven#payload-size")
+		WithDocs(docsBase + "/event-driven")
 }
 
 // ErrPlanFeatureGated is returned when the customer's plan does not
@@ -811,7 +811,7 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 		"Plan doesn't include this feature",
 		fmt.Sprintf("the %s plan doesn't unlock %s; upgrade to Hobby or higher to use event-driven features.", p, feature)).
-		WithDocs(docsBase + "/plans#event-driven")
+		WithDocs(docsBase + "/event-driven")
 }
 
 // ErrPlanDelayedTasksCap is the variant surfaced when a delayed-task
@@ -833,7 +833,7 @@ func ErrInvocationNotFound(id string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeInvocationNotFound,
 		"Invocation not found",
 		fmt.Sprintf("no invocation with id %q on this account.", id)).
-		WithDocs(docsBase + "/event-driven#invocations")
+		WithDocs(docsBase + "/event-driven#invocation-history-retention")
 }
 
 // ErrLongPollTimeout is returned by the long-poll handlers (sync
@@ -846,7 +846,7 @@ func ErrLongPollTimeout() *Problem {
 	return NewProblem(http.StatusGatewayTimeout, "long_poll_timeout",
 		"Long-poll wait budget ran out",
 		"the server waited for the configured long-poll window and the event did not arrive; retry.").
-		WithDocs(docsBase + "/event-driven#long-poll")
+		WithDocs(docsBase + "/event-driven")
 }
 
 // ErrInvalidScheduledAt is returned when a delayed-task POST carries a
@@ -873,7 +873,7 @@ func ErrInvalidCredentials() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeInvalidCredentials,
 		"Sign in failed",
 		"email or password is incorrect.").
-		WithDocs(docsBase + "/auth#sign-in")
+		WithDocs(docsBase + "/account#profile-sign-in-and-sessions")
 }
 
 // ErrEmailNotVerified is the 401 returned by the Google / GitHub OAuth
@@ -885,7 +885,7 @@ func ErrEmailNotVerified(provider string) *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeEmailNotVerified,
 		"Email not verified",
 		fmt.Sprintf("the %s account's primary email is not verified; verify it on the provider and retry.", provider)).
-		WithDocs(docsBase + "/auth#oauth")
+		WithDocs(docsBase + "/auth#email-verification")
 }
 
 // ErrPasswordTooWeak is the 400 returned by POST /signup and POST
@@ -895,7 +895,7 @@ func ErrEmailNotVerified(provider string) *Problem {
 func ErrPasswordTooWeak(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodePasswordTooWeak,
 		"Password too weak", reason).
-		WithDocs(docsBase + "/auth#password")
+		WithDocs(docsBase + "/account#profile-sign-in-and-sessions")
 }
 
 // ErrResetTokenInvalid is the 410 returned by GET / POST /auth/reset
@@ -906,7 +906,7 @@ func ErrResetTokenInvalid() *Problem {
 	return NewProblem(http.StatusGone, CodeResetTokenInvalid,
 		"Reset link invalid",
 		"this password-reset link is unknown or has already been used.").
-		WithDocs(docsBase + "/auth#reset")
+		WithDocs(docsBase + "/account#profile-sign-in-and-sessions")
 }
 
 // ErrResetTokenExpired is the 410 returned by GET / POST /auth/reset
@@ -917,7 +917,7 @@ func ErrResetTokenExpired() *Problem {
 	return NewProblem(http.StatusGone, CodeResetTokenExpired,
 		"Reset link expired",
 		"this password-reset link has expired; request a new one.").
-		WithDocs(docsBase + "/auth#reset")
+		WithDocs(docsBase + "/account#profile-sign-in-and-sessions")
 }
 
 // ErrInvalidRegistryHost is the 400 returned when the request body's
@@ -929,7 +929,7 @@ func ErrResetTokenExpired() *Problem {
 func ErrInvalidRegistryHost(detail error) *Problem {
 	return NewProblem(http.StatusBadRequest, "invalid_registry_host",
 		"Invalid registry host", detail.Error()).
-		WithDocs(docsBase + "/registry-credentials#registry-format")
+		WithDocs(docsBase + "/registry-credentials")
 }
 
 const CodeRouteHealthBlocked = "route_health_blocked"

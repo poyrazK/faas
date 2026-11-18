@@ -246,10 +246,16 @@ type LocalCacheBackend struct {
 	// zero disables the check. diskSpace reports free and total bytes.
 	// Both are guarded by mu.
 	minFreeBytes int64
-	diskSpace    func(string) (free, total int64, err error)
+	// ownerMinFreeBytes is the floor this cache holds while it is the
+	// eviction owner (OwnerMinFreeBytes); zero keeps minFreeBytes.
+	ownerMinFreeBytes int64
+	diskSpace         func(string) (free, total int64, err error)
 	// evictionTier orders eviction (cache_retention.go); nil is plain
 	// oldest-first. Guarded by mu.
 	evictionTier func(key string) int
+	// evictionOwner is set while this process holds the cache's eviction
+	// owner lock (cache_owner.go).
+	evictionOwner bool
 	// routes maps a generation-routed key to its name in the parent
 	// (cache_generation.go, ADR-20261026181418). Guarded by routesMu.
 	routesMu sync.RWMutex
@@ -293,6 +299,21 @@ func (c *LocalCacheBackend) SetMinFreeBytes(n int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.minFreeBytes = n
+}
+
+// SetOwnerMinFreeBytes sets the floor the cache holds while this process is
+// its eviction owner (ClaimEvictionOwnership); see OwnerMinFreeBytes.
+func (c *LocalCacheBackend) SetOwnerMinFreeBytes(n int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ownerMinFreeBytes = n
+}
+
+// MinFreeBytes reports the free-space floor the cache holds now.
+func (c *LocalCacheBackend) MinFreeBytes() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.minFreeBytes
 }
 
 // NewLocalCacheBackend wires a LocalCacheBackend rooted at
@@ -1241,6 +1262,9 @@ func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 	// so fan-out retired the replica and the next wake fetched the whole
 	// snapshot again (production-us, 2026-11-15: 38 of 46 retired replicas
 	// on one node had their memory file but not their vmstate).
+	// While another process owns eviction (vmmd on a compute node), this
+	// one leaves the snapshot captures and app layers it cannot rank alone.
+	deferred := c.deferToOwnerLocked()
 	groups := make(map[string]evictionGroup, len(entries))
 	for _, e := range entries {
 		g := cacheEvictionGroup(e.key)
@@ -1252,7 +1276,7 @@ func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 		if !seen || e.modTime.After(cur.newest) {
 			cur.newest = e.modTime
 		}
-		cur.pinned = cur.pinned || e.pinned
+		cur.pinned = cur.pinned || e.pinned || (deferred && ownerProtectedKey(e.key))
 		cur.protected = cur.protected || e.key == protect
 		groups[g] = cur
 	}

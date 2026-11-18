@@ -284,14 +284,17 @@ func TestReleaseSafetyDashboardShowsTheAppsGuards(t *testing.T) {
 	}
 }
 
-func TestRollbackRestoreDatabasesIsHiddenWithoutDatabaseRollbacks(t *testing.T) {
+// database-rollbacks is GA (ADR-20261031091607 amendment, #7355): with the
+// capability gate installed and no preview opened, restore_databases is an
+// accepted field rather than a hidden one.
+func TestRollbackRestoreDatabasesIsAcceptedOnceDatabaseRollbacksIsGA(t *testing.T) {
 	f := newSwitchFixture(t)
 	if err := f.env.InstallCapabilityGate(); err != nil {
 		t.Fatal(err)
 	}
 	w := f.do(t, http.MethodPost, "/v1/apps/"+f.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true})
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `unknown field \"restore_databases\"`) {
-		t.Fatalf("restore_databases with database-rollbacks off = %d %s, want the unknown-field answer", w.Code, w.Body)
+	if w.Code != http.StatusAccepted || strings.Contains(w.Body.String(), `unknown field`) {
+		t.Fatalf("restore_databases under the capability gate = %d %s, want an accepted switch", w.Code, w.Body)
 	}
 }
 

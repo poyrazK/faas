@@ -2,7 +2,8 @@ package main
 
 // adr: 20261107122928 idle ladder — the per-node idle ladder switches reach
 // the restarted vmmd on every rollout, set nothing while off, accept only
-// off, observe or on, and the guarded app pause needs on.
+// off, observe or on, and the guarded app pause and L3/L4 compression
+// (amendment 1) need on.
 
 import (
 	"os"
@@ -24,13 +25,12 @@ func TestNodeJoinRendersTheIdleLadderSwitches(t *testing.T) {
 	if !strings.Contains(content, "{% if (vmmd_idle_ladder | default('off')) != 'off' %}\nEnvironment=FAAS_IDLE_LADDER={{ vmmd_idle_ladder }}\n{% endif %}") {
 		t.Fatalf("FAAS_IDLE_LADDER is not set only while the switch is not off:\n%s", content)
 	}
-	if strings.Contains(content, "FAAS_IDLE_LADDER_COMPRESS") {
-		t.Fatal("node_join turns on L3/L4 compression, which needs a metal run first")
-	}
+	assertGuardedEnv(t, "node_join's drop-in", content, "vmmd_idle_ladder_compress", "FAAS_IDLE_LADDER_COMPRESS")
 	playbook := nodeJoinPlaybook(t)
 	for _, want := range []string{
 		"(vmmd_idle_ladder | default('off')) in ['off', 'observe', 'on']",
 		"not (vmmd_idle_ladder_apps | default(false) | bool) or (vmmd_idle_ladder | default('off')) == 'on'",
+		"not (vmmd_idle_ladder_compress | default(false) | bool) or (vmmd_idle_ladder | default('off')) == 'on'",
 	} {
 		if nodeJoinTask(t, "Validate the idle ladder switches") == nil || !strings.Contains(playbook, want) {
 			t.Fatalf("node_join does not validate %q", want)
@@ -52,7 +52,8 @@ func TestIdleLadderGroupVarsName(t *testing.T) {
 	if err := yaml.Unmarshal(raw, &vars); err != nil {
 		t.Fatalf("parse vmmd_idle_ladder.yml: %v", err)
 	}
-	for _, key := range []string{"vmmd_idle_ladder", "vmmd_idle_ladder_apps", "vmmd_idle_ladder_observe_nodes", "vmmd_idle_ladder_on_nodes", "vmmd_idle_ladder_apps_nodes"} {
+	for _, key := range []string{"vmmd_idle_ladder", "vmmd_idle_ladder_apps", "vmmd_idle_ladder_observe_nodes", "vmmd_idle_ladder_on_nodes", "vmmd_idle_ladder_apps_nodes",
+		"vmmd_idle_ladder_compress", "vmmd_idle_ladder_compress_nodes"} {
 		if _, ok := vars[key]; !ok {
 			t.Errorf("vmmd_idle_ladder.yml has no %s", key)
 		}
@@ -63,7 +64,7 @@ func TestIdleLadderGroupVarsName(t *testing.T) {
 			t.Errorf("vmmd_idle_ladder = %q does not use %s", mode, want)
 		}
 	}
-	if strings.Contains(string(raw), "idle_ladder_compress") && !strings.Contains(string(raw), "stay off") {
-		t.Error("vmmd_idle_ladder.yml mentions compression without keeping it off")
+	if compress, _ := vars["vmmd_idle_ladder_compress"].(string); !strings.Contains(compress, "vmmd_idle_ladder_compress_nodes") {
+		t.Errorf("vmmd_idle_ladder_compress = %q does not use vmmd_idle_ladder_compress_nodes", compress)
 	}
 }

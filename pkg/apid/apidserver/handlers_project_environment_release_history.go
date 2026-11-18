@@ -58,6 +58,11 @@ func (s *server) getProjectEnvironmentReleases(w http.ResponseWriter, r *http.Re
 			URL:          projectEnvironmentWorkloadURL(environment.ID, app.ID),
 		}
 		deployment, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, environment.Slug)
+		if errors.Is(err, state.ErrNotFound) && environment.Slug == "production" {
+			// Production also serves from the legacy default lane, where a
+			// normal deploy and a direct promotion land (PR 7340).
+			deployment, err = state.ResolveProductionDeployment(r.Context(), s.store, app.ID)
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			workloads = append(workloads, workload)
 			continue

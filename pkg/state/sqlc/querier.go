@@ -4370,6 +4370,8 @@ type Querier interface {
 	// Every enabled check on a live public app, with its app slug and last run
 	// time; the runner decides which are due. The public edge does not serve an
 	// internal app, so its checks wait until it is public (ADR-20261031144636).
+	// A protection-baseline health check is probed by apid, unbilled, not here
+	// (ADR-20261116120000 §3).
 	ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error)
 	ListRunningFlagExperiments(ctx context.Context, db DBTX, arg ListRunningFlagExperimentsParams) ([]ListRunningFlagExperimentsRow, error)
 	// ADR-20261114182830: every runtime release, and whether a compute node must
@@ -5782,10 +5784,18 @@ type Querier interface {
 	OperatorInsertAuditLog(ctx context.Context, db DBTX, arg OperatorInsertAuditLogParams) error
 	OperatorNodeHasLiveInstances(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	OperatorOverviewActivity(ctx context.Context, db DBTX, auditSince pgtype.Timestamptz) (OperatorOverviewActivityRow, error)
+	// Deploys and new accounts by the coding agent the Gregale CLI reported
+	// (ADR-20261112223000 amendment 1: audit_log.data->>'actor_agent'). Deploys
+	// read the audit window through audit_log_received_at_idx; new accounts start
+	// from the beta funnel cohort and reach their audit rows through
+	// audit_log_account_idx, so neither scans the whole log. A deployment emits
+	// one of these kinds; DISTINCT deployment_id keeps a repeat from counting twice.
+	OperatorOverviewCodingAgents(ctx context.Context, db DBTX, arg OperatorOverviewCodingAgentsParams) ([]OperatorOverviewCodingAgentsRow, error)
 	OperatorOverviewFailures(ctx context.Context, db DBTX, arg OperatorOverviewFailuresParams) ([]OperatorOverviewFailuresRow, error)
 	// last_request_at retains successful-request evidence, including terminal
 	// instances and deleted apps. It is not an immutable first-ever timestamp.
 	OperatorOverviewFunnel(ctx context.Context, db DBTX, arg OperatorOverviewFunnelParams) (OperatorOverviewFunnelRow, error)
+	// new_accounts, deploys, agent
 	OperatorOverviewNodes(ctx context.Context, db DBTX) ([]OperatorOverviewNodesRow, error)
 	OperatorOverviewRateLimited(ctx context.Context, db DBTX, arg OperatorOverviewRateLimitedParams) ([]OperatorOverviewRateLimitedRow, error)
 	OperatorOverviewTotals(ctx context.Context, db DBTX, arg OperatorOverviewTotalsParams) (OperatorOverviewTotalsRow, error)
@@ -7475,7 +7485,8 @@ type Querier interface {
 	RequestSDKCrashCapture(ctx context.Context, db DBTX, arg RequestSDKCrashCaptureParams) (CrashCapture, error)
 	// ADR-20261115180000: object deletion moves to the control plane.
 	// A fresh request, whatever the row held before; the trigger stamps a
-	// per-node login's node.
+	// per-node login's node. generation (slice 2) conditions the delete on one
+	// object generation; NULL deletes whatever the key holds.
 	RequestStorageObjectDeletion(ctx context.Context, db DBTX, arg RequestStorageObjectDeletionParams) error
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.

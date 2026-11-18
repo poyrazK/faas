@@ -550,10 +550,11 @@ func TestCDComputeWorkflowVerifiesHostingSmokeTenantRouting(t *testing.T) {
 // TestCDPlatformRunsANodeCanaryBeforeTheNextNode: rc.301's fsn-2 passed every
 // configuration and reachability gate while its builderd failed every build,
 // and only an operator's hold kept fsn-3 on the old release. cd-platform's
-// serial activation legs now each end with a canary that deploys through
+// first serial activation leg now ends with a canary that deploys through
 // production ingress until the node serves and has built an app, after the
 // last reachability gate and through a CP host key pinned in
-// COMPUTE_KNOWN_HOSTS. Prepare legs and standalone repair dispatches skip it.
+// COMPUTE_KNOWN_HOSTS; later legs rely on the fleet acceptance gate
+// (ADR-20261118060000). Prepare legs and standalone repair dispatches skip it.
 func TestCDPlatformRunsANodeCanaryBeforeTheNextNode(t *testing.T) {
 	workflow := readWorkflow(t, "cd-compute.yml")
 	if !strings.Contains(workflow, "      node_canary:\n") {
@@ -587,8 +588,9 @@ func TestCDPlatformRunsANodeCanaryBeforeTheNextNode(t *testing.T) {
 	platform := readWorkflow(t, "cd-platform.yml")
 	compute := strings.Index(platform, "\n  compute:\n")
 	verify := strings.Index(platform, "\n  verify:\n")
-	if compute < 0 || verify < 0 || !strings.Contains(platform[compute:verify], "node_canary: true") {
-		t.Fatal("cd-platform's serial compute activation legs do not run the node canary")
+	firstNodeOnly := "node_canary: ${{ toJSON(matrix.target) == toJSON(fromJSON(needs.plan.outputs.targets)[0]) }}"
+	if compute < 0 || verify < 0 || !strings.Contains(platform[compute:verify], firstNodeOnly) {
+		t.Fatal("cd-platform's first compute activation leg does not run the node canary (ADR-20261118060000)")
 	}
 	for _, prepare := range []string{"\n  compute-prepare:\n", "\n  compute-prepare-compat:\n"} {
 		start := strings.Index(platform, prepare)

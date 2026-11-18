@@ -179,6 +179,9 @@ func (s *server) startDatabaseSwitch(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.ErrDatabaseSwitchUnavailable("Managed PostgreSQL is not configured on this platform.", ""))
 		return
 	}
+	if !s.databaseSwitchCanVerify(w, r, app) {
+		return
+	}
 	if p, ok := principalFrom(r); !ok || !principalHasScope(p, api.ScopesManagedPostgresManageSurface) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Insufficient scope",
 			"restore_databases restores and rebinds a managed PostgreSQL database; the key needs the postgres:manage scope as well"))
@@ -512,4 +515,22 @@ func (s *server) appendDatabaseSwitchAudit(ctx context.Context, sw state.Databas
 	}); err != nil {
 		s.log.Warn("database switch: append deployment_audit failed", "switch", sw.ID, "err", err)
 	}
+}
+
+// databaseSwitchCanVerify refuses a switch whose staged credential the
+// platform could not verify, before it restores anything. Without it the
+// switch retried its verification phase for 30 minutes and then failed
+// (production 2026-11-17: runtime credentials were sealed to secretd's runtime
+// domain, and neither secretd's verifier nor the domain identity was available
+// to apid).
+func (s *server) databaseSwitchCanVerify(w http.ResponseWriter, r *http.Request, app state.App) bool {
+	if s.managedPostgresBindings.CanVerifyCutoverCredentials() {
+		return true
+	}
+	s.log.WarnContext(r.Context(), "database switch refused: staged credentials cannot be verified; configure apid's secretd verifier (FAAS_APID_SECRETD_TARGET) or stop sealing runtime credentials to the domain",
+		"app", app.ID)
+	api.WriteProblem(w, api.ErrDatabaseSwitchUnavailable(
+		"Database switches are temporarily unavailable: the platform cannot verify the restored copy's credentials.",
+		"Restore the database with gregale postgres restore and attach the copy, or retry later."))
+	return false
 }

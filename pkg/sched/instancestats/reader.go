@@ -86,7 +86,8 @@ type InstanceStat struct {
 	QuietPaused bool
 	// IdleLadderLevel (ADR-20261107122928) is the idle ladder level vmmd
 	// holds a quiet-paused instance at: 1 quiet pause, 2 freeze, which
-	// measured admission books at the frozen charge. 0 otherwise.
+	// measured admission books at the frozen charge, 3 and 4 compressed
+	// (L3/L4), which it also charges their latest sample. 0 otherwise.
 	IdleLadderLevel int32
 	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
 	// place.

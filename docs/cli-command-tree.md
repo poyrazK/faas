@@ -462,6 +462,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
 | `gregale mcp task-wait` | `gregale mcp client wait` |
+| `gregale mcp tasks bindings` | `gregale mcp server tasks bind` |
 | `gregale mcp tasks execution` | `gregale mcp server tasks run` |
 | `gregale mcp tasks intent` | `gregale mcp server tasks review` |
 | `gregale mcp tasks observer` | `gregale mcp observer` |

@@ -41,6 +41,8 @@ scaling:
 Each entry under `targets` states how much load **one instance** should carry.
 Declaring the signals is the whole configuration surface: you do not write a
 scaling rule, choose a stabilization window, or decide how signals combine.
+To autoscale on in-flight requests per instance, set a `concurrent_requests`
+target. Use `rps` to scale on request rate.
 
 | metric | meaning | good for |
 |---|---|---|

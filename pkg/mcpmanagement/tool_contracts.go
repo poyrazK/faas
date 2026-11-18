@@ -60,6 +60,9 @@ func toolOutputSchema(name string) map[string]any {
 }
 
 func toolSuccessSchema(name string) map[string]any {
+	if name == "gregale_verify_application_response" {
+		return applicationResponseSchema()
+	}
 	if name == "gregale_get_tool_connection" {
 		return map[string]any{"type": "object", "required": []string{"grant_id", "app", "app_id", "version", "name", "state"}, "properties": map[string]any{"grant_id": map[string]any{"type": "string"}, "app": map[string]any{"type": "string"}, "app_id": map[string]any{"type": "string"}, "version": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"}, "state": map[string]any{"type": "string", "enum": []string{"ready", "refresh_required", "refreshing", "reconnect_required"}}, "expires_at": map[string]any{"type": "string"}, "recovery_action": map[string]any{"type": "string"}}, "additionalProperties": false}
 	}

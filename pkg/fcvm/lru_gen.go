@@ -13,6 +13,12 @@ package fcvm
 // once per api.IdleLadderColdAge1Seconds, so generations stand for windows
 // of guest activity at least that long. Compressing "pages untouched for a
 // window" is then evicting every generation but the youngest few.
+//
+// Kernel lockdown (ADR-20261107220000) closes debugfs, root included. There
+// vmmd compresses through the VM cgroup's memory.reclaim instead
+// (ADR-20261107122928 amendment 1): it keeps a share of the VM's memory
+// resident and lets the kernel pick the coldest pages, which it ages itself
+// as reclaim needs.
 
 import (
 	"bufio"
@@ -26,6 +32,14 @@ import (
 	"syscall"
 	"time"
 )
+
+// ColdKeep is what a compression leaves resident: the youngest Generations
+// of the multi-gen LRU, or, without its debugfs interface, Percent of the
+// VM's memory.
+type ColdKeep struct {
+	Generations int
+	Percent     int
+}
 
 // lruGenPath and lruGenEnabledPath are replaced in tests.
 var (
@@ -172,19 +186,35 @@ func parseLRUGenLine(fields []string) (lruGen, bool) {
 	return lruGen{seq: uint64(nums[0]), ageMS: nums[1], anon: nums[2], file: nums[3]}, true
 }
 
-// lruGenAvailable reports whether the kernel's multi-gen LRU is on and its
-// debugfs interface is reachable.
-func lruGenAvailable() bool {
+// lruGenEnabled reports whether the kernel's multi-gen LRU is on.
+func lruGenEnabled() bool {
 	raw, err := os.ReadFile(lruGenEnabledPath)
 	if err != nil {
 		return false
 	}
 	v, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimSpace(string(raw)), "0x"), 16, 32)
-	if err != nil || v == 0 {
+	return err == nil && v != 0
+}
+
+// lruGenOpens reports whether vmmd can open the multi-gen LRU's debugfs
+// interface. Kernel lockdown refuses the open with EPERM although the file
+// is listed, so a stat is not enough.
+func lruGenOpens() bool {
+	f, err := os.Open(lruGenPath)
+	if err != nil {
 		return false
 	}
-	_, err = os.Stat(lruGenPath)
-	return err == nil
+	_ = f.Close()
+	return true
+}
+
+// ColdPagesByGeneration reports whether this host compresses through the
+// multi-gen LRU's debugfs interface; false means memory.reclaim. It probes
+// once per VMM: lockdown holds until reboot, and each refused open logs a
+// kernel lockdown notice.
+func (v *JailerVMM) ColdPagesByGeneration() bool {
+	v.coldByGenOnce.Do(func() { v.coldByGen = lruGenOpens() })
+	return v.coldByGen
 }
 
 // vmLRUGen reads the generations of a VM's cgroup.
@@ -206,14 +236,27 @@ func vmLRUGen(l Lease) (lruGenMemcg, error) {
 }
 
 // ColdPagesReady reports whether this host can compress a quiet VM's cold
-// pages: memory-only compressed swap and the multi-gen LRU.
+// pages: memory-only compressed swap, and either the multi-gen LRU's debugfs
+// interface or the VM cgroup's memory.reclaim.
 func (v *JailerVMM) ColdPagesReady(l Lease) bool {
-	return v.FrozenSwapReady(l) && lruGenAvailable()
+	if !v.FrozenSwapReady(l) {
+		return false
+	}
+	if v.ColdPagesByGeneration() {
+		return lruGenEnabled()
+	}
+	_, err := os.Stat(filepath.Join(vmCgroupScope(l), "memory.reclaim"))
+	return err == nil
 }
 
 // AgeVMMemory opens a new youngest generation on every NUMA node of the VM's
 // cgroup, moving the pages the guest touched since the last pass into it.
+// Without the debugfs interface it does nothing: reclaim ages the cgroup
+// itself when it runs out of old generations.
 func (v *JailerVMM) AgeVMMemory(l Lease) error {
+	if !v.ColdPagesByGeneration() {
+		return nil
+	}
 	memcg, err := vmLRUGen(l)
 	if err != nil {
 		return err
@@ -230,9 +273,19 @@ func (v *JailerVMM) AgeVMMemory(l Lease) error {
 }
 
 // EvictColdVMMemory compresses every generation of the VM's cgroup but the
-// youngest keep, in chunks, until they are empty, lruGenEvictBudget runs
-// out, or stop reports true. The caller has opened the scope's swap.
-func (v *JailerVMM) EvictColdVMMemory(l Lease, keep int, stop func() bool) (VMMemoryReclaim, error) {
+// youngest keep.Generations, in chunks, until they are empty,
+// lruGenEvictBudget runs out, or stop reports true. Without the debugfs
+// interface it reclaims until keep.Percent of the VM's memory stays
+// resident. The caller has opened the scope's swap.
+func (v *JailerVMM) EvictColdVMMemory(l Lease, keep ColdKeep, stop func() bool) (VMMemoryReclaim, error) {
+	if !v.ColdPagesByGeneration() {
+		return reclaimColdVMMemory(l, keep.Percent, stop)
+	}
+	return evictColdGenerations(l, keep.Generations, stop)
+}
+
+// evictColdGenerations is EvictColdVMMemory through the lru_gen interface.
+func evictColdGenerations(l Lease, keep int, stop func() bool) (VMMemoryReclaim, error) {
 	scope := vmCgroupScope(l)
 	var r VMMemoryReclaim
 	var err error
@@ -263,6 +316,51 @@ func (v *JailerVMM) EvictColdVMMemory(l Lease, keep int, stop func() bool) (VMMe
 			}
 			pages -= lruGenEvictChunkPages
 		}
+	}
+	if r.AfterBytes, err = readCgroupInt(scope, "memory.current"); err != nil {
+		return r, err
+	}
+	r.SwappedBytes, _ = readCgroupInt(scope, "memory.swap.current")
+	return r, nil
+}
+
+// reclaimColdVMMemory compresses a quiet VM through its cgroup's
+// memory.reclaim until keepPercent of its memory stays resident, in chunks,
+// within lruGenEvictBudget, stopping when stop reports true or the kernel
+// finds nothing more to take. The VM's memory is what is resident plus what
+// earlier passes already compressed, so L4 keeps its share of the same
+// whole that L3 did. The kernel reclaims the coldest pages first and ages
+// the cgroup itself when it needs to.
+func reclaimColdVMMemory(l Lease, keepPercent int, stop func() bool) (VMMemoryReclaim, error) {
+	scope := vmCgroupScope(l)
+	var r VMMemoryReclaim
+	var err error
+	if r.BeforeBytes, err = readCgroupInt(scope, "memory.current"); err != nil {
+		return r, err
+	}
+	stat, err := readCgroupStat(scope)
+	if err != nil {
+		return r, err
+	}
+	resident := stat["anon"] + stat["file"]
+	whole := resident + stat["zswapped"]
+	target := resident - whole*int64(min(max(keepPercent, 0), 100))/100
+	deadline := time.Now().Add(lruGenEvictBudget)
+	for requested := int64(0); requested < target && !stop(); {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		n := min(int64(reclaimChunkBytes), target-requested)
+		err := writeMemoryReclaim(filepath.Join(scope, "memory.reclaim"), n, min(remaining, lruGenWriteTimeout))
+		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR) {
+			// Nothing more the kernel can take, or out of time mid-write.
+			break
+		}
+		if err != nil {
+			return r, fmt.Errorf("vmm: reclaim cold pages %s: %w", l.Instance, err)
+		}
+		requested += n
 	}
 	if r.AfterBytes, err = readCgroupInt(scope, "memory.current"); err != nil {
 		return r, err
