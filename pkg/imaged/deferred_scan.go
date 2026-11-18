@@ -83,10 +83,13 @@ func (h *Handler) WithDeferredDeployScans() *Handler {
 // before the snapshot handoff. Enforce mode promotes only on the scan's
 // evidence, and the producer-evidence route (ADR-435) requires complete
 // evidence in every mode, as does a signed image deployed without a
-// producer; any doubt keeps the scan in front.
+// producer; any doubt keeps the scan in front. An organization's app also
+// keeps it in front: its instances capture the deployment's scan mirrors
+// at admission (ADR-595), so a scan that lands during the snapshot prime
+// makes the prime instance's inputs stale and fails the deploy.
 func (h *Handler) deployScanGatesHandoff(ctx context.Context, app state.App, dep state.Deployment) bool {
 	if h.deferredScans == nil || h.store == nil || h.log == nil ||
-		app.SecurityPolicy == api.AppSecurityPolicyEnforce || app.RequireSigned {
+		app.SecurityPolicy == api.AppSecurityPolicyEnforce || app.RequireSigned || app.OrgID != "" {
 		return true
 	}
 	present, err := producedRuntimePresent(ctx, h.store, app, dep)

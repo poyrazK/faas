@@ -1726,6 +1726,27 @@ type AppPrivateNetworkAttachmentNode struct {
 	ObservedAt   pgtype.Timestamptz
 }
 
+type AppProtection struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	State           string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	NextReconcileAt pgtype.Timestamptz
+	LeaseUntil      pgtype.Timestamptz
+	HealthProbeAt   pgtype.Timestamptz
+}
+
+type AppProtectionObject struct {
+	AppID     pgtype.UUID
+	Item      string
+	Status    string
+	ObjectID  string
+	Reason    string
+	Written   []byte
+	CreatedAt pgtype.Timestamptz
+}
+
 type AppRegistryCredential struct {
 	ID                pgtype.UUID
 	AccountID         pgtype.UUID
@@ -6983,6 +7004,13 @@ type Honeytoken struct {
 	RetiredAt   pgtype.Timestamptz
 }
 
+type HostedTaskBindingQualification struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
 type HostedTaskSourceIntent struct {
 	AccountID  pgtype.UUID
 	ID         string
@@ -12214,6 +12242,14 @@ type PlatformMailProducerOutbox struct {
 	AgentDeliveryID                  pgtype.UUID
 }
 
+type PlatformProbeWake struct {
+	InstanceID  string
+	AppID       pgtype.UUID
+	WokeAt      pgtype.Timestamptz
+	ProbeDoneAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 // Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).
 type PlatformReleaseActivation struct {
 	ID                pgtype.UUID
@@ -15871,6 +15907,14 @@ type SandboxAction struct {
 	ScreenshotBytes pgtype.Int8
 }
 
+// ADR-20261117091026 account default web-mode domain policy, written by apid.
+type SandboxEgressPolicy struct {
+	AccountID  pgtype.UUID
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 // ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
@@ -15919,7 +15963,17 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput []byte
+	TaskOutput  []byte
+	EgressAllow []string
+	EgressDeny  []string
+}
+
+// ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
+type SandboxSessionDomain struct {
+	SandboxID pgtype.UUID
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
 }
 
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.

@@ -304,7 +304,9 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 	if apiPromoted.Scope != "production" || apiPromoted.SourceSHA256 != f.apiSource.SourceSHA256 || apiPromoted.RootfsKey != f.apiSource.RootfsKey {
 		t.Fatalf("promoted api artifact=%+v source=%+v", apiPromoted, f.apiSource)
 	}
-	if workerPromoted.Scope != "production" || workerPromoted.SourceSHA256 != f.workerSource.SourceSHA256 || workerPromoted.RootfsKey != f.workerSource.RootfsKey {
+	// The worker had nothing in production, so its promotion lands in the
+	// lane a normally deployed project serves from (default scope).
+	if !state.EnvironmentOwnsScope("production", workerPromoted.Scope) || workerPromoted.SourceSHA256 != f.workerSource.SourceSHA256 || workerPromoted.RootfsKey != f.workerSource.RootfsKey {
 		t.Fatalf("promoted worker artifact=%+v source=%+v", workerPromoted, f.workerSource)
 	}
 	oldTarget, err := f.store.DeploymentByID(ctx, f.apiTarget.ID)
@@ -388,8 +390,10 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 	if apiLive.ID != f.apiTarget.ID {
 		t.Fatalf("restored api deployment=%s want=%s", apiLive.ID, f.apiTarget.ID)
 	}
-	if _, err := f.store.LiveDeploymentForScope(ctx, f.workerApp.ID, "production"); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("worker live deployment after rollback: err=%v, want not found", err)
+	for _, scope := range []string{"production", state.DefaultEnvScope} {
+		if _, err := f.store.LiveDeploymentForScope(ctx, f.workerApp.ID, scope); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("worker live %s deployment after rollback: err=%v, want not found", scope, err)
+		}
 	}
 	stage = "rollback idempotency replay"
 	raw, status = doReq(t, f.h, f.key, http.MethodPost, rollbackPath, nil,
@@ -429,8 +433,10 @@ func TestE2E_ProjectEnvironmentPromotion_StalePreviewRejected(t *testing.T) {
 		FromEnvironment: "staging", PromotionToken: preview.PromotionToken,
 	}, "promotion-stale-preview", http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid)
 
-	if _, err := f.store.LiveDeploymentForScope(ctx, f.workerApp.ID, "production"); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("stale preview created worker target: err=%v", err)
+	for _, scope := range []string{"production", state.DefaultEnvScope} {
+		if _, err := f.store.LiveDeploymentForScope(ctx, f.workerApp.ID, scope); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("stale preview created worker %s target: err=%v", scope, err)
+		}
 	}
 	var promotionCount int
 	if err := f.h.Pool.QueryRow(ctx, `select count(*) from project_environment_promotions where project_slug = $1`, f.project.Slug).Scan(&promotionCount); err != nil {

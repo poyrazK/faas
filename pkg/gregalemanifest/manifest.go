@@ -1604,6 +1604,9 @@ type Manifest struct {
 	// sets these keys and removes none: a key dropped from the manifest stays
 	// until `gregale app label unset` removes it. Labels are not secret.
 	Labels map[string]string `yaml:"labels,omitempty"`
+	// Protection is on or off: a deploy turns the app's production
+	// protection on or off (ADR-20261116120000 §5). Empty leaves it as it is.
+	Protection string `yaml:"protection,omitempty"`
 	// Project holds the repository's project-wide service settings
 	// (ADR-20261107180000). It is meaningful in the repository's root
 	// gregale.yaml, where the scanner applies it; it replaces the
@@ -2256,6 +2259,7 @@ type tomlManifest struct {
 	MainDependsOn       []ExtensionDependency      `toml:"main_depends_on"`
 	Extensions          []ExtensionSpec            `toml:"extensions"`
 	Labels              map[string]string          `toml:"labels"`
+	Protection          string                     `toml:"protection"`
 }
 
 type tomlTriggers struct {
@@ -2287,6 +2291,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		MainDependsOn:       raw.MainDependsOn,
 		Extensions:          raw.Extensions,
 		Labels:              raw.Labels,
+		Protection:          raw.Protection,
 	}, nil
 }
 
@@ -2323,6 +2328,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if err := m.validateRealtime(); err != nil {
 		return err
+	}
+	if m.Protection != "" && m.Protection != api.AppProtectionStateOn && m.Protection != api.AppProtectionStateOff {
+		return fmt.Errorf("protection: %q is not on or off", m.Protection)
 	}
 	if m.Project != nil {
 		if err := m.Project.Validate(); err != nil {

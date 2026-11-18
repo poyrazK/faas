@@ -1350,7 +1350,7 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int) *Problem {
 			"Concurrency over plan limit",
 			fmt.Sprintf("%s plan caps max_concurrency at %d; requested %d.", l.Plan, l.MaxConcurrency, maxConcurrency)).
 			WithLimit(int64(l.MaxConcurrency), int64(maxConcurrency)).
-			WithDocs(docsBase + "/plans#concurrency")
+			WithDocs(docsBase + "/plans#at-a-glance")
 	}
 	return nil
 }

@@ -18165,6 +18165,16 @@
     "kind": "operational"
   },
   {
+    "table": "sandbox_session_domains",
+    "columns": [
+      "domain",
+      "first_seen",
+      "refused",
+      "sandbox_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "sandbox_session_usage",
     "columns": [
       "account_id",
@@ -18194,6 +18204,8 @@
       "close_requested_at",
       "closed_at",
       "created_at",
+      "egress_allow",
+      "egress_deny",
       "expires_at",
       "id",
       "idle_timeout_sec",
@@ -18222,6 +18234,16 @@
       "tenant_id",
       "updated_at",
       "workspace_snapshot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_egress_policies",
+    "columns": [
+      "account_id",
+      "allow_rules",
+      "deny_rules",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -22059,6 +22081,16 @@
     "kind": "operational"
   },
   {
+    "table": "hosted_task_binding_qualifications",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "tool_publications",
     "columns": [
       "account_id",
@@ -22176,6 +22208,44 @@
       "experiment_id",
       "requests",
       "variant"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_protection",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "health_probe_at",
+      "lease_until",
+      "next_reconcile_at",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_protection_objects",
+    "columns": [
+      "app_id",
+      "created_at",
+      "item",
+      "object_id",
+      "reason",
+      "status",
+      "written"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_probe_wakes",
+    "columns": [
+      "app_id",
+      "created_at",
+      "instance_id",
+      "probe_done_at",
+      "woke_at"
     ],
     "kind": "operational"
   }

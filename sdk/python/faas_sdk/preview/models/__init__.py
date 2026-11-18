@@ -337,6 +337,13 @@ from .app_private_network_attachment_status import AppPrivateNetworkAttachmentSt
 from .app_private_network_node_status import AppPrivateNetworkNodeStatus
 from .app_private_network_node_status_fabric_status import AppPrivateNetworkNodeStatusFabricStatus
 from .app_private_network_node_status_route_status import AppPrivateNetworkNodeStatusRouteStatus
+from .app_protection_item_status import AppProtectionItemStatus
+from .app_protection_item_status_item import AppProtectionItemStatusItem
+from .app_protection_item_status_kind import AppProtectionItemStatusKind
+from .app_protection_item_status_reason import AppProtectionItemStatusReason
+from .app_protection_item_status_state import AppProtectionItemStatusState
+from .app_protection_response import AppProtectionResponse
+from .app_protection_response_state import AppProtectionResponseState
 from .app_publish_event_request import AppPublishEventRequest
 from .app_publish_event_response import AppPublishEventResponse
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
@@ -2398,6 +2405,14 @@ from .guarded_debug_regression_action_request import GuardedDebugRegressionActio
 from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
 from .held_link_review import HeldLinkReview
 from .held_links_response import HeldLinksResponse
+from .hosted_task_binding_check import HostedTaskBindingCheck
+from .hosted_task_binding_result import HostedTaskBindingResult
+from .hosted_task_binding_result_name import HostedTaskBindingResultName
+from .hosted_task_binding_result_status import HostedTaskBindingResultStatus
+from .hosted_task_binding_selection import HostedTaskBindingSelection
+from .hosted_task_binding_verification import HostedTaskBindingVerification
+from .hosted_task_binding_verification_status import HostedTaskBindingVerificationStatus
+from .hosted_task_binding_verification_version import HostedTaskBindingVerificationVersion
 from .hosted_task_source_check import HostedTaskSourceCheck
 from .hosted_task_source_decision import HostedTaskSourceDecision
 from .hosted_task_source_decision_decision import HostedTaskSourceDecisionDecision
@@ -6191,6 +6206,8 @@ from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
+from .set_app_protection_request import SetAppProtectionRequest
+from .set_app_protection_request_state import SetAppProtectionRequestState
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
@@ -7470,6 +7487,13 @@ __all__ = (
     "AppPrivateNetworkNodeStatus",
     "AppPrivateNetworkNodeStatusFabricStatus",
     "AppPrivateNetworkNodeStatusRouteStatus",
+    "AppProtectionItemStatus",
+    "AppProtectionItemStatusItem",
+    "AppProtectionItemStatusKind",
+    "AppProtectionItemStatusReason",
+    "AppProtectionItemStatusState",
+    "AppProtectionResponse",
+    "AppProtectionResponseState",
     "AppPublishEventRequest",
     "AppPublishEventResponse",
     "AppRegistryCredentialListResponse",
@@ -9362,6 +9386,14 @@ __all__ = (
     "GuardedDebugRegressionActionRequestAction",
     "HeldLinkReview",
     "HeldLinksResponse",
+    "HostedTaskBindingCheck",
+    "HostedTaskBindingResult",
+    "HostedTaskBindingResultName",
+    "HostedTaskBindingResultStatus",
+    "HostedTaskBindingSelection",
+    "HostedTaskBindingVerification",
+    "HostedTaskBindingVerificationStatus",
+    "HostedTaskBindingVerificationVersion",
     "HostedTaskSourceCheck",
     "HostedTaskSourceDecision",
     "HostedTaskSourceDecisionDecision",
@@ -12912,6 +12944,8 @@ __all__ = (
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetApplicationStandardLocalIntentRequest",
+    "SetAppProtectionRequest",
+    "SetAppProtectionRequestState",
     "SetAppStaticEgressIPRequest",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",

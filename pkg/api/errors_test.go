@@ -280,8 +280,8 @@ func TestErrWaitForWarm(t *testing.T) {
 	if p.Observed == nil || *p.Observed != 7 {
 		t.Errorf("Observed = %v, want 7 (live instances)", p.Observed)
 	}
-	if !strings.Contains(p.DocsURL, "scaling-policy#cooldown") {
-		t.Errorf("DocsURL = %q, want /scaling-policy#cooldown", p.DocsURL)
+	if !strings.HasSuffix(p.DocsURL, "/docs/scaling-policy") {
+		t.Errorf("DocsURL = %q, want /scaling-policy", p.DocsURL)
 	}
 	if got := p.HasHeader("Retry-After"); len(got) != 1 || got[0] != "5" {
 		t.Errorf("HasHeader(Retry-After) = %v, want [5]", got)
@@ -345,8 +345,8 @@ func TestErrBillingNotImplemented(t *testing.T) {
 	if p.Code != CodeBillingNotImplemented {
 		t.Errorf("Code = %q, want %q", p.Code, CodeBillingNotImplemented)
 	}
-	if !strings.Contains(p.DocsURL, "/billing#providers") {
-		t.Errorf("DocsURL = %q, want /billing#providers", p.DocsURL)
+	if !strings.HasSuffix(p.DocsURL, "/docs/billing") {
+		t.Errorf("DocsURL = %q, want /billing", p.DocsURL)
 	}
 }
 
@@ -640,15 +640,15 @@ func TestErrLongPollTimeout(t *testing.T) {
 
 func TestErrPlanFeatureGatedUsesCapabilitySpecificGuidance(t *testing.T) {
 	analytics := ErrPlanFeatureGated("analytics", PlanFree)
-	if strings.Contains(analytics.Detail, "event-driven") || !strings.Contains(analytics.Detail, "request analytics") || !strings.Contains(analytics.DocsURL, "#analytics") {
+	if strings.Contains(analytics.Detail, "event-driven") || !strings.Contains(analytics.Detail, "request analytics") || !strings.HasSuffix(analytics.DocsURL, "/docs/plans") {
 		t.Fatalf("analytics problem is not capability-specific: %+v", analytics)
 	}
 	invoke := ErrPlanFeatureGated("sync_invoke", PlanFree)
-	if strings.Contains(invoke.Detail, "event-driven") || !strings.Contains(invoke.Detail, "public HTTPS endpoint") || !strings.Contains(invoke.DocsURL, "#synchronous-invocation") {
+	if strings.Contains(invoke.Detail, "event-driven") || !strings.Contains(invoke.Detail, "public HTTPS endpoint") || !strings.HasSuffix(invoke.DocsURL, "/docs/plans") {
 		t.Fatalf("sync invoke problem is not capability-specific: %+v", invoke)
 	}
 	events := ErrPlanFeatureGated("queues", PlanFree)
-	if !strings.Contains(events.Detail, "event-driven") {
+	if !strings.Contains(events.Detail, "event-driven") || !strings.HasSuffix(events.DocsURL, "/docs/event-driven") {
 		t.Fatalf("event capability lost shared guidance: %+v", events)
 	}
 }

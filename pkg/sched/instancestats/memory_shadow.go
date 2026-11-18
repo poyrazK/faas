@@ -86,7 +86,11 @@ func (p *Poller) publishMemoryShadowWithBridges(instances []state.Instance, rows
 	// A paused VM cannot grow, and a thaw re-admits its full reservation, so
 	// a frozen instance is charged its latest sample, not the window's p95:
 	// the memory a compression frees reaches admission with the next sample,
-	// not ten minutes later (ADR 20261031190030).
+	// not ten minutes later (ADR 20261031190030). An instance vmmd holds
+	// compressed at the idle ladder's L3 or L4 is charged the same way: what
+	// stays resident is the share its wakes showed it needs, and the ladder
+	// parks it at ten minutes, so the window's p95 would never let the
+	// compression count (ADR-20261107122928 amendment 1).
 	frozen := make(map[string]struct{})
 	for _, in := range instances {
 		if state.State(in.State) == state.StateFrozen {
@@ -98,7 +102,8 @@ func (p *Poller) publishMemoryShadowWithBridges(instances []state.Instance, rows
 	for _, row := range rows {
 		if row.RSSMB >= 0 { // false for NaN, an unmeasured instance
 			charge := p.rssHistory.chargeSample(row.InstanceID, row.RSSMB, asOf)
-			if _, isFrozen := frozen[row.InstanceID]; !isFrozen {
+			_, isFrozen := frozen[row.InstanceID]
+			if !isFrozen && row.IdleLadderLevel < api.IdleLadderColdLevel {
 				row.RSSMB = charge
 			}
 			sampled[row.InstanceID] = struct{}{}

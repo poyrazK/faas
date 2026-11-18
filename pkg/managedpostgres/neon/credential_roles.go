@@ -431,7 +431,11 @@ func initializeCredentialSchema(ctx context.Context, tx pgx.Tx, role credentialR
 	}
 	queries := []string{
 		"GRANT " + owner + " TO CURRENT_USER",
-		"GRANT CONNECT, CREATE ON DATABASE " + roleIdentifier(role.database) + " TO " + owner,
+		// TEMPORARY lets migrations use pg_temp helpers (Windmill's
+		// migrations define pg_temp functions). Only the migration login is a
+		// member of the owner; runtime logins stay without it
+		// (ADR-20261116213000, amendment 1).
+		"GRANT CONNECT, CREATE, TEMPORARY ON DATABASE " + roleIdentifier(role.database) + " TO " + owner,
 		"ALTER SCHEMA public OWNER TO " + owner,
 		"REVOKE CREATE ON SCHEMA public FROM PUBLIC",
 		"REVOKE CREATE, TEMPORARY ON DATABASE " + roleIdentifier(role.database) + " FROM PUBLIC",

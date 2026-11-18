@@ -105,6 +105,11 @@ type SandboxWakeRequest struct {
 	// commands are vmmd's; a session with commands of its own or an image
 	// drive cannot have it.
 	Browser bool
+	// EgressAllow and EgressDeny are a web-mode session's domain policy
+	// (ADR-20261117091026 §3): the resolver's grant refuses a name the
+	// policy does not allow. vmmd validated them.
+	EgressAllow []string
+	EgressDeny  []string
 	// Snapshot restores the session from a warm snapshot CaptureSandboxSnapshot
 	// took of the same drives and machine (ADR-20261027090013 §12), and
 	// falls back to a cold boot (ADR-005). It was captured before the
@@ -160,6 +165,7 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 	}
 	inst, err := m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, sandboxNetwork: network,
+		sandboxEgressAllow: req.EgressAllow, sandboxEgressDeny: req.EgressDeny,
 		sandboxManifest: manifest, AccountID: req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: layer, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter, Snapshot: req.Snapshot,

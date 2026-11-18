@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -205,8 +206,9 @@ func TestVerifyEmailLinkNeedsTheAccountsBrowser(t *testing.T) {
 		wantCode int
 	}{
 		{"no session, JSON", "application/json", "", http.StatusUnauthorized},
-		{"no session, browser", "text/html", "", http.StatusSeeOther},
+		{"no session, browser", "text/html", "", http.StatusOK},
 		{"another account's session", "application/json", otherTok, http.StatusUnauthorized},
+		{"another account's browser", "text/html", otherTok, http.StatusOK},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -221,11 +223,10 @@ func TestVerifyEmailLinkNeedsTheAccountsBrowser(t *testing.T) {
 			if rec.Code != tc.wantCode {
 				t.Fatalf("verify-email = %d %s, want %d", rec.Code, rec.Body.String(), tc.wantCode)
 			}
-			if tc.wantCode == http.StatusSeeOther {
-				loc := rec.Header().Get("Location")
-				want := loginPath + "?verify=1&next=" + url.QueryEscape(emailVerificationPath+"?token="+url.QueryEscape(token))
-				if loc != want {
-					t.Errorf("redirect = %q, want the login page carrying the link", loc)
+			if tc.accept == "text/html" {
+				want := loginPath + "?reauth=1&verify=1&next=" + url.QueryEscape(emailVerificationPath+"?token="+url.QueryEscape(token))
+				if !strings.Contains(html.UnescapeString(rec.Body.String()), `href="`+want+`"`) {
+					t.Errorf("recovery page does not link to sign-in carrying the verification link: %s", rec.Body.String())
 				}
 			}
 		})

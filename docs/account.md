@@ -144,6 +144,108 @@ operation still enforces its own authorization and admission checks.
 - **Leaving an org:** `gregale org leave SLUG`. Owners transfer ownership first,
   billing contacts are replaced first, and a personal org cannot be left.
 
+## Members, roles and invitations
+
+An organization shares apps, projects, databases and billing between people.
+Every account also has a personal organization, which cannot take members,
+change owner or be deleted on its own. To work with others, create a team
+organization and invite them:
+
+```bash
+gregale org create --name "Acme" acme
+gregale org members invite --org acme --email ada@example.com --role developer
+```
+
+### Roles
+
+Each member has one role. The default for an invitation is `developer`.
+
+| Role | Can |
+|---|---|
+| `owner` | Everything an admin can, plus change roles, remove members, change the plan, require two-factor authentication, transfer ownership and delete the organization. There is exactly one owner. |
+| `admin` | Everything a developer can, plus delete apps and projects, change their access and security settings, manage databases and object storage, replay queue messages, invite members other than admins, and create or revoke organization API keys. |
+| `developer` | Read apps and logs, change app settings, deploy, manage secrets, approve releases, attach databases and storage, and send and consume queue messages. |
+| `viewer` | Read apps, logs, projects, databases, storage and queues. Changes nothing. |
+| `billing` | Manage billing details and the organization's name, and read usage. Cannot see apps. |
+
+`gregale org members list acme` shows each member's user ID, email, name and
+role. An action your role does not allow fails with `403 org_role_forbidden`.
+
+### Invitations
+
+`gregale org members invite` prints a single-use invitation token once. Gregale
+does not email it: send it to the person yourself. They run
+`gregale org invitation peek TOKEN` to see the organization and role, then
+`gregale org invitation accept TOKEN` while signed in as the invited email
+address. An invitation expires after 14 days. Accepting an expired, revoked
+or already used token fails with `410 org_invitation_invalid`; send a new
+invitation.
+
+Owners and admins can invite. Only the owner can invite an admin.
+
+```bash
+gregale org invitation list --org acme                  # pending invitations
+gregale org invitation revoke --org acme --invitation ID
+```
+
+Resetting your password, confirming an email change or signing out everywhere
+also cancels the invitations you sent that were not yet accepted.
+
+### Changing roles, removing members and ownership
+
+Only the owner changes roles and removes members:
+
+```bash
+gregale org members update --org acme --user USER_ID --role viewer
+gregale org members delete --org acme --user USER_ID
+gregale org owner set --org acme --to USER_ID
+```
+
+Nobody can be given the `owner` role directly. To transfer ownership,
+`gregale org owner set` hands it to an existing member, and the previous owner
+becomes an admin.
+Transferring ownership and deleting the organization need a signed-in browser,
+so an API key alone cannot do either. The last owner cannot be removed or leave
+(`409 org_last_owner`).
+
+### Member limits
+
+| Plan | Members | Pending invitations |
+|---|---|---|
+| Free | 0 | 0 |
+| Hobby | 10 | 5 |
+| Pro | 50 | 25 |
+| Scale | 200 | 100 |
+
+The plan is the organization's own plan. `gregale org usage --org acme` shows
+how many seats are used. An invitation past the pending limit fails with
+`403 org_invitation_cap_exceeded`; accepting one when the organization is full
+fails with `403 org_member_cap_exceeded`. Besides its personal organization,
+an account can own one team organization on the Free plan; creating or taking
+over another fails with `403 org_free_limit_exceeded` until one is upgraded.
+
+### Organization API keys
+
+Owners and admins create keys that belong to the organization rather than to
+a person:
+
+```bash
+gregale org keys add --org acme --label ci-deploy --scopes deploy:write
+gregale org keys list --org acme
+gregale org keys rotate --org acme KEY_ID
+gregale org keys rm --org acme KEY_ID
+```
+
+Creating one emails the owner. Scopes, lifetime and rotation work as for
+personal keys; see [API keys](auth.md#api-keys).
+
+### Require two-factor authentication
+
+The owner can require every member to use two-factor authentication with
+`PUT /v1/orgs/{slug}/security-policy` and `{"require_mfa": true}`. The owner
+needs it turned on first. Members without it get `403 org_mfa_required` until
+they turn it on.
+
 ## Export and deletion
 
 Exports are rate-limited and produce an audit event; store the resulting archive securely and delete it when no longer needed.

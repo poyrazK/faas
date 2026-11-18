@@ -583,9 +583,15 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	// for this minute. Like residency, they come from the ledger, so a
 	// caught-up minute subtracts exactly what a live roll would have.
 	var quietPaused map[string]state.QuietPausedSeconds
+	// ADR-20261116120000 §3: seconds a wake caused only by a baseline
+	// health probe kept the instance resident; the platform pays for them.
+	var probeUnbilled map[string]int64
 	if exactResidency {
 		var err error
 		if quietPaused, err = s.quietPausedSeconds(ctx, minute); err != nil {
+			return nil, err
+		}
+		if probeUnbilled, err = platformProbeUnbilledSeconds(ctx, s.store, minute); err != nil {
 			return nil, err
 		}
 	}
@@ -732,6 +738,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 					})
 				}
 				seconds = billed
+				seconds -= min(max(probeUnbilled[ins.ID], 0), seconds)
 			}
 			if seconds > 0 && (exactResidency || state.State(ins.State).Billable()) {
 				covered, err := managed()

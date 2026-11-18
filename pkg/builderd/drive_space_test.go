@@ -5,7 +5,20 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// ADR-20261118003000: builderd cannot evict the captures and layers the node
+// cache's eviction owner keeps, so the cache's floor on a build-sized disk
+// must hold a whole build drive. rc.351 on production-us (2026-11-18) failed
+// fsn-3's canary build at 18.3 GB free against a 16.1 GB floor.
+func TestArtifactCacheBuildFloorHoldsABuildDrive(t *testing.T) {
+	if api.ArtifactCacheBuildFreeBytes < BuildDriveMinFreeBytes {
+		t.Fatalf("api.ArtifactCacheBuildFreeBytes = %d, below BuildDriveMinFreeBytes %d",
+			api.ArtifactCacheBuildFreeBytes, BuildDriveMinFreeBytes)
+	}
+}
 
 // #5709: a node with 20.9 GB free refused every cache-miss build while its
 // artifact cache held tens of gigabytes it could drop.
