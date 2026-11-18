@@ -63,6 +63,11 @@ type SupportAccessRequest struct {
 	CreatedAt string `json:"created_at"`
 	ExpiresAt string `json:"expires_at"`
 	DecidedAt string `json:"decided_at,omitempty"`
+	// Apps, TTLHours and Extends are what support asked for; approving
+	// with an empty body grants exactly that.
+	Apps     []string `json:"apps,omitempty"`
+	TTLHours int      `json:"ttl_hours,omitempty"`
+	Extends  string   `json:"extends,omitempty"`
 }
 
 // SupportAccess is GET /v1/orgs/{slug}/support-access.
@@ -83,9 +88,15 @@ type CreateSupportGrantRequest struct {
 
 // OperatorSupportAccessRequest is an operator asking an organization for
 // access.
+// Apps and TTLHours say what support asks for (empty and zero leave it to
+// the customer); Extends names a live grant to continue, and asks for its
+// apps again unless Apps names others.
 type OperatorSupportAccessRequest struct {
-	Org    string `json:"org"`
-	Reason string `json:"reason"`
+	Org      string   `json:"org"`
+	Reason   string   `json:"reason"`
+	Apps     []string `json:"apps,omitempty"`
+	TTLHours int      `json:"ttl_hours,omitempty"`
+	Extends  string   `json:"extends,omitempty"`
 }
 
 // SupportGrantList is the operator's view of live grants.

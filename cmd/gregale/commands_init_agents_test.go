@@ -11,16 +11,6 @@ import (
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
-// noGeminiHome points agent detection at an empty home for one test.
-func noGeminiHome(t *testing.T) string {
-	t.Helper()
-	home := t.TempDir()
-	old := agentsHomeDir
-	agentsHomeDir = func() (string, error) { return home, nil }
-	t.Cleanup(func() { agentsHomeDir = old })
-	return home
-}
-
 func writeTestFile(t *testing.T, dir, name, body string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -66,7 +56,6 @@ func TestInitAgentsAgentsMD(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			noGeminiHome(t)
 			dir := t.TempDir()
 			if tt.existing != nil {
 				writeTestFile(t, dir, "AGENTS.md", *tt.existing)
@@ -94,7 +83,6 @@ func TestInitAgentsClaudeImport(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			noGeminiHome(t)
 			dir := t.TempDir()
 			writeTestFile(t, dir, "CLAUDE.md", tt.existing)
 			receipt := runInitAgentsJSON(t, dir, "my-api", false)
@@ -109,7 +97,6 @@ func TestInitAgentsClaudeImport(t *testing.T) {
 }
 
 func TestInitAgentsLeavesClaudeMDAbsent(t *testing.T) {
-	noGeminiHome(t)
 	dir := t.TempDir()
 	receipt := runInitAgentsJSON(t, dir, "my-api", false)
 	if len(receipt.Files) != 1 {
@@ -124,26 +111,26 @@ func TestInitAgentsGeminiSettings(t *testing.T) {
 	settings := filepath.Join(".gemini", "settings.json")
 	created := "{\n  \"context\": {\n    \"fileName\": [\"AGENTS.md\", \"GEMINI.md\"]\n  }\n}\n"
 	tests := []struct {
-		name       string
-		project    map[string]string
-		homeGemini bool
-		action     string
-		want       string
+		name    string
+		project map[string]string
+		action  string
+		want    string
 	}{
-		{name: "no gemini anywhere", action: ""},
-		{name: "GEMINI.md in the project", project: map[string]string{"GEMINI.md": "# Notes\n"}, action: agentFileCreated, want: created},
-		{name: "gemini on this machine", homeGemini: true, action: agentFileCreated, want: created},
+		{name: "no gemini settings", action: ""},
+		// Antigravity reads GEMINI.md and AGENTS.md by itself.
+		{name: "GEMINI.md alone", project: map[string]string{"GEMINI.md": "# Notes\n"}, action: ""},
+		{name: "a .gemini folder", project: map[string]string{filepath.Join(".gemini", "commands", "test.toml"): "prompt = \"x\"\n"}, action: agentFileCreated, want: created},
 		{name: "settings already read AGENTS.md", project: map[string]string{settings: `{"context":{"fileName":"AGENTS.md"}}`}, action: agentFileUnchanged, want: `{"context":{"fileName":"AGENTS.md"}}`},
 		{name: "older contextFileName key", project: map[string]string{settings: `{"contextFileName":["GEMINI.md","AGENTS.md"]}`}, action: agentFileUnchanged, want: `{"contextFileName":["GEMINI.md","AGENTS.md"]}`},
 		{name: "settings without AGENTS.md stay untouched", project: map[string]string{settings: `{"theme":"dark"}`}, action: agentFileManual, want: `{"theme":"dark"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			home := noGeminiHome(t)
-			if tt.homeGemini {
-				if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o755); err != nil {
-					t.Fatal(err)
-				}
+			// A ~/.gemini folder (Antigravity keeps files there too) is
+			// no reason to write project settings.
+			t.Setenv("HOME", t.TempDir())
+			if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".gemini"), 0o755); err != nil {
+				t.Fatal(err)
 			}
 			dir := t.TempDir()
 			for name, body := range tt.project {
@@ -173,10 +160,11 @@ func TestInitAgentsGeminiSettings(t *testing.T) {
 }
 
 func TestInitAgentsDryRunWritesNothing(t *testing.T) {
-	noGeminiHome(t)
 	dir := t.TempDir()
 	writeTestFile(t, dir, "CLAUDE.md", "# Project\n")
-	writeTestFile(t, dir, "GEMINI.md", "# Notes\n")
+	if err := os.Mkdir(filepath.Join(dir, ".gemini"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	receipt := runInitAgentsJSON(t, dir, "my-api", true)
 	if !receipt.DryRun || len(receipt.Files) != 3 {
 		t.Fatalf("receipt = %+v, want a dry run planning 3 files", receipt)
@@ -195,7 +183,6 @@ func TestInitAgentsDryRunWritesNothing(t *testing.T) {
 }
 
 func TestInitAgentsApp(t *testing.T) {
-	noGeminiHome(t)
 	dir := filepath.Join(t.TempDir(), "Orders API")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -218,7 +205,6 @@ func TestInitAgentsApp(t *testing.T) {
 }
 
 func TestInitAgentsRejectsABadName(t *testing.T) {
-	noGeminiHome(t)
 	if code := runInitAgents(t.TempDir(), "My API", false, &bytes.Buffer{}); code == 0 {
 		t.Fatal("exit 0 for an invalid --name")
 	}

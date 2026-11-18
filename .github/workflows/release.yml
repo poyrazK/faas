@@ -1005,8 +1005,10 @@ jobs:
         run: |
           set -euo pipefail
           MANIFEST_FILE="$OUT_DIR/production-manifest.yaml"
+          # The topology template is the one the tag's
+          # deploy/manifest/production/release-template names, and the
+          # materializer refuses it if it carries a credential.
           scripts/materialize-release-manifest.sh \
-            --template deploy/manifest/production/gcp-live.template.yaml \
             --git-sha "$GIT_SHA" \
             --builder-base-digest "$BUILDER_BASE_DIGEST" \
             --kernel-digest "$KERNEL_DIGEST" \

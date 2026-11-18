@@ -3,9 +3,11 @@ package preview
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -100,6 +102,49 @@ func TestTrackDropsWithoutVerifiedCustomerOrValidInput(t *testing.T) {
 	_ = flags.Flush(context.Background())
 	if len(sent()) != 0 || flags.DroppedEvents() != 4 {
 		t.Fatalf("sent %d batches, dropped %d; want none sent and 4 dropped", len(sent()), flags.DroppedEvents())
+	}
+}
+
+// ADR 20261117084505 §1: events carry properties, the request's subject and
+// every flag decision the request made before TrackWith.
+func TestTrackWithSendsPropertiesSubjectAndRequestFlags(t *testing.T) {
+	flags, sent := newTrackTestFlags(t, http.StatusOK, -1)
+	ctx, err := flags.WithSubject(trackRequest(flags, testFlagCustomer), "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flags.Boolean(ctx, "new-checkout", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flags.Variant(ctx, "pricing", "control"); err != nil {
+		t.Fatal(err)
+	}
+	if !flags.TrackWith(ctx, "order_completed", TrackOptions{Properties: map[string]string{"plan": "pro"}}) ||
+		!flags.TrackWith(ctx, "signup", TrackOptions{Subject: "user-2"}) {
+		t.Fatal("TrackWith refused valid events")
+	}
+	tooMany := map[string]string{}
+	for i := range 11 {
+		tooMany[fmt.Sprintf("k%d", i)] = "v"
+	}
+	for _, props := range []map[string]string{{"Bad Key": "x"}, tooMany, {"plan": strings.Repeat("x", 257)}} {
+		if flags.TrackWith(ctx, "signup", TrackOptions{Properties: props}) {
+			t.Errorf("tracked invalid properties %v", props)
+		}
+	}
+	if err := flags.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	decisions := map[string]string{"new-checkout": "false", "pricing": "control"}
+	want := [][]flagEvent{{
+		{Name: "order_completed", CustomerID: testFlagCustomer, At: "2026-11-15T12:00:00Z", Subject: "user-1", Properties: map[string]string{"plan": "pro"}, Flags: decisions},
+		{Name: "signup", CustomerID: testFlagCustomer, At: "2026-11-15T12:00:00Z", Subject: "user-2", Flags: decisions},
+	}}
+	if got := sent(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("sent %+v; want %+v", got, want)
+	}
+	if flags.DroppedEvents() != 3 {
+		t.Fatalf("dropped = %d; want 3", flags.DroppedEvents())
 	}
 }
 

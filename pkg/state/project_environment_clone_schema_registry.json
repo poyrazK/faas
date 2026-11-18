@@ -14166,15 +14166,18 @@
   {
     "table": "support_grant_requests",
     "columns": [
+      "app_ids",
       "created_at",
       "decided_at",
       "decided_by_account_id",
       "expires_at",
+      "extends_grant_id",
       "id",
       "operator_account_id",
       "org_id",
       "reason",
-      "status"
+      "status",
+      "ttl_seconds"
     ],
     "kind": "account_identity"
   },
@@ -14190,7 +14193,8 @@
       "reason",
       "request_id",
       "revoked_at",
-      "revoked_by_account_id"
+      "revoked_by_account_id",
+      "summary_sent_at"
     ],
     "kind": "account_identity"
   },
@@ -22257,6 +22261,31 @@
       "instance_id",
       "probe_done_at",
       "woke_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_events",
+    "columns": [
+      "account_id",
+      "at",
+      "customer_id",
+      "environment_id",
+      "flags",
+      "id",
+      "name",
+      "properties",
+      "subject_hash",
+      "value"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_property_keys",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "key"
     ],
     "kind": "operational"
   }

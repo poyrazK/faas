@@ -46,6 +46,31 @@ async def test_track_sends_customer_name_value_and_time():
 
 
 @pytest.mark.asyncio
+async def test_track_sends_properties_subject_and_request_flags():
+    """ADR 20261117084505 §1: events carry properties, the request's subject
+    and every flag decision the request made before track()."""
+    flags, sent = flags_client()
+    async with flags.run_request({GREGALE_FLAG_CONTEXT_HEADER: TENANT}):
+        async with flags.for_subject("user-1"):
+            flags.boolean("new-checkout", False)
+            flags.variant("pricing", "control")
+            assert flags.track("order_completed", properties={"plan": "pro"})
+            assert flags.track("signup", subject="user-2")
+            assert not flags.track("signup", properties={"Bad Key": "x"})
+            assert not flags.track("signup", properties={f"k{i}": "v" for i in range(11)})
+            assert not flags.track("signup", properties={"plan": "x" * 257})
+    await flags.flush()
+    assert "track-v2" in sent[0]["capabilities"]
+    decisions = {"new-checkout": "false", "pricing": "control"}
+    assert sent[0]["body"]["events"] == [
+        {"name": "order_completed", "customer_id": TENANT, "at": "2026-11-15T12:00:00Z", "subject": "user-1",
+         "properties": {"plan": "pro"}, "flags": decisions},
+        {"name": "signup", "customer_id": TENANT, "at": "2026-11-15T12:00:00Z", "subject": "user-2", "flags": decisions},
+    ]
+    assert flags.dropped_events() == 3
+
+
+@pytest.mark.asyncio
 async def test_track_drops_without_verified_customer_or_valid_input():
     flags, sent = flags_client()
     assert not flags.track("signup")  # outside run_request

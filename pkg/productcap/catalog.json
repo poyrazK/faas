@@ -2614,10 +2614,12 @@
       "acceptance_test": "cmd/e2e/feature_flags_native_restore_metal_test.go::TestFeatureFlagsNativeParkRestoreMetal",
       "routes": [
         "/v1/projects/{}/environments/{}/flags",
+        "/v1/projects/{}/environments/{}/insights",
         "/v1/runtime/flags"
       ],
       "cli": [
-        "flags"
+        "flags",
+        "insights"
       ]
     },
     {

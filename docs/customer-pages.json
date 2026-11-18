@@ -8,6 +8,7 @@
     {"path": "claude-code", "source": "docs/claude-code.md"},
     {"path": "codex", "source": "docs/codex.md"},
     {"path": "cursor", "source": "docs/cursor.md"},
+    {"path": "antigravity", "source": "docs/antigravity.md"},
     {"path": "gemini-cli", "source": "docs/gemini-cli.md"},
     {"path": "alerts", "source": "docs/alerts.md"},
     {"path": "api-hosting", "source": "docs/api-hosting-roadmap.md", "unpublished": "internal roadmap, not a customer page"},

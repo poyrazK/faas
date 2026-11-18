@@ -8,7 +8,8 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TEMPLATE="$REPO_ROOT/deploy/manifest/production/gcp-live.template.yaml"
+# Default: the template deploy/manifest/production/release-template names.
+TEMPLATE=""
 GIT_SHA=""
 OUTPUT=""
 BUILDER_BASE_DIGEST=""
@@ -18,7 +19,7 @@ FIRECRACKER_DIGEST=""
 
 usage() {
   cat >&2 <<'USAGE'
-usage: materialize-release-manifest.sh --git-sha SHA --output PATH --runtime-bases-env PATH [--template PATH] [--builder-base-digest DIGEST] [--kernel-digest DIGEST] [--firecracker-digest DIGEST]
+usage: materialize-release-manifest.sh --git-sha SHA --output PATH --runtime-bases-env PATH [--template PATH (default: the one deploy/manifest/production/release-template names)] [--builder-base-digest DIGEST] [--kernel-digest DIGEST] [--firecracker-digest DIGEST]
 USAGE
 }
 
@@ -78,10 +79,16 @@ if [[ -z "$OUTPUT" ]]; then
   echo "materialize-release-manifest: --output is required" >&2
   exit 2
 fi
+if [[ -z "$TEMPLATE" ]]; then
+  TEMPLATE=$(bash "$REPO_ROOT/scripts/release-template.sh")
+fi
 if [[ ! -f "$TEMPLATE" ]]; then
   echo "materialize-release-manifest: template not found: $TEMPLATE" >&2
   exit 1
 fi
+# The materialized manifest is published as a release asset: refuse a
+# template that carries a credential before any byte of it is copied.
+bash "$REPO_ROOT/scripts/check-manifest-credentials.sh" "$TEMPLATE"
 if [[ -n "$BUILDER_BASE_DIGEST" && ! "$BUILDER_BASE_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]]; then
   echo "materialize-release-manifest: --builder-base-digest must be a sha256 digest" >&2
   exit 2
@@ -250,7 +257,8 @@ awk -v release_id="$release_id" -v release_sha="$GIT_SHA" \
   }
 ' "$TEMPLATE" > "$tmp"
 
+bash "$REPO_ROOT/scripts/check-manifest-credentials.sh" "$tmp"
 mv "$tmp" "$OUTPUT"
 trap - EXIT
 chmod 0644 "$OUTPUT"
-printf 'materialized %s (release=%s, manifest hash computed by caller)\n' "$OUTPUT" "$release_id"
+printf 'materialized %s from %s (release=%s, manifest hash computed by caller)\n' "$OUTPUT" "${TEMPLATE#"$REPO_ROOT"/}" "$release_id"
