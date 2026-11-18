@@ -47,6 +47,8 @@ func UnitVmmd() daemonunit.Unit {
 		Documentation: "https://gregale.dev/docs/ops/vmmd",
 		After: []string{
 			"faas-tenant.slice", "faas-cp.slice", "faas-cp-build.slice",
+			// Borrowed builder slots (ADR-20261118154632).
+			"faas-borrowed.slice",
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
 			// Spec §11 fence pins: keep the per-VM cgroup controllers
@@ -54,11 +56,13 @@ func UnitVmmd() daemonunit.Unit {
 			"faas-tenant-fence.slice",
 			"faas-tenant-free-fence.slice", "faas-tenant-hobby-fence.slice",
 			"faas-tenant-pro-fence.slice", "faas-tenant-scale-fence.slice",
-			"faas-cp-build-fence.slice",
+			"faas-cp-build-fence.slice", "faas-borrowed-fence.slice",
 			"nftables.service", "br-tenants-up.service",
 		},
 		Wants: []string{
 			"faas-tenant.slice", "faas-cp.slice", "faas-cp-build.slice",
+			// Borrowed builder slots (ADR-20261118154632).
+			"faas-borrowed.slice",
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
 			// Spec §11 fence pins: keep the per-VM cgroup controllers
@@ -66,7 +70,7 @@ func UnitVmmd() daemonunit.Unit {
 			"faas-tenant-fence.slice",
 			"faas-tenant-free-fence.slice", "faas-tenant-hobby-fence.slice",
 			"faas-tenant-pro-fence.slice", "faas-tenant-scale-fence.slice",
-			"faas-cp-build-fence.slice",
+			"faas-cp-build-fence.slice", "faas-borrowed-fence.slice",
 			"nftables.service", "br-tenants-up.service",
 		},
 		StartLimitIntervalSec: "60s",

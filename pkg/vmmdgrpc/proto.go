@@ -659,6 +659,10 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// after the VM exits.
 		ExportDir:       buildSpecExportDir(req.GetBuild()),
 		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
+		// ADR-20261118154632: a builder on a borrowed slot runs in
+		// faas-borrowed.slice. CreateColdBoot refuses it first when this
+		// node cannot.
+		BorrowedBuilder: req.GetBuild().GetBorrowed() && buildSpecExportDir(req.GetBuild()) != "",
 		// ADR-20261026091500: the built app's sealed registry
 		// credentials, for the builder's FROM pulls.
 		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
