@@ -26,7 +26,8 @@ func projectProgressServer(t *testing.T) *httptest.Server {
 		case "/v1/deployments/orders":
 			dep = api.DeploymentResponse{ID: "orders", Status: "building", StageState: building}
 			if ordersReads.Add(1) > 1 {
-				dep = api.DeploymentResponse{ID: "orders", Status: "failed", Error: "cold_boot_timeout: instance=i-1"}
+				dep = api.DeploymentResponse{ID: "orders", Status: "failed", Error: "cold_boot_timeout: instance=i-1", ErrorCode: "app_startup_timeout",
+					ErrorFix: "• set lifecycle.startup_deadline_s in gregale.yaml\n• check the startup log"}
 			}
 		case "/v1/deployments/cart":
 			dep = api.DeploymentResponse{ID: "cart", Status: "building", StageState: building}
@@ -65,6 +66,7 @@ func TestProjectWaitReportsStagesAndFailuresAsTheyHappen(t *testing.T) {
 		"retail-demo-orders: image_build",
 		"retail-demo-orders: failed after",
 		"cold_boot_timeout",
+		"    fix:\n      • set lifecycle.startup_deadline_s in gregale.yaml\n      • check the startup log\n",
 		"retail-demo-cart: image_build",
 		"retail-demo-cart: live after",
 	} {
@@ -95,6 +97,8 @@ func TestProjectWaitJSONProgressEvents(t *testing.T) {
 			Service string `json:"service"`
 			Stage   string `json:"stage"`
 			Error   string `json:"error"`
+			Code    string `json:"error_code"`
+			Fix     string `json:"fix"`
 		}
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			t.Fatalf("progress line is not JSON: %q", line)
@@ -103,6 +107,9 @@ func TestProjectWaitJSONProgressEvents(t *testing.T) {
 			t.Fatalf("event = %q", ev.Event)
 		}
 		stages[ev.Service] = append(stages[ev.Service], ev.Stage)
+		if ev.Stage == "failed" && (ev.Code != "app_startup_timeout" || !strings.Contains(ev.Fix, "startup_deadline_s")) {
+			t.Errorf("failed event lacks the server's code and fix: %s", line)
+		}
 	}
 	if strings.Join(stages["retail-demo-orders"], ",") != "image_build,failed" || strings.Join(stages["retail-demo-cart"], ",") != "image_build,live" {
 		t.Fatalf("stages = %v\nstderr:\n%s", stages, stderr.String())

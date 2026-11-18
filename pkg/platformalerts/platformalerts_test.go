@@ -98,6 +98,46 @@ func TestWorker_OutageEmailsOnceAndSkipsCoveredApps(t *testing.T) {
 	}
 }
 
+// An enabled burn alert on an availability SLO (the protection baseline's,
+// ADR-20261116120000 §7) covers the app; a burn alert on a latency SLO does
+// not.
+func TestWorker_OutageSkipsAppsWithAvailabilityBurnAlert(t *testing.T) {
+	store := state.NewMemStore()
+	burn := func(acct state.Account, app state.App, sli string, threshold int) {
+		t.Helper()
+		slo, err := store.CreateSLO(t.Context(), state.SLO{AccountID: acct.ID, AppID: app.ID, Name: sli, SLI: sli,
+			LatencyThresholdMS: threshold, ObjectiveBP: 9950, WindowDays: 30}, api.MaxSLOsPerApp)
+		if err != nil {
+			t.Fatalf("CreateSLO: %v", err)
+		}
+		if _, err := store.CreateAlertRule(t.Context(), state.AlertRule{AccountID: acct.ID, AppID: app.ID, Name: sli + "-burn",
+			Enabled: true, Metric: state.AlertMetricSLOBudgetBurn, Comparison: state.AlertGt, Threshold: 14.4,
+			WindowSpec: state.AlertWindowSpec("1h"), SLOID: slo.ID, WebhookURL: "https://example.com/hook",
+			WebhookSecretSealed: []byte("x"), CooldownMinutes: 30}); err != nil {
+			t.Fatalf("CreateAlertRule: %v", err)
+		}
+	}
+	availAcct, protected := seedApp(t, store, "protected")
+	burn(availAcct, protected, state.SLIAvailability, 0)
+	latencyAcct, slowOnly := seedApp(t, store, "slowonly")
+	burn(latencyAcct, slowOnly, state.SLILatency, 1000)
+	metrics := fakeMetrics{
+		rates:    map[string]float64{protected.ID: 100, slowOnly.ID: 100},
+		requests: map[string]float64{protected.ID: 300, slowOnly.ID: 300},
+	}
+	mail := &fakeMailer{}
+	w := &platformalerts.Worker{Store: store, Metrics: metrics, Mail: mail}
+	if err := w.DetectOutages(t.Context()); err != nil {
+		t.Fatalf("DetectOutages: %v", err)
+	}
+	if err := w.SendDue(t.Context()); err != nil {
+		t.Fatalf("SendDue: %v", err)
+	}
+	if len(mail.sent) != 1 || mail.sent[0].to != latencyAcct.Email {
+		t.Fatalf("sent = %+v; want one email, to the latency-only app's owner", mail.sent)
+	}
+}
+
 func queueCronPaused(t *testing.T, store *state.MemStore) (state.Account, state.Cron) {
 	t.Helper()
 	acct, app := seedApp(t, store, "orders")

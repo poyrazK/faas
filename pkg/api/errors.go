@@ -5150,7 +5150,7 @@ func ErrPlanPublicAuthBearerNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanPublicAuthBearerNotAllowed,
 		"Bearer public-URL auth is not available on this plan",
 		fmt.Sprintf("the %s plan does not include bearer-mode public auth; upgrade to Hobby or above to opt in. The 'open' mode is available on every plan.", p)).
-		WithDocs(docsBase + "/plans")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrPlanPublicAuthBasicNotAllowed is the 402 apid returns when a
@@ -5165,7 +5165,7 @@ func ErrPlanPublicAuthBasicNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanPublicAuthBasicNotAllowed,
 		"Basic public-URL auth is not available on this plan",
 		fmt.Sprintf("the %s plan does not include basic-mode public auth; upgrade to Pro or above to opt in. The 'open' and 'bearer' modes are available on lower plans.", p)).
-		WithDocs(docsBase + "/plans")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrPlanEvictionPriorityReservedQuota is the 422 apid returns when
@@ -5961,7 +5961,7 @@ func ErrAPIKeyExpired() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyExpired,
 		"API key expired",
 		"the bearer key has expired; rotate it and use the new plaintext").
-		WithDocs(docsBase + "/auth")
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
 // ErrAPIKeyRevoked is returned by the auth middleware when the
@@ -5973,7 +5973,7 @@ func ErrAPIKeyRevoked() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyRevoked,
 		"API key revoked",
 		"the bearer key has been revoked; mint a new one via POST /v1/keys").
-		WithDocs(docsBase + "/auth")
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
 // ErrAPIKeyLimitExceeded is returned when a POST /v1/keys would
@@ -5988,7 +5988,7 @@ func ErrAPIKeyLimitExceeded(l Limits, observed int) *Problem {
 		fmt.Sprintf("%s plan allows %d API key(s) per account; you have %d active or in grace. Revoke a key before minting a new one.",
 			l.Plan, l.KeysMax, observed)).
 		WithLimit(int64(l.KeysMax), int64(observed)).
-		WithDocs(docsBase + "/auth")
+		WithDocs(docsBase + "/auth#api-keys")
 }
 
 // ErrPlanLimitTrustedSigners is returned when a trusted-signer PUT
@@ -6366,7 +6366,7 @@ func ErrInvalidCanaryPreset(got string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidCanaryPreset,
 		"Invalid canary preset",
 		fmt.Sprintf("canary preset %q is not in the closed-set catalog (%v); see --canary-preset in `gregale deploy --help`.", got, canary.AllowedCanaryPresets)).
-		WithDocs("https://gregale.dev/docs/rollouts#how-a-rollout-proceeds")
+		WithDocs("https://gregale.dev/docs/rollouts#canary-ladders")
 }
 
 // ErrCanaryStepConflict is the expected concurrency response for the
@@ -6472,7 +6472,7 @@ func ErrPlanMirrorNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanMirrorNotAllowed,
 		"Plan doesn't allow traffic mirroring",
 		fmt.Sprintf("the %s plan wakes a mirror VM on every request (billed per running second); upgrade to Pro or Scale to mirror traffic in the background.", p)).
-		WithDocs("https://gregale.dev/docs/plans")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorRuleQuotaExceeded (issue #72 / ADR-125 PR-A2) is
@@ -6487,7 +6487,7 @@ func ErrMirrorRuleQuotaExceeded(l Limits, observed int) *Problem {
 		"mirror rule quota exceeded",
 		fmt.Sprintf("this app already has %d mirror rule(s); the plan cap is %d.", observed, l.MirrorTargetsPerApp)).
 		WithLimit(int64(l.MirrorTargetsPerApp), int64(observed)).
-		WithDocs("https://gregale.dev/docs/apps")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrInvalidMirrorPercent (issue #72 / ADR-125 PR-A2) is
@@ -6502,7 +6502,7 @@ func ErrInvalidMirrorPercent(got int) *Problem {
 		"Invalid mirror percent",
 		fmt.Sprintf("mirror percent must be in [0, %d]; got %d.", cap, got)).
 		WithLimit(int64(cap), int64(got)).
-		WithDocs("https://gregale.dev/docs/apps")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorSourceTargetSame (issue #72 / ADR-125 PR-A2) is
@@ -6514,7 +6514,7 @@ func ErrMirrorSourceTargetSame() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMirrorSourceTargetSame,
 		"source and mirror deployments must differ",
 		"source_deployment_id and mirror_deployment_id cannot reference the same deployment.").
-		WithDocs("https://gregale.dev/docs/apps")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorDeploymentNotLive (issue #72 / ADR-125 PR-A2) is
@@ -6529,7 +6529,7 @@ func ErrMirrorDeploymentNotLive() *Problem {
 	return NewProblem(http.StatusConflict, CodeMirrorDeploymentNotLive,
 		"referenced deployment is not live",
 		"one or both of source_deployment_id / mirror_deployment_id points at a deployment that is not 'live'; mirror targets must both be live.").
-		WithDocs("https://gregale.dev/docs/apps")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorCrossAppMismatch (issue #72 / ADR-125 PR-A2) is
@@ -6542,7 +6542,7 @@ func ErrMirrorCrossAppMismatch() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMirrorCrossAppMismatch,
 		"source and mirror deployments must belong to the same app",
 		"source_deployment_id and mirror_deployment_id must reference deployments of the same app (slug in the URL path).").
-		WithDocs("https://gregale.dev/docs/apps")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorRuleNotFound (issue #72 / ADR-125 PR-A2) is the
@@ -6555,7 +6555,7 @@ func ErrMirrorRuleNotFound(id string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeMirrorRuleNotFound,
 		"mirror rule not found",
 		fmt.Sprintf("no mirror rule with id %q on this app.", id)).
-		WithDocs("https://gregale.dev/docs/apps")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrInvalidMirrorWindow (issue #72 / ADR-125 PR-A2) is the
@@ -6567,7 +6567,7 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidMirrorWindow,
 		"Invalid mirror window",
 		fmt.Sprintf("window must be one of: 1h, 24h, 7d; got %q.", got)).
-		WithDocs("https://gregale.dev/docs/apps")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrSidecarCapExceeded is returned when the request carries more
@@ -6809,7 +6809,7 @@ func ErrPlanPublicAuthIPAllowlistNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanPublicAuthIPAllowlistNotAllowed,
 		"Plan doesn't allow a public-auth IP allowlist",
 		fmt.Sprintf("the %s plan cannot pin a public-auth IP allowlist; upgrade to Pro or Scale to unlock this operator surface.", p)).
-		WithDocs(docsBase + "/apps")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrPlanLivenessProbeNotAllowed (issue #554 / ADR-078) is returned when a
@@ -6850,7 +6850,7 @@ func ErrPublicAuthIPAllowlistTooLong(got, maxEntries int) *Problem {
 		"Public-auth IP allowlist too long",
 		fmt.Sprintf("public_auth_ip_allowlist has %d entries; plan caps it at %d.", got, maxEntries)).
 		WithLimit(int64(maxEntries), int64(got)).
-		WithDocs(docsBase + "/apps")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrAccountEgressAllowlistExtraOutOfRange (issue #679 / PR-B /
@@ -7006,7 +7006,7 @@ func ErrInvalidPublicAuthIPAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidPublicAuthIPAllowlist,
 		"Invalid public-auth IP allowlist entry",
 		fmt.Sprintf("entry %q is not a valid v4 or v6 CIDR (non-/0): %v.", entry, reason)).
-		WithDocs(docsBase + "/apps")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrValidation is a 400 fallback for malformed request bodies. Used by
@@ -7534,7 +7534,7 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 		fmt.Sprintf("the plan caps this organization at %d member(s); you have %d.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#member-limits")
 }
 
 // ErrOrgFreeLimitExceeded is the 403 returned when the caller already owns
@@ -7546,7 +7546,7 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade one to create another; a Free organization deleted this month counts until the month ends.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#member-limits")
 }
 
 // ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
@@ -7566,7 +7566,7 @@ func ErrOrgInvitationCapExceeded(limit, observed int) *Problem {
 		fmt.Sprintf("the plan caps this organization at %d pending invitation(s); you have %d.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#member-limits")
 }
 
 // ErrOrgRoleForbidden is the 403 returned when the authenticated
@@ -7577,7 +7577,7 @@ func ErrOrgRoleForbidden(action string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgRoleForbidden,
 		"Insufficient role for this action",
 		fmt.Sprintf("your role does not allow %s on this organization.", action)).
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#roles")
 }
 
 // ErrOrgMFARequired is the 403 a member without two-factor authentication
@@ -7586,7 +7586,7 @@ func ErrOrgMFARequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgMFARequired,
 		"Two-factor authentication required",
 		"this organization requires two-factor authentication; turn it on for your account and try again.").
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#require-two-factor-authentication")
 }
 
 // ErrOrgAlreadyMember is the 409 returned when the accepting
@@ -7597,7 +7597,7 @@ func ErrOrgAlreadyMember(role string) *Problem {
 	return NewProblem(http.StatusConflict, CodeOrgAlreadyMember,
 		"Already a member of this organization",
 		fmt.Sprintf("this account is already a member of the organization with role %q.", role)).
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#invitations")
 }
 
 // ErrOrgInvitationInvalid is the 410 returned when the invitation
@@ -7608,7 +7608,7 @@ func ErrOrgInvitationInvalid() *Problem {
 	return NewProblem(http.StatusGone, CodeOrgInvitationInvalid,
 		"Invitation invalid",
 		"this invitation is unknown, already consumed, or has been revoked.").
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#invitations")
 }
 
 // ErrOrgInvitationExpired is the 410 returned when the invitation
@@ -7619,7 +7619,7 @@ func ErrOrgInvitationExpired() *Problem {
 	return NewProblem(http.StatusGone, CodeOrgInvitationExpired,
 		"Invitation expired",
 		"this invitation has expired; ask the inviter to send a new one.").
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#invitations")
 }
 
 // ErrOrgLastOwner is the 409 returned when removing, demoting,
@@ -7629,7 +7629,7 @@ func ErrOrgLastOwner() *Problem {
 	return NewProblem(http.StatusConflict, CodeOrgLastOwner,
 		"Cannot remove the last owner",
 		"transfer ownership to another member before removing or demoting this role.").
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#changing-roles-removing-members-and-ownership")
 }
 
 // ErrOrgPersonalImmutable is the 409 returned when a caller
@@ -7640,7 +7640,7 @@ func ErrOrgPersonalImmutable() *Problem {
 	return NewProblem(http.StatusConflict, CodeOrgPersonalImmutable,
 		"Personal organizations are immutable",
 		"this organization is the personal organization of one account; it cannot accept members or be deleted independently.").
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#members-roles-and-invitations")
 }
 
 // ErrOrgAPIKeyRequiresOrg is the 409 returned when a legacy API
@@ -7651,7 +7651,7 @@ func ErrOrgAPIKeyRequiresOrg() *Problem {
 	return NewProblem(http.StatusConflict, CodeOrgAPIKeyRequiresOrg,
 		"API key must be bound to an organization",
 		"this legacy API key has no organization binding; create a new key via /v1/orgs/{slug}/keys.").
-		WithDocs(docsBase + "/orgs")
+		WithDocs(docsBase + "/orgs#organization-api-keys")
 }
 
 // ErrInvalidOverflowNode is the 422 returned when the

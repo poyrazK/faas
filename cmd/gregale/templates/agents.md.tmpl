@@ -28,6 +28,28 @@ stable `code`, a `hint` and an `exit_code`:
 
 ## Deploy
 
+{{if eq .Template "hello-node-private" -}}
+Use the internal Compose project in this directory. Keep the same project
+and service names on edits. Preview and check that the plan contains one
+internal HTTP workload and `can_apply: true` before submitting.
+
+```sh
+gregale --non-interactive --json deploy --project --path . --source=worktree --dry-run
+gregale --non-interactive --json deploy --project --path . --source=worktree --yes --no-wait
+```
+
+Take the app slug and accepted deployment UUID from the matching `builds`
+entry. Wait for readiness, then verify the response by UUID.
+
+```sh
+gregale --non-interactive --json release wait <deployment-id> --app <app>
+gregale --non-interactive --json release verify <deployment-id> --app <app> --path /
+```
+
+Edit `app/server.js` and repeat with the new receipt. Use
+`release wait <deployment-id> --rollout` to follow the canary to 100% traffic.
+If the deployment was interrupted, follow its receipt's `resume_command`.
+{{else -}}
 Use the deploy command from README.md, with the same app name every time, for
 example:
 
@@ -69,6 +91,7 @@ API key, and `invocation run` sends the request with your credential. Never put 
 in a URL. `/healthz` on `app_url` answers from Gregale's edge, not from the
 app, so it does not show your code ran.
 
+{{end -}}
 ## Check and debug
 
 ```sh

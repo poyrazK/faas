@@ -1,0 +1,1 @@
+-- These queries read PostgreSQL's built-in catalog only.

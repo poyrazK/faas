@@ -86,19 +86,19 @@ See [Alerts](alerts.md).
 
 HTTP 401 · API key expired
 
-See [Authentication](auth.md).
+See [Authentication](auth.md#expiry-and-rotation).
 
 ### `api_key_limit_exceeded`
 
 HTTP 409 · API key limit reached
 
-See [Authentication](auth.md).
+See [Authentication](auth.md#api-keys).
 
 ### `api_key_revoked`
 
 HTTP 401 · API key revoked
 
-See [Authentication](auth.md).
+See [Authentication](auth.md#expiry-and-rotation).
 
 ### `api_rate_limited`
 
@@ -1258,7 +1258,7 @@ HTTP 400 · Invalid JSON body
 
 HTTP 422 · Invalid canary preset; Invalid canary rollout
 
-See [Progressive rollouts](rollouts.md#how-a-rollout-proceeds).
+See [Progressive rollouts](rollouts.md#canary-ladders).
 
 ### `invalid_cooldown`
 
@@ -1314,13 +1314,13 @@ See [How scaling to zero works](cold-wake.md#opting-out-keep-n-instances-warm-pr
 
 HTTP 422 · Invalid mirror percent
 
-See [Apps](apps.md).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `invalid_mirror_window`
 
 HTTP 422 · Invalid mirror window
 
-See [Apps](apps.md).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `invalid_nonce`
 
@@ -1338,7 +1338,7 @@ HTTP 400 · Invalid OAuth Request
 
 HTTP 400 · Invalid public-auth IP allowlist entry
 
-See [Apps](apps.md).
+See [Authentication](auth.md#app-access-control).
 
 ### `invalid_ram_mb`
 
@@ -1688,25 +1688,25 @@ HTTP 409 · Migration recovery blocked
 
 HTTP 422 · Source and mirror deployments must belong to the same app
 
-See [Apps](apps.md).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `mirror_deployment_not_live`
 
 HTTP 409 · Referenced deployment is not live
 
-See [Apps](apps.md).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `mirror_rule_not_found`
 
 HTTP 404 · Mirror rule not found
 
-See [Apps](apps.md).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `mirror_rule_quota_exceeded`
 
 HTTP 422 · Mirror rule quota exceeded
 
-See [Apps](apps.md).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `mirror_slot_at_capacity`
 
@@ -1716,7 +1716,7 @@ HTTP 503
 
 HTTP 422 · Source and mirror deployments must differ
 
-See [Apps](apps.md).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `misdirected_request`
 
@@ -1822,55 +1822,55 @@ HTTP 409 · OpenAPI policy plan is stale
 
 HTTP 409 · Already a member of this organization
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#invitations).
 
 ### `org_api_key_requires_org`
 
 HTTP 409 · Organization key required; API key must be bound to an organization; Organization project path required
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#organization-api-keys).
 
 ### `org_free_limit_exceeded`
 
 HTTP 403 · Free organization limit reached
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#member-limits).
 
 ### `org_invitation_cap_exceeded`
 
 HTTP 403 · Organization invitation limit reached
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#member-limits).
 
 ### `org_invitation_expired`
 
 HTTP 410 · Invitation expired
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#invitations).
 
 ### `org_invitation_invalid`
 
 HTTP 410 · Invitation invalid
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#invitations).
 
 ### `org_last_owner`
 
 HTTP 409 · Cannot remove the last owner; Owner cannot leave
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#changing-roles-removing-members-and-ownership).
 
 ### `org_member_cap_exceeded`
 
 HTTP 403 · Organization member limit reached
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#member-limits).
 
 ### `org_mfa_required`
 
 HTTP 403 or 409 · Turn on two-factor authentication first; Two-factor authentication required
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#require-two-factor-authentication).
 
 ### `org_not_found`
 
@@ -1882,7 +1882,7 @@ See [Account and organization management](account.md).
 
 HTTP 409 · Personal organizations are immutable
 
-See [Account and organization management](account.md).
+See [Account and organization management](account.md#members-roles-and-invitations).
 
 ### `org_role_forbidden`
 
@@ -1890,7 +1890,7 @@ HTTP 403 · Application standards mutation forbidden; Approver not allowed; Insu
 
 Ask a teammate the policy lets approve to approve this promotion, then promote with their approval.
 
-See [Deploys](deploys.md#release-approvals), [Account and organization management](account.md).
+See [Account and organization management](account.md#roles), [Deploys](deploys.md#release-approvals).
 
 ### `org_slug_invalid`
 
@@ -2240,7 +2240,7 @@ See [How scaling to zero works](cold-wake.md#opting-out-keep-n-instances-warm-pr
 
 HTTP 403 · Plan doesn't allow traffic mirroring
 
-See [Plans and pricing](plans.md).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `plan_openapi_doc_quota_reached`
 
@@ -2270,19 +2270,19 @@ See [Networking](networking.md).
 
 HTTP 402 · Basic public-URL auth is not available on this plan
 
-See [Plans and pricing](plans.md).
+See [Authentication](auth.md#app-access-control).
 
 ### `plan_public_auth_bearer_not_allowed`
 
 HTTP 402 · Bearer public-URL auth is not available on this plan
 
-See [Plans and pricing](plans.md).
+See [Authentication](auth.md#app-access-control).
 
 ### `plan_public_auth_ip_allowlist_not_allowed`
 
 HTTP 403 · Plan doesn't allow a public-auth IP allowlist
 
-See [Apps](apps.md).
+See [Authentication](auth.md#app-access-control).
 
 ### `plan_queue_backlog_bytes`
 
@@ -2640,7 +2640,7 @@ HTTP 503 · Public authentication unavailable
 
 HTTP 400 · Public-auth IP allowlist too long
 
-See [Apps](apps.md).
+See [Authentication](auth.md#app-access-control).
 
 ## Q
 

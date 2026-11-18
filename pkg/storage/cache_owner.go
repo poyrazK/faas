@@ -36,10 +36,17 @@ func (c *LocalCacheBackend) ClaimEvictionOwnership() (func(), error) {
 	}
 	c.mu.Lock()
 	c.evictionOwner = true
+	// ADR-20261118003000: only the owner can evict captures and layers, so
+	// only the owner holds the build-drive floor.
+	standing := c.minFreeBytes
+	if c.ownerMinFreeBytes > c.minFreeBytes {
+		c.minFreeBytes = c.ownerMinFreeBytes
+	}
 	c.mu.Unlock()
 	return func() {
 		c.mu.Lock()
 		c.evictionOwner = false
+		c.minFreeBytes = standing
 		c.mu.Unlock()
 		unlock()
 	}, nil

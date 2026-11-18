@@ -3879,6 +3879,15 @@ const (
 	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
 	// the filesystem has less than this free.
 	ArtifactCacheMinFreeBytes int64 = 8 << 30
+	// ArtifactCacheBuildFreeBytes is the free-space floor on a cache disk
+	// large enough to host builds (at least twice this): one build drive
+	// (builderd.BuildDriveMinFreeBytes, 20 GiB) plus a capture of the largest
+	// plan. Since ADR-20261114182830's owner-only eviction, builderd can no
+	// longer evict captures and app layers to make room for a build, so the
+	// eviction owner must keep this much free itself; rc.351 on production-us
+	// (2026-11-18) failed fsn-3's canary build with 18.3 GB free against the
+	// old 15% floor (16.1 GB) (ADR-20261118003000).
+	ArtifactCacheBuildFreeBytes int64 = 24 << 30
 	// SnapshotReplicaRefetchMinMargin and SnapshotReplicaRefetchCooldown
 	// bound how snapshothipd takes back a live snapshot the node cache evicted
 	// (ADR-20261115140000): only while the cache keeps this margin (or a tenth
@@ -8589,6 +8598,22 @@ const (
 	IdleLadderFaultMicrosPerPage      = 21
 	IdleLadderMaxExtraKeepGenerations = 2
 	IdleLadderCeilingRelaxWakes       = 5
+	// Kernel lockdown (ADR-20261107220000) closes the multi-gen LRU's
+	// debugfs interface, so on a locked-down host vmmd compresses through
+	// the VM cgroup's memory.reclaim and the kernel picks the coldest pages
+	// (ADR-20261107122928 amendment 1): L3 keeps IdleLadderCold1KeepPercent
+	// of the VM's memory resident, L4 IdleLadderCold2KeepPercent, and each
+	// step of an app's ceiling keeps IdleLadderExtraKeepPercent more. A
+	// level that would keep 100% compresses nothing.
+	IdleLadderCold1KeepPercent = 50
+	IdleLadderCold2KeepPercent = 25
+	IdleLadderExtraKeepPercent = 25
+	// IdleLadderColdLevel is the idle_ladder_level vmmd reports for L3 (L4
+	// reports one more). Measured admission charges an instance at L3 or L4
+	// its latest resident sample, as it does a frozen one, so the memory a
+	// compression frees reaches admission with the next sample
+	// (ADR-20261107122928 amendment 1).
+	IdleLadderColdLevel = 3
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
@@ -8907,10 +8932,17 @@ const (
 	BuildVMOverheadMB = 768
 	// BuilderSliceMaxMB is the faas-cp-build.slice ceiling. It leaves enough
 	// room for one guaranteed builder's full snapshot below the 6 GiB parent.
-	BuilderSliceMaxMB      = 5_120
-	BuildVMVCPU            = 2
-	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
-	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
+	BuilderSliceMaxMB = 5_120
+	// BuilderSecondSlotHeadroomMB is the free builder-slice memory a second,
+	// opportunistic build must leave after its own worst case (a full
+	// snapshot: 2 × BuildVMRAMMB + BuildVMOverheadMB). The default slice
+	// above never has that much free while a build runs, so a second build
+	// runs only where ops raised faas_cp_build_slice_memory_max (retail-store
+	// feedback A3, 2026-11-17).
+	BuilderSecondSlotHeadroomMB = 512
+	BuildVMVCPU                 = 2
+	BuildTimeoutSeconds         = 900 // 15 min build; cold rootless Railpack export needs headroom
+	BuildE2ETimeoutSeconds      = 900 // 15 min end-to-end
 	// BuildCacheExportTimeoutSeconds bounds the second builder VM that exports
 	// a deferred dependency cache (ADR-20261029171525). On rc.304 a cold
 	// Node cache export took about 115 s. The builder slot stays held for the
@@ -18452,6 +18484,83 @@ const (
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
 var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
 
+// Production protection baseline (ADR-20261116120000): the objects apid
+// creates for an enrolled app. The objectives are deliberately loose, to
+// page when something is clearly wrong rather than to define the customer's
+// real objective; customers tighten them by editing the objects.
+const (
+	ProtectionBaselineAvailabilitySLOName       = "availability"
+	ProtectionBaselineLatencySLOName            = "latency"
+	ProtectionBaselineHealthCheckName           = "health"
+	ProtectionBaselineEmailChannelName          = "account-email"
+	ProtectionBaselineAvailabilityBurnAlertName = "availability-burn"
+	ProtectionBaselineLatencyBurnAlertName      = "latency-burn"
+	ProtectionBaselineHealthAlertName           = "health-failing"
+	ProtectionBaselineAvailabilityGateName      = "availability"
+
+	// ProtectionBaselineAvailabilityObjectivePct is the availability SLO.
+	ProtectionBaselineAvailabilityObjectivePct = 99.5
+	// ProtectionBaselineLatencyObjectivePct of requests finish within
+	// ProtectionBaselineLatencyThresholdMS.
+	ProtectionBaselineLatencyObjectivePct = 99.0
+	ProtectionBaselineLatencyThresholdMS  = 1000
+	ProtectionBaselineSLOWindowDays       = 30
+	// ProtectionBaselineHealthCheckIntervalSeconds: hourly, unbilled
+	// (ADR-20261116120000 §3).
+	ProtectionBaselineHealthCheckIntervalSeconds = 3600
+	// ProtectionBaselineBurnRate is the fast-burn alert threshold: a rate
+	// that spends 2% of a 30-day budget in one hour.
+	ProtectionBaselineBurnRate = 14.4
+	// ProtectionBaselineHealthFailures consecutive failed runs fire the
+	// health alert.
+	ProtectionBaselineHealthFailures = 2
+	// ProtectionBaselineBurnWindow is the burn alerts' evaluation window
+	// (docs/slos.md: 14.4 over 1h, with the 6h burn folded in).
+	ProtectionBaselineBurnWindow = "1h"
+	// ProtectionBaselineGateActor is the release gates' created_by.
+	ProtectionBaselineGateActor = "gregale-protection"
+)
+
+// Protection baseline reconciler (ADR-20261116120000 §4): apid sweeps every
+// ProtectionReconcileSweepInterval, leases up to ProtectionReconcileBatch
+// due apps for ProtectionReconcileLease, retries an app with work left after
+// ProtectionReconcileRetry and re-checks a finished one after
+// ProtectionReconcileRecheck.
+const (
+	ProtectionReconcileSweepInterval = 30 * time.Second
+	ProtectionReconcileBatch         = 20
+	ProtectionReconcileLease         = 2 * time.Minute
+	ProtectionReconcileRetry         = 15 * time.Minute
+	ProtectionReconcileRecheck       = 24 * time.Hour
+	// ProtectionHealthProbePoll is how often apid claims due baseline
+	// health checks, at most ProtectionHealthProbeBatch at a time, probing
+	// ProtectionHealthProbeWorkers at once.
+	ProtectionHealthProbePoll    = time.Minute
+	ProtectionHealthProbeBatch   = 20
+	ProtectionHealthProbeWorkers = 4
+	// ProtectionBaselineHealthComparison and Window configure the
+	// health-failing alert (docs/synthetic-checks.md: gte 2; the window is
+	// required but ignored for this metric).
+	ProtectionBaselineHealthComparison = "gte"
+	ProtectionBaselineHealthWindow     = "1h"
+)
+
+// Unbilled probe wakes (ADR-20261116120000 §3). schedd parks an instance a
+// baseline health probe alone woke once ProtectionProbeParkGrace has passed
+// since the probe with nothing in flight and no request later than the
+// probe's end plus ProtectionProbeActivitySlack; it reads wakes from the
+// last ProtectionProbeWakeLookback. meterd leaves [woke_at, probe_done_at +
+// ProtectionProbeUnbilledTail] unbilled: the grace, one 10 s reaper tick and
+// the park itself. Wakes are kept PlatformProbeWakeRetention.
+const (
+	ProtectionProbeParkGrace     = 5 * time.Second
+	ProtectionProbeActivitySlack = 2 * time.Second
+	ProtectionProbeWakeLookback  = 10 * time.Minute
+	ProtectionProbeUnbilledTail  = 30 * time.Second
+	PlatformProbeWakeRetention   = 7 * 24 * time.Hour
+	PlatformProbeWakeDeleteBatch = 1000
+)
+
 // Event substrate benchmark workload (spec Appendix D V12,
 // docs/ops/event-substrate-benchmark.md): disposable-database bench sizes,
 // never customer quotas. Events spread over accounts so each subscription
@@ -19899,3 +20008,21 @@ const (
 	DataPipelineWorkQueryMinMillis       = int64(50)
 	DataPipelineMinutesPerDay            = 24 * 60
 )
+
+// Hosted Task binding verification inherits source-intent admission bounds.
+const (
+	HostedTaskBindingRequestMaxBytes   = 16 << 10
+	HostedTaskBindingRecordMaxBytes    = 32 << 10
+	HostedTaskBindingNamespaceMaxBytes = 128
+	HostedTaskBindingSecretMaxBytes    = 32 << 10
+	HostedTaskBindingMaxPins           = 40
+	HostedTaskBindingCatalogMaxTables  = 128
+	HostedTaskBindingPreviousKeysMax   = 16
+	HostedTaskBindingOwnerKeyMinBytes  = 32
+	HostedTaskBindingProbeTimeout      = 15 * time.Second
+	HostedTaskBindingSQLTimeout        = 5 * time.Second
+	HostedTaskBindingCleanupTimeout    = time.Second
+	HostedTaskBindingEvidenceTTL       = time.Minute
+)
+
+const HostedTaskBindingKeyIDMaxBytes = 64

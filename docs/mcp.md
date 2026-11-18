@@ -9581,3 +9581,40 @@ alone does not remove that retained state. See
 [ADR 20261017191530](adr/20261017191530-mcp-readiness-pagerduty-release.md). Local tests cover memory,
 PostgreSQL restart, signatures, migration replay and client contracts; live
 PagerDuty subscription qualification remains pending.
+
+
+### Owner-qualified hosted Task bindings
+
+After approving a retained hosted source review, its personal owner can select
+existing native managed PostgreSQL bindings and run one bounded catalog probe.
+Enable both `FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION=1` and the separate
+`FAAS_MCP_HOSTED_TASK_BINDING_VERIFICATION=1` on APID; Account source sealing
+and account-bound runtime envelopes remain independent.
+
+```sh
+gregale mcp server tasks bind qualify --id INTENT \
+  --intent-sha256 INTENT_DIGEST --review-sha256 REVIEW_DIGEST \
+  --namespace QUEUE_NAMESPACE \
+  --web-database-ref secret:DATABASE_URL \
+  --worker-database-ref secret:DATABASE_URL \
+  --migration-database-ref secret:MIGRATION_URL \
+  --observer-database-ref secret:DATABASE_URL
+gregale mcp server tasks bind get --id INTENT
+gregale mcp server tasks bind revoke --id INTENT --binding-sha256 BINDING_DIGEST
+```
+
+All four references must identify one ready account-owned native database with
+runtime read/write, migration-only and observer read-only roles. Namespace and
+configured owner/payload keys must agree with the approved source and native
+apps. Selection is immutable; retries never repeat a probe. Changed selections
+require a new retained source identity and approval.
+
+Only metadata is returned. The hosted consent-gated
+`gregale_get_uploaded_task_tool_bindings` tool lets the original requester read
+status and fixed check results; agents cannot select, probe or revoke bindings.
+Evidence expires within one minute and never extends the source's original
+fifteen-minute deadline. Reads may permanently invalidate drift without probing.
+These are historical catalog/configuration observations, not retained payload
+decryption, migration compatibility, VM connectivity or execution readiness.
+All receipts keep `ready_to_apply=false`, `bindings_verified=false` and
+`owner_authorization_required=true`. No deployment or Task execution occurs.

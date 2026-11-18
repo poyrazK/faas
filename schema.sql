@@ -33465,6 +33465,44 @@ CREATE TABLE public.app_private_network_attachments (
 
 
 --
+-- Name: app_protection; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_protection (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    state text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    next_reconcile_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_until timestamp with time zone,
+    health_probe_at timestamp with time zone,
+    CONSTRAINT app_protection_state_check CHECK ((state = ANY (ARRAY['on'::text, 'off'::text])))
+);
+
+
+--
+-- Name: app_protection_objects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_protection_objects (
+    app_id uuid NOT NULL,
+    item text NOT NULL,
+    status text DEFAULT 'created'::text NOT NULL,
+    object_id text DEFAULT ''::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    written jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_protection_objects_item_check CHECK ((item = ANY (ARRAY['availability_slo'::text, 'latency_slo'::text, 'health_check'::text, 'email_channel'::text, 'availability_burn_alert'::text, 'latency_burn_alert'::text, 'health_alert'::text, 'availability_gate'::text]))),
+    CONSTRAINT app_protection_objects_object_id_check CHECK ((length(object_id) <= 128)),
+    CONSTRAINT app_protection_objects_reason_check CHECK ((length(reason) <= 64)),
+    CONSTRAINT app_protection_objects_status_check CHECK ((status = ANY (ARRAY['created'::text, 'skipped'::text]))),
+    CONSTRAINT app_protection_objects_status_chk CHECK ((((status = 'created'::text) AND (object_id <> ''::text) AND (reason = ''::text)) OR ((status = 'skipped'::text) AND (object_id = ''::text) AND (reason <> ''::text)))),
+    CONSTRAINT app_protection_objects_written_check CHECK ((jsonb_typeof(written) = 'object'::text))
+);
+
+
+--
 -- Name: app_registry_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43344,6 +43382,22 @@ COMMENT ON TABLE public.honeytokens IS 'Decoy credentials that belong to no acco
 
 
 --
+-- Name: hosted_task_binding_qualifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosted_task_binding_qualifications (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    payload jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT hosted_task_binding_qualifications_check CHECK ((((((payload -> 'Public'::text) ->> 'account_id'::text) = (account_id)::text) AND (((payload -> 'Public'::text) ->> 'intent_id'::text) = id) AND ((((payload -> 'Public'::text) ->> 'expires_at'::text))::timestamp with time zone = expires_at) AND (((payload -> 'Public'::text) ->> 'status'::text) = ANY (ARRAY['selected'::text, 'verifying'::text, 'passed'::text, 'failed'::text, 'stale'::text, 'revoked'::text, 'expired'::text]))) IS TRUE)),
+    CONSTRAINT hosted_task_binding_qualifications_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosted_task_binding_qualifications_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 32768))),
+    CONSTRAINT hosted_task_binding_qualifications_payload_check1 CHECK (((payload -> 'Public'::text) @> '{"ready_to_apply": false, "bindings_verified": false, "owner_authorization_required": true}'::jsonb))
+);
+
+
+--
 -- Name: hosted_task_source_intents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -52714,6 +52768,21 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_template_version_check CHECK ((template_version = 1)),
     CONSTRAINT platform_mail_producer_outbox_updated_at_check CHECK (isfinite(updated_at)),
     CONSTRAINT platform_mail_producer_outbox_verification_v2_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text, 'agent_run_delivered'::text, 'managed_postgres_restore_slot'::text, 'managed_postgres_plan_excess'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = ANY (ARRAY[32, 33])) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
+);
+
+
+--
+-- Name: platform_probe_wakes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_probe_wakes (
+    instance_id text NOT NULL,
+    app_id uuid NOT NULL,
+    woke_at timestamp with time zone NOT NULL,
+    probe_done_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_probe_wakes_instance_id_check CHECK (((instance_id <> ''::text) AND (length(instance_id) <= 128))),
+    CONSTRAINT platform_probe_wakes_order_chk CHECK ((probe_done_at >= woke_at))
 );
 
 
@@ -64053,6 +64122,22 @@ ALTER TABLE ONLY public.app_private_network_attachments
 
 
 --
+-- Name: app_protection_objects app_protection_objects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection_objects
+    ADD CONSTRAINT app_protection_objects_pkey PRIMARY KEY (app_id, item);
+
+
+--
+-- Name: app_protection app_protection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection
+    ADD CONSTRAINT app_protection_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_registry_credentials app_registry_credentials_app_registry_uq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68653,6 +68738,14 @@ ALTER TABLE ONLY public.honeytokens
 
 
 --
+-- Name: hosted_task_binding_qualifications hosted_task_binding_qualifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_binding_qualifications
+    ADD CONSTRAINT hosted_task_binding_qualifications_pkey PRIMARY KEY (account_id, id);
+
+
+--
 -- Name: hosted_task_source_intents hosted_task_source_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72594,6 +72687,14 @@ ALTER TABLE ONLY public.platform_mail_producer_outbox
 
 ALTER TABLE ONLY public.platform_mail_producer_outbox
     ADD CONSTRAINT platform_mail_producer_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: platform_probe_wakes platform_probe_wakes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_probe_wakes
+    ADD CONSTRAINT platform_probe_wakes_pkey PRIMARY KEY (instance_id, woke_at);
 
 
 --
@@ -78220,6 +78321,20 @@ CREATE INDEX app_private_network_attachments_account_idx ON public.app_private_n
 --
 
 CREATE INDEX app_private_network_attachments_network_idx ON public.app_private_network_attachments USING btree (account_id, network_id);
+
+
+--
+-- Name: app_protection_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_protection_account_idx ON public.app_protection USING btree (account_id);
+
+
+--
+-- Name: app_protection_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_protection_due_idx ON public.app_protection USING btree (next_reconcile_at) WHERE (state = 'on'::text);
 
 
 --
@@ -85560,6 +85675,13 @@ CREATE UNIQUE INDEX platform_mail_producer_outbox_suspended_period_idx ON public
 --
 
 CREATE INDEX platform_mail_producer_outbox_verification_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, verification_key_id) WHERE ((template = 'email_verification'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_probe_wakes_done_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_probe_wakes_done_idx ON public.platform_probe_wakes USING btree (probe_done_at);
 
 
 --
@@ -98281,6 +98403,30 @@ ALTER TABLE ONLY public.app_private_network_attachments
 
 
 --
+-- Name: app_protection app_protection_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection
+    ADD CONSTRAINT app_protection_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_protection app_protection_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection
+    ADD CONSTRAINT app_protection_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_protection_objects app_protection_objects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_protection_objects
+    ADD CONSTRAINT app_protection_objects_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.app_protection(app_id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_registry_credentials app_registry_credentials_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -103593,6 +103739,14 @@ ALTER TABLE ONLY public.gitlab_oauth_connections
 
 
 --
+-- Name: hosted_task_binding_qualifications hosted_task_binding_qualifications_account_id_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_binding_qualifications
+    ADD CONSTRAINT hosted_task_binding_qualifications_account_id_id_fkey FOREIGN KEY (account_id, id) REFERENCES public.hosted_task_source_intents(account_id, id) ON DELETE CASCADE;
+
+
+--
 -- Name: hosted_task_source_intents hosted_task_source_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -107870,6 +108024,14 @@ ALTER TABLE ONLY public.platform_mail_deployment_observations
 
 ALTER TABLE ONLY public.platform_mail_producer_outbox
     ADD CONSTRAINT platform_mail_producer_outbox_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_probe_wakes platform_probe_wakes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_probe_wakes
+    ADD CONSTRAINT platform_probe_wakes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

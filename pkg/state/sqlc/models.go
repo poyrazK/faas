@@ -1726,6 +1726,27 @@ type AppPrivateNetworkAttachmentNode struct {
 	ObservedAt   pgtype.Timestamptz
 }
 
+type AppProtection struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	State           string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	NextReconcileAt pgtype.Timestamptz
+	LeaseUntil      pgtype.Timestamptz
+	HealthProbeAt   pgtype.Timestamptz
+}
+
+type AppProtectionObject struct {
+	AppID     pgtype.UUID
+	Item      string
+	Status    string
+	ObjectID  string
+	Reason    string
+	Written   []byte
+	CreatedAt pgtype.Timestamptz
+}
+
 type AppRegistryCredential struct {
 	ID                pgtype.UUID
 	AccountID         pgtype.UUID
@@ -6983,6 +7004,13 @@ type Honeytoken struct {
 	RetiredAt   pgtype.Timestamptz
 }
 
+type HostedTaskBindingQualification struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
 type HostedTaskSourceIntent struct {
 	AccountID  pgtype.UUID
 	ID         string
@@ -12212,6 +12240,14 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureSuccessRevision pgtype.Int8
 	DeploymentFailureAt              pgtype.Timestamptz
 	AgentDeliveryID                  pgtype.UUID
+}
+
+type PlatformProbeWake struct {
+	InstanceID  string
+	AppID       pgtype.UUID
+	WokeAt      pgtype.Timestamptz
+	ProbeDoneAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
 }
 
 // Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).

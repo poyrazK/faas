@@ -1172,7 +1172,7 @@ func TestProcessOne_EmitsBuildMetrics(t *testing.T) {
 		`builderd_build_queue_wait_seconds_count 1`,
 		`builderd_build_slot_decisions_total{outcome="granted"} 1`,
 		`builderd_build_slots_in_use 0`,
-		`builderd_build_slots_limit 1`,
+		`builderd_build_slots_limit 2`,
 		`builderd_build_claims_total{outcome="claimed",source="notification"} 1`,
 	} {
 		if !strings.Contains(body, want) {

@@ -285,6 +285,36 @@ func TestAnalyzeAppliesHostingOverrides(t *testing.T) {
 	}
 }
 
+// hosting.health: / hides the app's home page behind the edge's health
+// answer; only that exact path warns.
+func TestAnalyzeWarnsForRootHealthPath(t *testing.T) {
+	for _, tc := range []struct {
+		health string
+		want   bool
+	}{{"/", true}, {"/healthz", false}, {"/ready", false}} {
+		got, err := Analyze(fstest.MapFS{
+			"package.json": &fstest.MapFile{Data: []byte(`{"dependencies":{"express":"^5"},"scripts":{"start":"node server.js"}}`)},
+			"server.js":    &fstest.MapFile{Data: []byte("app.listen(process.env.PORT);\n")},
+			"gregale.yaml": &fstest.MapFile{Data: []byte("hosting:\n  health: " + tc.health + "\n")},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		warned := false
+		for _, warning := range got.Warnings {
+			if warning.Code == "health_path_root" {
+				warned = true
+				if len(warning.Sources) != 1 || warning.Sources[0] != "gregale.yaml" {
+					t.Fatalf("health %q: sources = %v, want [gregale.yaml]", tc.health, warning.Sources)
+				}
+			}
+		}
+		if warned != tc.want {
+			t.Fatalf("health %q: health_path_root warned = %v, want %v (%+v)", tc.health, warned, tc.want, got.Warnings)
+		}
+	}
+}
+
 func TestAnalyzePythonUsesNestedApplicationEntrypoint(t *testing.T) {
 	got, err := Analyze(fstest.MapFS{
 		"pyproject.toml": &fstest.MapFile{Data: []byte("[project]\ndependencies = ['fastapi', 'uvicorn']\n")},

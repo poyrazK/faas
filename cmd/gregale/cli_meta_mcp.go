@@ -250,6 +250,18 @@ func mcpCLICommand() cliCommand {
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
+
+			{Name: "bindings", Short: "Qualify or inspect hosted Task bindings", Positionals: []string{"<qualify|get|revoke>"}, Notes: []string{"Owner-selected native managed PostgreSQL references only. Qualification runs bounded read-only catalog probes once per source intent; evidence expires within one minute or on drift. Credentials remain private and execution requires separate owner authorization."}, Flags: []cliFlag{
+				{Name: "id", Value: "INTENT", Short: "Retained source intent identity"},
+				{Name: "intent-sha256", Value: "DIGEST", Short: "Exact approved intent digest"},
+				{Name: "review-sha256", Value: "DIGEST", Short: "Exact approved review digest"},
+				{Name: "namespace", Value: "NAMESPACE", Short: "Task queue namespace"},
+				{Name: "web-database-ref", Value: "REF", Short: "Web native managed PostgreSQL reference"},
+				{Name: "worker-database-ref", Value: "REF", Short: "Worker native managed PostgreSQL reference"},
+				{Name: "migration-database-ref", Value: "REF", Short: "Worker migration-only reference"},
+				{Name: "observer-database-ref", Value: "REF", Short: "Observer read-only reference"},
+				{Name: "binding-sha256", Value: "DIGEST", Short: "Exact binding fingerprint for revocation"},
+			}, Examples: []string{"gregale mcp server tasks bind get --id INTENT", "gregale mcp server tasks bind revoke --id INTENT --binding-sha256 DIGEST"}},
 			{Name: "source-review", Short: "Inspect or decide on retained hosted Task source", Positionals: []string{"<get|check|approve|reject|revoke>"}, Notes: []string{"Source is retained for the original fifteen-minute deadline. Review metadata is readable by its requester and owner; decisions require an unscoped personal owner. Approval binds the exact source review and grants no credential or execution authority. Checks permanently invalidate observed drift."}, Flags: []cliFlag{
 				{Name: "id", Short: "retained hosted source review identity", Value: "ID", Req: true},
 				{Name: "review-sha256", Short: "exact review fingerprint for checks and decisions", Value: "SHA256"},

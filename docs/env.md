@@ -132,3 +132,5 @@ served with the new config, and gives up after 24 hours without traffic.
 `gregale env set` and `gregale env push` say when a guard is watching.
 Pass `--no-guard` to change config without one, for example while you fix a
 deliberately broken staging app.
+
+Hosted Task binding checks let owners qualify managed PostgreSQL bindings. Agents receive metadata only. See [hosted Task bindings](mcp.md#owner-qualified-hosted-task-bindings).

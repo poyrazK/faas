@@ -513,6 +513,182 @@ paths:
           description: Owner decisions for hosted source reviews are currently rate-limited.
         '503':
           description: Source review approval is disabled or the owner review journal is temporarily unavailable.
+  /v1/task-tool-source-intents/{id}/bindings:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Immutable retained source identity whose native Task binding selection is being inspected or set.
+    get:
+      operationId: getHostedTaskBindings
+      summary: Inspect hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: Fresh original requester or personal owner reads qualification metadata only. Native source, app,
+        credential and authority drift permanently invalidates previously observed evidence. This read can persist
+        terminal invalidation but never opens credentials or repeats probes. Passing evidence expires within one minute,
+        ends at the original source deadline and grants no readiness or execution authority.
+      responses:
+        '200':
+          description: Closed qualification metadata with current terminal invalidation and no source, references
+            or credential values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The retained source identity supplied for metadata inspection is malformed.
+        '401':
+          description: Authenticate the inspecting requester or personal owner before reading qualification metadata.
+        '403':
+          description: This caller lacks permission to inspect the selected source binding metadata.
+        '404':
+          description: No qualification for this source is visible to the current account or reader.
+        '409':
+          description: Qualification metadata could not be refreshed atomically; inspect the same source identity
+            again.
+        '429':
+          description: Metadata reads for this retained Task source are currently rate limited.
+        '503':
+          description: The native qualification journal is temporarily unavailable for metadata inspection.
+    put:
+      operationId: selectHostedTaskBindings
+      summary: Select owner-reviewed native Task bindings
+      tags:
+      - mcp-management
+      description: An authenticated account owner or fresh unscoped non-agent, non-MCP-login personal administrator
+        selects existing native managed PostgreSQL references under the account MFA policy. Both verification and
+        source-retention opt-ins and independent sealing identities are required. Selection immutably pins the approved
+        source digests, queue namespace, app baselines and secret versions for one ready account-owned database with
+        distinct runtime, migration and observer roles. Retries preserve the original non-renewable source deadline;
+        selection starts neither probes nor execution.
+      responses:
+        '200':
+          description: New or identically replayed native-reference selection metadata with its fixed source deadline;
+            no checks or execution are started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The binding selection contains malformed source digests, namespace or native secret references.
+        '401':
+          description: Authenticate the selecting personal owner before recording native binding references.
+        '403':
+          description: Selecting Task bindings requires personal owner authority and satisfaction of the account MFA
+            policy.
+        '404':
+          description: The retained source or selecting owner is unavailable within this account.
+        '409':
+          description: The source approval, selected references or pinned native facts differ from the immutable qualification.
+        '429':
+          description: Owner requests to select hosted Task bindings are currently rate limited.
+        '503':
+          description: New binding selection, source retention or the required independent seal identities are unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingSelection'
+  /v1/task-tool-source-intents/{id}/bindings/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity for the one-time personal-owner binding probe.
+    post:
+      operationId: checkHostedTaskBindings
+      summary: Probe selected hosted Task bindings once
+      tags:
+      - mcp-management
+      description: A fresh personal owner claims the exact selected fingerprint once and runs bounded read-only catalog
+        qualification under the account MFA policy. Native authority and pins are checked before and after the attempt.
+        Validated public destinations, verified TLS and sequential role connections keep credentials private. Concurrent
+        calls and restarts cannot repeat the claim. Success records at most one minute of historical evidence, clamped
+        to source expiry, without proving retained payload readability, migration compatibility, VM connectivity or
+        permission to apply.
+      responses:
+        '200':
+          description: Recorded one-time catalog results or the existing in-progress or terminal receipt for that
+            same immutable selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The probe request must name a valid source identity and lowercase SHA256 qualification fingerprint.
+        '401':
+          description: Authenticate the personal owner before requesting a one-time catalog probe.
+        '403':
+          description: Probing selected bindings requires fresh personal owner authority and the account MFA policy.
+        '404':
+          description: The source, selected qualification or current probing owner cannot be found in this account.
+        '409':
+          description: The probe fingerprint conflicts with the selection or all bounded private workers are occupied.
+        '429':
+          description: Personal-owner qualification probe requests are currently rate limited.
+        '503':
+          description: Owner probing, retained source admission or the required unseal configuration is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
+  /v1/task-tool-source-intents/{id}/bindings/revoke:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity whose selected binding evidence is being revoked.
+    post:
+      operationId: revokeHostedTaskBindings
+      summary: Revoke hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: A fresh personal owner permanently revokes the exact selected qualification under the account MFA
+        policy. Revocation remains available while new admission is disabled and does not require the old requester
+        or native app baseline to remain live. Revoked evidence cannot be revived and previously observed passing
+        checks never supply execution authority.
+      responses:
+        '200':
+          description: Terminal revocation metadata for the exact selected qualification fingerprint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The revocation request contains an invalid source identity or qualification fingerprint.
+        '401':
+          description: Authenticate the personal owner before revoking selected binding evidence.
+        '403':
+          description: Revoking binding evidence requires personal owner authority and compliance with the account
+            MFA policy.
+        '404':
+          description: The retained source, selected qualification or current revoking owner is unavailable in this
+            account.
+        '409':
+          description: Revocation names a fingerprint different from the immutable selected qualification.
+        '429':
+          description: Owner revocations of hosted Task qualifications are currently rate limited.
+        '503':
+          description: The native qualification journal cannot currently record binding revocations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
   /v1/task-tool-release-intents/{id}:
     parameters:
     - name: id
@@ -24273,6 +24449,39 @@ paths:
       responses:
         '204':
           description: The SLO was deleted.
+  /v1/apps/{slug}/protection:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: getAppProtection
+      summary: Show the app's production protection
+      description: "Reports whether the app is enrolled in production protection and the state of each protection object: the availability and latency SLOs, the health check, the account email channel, the alert rules and the availability release gate. The health check is run by the platform without billing its requests. An app created before protection was available reports state none."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's production protection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppProtectionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: setAppProtection
+      summary: Turn the app's production protection on or off
+      description: "on enrolls the app, including one created before protection was available, and sets up the protection objects after its next live production deploy. off deletes the protection objects the customer has not changed; changed objects, objects a kept alert rule or release gate still uses, and the account email channel stay."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetAppProtectionRequest' }
+      responses:
+        '200':
+          description: The app's production protection after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppProtectionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/synthetics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -34398,9 +34607,15 @@ paths:
       tags: [env]
       operationId: listEnv
       summary: List env vars on an app.
+      parameters:
+        - name: values
+          in: query
+          required: false
+          schema: { type: string, enum: ["true"] }
+          description: "`true` includes each variable's plaintext `value`. Variables are non-sensitive by contract; sealed secrets are listed separately and never carry a value."
       description: |
         Returns every env var key + timestamps on the app. The plaintext
-        value NEVER appears in the response — guest-init reads the value
+        value appears only with `?values=true`; guest-init reads it
         at process start from `/etc/faas/env.json` inside the guest.
 
         **scope filter.** The optional `?scope=`
@@ -75029,6 +75244,167 @@ components:
           - reject
           - revoke
           description: Owner verdict on this hosted source review, independent of future execution authorization.
+    HostedTaskBindingSelection:
+      type: object
+      additionalProperties: false
+      required:
+      - intent_sha256
+      - review_sha256
+      - namespace
+      - web_database_ref
+      - worker_database_ref
+      - migration_database_ref
+      - observer_database_ref
+      properties:
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        namespace:
+          type: string
+          maxLength: 128
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:/-]*$
+        web_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Existing read_write native managed PostgreSQL secret reference on the reviewed web app; never
+            a credential value.
+        worker_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Existing read_write native managed PostgreSQL secret reference on the reviewed worker app sharing
+            the selected queue.
+        migration_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Worker app reference for its separate migration-only PostgreSQL role; qualification never runs
+            a migration.
+        observer_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Native read_only PostgreSQL secret reference on the reviewed observer app, isolated from runtime
+            and migration roles.
+      description: Personal-owner selection of native Task binding references for one approved retained source intent,
+        never plaintext credentials.
+    HostedTaskBindingCheck:
+      type: object
+      additionalProperties: false
+      required:
+      - binding_sha256
+      properties:
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+      description: Exact immutable qualification fingerprint supplied by a personal owner for a check or revocation.
+    HostedTaskBindingResult:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - status
+      properties:
+        name:
+          type: string
+          enum:
+          - namespace
+          - owner_keys
+          - configured_payload_keys
+          - database_schema
+          - runtime_roles
+          - migration_owner
+          - observer_read_only
+        status:
+          type: string
+          enum:
+          - not_checked
+          - passed
+          - failed
+      description: One fixed-name bounded qualification outcome containing no native database facts or secret material.
+    HostedTaskBindingVerification:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - account_id
+      - intent_id
+      - intent_sha256
+      - review_sha256
+      - binding_sha256
+      - status
+      - checks
+      - created_at
+      - expires_at
+      - ready_to_apply
+      - bindings_verified
+      - owner_authorization_required
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        account_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        status:
+          type: string
+          enum:
+          - selected
+          - verifying
+          - passed
+          - failed
+          - stale
+          - revoked
+          - expired
+        checks:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/HostedTaskBindingResult'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        checked_at:
+          type: string
+          format: date-time
+        valid_until:
+          type: string
+          format: date-time
+        ready_to_apply:
+          type: boolean
+          enum:
+          - false
+        bindings_verified:
+          type: boolean
+          enum:
+          - false
+        owner_authorization_required:
+          type: boolean
+          enum:
+          - true
+      description: Historical private-binding qualification metadata only. No credential values, references, source,
+        database facts, owner decisions or execution authority.
     TaskToolReleaseIntent:
       type: object
       additionalProperties: false
@@ -104187,6 +104563,54 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean, description: 'false pauses the check; true resumes it.' }
+    SetAppProtectionRequest:
+      description: 'Turns production protection on or off. on creates the baseline; off deletes the baseline objects you have not changed.'
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: ['on', 'off']
+          description: on enrolls the app; off removes the unchanged protection objects.
+    AppProtectionResponse:
+      description: 'An app''s production protection.'
+      type: object
+      required: [state, protected, items]
+      properties:
+        state:
+          type: string
+          enum: ['on', 'off', none]
+          description: 'on when the app is enrolled, off when its owner turned protection off, none when the app was never enrolled.'
+        protected:
+          type: boolean
+          description: 'True when the app is enrolled and every protection object is active.'
+        items:
+          type: array
+          description: 'Every protection object in a fixed order; empty when state is none.'
+          items: { $ref: '#/components/schemas/AppProtectionItemStatus' }
+    AppProtectionItemStatus:
+      description: 'One production protection object.'
+      type: object
+      required: [item, kind, name, state]
+      properties:
+        item:
+          type: string
+          enum: [availability_slo, latency_slo, health_check, email_channel, availability_burn_alert, latency_burn_alert, health_alert, availability_gate]
+        kind:
+          type: string
+          enum: [slo, synthetic_check, notification_channel, alert_rule, release_gate]
+        name: { type: string, example: availability }
+        state:
+          type: string
+          enum: [active, pending, skipped, removed]
+          description: 'active when the object was created and still exists; pending while the app waits for a live production deployment; skipped when it could not be created yet (see reason), retried automatically; removed when you deleted it, in which case it is not created again.'
+        object_id:
+          type: string
+          description: 'The created object''s id. Present when state is active or removed.'
+        reason:
+          type: string
+          enum: [plan, not_released, email_unverified, name_taken, limit_reached, needs_slo, needs_channel, needs_check, probes_unavailable]
+          description: 'Why a skipped object could not be created yet: the plan does not include it, the feature is not available to the account, the account email is not verified, you already have an object with this name, the app or account is at its limit, the SLO, email channel or health check it needs was not created, or free health probes are not running on this platform.'
     SyntheticCheckResponse:
       description: 'One synthetic check definition.'
       type: object
@@ -124448,7 +124872,7 @@ components:
         deleted: { type: array, items: { type: string } }
         secrets_not_restored: { type: array, items: { $ref: '#/components/schemas/ConfigSecretDifference' } }
     AppEnvResponse:
-      description: "An env var envelope: key name + scope + timestamps. The plaintext value never appears here."
+      description: "An env var envelope: key name + scope + timestamps. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [key, scope, created_at, updated_at]
       properties:
@@ -124461,6 +124885,7 @@ components:
           example: "default"
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        value: { type: string, description: "The variable's plaintext; present only with `?values=true`." }
         config_change:
           $ref: '#/components/schemas/ConfigChangeReceipt'
           description: "Present on env writes: the revision this write recorded and the config guard watching it."
@@ -124473,7 +124898,7 @@ components:
     # branch on `if 'env_by_scope' in response` decodes the
     # nested map; otherwise it decodes the flat `env` array.
     ScopedAppEnvResponse:
-      description: "An env var envelope scoped to one named environment. The plaintext value never appears here."
+      description: "An env var envelope scoped to one named environment. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [scope, key, created_at, updated_at]
       properties:
@@ -124485,6 +124910,7 @@ components:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DB_URL" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        value: { type: string, description: "This scope's plaintext value of the variable, included only on a `?values=true` listing." }
 
     AppEnvListResponse:
       description: |
