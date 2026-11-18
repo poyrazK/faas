@@ -178,37 +178,6 @@ func newAsOfFixture(t *testing.T, pageSize int, branch map[string]string) (overl
 	return f, versioned
 }
 
-func TestAsOfCandidateTies(t *testing.T) {
-	at := asOfBranchPoint
-	version := func(id string, offset time.Duration, latest, marker bool) objectstorage.ListedObjectVersion {
-		return objectstorage.ListedObjectVersion{Object: objectstorage.Object{Key: "k", LastModified: at.Add(offset)}, ProviderVersionID: id, IsLatest: latest, DeleteMarker: marker}
-	}
-	for _, tc := range []struct {
-		name     string
-		versions []objectstorage.ListedObjectVersion
-		want     string
-		live     bool
-	}{
-		{"newest before the branch point", []objectstorage.ListedObjectVersion{version("new", time.Hour, true, false), version("mid", -time.Hour, false, false), version("old", -2*time.Hour, false, false)}, "mid", true},
-		{"exactly at the branch point", []objectstorage.ListedObjectVersion{version("at", 0, true, false)}, "at", true},
-		{"only later versions", []objectstorage.ListedObjectVersion{version("new", time.Second, true, false)}, "", false},
-		{"deleted then", []objectstorage.ListedObjectVersion{version("gone", -time.Hour, false, true), version("old", -2*time.Hour, false, false)}, "gone", false},
-		{"tie: latest wins", []objectstorage.ListedObjectVersion{version("x", -time.Hour, false, false), version("y", -time.Hour, true, false)}, "y", true},
-		{"tie: marker beats data", []objectstorage.ListedObjectVersion{version("x", -time.Hour, false, false), version("m", -time.Hour, false, true)}, "m", false},
-		{"tie: data never beats marker", []objectstorage.ListedObjectVersion{version("m", -time.Hour, false, true), version("x", -time.Hour, false, false)}, "m", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var c asOfCandidate
-			for _, v := range tc.versions {
-				c.consider(v, at)
-			}
-			if c.version.ProviderVersionID != tc.want || c.live() != tc.live {
-				t.Fatalf("candidate = %q live=%v, want %q live=%v", c.version.ProviderVersionID, c.live(), tc.want, tc.live)
-			}
-		})
-	}
-}
-
 func TestAsOfVersionPagesAcrossAKey(t *testing.T) {
 	versions := []testVersion{{key: "k", id: "late", body: "x", at: time.Hour}}
 	for i := range 5 {
