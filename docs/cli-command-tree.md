@@ -178,6 +178,7 @@ touch them. The tables below map each earlier name.
 | `gregale approvals approve` | `gregale release approve` |
 | `gregale approvals off` | `gregale release approval disable` |
 | `gregale approvals reject` | `gregale release reject` |
+| `gregale apps purge` | `gregale app purge` |
 | `gregale apps restore` | `gregale app restore` |
 | `gregale apps rm` | `gregale app delete` |
 | `gregale apps streaming-cap` | `gregale app streaming-cap` |

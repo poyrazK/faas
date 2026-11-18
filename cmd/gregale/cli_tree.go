@@ -151,6 +151,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app list", "apps"},
 	{"app delete", "apps rm"},
 	{"app restore", "apps restore"},
+	{"app purge", "apps purge"},
 	{"app instances", "ps"},
 	{"app park", "park"},
 	{"app wake", "wake"},

@@ -2051,7 +2051,7 @@ func (s *server) scanService(
 	}
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, result.Workloads)...)
-	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, result.Workloads, slugHolders)...)
+	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, result.Workloads, slugHolders)...)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
@@ -2060,7 +2060,7 @@ func (s *server) scanService(
 		// applicable no-op; the skipped partition records that intent.
 		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID, dependencyReferences)
 		admissionReasons = append(admissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, filteredW)...)
-		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, filteredW, slugHolders)...)
+		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, filteredW, slugHolders)...)
 	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		stageReasons := reconcile.EnvironmentWorkloadAdmissionReasons(filteredW, projectApps)

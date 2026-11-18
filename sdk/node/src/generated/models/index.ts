@@ -724,6 +724,7 @@ export type { DelayedTaskResponse } from './DelayedTaskResponse.js';
 export type { DelegatedToolInvocationIntent } from './DelegatedToolInvocationIntent.js';
 export type { DeleteFinancialBudgetRequest } from './DeleteFinancialBudgetRequest.js';
 export type { DeletedAppListResponse } from './DeletedAppListResponse.js';
+export type { DeletedAppPurgeResponse } from './DeletedAppPurgeResponse.js';
 export type { DeletedAppSummary } from './DeletedAppSummary.js';
 export type { DeliverAppEventRequest } from './DeliverAppEventRequest.js';
 export type { DeliverAppEventResponse } from './DeliverAppEventResponse.js';

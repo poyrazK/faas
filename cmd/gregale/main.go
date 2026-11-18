@@ -452,6 +452,9 @@ func run(args []string) (status int) {
 		if len(args) > 1 && args[1] == subRestore {
 			return cmdAppsRestore(args[2:])
 		}
+		if len(args) > 1 && args[1] == "purge" {
+			return cmdAppsPurge(args[2:])
+		}
 		// `gregale apps routes <slug>` — ADR-093 Tier B item #2
 		// operator entry point. Must come before the default
 		// fall-through so a slug-shaped token ("routes") is never
