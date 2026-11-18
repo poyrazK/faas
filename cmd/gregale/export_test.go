@@ -555,6 +555,7 @@ var GitMetadataTimeout = &gitMetadataTimeout
 var GitSlowNoticeAfter = &gitSlowNoticeAfter
 var GitPipeWaitDelay = &gitPipeWaitDelay
 var WithProjectWaitProgress = withProjectWaitProgress
+var ProjectBuildStepInterval = &projectBuildStepInterval
 var WaitForProjectApplyTimeouts = waitForProjectApplyTimeouts
 var OsStdin = &osStdin
 var OsStdout = &osStdout
