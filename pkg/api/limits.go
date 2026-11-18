@@ -3916,6 +3916,30 @@ const (
 	// NodeCacheSweepInterval is how often a compute node removes cached
 	// snapshot captures and runtime release bases nothing needs any more.
 	NodeCacheSweepInterval = 10 * time.Minute
+	// OwnedSnapshotRefetchAfter is how long a node waits before it fetches
+	// again a live snapshot of an app it owns that its cache evicted
+	// (ADR-20261118160000). The wait bounds the churn when the apps a node
+	// owns outgrow its cache budget; a missing replica is fetched at the
+	// next sweep.
+	OwnedSnapshotRefetchAfter = time.Hour
+	// Ownership balance (ADR-20261118160000). A new app goes to the node that
+	// owns the least app RAM for its ceiling, but nothing moved apps back
+	// after a drain or a dead node moved them off, so one drain skewed
+	// ownership for good (production-us 2026-11-17/18: 77 apps and 50 GB on
+	// one node, 1 GB on the other, three hand rebalances). The control plane
+	// moves parked apps from the node owning the largest share of its
+	// admission ceiling to the smallest once the gap exceeds
+	// OwnerBalanceTriggerSpreadPct points, until it is within
+	// OwnerBalanceTargetSpreadPct, at most OwnerBalanceMovesPerTick apps
+	// every OwnerBalanceInterval. Only apps idle (not woken and not moved)
+	// for OwnerBalanceMinIdle move, coldest first, so a busy app keeps its
+	// warm cache; the new owner fetches the moved app's snapshot before its
+	// next wake.
+	OwnerBalanceTriggerSpreadPct = 20
+	OwnerBalanceTargetSpreadPct  = 10
+	OwnerBalanceMovesPerTick     = 5
+	OwnerBalanceInterval         = time.Minute
+	OwnerBalanceMinIdle          = 24 * time.Hour
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
