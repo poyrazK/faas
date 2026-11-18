@@ -193,7 +193,7 @@ func planGeminiSettings(dir string) (agentFileChange, bool, error) {
 		return change, false, err
 	}
 	if current == nil {
-		if info, err := os.Stat(filepath.Join(dir, ".gemini")); err != nil || !info.IsDir() {
+		if !hasGeminiFolder(dir) {
 			return change, false, nil
 		}
 		change.Action = agentFileCreated
@@ -207,6 +207,13 @@ func planGeminiSettings(dir string) (agentFileChange, bool, error) {
 	change.Action = agentFileManual
 	change.Note = `add "AGENTS.md" to context.fileName so Gemini CLI reads it`
 	return change, true, nil
+}
+
+// hasGeminiFolder reports a .gemini folder, where Gemini CLI keeps a
+// project's settings.
+func hasGeminiFolder(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, ".gemini"))
+	return err == nil && info.IsDir()
 }
 
 // geminiReadsAgents reports whether settings name AGENTS.md as a context
