@@ -183,8 +183,15 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 				}
 				t.Logf("cancel plus export/cleanup: %s", time.Since(start))
 			} else {
+				steps := followLiveSteps(ctx, driver, handle)
 				result, err := driver.WaitForCompletion(ctx, handle)
+				finished := time.Now()
 				mustAcceptance(t, err)
+				if !tc.fail {
+					steps.assertLive(t, finished)
+				} else {
+					steps.stop()
+				}
 				data, err := os.ReadFile(filepath.Join(handle.ExportDir, "build-done.json"))
 				mustAcceptance(t, err)
 				var done api.BuildDone
