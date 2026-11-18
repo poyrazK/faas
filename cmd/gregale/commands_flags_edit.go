@@ -250,13 +250,6 @@ func isFlagsVersionConflict(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Problem.Code == flagsEditConflictCode
 }
 
-func findFlag(cfg *flags.Config, key string) (*flags.Flag, error) { return flags.FindFlag(cfg, key) }
-
-func isVariantFlag(f *flags.Flag) bool { return flags.IsVariant(f) }
-
-// parseFlagValue turns a CLI value into the JSON value for flag f.
-func parseFlagValue(f *flags.Flag, raw string) (any, error) { return flags.ParseValue(f, raw) }
-
 func flagsCreate(key, variantList, defaultValue, description string, fs *flag.FlagSet) flagsEdit {
 	var variants []string
 	if variantList != "" {
@@ -335,8 +328,6 @@ func flagsKill(key string, killed bool) flagsEdit { return flagsEdit(flags.EditK
 func parseFlagsPercent(raw string) (int, error) { return flags.ParsePercent(raw) }
 
 func flagsPercent(key string, bp int) flagsEdit { return flagsEdit(flags.EditPercent(key, bp)) }
-
-func formatBasisPoints(bp int) string { return flags.FormatBasisPoints(bp) }
 
 // flagsAttributeName expands a short attribute name: country and ua_family
 // are the gateway's, any other bare name is the application's.

@@ -600,9 +600,8 @@ func (m *management) planMonitoringChange(ctx context.Context, a planMonitoringA
 // runAsyncOperation applies the batch 2 operation kinds. Each native call
 // carries a key derived from the plan, so a retried apply repeats nothing.
 func (m *management) runAsyncOperation(ctx context.Context, p *releasePlan) (any, error) {
-	key := func(suffix string) context.Context {
-		return api.ContextWithIdempotencyKey(ctx, "mcp-operation-"+p.ID+suffix)
-	}
+	base := ctx
+	ctx = api.ContextWithIdempotencyKey(base, "mcp-operation-"+p.ID)
 	switch p.Operation.Kind {
 	case "dlq_replay":
 		var req replayRequest
@@ -610,11 +609,11 @@ func (m *management) runAsyncOperation(ctx context.Context, p *releasePlan) (any
 			return nil, err
 		}
 		if req.All {
-			return m.client.ReplayAllDeadLetterEvents(key(""), p.App, req.Limit)
+			return m.client.ReplayAllDeadLetterEvents(ctx, p.App, req.Limit)
 		}
 		replayed := make([]string, 0, len(req.EventIDs))
 		for _, id := range req.EventIDs {
-			if _, err := m.client.ReplayDeadLetterEvent(key(":"+id), p.App, id); err != nil {
+			if _, err := m.client.ReplayDeadLetterEvent(api.ContextWithIdempotencyKey(base, "mcp-operation-"+p.ID+":"+id), p.App, id); err != nil {
 				return nil, fmt.Errorf("replayed %d of %d before %s failed: %w", len(replayed), len(req.EventIDs), id, err)
 			}
 			replayed = append(replayed, id)
@@ -627,14 +626,14 @@ func (m *management) runAsyncOperation(ctx context.Context, p *releasePlan) (any
 		}
 		switch req.Action {
 		case "retry_step":
-			return m.client.RetryWorkflowStep(key(""), req.RunID, req.Step)
+			return m.client.RetryWorkflowStep(ctx, req.RunID, req.Step)
 		case "resume":
 			count := req.ExpectedResumeCount
-			return m.client.ResumeWorkflowRunWithIdempotencyKey(ctx, req.RunID, api.ResumeWorkflowRunRequest{ExpectedResumeCount: &count}, "mcp-operation-"+p.ID)
+			return m.client.ResumeWorkflowRunWithIdempotencyKey(base, req.RunID, api.ResumeWorkflowRunRequest{ExpectedResumeCount: &count}, "mcp-operation-"+p.ID)
 		case "cancel":
-			return m.client.CancelWorkflowRun(key(""), req.RunID)
+			return m.client.CancelWorkflowRun(ctx, req.RunID)
 		case "cancel_queued":
-			return m.client.CancelUnstartedWorkflowRuns(key(""), p.App, api.WorkflowQueuedRunCancelRequest{RunIDs: req.RunIDs})
+			return m.client.CancelUnstartedWorkflowRuns(ctx, p.App, api.WorkflowQueuedRunCancelRequest{RunIDs: req.RunIDs})
 		}
 	case "monitoring_change":
 		var req monitoringRequest
@@ -643,17 +642,17 @@ func (m *management) runAsyncOperation(ctx context.Context, p *releasePlan) (any
 		}
 		switch req.Kind + "/" + req.Op {
 		case "slo/create":
-			return m.client.CreateSLO(key(""), p.App, *req.SLO)
+			return m.client.CreateSLO(ctx, p.App, *req.SLO)
 		case "synthetic/create":
-			return m.client.CreateSyntheticCheck(key(""), p.App, *req.Synthetic)
+			return m.client.CreateSyntheticCheck(ctx, p.App, *req.Synthetic)
 		case "synthetic/enable", "synthetic/disable":
-			return m.client.UpdateSyntheticCheck(key(""), p.App, req.ID, api.UpdateSyntheticCheckRequest{Enabled: req.Op == "enable"})
+			return m.client.UpdateSyntheticCheck(ctx, p.App, req.ID, api.UpdateSyntheticCheckRequest{Enabled: req.Op == "enable"})
 		case "alert/create":
 			s := req.Alert
-			return m.client.CreateAlertRule(key(""), p.App, api.CreateAlertRuleRequest{Name: *s.Name, Enabled: s.Enabled, Metric: s.Metric, Comparison: *s.Comparison, Threshold: *s.Threshold, WindowSpec: *s.WindowSpec, SLOID: s.SLOID, SyntheticCheckID: s.SyntheticCheckID, ChannelIDs: *s.ChannelIDs, CooldownMinutes: s.CooldownMinutes})
+			return m.client.CreateAlertRule(ctx, p.App, api.CreateAlertRuleRequest{Name: *s.Name, Enabled: s.Enabled, Metric: s.Metric, Comparison: *s.Comparison, Threshold: *s.Threshold, WindowSpec: *s.WindowSpec, SLOID: s.SLOID, SyntheticCheckID: s.SyntheticCheckID, ChannelIDs: *s.ChannelIDs, CooldownMinutes: s.CooldownMinutes})
 		case "alert/update":
 			s := req.Alert
-			return m.client.UpdateAlertRule(key(""), p.App, req.ID, api.UpdateAlertRuleRequest{Name: s.Name, Enabled: s.Enabled, Comparison: s.Comparison, Threshold: s.Threshold, WindowSpec: s.WindowSpec, ChannelIDs: s.ChannelIDs, CooldownMinutes: s.CooldownMinutes})
+			return m.client.UpdateAlertRule(ctx, p.App, req.ID, api.UpdateAlertRuleRequest{Name: s.Name, Enabled: s.Enabled, Comparison: s.Comparison, Threshold: s.Threshold, WindowSpec: s.WindowSpec, ChannelIDs: s.ChannelIDs, CooldownMinutes: s.CooldownMinutes})
 		}
 	}
 	return nil, invalid("invalid_plan", "unsupported operation kind")

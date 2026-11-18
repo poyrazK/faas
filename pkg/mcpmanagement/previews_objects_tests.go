@@ -273,7 +273,7 @@ func fetchObjectStart(ctx context.Context, signed api.ObjectSignedRequest, limit
 	if err != nil {
 		return nil, invalid("object_read_failed", "the object store did not answer")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return nil, invalid("object_read_failed", fmt.Sprintf("the object store answered %d", resp.StatusCode))
 	}
