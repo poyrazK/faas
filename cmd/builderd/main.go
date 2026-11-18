@@ -405,6 +405,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Debug("builderd: build deferred behind an identical build", "build", buildID)
 				return
 			}
+			if errors.Is(err, builderdpkg.ErrPreempted) {
+				return
+			}
 			log.Warn("builderd: process", "build", buildID, "err", err)
 		}
 	})
@@ -442,6 +445,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	workerMetrics := newBuildWorkerMetrics(ops.Registry(), pollInterval, reapThreshold)
 	go workerLoopWithMetrics(runCtx, b, pollInterval, log, workerMetrics)
+	startElasticSlots(ctx, runCtx, cfg, store, pool, b, pollInterval, log)
 	go b.RunBuildKitSeedLoop(runCtx)
 
 	reaperMetrics := builderdpkg.NewReaperMetrics(ops.Registry(), reapInterval, reapThreshold)
@@ -789,6 +793,11 @@ func workerLoopWithMetrics(ctx context.Context, b buildWorkerProcessor, interval
 		}
 		if errors.Is(err, builderdpkg.ErrCoalesced) {
 			log.Debug("builderd: worker tick — deferred behind an identical build")
+			continue
+		}
+		// A borrowed slot gave its build back to tenants; the build is back
+		// in the queue at its place (ADR-20261118154632).
+		if errors.Is(err, builderdpkg.ErrPreempted) {
 			continue
 		}
 		log.Warn("builderd: worker tick — process next", "err", err)
