@@ -518,6 +518,7 @@ var templateNames13 = []string{
 	"hello-node",
 	"hello-python",
 	"hello-go",
+	"hello-node-private",
 	"cron-example",
 	"function-node",
 	"function-python",
