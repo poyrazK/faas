@@ -124910,7 +124910,7 @@ components:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DB_URL" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
-        value: { type: string, description: "The variable's plaintext; present only with `?values=true`." }
+        value: { type: string, description: "This scope's plaintext value of the variable, included only on a `?values=true` listing." }
 
     AppEnvListResponse:
       description: |
