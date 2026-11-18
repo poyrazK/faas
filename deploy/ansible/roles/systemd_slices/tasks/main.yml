@@ -130,7 +130,9 @@
     fail_msg: >-
       faas_cp_slice_memory_max must be a systemd byte size such as 3072M
       (got {{ faas_cp_slice_memory_max }}), and faas_cp_slice_cpu_quota a
-      percentage such as 400% (got {{ faas_cp_slice_cpu_quota }}).
+      percentage such as 400% (got {{ faas_cp_slice_cpu_quota }}), and
+      faas_cp_build_slice_memory_max a byte size such as 5120M
+      (got {{ faas_cp_build_slice_memory_max }}).
 
 - name: systemd_slices — write faas-cp.slice
   ansible.builtin.copy:
