@@ -263,6 +263,15 @@ keep ordinary readiness, use `HEALTHCHECK NONE`, drop the instruction, or set
 `healthcheck: {disable: true}` on the Compose service. Deployments built before
 this change keep their readiness until they are redeployed.
 
+A Compose healthcheck that only fetches the service's own serving port with
+`curl` or `wget` (`curl -f http://localhost:8080/actuator/health || exit 1`,
+or the `CMD` list form) runs from the platform instead: it becomes the
+service's HTTP readiness check on that path, with the same interval, timeout,
+retries and start period, and the command check (including an inherited image
+`HEALTHCHECK`) is set to `NONE`. The image then needs no `curl` or `wget`. A
+check of another port, with headers, a method other than GET, or any other
+shell syntax stays a command check. The plan notes each conversion.
+
 Required primary image checks also drive runtime recovery. Each serving
 instance executes fresh command attempts using the effective interval, timeout,
 startup grace, and consecutive failure threshold. Repeated command failures
@@ -316,6 +325,36 @@ so set them with `gregale env set` or secrets. The project plan shows, per
 service, each name that will have no value in the target environment under
 **Needs a value**: names already configured on the app, supplied by
 `--secrets-file`, or set by Gregale itself (`PORT`, `GREGALE_*`) are left out.
+
+Three more Gregale keys shape the apps a Compose file creates:
+
+```yaml
+x-gregale-slug-prefix: shop-    # new apps are shop-ui, shop-cart, ...
+x-gregale-public-auth: open     # or bearer; per service too
+services:
+  ui:
+    build: ./ui
+    x-gregale-startup-deadline: 90s
+```
+
+- `x-gregale-slug-prefix` (top level) names each new app `<prefix><service>`,
+  so short service names need not be unique across Gregale. Service names, and
+  the `<service>.svc.gregale` addresses built from them, do not change; an app
+  that already exists keeps its name. `gregale deploy --project --prefix P`
+  does the same and wins over the file.
+- `x-gregale-startup-deadline` (seconds or a duration, at most 120 s) is how
+  long a new instance may take to become ready. Without it, a healthcheck with
+  a `start_period` sets it to `start_period` plus `retries` × `interval`
+  (Docker's defaults: 3 and 30 s) when that is longer than the default 30 s. A
+  `lifecycle.startup_deadline_s` in `gregale.yaml` takes precedence over the
+  derived value. Either is capped at the plan's maximum (Free and Hobby 30 s,
+  Pro 60 s, Scale 120 s).
+- `x-gregale-public-auth` (`open` or `bearer`, top level or per service) sets
+  who may call a new app's public URL instead of the plan default; `bearer`
+  needs Hobby or above.
+
+The deadline and auth keys apply when an app is created; change an existing
+app with `gregale app update`.
 
 A Compose file can opt in to importing the plain values of `environment:`:
 
@@ -527,7 +566,7 @@ their keys: the managed resource replaces the container.
 | Main listener | Explicit deployment port, otherwise one exposed TCP port, otherwise 8080. Port 80 is supported: when a workload in the VM declares it, the in-guest metadata endpoint moves from `169.254.169.254:80` to `169.254.169.254:8775`. | Multiple TCP declarations do not select the main port. Bind to `0.0.0.0`. Read the metadata URLs from `FAAS_EVENT_PUBLISH_ENDPOINT`, `FAAS_METADATA_ENV_ENDPOINT` and `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` instead of hardcoding the address. |
 | Additional listeners | Declared TCP listeners use `<slug>--port-<name>.<apps-domain>` selectors through the gateway | These are HTTP gateway selectors. Raw TCP uses separately configured app-owned listeners; UDP uses the separate opt-in listener service below. |
 | Raw TCP ingress | Opt-in public edge binds stable app-owned TCP listener ports and forwards bytes to the app; optional per-listener TLS termination | Not enabled for every account yet. TLS defaults to passthrough; termination requires a verified app-owned hostname. |
-| Private TCP between services | Same-account services dial `<name>.svc.gregale:<port>` on any declared TCP listener or the serving port; compose `expose:` declares internal-only listeners | Not enabled for every account yet; until it is, service names answer HTTP only. Internal listeners never get public selectors or raw TCP listeners. Ports 10080, 10081 and 443 stay on the HTTP mesh. See [networking](networking.md#private-tcp-between-services). |
+| Private TCP between services | Same-account services dial `<name>.svc.gregale:<port>`, or the bare Compose name (`orders:8080`, which the guest resolver searches under `svc.gregale`), on any declared TCP listener or the serving port; compose `expose:` declares internal-only listeners | Not enabled for every account yet; until it is, service names answer HTTP only. Internal listeners never get public selectors or raw TCP listeners. Ports 10080, 10081 and 443 stay on the HTTP mesh. See [networking](networking.md#private-tcp-between-services). |
 | Raw UDP ingress | Opt-in public edge reserves app-owned UDP endpoints and forwards framed datagrams to the app | Not enabled for every account yet; requires IPv4 source CIDRs. |
 | Host ports | Durable per-node TCP/UDP lease allocation | A lease does not bind a socket or enable direct ingress. |
 | Readiness | TCP by default for direct images; explicit health path selects HTTP | Image HEALTHCHECK metadata is separate from verifying public-route readiness. |

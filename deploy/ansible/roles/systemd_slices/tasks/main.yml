@@ -12,7 +12,7 @@
 #     same calculation vmmd uses for the admission ceiling. Do not treat the
 #     value below as the effective fence on a compute node.
 #   faas-cp.slice     : MemoryMax=faas_cp_slice_memory_max (default 6144M; postgres + daemons; spec §13 budget row)
-#   faas-cp-build.slice : MemoryMax=5120M (one 2 GiB builder plus full-snapshot headroom)
+#   faas-cp-build.slice : MemoryMax=faas_cp_build_slice_memory_max (default 5120M; one 2 GiB builder plus full-snapshot headroom)
 #   faas-obs.slice    : MemoryMax=faas_obs_slice_memory_max (default 3584M; Prometheus,
 #                       Alertmanager, Grafana, Loki, Promtail; ADR-20261023124955)
 #
@@ -126,10 +126,13 @@
     that:
       - faas_cp_slice_memory_max | string is match('^[0-9]+[KMGT]?$')
       - faas_cp_slice_cpu_quota | string is match('^[0-9]+%$')
+      - faas_cp_build_slice_memory_max | string is match('^[0-9]+[KMGT]?$')
     fail_msg: >-
       faas_cp_slice_memory_max must be a systemd byte size such as 3072M
       (got {{ faas_cp_slice_memory_max }}), and faas_cp_slice_cpu_quota a
-      percentage such as 400% (got {{ faas_cp_slice_cpu_quota }}).
+      percentage such as 400% (got {{ faas_cp_slice_cpu_quota }}), and
+      faas_cp_build_slice_memory_max a byte size such as 5120M
+      (got {{ faas_cp_build_slice_memory_max }}).
 
 - name: systemd_slices — write faas-cp.slice
   ansible.builtin.copy:
@@ -237,7 +240,7 @@
       [Slice]
       # A full 2 GiB builder snapshot briefly charges both the resident guest
       # RAM and its memory file to this cgroup: 2*2048 + 768 = 4864 MiB.
-      MemoryMax=5120M
+      MemoryMax={{ faas_cp_build_slice_memory_max }}
       CPUQuota=200%
   register: build_slice
 

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ConfigChangeReceipt } from './ConfigChangeReceipt.js';
 /**
- * An env var envelope: key name + scope + timestamps. The plaintext value never appears here.
+ * An env var envelope: key name + scope + timestamps. The plaintext value appears only on a `?values=true` listing.
  */
 export type AppEnvResponse = {
   key: string;
@@ -14,6 +14,10 @@ export type AppEnvResponse = {
   scope: string;
   created_at: string;
   updated_at: string;
+  /**
+   * The variable's plaintext; present only with `?values=true`.
+   */
+  value?: string;
   /**
    * Present on env writes: the revision this write recorded and the config guard watching it.
    */
