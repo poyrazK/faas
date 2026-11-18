@@ -306,6 +306,10 @@ type server struct {
 	// logArchive reaches the runtime-log archive bucket; nil when this apid
 	// has none configured. The grace sweep erases archived logs through it.
 	logArchive logerasure.Objects
+	// purgeDeletedApp runs the grace sweep's purge for one app whose restore
+	// window the owner closed (POST /v1/deleted-apps/{id}/purge). Nil where
+	// no sweep runs: the purge then waits for the sweep elsewhere.
+	purgeDeletedApp func(ctx context.Context, appID, actor string) error
 	// databaseSwitchDrainOverride feeds the database switch worker drain
 	// evidence on stores without schedd's drain plans (tests).
 	databaseSwitchDrainOverride      state.DatabaseSwitchDrainStore
@@ -2886,6 +2890,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/deleted-apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeletedApps))))
 	mux.HandleFunc("GET /v1/deleted-apps/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeletedApp))))
 	mux.HandleFunc("POST /v1/deleted-apps/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreDeletedApp))))
+	mux.HandleFunc("POST /v1/deleted-apps/{id}/purge", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.purgeDeletedAppNow))))
 	// First-class preview state keeps URL, expiry, production diff, and
 	// observability/configuration links behind the normal read surface.
 	mux.HandleFunc("GET /v1/preview/{slug}", s.authLimited(s.requireScope(api.ScopesPreviewStatusReadSurface...)(s.getPreviewStatus)))
