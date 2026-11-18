@@ -671,6 +671,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
+	env = StampJVMHeapEnv(env, argv...)
 	env = StampRestoreReseedEnv(env, argv...)
 	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)

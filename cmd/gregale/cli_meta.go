@@ -1805,6 +1805,9 @@ var cliCommands = []cliCommand{
 				{Name: "delete-bindings", Short: "revoke the app's managed PostgreSQL bindings first (deleting the app otherwise refuses while any is live)", Bool: true},
 			}},
 			{Name: "restore", Short: "Restore an app during its deletion grace window", Positionals: []string{"<slug>"}},
+			{Name: "purge", Short: "Permanently remove a deleted app now and free its name", Positionals: []string{"<slug>"}, Notes: []string{"A deleted app keeps its name for seven days so it can be restored; purge ends that window at once, so a redeploy (for example the same Compose file under a new project) can reuse the name.", "Purging cannot be undone. Delete the app's object storage buckets first."}, Examples: []string{"gregale app delete api --yes && gregale app purge api --yes"}, Flags: []cliFlag{
+				{Name: "yes", Short: "purge without prompting; required in non-interactive and JSON mode", Bool: true},
+			}},
 			{Name: "routes", Short: "List admitted per-route labels for one app", Positionals: []string{"<slug>"}},
 			appTCPListenerCLISubcommand(true),
 			appUDPListenerCLISubcommand(true),
@@ -3205,6 +3208,7 @@ var cliCommands = []cliCommand{
 			// subsequent deploys honor the persisted set automatically.
 			{Name: "persist-exclude", Group: "Projects", Short: "save --exclude slugs for future project deploys"},
 			{Name: "project-slug", Group: "Projects", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
+			{Name: "prefix", Group: "Projects", Short: "name new project apps <prefix><service> (overrides x-gregale-slug-prefix)", Value: "PREFIX"},
 			{Name: "rollout", Group: "Rollout and health", Short: "how this release reaches traffic: safe (adaptive canary with rollback; waits for 100%), fast (5% -> 50% -> 100%) or immediate; default: the app release policy", Value: "MODE", ClosedSet: []string{"safe", "fast", "immediate"}},
 			{Name: "override-freeze", Group: "Rollout and health", Short: "release to production during a deploy freeze; the reason is audited", Value: "REASON"},
 			{Name: "at", Group: "Rollout and health", Short: "build now and start the production rollout at this time: +2h, 02:00, \"2026-10-22 02:00\" (local) or RFC 3339; freezes are checked then", Value: "WHEN"},
@@ -6875,6 +6879,9 @@ var cliCommands = []cliCommand{
 				{Name: "acknowledge-releases", Short: "accept rolling back across release commands", Bool: true},
 				{Name: "timeout", Short: "wait per service (default 10m)", Value: "DURATION"},
 			}},
+			{Name: "health", Short: "Check serving health of every app in a project", Positionals: []string{"<project>"}, Notes: []string{"Same as `app health --project <project>`; takes the same flags."}},
+			{Name: "wake", Short: "Wake every app in a project before traffic arrives", Positionals: []string{"<project>"}, Notes: []string{"Same as `app wake --project <project>`; takes the same flags, such as --wait."}},
+			{Name: "restart", Short: "Restart every app in a project", Positionals: []string{"<project>"}, Notes: []string{"Same as `app restart --project <project>`; takes the same flags."}},
 			{Name: "export", Short: "Write the project's services as a plain Compose file", Positionals: []string{"<project>"}, Notes: []string{"Env values stay sealed: each variable is referenced by name, as ${NAME}.", "Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back."}, Flags: []cliFlag{
 				{Name: "format", Short: "output format (compose)", Value: "FORMAT"},
 				{Name: "out", Short: "write to PATH instead of stdout", Value: "PATH"},
@@ -6976,6 +6983,7 @@ var cliCommands = []cliCommand{
 				{Name: "class", Short: "retention: persistent by default; ephemeral values make every wake a slower cold start; omission keeps an existing class", Value: "CLASS", ClosedSet: []string{api.SecretClassPersistent, api.SecretClassEphemeral}},
 				{Name: "restart", Short: "restart the app and apply updated secrets now"},
 				{Name: "no-guard", Short: "do not open a config guard for this change", Bool: true},
+				{Name: "plain", Short: "store KEY=VALUE as a readable, non-secret variable (shown by env list)", Bool: true},
 			}},
 			{Name: "unset", Short: "Remove named sealed secrets (alias: rm)", Examples: []string{"gregale env unset OLD_TOKEN UNUSED_KEY --dry-run", "gregale env unset --app my-api --interactive", "gregale env unset --app my-api OLD_API_KEY", "gregale env unset --app my-api OLD_API_KEY --env staging", "gregale env unset --app my-api OLD_API_KEY --wait-for-ack", "gregale env unset --app my-api OLD_API_KEY --restart"}, Positionals: []string{"[<KEY>...]"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "validate local input and preview keys and runtime options without API requests or changes", Bool: true},

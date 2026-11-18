@@ -85,6 +85,13 @@ func SuggestedAppSlug(project, name string) string {
 // the restore.
 func AllocateAppSlugs(ctx context.Context, lookup SlugLookup, workloads []reposcan.Workload, accountApps []state.App, accountID, projectID, projectSlug string) ([]reposcan.Workload, error) {
 	out := PreserveAppSlugs(workloads, accountApps, projectID)
+	// A declared prefix names every new app <prefix><service>; existing
+	// members kept their slugs above (retail-store feedback A1).
+	for i := range out {
+		if out[i].AppSlug == "" && out[i].SlugPrefix != "" && api.ValidAppSlug(out[i].SlugPrefix+out[i].Name) {
+			out[i].AppSlug = out[i].SlugPrefix + out[i].Name
+		}
+	}
 	if projectSlug == "" {
 		return out, nil
 	}

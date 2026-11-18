@@ -915,6 +915,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case "gcs":
 		log.Info("vmmd: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("vmmd: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("vmmd: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"))
 	}
@@ -1391,6 +1395,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if strings.TrimSpace(os.Getenv("FAAS_SANDBOX_WEB_NODE_EGRESS")) == "1" {
 		log.Warn("vmmd: web-mode sandbox sessions may leave from this node's own address (FAAS_SANDBOX_WEB_NODE_EGRESS=1)")
 		mgr.WithSandboxWebNodeEgress(true)
+	}
+	// ADR-20261117185346 §3: sandbox sessions with egress leave through the
+	// agent tunnel. The switch with an incomplete tunnel refuses to start
+	// rather than leave sessions on the tenant path.
+	if strings.TrimSpace(os.Getenv("FAAS_AGENT_EGRESS_GATEWAY")) == "1" {
+		cfg, err := agentEgressConfigFromEnv(os.Getenv)
+		if err != nil {
+			return err
+		}
+		if err := mgr.SetAgentEgress(cfg); err != nil {
+			return fmt.Errorf("vmmd: %w", err)
+		}
+		log.Info("vmmd: sandbox sessions leave through the agent egress gateway", "iface", cfg.Iface, "slice", cfg.Slice.String(),
+			"proxy", cfg.Proxy != nil)
+		go mgr.RunAgentEgressRenewal(ctx)
 	}
 	// ADR-477: journal survivors remain quarantined. The legacy name reaper
 	// is only available to portable wiring without a journal.

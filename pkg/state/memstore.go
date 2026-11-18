@@ -1124,6 +1124,9 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appTaskNetworks mirrors app_task_networks (ADR-20261118070000), keyed
+	// by task id; created on first use.
+	appTaskNetworks map[string]appTaskNetwork
 	// appTaskCapacityWaits mirrors app_tasks.capacity_wait_started_at.
 	appTaskCapacityWaits map[string]time.Time
 	// releaseOutcomeChecks mirrors release_outcome_checks (ADR-1448
@@ -7875,6 +7878,25 @@ func (m *MemStore) ClaimAppDeletion(_ context.Context, id string) error {
 	}
 	m.appDeletionClaims[id] = struct{}{}
 	return nil
+}
+
+func (m *MemStore) EndAppDeleteGrace(_ context.Context, id string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok || a.Status != AppDeleted || a.DeleteGraceUntil == nil {
+		return App{}, ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return App{}, ErrConflict
+		}
+	}
+	if now := time.Now(); a.DeleteGraceUntil.After(now) {
+		a.DeleteGraceUntil = &now
+		m.apps[id] = a
+	}
+	return a, nil
 }
 
 func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {

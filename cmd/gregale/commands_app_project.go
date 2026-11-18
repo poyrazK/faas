@@ -14,7 +14,7 @@ import (
 // once per workload of that project, in workload order. Compose projects of
 // ten services otherwise needed a shell loop over every slug for a restart,
 // a health check or a setting change.
-var appProjectVerbs = []string{subRestart, subHealth, "update"}
+var appProjectVerbs = []string{subRestart, subHealth, "update", "wake"}
 
 // projectFlagValue returns the --project value in args and args without it.
 func projectFlagValue(args []string) (string, []string, bool) {
@@ -87,6 +87,8 @@ func appProjectRunner(verb string) func(slug string, args []string) int {
 		return cmdAppRestart
 	case subHealth:
 		return cmdAppHealth
+	case "wake":
+		return func(slug string, args []string) int { return cmdWake(append([]string{slug}, args...)) }
 	default:
 		return func(slug string, args []string) int { return cmdApp(append([]string{slug}, args...)) }
 	}

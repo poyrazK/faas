@@ -107,9 +107,12 @@ type scanPlanRequest struct {
 	SafeRelease              *api.ProjectSafeRelease
 	RetryTargets             map[string]string
 	AppSlugs                 map[string]string
-	Migration                bool
-	SourcePath               string // spool path after validateAndSpool + extractTarGzToDir
-	SourceSHA256             string // hex digest of the original compressed bytes
+	// AppSlugPrefix is `deploy --project --prefix`: new apps are named
+	// <prefix><service>, replacing a Compose x-gregale-slug-prefix.
+	AppSlugPrefix string
+	Migration     bool
+	SourcePath    string // spool path after validateAndSpool + extractTarGzToDir
+	SourceSHA256  string // hex digest of the original compressed bytes
 	// ScanDir is the extracted source tree. Cleaned up by scanService's
 	// defer (task #19 fix; pre-fix was "cleaned up by caller" but no
 	// caller ever removed it, so every successful scan leaked the dir).
@@ -1634,6 +1637,7 @@ func (s *server) scanService(
 	if !preserveNames {
 		scopeGenericRootWorkload(&result, req.ProjectSlug)
 	}
+	reposcan.ApplySlugPrefix(result.Workloads, req.AppSlugPrefix)
 	appSlugs, slugProblem := projectsetup.AppSlugs(result.Workloads, acctApps, projectID, req.ProjectSlug, req.AppSlugs, req.Migration)
 	if slugProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, slugProblem
@@ -2047,7 +2051,7 @@ func (s *server) scanService(
 	}
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, result.Workloads)...)
-	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, result.Workloads, slugHolders)...)
+	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, result.Workloads, slugHolders)...)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
@@ -2056,7 +2060,7 @@ func (s *server) scanService(
 		// applicable no-op; the skipped partition records that intent.
 		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID, dependencyReferences)
 		admissionReasons = append(admissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, filteredW)...)
-		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, filteredW, slugHolders)...)
+		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, filteredW, slugHolders)...)
 	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		stageReasons := reconcile.EnvironmentWorkloadAdmissionReasons(filteredW, projectApps)
@@ -2915,6 +2919,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	}
 	var (
 		appSlugs               map[string]string
+		appSlugPrefix          string
 		appSlugsSet            bool
 		migration              bool
 		sourcePath             string
@@ -2993,6 +2998,13 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 			}
 			sourcePath = path
 			_ = n
+		case "app_slug_prefix":
+			b, readErr := io.ReadAll(io.LimitReader(part, 64))
+			appSlugPrefix = strings.TrimSpace(string(b))
+			if readErr != nil || reposcan.ValidateSlugPrefix(appSlugPrefix) != nil {
+				return nil, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Invalid app name prefix", "app_slug_prefix must be at most 30 lowercase letters, digits and hyphens, starting with a letter")
+			}
 		case "project_slug":
 			projectSlugSet = true
 			b, readErr := io.ReadAll(io.LimitReader(part, 64))
@@ -3164,6 +3176,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	parsed = true
 	return &scanPlanRequest{
 		AppSlugs:               appSlugs,
+		AppSlugPrefix:          appSlugPrefix,
 		Migration:              migration,
 		SourcePath:             sourcePath,
 		SourceSHA256:           hash,

@@ -8932,10 +8932,17 @@ const (
 	BuildVMOverheadMB = 768
 	// BuilderSliceMaxMB is the faas-cp-build.slice ceiling. It leaves enough
 	// room for one guaranteed builder's full snapshot below the 6 GiB parent.
-	BuilderSliceMaxMB      = 5_120
-	BuildVMVCPU            = 2
-	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
-	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
+	BuilderSliceMaxMB = 5_120
+	// BuilderSecondSlotHeadroomMB is the free builder-slice memory a second,
+	// opportunistic build must leave after its own worst case (a full
+	// snapshot: 2 × BuildVMRAMMB + BuildVMOverheadMB). The default slice
+	// above never has that much free while a build runs, so a second build
+	// runs only where ops raised faas_cp_build_slice_memory_max (retail-store
+	// feedback A3, 2026-11-17).
+	BuilderSecondSlotHeadroomMB = 512
+	BuildVMVCPU                 = 2
+	BuildTimeoutSeconds         = 900 // 15 min build; cold rootless Railpack export needs headroom
+	BuildE2ETimeoutSeconds      = 900 // 15 min end-to-end
 	// BuildCacheExportTimeoutSeconds bounds the second builder VM that exports
 	// a deferred dependency cache (ADR-20261029171525). On rc.304 a cold
 	// Node cache export took about 115 s. The builder slot stays held for the
@@ -11370,6 +11377,26 @@ var (
 	// log keeps (ADR-20261117091026 §4); its granted ones are bounded by
 	// SandboxWebDistinctDomains.
 	SandboxEgressRefusedLogMax = 1000
+
+	// AgentEgressHandshakeMaxAgeSec bounds how old the agent tunnel's latest
+	// WireGuard handshake may be when a sandbox session boots on it
+	// (ADR-20261117185346 §3). WireGuard rekeys every two minutes while
+	// traffic flows, and keepalives hold an idle tunnel's handshake fresh.
+	AgentEgressHandshakeMaxAgeSec = 180
+	// AgentEgressConnsPerVM, AgentEgressConnsPerAccountDomain and
+	// AgentEgressConnsPerDomainFleet are agentproxyd's concurrent-connection
+	// caps (ADR-20261117185346 §4): per agent VM, per account per registrable
+	// domain, and per registrable domain across every agent. A headless
+	// browser opens about six connections per host across a few dozen hosts.
+	AgentEgressConnsPerVM            = 256
+	AgentEgressConnsPerAccountDomain = 64
+	AgentEgressConnsPerDomainFleet   = 512
+	// AgentEgressRegistrationTTLSec is how long agentproxyd keeps a VM's
+	// registration without a renewal; vmmd renews well inside it.
+	AgentEgressRegistrationTTLSec = 300
+	// AgentEgressPeekTimeoutSec bounds how long agentproxyd waits for a
+	// connection's TLS ClientHello or HTTP request head.
+	AgentEgressPeekTimeoutSec = 10
 	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
 	// command.
 	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}

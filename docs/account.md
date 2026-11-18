@@ -197,7 +197,7 @@ Only the owner changes roles and removes members:
 
 ```bash
 gregale org members update --org acme --user USER_ID --role viewer
-gregale org members delete --org acme --user USER_ID
+gregale org members rm --org acme --user USER_ID
 gregale org owner set --org acme --to USER_ID
 ```
 

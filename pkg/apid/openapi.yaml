@@ -23216,6 +23216,51 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/deleted-apps/{id}/purge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact account-owned deleted-app ID to remove permanently, from the deleted-app inventory.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: purgeDeletedApp
+      summary: Permanently remove a deleted app now, freeing its slug.
+      description: |
+        Ends the app's restore window at once and removes the app and its stored
+        artifacts, so the same account can reuse the slug (for example to redeploy
+        a Compose project after a teardown). This cannot be undone. Requires
+        deploy-write, MFA completion and trusted browser origin for cookie
+        authentication. Refused with 409 app_not_purgeable, before the window
+        closes, while the app still has object storage buckets. When something
+        else still holds the app the response is 202 with pending_reason; the
+        window stays closed and the grace sweep finishes the purge.
+      requestBody:
+        description: Optional empty object; no fields are accepted.
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        '200':
+          description: The app is gone and its slug is free for this account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppPurgeResponse' }
+        '202':
+          description: The restore window is closed; the purge finishes once pending_reason clears.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppPurgeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/restore:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -34607,9 +34652,15 @@ paths:
       tags: [env]
       operationId: listEnv
       summary: List env vars on an app.
+      parameters:
+        - name: values
+          in: query
+          required: false
+          schema: { type: string, enum: ["true"] }
+          description: "`true` includes each variable's plaintext `value`. Variables are non-sensitive by contract; sealed secrets are listed separately and never carry a value."
       description: |
         Returns every env var key + timestamps on the app. The plaintext
-        value NEVER appears in the response — guest-init reads the value
+        value appears only with `?values=true`; guest-init reads it
         at process start from `/etc/faas/env.json` inside the guest.
 
         **scope filter.** The optional `?scope=`
@@ -99656,6 +99707,19 @@ components:
         apps: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/DeletedAppSummary' } }
         next_cursor: { type: string, maxLength: 1024 }
         evaluated_at: { type: string, format: date-time }
+    DeletedAppPurgeResponse:
+      type: object
+      description: Outcome of an owner's purge. The restore window is closed either way.
+      required: [account_id, id, slug, purged]
+      properties:
+        account_id: { type: string, format: uuid }
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        purged: { type: boolean, description: True once the app is gone and its slug is free for this account. }
+        pending_reason:
+          type: string
+          description: What still holds the app while purged is false; the grace sweep retries.
+          enum: [environment_clone, exclusive_work, foreign_key, managed_postgres_binding, multipart_write, object_bucket, retained_resources, retry_pending]
 
     AppScalingSettings:
       description: Stored RAM, CPU, concurrency and instance-floor settings.
@@ -124866,7 +124930,7 @@ components:
         deleted: { type: array, items: { type: string } }
         secrets_not_restored: { type: array, items: { $ref: '#/components/schemas/ConfigSecretDifference' } }
     AppEnvResponse:
-      description: "An env var envelope: key name + scope + timestamps. The plaintext value never appears here."
+      description: "An env var envelope: key name + scope + timestamps. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [key, scope, created_at, updated_at]
       properties:
@@ -124879,6 +124943,7 @@ components:
           example: "default"
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        value: { type: string, description: "The variable's plaintext; present only with `?values=true`." }
         config_change:
           $ref: '#/components/schemas/ConfigChangeReceipt'
           description: "Present on env writes: the revision this write recorded and the config guard watching it."
@@ -124891,7 +124956,7 @@ components:
     # branch on `if 'env_by_scope' in response` decodes the
     # nested map; otherwise it decodes the flat `env` array.
     ScopedAppEnvResponse:
-      description: "An env var envelope scoped to one named environment. The plaintext value never appears here."
+      description: "An env var envelope scoped to one named environment. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [scope, key, created_at, updated_at]
       properties:
@@ -124903,6 +124968,7 @@ components:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DB_URL" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        value: { type: string, description: "This scope's plaintext value of the variable, included only on a `?values=true` listing." }
 
     AppEnvListResponse:
       description: |
