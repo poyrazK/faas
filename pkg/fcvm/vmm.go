@@ -6293,7 +6293,7 @@ func (v *JailerVMM) stageMountHelper(root string) error {
 	}
 	// Defensive fallback for non-production tests/configurations where the
 	// chroot base and instance root do not share a filesystem.
-	if err := copyFile(shared, dst); err != nil {
+	if err := writeExecutable(func() error { return copyFile(shared, dst) }); err != nil {
 		return fmt.Errorf("vmm: stage mount helper: %w", err)
 	}
 	if err := os.Chmod(dst, 0o755); err != nil {
@@ -6324,18 +6324,27 @@ func (v *JailerVMM) ensureMountHelper() (string, error) {
 		return "", fmt.Errorf("vmm: create mount helper root: %w", err)
 	}
 	shared := filepath.Join(v.chrootBase, ".faas-mount-helper")
-	tmp, err := os.CreateTemp(v.chrootBase, ".faas-mount-helper-*")
-	if err != nil {
-		return "", fmt.Errorf("vmm: create shared mount helper: %w", err)
-	}
-	tmpPath := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("vmm: close shared mount helper: %w", err)
-	}
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := copyFile(exe, tmpPath); err != nil {
-		return "", fmt.Errorf("vmm: copy shared mount helper: %w", err)
+	var tmpPath string
+	defer func() {
+		if tmpPath != "" {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := writeExecutable(func() error {
+		tmp, err := os.CreateTemp(v.chrootBase, ".faas-mount-helper-*")
+		if err != nil {
+			return fmt.Errorf("vmm: create shared mount helper: %w", err)
+		}
+		tmpPath = tmp.Name()
+		if err := tmp.Close(); err != nil {
+			return fmt.Errorf("vmm: close shared mount helper: %w", err)
+		}
+		if err := copyFile(exe, tmpPath); err != nil {
+			return fmt.Errorf("vmm: copy shared mount helper: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return "", err
 	}
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
 		return "", fmt.Errorf("vmm: chmod shared mount helper: %w", err)
