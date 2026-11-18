@@ -9,7 +9,8 @@ directly.
 
 To set up one agent step by step, see
 [Deploy with Claude Code](claude-code.md), [Deploy with Codex](codex.md),
-[Deploy with Cursor](cursor.md) or [Deploy with Gemini CLI](gemini-cli.md).
+[Deploy with Cursor](cursor.md), [Deploy with Antigravity](antigravity.md) or
+[Deploy with Gemini CLI](gemini-cli.md).
 
 Starting with an empty directory and a Free account? Follow the
 [private Node quickstart](quickstart.md#deploy-a-private-node-app-on-free)
@@ -120,7 +121,8 @@ Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
 With the Gregale CLI installed, one command sets up Claude Code, Codex,
-Cursor, VS Code and Windsurf, and prints the steps for Claude Desktop:
+Cursor, VS Code, Windsurf and Antigravity, and prints the steps for Claude
+Desktop:
 
 ```sh
 gregale mcp connect
@@ -809,16 +811,17 @@ deploy and roll back `my-api`, and which actions need the user's OK. Without
 Running it again replaces the section in place; the rest of the file stays as
 you wrote it. `--dry-run` shows the changes without writing them.
 
-Codex and Cursor read `AGENTS.md` on their own. For the other agents, the
-command also:
+Codex, Cursor and Antigravity read `AGENTS.md` on their own. For the other
+agents, the command also:
 
 - adds `@AGENTS.md` to an existing `CLAUDE.md`, since Claude Code reads
   `AGENTS.md` by itself only when a project has no `CLAUDE.md`;
-- creates `.gemini/settings.json` naming `AGENTS.md` when the project or your
-  machine uses Gemini CLI. An existing settings file is never rewritten; the
-  command says what to add to it.
+- creates `.gemini/settings.json` naming `AGENTS.md` in a project with a
+  `.gemini` folder, where Gemini CLI keeps its project settings. An existing
+  settings file is never rewritten; the command says what to add to it.
 
-See [Deploy with Claude Code](claude-code.md) and
+See [Deploy with Claude Code](claude-code.md),
+[Deploy with Antigravity](antigravity.md) and
 [Deploy with Gemini CLI](gemini-cli.md).
 
 ## Documentation for agents
