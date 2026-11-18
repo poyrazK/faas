@@ -2,7 +2,11 @@ package mcpmanagement
 
 import (
 	"html"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // consentCapabilityChoices are the optional scopes chosen before sign-in.
@@ -34,6 +38,7 @@ func consentPage(v consentView) string {
 	}
 	hidden := `<input type="hidden" name="request_id" value="` + e(v.RequestID) + `"><input type="hidden" name="csrf" value="` + e(v.CSRF) + `">`
 	w(consentDocumentStart("Connect to Gregale", ""), `<p class="steps">Sign in &rarr; Review access &rarr; Return to your agent</p><h1>Connect to Gregale</h1><p>Client: <strong>`, e(v.Client), `</strong></p>`)
+	w(`<p class="fine">Complete sign-in and access review within `, strconv.Itoa(int(api.MCPBrowserAuthorizationTTL/time.Minute)), ` minutes of starting this connection.</p>`)
 	if v.Account == "" && v.LoginURL == "" {
 		w(`<details><summary>Tools and optional access</summary><p class="fine">Core tools cover apps, deployments, logs and health. Choosing more tools does not grant extra permissions.</p><label>Agent tools <select name="toolsets" form="gregale-connect">`)
 		for _, choice := range []struct{ value, label string }{{"core", "Core tools (default)"}, {"core,release,provision,operate", "Deploy and operate"}, {"core,diagnose,operate", "Diagnose and recover"}, {"core,build-tools,registry", "Build and publish tools"}, {"core,registry", "Discover approved tools"}, {"core,registry,invoke", "Use approved tools"}, {"all", "All available tools"}} {

@@ -10,8 +10,9 @@ printf 'LOG_LEVEL=debug\n' | gregale env push --app my-api --from-stdin --restar
 gregale env diff --app my-api
 ```
 
-Keys must be uppercase and begin with a letter (`^[A-Z][A-Z0-9_]*$`). Values
-are bounded by the plan. `gregale env pull` and `gregale env push` support
+Keys begin with a letter and contain letters, digits and underscores
+(`^[A-Za-z][A-Za-z0-9_]*$`). Case is kept, so mixed-case names such as
+`DOTNET_gcServer` reach the app as written. Values are bounded by the plan. `gregale env pull` and `gregale env push` support
 local workflows; pull never returns sealed secret values.
 
 The effective precedence is OS environment, manifest environment, shared
@@ -69,7 +70,7 @@ gregale environment config set shop production --file production.json --yes
 
 `config set` replaces the whole document, so include every key you want to
 keep. A top-level key becomes an environment variable when it is a valid
-variable name (`^[A-Z][A-Z0-9_]*$`) and its value is a string, number or
+variable name (`^[A-Za-z][A-Za-z0-9_]*$`) and its value is a string, number or
 boolean; numbers keep their JSON text and booleans become `true` or `false`.
 Other keys, and objects, arrays and nulls, stay in the document without
 reaching the services. Secret-shaped names such as `*_TOKEN` or `*_PASSWORD`
@@ -131,3 +132,5 @@ served with the new config, and gives up after 24 hours without traffic.
 `gregale env set` and `gregale env push` say when a guard is watching.
 Pass `--no-guard` to change config without one, for example while you fix a
 deliberately broken staging app.
+
+Hosted Task binding checks let owners qualify managed PostgreSQL bindings. Agents receive metadata only. See [hosted Task bindings](mcp.md#owner-qualified-hosted-task-bindings).

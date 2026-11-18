@@ -101,9 +101,21 @@ type Workload struct {
 	Name string // service name; deterministic sort key
 	// AppSlug is control-plane allocation metadata, never a repository declaration.
 	// Name remains the identity used by dependencies, configuration and reconcile.
-	AppSlug    string `json:"-"`
-	RootDir    string // build context relative to repo root; "" = root
-	Dockerfile string // explicit path if declared (relative to RootDir)
+	AppSlug string `json:"-"`
+	// SlugPrefix names a new app <prefix><Name> (Compose
+	// x-gregale-slug-prefix, or `deploy --project --prefix`); an existing
+	// member keeps its slug. reconcile.AllocateAppSlugs applies it.
+	SlugPrefix string `json:"-"`
+	// StartupDeadlineS is the time-to-ready the repository asks for
+	// (Compose x-gregale-startup-deadline, or healthcheck start_period plus
+	// retries × interval); 0 keeps the default. Apply caps it at the plan's
+	// maximum.
+	StartupDeadlineS int `json:"-"`
+	// PublicAuthMode is Compose x-gregale-public-auth (open or bearer); ""
+	// keeps the plan default for a new app and the app's setting otherwise.
+	PublicAuthMode string `json:"-"`
+	RootDir        string // build context relative to repo root; "" = root
+	Dockerfile     string // explicit path if declared (relative to RootDir)
 	// DockerfileBuild carries a source-built Compose service's build.args
 	// and build.target (ADR-20261019142544). Nil builds the final stage with
 	// every ARG at its default.

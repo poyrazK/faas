@@ -294,7 +294,7 @@ func ErrAgentLimit(plan Plan, limit string, max, observed int) *Problem {
 	return NewProblem(status, CodeAgentLimit, "Agent limit reached",
 		fmt.Sprintf("The %s plan allows %s of %d; this request needs %d.", plan, limit, max, observed)).
 		WithLimit(int64(max), int64(observed)).
-		WithDocs(docsBase + "/plans#agents")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrAgentCallbackRateLimited refuses a callback beyond the thread's limit.
@@ -302,7 +302,7 @@ func ErrAgentCallbackRateLimited(limit, observed int) *Problem {
 	return NewProblem(http.StatusTooManyRequests, CodeAgentCallbackRateLimited, "Callback rate limit reached",
 		fmt.Sprintf("The thread got %d callbacks this minute; AgentCallbacksPerMinutePerThread allows %d. Retry after the minute.", observed, limit)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#agents")
+		WithDocs(docsBase + "/plans")
 }
 
 // AgentInboxChannel is the realtime channel of a stateless agent app's inbox

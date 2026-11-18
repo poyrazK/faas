@@ -120,6 +120,9 @@ func relayAttachedSession(ctx context.Context, conn *websocket.Conn, tty bool, s
 		PrintFail(osStderr, "Session ended unexpectedly: %v", sessionErr)
 		return appExecDisconnectExitCode
 	}
+	if terminal.Failure != nil {
+		printAppExecFailureHint(terminal.Failure.Code)
+	}
 	if terminal.Failure != nil && terminal.ExitCode == nil {
 		PrintFail(osStderr, "Session ended: %s (%s)", terminal.Failure.Message, terminal.Failure.Code)
 		return appExecInteractiveExitFail
@@ -268,5 +271,16 @@ func cancelInteractiveTask(ctx context.Context, client *api.Client, slug, taskID
 	defer cancel()
 	if _, err := client.CancelAppTask(cancelCtx, slug, taskID); err != nil {
 		PrintWarn(osStderr, "could not request cancellation for task %s: %v", taskID, err)
+	}
+}
+
+// printAppExecFailureHint says what to do next for the session failures a
+// user can fix (ADR-20261117070620).
+func printAppExecFailureHint(code string) {
+	switch code {
+	case "command_not_found":
+		PrintWarn(osStderr, "the command is not in the image; images without a shell (distroless, scratch) can use `gregale app exec --debug`")
+	case "debug_tools_unavailable":
+		PrintWarn(osStderr, "this deployment predates debug tools; redeploy the app, then retry --debug")
 	}
 }

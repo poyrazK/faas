@@ -225,6 +225,17 @@ egress:
   #   public_key: <gateway WireGuard public key>
   #   tunnel_cidr: 10.43.0.0/24
   #   ssh_host: egress-gw.example.net   # optional, defaults to the endpoint host
+  # ADR-20261117185346: agent VMs (sandbox sessions, agent runs) leave
+  # through their own tunnel and public addresses, never the apps'. It may
+  # share the tenant gateway's host on another port; the addresses must be
+  # secondary addresses on the gateway's public NIC. Converge with
+  # `make bootstrap-agent-egress-gateway`.
+  # agent_gateway:
+  #   endpoint: egress-gw.example.net:51821
+  #   public_key: <gateway wg-agent public key>
+  #   tunnel_cidr: 10.78.0.0/16
+  #   node_prefix: 22                   # optional; one slice per compute node
+  #   addresses: [198.51.100.7]
 
 # DNS — public-facing hostname contract. apps_domain is the single
 # source of truth consumed by gatewayd-internal and apid. A value of

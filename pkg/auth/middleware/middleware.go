@@ -1858,9 +1858,10 @@ func IsUploadSessionPath(path string) bool {
 // /v1/apps/{slug} routes, the upload routes and its app's deployment reads,
 // and nothing else. It answers the request and reports true when it refuses.
 func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Request, key state.APIKey, title string) bool {
-	// App agents inspect their own minimal principal and platform capabilities
-	// before connecting to MCP. This grants no account inventory or mutations.
-	if slices.Contains(key.Scopes, api.ScopeAgent) && r.Method == http.MethodGet && (r.URL.Path == "/v1/account" || r.URL.Path == "/v1/capabilities") {
+	// App agents inspect their minimal principal and platform/check support.
+	// Response-check support exposes no app data; its route still requires
+	// deploy:write. This grants no account inventory or mutations.
+	if slices.Contains(key.Scopes, api.ScopeAgent) && r.Method == http.MethodGet && (r.URL.Path == "/v1/account" || r.URL.Path == "/v1/capabilities" || r.URL.Path == "/v1/deployments/response-check/capabilities") {
 		return false
 	}
 	// The resumable upload routes are the CLI's default source

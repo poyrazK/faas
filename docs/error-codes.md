@@ -12,7 +12,7 @@ The list is generated from the code that builds each error, so a new code appear
 
 HTTP 403 · Account on hold
 
-See [Apps](apps.md#egress-limits).
+See [Networking](networking.md#outbound-connections).
 
 ### `account_deletion_confirm_required`
 
@@ -38,7 +38,7 @@ HTTP 409 · Deployment unavailable
 
 HTTP 400 · Account egress allowlist extra out of range
 
-See [Account and organization management](account.md#egress-allowlist-extra).
+See [Networking](networking.md#outbound-connections).
 
 ### `account_exists`
 
@@ -62,13 +62,13 @@ See [Billing](billing.md#spend-cap).
 
 HTTP 400 · Alert preset not yet available
 
-See [Alerts](alerts.md#presets).
+See [Alerts](alerts.md#configure-an-alert).
 
 ### `alert_preset_invalid`
 
 HTTP 400 · Invalid alert preset
 
-See [Alerts](alerts.md#presets).
+See [Alerts](alerts.md#configure-an-alert).
 
 ### `alert_preset_test_rate_limited`
 
@@ -86,19 +86,19 @@ See [Alerts](alerts.md).
 
 HTTP 401 · API key expired
 
-See [Authentication](auth.md#expiry).
+See [Authentication](auth.md#expiry-and-rotation).
 
 ### `api_key_limit_exceeded`
 
 HTTP 409 · API key limit reached
 
-See [Authentication](auth.md#quotas).
+See [Authentication](auth.md#api-keys).
 
 ### `api_key_revoked`
 
 HTTP 401 · API key revoked
 
-See [Authentication](auth.md#revocation).
+See [Authentication](auth.md#expiry-and-rotation).
 
 ### `api_rate_limited`
 
@@ -118,7 +118,7 @@ HTTP 422 · Unsupported CPU architecture
 
 HTTP 429 · App concurrency reached
 
-See [Plans and pricing](plans.md#concurrency).
+See [Plans and pricing](plans.md#at-a-glance).
 
 ### `app_deleted`
 
@@ -190,7 +190,7 @@ HTTP 409 or 422 · Many operations send this code; the response's `title` and `d
 
 HTTP 422 · No process listening on $PORT; App listens on a different port
 
-See [Deployment overrides](deploy-overrides.md), [Errors](errors.md).
+See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md).
 
 ### `app_not_restorable`
 
@@ -224,7 +224,7 @@ HTTP 422 · Many operations send this code; the response's `title` and `detail` 
 
 HTTP 400 · Invalid static egress IP
 
-See [Apps](apps.md#static-egress-ip).
+See [Static egress IP](static-egress-ip.md).
 
 ### `app_unavailable`
 
@@ -386,7 +386,7 @@ The response's `title` and `detail` describe the failure.
 
 HTTP 404 · No such build
 
-See [Builds and framework detection](build.md#status).
+See [Builds and framework detection](build.md).
 
 ### `build_oom`
 
@@ -396,13 +396,13 @@ HTTP 503
 
 HTTP 404 · Build provenance not found
 
-See [Builds and framework detection](build.md#provenance).
+See [Builds and framework detection](build.md).
 
 ### `build_sbom_unavailable`
 
 HTTP 503 · Build SBOM unavailable
 
-See [Builds and framework detection](build.md#sbom).
+See [Builds and framework detection](build.md).
 
 ### `build_timeout`
 
@@ -418,7 +418,7 @@ HTTP 400
 
 HTTP 409 · Canary step changed
 
-See [Deploys](deploys.md#canary).
+See [Progressive rollouts](rollouts.md#how-a-rollout-proceeds).
 
 ### `capability_not_released`
 
@@ -452,7 +452,7 @@ HTTP 429 · Too many app wakes
 
 HTTP 503 · Companion preset unavailable
 
-See [Application companions](companions.md#managed-presets).
+See [Application companions](companions.md).
 
 ### `concurrency_queue_full`
 
@@ -502,7 +502,7 @@ HTTP 403 · CORS origin not allowed
 
 HTTP 422 · CORS preset too large
 
-See [Plans and pricing](plans.md#cors-presets).
+See [Plans and pricing](plans.md).
 
 ### `cron_fire_now_busy`
 
@@ -534,7 +534,7 @@ HTTP 422 · Custom metric limit reached
 
 HTTP 503 · Data placement is disabled
 
-See [Plans and pricing](plans.md#data-placement).
+See [Plans and pricing](plans.md).
 
 ### `database_cutover_fenced`
 
@@ -584,7 +584,7 @@ See [Deploys](deploys.md).
 
 HTTP 429 · Deploy rate limited
 
-See [Deploys](deploys.md#rate-limit).
+See [Deploys](deploys.md#limits).
 
 ### `deploy_settings_conflict`
 
@@ -594,7 +594,7 @@ HTTP 409 · Deploy settings changed
 
 HTTP 403 · Signed-image enforcement rejected the deploy
 
-See [Deploys](deploys.md#signed-images).
+See [Security](security.md#app-deploy-guard).
 
 ### `deployment_attempt_accepted`
 
@@ -638,7 +638,7 @@ See [Deploys](deploys.md#cancel).
 
 HTTP 409 · Deployment is not live
 
-See [Deploys](deploys.md#traffic-percent).
+See [Progressive rollouts](rollouts.md).
 
 ### `deployment_promotion_attempt_accepted`
 
@@ -660,13 +660,13 @@ HTTP 409 · Reorder only valid for pending deployments
 
 Cancel this deployment and re-deploy with --priority if you need queue control.
 
-See [Deploys](deploys.md#reorder).
+See [Deploys](deploys.md).
 
 ### `deployment_reorder_priority_invalid`
 
 HTTP 422 · Priority must be in [0, 1000]
 
-See [Deploys](deploys.md#reorder).
+See [Deploys](deploys.md).
 
 ### `deployment_scope_collision`
 
@@ -702,13 +702,13 @@ HTTP 429 · Too many debugger sessions
 
 HTTP 409 · Developer environment is being removed
 
-See [CLI guide](cli-setup.md#dev).
+See [`gregale dev`](gregale-dev.md).
 
 ### `dev_source_base_missing`
 
 HTTP 409 · Developer source base unavailable
 
-See [CLI guide](cli-setup.md#dev).
+See [`gregale dev`](gregale-dev.md).
 
 ### `dev_source_diverged`
 
@@ -718,7 +718,7 @@ HTTP 409 · Instance not snapshotted
 
 HTTP 422 · Watch mode is for apps; Watch mode needs an authenticated environment; Watch mode needs more memory
 
-See [CLI guide](cli-setup.md#dev), [`gregale dev`](gregale-dev.md).
+See [`gregale dev`](gregale-dev.md).
 
 ### `developer_seed_failed`
 
@@ -734,19 +734,19 @@ HTTP 503 · Developer sync history unavailable
 
 HTTP 422 · Domain cert not issued
 
-See [Domains](domains.md#verify).
+See [Domains](domains.md#verification).
 
 ### `domain_not_verified`
 
 HTTP 409 · Domain not verified
 
-See [Domains](domains.md#verify).
+See [Domains](domains.md#verification).
 
 ### `domain_verification_failed`
 
 HTTP 422 · Domain verification failed
 
-See [Domains](domains.md#verify).
+See [Domains](domains.md#verification).
 
 ### `dry_run_requires_post`
 
@@ -798,13 +798,13 @@ HTTP 412 · Edge rules changed
 
 HTTP 400 · Egress allowlist too long
 
-See [Apps](apps.md#egress-allowlist).
+See [Networking](networking.md#outbound-connections).
 
 ### `egress_ports_too_many`
 
 HTTP 400 · Too many egress ports
 
-See [Apps](apps.md#egress-ports).
+See [Networking](networking.md#outbound-connections).
 
 ### `email_missing`
 
@@ -814,7 +814,7 @@ HTTP 400 · Missing Email
 
 HTTP 401 · Email not verified
 
-See [Authentication](auth.md#oauth).
+See [Authentication](auth.md#email-verification).
 
 ### `email_verification_required`
 
@@ -838,25 +838,25 @@ HTTP 409 · Configuration changed
 
 HTTP 400 · Invalid env scope
 
-See [Environment variables](env.md#scopes).
+See [Environment variables](env.md).
 
 ### `env_scope_reserved`
 
 HTTP 400 · Env scope reserved
 
-See [Environment variables](env.md#scopes).
+See [Environment variables](env.md).
 
 ### `env_value_too_large`
 
 HTTP 413 · Invalid sidecar env; Env var value too large
 
-See [Environment variables](env.md#limits).
+See [Environment variables](env.md).
 
 ### `env_var_invalid_key`
 
 HTTP 400 · Invalid env var key
 
-See [Environment variables](env.md#keys).
+See [Environment variables](env.md).
 
 ### `env_var_missing`
 
@@ -954,7 +954,7 @@ See [Errors](errors.md).
 
 HTTP 429 · Export rate limited
 
-See [Account and organization management](account.md#export-rate-limit).
+See [Account and organization management](account.md#export-and-deletion).
 
 ## F
 
@@ -1036,7 +1036,7 @@ HTTP 409 · GitHub installation is ambiguous
 
 HTTP 404 or 409 · GitHub connection not found; GitHub installation is no longer available; No GitHub installation
 
-See [Deploy from a GitHub source ref](source-ref.md#prereq).
+See [Deploy from a GitHub source ref](source-ref.md#prerequisites).
 
 ### `github_install_not_owned`
 
@@ -1258,13 +1258,13 @@ HTTP 400 · Invalid JSON body
 
 HTTP 422 · Invalid canary preset; Invalid canary rollout
 
-See [Deploys](deploys.md#canary-presets).
+See [Progressive rollouts](rollouts.md#canary-ladders).
 
 ### `invalid_cooldown`
 
 HTTP 422 · Invalid cooldown
 
-See [Apps](apps.md#scaling-policy).
+See [Scaling policy](scaling-policy.md).
 
 ### `invalid_cpu_millicores`
 
@@ -1274,13 +1274,13 @@ HTTP 422 · Invalid CPU
 
 HTTP 422 · Invalid CPU/RAM pair
 
-See [Plans and pricing](plans.md#resources).
+See [Plans and pricing](plans.md#what-each-limit-means).
 
 ### `invalid_credentials`
 
 HTTP 401 · Sign in failed
 
-See [Authentication](auth.md#sign-in).
+See [Account and organization management](account.md#profile-sign-in-and-sessions).
 
 ### `invalid_cursor`
 
@@ -1290,37 +1290,37 @@ HTTP 400 · Invalid cursor
 
 HTTP 400 · Invalid egress allowlist entry
 
-See [Apps](apps.md#egress-allowlist).
+See [Networking](networking.md#outbound-connections).
 
 ### `invalid_egress_port`
 
 HTTP 400 · Invalid egress port
 
-See [Apps](apps.md#egress-ports).
+See [Networking](networking.md#outbound-connections).
 
 ### `invalid_max_instances`
 
 HTTP 422 · Invalid max_instances
 
-See [Apps](apps.md#max-instances).
+See [Scaling policy](scaling-policy.md#manifest-form).
 
 ### `invalid_min_instances`
 
 HTTP 422 · Invalid min_instances; Min_instances must be >= 0
 
-See [Apps](apps.md#min-instances).
+See [How scaling to zero works](cold-wake.md#opting-out-keep-n-instances-warm-pro-scale).
 
 ### `invalid_mirror_percent`
 
 HTTP 422 · Invalid mirror percent
 
-See [Apps](apps.md#mirror-rules).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `invalid_mirror_window`
 
 HTTP 422 · Invalid mirror window
 
-See [Apps](apps.md#mirror-summary).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `invalid_nonce`
 
@@ -1338,7 +1338,7 @@ HTTP 400 · Invalid OAuth Request
 
 HTTP 400 · Invalid public-auth IP allowlist entry
 
-See [Apps](apps.md#public-auth-ip-allowlist).
+See [Authentication](auth.md#app-access-control).
 
 ### `invalid_ram_mb`
 
@@ -1348,7 +1348,7 @@ HTTP 422 · Invalid RAM
 
 HTTP 422 · Invalid recover_rollout action
 
-See [Deploys](deploys.md#recover-rollout).
+See [Progressive rollouts](rollouts.md#why-a-rollout-advanced-waits-or-stopped).
 
 ### `invalid_ref`
 
@@ -1360,7 +1360,7 @@ See [Deploy from a GitHub source ref](source-ref.md).
 
 HTTP 400 · Invalid registry host
 
-See [Registry credentials](registry-credentials.md#registry-format).
+See [Registry credentials](registry-credentials.md).
 
 ### `invalid_request`
 
@@ -1388,7 +1388,7 @@ HTTP 400 · Invalid State
 
 HTTP 422 · Invalid traffic_percent
 
-See [Deploys](deploys.md#traffic-percent).
+See [Progressive rollouts](rollouts.md).
 
 ### `invalid_warm_pool_size`
 
@@ -1410,13 +1410,13 @@ HTTP 409 · Stage work unavailable
 
 HTTP 404 · Invocation not found
 
-See [Event-driven workloads](event-driven.md#invocations).
+See [Event-driven workloads](event-driven.md#invocation-history-retention).
 
 ### `invocation_not_replayable`
 
 HTTP 409 · Invocation not replayable; Invocation is not in a replayable state
 
-See [Event-driven workloads](event-driven.md#invocations).
+See [Event-driven workloads](event-driven.md#invocation-history-retention).
 
 ### `invocation_replay_unavailable`
 
@@ -1454,67 +1454,67 @@ See [Edge rules](edge-rules.md), [Errors](errors.md).
 
 HTTP 422 · Job command invalid
 
-See [Jobs](jobs.md#command).
+See [Jobs](jobs.md).
 
 ### `job_deadline_exceeded`
 
 HTTP 410 · Job run deadline exceeded
 
-See [Jobs](jobs.md#deadlines).
+See [Jobs](jobs.md).
 
 ### `job_has_live_instances`
 
 HTTP 409 · Job has active work; Job has live instances
 
-See [Jobs](jobs.md#delete).
+See [Jobs](jobs.md).
 
 ### `job_image_missing`
 
 HTTP 422 · Job image not found
 
-See [Jobs](jobs.md#image).
+See [Jobs](jobs.md).
 
 ### `job_quota_exceeded`
 
 HTTP 403 · Job limit reached
 
-See [Plans and pricing](plans.md#jobs).
+See [Plans and pricing](plans.md).
 
 ### `job_registry_credential_not_found`
 
 HTTP 400 · Job registry credential not set
 
-See [Jobs](jobs.md#registry-credentials).
+See [Registry credentials](registry-credentials.md).
 
 ### `job_run_cancelled`
 
 HTTP 409 · Job run is already terminal
 
-See [Jobs](jobs.md#cancel).
+See [Jobs](jobs.md).
 
 ### `job_task_max_retries_reached`
 
 HTTP 409 · Job task retry budget exhausted
 
-See [Jobs](jobs.md#retry).
+See [Jobs](jobs.md).
 
 ### `job_task_not_found`
 
 HTTP 404 · Job task not found; Task not found
 
-See [Jobs](jobs.md#tasks).
+See [Jobs](jobs.md).
 
 ### `job_task_not_retriable`
 
 HTTP 409 · Job task cannot be retried
 
-See [Jobs](jobs.md#retry).
+See [Jobs](jobs.md).
 
 ### `jobs_not_allowed`
 
 HTTP 402 · Jobs unavailable on this plan
 
-See [Plans and pricing](plans.md#jobs).
+See [Plans and pricing](plans.md).
 
 ### `json_error`
 
@@ -1564,7 +1564,7 @@ HTTP 403 · Archived log date is outside the retention window
 
 Choose a more recent date, or review plans with longer log retention.
 
-See [Plans and pricing](plans.md#log-archive), [Errors](errors.md).
+See [Logs](logs.md#retention), [Errors](errors.md).
 
 ### `log_archive_unconfigured`
 
@@ -1588,7 +1588,7 @@ See [Logs](logs.md#limits).
 
 HTTP 503 · Long-poll wait budget ran out
 
-See [Event-driven workloads](event-driven.md#long-poll).
+See [Event-driven workloads](event-driven.md).
 
 ## M
 
@@ -1646,7 +1646,7 @@ HTTP 403 · Managed PostgreSQL quota exceeded
 
 Delete a database you no longer need or upgrade the plan, then try again; or restore the database with gregale postgres restore and attach the copy yourself.
 
-See [Plans and pricing](plans.md), [Managed PostgreSQL](postgres.md#storage), [Safe releases](releases.md).
+See [Plans and pricing](plans.md), [Managed PostgreSQL](postgres.md#usage-and-limits), [Safe releases](releases.md).
 
 ### `managed_postgres_unavailable`
 
@@ -1658,7 +1658,7 @@ See [Managed PostgreSQL](postgres.md).
 
 HTTP 422 · Min_instances exceeds plan cap
 
-See [Apps](apps.md#min-instances).
+See [How scaling to zero works](cold-wake.md#opting-out-keep-n-instances-warm-pro-scale).
 
 ### `method_not_allowed`
 
@@ -1688,25 +1688,25 @@ HTTP 409 · Migration recovery blocked
 
 HTTP 422 · Source and mirror deployments must belong to the same app
 
-See [Apps](apps.md#mirror-rules).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `mirror_deployment_not_live`
 
 HTTP 409 · Referenced deployment is not live
 
-See [Apps](apps.md#mirror-rules).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `mirror_rule_not_found`
 
 HTTP 404 · Mirror rule not found
 
-See [Apps](apps.md#mirror-rules).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `mirror_rule_quota_exceeded`
 
 HTTP 422 · Mirror rule quota exceeded
 
-See [Apps](apps.md#mirror-rules).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `mirror_slot_at_capacity`
 
@@ -1716,7 +1716,7 @@ HTTP 503
 
 HTTP 422 · Source and mirror deployments must differ
 
-See [Apps](apps.md#mirror-rules).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `misdirected_request`
 
@@ -1742,7 +1742,7 @@ See [CLI guide](cli-setup.md).
 
 HTTP 409 · A release is still rolling out; Choose a rollback target; More than one environment serves this app
 
-See [Deploys](deploys.md#rollback).
+See [Deploys](deploys.md#revisions).
 
 ### `not_found`
 
@@ -1792,7 +1792,7 @@ See [Authentication](auth.md), [Errors](errors.md).
 
 HTTP 402 · Endpoint discovery unavailable on this plan; Stored route checks unavailable
 
-See [Plans and pricing](plans.md#endpoint-discovery).
+See [Plans and pricing](plans.md).
 
 ### `openapi_import_invalid`
 
@@ -1822,25 +1822,25 @@ HTTP 409 · OpenAPI policy plan is stale
 
 HTTP 409 · Already a member of this organization
 
-See [Account and organization management](account.md#members).
+See [Account and organization management](account.md#invitations).
 
 ### `org_api_key_requires_org`
 
 HTTP 409 · Organization key required; API key must be bound to an organization; Organization project path required
 
-See [Account and organization management](account.md#api-keys).
+See [Account and organization management](account.md#organization-api-keys).
 
 ### `org_free_limit_exceeded`
 
 HTTP 403 · Free organization limit reached
 
-See [Account and organization management](account.md#free-organizations).
+See [Account and organization management](account.md#member-limits).
 
 ### `org_invitation_cap_exceeded`
 
 HTTP 403 · Organization invitation limit reached
 
-See [Account and organization management](account.md#invitation-cap).
+See [Account and organization management](account.md#member-limits).
 
 ### `org_invitation_expired`
 
@@ -1858,13 +1858,13 @@ See [Account and organization management](account.md#invitations).
 
 HTTP 409 · Cannot remove the last owner; Owner cannot leave
 
-See [Account and organization management](account.md#ownership).
+See [Account and organization management](account.md#changing-roles-removing-members-and-ownership).
 
 ### `org_member_cap_exceeded`
 
 HTTP 403 · Organization member limit reached
 
-See [Account and organization management](account.md#member-cap).
+See [Account and organization management](account.md#member-limits).
 
 ### `org_mfa_required`
 
@@ -1882,7 +1882,7 @@ See [Account and organization management](account.md).
 
 HTTP 409 · Personal organizations are immutable
 
-See [Account and organization management](account.md#personal-orgs).
+See [Account and organization management](account.md#members-roles-and-invitations).
 
 ### `org_role_forbidden`
 
@@ -1896,13 +1896,13 @@ See [Account and organization management](account.md#roles), [Deploys](deploys.m
 
 HTTP 422 · Invalid org plan; Invalid organization slug
 
-See [Account and organization management](account.md#slugs).
+See [Account and organization management](account.md).
 
 ### `org_slug_taken`
 
 HTTP 409 · Organization slug in use
 
-See [Account and organization management](account.md#slugs).
+See [Account and organization management](account.md).
 
 ### `outbound_probe_unavailable`
 
@@ -1928,7 +1928,7 @@ See [Billing](billing.md#spend-cap).
 
 HTTP 400 · Password too weak
 
-See [Authentication](auth.md#password).
+See [Account and organization management](account.md#profile-sign-in-and-sessions).
 
 ### `payment_authentication_required`
 
@@ -1950,25 +1950,25 @@ See [Edge rules](edge-rules.md), [Security](security.md).
 
 HTTP 402 · Alert preset not available on this plan
 
-See [Plans and pricing](plans.md#alerts).
+See [Plans and pricing](plans.md).
 
 ### `plan_alert_rule_quota`
 
 HTTP 403 · Alert rule limit reached
 
-See [Plans and pricing](plans.md#alerts).
+See [Plans and pricing](plans.md).
 
 ### `plan_alert_rules_not_allowed`
 
 HTTP 402 · Alert rules unavailable on this plan
 
-See [Plans and pricing](plans.md#alerts).
+See [Plans and pricing](plans.md).
 
 ### `plan_app_errors_not_allowed`
 
 HTTP 402 · App error grouping unavailable on this plan
 
-See [Plans and pricing](plans.md#app-errors).
+See [Plans and pricing](plans.md).
 
 ### `plan_app_protocol_grpc_not_allowed`
 
@@ -1978,7 +1978,7 @@ HTTP 403 · Per-app gRPC wire protocol is not allowed on this plan
 
 HTTP 402 · App usage summary unavailable on this plan
 
-See [Plans and pricing](plans.md#app-usage-summary).
+See [Plans and pricing](plans.md).
 
 ### `plan_async_backlog`
 
@@ -1994,25 +1994,25 @@ HTTP 403 · Autoscale target CPU% is not allowed on this plan; Autoscale target 
 
 HTTP 403 · CORS preset limit reached
 
-See [Plans and pricing](plans.md#cors-presets).
+See [Plans and pricing](plans.md).
 
 ### `plan_cors_presets_not_allowed`
 
 HTTP 402 · CORS presets unavailable on this plan
 
-See [Plans and pricing](plans.md#cors-presets).
+See [Plans and pricing](plans.md).
 
 ### `plan_cron_quota`
 
 HTTP 403 · Cron limit reached; Cron over plan limit
 
-See [Plans and pricing](plans.md#crons).
+See [Crons](crons.md).
 
 ### `plan_crons_not_allowed`
 
 HTTP 402 · Crons unavailable on this plan
 
-See [Plans and pricing](plans.md#crons).
+See [Crons](crons.md).
 
 ### `plan_custom_metrics_not_allowed`
 
@@ -2028,19 +2028,19 @@ See [Event-driven workloads](event-driven.md#delayed-tasks).
 
 HTTP 402 · Edge rule kind unavailable on this plan
 
-See [Plans and pricing](plans.md#edge-rules), [Edge rules](edge-rules.md).
+See [Edge rules](edge-rules.md#limits).
 
 ### `plan_edge_rule_kind_quota_reached`
 
 HTTP 403 · Edge rule kind quota reached
 
-See [Plans and pricing](plans.md#edge-rules), [Edge rules](edge-rules.md).
+See [Edge rules](edge-rules.md#limits).
 
 ### `plan_egress_allowlist_not_allowed`
 
 HTTP 403 · Plan doesn't allow an egress allowlist
 
-See [Apps](apps.md#egress-allowlist).
+See [Networking](networking.md#outbound-connections).
 
 ### `plan_egress_overage_not_allowed`
 
@@ -2052,7 +2052,7 @@ See [Billing](billing.md).
 
 HTTP 403 · Plan doesn't allow extra egress ports
 
-See [Apps](apps.md#egress-ports).
+See [Networking](networking.md#outbound-connections).
 
 ### `plan_empty`
 
@@ -2062,13 +2062,13 @@ HTTP 422 · Project plan is empty
 
 HTTP 402 · Reserved eviction priority is not available on this plan
 
-See [Plans and pricing](plans.md#eviction-priority).
+See [Plans and pricing](plans.md).
 
 ### `plan_eviction_priority_reserved_quota`
 
 HTTP 422 · Reserved eviction priority quota reached
 
-See [Plans and pricing](plans.md#eviction-priority).
+See [Plans and pricing](plans.md).
 
 ### `plan_feature_gated`
 
@@ -2108,19 +2108,19 @@ See [Networking](networking.md).
 
 HTTP 413 · Per-job registry credential quota reached
 
-See [Jobs](jobs.md#registry-credentials).
+See [Registry credentials](registry-credentials.md).
 
 ### `plan_job_registry_credentials_not_allowed`
 
 HTTP 403 · Plan doesn't allow private-registry credentials for jobs
 
-See [Jobs](jobs.md#registry-credentials).
+See [Registry credentials](registry-credentials.md).
 
 ### `plan_limit_apps`
 
 HTTP 403 · App limit reached; Environment branch limit reached; PR preview environment too large
 
-See [Plans and pricing](plans.md#apps).
+See [Plans and pricing](plans.md#at-a-glance).
 
 ### `plan_limit_build_minutes`
 
@@ -2132,7 +2132,7 @@ See [Plans and pricing](plans.md#builds).
 
 HTTP 403 or 429 · Concurrency limit reached; Concurrency over plan limit; Execution concurrency limit reached
 
-See [Plans and pricing](plans.md#concurrency), [Gregale API specification](faas_openapi_spec.md).
+See [Plans and pricing](plans.md#at-a-glance), [Gregale API specification](faas_openapi_spec.md).
 
 ### `plan_limit_deployment_aliases`
 
@@ -2156,25 +2156,25 @@ See [Plans and pricing](plans.md#developer-environments), [`gregale dev`](gregal
 
 HTTP 403 · Edge rule list too large
 
-See [Plans and pricing](plans.md#edge-rules).
+See [Edge rules](edge-rules.md#limits).
 
 ### `plan_limit_edge_rule_lists`
 
 HTTP 403 · Edge rule list limit reached
 
-See [Plans and pricing](plans.md#edge-rules).
+See [Edge rules](edge-rules.md#limits).
 
 ### `plan_limit_edge_rules`
 
 HTTP 403 · Edge rule limit reached
 
-See [Plans and pricing](plans.md#edge-rules), [Edge rules](edge-rules.md).
+See [Edge rules](edge-rules.md#limits).
 
 ### `plan_limit_env_vars`
 
 HTTP 403 · Env var count limit reached
 
-See [Environment variables](env.md#limits).
+See [Environment variables](env.md).
 
 ### `plan_limit_project_secrets`
 
@@ -2186,79 +2186,79 @@ See [Delivered secrets](secrets.md#project-environment-secrets).
 
 HTTP 403 · RAM over plan limit
 
-See [Plans and pricing](plans.md#ram).
+See [Plans and pricing](plans.md#at-a-glance).
 
 ### `plan_limit_secrets`
 
 HTTP 403 · Secret count limit reached
 
-See [Delivered secrets](secrets.md#limits).
+See [Delivered secrets](secrets.md).
 
 ### `plan_limit_trusted_signers`
 
 HTTP 403 · Trusted signer count limit reached; Trusted signers are not allowed on this plan
 
-See [Deploys](deploys.md#trusted-signers).
+See [Security](security.md#app-deploy-guard).
 
 ### `plan_liveness_probe_not_allowed`
 
 HTTP 403 · GRPC liveness probes are not allowed on this plan; Liveness probes are not allowed on this plan; Plan doesn't allow a liveness probe
 
-See [Deployment overrides](deploy-overrides.md#liveness-probe).
+See [Deployment overrides](deploy-overrides.md).
 
 ### `plan_log_archive_not_allowed`
 
 HTTP 402 · Log archive unavailable on this plan
 
-See [Plans and pricing](plans.md#log-archive).
+See [Logs](logs.md#retention).
 
 ### `plan_log_drain_quota`
 
 HTTP 403 · Log drain limit reached
 
-See [Plans and pricing](plans.md#observability).
+See [Logs](logs.md#log-drains).
 
 ### `plan_log_drains_not_allowed`
 
 HTTP 402 · Log drains unavailable on this plan
 
-See [Plans and pricing](plans.md#observability).
+See [Logs](logs.md#log-drains).
 
 ### `plan_max_instances_not_allowed`
 
 HTTP 403 · Plan doesn't allow a max_instances ceiling
 
-See [Apps](apps.md#max-instances).
+See [Scaling policy](scaling-policy.md#manifest-form).
 
 ### `plan_min_instances_not_allowed`
 
 HTTP 403 · Plan doesn't allow a min-instances floor
 
-See [Plans and pricing](plans.md#min-instances).
+See [How scaling to zero works](cold-wake.md#opting-out-keep-n-instances-warm-pro-scale).
 
 ### `plan_mirror_not_allowed`
 
 HTTP 403 · Plan doesn't allow traffic mirroring
 
-See [Plans and pricing](plans.md#traffic-mirror).
+See [Progressive rollouts](rollouts.md#traffic-mirroring).
 
 ### `plan_openapi_doc_quota_reached`
 
 HTTP 403 · OpenAPI document limit reached
 
-See [Plans and pricing](plans.md#endpoint-discovery).
+See [Plans and pricing](plans.md).
 
 ### `plan_openapi_doc_too_large`
 
 HTTP 413 · OpenAPI document exceeds the per-plan byte cap
 
-See [Plans and pricing](plans.md#endpoint-discovery).
+See [Plans and pricing](plans.md).
 
 ### `plan_per_app_metrics_not_allowed`
 
 HTTP 402 · Per-app metrics unavailable on this plan
 
-See [Plans and pricing](plans.md#per-app-metrics).
+See [Plans and pricing](plans.md).
 
 ### `plan_private_network_not_allowed`
 
@@ -2270,19 +2270,19 @@ See [Networking](networking.md).
 
 HTTP 402 · Basic public-URL auth is not available on this plan
 
-See [Plans and pricing](plans.md#public-auth).
+See [Authentication](auth.md#app-access-control).
 
 ### `plan_public_auth_bearer_not_allowed`
 
 HTTP 402 · Bearer public-URL auth is not available on this plan
 
-See [Plans and pricing](plans.md#public-auth).
+See [Authentication](auth.md#app-access-control).
 
 ### `plan_public_auth_ip_allowlist_not_allowed`
 
 HTTP 403 · Plan doesn't allow a public-auth IP allowlist
 
-See [Apps](apps.md#public-auth-ip-allowlist).
+See [Authentication](auth.md#app-access-control).
 
 ### `plan_queue_backlog_bytes`
 
@@ -2300,7 +2300,7 @@ See [Event-driven workloads](event-driven.md#queue-depth).
 
 HTTP 413 · Per-app registry credential quota reached
 
-See [Registry credentials](registry-credentials.md#quota).
+See [Registry credentials](registry-credentials.md).
 
 ### `plan_registry_credentials_not_allowed`
 
@@ -2314,7 +2314,7 @@ HTTP 402 · Plan doesn't allow reorder or deploy-immediately
 
 Cancel + clear-obsolete remain available on Free; upgrade to unlock reorder/deploy-immediately.
 
-See [Plans and pricing](plans.md#queue-controls).
+See [Plans and pricing](plans.md).
 
 ### `plan_require_authn_not_allowed`
 
@@ -2324,7 +2324,7 @@ HTTP 403 · Per-app authentication is not allowed on this plan; Per-deployment a
 
 HTTP 403 · Plan doesn't allow 5xx auto-rollback
 
-See [Plans and pricing](plans.md#rollback-on-5xx).
+See [Plans and pricing](plans.md).
 
 ### `plan_route_metrics_not_allowed`
 
@@ -2334,19 +2334,19 @@ HTTP 403 · Per-route metrics are not allowed on this plan
 
 HTTP 413 · Invocation payload too large
 
-See [Event-driven workloads](event-driven.md#payload-size).
+See [Event-driven workloads](event-driven.md).
 
 ### `plan_static_egress_ip_not_allowed`
 
 HTTP 402 · Plan does not unlock static egress IP
 
-See [Apps](apps.md#static-egress-ip).
+See [Static egress IP](static-egress-ip.md).
 
 ### `plan_static_egress_ip_quota`
 
 HTTP 403 · Static egress IP quota reached
 
-See [Apps](apps.md#static-egress-ip).
+See [Static egress IP](static-egress-ip.md).
 
 ### `plan_streaming_not_allowed`
 
@@ -2360,19 +2360,19 @@ HTTP 409 · Plan_token does not match project binding; Plan_token does not match
 
 HTTP 403 · Plan doesn't allow traffic splitting; Route enforcement unavailable; Route health enforcement unavailable
 
-See [Plans and pricing](plans.md#traffic-split).
+See [Plans and pricing](plans.md).
 
 ### `plan_trigger_quota`
 
 HTTP 403 · Trigger limit reached
 
-See [Plans and pricing](plans.md#triggers).
+See [Plans and pricing](plans.md).
 
 ### `plan_triggers_not_allowed`
 
 HTTP 402 · Triggers unavailable on this plan
 
-See [Plans and pricing](plans.md#triggers).
+See [Plans and pricing](plans.md).
 
 ### `plan_warm_pool_not_allowed`
 
@@ -2386,13 +2386,13 @@ HTTP 403 · Warm-tier snapshots are not allowed on this plan
 
 HTTP 403 · Webhook limit reached
 
-See [Plans and pricing](plans.md#webhooks).
+See [Plans and pricing](plans.md).
 
 ### `plan_webhooks_not_allowed`
 
 HTTP 402 · Outbound webhooks unavailable on this plan
 
-See [Plans and pricing](plans.md#webhooks).
+See [Plans and pricing](plans.md).
 
 ### `plan_websocket_not_allowed`
 
@@ -2402,13 +2402,13 @@ HTTP 403 · WebSocket / Upgrade traffic is not allowed on this plan
 
 HTTP 402 · Workflows unavailable on this plan
 
-See [Plans and pricing](plans.md#workflows).
+See [Plans and pricing](plans.md).
 
 ### `plan_workflows_quota`
 
 HTTP 403 · Stored workflow definition quota exceeded; Workflow run quota exceeded
 
-See [Plans and pricing](plans.md#workflows).
+See [Plans and pricing](plans.md).
 
 ### `platform_release_paused`
 
@@ -2478,7 +2478,7 @@ HTTP 410 · Review source again; Review this project again; Preview source expir
 
 HTTP 409 · Preview is full
 
-See [CLI guide](cli-setup.md#previews).
+See [CLI guide](cli-setup.md).
 
 ### `preview_not_found`
 
@@ -2488,19 +2488,19 @@ HTTP 404 · Preview not found
 
 HTTP 404 · Preview not offered
 
-See [CLI guide](cli-setup.md#previews).
+See [CLI guide](cli-setup.md).
 
 ### `preview_org_unsupported`
 
 HTTP 409 · Preview cannot be joined by an organization
 
-See [CLI guide](cli-setup.md#previews).
+See [CLI guide](cli-setup.md).
 
 ### `preview_plan_not_eligible`
 
 HTTP 403 · Plan not eligible for this preview
 
-See [CLI guide](cli-setup.md#previews).
+See [CLI guide](cli-setup.md).
 
 ### `preview_production_dependency_denied`
 
@@ -2640,7 +2640,7 @@ HTTP 503 · Public authentication unavailable
 
 HTTP 400 · Public-auth IP allowlist too long
 
-See [Apps](apps.md#public-auth-ip-allowlist).
+See [Authentication](auth.md#app-access-control).
 
 ## Q
 
@@ -2706,7 +2706,7 @@ HTTP 503 · Managed realtime temporarily unavailable
 
 Retry the connection in a few seconds.
 
-See [Plans and pricing](plans.md#realtime), [Errors](errors.md).
+See [Plans and pricing](plans.md#managed-realtime), [Errors](errors.md).
 
 ### `recent_sign_in_required`
 
@@ -2862,7 +2862,7 @@ HTTP 409 · Release staging changed
 
 HTTP 400 · Request body could not be read
 
-See [Functions and runtimes](functions.md#limits).
+See [Functions and runtimes](functions.md).
 
 ### `request_budget_exceeded`
 
@@ -2876,7 +2876,7 @@ HTTP 413 · Event too large; MCP instance probe failed; Request body too large
 
 For larger uploads, use a bucket signed URL (gregale storage ... signed-url).
 
-See [Event-driven workloads](event-driven.md), [Plans and pricing](plans.md#workflows), [Storage](storage.md#signed-uploads).
+See [Event-driven workloads](event-driven.md), [Plans and pricing](plans.md), [Storage](storage.md).
 
 ### `request_upload_timeout`
 
@@ -2884,7 +2884,7 @@ HTTP 408 · Request upload timed out
 
 Retry on a stable connection, or use a bucket signed URL for large uploads.
 
-See [Functions and runtimes](functions.md#limits).
+See [Functions and runtimes](functions.md).
 
 ### `request_validation_failed`
 
@@ -2896,13 +2896,13 @@ See [Edge rules](edge-rules.md).
 
 HTTP 410 · Reset link expired
 
-See [Authentication](auth.md#reset).
+See [Account and organization management](account.md#profile-sign-in-and-sessions).
 
 ### `reset_token_invalid`
 
 HTTP 410 · Reset link invalid
 
-See [Authentication](auth.md#reset).
+See [Account and organization management](account.md#profile-sign-in-and-sessions).
 
 ### `response_too_large`
 
@@ -2936,7 +2936,7 @@ HTTP 409 · Checked rollback in progress
 
 HTTP 409 · Rollback target is already live
 
-See [Deploys](deploys.md#rollback).
+See [Deploys](deploys.md#revisions).
 
 ### `rollback_target_database_restored`
 
@@ -2950,31 +2950,31 @@ See [Deploys](deploys.md#rollbacks-that-restore-the-database), [Safe releases](r
 
 HTTP 409 · Rollback target is not eligible
 
-See [Deploys](deploys.md#rollback).
+See [Deploys](deploys.md#revisions).
 
 ### `rollback_target_not_found`
 
 HTTP 404 · Rollback target not found
 
-See [Deploys](deploys.md#rollback).
+See [Deploys](deploys.md#revisions).
 
 ### `rollback_target_unavailable`
 
 HTTP 409 · Rollback target is unavailable
 
-See [Deploys](deploys.md#rollback).
+See [Deploys](deploys.md#revisions).
 
 ### `rollout_not_stuck`
 
 HTTP 409 · Rollout is not stuck
 
-See [Deploys](deploys.md#recover-rollout).
+See [Progressive rollouts](rollouts.md#why-a-rollout-advanced-waits-or-stopped).
 
 ### `rollout_state_invalid`
 
 HTTP 409 · Rollout state does not permit recovery; Rollouts are in progress in more than one environment
 
-See [Deploys](deploys.md#recover-rollout).
+See [Progressive rollouts](rollouts.md#why-a-rollout-advanced-waits-or-stopped).
 
 ### `route_health_blocked`
 
@@ -2998,7 +2998,7 @@ HTTP 409 · Scaling settings changed
 
 HTTP 422 · Target metric is not compatible with this app's workload class
 
-See [Apps](apps.md#scaling-policy).
+See [Scaling policy](scaling-policy.md).
 
 ### `scan_critical`
 
@@ -3020,7 +3020,7 @@ HTTP 410 · Secret entry unavailable
 
 HTTP 400 · Invalid secret key
 
-See [Delivered secrets](secrets.md#keys).
+See [Delivered secrets](secrets.md).
 
 ### `secret_not_found`
 
@@ -3036,7 +3036,7 @@ HTTP 409 · Reference conflict
 
 HTTP 403 · Suppression limit reached
 
-See [Environment variables](env.md#secret-references).
+See [Environment variables](env.md).
 
 ### `secret_scan_strict`
 
@@ -3052,13 +3052,13 @@ HTTP 503 · Secret storage unavailable
 
 HTTP 413 · Secret value too large
 
-See [Delivered secrets](secrets.md#limits).
+See [Delivered secrets](secrets.md).
 
 ### `security_posture_blocked`
 
 HTTP 403 or 409 or 503 · App is security quarantined; Security posture blocks this deploy
 
-See [Security](security.md#deploy-enforcement).
+See [Security](security.md#app-deploy-guard).
 
 ### `security_quarantine_recovery_blocked`
 
@@ -3094,7 +3094,7 @@ HTTP 401 · Session invalid
 
 HTTP 400 · Too many sidecars
 
-See [Application companions](companions.md#cap).
+See [Application companions](companions.md#limits-and-lifecycle).
 
 ### `sidecar_invalid_cpu_millicores`
 
@@ -3132,13 +3132,13 @@ HTTP 400 · Invalid sidecar type
 
 HTTP 403 · Plan doesn't allow sidecars
 
-See [Plans and pricing](plans.md#sidecars).
+See [Plans and pricing](plans.md).
 
 ### `sidecar_stateful_denied`
 
 HTTP 403 · Stateful sidecar image is not allowed
 
-See [Application companions](companions.md#stateless).
+See [Application companions](companions.md#writable-paths).
 
 ### `snapshot_backoff`
 
@@ -3162,7 +3162,7 @@ See [Deploy from a GitHub source ref](source-ref.md).
 
 HTTP 503 · Source-ref fetch unavailable
 
-See [Deploy from a GitHub source ref](source-ref.md#errors).
+See [Deploy from a GitHub source ref](source-ref.md#failure-modes).
 
 ### `source_too_large`
 
@@ -3218,7 +3218,7 @@ See [Static egress IP](static-egress-ip.md).
 
 HTTP 404 · Static egress IP not provisioned on this host
 
-See [Apps](apps.md#static-egress-ip).
+See [Static egress IP](static-egress-ip.md).
 
 ### `step_up_required`
 
@@ -3246,7 +3246,7 @@ See [Synthetic checks](synthetic-checks.md).
 
 HTTP 409 · Canary rollout controls traffic
 
-See [Deploys](deploys.md#canary).
+See [Progressive rollouts](rollouts.md#how-a-rollout-proceeds).
 
 ### `traffic_deadline_invalid`
 
@@ -3260,13 +3260,13 @@ The response's `title` and `detail` describe the failure.
 
 HTTP 409 · No deployment can take the remaining traffic; Traffic_percent sum invariant violated
 
-See [Deploys](deploys.md#traffic-percent).
+See [Progressive rollouts](rollouts.md), [Deploys](deploys.md).
 
 ### `traffic_policy_too_complex`
 
 HTTP 422 · Traffic policy analysis limit reached
 
-See [Plans and pricing](plans.md#edge-rules).
+See [Edge rules](edge-rules.md#limits).
 
 ### `traffic_policy_too_large`
 
@@ -3276,7 +3276,7 @@ Reduce policy values and replace the policy. Clear an environment overlay or dis
 
 Reduce rules or preset values that match the same host. Size-reducing repairs to an existing oversized host remain allowed.
 
-See [Plans and pricing](plans.md#edge-rules).
+See [Edge rules](edge-rules.md#limits).
 
 ### `traffic_policy_unavailable`
 
@@ -3296,13 +3296,13 @@ HTTP 403 · Traffic revoked
 
 HTTP 409 · Production revision changed; Traffic split changed
 
-See [Deploys](deploys.md#traffic-percent), [Progressive rollouts](rollouts.md).
+See [Progressive rollouts](rollouts.md).
 
 ### `traffic_split_release_limit`
 
 HTTP 422 · Too many releases in the traffic split
 
-See [Deploys](deploys.md#traffic-percent).
+See [Progressive rollouts](rollouts.md), [Deploys](deploys.md).
 
 ### `transport_error`
 
@@ -3314,7 +3314,7 @@ See [Errors](errors.md).
 
 HTTP 403 · Batch_window too large for this plan
 
-See [Plans and pricing](plans.md#triggers).
+See [Plans and pricing](plans.md).
 
 ### `trigger_immutable`
 
@@ -3336,7 +3336,7 @@ HTTP 422 · Invalid retry policy
 
 HTTP 403 · Trigger kind not available
 
-See [Plans and pricing](plans.md#triggers).
+See [Plans and pricing](plans.md).
 
 ### `trigger_kind_unavailable`
 
@@ -3346,13 +3346,13 @@ HTTP 422 · Trigger kind unavailable
 
 HTTP 403 · Tls.skip_verify unavailable on this plan
 
-See [Plans and pricing](plans.md#triggers).
+See [Plans and pricing](plans.md).
 
 ### `trusted_signer_invalid`
 
 HTTP 400 · Trusted signer invalid
 
-See [Deploys](deploys.md#trusted-signers).
+See [Security](security.md#app-deploy-guard).
 
 ### `trusted_signer_not_found`
 
@@ -3364,7 +3364,7 @@ HTTP 404 · Trusted signer not found
 
 HTTP 409 · UDP listener reservation limit reached
 
-See [Deploys](deploys.md#containers).
+See [Networking](networking.md#private-tcp-between-services).
 
 ### `unauthorized`
 
@@ -3388,7 +3388,7 @@ HTTP 422 · Too many changes
 
 HTTP 403 · Endpoint requires the dashboard session cookie
 
-See [CLI guide](cli-setup.md#cookie-only-routes).
+See [CLI guide](cli-setup.md).
 
 ### `unsupported_media_type`
 
@@ -3402,43 +3402,43 @@ HTTP 410 · Uploaded archive does not match its checksum
 
 Start the upload again; gregale deploy does this automatically.
 
-See [Deploy from a GitHub source ref](source-ref.md#uploads).
+See [Deploys](deploys.md#what-gets-uploaded).
 
 ### `upload_session_already_cancelled`
 
 HTTP 409 · Upload session not open
 
-See [Deploy from a GitHub source ref](source-ref.md#uploads).
+See [Deploys](deploys.md#what-gets-uploaded).
 
 ### `upload_session_already_committed`
 
 HTTP 409 · Upload session already committed
 
-See [Deploy from a GitHub source ref](source-ref.md#uploads).
+See [Deploys](deploys.md#what-gets-uploaded).
 
 ### `upload_session_expired`
 
 HTTP 410 · Upload session expired
 
-See [Deploy from a GitHub source ref](source-ref.md#uploads).
+See [Deploys](deploys.md#what-gets-uploaded).
 
 ### `upload_session_not_found`
 
 HTTP 404 · Upload session not found
 
-See [Deploy from a GitHub source ref](source-ref.md#uploads).
+See [Deploys](deploys.md#what-gets-uploaded).
 
 ### `upload_session_offset_conflict`
 
 HTTP 409 · Upload session offset conflict
 
-See [Deploy from a GitHub source ref](source-ref.md#uploads).
+See [Deploys](deploys.md#what-gets-uploaded).
 
 ### `upload_session_too_many`
 
 HTTP 429 · Too many upload sessions
 
-See [Deploy from a GitHub source ref](source-ref.md#uploads).
+See [Deploys](deploys.md#what-gets-uploaded).
 
 ## V
 
@@ -3466,7 +3466,7 @@ See [Edge rules](edge-rules.md), [Errors](errors.md).
 
 HTTP 503 · Scale-out cooldown in effect
 
-See [Scaling policy](scaling-policy.md#cooldown).
+See [Scaling policy](scaling-policy.md).
 
 ### `wait_timed_out`
 
@@ -3498,7 +3498,7 @@ HTTP 503 · Webhook workflow unavailable
 
 HTTP 402 · Wildcard domains unavailable on this plan
 
-See [Domains](domains.md#wildcard-domains).
+See [Domains](domains.md#serve-several-apps-on-one-domain).
 
 ### `work_policy_in_use`
 
@@ -3544,6 +3544,12 @@ HTTP 404
 
 HTTP 503 · Workflow replay preview read timed out
 
+### `workflow_function_not_invocable`
+
+HTTP 404
+
+See [Functions and runtimes](functions.md).
+
 ### `workflow_not_running`
 
 HTTP 409 · Workflow run not running
@@ -3567,6 +3573,10 @@ HTTP 409 · Workflow cannot be resumed
 ### `workflow_run_not_found`
 
 HTTP 404 · Workflow run not found
+
+### `workflow_sdk_missing`
+
+The response's `title` and `detail` describe the failure.
 
 ### `workflow_step_not_found`
 

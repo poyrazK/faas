@@ -3,7 +3,7 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "3e93c0440f7d4515bcdc90945d2463af0b18741220a0330247bb8bd68445db46",
+      "revision": "32c2563ba82143af46cc5d6e38fb1984190fe5debd91175e671c52322ffc5920",
       "expected": {
         "id": "gregale-core-v1",
         "revision": "20887e41975409bd4289c5469ebff35157840e971bb9b22163bbf5f6f526600e",
@@ -1924,8 +1924,8 @@
           }
         ]
       },
-      "alert_set_revision": "0becbf23f289c3da019cb17f62c7654e58545bf440eb53dce8d3b7719c879e49",
-      "alert_count": 569,
+      "alert_set_revision": "fefc7d9eac640f2a8851ec7aa703ac851b9c3d047bf7afe27902268c0614d55b",
+      "alert_count": 571,
       "dependents": [
         {
           "rule_id": "0334e9dd652d8034eae35eed898be3ec03fb7548b2af3a4479360eee5f146041",
@@ -4175,6 +4175,12 @@
           "rule_name": "FaasLogArchiveSpoolNearCap"
         },
         {
+          "id": "42535689b36762c84cd9893f997efa0d4a2566ddd42eef2e9ee1c28bf823db67",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasDBPermissionDenied"
+        },
+        {
           "id": "42b660896b0cb4e777cc6313f5803f48c973b5154a2ab4a248d183992ab544d1",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -4279,7 +4285,7 @@
       ]
     },
     {
-      "revision": "0ae071eec06bacc4c95441bad719c0f37eec1e6300f41907c47338e871b77a28",
+      "revision": "1ea9ac05e477c5df58b13f57a0b2a36c943ba5aa0c52ad6b5d307eb243056b46",
       "expected": {
         "id": "gregale-full-v1",
         "revision": "b0b64d7df43b746a5c22674c6208d0516fa62e7b04bd54119308a7f7e64618d1",
@@ -6204,8 +6210,8 @@
           }
         ]
       },
-      "alert_set_revision": "5d9c6b8b70e8267f55e6de2ec86b9d90e7cabeec591105d5684df5569a062507",
-      "alert_count": 593,
+      "alert_set_revision": "ee5720a72e10c6608113a56161e94a4b9676d6326a500cf808b0d2686470a4fc",
+      "alert_count": 595,
       "dependents": [
         {
           "rule_id": "0334e9dd652d8034eae35eed898be3ec03fb7548b2af3a4479360eee5f146041",
@@ -8453,6 +8459,12 @@
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
           "rule_name": "FaasLogArchiveSpoolNearCap"
+        },
+        {
+          "id": "42535689b36762c84cd9893f997efa0d4a2566ddd42eef2e9ee1c28bf823db67",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasDBPermissionDenied"
         },
         {
           "id": "42b660896b0cb4e777cc6313f5803f48c973b5154a2ab4a248d183992ab544d1",

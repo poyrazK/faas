@@ -54,7 +54,7 @@ func SlugHolderReasons(accountID string, workloads []reposcan.Workload, holders 
 		case !held:
 		case app.AccountID == accountID && app.Status == state.AppDeleted:
 			reasons = append(reasons, fmt.Sprintf(
-				"workload %q uses app slug %q, held by a deleted app until its grace window ends; restore it with `gregale apps restore %s` or choose another app name",
+				"workload %q uses app slug %q, held by a deleted app until its grace window ends; restore it with `gregale app restore %s` or choose another app name",
 				workload.Name, slug, slug))
 		default:
 			reasons = append(reasons, fmt.Sprintf(

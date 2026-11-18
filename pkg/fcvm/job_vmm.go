@@ -939,17 +939,29 @@ const guestInitExitMarker = "Attempted to kill init! exitcode=0x"
 // code is guest-init's exit code when the kernel printed it, else 0.
 func consoleShowsGuestStopped(path string) (stopped bool, code int32) {
 	tail := consoleTail(path)
-	if i := bytes.LastIndex(tail, []byte(guestInitExitMarker)); i >= 0 {
-		digits := tail[i+len(guestInitExitMarker):]
-		if n := bytes.IndexFunc(digits, func(r rune) bool { return !strings.ContainsRune("0123456789abcdefABCDEF", r) }); n >= 0 {
-			digits = digits[:n]
-		}
-		if status, err := strconv.ParseUint(string(digits), 16, 32); err == nil {
-			return true, int32((status >> 8) & 0xff)
-		}
-		return true, 0
+	if status, ok := guestInitWaitStatus(tail); ok {
+		return true, int32((status >> 8) & 0xff)
 	}
 	return bytes.Contains(tail, []byte("Attempted to kill init!")) || bytes.Contains(tail, []byte("System halted")), 0
+}
+
+// guestInitWaitStatus returns the wait status the kernel printed after
+// guestInitExitMarker in console output, when it printed one. 0 is an exit
+// with status 0; a fatal signal sets the low bits instead.
+func guestInitWaitStatus(console []byte) (uint32, bool) {
+	i := bytes.LastIndex(console, []byte(guestInitExitMarker))
+	if i < 0 {
+		return 0, false
+	}
+	digits := console[i+len(guestInitExitMarker):]
+	if n := bytes.IndexFunc(digits, func(r rune) bool { return !strings.ContainsRune("0123456789abcdefABCDEF", r) }); n >= 0 {
+		digits = digits[:n]
+	}
+	status, err := strconv.ParseUint(string(digits), 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	return uint32(status), true
 }
 
 func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.Signal) error {

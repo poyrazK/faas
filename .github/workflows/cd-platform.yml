@@ -338,7 +338,10 @@ jobs:
       format_storage: ${{ matrix.target.format_storage }}
       skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
       rollout_phase: ${{ inputs.compute_rollout_mode == 'full' && 'full' || 'activate' }}
-      node_canary: true
+      # ADR-20261118060000: only the first node's leg runs the canary. It
+      # catches a release that cannot serve or build before any other node
+      # moves; the fleet acceptance gate after the last node covers the rest.
+      node_canary: ${{ toJSON(matrix.target) == toJSON(fromJSON(needs.plan.outputs.targets)[0]) }}
     secrets: inherit
 
   verify:

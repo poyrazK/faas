@@ -106,6 +106,9 @@ tests:
   - &id026
     series: builderd_build_slot_decisions_total{job="builderd",instance="b",outcome="policy"}
     values: '0x90'
+  - &id026m
+    series: builderd_build_slot_decisions_total{job="builderd",instance="b",outcome="memory"}
+    values: '0x90'
   alert_rule_test:
   - eval_time: 20m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -184,6 +187,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 20m
     alertname: FaasBuilderWorkerStalled
@@ -251,6 +255,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 3m
     alertname: FaasBuilderWorkerStalled
@@ -324,6 +329,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 9m
     alertname: FaasBuilderWorkerStalled
@@ -389,6 +395,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 14m
     alertname: FaasBuilderWorkerStalled
@@ -468,6 +475,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 16m
     alertname: FaasBuilderWorkerStalled
@@ -537,6 +545,7 @@ tests:
   - series: builderd_build_slot_decisions_total{job="builderd",instance="b",outcome="limit"}
     values: 0+100x90
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 20m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -602,6 +611,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuilderClaimsFailing
@@ -675,6 +685,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 10m
     alertname: FaasBuilderClaimsFailing
@@ -741,6 +752,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuilderRequeuesFailing
@@ -814,6 +826,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 20m
     alertname: FaasBuilderRequeuesFailing
@@ -872,6 +885,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuilderClaimsFailing
@@ -933,6 +947,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuilderRequeuesFailing
@@ -995,6 +1010,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 10m
     alertname: FaasBuilderClaimsFailing
@@ -1061,6 +1077,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 30m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1122,6 +1139,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   - series: up{job="builderd",instance="c"}
     values: 1x90
   - series: builderd_build_worker_enabled{job="builderd",instance="c"}
@@ -1195,6 +1213,8 @@ tests:
   - series: builderd_build_slot_decisions_total{job="builderd",instance="c",outcome="limit"}
     values: '0x90'
   - series: builderd_build_slot_decisions_total{job="builderd",instance="c",outcome="policy"}
+    values: '0x90'
+  - series: builderd_build_slot_decisions_total{job="builderd",instance="c",outcome="memory"}
     values: '0x90'
   alert_rule_test:
   - eval_time: 6m
@@ -1271,6 +1291,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 6m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1336,6 +1357,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 6m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1401,6 +1423,7 @@ tests:
   - *id023
   - *id024
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 6m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1467,6 +1490,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 6m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1536,6 +1560,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 6m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1605,6 +1630,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 6m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1674,6 +1700,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 6m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1743,6 +1770,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 6m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1805,6 +1833,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 6m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1867,6 +1896,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 20m
     alertname: FaasBuilderQueueTelemetryUnavailable
@@ -1946,6 +1976,7 @@ tests:
   - *id024
   - *id025
   - *id026
+  - *id026m
   alert_rule_test:
   - eval_time: 19m
     alertname: FaasBuilderWorkerStalled

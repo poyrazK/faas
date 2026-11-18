@@ -41,7 +41,7 @@ func (q *Queries) DecideStorageObjectDeletion(ctx context.Context, db DBTX, arg 
 }
 
 const dueStorageObjectDeletions = `-- name: DueStorageObjectDeletions :many
-SELECT storage_key, reason, requested_by, requested_at, attempts FROM storage_object_deletions
+SELECT storage_key, reason, requested_by, requested_at, attempts, generation FROM storage_object_deletions
 WHERE state = 'requested' AND next_attempt_at <= $1::timestamptz
 ORDER BY next_attempt_at, storage_key
 LIMIT $2::int
@@ -58,6 +58,7 @@ type DueStorageObjectDeletionsRow struct {
 	RequestedBy string
 	RequestedAt pgtype.Timestamptz
 	Attempts    int32
+	Generation  pgtype.Int8
 }
 
 func (q *Queries) DueStorageObjectDeletions(ctx context.Context, db DBTX, arg DueStorageObjectDeletionsParams) ([]DueStorageObjectDeletionsRow, error) {
@@ -75,6 +76,7 @@ func (q *Queries) DueStorageObjectDeletions(ctx context.Context, db DBTX, arg Du
 			&i.RequestedBy,
 			&i.RequestedAt,
 			&i.Attempts,
+			&i.Generation,
 		); err != nil {
 			return nil, err
 		}
@@ -88,10 +90,11 @@ func (q *Queries) DueStorageObjectDeletions(ctx context.Context, db DBTX, arg Du
 
 const requestStorageObjectDeletion = `-- name: RequestStorageObjectDeletion :exec
 
-INSERT INTO storage_object_deletions (storage_key, reason, requested_by)
-VALUES ($1::text, $2::text, session_user)
+INSERT INTO storage_object_deletions (storage_key, reason, requested_by, generation)
+VALUES ($1::text, $2::text, session_user, $3::bigint)
 ON CONFLICT (storage_key) DO UPDATE SET
     reason = EXCLUDED.reason, requested_by = session_user, requested_at = clock_timestamp(),
+    generation = EXCLUDED.generation,
     next_attempt_at = clock_timestamp() + interval '10 minutes', state = 'requested',
     attempts = 0, last_error = '', decided_at = NULL
 `
@@ -99,13 +102,15 @@ ON CONFLICT (storage_key) DO UPDATE SET
 type RequestStorageObjectDeletionParams struct {
 	StorageKey string
 	Reason     string
+	Generation pgtype.Int8
 }
 
 // ADR-20261115180000: object deletion moves to the control plane.
 // A fresh request, whatever the row held before; the trigger stamps a
-// per-node login's node.
+// per-node login's node. generation (slice 2) conditions the delete on one
+// object generation; NULL deletes whatever the key holds.
 func (q *Queries) RequestStorageObjectDeletion(ctx context.Context, db DBTX, arg RequestStorageObjectDeletionParams) error {
-	_, err := db.Exec(ctx, requestStorageObjectDeletion, arg.StorageKey, arg.Reason)
+	_, err := db.Exec(ctx, requestStorageObjectDeletion, arg.StorageKey, arg.Reason, arg.Generation)
 	return err
 }
 

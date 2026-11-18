@@ -7732,6 +7732,10 @@ type AppSecret struct {
 	// only by the managed PostgreSQL credential sink. Customer writes cannot
 	// replace or delete an owned row while its binding is active.
 	ManagedPostgresBindingID string
+	// ManagedPostgresDatabaseID is a private qualification projection. The
+	// native credential sink retains it in memory; PostgreSQL qualification
+	// reads the authoritative binding catalog under row locks.
+	ManagedPostgresDatabaseID string
 	// ManagedPostgresAccess is delivery metadata projected from the binding
 	// catalog by scoped reads. It is never inferred from an environment key.
 	ManagedPostgresAccess       string

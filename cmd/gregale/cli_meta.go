@@ -518,6 +518,7 @@ var templateNames13 = []string{
 	"hello-node",
 	"hello-python",
 	"hello-go",
+	"hello-node-private",
 	"cron-example",
 	"function-node",
 	"function-python",
@@ -1842,6 +1843,17 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<app>", "KEY=VALUE..."}},
 				{Name: "unset", Short: "Remove labels", Positionals: []string{"<app>", "KEY..."}},
 			}},
+			{Name: subProtection, Short: "Show or change the app's production protection (preview)", Positionals: []string{"<app>"},
+				Notes: []string{
+					"New public apps get availability and latency SLOs, an hourly health check, email alerts and a rollback gate as ordinary objects you can edit or delete.",
+					"The health check's requests and the wakes it alone causes are not billed.",
+					"off deletes the protection objects you have not changed; on creates the missing ones after the next live production deploy.",
+				},
+				Examples: []string{"gregale app protection my-api", "gregale app protection off my-api", "gregale app protection on my-api"},
+				Subcommands: []cliSub{
+					{Name: "on", Short: "Turn protection on, also for an app created before it existed", Positionals: []string{"<app>"}},
+					{Name: "off", Short: "Turn protection off and delete its unchanged objects", Positionals: []string{"<app>"}},
+				}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
 				{Name: "project", Short: "check every app of this project instead of one", Value: "PROJECT"},
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
@@ -1907,6 +1919,8 @@ var cliCommands = []cliCommand{
 			{Name: subExec, Common: true, Short: "Run a command in a fresh VM of the live deployment", Flags: []cliFlag{
 				{Name: "interactive", Short: "attach stdin and stream output live (-i; default command /bin/sh)"},
 				{Name: "tty", Short: "allocate a remote terminal (-t; use -it)"},
+				{Name: "debug", Short: "add busybox tools for images without a shell (distroless, scratch); implies -it, default command sh"},
+				{Name: "no-tty", Short: "with --debug, no remote terminal"},
 				{Name: "shell", Short: "interpret one command string through the app shell"},
 				{Name: "detach", Short: "return after the task is queued"},
 				{Name: "timeout-seconds", Short: "server-side command timeout", Value: "N"},
@@ -3191,6 +3205,7 @@ var cliCommands = []cliCommand{
 			// subsequent deploys honor the persisted set automatically.
 			{Name: "persist-exclude", Group: "Projects", Short: "save --exclude slugs for future project deploys"},
 			{Name: "project-slug", Group: "Projects", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
+			{Name: "prefix", Group: "Projects", Short: "name new project apps <prefix><service> (overrides x-gregale-slug-prefix)", Value: "PREFIX"},
 			{Name: "rollout", Group: "Rollout and health", Short: "how this release reaches traffic: safe (adaptive canary with rollback; waits for 100%), fast (5% -> 50% -> 100%) or immediate; default: the app release policy", Value: "MODE", ClosedSet: []string{"safe", "fast", "immediate"}},
 			{Name: "override-freeze", Group: "Rollout and health", Short: "release to production during a deploy freeze; the reason is audited", Value: "REASON"},
 			{Name: "at", Group: "Rollout and health", Short: "build now and start the production rollout at this time: +2h, 02:00, \"2026-10-22 02:00\" (local) or RFC 3339; freezes are checked then", Value: "WHEN"},
@@ -5537,7 +5552,7 @@ var cliCommands = []cliCommand{
 					{Name: "label", Short: "new label (empty keeps the current one)", Value: "TEXT"},
 				}},
 			}},
-			{Name: "support-access", Short: "See and revoke Gregale support access to the org's apps, and reject requests for it", Notes: []string{"Support access lets Gregale support deploy the production branch, retry, cancel, roll back and restart the org's apps for a limited time. It never reaches secrets, configuration, members, keys or billing.", "Granting and approving need a signed-in browser: use the dashboard's Support access page."}, Subcommands: []cliSub{
+			{Name: "support-access", Short: "See and revoke support access to the org's apps; reject requests", Notes: []string{"Support access lets Gregale support deploy the production branch, retry, cancel, roll back and restart the org's apps for a limited time. It never reaches secrets, configuration, members, keys or billing.", "Granting and approving need a signed-in browser: use the dashboard's Support access page."}, Subcommands: []cliSub{
 				{Name: "list", Short: "List support grants and open requests", Flags: []cliFlag{orgSlugFlag, {Name: "json", Short: "Print JSON", Bool: true}}, Examples: []string{"gregale org support list --org acme"}},
 				{Name: "revoke", Short: "End a support grant now", Positionals: []string{"GRANT_ID"}, Notes: []string{"Owners and admins only. An API key may revoke: taking access away is always safe."}, Flags: []cliFlag{orgSlugFlag}, Examples: []string{"gregale org support revoke --org acme 3f2a…"}},
 				{Name: "reject", Short: "Reject a support access request", Positionals: []string{"REQUEST_ID"}, Notes: []string{"Owners and admins only."}, Flags: []cliFlag{orgSlugFlag}},
@@ -6858,6 +6873,9 @@ var cliCommands = []cliCommand{
 				{Name: "acknowledge-releases", Short: "accept rolling back across release commands", Bool: true},
 				{Name: "timeout", Short: "wait per service (default 10m)", Value: "DURATION"},
 			}},
+			{Name: "health", Short: "Check serving health of every app in a project", Positionals: []string{"<project>"}, Notes: []string{"Same as `app health --project <project>`; takes the same flags."}},
+			{Name: "wake", Short: "Wake every app in a project before traffic arrives", Positionals: []string{"<project>"}, Notes: []string{"Same as `app wake --project <project>`; takes the same flags, such as --wait."}},
+			{Name: "restart", Short: "Restart every app in a project", Positionals: []string{"<project>"}, Notes: []string{"Same as `app restart --project <project>`; takes the same flags."}},
 			{Name: "export", Short: "Write the project's services as a plain Compose file", Positionals: []string{"<project>"}, Notes: []string{"Env values stay sealed: each variable is referenced by name, as ${NAME}.", "Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back."}, Flags: []cliFlag{
 				{Name: "format", Short: "output format (compose)", Value: "FORMAT"},
 				{Name: "out", Short: "write to PATH instead of stdout", Value: "PATH"},
@@ -6959,6 +6977,7 @@ var cliCommands = []cliCommand{
 				{Name: "class", Short: "retention: persistent by default; ephemeral values make every wake a slower cold start; omission keeps an existing class", Value: "CLASS", ClosedSet: []string{api.SecretClassPersistent, api.SecretClassEphemeral}},
 				{Name: "restart", Short: "restart the app and apply updated secrets now"},
 				{Name: "no-guard", Short: "do not open a config guard for this change", Bool: true},
+				{Name: "plain", Short: "store KEY=VALUE as a readable, non-secret variable (shown by env list)", Bool: true},
 			}},
 			{Name: "unset", Short: "Remove named sealed secrets (alias: rm)", Examples: []string{"gregale env unset OLD_TOKEN UNUSED_KEY --dry-run", "gregale env unset --app my-api --interactive", "gregale env unset --app my-api OLD_API_KEY", "gregale env unset --app my-api OLD_API_KEY --env staging", "gregale env unset --app my-api OLD_API_KEY --wait-for-ack", "gregale env unset --app my-api OLD_API_KEY --restart"}, Positionals: []string{"[<KEY>...]"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "validate local input and preview keys and runtime options without API requests or changes", Bool: true},

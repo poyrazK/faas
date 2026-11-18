@@ -105,7 +105,7 @@ func TestE2E_OrgLifecycle_HappyPath(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	h := e2etest.Start(t, pool, e2etest.APID)
+	h, sessions := startAPIDWithSessions(t, pool)
 	ctx := context.Background()
 
 	// 1. Seed two accounts. The PR-3 personal-org backfill fires
@@ -291,8 +291,8 @@ func TestE2E_OrgLifecycle_HappyPath(t *testing.T) {
 		t.Fatalf("change role: %d %s", status, raw)
 	}
 
-	// 9. Transfer ownership alice → bob.
-	raw, status = doReq(t, h, aliceKey,
+	// 9. Transfer ownership alice → bob. Only a signed-in browser may.
+	raw, status = doSessionReq(t, h, browserSessionCookie(t, pool, sessions, aliceAcct.ID),
 		http.MethodPost, "/v1/orgs/acme/transfer_ownership",
 		api.TransferOwnershipRequest{NewOwnerAccountID: bobAcct.ID},
 		map[string]string{"X-Active-Org": "acme"})
@@ -361,7 +361,7 @@ func TestE2E_OrgLifecycle_HappyPath(t *testing.T) {
 
 	// 12. Soft-delete the org as the new owner (POST 7 in the
 	// dispatch). Wire assertion: 204 No Content.
-	raw, status = doReq(t, h, bobKey, http.MethodDelete, "/v1/orgs/acme", nil,
+	raw, status = doSessionReq(t, h, browserSessionCookie(t, pool, sessions, bobAcct.ID), http.MethodDelete, "/v1/orgs/acme", nil,
 		map[string]string{"X-Active-Org": "acme"})
 	if status != http.StatusNoContent {
 		t.Fatalf("delete org: %d %s", status, raw)
@@ -577,7 +577,7 @@ func TestE2E_OrgLifecycle_PersonalImmutable(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	h := e2etest.Start(t, pool, e2etest.APID)
+	h, sessions := startAPIDWithSessions(t, pool)
 	ctx := context.Background()
 
 	key := h.SeedAccount(ctx, api.PlanFree, "pr5-personal")
@@ -591,8 +591,8 @@ func TestE2E_OrgLifecycle_PersonalImmutable(t *testing.T) {
 		t.Fatalf("OrgByPersonalAccount: %v", err)
 	}
 
-	// DELETE — must 409.
-	raw, status := doReq(t, h, key, http.MethodDelete,
+	// DELETE — must 409. Deletion needs a signed-in browser.
+	raw, status := doSessionReq(t, h, browserSessionCookie(t, pool, sessions, acct.ID), http.MethodDelete,
 		"/v1/orgs/"+personal.Slug, nil,
 		map[string]string{"X-Active-Org": personal.Slug})
 	if status != http.StatusConflict {

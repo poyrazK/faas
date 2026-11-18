@@ -52,7 +52,8 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
 		Network: start.GetNetworkMode(), WorkspaceKey: start.GetWorkspaceKey(), ImageKey: start.GetImageKey(),
 		StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(), ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond,
-		Browser: start.GetBrowser(), Task: sandboxTaskFromProto(start.GetTask())}
+		Browser: start.GetBrowser(), Task: sandboxTaskFromProto(start.GetTask()),
+		EgressAllow: start.GetEgressAllow(), EgressDeny: start.GetEgressDeny(), WebDomainLog: start.GetWebDomainLog()}
 	ctx := stream.Context()
 	var sendMu sync.Mutex
 	send := func(ev *scheddpb.SandboxRunEvent) error {
@@ -78,7 +79,7 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 	hooks := sched.SandboxHooks{
 		Booted: func(_ context.Context, b sched.SandboxBooted) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: b.Method,
-				BootMs: b.BootMs, Actions: b.Actions}}})
+				BootMs: b.BootMs, Actions: b.Actions, EgressPolicy: b.EgressPolicy}}})
 		},
 		Activity: func(_ context.Context, a sched.SandboxActivity) error {
 			ev := &scheddpb.SandboxRunActivity{CallsInFlight: int32(a.CallsInFlight)}
@@ -115,6 +116,13 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		TaskDone: func(_ context.Context, d sched.SandboxTaskDone) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_TaskDone{TaskDone: &scheddpb.SandboxRunTaskDone{
 				ExitCode: int32(d.ExitCode), Output: d.Output, TimedOut: d.TimedOut, Truncated: d.Truncated, Error: d.Error}}})
+		},
+		WebDomains: func(_ context.Context, d []sched.SandboxWebDomain) error {
+			frame := &scheddpb.SandboxRunWebDomains{Domains: make([]*scheddpb.SandboxRunWebDomain, 0, len(d))}
+			for _, x := range d {
+				frame.Domains = append(frame.Domains, &scheddpb.SandboxRunWebDomain{Domain: x.Domain, Refused: x.Refused, AtUnixMs: x.At.UnixMilli()})
+			}
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_WebDomains{WebDomains: frame}})
 		},
 	}
 	opErr = s.sandboxRuns.RunSandbox(ctx, admission, placed, hooks, frames.control)

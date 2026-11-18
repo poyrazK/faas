@@ -7,6 +7,7 @@ package agentd_test
 import (
 	"context"
 	"net"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -62,13 +63,22 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 		return status.Error(codes.Aborted, "not told to proceed")
 	}
 	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: "WAKE_COLD_BOOT", BootMs: 700,
-		Actions: script == "actions"}}}); err != nil {
+		Actions: script == "actions", EgressPolicy: script == "egress"}}}); err != nil {
 		return err
 	}
 	// vmmd's usage of the session VM, cumulative (step 11).
 	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Usage{Usage: &scheddpb.AgentRunUsage{
 		Method: 1, Samples: 1, ExpectedSamples: 1, MeasuredMs: 1000, BillableMbMs: 264_000, PeakPrivateMb: 100}}}); err != nil {
 		return err
+	}
+	if script == "egress" {
+		// vmmd's domain log (ADR-20261117091026 §4), a repeat included.
+		if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_WebDomains{WebDomains: &scheddpb.SandboxRunWebDomains{
+			Domains: []*scheddpb.SandboxRunWebDomain{{Domain: "example.com", AtUnixMs: 1_800_000_000_000},
+				{Domain: "admin.example.com", Refused: "policy", AtUnixMs: 1_800_000_001_000},
+				{Domain: "example.com", AtUnixMs: 1_800_000_002_000}}}}}); err != nil {
+			return err
+		}
 	}
 	if script == "lose-vm" {
 		time.Sleep(50 * time.Millisecond)
@@ -396,5 +406,59 @@ func TestSandboxActionsRunInOrderAndEndWithTheSession(t *testing.T) {
 	}
 	if state, exit, _ := actionState(pending.ID); state != agentstore.SandboxActionDone || exit != nil {
 		t.Fatalf("a pending action at the session's end = %s %v", state, exit)
+	}
+}
+
+// adr: 20261117091026 §3 — agentd sends a session's domain policy on its
+// start frame, and closes a session with a policy whose node boots it
+// without enforcing one.
+func TestSandboxEgressPolicyFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		script, state, outcome string
+	}{
+		{"egress", agentstore.SandboxReady, ""},
+		{"", agentstore.SandboxFailed, "egress_policy_unsupported"},
+	} {
+		t.Run("script="+tc.script, func(t *testing.T) {
+			_, store := openStore(t)
+			sb, err := store.CreateSandbox(context.Background(), agentstore.SandboxAdmission{AccountID: account, Kind: "ephemeral",
+				Preset: "codex", RAMMB: 1024, NetworkMode: "web", IdleTimeoutSec: 600, ExpiresAt: time.Now().Add(time.Hour), QueuedMax: 100,
+				EgressAllow: []string{"example.com"}, EgressDeny: []string{"admin.example.com"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fake := &fakeSandboxSchedd{scripts: map[string]string{sb.ID: tc.script}}
+			done := holdSandbox(t, newSandboxes(t, store, fake, agentd.SandboxConfig{}))
+			if tc.state == agentstore.SandboxReady {
+				waitFor(t, "ready", func() bool { return sandboxState(t, store, sb.ID).State == agentstore.SandboxReady })
+				var log []agentstore.SandboxDomain
+				waitFor(t, "the domain log", func() bool {
+					log, err = store.SandboxDomains(context.Background(), account, sb.ID)
+					return err == nil && len(log) == 2
+				})
+				if log[0].Domain != "example.com" || log[0].Refused != "" || !log[0].FirstSeen.Equal(time.UnixMilli(1_800_000_000_000)) ||
+					log[1].Domain != "admin.example.com" || log[1].Refused != "policy" {
+					t.Fatalf("domain log %+v", log)
+				}
+				if _, err := store.CloseSandbox(context.Background(), account, sb.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !<-done {
+				t.Fatal("nothing was claimed")
+			}
+			if tc.outcome != "" {
+				if got := sandboxState(t, store, sb.ID); got.State != tc.state || got.OutcomeCode != tc.outcome {
+					t.Fatalf("session = %s %q", got.State, got.OutcomeCode)
+				}
+			}
+			start := fake.starts[0]
+			if !start.GetWebDomainLog() {
+				t.Fatal("agentd did not ask for the domain log")
+			}
+			if !slices.Equal(start.GetEgressAllow(), []string{"example.com"}) || !slices.Equal(start.GetEgressDeny(), []string{"admin.example.com"}) {
+				t.Fatalf("start policy %v / %v", start.GetEgressAllow(), start.GetEgressDeny())
+			}
+		})
 	}
 }
