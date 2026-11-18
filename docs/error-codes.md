@@ -194,7 +194,7 @@ See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a 
 
 ### `app_not_purgeable`
 
-HTTP 409 · App not purgeable
+HTTP 409 Conflict · App not purgeable
 
 ### `app_not_restorable`
 
