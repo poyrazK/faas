@@ -19,16 +19,26 @@ type FlagConversionEvent struct {
 	CustomerID string
 	Value      int64
 	At         time.Time
+	// Subject, Properties and Flags are kept only as product analytics
+	// (ADR 20261117084505 §1): the subject as a hash, properties bounded per
+	// environment, flags as the request's decisions.
+	Subject    string
+	Properties map[string]string
+	Flags      map[string]string
 }
 
 // FlagEventIngest is one runtime batch for an environment. Quota is the
 // account's monthly event quota; MaxNames bounds distinct event names.
+// Analytics stores accepted events as raw product analytics events too, with
+// at most MaxPropertyKeys distinct property keys per environment.
 type FlagEventIngest struct {
-	Scope    FeatureFlagScope
-	Quota    int64
-	MaxNames int
-	Events   []FlagConversionEvent
-	Now      time.Time
+	Scope           FeatureFlagScope
+	Quota           int64
+	MaxNames        int
+	Events          []FlagConversionEvent
+	Now             time.Time
+	Analytics       bool
+	MaxPropertyKeys int
 }
 
 // FlagEventIngestResult says what happened to each event of a batch.
@@ -103,7 +113,13 @@ func (s *PgStore) IngestFlagEvents(ctx context.Context, in FlagEventIngest) (Fla
 		}
 		res.MonthAccepted, res.MonthDropped = totals.Accepted, totals.Dropped
 		res.Accepted = len(events)
-		return foldFlagConversions(ctx, q, tx, acct, env, events)
+		if err := foldFlagConversions(ctx, q, tx, acct, env, events); err != nil {
+			return err
+		}
+		if !in.Analytics || len(events) == 0 {
+			return nil
+		}
+		return insertAnalyticsEvents(ctx, q, tx, in, acct, env, events)
 	})
 	if err != nil {
 		return FlagEventIngestResult{}, err

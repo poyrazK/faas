@@ -53,11 +53,13 @@ func templateDescription(name string) string {
 	case "hello-node":
 		return "minimal Node.js HTTP server — first-touch smoke test"
 	case templates.PrivateNode:
-		return templates.Summary(name)
+		return "internal Node.js HTTP app that fits the Free plan"
 	case "hello-python":
 		return "minimal Python 3.12 HTTP server — first-touch smoke test"
 	case "hello-go":
 		return "minimal Go HTTP server — first-touch smoke test"
+	case templates.PrivateNode:
+		return "internal Node.js HTTP server with no public URL — fits the Free plan"
 	case "cron-example":
 		return "scheduled cron job worker — fires every minute"
 	case "function-node", "function-node24":

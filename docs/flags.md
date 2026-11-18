@@ -683,6 +683,75 @@ and stops the experiment. MCP agents read the same results and recommendation
 with `gregale_list_flag_experiments` and
 `gregale_get_flag_experiment_results` (release toolset).
 
+## Analyze product events
+
+The same `track()` events also feed product analytics: event series, funnels
+and retention, each of which can be split by the variant a customer saw
+([ADR-20261117084505](adr/20261117084505-product-analytics-events-funnels-retention.md)).
+It is behind the `product_analytics` platform flag and needs a plan with
+analytics retention:
+
+| Plan | Raw event retention |
+|---|---|
+| Free | off |
+| Hobby | 30 days |
+| Pro | 90 days |
+| Scale | 365 days |
+
+Analytics events share the monthly event quota with experiments; an event is
+counted once.
+
+### Send properties and a subject
+
+An event may carry up to 10 string properties (keys
+`^[a-z][a-z0-9_]{0,63}$`, values up to 256 bytes; at most 50 distinct keys per
+environment) and an end-user subject. The subject defaults to the one the
+request's flags were evaluated for; Gregale stores only a hash of it. The SDK
+also attaches every flag decision the request made before the call, so any
+event can be split by variant without extra code.
+
+```ts
+flags.track('order_completed', { value: 4200, properties: { plan: 'pro' } });
+```
+
+```python
+flags.track("order_completed", 4200, properties={"plan": "pro"})
+```
+
+```go
+flags.TrackWith(ctx, "order_completed", preview.TrackOptions{Value: 4200, Properties: map[string]string{"plan": "pro"}})
+```
+
+SDKs that send these fields advertise the `track-v2` capability; older SDKs
+keep working without them.
+
+### Query
+
+```bash
+gregale insight event list --project shop --by flag:checkout --from 14d order_completed
+gregale insight funnel get --project shop --window 72h --by flag:checkout signup add_to_cart order_completed
+gregale insight retention get --project shop --period week --periods 4 signup order_completed
+gregale insight request list --project shop --flag checkout
+```
+
+- `--unit subject` counts end users instead of customers and ignores events
+  without a subject.
+- `--by flag:KEY` uses the flag value carried by the unit's earliest event in
+  the range with that flag (for a funnel, its first-step event); `(none)`
+  means the unit never sent an event with that flag. `--by property:KEY`
+  splits by a property. At most 20 values are listed; the rest are `(other)`.
+- Funnels and retention read at most 200,000 units and say `truncated` when
+  they stop; narrow the range or filter.
+- Ranges stop at the plan's retention and 90 days. `insight request list`
+  reads request telemetry and follows its shorter retention.
+
+The API routes are under
+`/v1/projects/{slug}/environments/{environment}/insights` (`GET events`,
+`POST funnel`, `POST retention`, `GET requests`; all read-only). MCP agents use
+`gregale_get_insight_events`, `gregale_get_insight_funnel`,
+`gregale_get_insight_retention` and `gregale_get_insight_requests`
+(diagnose toolset).
+
 ## Promote a guarded rollout stage
 
 Attach a progression plan to a boolean rule that selects `true`. The rule's

@@ -1752,6 +1752,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.Role == role.RoleControlPlane && store != nil {
 		go runOwnerAuthorityMetrics(ctx, ops.Registry(), store, time.Minute, log)
 	}
+	// ADR-20261118160000: the control plane moves parked, long-idle apps back
+	// toward the least owned node, which nothing did after a drain. Every
+	// move is a compare-and-set on apps.node_id, so it is safe under either
+	// owner authority. On unless an operator turns it off.
+	if cfg.Role == role.RoleControlPlane {
+		if os.Getenv("FAAS_OWNER_BALANCE") != "off" {
+			go engine.NewOwnerBalancer().Run(ctx)
+		} else {
+			log.Warn("schedd: ownership balance off (FAAS_OWNER_BALANCE=off)")
+		}
+	}
 	if os.Getenv("FAAS_SCHEDD_OBJECT_GC") == "1" {
 		// ADR-20261115180000: the control plane deletes shared-store objects
 		// compute nodes asked to delete (FAAS_STORAGE_DELETE_MODE=defer),

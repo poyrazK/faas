@@ -18,6 +18,12 @@ import type { FlagOutcomesResponse } from '../models/FlagOutcomesResponse.js';
 import type { FlagRolloutPromotion } from '../models/FlagRolloutPromotion.js';
 import type { FlagRolloutPromotionRequest } from '../models/FlagRolloutPromotionRequest.js';
 import type { FlagsBundle } from '../models/FlagsBundle.js';
+import type { InsightEventSeries } from '../models/InsightEventSeries.js';
+import type { InsightFunnel } from '../models/InsightFunnel.js';
+import type { InsightFunnelRequest } from '../models/InsightFunnelRequest.js';
+import type { InsightRequests } from '../models/InsightRequests.js';
+import type { InsightRetention } from '../models/InsightRetention.js';
+import type { InsightRetentionRequest } from '../models/InsightRetentionRequest.js';
 import type { InspectFeatureFlagRequest } from '../models/InspectFeatureFlagRequest.js';
 import type { RollbackFeatureFlagsRequest } from '../models/RollbackFeatureFlagsRequest.js';
 import type { UpdateFeatureFlagsRequest } from '../models/UpdateFeatureFlagsRequest.js';
@@ -885,6 +891,252 @@ export class FlagsService {
     });
   }
   /**
+   * Read a product analytics event series.
+   * Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by properties and broken down by a flag's served value or a property. Requires the product_analytics platform flag and a plan with analytics retention. The range defaults to the last 7 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays.
+   * @returns InsightEventSeries The event series.
+   * @throws ApiError
+   */
+  public static getProjectInsightEvents({
+    slug,
+    environment,
+    event,
+    interval = 'day',
+    unit = 'customer',
+    by,
+    where,
+    from,
+    until,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Event name.
+     */
+    event: string,
+    /**
+     * Bucket size.
+     */
+    interval?: 'hour' | 'day',
+    /**
+     * What Units counts.
+     */
+    unit?: 'customer' | 'subject',
+    /**
+     * Breakdown: flag:KEY or property:KEY.
+     */
+    by?: string,
+    /**
+     * Repeatable KEY:VALUE property filter.
+     */
+    where?: Array<string>,
+    /**
+     * Range start (RFC 3339).
+     */
+    from?: string,
+    /**
+     * Range end (RFC 3339); defaults to now.
+     */
+    until?: string,
+  }): CancelablePromise<InsightEventSeries> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/events',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'event': event,
+        'interval': interval,
+        'unit': unit,
+        'by': by,
+        'where': where,
+        'from': from,
+        'until': until,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Compute a product analytics funnel.
+   * Read-only. Units that did the steps in order, each step after the previous one, within the window from the first step. A flag breakdown uses the flag value carried by the unit's first-step event.
+   * @returns InsightFunnel Units and conversion per step, overall and per breakdown value.
+   * @throws ApiError
+   */
+  public static postProjectInsightFunnel({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    requestBody: InsightFunnelRequest,
+  }): CancelablePromise<InsightFunnel> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/funnel',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Compute product analytics retention.
+   * Read-only. Cohorts units by the period of their first start event and reports which sent the return event in each following period; only ended periods count. The range defaults to the last 28 days.
+   * @returns InsightRetention Overall, per-cohort and per-breakdown retention.
+   * @throws ApiError
+   */
+  public static postProjectInsightRetention({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    requestBody: InsightRetentionRequest,
+  }): CancelablePromise<InsightRetention> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/retention',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read request telemetry by flag value.
+   * Requests, server errors and p95 latency per served value of one flag, from request telemetry and within its retention. The range defaults to the last day.
+   * @returns InsightRequests Request telemetry per flag value.
+   * @throws ApiError
+   */
+  public static getProjectInsightRequests({
+    slug,
+    environment,
+    flag,
+    from,
+    until,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Flag key.
+     */
+    flag: string,
+    /**
+     * Start of the request telemetry range (RFC 3339); defaults to one day ago.
+     */
+    from?: string,
+    /**
+     * End of the request telemetry range (RFC 3339); defaults to now.
+     */
+    until?: string,
+  }): CancelablePromise<InsightRequests> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/requests',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'flag': flag,
+        'from': from,
+        'until': until,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Report conversion events for flag experiments.
    * Requires the same workload identity as getRuntimeFlags. Account, app and environment come from the token. Each event names the verified customer of the request it belongs to; events for customers that are not active platform tenants of the account are dropped. Accepted events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never billed.
    * @returns FlagEventsResponse What happened to each event of the batch, and the month's usage.
@@ -896,7 +1148,7 @@ export class FlagsService {
   }: {
     requestBody: FlagEventsRequest,
     /**
-     * Comma-separated optional runtime SDK capabilities. SDKs that report events advertise track-v1.
+     * Comma-separated optional runtime SDK capabilities. SDKs that report events advertise track-v1; SDKs that send subject, properties and flags also advertise track-v2.
      */
     xFaasFlagsCapabilities?: string,
   }): CancelablePromise<FlagEventsResponse> {
