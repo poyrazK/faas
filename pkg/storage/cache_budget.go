@@ -55,6 +55,11 @@ func ResolveCacheBudget(memTotalBytes, fsTotalBytes int64) (maxBytes, minFreeByt
 	if reserve := fsTotalBytes / 100 * api.ArtifactCacheReservePercent; reserve > minFreeBytes {
 		minFreeBytes = reserve
 	}
+	// ADR-20261118003000: a disk that can host builds keeps one build drive
+	// free; builderd cannot evict the captures and layers vmmd owns.
+	if fsTotalBytes >= 2*api.ArtifactCacheBuildFreeBytes && minFreeBytes < api.ArtifactCacheBuildFreeBytes {
+		minFreeBytes = api.ArtifactCacheBuildFreeBytes
+	}
 	if disk := fsTotalBytes - minFreeBytes; disk > maxBytes {
 		maxBytes = disk
 	}
