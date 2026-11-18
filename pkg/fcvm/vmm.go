@@ -241,6 +241,10 @@ type JailerVMM struct {
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.
 	bindMounts map[string][]ephemeralBind
+	// buildkitSeedSources is each builder's host BuildKit seed drive, handed
+	// back to builderd once the VM is gone (buildkit_seed_handback.go).
+	// Guarded by mu.
+	buildkitSeedSources map[string]string
 	// driveBaseKeys is the storage key of the app layer each instance's
 	// private drive started from, recorded at boot and restore. A park
 	// uploads the drive as a delta against it (ADR-20261115213230). Guarded
@@ -4301,6 +4305,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 	if err := v.unmountBindMounts(l.Instance); err != nil {
 		return err
 	}
+	v.handBackBuildKitSeed(l.Instance)
 	if err := v.removeOwnedJail(l.Instance); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
@@ -5942,6 +5947,9 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		} else if d.IsReadOnly {
 			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
+			if d.DriveID == DriveBuildKitSeed {
+				v.noteBuildKitSeedSource(instanceID, d.PathOnHost)
+			}
 			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, writableDriveImageName(d), uid, gid, instanceID)
 		} else {
 			name, err = v.stageWritableAsForOwner(ctx, owner, root, d.PathOnHost, writableDriveImageName(d), uid, gid, instanceID)
