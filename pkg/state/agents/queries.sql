@@ -473,19 +473,20 @@ SELECT count(*)::integer FROM sandbox_sessions WHERE account_id=sqlc.arg(account
 
 -- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny)
 VALUES (sqlc.arg(account_id)::text::uuid,sqlc.narg(tenant_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(preset)::text,
   sqlc.arg(ram_mb)::integer,sqlc.arg(network_mode)::text,sqlc.arg(idle_timeout_sec)::integer,sqlc.arg(expires_at)::timestamptz,
   sqlc.arg(labels)::jsonb,sqlc.narg(workspace_snapshot_id)::text::uuid,sqlc.narg(image_ref)::text,sqlc.narg(image_job_id)::text::uuid,
   sqlc.narg(template_id)::text::uuid,sqlc.arg(browser)::boolean,sqlc.narg(task_kind)::text,sqlc.narg(task_url)::text,
-  sqlc.narg(task_max_chars)::integer)
+  sqlc.narg(task_max_chars)::integer,sqlc.narg(egress_allow)::text[],sqlc.narg(egress_deny)::text[])
 RETURNING id::text AS id;
 
 -- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: ListSandboxSessions :many
@@ -493,7 +494,8 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions
  WHERE account_id=sqlc.arg(account_id)::text::uuid
  AND (sqlc.narg(state)::text IS NULL OR state=sqlc.narg(state)::text)
@@ -549,7 +551,8 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
   coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
   coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
-  coalesce(sb.task_max_chars, 0)::integer AS task_max_chars
+  coalesce(sb.task_max_chars, 0)::integer AS task_max_chars,
+  coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
@@ -895,3 +898,37 @@ SELECT a.id::text AS id, a.screenshot_key::text AS screenshot_key
 
 -- name: ClearSandboxScreenshot :exec
 UPDATE sandbox_actions SET screenshot_key = NULL WHERE id = sqlc.arg(id)::text::uuid;
+-- name: GetSandboxEgressPolicy :one
+-- ADR-20261117091026 §2: the account's default web-mode domain policy.
+SELECT allow_rules, deny_rules, updated_at FROM sandbox_egress_policies WHERE account_id = sqlc.arg(account_id)::text::uuid;
+
+-- name: PutSandboxEgressPolicy :one
+INSERT INTO sandbox_egress_policies (account_id, allow_rules, deny_rules)
+VALUES (sqlc.arg(account_id)::text::uuid, sqlc.arg(allow_rules)::text[], sqlc.arg(deny_rules)::text[])
+ON CONFLICT (account_id) DO UPDATE SET allow_rules = EXCLUDED.allow_rules, deny_rules = EXCLUDED.deny_rules, updated_at = now()
+RETURNING allow_rules, deny_rules, updated_at;
+
+-- name: CountSandboxSessionDomains :one
+-- How many grants and refusals a session's domain log holds
+-- (ADR-20261117091026 §4).
+SELECT count(*) FILTER (WHERE refused = '')::integer AS granted,
+       count(*) FILTER (WHERE refused <> '')::integer AS refused
+  FROM sandbox_session_domains WHERE sandbox_id=sqlc.arg(session_id)::text::uuid;
+
+-- name: RecordSandboxSessionDomains :execrows
+-- Adds entries to a session's domain log while the lease is held and the
+-- session has a VM; an entry already there keeps its first sighting.
+INSERT INTO sandbox_session_domains (sandbox_id, domain, refused, first_seen)
+SELECT s.id, x.domain, x.refused, x.first_seen
+  FROM sandbox_sessions s,
+       (SELECT unnest(sqlc.arg(domains)::text[]) AS domain, unnest(sqlc.arg(refused)::text[]) AS refused,
+               unnest(sqlc.arg(first_seen)::timestamptz[]) AS first_seen) x
+ WHERE s.id=sqlc.arg(session_id)::text::uuid AND s.lease_token=sqlc.arg(lease_token)::text AND s.state IN ('ready','frozen')
+ON CONFLICT DO NOTHING;
+
+-- name: ListSandboxSessionDomains :many
+-- A session's domain log, for its account (ADR-20261117091026 §4).
+SELECT d.domain, d.refused, d.first_seen
+  FROM sandbox_session_domains d JOIN sandbox_sessions s ON s.id = d.sandbox_id
+ WHERE d.sandbox_id=sqlc.arg(session_id)::text::uuid AND s.account_id=sqlc.arg(account_id)::text::uuid
+ ORDER BY d.first_seen, d.refused, d.domain;

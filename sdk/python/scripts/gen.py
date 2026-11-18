@@ -228,7 +228,6 @@ PREVIEW_WRAPPER_MODULES = (
     "event_outbox_state.py",
     "event_outbox_transaction.py",
     "event_publication.py",
-
     "event_contract.py",
     "event_types.py",
     "event_pipeline_state.py",

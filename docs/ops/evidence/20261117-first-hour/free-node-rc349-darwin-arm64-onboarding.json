@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "reason": "fresh_free_node_onboarding_passed",
+  "provenance": {
+    "evidence_kind": "deployed",
+    "target": "https://api.gregale.dev",
+    "plan": "free",
+    "interaction": "scripted_pty_and_browser",
+    "started_at": "2026-11-17T19:02:42Z",
+    "cli_version": "v0.1.18-rc.349",
+    "cli_sha256": "7a1597ffc8dc91ba76ca4f8478c12cb84fb608da9b513c1881b9c12d7daf12c1",
+    "harness_revision": "143bfe14d73a11c89a770cf14d4084a99cfc4206",
+    "harness_worktree_dirty": false
+  },
+  "phases": {
+    "isolated_environment": {
+      "status": "passed",
+      "seconds": 0.001
+    },
+    "published_install": {
+      "status": "passed",
+      "seconds": 32.34
+    },
+    "fresh_browser_login": {
+      "status": "passed",
+      "seconds": 130.546
+    },
+    "free_account_preflight": {
+      "status": "passed",
+      "seconds": 1.604
+    },
+    "start_node": {
+      "status": "passed",
+      "seconds": 132.769
+    },
+    "edit_same_app": {
+      "status": "passed",
+      "seconds": 129.769
+    },
+    "cleanup_app": {
+      "status": "passed",
+      "seconds": 3.526
+    },
+    "logout": {
+      "status": "passed",
+      "seconds": 1.289
+    }
+  },
+  "artifact": {
+    "release_tag": "v0.1.18-rc.349",
+    "release_url": "https://github.com/poyrazK/faas/releases/tag/v0.1.18-rc.349",
+    "published_at": "2026-11-17T12:11:51Z",
+    "platform": "darwin/arm64",
+    "archive": "gregale_0.1.18-rc.349_darwin_arm64.tar.gz",
+    "archive_url": "https://github.com/poyrazK/faas/releases/download/v0.1.18-rc.349/gregale_0.1.18-rc.349_darwin_arm64.tar.gz",
+    "checksum_manifest_sha256": "35c0280d016a59d1e305a1af8afeb88cad3200b267b8fef4d92206a3b7c8c006",
+    "expected_archive_sha256": "7b10c2c34b2f93110c8965a252bc95ff8b2030b658e1411299353465f4625c78",
+    "archive_sha256": "7b10c2c34b2f93110c8965a252bc95ff8b2030b658e1411299353465f4625c78",
+    "checksum_verified": true,
+    "cli_sha256": "7a1597ffc8dc91ba76ca4f8478c12cb84fb608da9b513c1881b9c12d7daf12c1",
+    "cli_version": "v0.1.18-rc.349",
+    "cli_source_sha": "37b55bddef0ce36d22b524c9270b290ecd529e81",
+    "release_verify_available": true,
+    "status": "passed",
+    "installer_url": "https://get.gregale.dev",
+    "installer_sha256": "c45e00f965c0cef6ef0b028bdcfa406cce554c4755d36996b63bb95af5d88334",
+    "installer_cli_matches_archive": true
+  },
+  "proof": {
+    "signed_out_before_login": true,
+    "expected_account_verified": true,
+    "initial_app_count": 0,
+    "source_before_sha256": "8fdd5e674277164bf8cd8e28cb2e3f12b91787cc583ba17fbe0d859eedaacaca",
+    "first_response": {
+      "app_sha256": "29b429528be2cd84b69b664457de492b8ea36b2a30ecaf587856e546f3baca6f",
+      "deployment_sha256": "f56b6783c03fb97d1ed47ef51c8ea631b10c80563cad5d344d12581bb375aa38",
+      "instance_sha256": "a6bf588b63a6befb4e6d938d2356fae1b6d8e2b26b6c4f33098d91aafecc091a",
+      "greeting_sha256": "be17a83f8d73ea61efad6e8ba3b7e80c0026c59c7b1aab22af925b57414b4ced",
+      "http_status": 200,
+      "verified": true
+    },
+    "edited_response": {
+      "app_sha256": "29b429528be2cd84b69b664457de492b8ea36b2a30ecaf587856e546f3baca6f",
+      "deployment_sha256": "71bde61804e4e5bc47b6905500861d94567e1d95e1b2ead2f20093efc42f4b2d",
+      "instance_sha256": "a5a41171f4e1531bf7785e32a873fde89fd85cc9d464202059e7127ee0080eb1",
+      "greeting_sha256": "e80c818d79e83f5ce76ec8194b832b269fbf9f79f4727b99f7febf326c33e4ae",
+      "http_status": 200,
+      "verified": true
+    },
+    "source_after_sha256": "d2db031cb8353b8e9c91585de9ddaea8c978dbf17e0538f76d81d52b1e2067d8",
+    "submitted_releases": 2,
+    "live_app_count": 1,
+    "final_app_count": 0
+  },
+  "metrics": {
+    "install_s": 32.185,
+    "browser_login_s": 130.088,
+    "first_response_from_start_s": 297.377,
+    "edit_to_response_s": 129.767,
+    "complete_s": 427.159
+  }
+}

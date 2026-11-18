@@ -42,9 +42,28 @@ func cmdAppExec(slug string, args []string) int {
 	waitTimeout := fs.Duration("wait-timeout", appTaskWaitTimeoutDefault, "maximum time for the CLI to remain attached")
 	interactive := fs.Bool("interactive", false, "attach stdin and stream output live, -i (ADR-1037)")
 	tty := fs.Bool("tty", false, "allocate a remote terminal, -t (requires --interactive)")
-	flags, positionals := splitArgsForFlags(expandShortExecFlags(args), "shell", "detach", "interactive", "tty")
+	debug := fs.Bool("debug", false, "add busybox debug tools to the session, for images without a shell (implies -it)")
+	noTTY := fs.Bool("no-tty", false, "with --debug: no remote terminal")
+	flags, positionals := splitArgsForFlags(expandShortExecFlags(args), "shell", "detach", "interactive", "tty", "debug", "no-tty")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	if *noTTY && !*debug {
+		printAppExecUsage()
+		return 1
+	}
+	if *debug {
+		// ADR-20261117070620: the session runs the command with the runtime
+		// base's busybox on PATH, after the image's own tools.
+		if *shell {
+			return printErr("Invalid app command", errors.New("--debug runs a command directly; drop --shell and pass the command, e.g. -- sh -c '...'"))
+		}
+		command := positionals
+		if len(command) == 0 {
+			command = []string{api.AppTaskDebugDefaultCommand}
+		}
+		positionals = append([]string{api.AppTaskDebugCommand}, command...)
+		*interactive, *tty = true, !*noTTY
 	}
 	if *interactive || *tty {
 		if !*interactive || *detach || *operationPolicy != "" || *maxOutputBytes != 0 || slug == "" {
@@ -225,7 +244,7 @@ func validJSONScalar(value string) bool {
 func printAppExecUsage() {
 	PrintUsage(
 		osStderr,
-		"usage: gregale app exec <slug> [--shell] [--detach] [--timeout-seconds N] [--max-output-bytes N] [--operation-policy NAME --operation-key JSON] [--equivalence-key KEY] [--idempotency-key KEY] [--poll-interval D] [--wait-timeout D] -- <command> [args...]\n       gregale app exec <slug> -i [-t] [--shell] [--timeout-seconds N] [--wait-timeout D] [-- <command> [args...]]   (interactive; default command /bin/sh)",
+		"usage: gregale app exec <slug> [--shell] [--detach] [--timeout-seconds N] [--max-output-bytes N] [--operation-policy NAME --operation-key JSON] [--equivalence-key KEY] [--idempotency-key KEY] [--poll-interval D] [--wait-timeout D] -- <command> [args...]\n       gregale app exec <slug> -i [-t] [--shell] [--timeout-seconds N] [--wait-timeout D] [-- <command> [args...]]   (interactive; default command /bin/sh)\n       gregale app exec <slug> --debug [--no-tty] [--timeout-seconds N] [-- <command> [args...]]   (busybox tools for images without a shell; default command sh)",
 		"apps",
 	)
 }

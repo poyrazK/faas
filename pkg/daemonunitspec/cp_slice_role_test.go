@@ -67,8 +67,14 @@ func TestControlPlaneSliceLimitsComeFromOperatorVariables(t *testing.T) {
 		t.Errorf("faas-cp.slice still hard-codes a limit:\n%s", content)
 	}
 
-	if len(patterns) != 2 {
-		t.Fatalf("validate task has %d match() patterns, want 2 (memory, cpu): %v", len(patterns), patterns)
+	if len(patterns) != 3 {
+		t.Fatalf("validate task has %d match() patterns, want 3 (memory, cpu, build memory): %v", len(patterns), patterns)
+	}
+	if patterns[2] != patterns[0] {
+		t.Errorf("build slice memory pattern %q differs from the cp slice memory pattern %q", patterns[2], patterns[0])
+	}
+	if defaults["faas_cp_build_slice_memory_max"] != "5120M" {
+		t.Errorf("faas_cp_build_slice_memory_max default = %v, want 5120M", defaults["faas_cp_build_slice_memory_max"])
 	}
 	memory, cpu := regexp.MustCompile(patterns[0]), regexp.MustCompile(patterns[1])
 	for _, tc := range []struct {

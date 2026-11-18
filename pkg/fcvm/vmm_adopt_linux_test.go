@@ -33,7 +33,7 @@ func TestAdoptGuestProcessSignalsAndWatchesThroughPidfds(t *testing.T) {
 	v := NewJailerVMM(t.TempDir(), time.Second)
 	var exits atomic.Int32
 	var code atomic.Int32
-	v.processExitSink = func(_ string, exitCode int) { exits.Add(1); code.Store(int32(exitCode)) }
+	v.processExitSink = func(_ string, exitCode int) { code.Store(int32(exitCode)); exits.Add(1) } // code first: the test reads it once exits is set
 	l := leaseForSlot(idLive, 3)
 	l.Plan, l.MemoryMaxMiB = api.PlanPro, 512
 	// The guest's cgroup scope exists while it runs; adoption rewrites its

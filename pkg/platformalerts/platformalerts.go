@@ -186,18 +186,50 @@ func (w *Worker) queueOutage(ctx context.Context, appID string, pct float64, req
 }
 
 // hasOwnErrorRateRule reports whether the app already has an enabled
-// error-rate alert rule: its owner chose how to be told.
+// error-rate alert rule, or an enabled burn alert on an availability SLO
+// (the protection baseline's, ADR-20261116120000 §7, or the owner's own):
+// its owner already gets told, and a full outage burns the budget before
+// the outage detector fires.
 func (w *Worker) hasOwnErrorRateRule(ctx context.Context, app state.App) (bool, error) {
 	rules, err := w.Store.ListAlertRulesForAccount(ctx, app.AccountID)
 	if err != nil {
 		return false, err
 	}
 	for _, r := range rules {
-		if r.Enabled && r.AppID == app.ID && string(r.Metric) == "error_rate_pct" {
+		if !r.Enabled || r.AppID != app.ID {
+			continue
+		}
+		if string(r.Metric) == "error_rate_pct" {
 			return true, nil
+		}
+		if r.Metric == state.AlertMetricSLOBudgetBurn && r.SLOID != "" {
+			available, err := w.availabilitySLO(ctx, app.ID, r.SLOID)
+			if err != nil {
+				return false, err
+			}
+			if available {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
+}
+
+// availabilitySLO reports whether the app's SLO measures availability. A
+// store without SLO definitions cannot say, so a burn rule counts.
+func (w *Worker) availabilitySLO(ctx context.Context, appID, sloID string) (bool, error) {
+	slos, ok := w.Store.(state.SLOStore)
+	if !ok {
+		return true, nil
+	}
+	def, err := slos.GetSLO(ctx, appID, sloID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return def.SLI == state.SLIAvailability, nil
 }
 
 // SendDue delivers the notices due now.

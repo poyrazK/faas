@@ -33,6 +33,9 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) stri
 		// ADR-20261116182615 rollout: browser sessions are on once vmmd,
 		// schedd and agentd carry them.
 		Browser: strings.TrimSpace(getenv("FAAS_SANDBOX_BROWSER")) == "1",
+		// ADR-20261117091026 rollout: domain policies are on once vmmd,
+		// schedd and agentd enforce them.
+		EgressPolicy: strings.TrimSpace(getenv("FAAS_SANDBOX_EGRESS_POLICY")) == "1",
 		Audit: func(ctx context.Context, action, accountID string, fields map[string]any) {
 			s.audit.Emit(ctx, action, &accountID, fields)
 		},

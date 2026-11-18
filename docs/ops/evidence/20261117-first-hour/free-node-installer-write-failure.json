@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "status": "failed",
+  "reason": "onboarding_step_failed",
+  "provenance": {
+    "evidence_kind": "deployed",
+    "target": "https://api.gregale.dev",
+    "plan": "not_measured",
+    "interaction": "scripted_pty_and_browser",
+    "started_at": "2026-11-17T18:57:39Z"
+  },
+  "phases": {
+    "isolated_environment": {
+      "status": "passed",
+      "seconds": 0.005
+    },
+    "published_install": {
+      "status": "failed",
+      "seconds": 2.962
+    },
+    "fresh_browser_login": {
+      "status": "not_run",
+      "seconds": null
+    },
+    "free_account_preflight": {
+      "status": "not_run",
+      "seconds": null
+    },
+    "start_node": {
+      "status": "not_run",
+      "seconds": null
+    },
+    "edit_same_app": {
+      "status": "not_run",
+      "seconds": null
+    },
+    "cleanup_app": {
+      "status": "not_run",
+      "seconds": null
+    },
+    "logout": {
+      "status": "not_run",
+      "seconds": null
+    }
+  },
+  "artifact": {},
+  "proof": {},
+  "metrics": {}
+}

@@ -20,6 +20,15 @@
 # The image is built and published by CI. imaged resolves the immutable
 # per-runtime reference and auto-stages the matching ext4 on first use, so a
 # newly provisioned compute node does not need a hand-copied runtime image.
+# Debug tools for `gregale app exec --debug` (ADR-20261117070620): the pinned
+# static BusyBox (root:root 0555) with applet links, at /usr/lib/gregale/debug.
+# guest-init mounts it only into a debug session's private mount namespace; it
+# is not on any PATH. Every runtime base carries the same BusyBox.
+FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools
+RUN set -eu; mkdir -p /out/bin; cp /bin/busybox /out/busybox; \
+    for applet in $(/bin/busybox --list); do ln -s ../busybox "/out/bin/$applet"; done; \
+    chmod 0555 /out/busybox
+
 FROM mirror.gcr.io/library/golang:1.24-alpine@sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a
 # Issue #197 B3.6 (extension): mutable tag pinned via images/Dockerfile.lock.
 
@@ -38,3 +47,6 @@ RUN apk upgrade --no-cache && \
 # (the customer-emitted static binary at /app/server). The shim is
 # identical to the bookworm variant — libc only differs.
 WORKDIR /app
+
+# ADR-20261117070620: debug tools for `gregale app exec --debug`.
+COPY --from=gregale-debug-tools /out/ /usr/lib/gregale/debug/

@@ -44,6 +44,16 @@ class ChainProblemTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("images/runner-node24.Dockerfile", problems[0])
 
+    def test_ignores_debug_tools_stage_entry(self):
+        # ADR-20261117070620: the busybox stage is copied into the child, it
+        # is not the child's base, so its lock entry is not the child's FROM.
+        pinned = lock(parent="sha256:new", node="sha256:new")
+        pinned["pinned"].append({
+            "dockerfile": "images/runner-node24.Dockerfile", "resolved_repo": "mirror.gcr.io/library/busybox",
+            "digest": "sha256:bb", "pinned_in_dockerfile": "FROM busybox@sha256:bb AS gregale-debug-tools"})
+        problems = check.chain_problems(pinned, ["images/runner-node24.Dockerfile"], self.layers.__getitem__)
+        self.assertEqual(problems, [])
+
     def test_requires_one_lock_entry_per_dockerfile(self):
         with self.assertRaises(ValueError):
             check.chain_problems(lock(parent="sha256:new"), ["images/runner-node24.Dockerfile"],

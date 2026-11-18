@@ -148,7 +148,7 @@ func TestPooledDaemonConnectionBudgetFitsFleet(t *testing.T) {
 	reserved := postgresCapacityDefault(t, "faas_postgres_superuser_reserved_connections")
 	headroom := postgresCapacityDefault(t, "faas_postgres_min_operator_headroom")
 	overlap := postgresCapacityDefault(t, "faas_postgres_rollout_overlap_nodes")
-	for _, tc := range []struct{ nodes, want int32 }{{2, 250}, {12, 490}, {50, 1400}, {100, 2600}} {
+	for _, tc := range []struct{ nodes, want int32 }{{2, 250}, {12, 520}, {50, 1530}, {100, 2860}} {
 		steady := control + tc.nodes*direct
 		rollout := control + (tc.nodes+overlap)*direct
 		ordinary := max32((steady*4+2)/3, rollout+headroom)

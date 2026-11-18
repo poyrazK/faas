@@ -212,6 +212,8 @@ type Builderd struct {
 	// future opportunistic eligibility but cannot bypass this host fence.
 	slotMu      sync.Mutex
 	activeSlots int
+	// sliceFreeMB overrides the builder-slice memory read in tests.
+	sliceFreeMB func() (int, bool)
 	// sourceStorage is the optional remote source handoff used by split-box
 	// deployments. Local/single-box deployments leave it nil and continue to
 	// read the source spool directly.
@@ -1182,37 +1184,42 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 
 	dependencyCacheKey := dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef)
+	dependencyCacheSeedKey := ""
+	if dependencyCacheKey != "" && len(buildSecrets) == 0 && len(registryCreds) == 0 {
+		dependencyCacheSeedKey = dependencyCacheFamilyKey(app, fw, runtimeBaseRef)
+	}
 	vmReq := VMRequest{
-		BuildDependencyDigest: buildDependencyDigest,
-		PublicBuildURLs:       publicURLs,
-		DockerfileBuild:       dockerfileBuild,
-		GoCommand:             goCommand,
-		BuildSecrets:          buildSecrets,
-		RegistryCredentials:   registryCreds,
-		BuildID:               build.ID,
-		TenantID:              app.AccountID,
-		DeploymentID:          dep.ID,
-		SourcePath:            dep.SourcePath,
-		SourceSHA256:          srcHash,
-		SourceRoot:            dep.SourceRoot,
-		DockerfilePath:        dockerfilePath,
-		Framework:             fw,
-		Runtime:               runtimeName,
-		RuntimeBaseRef:        runtimeBaseRef,
-		IssueSourceMaps:       sourceMaps,
-		Function:              app.Type == state.AppTypeFunction,
-		SharedRuntime:         sharedRuntime != "",
-		DevWatchCommand:       watch.Command,
-		DevWatchHost:          watch.Host,
-		DependencyCacheKey:    dependencyCacheKey,
-		LayerCompression:      b.cfg.LayerCompression,
-		BuildKitSnapshotter:   b.cfg.BuildKitSnapshotter,
-		DeferCacheExport:      b.cfg.DeferCacheExport,
-		LogPath:               dep.LogPath,
-		RAMMB:                 api.BuildVMRAMMB,
-		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
-		Plan:                  string(acct.Plan),
-		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
+		BuildDependencyDigest:  buildDependencyDigest,
+		PublicBuildURLs:        publicURLs,
+		DockerfileBuild:        dockerfileBuild,
+		GoCommand:              goCommand,
+		BuildSecrets:           buildSecrets,
+		RegistryCredentials:    registryCreds,
+		BuildID:                build.ID,
+		TenantID:               app.AccountID,
+		DeploymentID:           dep.ID,
+		SourcePath:             dep.SourcePath,
+		SourceSHA256:           srcHash,
+		SourceRoot:             dep.SourceRoot,
+		DockerfilePath:         dockerfilePath,
+		Framework:              fw,
+		Runtime:                runtimeName,
+		RuntimeBaseRef:         runtimeBaseRef,
+		IssueSourceMaps:        sourceMaps,
+		Function:               app.Type == state.AppTypeFunction,
+		SharedRuntime:          sharedRuntime != "",
+		DevWatchCommand:        watch.Command,
+		DevWatchHost:           watch.Host,
+		DependencyCacheKey:     dependencyCacheKey,
+		DependencyCacheSeedKey: dependencyCacheSeedKey,
+		LayerCompression:       b.cfg.LayerCompression,
+		BuildKitSnapshotter:    b.cfg.BuildKitSnapshotter,
+		DeferCacheExport:       b.cfg.DeferCacheExport,
+		LogPath:                dep.LogPath,
+		RAMMB:                  api.BuildVMRAMMB,
+		TimeoutSec:             b.cfg.BuildTimeoutSeconds,
+		Plan:                   string(acct.Plan),
+		WarmScopeKey:           builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
 	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
 		// A build with secrets or registry credentials never restores or

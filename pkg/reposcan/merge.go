@@ -88,6 +88,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		image               string // highest-tier seed's prebuilt image
 		healthcheck         *api.ComposeHealthcheck
 		readinessCheck      *api.DeploymentHealthcheck
+		slugPrefix          string
+		startupDeadlineS    int
+		publicAuth          string
 		ingressSettings     []IngressSetting
 		labels              map[string]string
 		imageProcess        *api.ComposeProcess
@@ -201,6 +204,15 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		}
 		if b.labels == nil && s.labels != nil {
 			b.labels = maps.Clone(s.labels)
+		}
+		if b.slugPrefix == "" {
+			b.slugPrefix = s.slugPrefix
+		}
+		if b.startupDeadlineS == 0 {
+			b.startupDeadlineS = s.startupDeadlineS
+		}
+		if b.publicAuth == "" {
+			b.publicAuth = s.publicAuth
 		}
 		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
@@ -332,6 +344,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			CommandShell:        b.commandShell,
 			ImageHealthcheck:    b.healthcheck.Clone(),
 			ReadinessCheck:      b.readinessCheck.Clone(),
+			SlugPrefix:          b.slugPrefix,
+			StartupDeadlineS:    b.startupDeadlineS,
+			PublicAuthMode:      b.publicAuth,
 			IngressSettings:     slices.Clone(b.ingressSettings),
 			Labels:              maps.Clone(b.labels),
 			ImageProcess:        b.imageProcess.Clone(),

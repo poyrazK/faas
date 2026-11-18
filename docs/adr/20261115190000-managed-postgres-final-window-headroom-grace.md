@@ -84,3 +84,25 @@ the next window, an earlier missing window and a final window overdue by
 `stale_after`. `TestFinalWindowPendingAdmitsOnlyWithHeadroom` checks admission
 just under and at the margin of each ceiling, and that another database's hard
 issue still blocks.
+
+## Amendment 1 (2026-11-17): a live database's latest window
+
+- **Context:** a live database's coverage counted as `coverage_incomplete`, a
+  hard block, from the moment an hour closed until the sweep collected it. The
+  provider publishes an hour's usage some minutes after the hour ends (prod
+  sweeps still answered `managed postgres unavailable` 18 and 23 minutes past
+  20:00 on 2026-11-16), so every hour began with the whole account's creates,
+  restores and resizes refused (TestManagedPostgres resize and restore, prod
+  journeys 2026-11-16). A database created in the hour that just closed had the
+  same block as `coverage_missing`.
+- **Decision (owner, 2026-11-17):** a live database whose only uncollected
+  window is the most recent closed one, or which was created in it, reports
+  `latest_window_pending`. Like `final_window_pending`, it is admitted while the
+  recorded month is below 90% of every ceiling. Two or more uncollected
+  windows block as before, and `observation_stale` still blocks a provider that
+  keeps failing past `usage.stale_after_seconds`. The uncollected hour adds at
+  most one window of one database's usage, the same bound this ADR accepted
+  for a deleted database's final window.
+- **API:** `latest_window_pending` joins the accounting diagnostic reasons
+  (OpenAPI enum, SDK models).
+

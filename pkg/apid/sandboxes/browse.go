@@ -52,7 +52,7 @@ func (h *Handler) AdmitBrowse(ctx context.Context, acct state.Account, url strin
 	}
 	lifetime := timeout + int(browseTaskSlack/time.Second)
 	lifetime = min(lifetime, api.SandboxMaxLifetimeSec[acct.Plan.PlanIndex()])
-	a, prob := h.admission(acct, createBody{CreateSandboxRequest: api.CreateSandboxRequest{Preset: agentpresets.Names()[0],
+	a, prob := h.admission(ctx, acct, createBody{CreateSandboxRequest: api.CreateSandboxRequest{Preset: agentpresets.Names()[0],
 		Browser: true, Network: &api.SandboxNetwork{Mode: api.SandboxNetworkWeb}, LifetimeS: lifetime}})
 	if prob != nil {
 		return sb, false, prob
@@ -145,7 +145,7 @@ func (h *Handler) AdmitBrowserSession(ctx context.Context, acct state.Account, u
 	if idle == 0 || lifetime == 0 {
 		return sb, false, api.ErrAgentLimit(acct.Plan, "SandboxBrowserLifetimeSec", 0, 1)
 	}
-	a, prob := h.admission(acct, createBody{CreateSandboxRequest: api.CreateSandboxRequest{Preset: agentpresets.Names()[0],
+	a, prob := h.admission(ctx, acct, createBody{CreateSandboxRequest: api.CreateSandboxRequest{Preset: agentpresets.Names()[0],
 		Browser: true, Network: &api.SandboxNetwork{Mode: api.SandboxNetworkWeb}, IdleTimeoutS: idle, LifetimeS: lifetime}})
 	if prob != nil {
 		return sb, false, prob

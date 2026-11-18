@@ -1678,9 +1678,20 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			DeploymentID string    `json:"deployment_id"`
 			Token        string    `json:"token"`
 			ExpiresAt    time.Time `json:"expires_at"`
+			// Unbilled marks a protection-baseline health probe
+			// (ADR-20261116120000 §3).
+			Unbilled bool `json:"unbilled"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.DeploymentID == "" || p.Token == "" || p.ExpiresAt.IsZero() {
 			log.Warn("gatewayd: bad route probe challenge", "payload_length", len(n.Payload))
+			return
+		}
+		if p.Unbilled {
+			if authorizer, ok := inv.(interface {
+				AuthorizeUnbilledRouteProbe(string, string, string, time.Time)
+			}); ok {
+				authorizer.AuthorizeUnbilledRouteProbe(p.AppID, p.DeploymentID, p.Token, p.ExpiresAt)
+			}
 			return
 		}
 		if p.Scope != "" {
