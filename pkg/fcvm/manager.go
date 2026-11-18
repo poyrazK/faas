@@ -469,6 +469,9 @@ type Instance struct {
 	// it serves sandbox calls, and only for that session. WakeSandbox sets
 	// it.
 	SandboxID string
+	// agentEgressIP is the VM's address in this node's agent tunnel slice
+	// (ADR-20261117185346 §2); invalid for a VM on the tenant path.
+	agentEgressIP netip.Addr
 	// AgentRunRelay is the run principal of the VM's relay; host-only.
 	AgentRunRelay *AgentRunRelay `json:"-"`
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).
@@ -1439,6 +1442,9 @@ type Manager struct {
 	// host policy so concurrent static-egress and SMTP allowlist changes
 	// cannot overwrite each other's fields.
 	hostPolicyMu sync.Mutex
+	// agentEgress is the agent tunnel (ADR-20261117185346, agent_egress.go);
+	// its maps are guarded by mu. Zero keeps sandboxes on the tenant path.
+	agentEgress agentEgressState
 
 	// Quiet pause (ADR-1151; quiet_pause.go). quietActivity is nil unless
 	// vmmd.toml enables quiet pause. quietMu guards quietStates and is a
@@ -1679,6 +1685,7 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 			AppID:        inst.AppID,
 		})
 	}
+	agentRules := m.agentEgressRulesLocked()
 	for id, starting := range m.staticEgressStarting {
 		if m.live[id] != nil {
 			continue
@@ -1704,6 +1711,9 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 	next := *cur
 	next.SMTPAllowlistRules = rules
 	next.StaticEgressRules = staticRules
+	if cfg := m.agentEgress.cfg; cfg != nil {
+		next.AgentEgressIface, next.AgentEgressRules = cfg.Iface, agentRules
+	}
 	next.StaticEgressBlockedSources = blockedSources
 	next.PrivateNetworkBridges = privateBridges
 	if next.TenantEgressIface != "" && len(staticRules) > 0 {
@@ -5468,6 +5478,15 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := m.prepareStaticEgressWake(ctx, req, qualificationOnly); err != nil {
 		return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
 	}
+	undoAgentEgress, agentErr := m.prepareAgentEgressWake(ctx, req, lease)
+	if agentErr != nil {
+		return nil, fmt.Errorf("wake %s: %w", req.Instance, agentErr)
+	}
+	defer func() {
+		if err != nil {
+			undoAgentEgress()
+		}
+	}()
 	// Issue #679 / PR-A: cache the per-app slice BEFORE the
 	// operator-bundle merge so SetEgressOperatorBundle can read
 	// the authoritative per-app set on a subsequent bundle
@@ -6017,6 +6036,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		delete(m.waking, req.Instance)
 		m.adoptBootingEgressLocked(inst)
+		m.agentEgressStartedLocked(inst)
 		m.live[req.Instance] = inst
 		m.recordProvenWorkerLocked(inst)
 		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {

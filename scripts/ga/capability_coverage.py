@@ -98,6 +98,8 @@ RULES = [
     (r"/v1/status|status-incident", "Public status page"),
     (r"/v1/synthesize|synth", "INFRA"),
     (r"/v1/internal/(apps|services)/", "INFRA"),
+    # agentproxyd's registration API, reached by vmmd over wg-agent (ADR-20261117185346 §4).
+    (r"^/v1/registrations/", "INFRA"),
     (r"/v1/apps/\{slug\}/diff|^diff$", "Affected-workload preview"),
     (r"apps/\{slug\}/env/|app-envs?$", "Env vars:"),
     (r"health/history|^apps/status status$|^conditions$", "App health assessment"),
