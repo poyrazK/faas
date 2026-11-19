@@ -167,7 +167,7 @@ func webFetchResult(resp *http.Response) (string, bool, error) {
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, api.AgentWebFetchMaxBytes+1))
 	if err != nil {
-		return "web_fetch: the page could not be read", true, nil
+		return "web_fetch: the page could not be read", true, nil //nolint:nilerr // A failed read is the page's fault: the agent reads it as an error result.
 	}
 	truncated := len(body) > api.AgentWebFetchMaxBytes
 	if truncated {
