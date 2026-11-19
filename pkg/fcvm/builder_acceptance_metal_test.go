@@ -187,15 +187,13 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 				result, err := driver.WaitForCompletion(ctx, handle)
 				finished := time.Now()
 				mustAcceptance(t, err)
-				if !tc.fail {
-					steps.assertLive(t, finished)
-				} else {
-					steps.stop()
-				}
 				data, err := os.ReadFile(filepath.Join(handle.ExportDir, "build-done.json"))
 				mustAcceptance(t, err)
 				var done api.BuildDone
 				mustAcceptance(t, json.Unmarshal(data, &done))
+				// Steps are required when the build succeeded; every build,
+				// even one that stops before BuildKit, must stream its console.
+				steps.assertLive(t, finished, !tc.fail && done.ExitCode == 0)
 				t.Logf("guest build result: exit=%d\n%s", done.ExitCode, done.LogTail)
 				if tc.fail {
 					if result.ExitCode == 0 || done.ExitCode == 0 || !strings.Contains(done.LogTail, "exit code: 42") {
