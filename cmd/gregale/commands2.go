@@ -1087,7 +1087,7 @@ func cmdAppsRm(args []string) int {
 			return 130
 		}
 	}
-	var revoked []string
+	var revoked, keptDatabases []string
 	if *deleteBindings {
 		ctx := context.Background()
 		app, err := client.GetApp(ctx, slug)
@@ -1102,6 +1102,7 @@ func cmdAppsRm(args []string) int {
 		if err != nil {
 			return printErr("Could not revoke a database binding", err)
 		}
+		keptDatabases = boundDatabaseNames(bindings)
 	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
 		if !*deleteBindings && strings.Contains(err.Error(), "app_has_postgres_bindings") {
@@ -1117,11 +1118,13 @@ func cmdAppsRm(args []string) int {
 		}
 		if *deleteBindings {
 			out["revoked_bindings"] = revoked
+			out["kept_databases"] = keptDatabases
 		}
 		return jsonOut(writeJSON(out))
 	}
 	if len(revoked) > 0 {
 		PrintOK(osStdout, "Revoked %d database binding(s) and deleted %s", len(revoked), slug)
+		printKeptDatabases(osStdout, keptDatabases)
 		return 0
 	}
 	PrintOK(osStdout, "Deleted %s", slug)
