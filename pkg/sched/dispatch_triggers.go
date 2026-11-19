@@ -523,6 +523,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		attribute.String("gregale.trigger.kind", t.Kind))
 	res := poller.Poll(pollCtx, t)
 	settleRate(len(res.Records))
+	reportTriggerPoll(ctx, len(res.Records))
 	_, storedReplay := poller.(*storedTriggerReplaySource)
 	if !storedReplay {
 		l.recordTriggerConsumerHealth(ctx, store, t, res)
