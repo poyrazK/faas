@@ -73,7 +73,7 @@ func newTaskPostgresFixture(t *testing.T) taskPostgresFixture {
 		t.Fatalf("create Task fixture: %v", err)
 	}
 	t.Cleanup(func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		if err := s.Delete(cleanup, account, run); err != nil {
 			t.Errorf("cleanup fixture: %v", err)
@@ -94,27 +94,27 @@ func newTaskPostgresFixture(t *testing.T) taskPostgresFixture {
 		if err != nil {
 			t.Fatalf("bind enrolled Task participant: %v", err)
 		}
-		return connectTaskFixture(t, p, dsn)
+		return connectTaskFixture(ctx, t, p, dsn)
 	}
-	owner := connectTaskFixture(t, p, primaryDSN)
+	owner := connectTaskFixture(ctx, t, p, primaryDSN)
 	return taskPostgresFixture{
 		backend: p, service: s, resource: r, runtimeApp: runtimeApp, observerApp: observerApp,
 		owner: owner, writer: bind(runtimeApp), observer: bind(observerApp),
 	}
 }
 
-func connectTaskFixture(t *testing.T, p *Postgres, dsn string) *pgx.Conn {
+func connectTaskFixture(ctx context.Context, t *testing.T, p *Postgres, dsn string) *pgx.Conn {
 	t.Helper()
 	u, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatal("invalid generated fixture connection")
 	}
 	u.Host = net.JoinHostPort(p.config.Host, strconv.Itoa(int(p.config.Port)))
-	conn, err := pgx.Connect(t.Context(), u.String())
+	conn, err := pgx.Connect(ctx, u.String())
 	if err != nil {
 		t.Fatal("Task participant could not connect")
 	}
-	t.Cleanup(func() { closeTaskParticipantConnection(t.Context(), conn) })
+	t.Cleanup(func() { closeTaskParticipantConnection(ctx, conn) })
 	return conn
 }
 
