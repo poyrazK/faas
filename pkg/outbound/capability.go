@@ -76,6 +76,7 @@ type CapabilityMetrics struct {
 	calls     *prometheus.CounterVec
 	seconds   *prometheus.HistogramVec
 	exhausted *prometheus.CounterVec
+	approvals *prometheus.CounterVec
 }
 
 // NewCapabilityMetrics registers the gateway's metrics on reg.
@@ -88,8 +89,9 @@ func NewCapabilityMetrics(reg prometheus.Registerer) (*CapabilityMetrics, error)
 			Buckets: []float64{0.005, 0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30}}, []string{"source"}),
 		exhausted: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "agent_budget_exhausted_total",
 			Help: "Agent run capability calls refused by an exhausted budget, by budget kind."}, []string{"kind"}),
+		approvals: newApprovalCounter(),
 	}
-	for _, c := range []prometheus.Collector{m.calls, m.seconds, m.exhausted} {
+	for _, c := range []prometheus.Collector{m.calls, m.seconds, m.exhausted, m.approvals} {
 		if err := reg.Register(c); err != nil {
 			return nil, fmt.Errorf("register capability metrics: %w", err)
 		}
@@ -117,6 +119,11 @@ type CapabilityGateway struct {
 	Metrics *CapabilityMetrics
 	// ToolTimeout bounds one tool call; zero means a minute.
 	ToolTimeout time.Duration
+	// ApprovalPoll is how often a held call reads its decision; zero means
+	// AgentRunApprovalPollMillis.
+	ApprovalPoll time.Duration
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
 
 	mcp http.Handler
 }
@@ -160,15 +167,21 @@ func (g *CapabilityGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_agent_run_not_authorized", "This agent run is not running under its lease", "")
 		return
 	}
+	if holdsApprovals(caps.Policy) {
+		// A held call outlives the relay's write timeout (amendment 2). A
+		// writer that cannot move its deadline keeps the server's.
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(g.approvalWait()))
+	}
 	ctx := context.WithValue(r.Context(), capabilityRunKey{}, capabilityRun{run: run, caps: caps})
 	g.mcp.ServeHTTP(w, r.WithContext(ctx))
 }
 
-// listed are the tools the run may call: switched on and allowed by policy.
+// listed are the tools the run may call: switched on, and allowed or
+// approve-mode by policy.
 func (g *CapabilityGateway) listed(caps AgentRunCapabilities) []CapabilityTool {
 	var out []CapabilityTool
 	for _, tool := range g.Tools {
-		if tool.Enabled() && caps.Policy.Allows(tool.Name()) {
+		if tool.Enabled() && caps.Policy.Lists(tool.Name()) {
 			out = append(out, tool)
 		}
 	}
@@ -182,7 +195,12 @@ func (g *CapabilityGateway) server(r *http.Request) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "gregale-capabilities", Version: "1"}, nil)
 	listed := g.listed(cr.caps)
 	for _, tool := range listed {
-		s.AddTool(&mcp.Tool{Name: tool.Name(), Description: tool.Description(), InputSchema: tool.InputSchema()},
+		description := tool.Description()
+		if cr.caps.Policy.Mode(tool.Name()) == api.AgentCapabilityApprove {
+			description += fmt.Sprintf(" Each call waits for the seller's approval, for at most %d minutes; a denied or expired call returns an error.",
+				api.AgentRunApprovalTimeoutSec/60)
+		}
+		s.AddTool(&mcp.Tool{Name: tool.Name(), Description: description, InputSchema: tool.InputSchema()},
 			g.handler(cr, tool))
 	}
 	s.AddReceivingMiddleware(g.refuseUnlisted(cr, listed))
@@ -223,9 +241,17 @@ func (g *CapabilityGateway) enabled(name string) bool {
 	return slices.ContainsFunc(g.Tools, func(t CapabilityTool) bool { return t.Name() == name && t.Enabled() })
 }
 
-// handler counts the call against the run's budget, then runs the tool.
+// handler holds an approve-mode call for its decision, counts the call
+// against the run's budget, then runs the tool. A denied or expired call is
+// not counted.
 func (g *CapabilityGateway) handler(cr capabilityRun, tool CapabilityTool) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if cr.caps.Policy.Mode(tool.Name()) == api.AgentCapabilityApprove {
+			refused, err := g.awaitApproval(ctx, cr, tool.Name(), req.Params.Arguments)
+			if err != nil || refused != nil {
+				return refused, err
+			}
+		}
 		began := time.Now()
 		budget := cr.caps.Policy.ToolCallBudget(cr.caps.Plan)
 		ok, err := g.Store.ReserveToolCall(ctx, cr.run, budget)
@@ -238,11 +264,7 @@ func (g *CapabilityGateway) handler(cr capabilityRun, tool CapabilityTool) mcp.T
 			g.record(ctx, cr.run, tool.Name(), CapabilityBudget)
 			return errorResult(fmt.Sprintf("this run has used its %d tool calls (AgentToolCallsPerRunMax)", budget)), nil
 		}
-		timeout := g.ToolTimeout
-		if timeout <= 0 {
-			timeout = time.Minute
-		}
-		ctx, cancel := context.WithTimeout(ctx, timeout)
+		ctx, cancel := context.WithTimeout(ctx, g.toolTimeout())
 		defer cancel()
 		text, isError, err := tool.Call(ctx, cr.run, req.Params.Arguments)
 		if err != nil {
@@ -253,6 +275,13 @@ func (g *CapabilityGateway) handler(cr capabilityRun, tool CapabilityTool) mcp.T
 		res := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}, IsError: isError}
 		return res, nil
 	}
+}
+
+func (g *CapabilityGateway) toolTimeout() time.Duration {
+	if g.ToolTimeout <= 0 {
+		return time.Minute
+	}
+	return g.ToolTimeout
 }
 
 // record writes a decision row. A store error does not change the answer:
