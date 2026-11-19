@@ -3520,6 +3520,7 @@
       "kind",
       "log_path",
       "not_before",
+      "preemptions",
       "source_bytes",
       "started_at",
       "status"
@@ -22112,6 +22113,16 @@
   },
   {
     "table": "hosted_task_binding_qualifications",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_rehearsal_plans",
     "columns": [
       "account_id",
       "expires_at",

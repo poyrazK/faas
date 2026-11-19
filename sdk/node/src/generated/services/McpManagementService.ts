@@ -5,6 +5,9 @@
 import type { HostedTaskBindingCheck } from '../models/HostedTaskBindingCheck.js';
 import type { HostedTaskBindingSelection } from '../models/HostedTaskBindingSelection.js';
 import type { HostedTaskBindingVerification } from '../models/HostedTaskBindingVerification.js';
+import type { HostedTaskRehearsalDecision } from '../models/HostedTaskRehearsalDecision.js';
+import type { HostedTaskRehearsalPlan } from '../models/HostedTaskRehearsalPlan.js';
+import type { HostedTaskRehearsalPrepare } from '../models/HostedTaskRehearsalPrepare.js';
 import type { HostedTaskSourceCheck } from '../models/HostedTaskSourceCheck.js';
 import type { HostedTaskSourceDecision } from '../models/HostedTaskSourceDecision.js';
 import type { HostedTaskSourceIntent } from '../models/HostedTaskSourceIntent.js';
@@ -283,6 +286,107 @@ export class McpManagementService {
         409: `Revocation names a fingerprint different from the immutable selected qualification.`,
         429: `Owner revocations of hosted Task qualifications are currently rate limited.`,
         503: `The native qualification journal cannot currently record binding revocations.`,
+      },
+    });
+  }
+  /**
+   * Inspect a hosted Task rehearsal plan
+   * Read owner-only rehearsal metadata and persist invalidation when evidence expires or native facts drift.
+   * @returns HostedTaskRehearsalPlan The current metadata for the immutable rehearsal plan.
+   * @throws ApiError
+   */
+  public static getHostedTaskRehearsal({
+    id,
+  }: {
+    /**
+     * Immutable retained source identity for the contained rehearsal plan.
+     */
+    id: string,
+  }): CancelablePromise<HostedTaskRehearsalPlan> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/task-tool-source-intents/{id}/rehearsal',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `The retained source identity is malformed.`,
+        401: `A personal administrator key must authenticate this inspection.`,
+        403: `Only an unscoped personal administrator can inspect retained rehearsal metadata.`,
+        404: `The hosted Task rehearsal plan is absent or inaccessible to the current account.`,
+        409: `The plan could not be refreshed atomically.`,
+        429: `Owner reads are currently rate limited for hosted Task rehearsal metadata.`,
+        503: `Native rehearsal state cannot be inspected while the journal is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Plan a contained hosted Task rehearsal
+   * Reserve one disposable target identity for the exact approved source and passing binding observation. Preparation records no approval and allocates no runtime resources.
+   * @returns HostedTaskRehearsalPlan The new or identically replayed rehearsal plan.
+   * @throws ApiError
+   */
+  public static prepareHostedTaskRehearsal({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Immutable retained source identity for the contained rehearsal plan.
+     */
+    id: string,
+    requestBody: HostedTaskRehearsalPrepare,
+  }): CancelablePromise<HostedTaskRehearsalPlan> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/task-tool-source-intents/{id}/rehearsal',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `The source or binding digests are malformed.`,
+        401: `Authenticate the personal administrator reserving the rehearsal target.`,
+        403: `The caller lacks personal administrator authority to reserve this rehearsal target.`,
+        404: `No retained source or native binding observation is visible to this personal account.`,
+        409: `The source or binding observation is unavailable, stale, or differs from the immutable rehearsal plan.`,
+        429: `Rehearsal plan preparation exceeds the owner request budget.`,
+        503: `Planning admission or its source and binding prerequisites are disabled, or the journal is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Approve or revoke a hosted Task rehearsal plan
+   * Record a separate owner decision against the exact plan digest. Approval cannot renew binding evidence and produces no runtime effects. Identical retries preserve the original decision time.
+   * @returns HostedTaskRehearsalPlan The current plan metadata after a decision or an idempotent replay.
+   * @throws ApiError
+   */
+  public static decideHostedTaskRehearsal({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Retained source identity whose rehearsal plan receives the owner decision.
+     */
+    id: string,
+    requestBody: HostedTaskRehearsalDecision,
+  }): CancelablePromise<HostedTaskRehearsalPlan> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/task-tool-source-intents/{id}/rehearsal/decision',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `The plan digest or decision is malformed.`,
+        401: `Authenticate the personal administrator recording the rehearsal decision.`,
+        403: `The current key cannot approve or revoke this disposable rehearsal plan.`,
+        404: `No plan matching this retained source identity is visible to the deciding owner.`,
+        409: `The digest differs from the retained plan or a different owner key already approved it.`,
+        429: `The account decision requests for hosted Task rehearsals are rate limited.`,
+        503: `Approval admission is disabled or the native decision cannot be persisted.`,
       },
     });
   }

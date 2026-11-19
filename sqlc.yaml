@@ -304,6 +304,7 @@ sql:
       - "pkg/state/billing_run_product_queries.sql"
       - "pkg/state/binding_verification_run_queries.sql"
       - "pkg/state/build_coalescing_queries.sql"
+      - "pkg/state/build_preemption_queries.sql"
       - "pkg/state/build_dependency_queries.sql"
       - "pkg/state/config_revision_queries.sql"
       - "pkg/state/env_batch_queries.sql"

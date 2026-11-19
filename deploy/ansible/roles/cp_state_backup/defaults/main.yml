@@ -14,7 +14,8 @@ faas_cp_state_backup_remote: "{{ off_host_backup_remote | default('offhostbox', 
 faas_cp_state_backup_path: faas-cp-state
 
 # Local bundles kept after a verified push; remote retention belongs to the
-# storage backend's lifecycle policy, as for the PostgreSQL backups.
+# storage backend's lifecycle policy, as for the PostgreSQL backups
+# (deploy/backup-lifecycle/: 14 days, ADR-20261118203000).
 faas_cp_state_backup_keep: 3
 
 # Daily, after the 03:00/03:30 PostgreSQL backup and push.

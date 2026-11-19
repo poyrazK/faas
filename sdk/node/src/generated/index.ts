@@ -1234,6 +1234,9 @@ export type { HostedTaskBindingCheck } from './models/HostedTaskBindingCheck.js'
 export type { HostedTaskBindingResult } from './models/HostedTaskBindingResult.js';
 export type { HostedTaskBindingSelection } from './models/HostedTaskBindingSelection.js';
 export type { HostedTaskBindingVerification } from './models/HostedTaskBindingVerification.js';
+export type { HostedTaskRehearsalDecision } from './models/HostedTaskRehearsalDecision.js';
+export type { HostedTaskRehearsalPlan } from './models/HostedTaskRehearsalPlan.js';
+export type { HostedTaskRehearsalPrepare } from './models/HostedTaskRehearsalPrepare.js';
 export type { HostedTaskSourceCheck } from './models/HostedTaskSourceCheck.js';
 export type { HostedTaskSourceDecision } from './models/HostedTaskSourceDecision.js';
 export type { HostedTaskSourceEntry } from './models/HostedTaskSourceEntry.js';

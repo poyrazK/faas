@@ -8,6 +8,24 @@ command when one is known. `type` defaults to `about:blank` when no specific
 problem URI is supplied. `instance` identifies the specific occurrence when
 the caller supplies an occurrence URI.
 
+An error response looks like this:
+
+```json
+{
+  "type": "about:blank",
+  "title": "App limit reached",
+  "status": 403,
+  "code": "plan_limit_apps",
+  "detail": "free plan allows 1 deployed app(s); you have 1.",
+  "limit": 1,
+  "observed": 1,
+  "docs_url": "https://gregale.dev/docs/plans#at-a-glance"
+}
+```
+
+A limit error carries the plan's `limit` and the `observed` value. Some codes
+add fields of their own, such as `retry_after_seconds`.
+
 The [error code reference](error-codes.md) lists every code with the HTTP
 status it is sent with, its title and hint, and the page that explains it.
 This page covers the codes you are most likely to meet and what to do next.

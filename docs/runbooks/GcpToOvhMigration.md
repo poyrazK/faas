@@ -53,7 +53,10 @@ metric). Each app is recaptured on OVH after that boot.
       the release: every app cold-boots once on cutover day, and 128 MB apps
       ran out of memory on cold boot without it.
 - [ ] One OVH Additional IP per compute node for the app entry (`entry_ipv4`,
-      ADR-20261103163954 §2).
+      ADR-20261103163954 §2), routed to that server. No role puts it on
+      the host: add it to the public card in its own netplan file
+      (`/etc/netplan/61-entry-ip.yaml`, `addresses: [<ip>/32]` under the
+      card named in `50-cloud-init.yaml`) and check it answers ping.
 - [ ] OVH account: 2FA on every login, API tokens scoped and listed, IPMI and
       rescue mode understood (disk encryption, ADR-20261109120000, covers
       the rescue-mode risk to data volumes).
@@ -69,8 +72,13 @@ metric). Each app is recaptured on OVH after that boot.
 |---|---|---|---|
 | node artifact key (one per compute node) | artifacts | get, put, list; **no delete** | `storage.env` on that node |
 | control-plane artifact key | artifacts | get, put, list, delete | `storage.env` on the control node |
-| log archive key | log archive | put, get, list | `log_archive.credentials_src` on the controller |
-| backup key | backups | put, get, list, delete (WAL prune) | `/etc/faas/secrets/storage-box/rclone.conf` |
+| log archive key | log archive | put, get, list, delete (account erasure) | `log_archive.credentials_src` on the controller |
+| backup key | backups | put, get, list; **no delete** | `/etc/faas/secrets/storage-box/rclone.conf` |
+
+The policies are in `deploy/ovh/object-storage-policies/`, with the user
+for each key and each bucket's lifecycle. The backup key is append-only
+like the GCS writer role: the WAL prune deletes only local segments, and
+the bucket lifecycle removes old recovery points (ADR-20261118203000).
 
 Nodes go without delete through `FAAS_STORAGE_DELETE_MODE=defer`: deletes
 become `storage_object_deletions` rows that the control plane's object GC
@@ -181,7 +189,11 @@ manifest.
    before the promotion is present.
 8. **Backups**: run the immediate push (`PostgresBackup.md`) and confirm it
    lands in the OVH backup bucket.
-9. **Resume CD.**
+9. **Point releases at OVH**: merge the PR that changes
+   `deploy/manifest/production/release-template` to `ovh-live.template.yaml`
+   before the first release after the window. Until it merges, a release
+   still materializes the GCP topology.
+10. **Resume CD.**
 
 ### Rollback
 

@@ -2,7 +2,8 @@
 // project for coding agents. `gregale init --template` writes a full
 // AGENTS.md into new projects; an existing project gets a marked Gregale
 // section instead, plus the one setting Claude Code and Gemini CLI each
-// need to read AGENTS.md. Codex and Cursor read AGENTS.md on their own.
+// need to read AGENTS.md. Codex, Cursor and Antigravity read AGENTS.md on
+// their own.
 //
 // Every change is idempotent: a second run replaces the marked section in
 // place and leaves files that already point at AGENTS.md alone. Nothing the
@@ -44,9 +45,6 @@ type initAgentsReceipt struct {
 	DryRun bool              `json:"dry_run"`
 	Files  []agentFileChange `json:"files"`
 }
-
-// agentsHomeDir locates the user's home for agent detection; tests swap it.
-var agentsHomeDir = os.UserHomeDir
 
 // runInitAgents plans every agent file for dir, then writes the changes
 // unless dryRun.
@@ -180,10 +178,14 @@ func planClaudeImport(dir string) (agentFileChange, bool, error) {
 	return change, true, nil
 }
 
-// planGeminiSettings points Gemini CLI at AGENTS.md when the project or
-// this machine uses Gemini CLI. It creates .gemini/settings.json but never
-// rewrites an existing one: re-encoding would reorder the customer's keys,
-// so it says what to add instead.
+// planGeminiSettings points Gemini CLI at AGENTS.md in a project that has
+// Gemini CLI settings (a .gemini folder). It creates .gemini/settings.json
+// but never rewrites an existing one: re-encoding would reorder the
+// customer's keys, so it says what to add instead.
+//
+// Neither GEMINI.md nor ~/.gemini says Gemini CLI: Antigravity, which
+// replaced Gemini CLI for individual accounts, reads GEMINI.md and AGENTS.md
+// on its own and keeps its own files under ~/.gemini.
 func planGeminiSettings(dir string) (agentFileChange, bool, error) {
 	change := agentFileChange{Path: filepath.Join(".gemini", "settings.json")}
 	current, err := readOptional(filepath.Join(dir, change.Path))
@@ -191,7 +193,7 @@ func planGeminiSettings(dir string) (agentFileChange, bool, error) {
 		return change, false, err
 	}
 	if current == nil {
-		if !usesGeminiCLI(dir) {
+		if !hasGeminiFolder(dir) {
 			return change, false, nil
 		}
 		change.Action = agentFileCreated
@@ -207,19 +209,10 @@ func planGeminiSettings(dir string) (agentFileChange, bool, error) {
 	return change, true, nil
 }
 
-// usesGeminiCLI reports a .gemini folder or GEMINI.md in the project, or a
-// ~/.gemini folder Gemini CLI made on this machine.
-func usesGeminiCLI(dir string) bool {
-	for _, path := range []string{filepath.Join(dir, ".gemini"), filepath.Join(dir, "GEMINI.md")} {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-	}
-	home, err := agentsHomeDir()
-	if err != nil || home == "" {
-		return false
-	}
-	info, err := os.Stat(filepath.Join(home, ".gemini"))
+// hasGeminiFolder reports a .gemini folder, where Gemini CLI keeps a
+// project's settings.
+func hasGeminiFolder(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, ".gemini"))
 	return err == nil && info.IsDir()
 }
 
@@ -302,6 +295,6 @@ func printInitAgents(w io.Writer, receipt initAgentsReceipt) {
 		}
 		PrintProgress(w, "%s", line)
 	}
-	PrintProgress(w, "Agents will deploy this project as %s. Codex and Cursor read AGENTS.md on their own.", receipt.App)
+	PrintProgress(w, "Agents will deploy this project as %s. Codex, Cursor and Antigravity read AGENTS.md on their own.", receipt.App)
 	PrintProgress(w, "Docs: https://gregale.dev/docs/agents")
 }

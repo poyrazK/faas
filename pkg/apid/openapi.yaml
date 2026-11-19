@@ -689,6 +689,119 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/HostedTaskBindingCheck'
+  /v1/task-tool-source-intents/{id}/rehearsal:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Immutable retained source identity for the contained rehearsal plan.
+    get:
+      operationId: getHostedTaskRehearsal
+      summary: Inspect a hosted Task rehearsal plan
+      tags:
+      - mcp-management
+      description: Read owner-only rehearsal metadata and persist invalidation when evidence expires or native facts drift.
+      responses:
+        '200':
+          description: The current metadata for the immutable rehearsal plan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskRehearsalPlan'
+        '400':
+          description: The retained source identity is malformed.
+        '401':
+          description: A personal administrator key must authenticate this inspection.
+        '403':
+          description: Only an unscoped personal administrator can inspect retained rehearsal metadata.
+        '404':
+          description: The hosted Task rehearsal plan is absent or inaccessible to the current account.
+        '409':
+          description: The plan could not be refreshed atomically.
+        '429':
+          description: Owner reads are currently rate limited for hosted Task rehearsal metadata.
+        '503':
+          description: Native rehearsal state cannot be inspected while the journal is unavailable.
+    put:
+      operationId: prepareHostedTaskRehearsal
+      summary: Plan a contained hosted Task rehearsal
+      tags:
+      - mcp-management
+      description: Reserve one disposable target identity for the exact approved source and passing binding observation.
+        Preparation records no approval and allocates no runtime resources.
+      responses:
+        '200':
+          description: The new or identically replayed rehearsal plan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskRehearsalPlan'
+        '400':
+          description: The source or binding digests are malformed.
+        '401':
+          description: Authenticate the personal administrator reserving the rehearsal target.
+        '403':
+          description: The caller lacks personal administrator authority to reserve this rehearsal target.
+        '404':
+          description: No retained source or native binding observation is visible to this personal account.
+        '409':
+          description: The source or binding observation is unavailable, stale, or differs from the immutable rehearsal plan.
+        '429':
+          description: Rehearsal plan preparation exceeds the owner request budget.
+        '503':
+          description: Planning admission or its source and binding prerequisites are disabled, or the journal is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskRehearsalPrepare'
+  /v1/task-tool-source-intents/{id}/rehearsal/decision:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity whose rehearsal plan receives the owner decision.
+    put:
+      operationId: decideHostedTaskRehearsal
+      summary: Approve or revoke a hosted Task rehearsal plan
+      tags:
+      - mcp-management
+      description: Record a separate owner decision against the exact plan digest. Approval cannot renew binding evidence
+        and produces no runtime effects. Identical retries preserve the original decision time.
+      responses:
+        '200':
+          description: The current plan metadata after a decision or an idempotent replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskRehearsalPlan'
+        '400':
+          description: The plan digest or decision is malformed.
+        '401':
+          description: Authenticate the personal administrator recording the rehearsal decision.
+        '403':
+          description: The current key cannot approve or revoke this disposable rehearsal plan.
+        '404':
+          description: No plan matching this retained source identity is visible to the deciding owner.
+        '409':
+          description: The digest differs from the retained plan or a different owner key already approved it.
+        '429':
+          description: The account decision requests for hosted Task rehearsals are rate limited.
+        '503':
+          description: Approval admission is disabled or the native decision cannot be persisted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskRehearsalDecision'
   /v1/task-tool-release-intents/{id}:
     parameters:
     - name: id
@@ -75400,6 +75513,106 @@ components:
           - reject
           - revoke
           description: Owner verdict on this hosted source review, independent of future execution authorization.
+    HostedTaskRehearsalPrepare:
+      type: object
+      additionalProperties: false
+      description: Exact digests of the approved source and passing native qualification.
+      required:
+      - intent_sha256
+      - review_sha256
+      - binding_sha256
+      properties:
+        intent_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        review_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        binding_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+    HostedTaskRehearsalDecision:
+      type: object
+      additionalProperties: false
+      description: A separate owner decision against an immutable rehearsal plan.
+      required:
+      - plan_sha256
+      - decision
+      properties:
+        plan_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        decision:
+          type: "string"
+          enum: ["approve", "revoke"]
+    HostedTaskRehearsalPlan:
+      type: object
+      additionalProperties: false
+      description: Owner-only plan metadata. A target identity reserves future allocation and creates no resources.
+      required:
+      - version
+      - account_id
+      - intent_id
+      - intent_sha256
+      - review_sha256
+      - binding_sha256
+      - target_id
+      - queue_namespace
+      - plan_sha256
+      - status
+      - created_at
+      - binding_checked_at
+      - expires_at
+      - no_traffic
+      properties:
+        version:
+          type: "integer"
+          enum: [1]
+        account_id:
+          type: "string"
+          format: "uuid"
+        intent_id:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        intent_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        review_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        binding_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        target_id:
+          type: "string"
+          format: "uuid"
+        queue_namespace:
+          type: "string"
+          pattern: "^rehearsal-[0-9a-f-]{36}$"
+        plan_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        status:
+          type: "string"
+          enum: ["planned", "approved", "claimed", "revoked", "stale", "expired"]
+        created_at:
+          type: "string"
+          format: "date-time"
+        binding_checked_at:
+          type: "string"
+          format: "date-time"
+        expires_at:
+          type: "string"
+          format: "date-time"
+        approved_at:
+          type: "string"
+          format: "date-time"
+        claimed_at:
+          type: "string"
+          format: "date-time"
+        no_traffic:
+          type: "boolean"
+          enum: [true]
     HostedTaskBindingSelection:
       type: object
       additionalProperties: false
@@ -94709,7 +94922,7 @@ components:
         label: { type: string }
         description: { type: string }
         category: { type: string }
-        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups, platform_flag_opt_ins] }
+        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups, platform_flag_opt_ins, builder_slots] }
         default_value: {}
         desired_value: {}
         effective_value: {}

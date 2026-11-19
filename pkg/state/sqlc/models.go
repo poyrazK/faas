@@ -2769,6 +2769,7 @@ type Build struct {
 	NotBefore                    pgtype.Timestamptz
 	CoalescedWith                pgtype.UUID
 	BuilderNodeName              pgtype.Text
+	Preemptions                  int32
 }
 
 type BuildExportPublication struct {
@@ -7033,6 +7034,13 @@ type Honeytoken struct {
 }
 
 type HostedTaskBindingQualification struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+type HostedTaskRehearsalPlan struct {
 	AccountID pgtype.UUID
 	ID        string
 	Payload   []byte

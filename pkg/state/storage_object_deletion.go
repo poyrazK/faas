@@ -112,9 +112,7 @@ func (s *PgStore) RequestStorageObjectRetirement(ctx context.Context, key string
 	if generation <= 0 {
 		return ErrInvalidArgument
 	}
-	if len(reason) > 200 {
-		reason = reason[:200]
-	}
+	reason = safetext.Truncate(reason, 200)
 	if err := sqlc.New().RequestStorageObjectDeletion(ctx, s.pool, sqlc.RequestStorageObjectDeletionParams{StorageKey: key, Reason: reason,
 		Generation: pgtype.Int8{Int64: generation, Valid: true}}); err != nil {
 		return fmt.Errorf("state: request retirement of %q generation %d: %w", key, generation, mapErr(err))
