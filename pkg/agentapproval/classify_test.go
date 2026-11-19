@@ -32,6 +32,21 @@ func TestClassify(t *testing.T) {
 		{"POST /v1/apps/{slug}/route-policy/apply", api.AgentApprovalProduction, TargetApp},
 		{"POST /v1/apps/{slug}/routes/insights/{id}/fix", api.AgentApprovalProduction, TargetApp},
 		{"DELETE /v1/edge-rules/{id}", api.AgentApprovalDelete, TargetNone},
+		// ADR-20261117215858: commands and flag publishes ask; the kill does not.
+		{"POST /v1/apps/{slug}/tasks", api.AgentApprovalProduction, TargetApp},
+		{"PUT /v1/projects/{slug}/environments/{environment}/flags", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/{slug}/environments/{environment}/flags/rollback", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote", api.AgentApprovalProduction, TargetNone},
+		// ADR-20261117232109: replays and workflow recovery re-run app code.
+		{"POST /v1/apps/{slug}/dlq/{id}/replay", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/apps/{slug}/dlq:replay_all", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/workflows/runs/{id}/steps/{step}/retry", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/workflows/runs/{id}/resume", api.AgentApprovalProduction, TargetNone},
+		// ADR-20261118160000: subscription pauses, event recoveries, consumer spend caps.
+		{"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/apps/{slug}/event-recoveries", api.AgentApprovalProduction, TargetApp},
+		{"PUT /v1/apps/{slug}/consumers/{consumer_id}/spend-cap", api.AgentApprovalBilling, TargetNone},
+		{"PUT /v1/billing/budgets/{id}", api.AgentApprovalBilling, TargetNone},
 		// Deploy review 2026-11-10 (D3): project deploys, promotions,
 		// release sets and GitOps sources, in their ServeMux spelling.
 		// Apps/projects review 2026-11-10 (P10): production configuration
@@ -87,6 +102,10 @@ func TestClassify(t *testing.T) {
 		"POST /v1/projects/{slug}/environments/{environment}/gitops/plan",
 		"POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare",
 		"DELETE /v1/admin/accounts/{id}",
+		"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/kill",
+		"POST /v1/postgres/databases/{id}/query",
+		"POST /v1/incidents/{id}/notes",
+		"POST /v1/apps/{slug}/slos",
 	} {
 		if rule, ok := Classify(pattern); ok {
 			t.Errorf("Classify(%q) = %+v; want no approval", pattern, rule)

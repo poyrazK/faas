@@ -1128,6 +1128,7 @@ export type { ExtendProjectEnvironmentBranchRequest } from './models/ExtendProje
 export type { FailureRule } from './models/FailureRule.js';
 export type { FailureRules } from './models/FailureRules.js';
 export type { FeatureFlag } from './models/FeatureFlag.js';
+export type { FeatureFlagKillResponse } from './models/FeatureFlagKillResponse.js';
 export type { FeatureFlagVersion } from './models/FeatureFlagVersion.js';
 export type { FeatureHint } from './models/FeatureHint.js';
 export type { FieldError } from './models/FieldError.js';
@@ -1463,6 +1464,8 @@ export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
 export type { ManagedPostgresOverage } from './models/ManagedPostgresOverage.js';
 export type { ManagedPostgresOverageRequest } from './models/ManagedPostgresOverageRequest.js';
+export type { ManagedPostgresQueryRequest } from './models/ManagedPostgresQueryRequest.js';
+export type { ManagedPostgresQueryResponse } from './models/ManagedPostgresQueryResponse.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
 export type { ManagedPostgresRestoreRange } from './models/ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresUsageImportReading } from './models/ManagedPostgresUsageImportReading.js';

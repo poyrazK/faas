@@ -3,6 +3,7 @@ from typing import Literal
 CreateOrgAPIKeyRequestScopesItem = Literal[
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",
@@ -33,6 +34,7 @@ CreateOrgAPIKeyRequestScopesItem = Literal[
 CREATE_ORG_API_KEY_REQUEST_SCOPES_ITEM_VALUES: set[CreateOrgAPIKeyRequestScopesItem] = {
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",

@@ -2176,6 +2176,7 @@ from .failure_rules_uncertain_outcome import FailureRulesUncertainOutcome
 from .failure_rules_unmatched_failure import FailureRulesUnmatchedFailure
 from .failure_rules_version import FailureRulesVersion
 from .feature_flag import FeatureFlag
+from .feature_flag_kill_response import FeatureFlagKillResponse
 from .feature_flag_type import FeatureFlagType
 from .feature_flag_version import FeatureFlagVersion
 from .feature_hint import FeatureHint
@@ -2915,6 +2916,9 @@ from .managed_postgres_health_provider_status import ManagedPostgresHealthProvid
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
 from .managed_postgres_overage import ManagedPostgresOverage
 from .managed_postgres_overage_request import ManagedPostgresOverageRequest
+from .managed_postgres_query_request import ManagedPostgresQueryRequest
+from .managed_postgres_query_response import ManagedPostgresQueryResponse
+from .managed_postgres_query_response_columns_item import ManagedPostgresQueryResponseColumnsItem
 from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
@@ -9207,6 +9211,7 @@ __all__ = (
     "FailureRulesUnmatchedFailure",
     "FailureRulesVersion",
     "FeatureFlag",
+    "FeatureFlagKillResponse",
     "FeatureFlagType",
     "FeatureFlagVersion",
     "FeatureHint",
@@ -9902,6 +9907,9 @@ __all__ = (
     "ManagedPostgresHealthStatus",
     "ManagedPostgresOverage",
     "ManagedPostgresOverageRequest",
+    "ManagedPostgresQueryRequest",
+    "ManagedPostgresQueryResponse",
+    "ManagedPostgresQueryResponseColumnsItem",
     "ManagedPostgresResize",
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",

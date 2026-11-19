@@ -9524,6 +9524,10 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	}
 	d.RolloutAbortedReason = abortedReason
 	m.putDeploymentLocked(id, d)
+	if d.RolloutState == "aborted" {
+		m.rebalanceAbortedTrafficLocked(d)
+		d = m.deployments[id]
+	}
 	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	return d, nil
 }

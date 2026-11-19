@@ -17,12 +17,17 @@ test('an impersonated token cannot change the account, only sign itself out', ()
     ['GET', '/auth/v1/user/identities/authorize?provider=github'], ['DELETE', '/auth/v1/user/identities/i1'], ['GET', '/auth/v1/reauthenticate'],
     ['POST', '/auth/v1/logout'], ['POST', '/auth/v1/logout?scope=global'], ['POST', '/auth/v1/logout?scope=others'], ['POST', '/auth/v1/oauth/authorizations/a1/consent'],
     ['DELETE', '/authz/v1/account'], ['DELETE', '/authz/v1/sessions/s1'],
+    // Access that would outlive the session, and organization security.
+    ['POST', '/authz/v1/orgs/o1/service-accounts'], ['POST', '/authz/v1/orgs/o1/service-accounts/a1/secrets'], ['POST', '/authz/v1/orgs/o1/invitations'],
+    ['PATCH', '/authz/v1/orgs/o1/members/m1'], ['PATCH', '/authz/v1/orgs/o1'], ['POST', '/authz/v1/orgs/o1/sso'], ['DELETE', '/authz/v1/orgs/o1/domains/d1'],
+    ['POST', '/authz/v1/orgs/o1/invitations/?x=1'],
     // GoTrue's router serves these as the paths above.
     ['PUT', '/auth/v1/user/'], ['PUT', '/auth/v1/user//?x=1'], ['POST', '/auth/v1/factors/'], ['POST', '/auth/v1/logout/?scope=local']]) {
     assert.equal(impersonationBlocked(method, url), true, `${method} ${url}`)
   }
   for (const [method, url] of [['GET', '/auth/v1/user'], ['POST', '/auth/v1/logout?scope=local'], ['POST', '/auth/v1/token?grant_type=refresh_token'],
-    ['GET', '/authz/v1/orgs'], ['POST', '/authz/v1/authorize'], ['GET', '/authz/v1/sessions']]) {
+    ['GET', '/authz/v1/orgs'], ['POST', '/authz/v1/authorize'], ['GET', '/authz/v1/sessions'],
+    ['GET', '/authz/v1/orgs/o1/service-accounts'], ['GET', '/authz/v1/orgs/o1/members'], ['DELETE', '/authz/v1/orgs/o1/members/m1'], ['POST', '/authz/v1/orgs']]) {
     assert.equal(impersonationBlocked(method, url), false, `${method} ${url}`)
   }
 })
