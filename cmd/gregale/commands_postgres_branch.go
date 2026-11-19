@@ -18,7 +18,7 @@ import (
 // optional TTL (ADR-20261106103654). A branch is an ordinary database whose
 // restore_source_database_id names its source.
 func cmdPostgresBranch(args []string) int {
-	const usage = "usage: gregale postgres branch [create] <database> <name> [--from live|RFC3339] [--ttl DURATION]\n" +
+	const usage = "usage: gregale postgres branch [create] <database> <name> [--since live|RFC3339] [--ttl DURATION]\n" +
 		"       gregale postgres branch list <database>\n" +
 		"       gregale postgres branch delete <database> <name> [--yes]"
 	if len(args) == 0 {
@@ -42,7 +42,7 @@ func cmdPostgresBranch(args []string) int {
 }
 
 func cmdPostgresBranchCreate(args []string) int {
-	const usage = "usage: gregale postgres branch [create] <database> <name> [--from live|RFC3339] [--ttl DURATION]"
+	const usage = "usage: gregale postgres branch [create] <database> <name> [--since live|RFC3339] [--ttl DURATION]"
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("postgres branch", flag.ContinueOnError)
 	from := fs.String("from", "live", "live (the latest point) or an RFC3339 time inside the source's restore range")

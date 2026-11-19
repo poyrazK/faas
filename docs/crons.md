@@ -254,7 +254,7 @@ in production, which is where every existing cron runs. For an app in a
 project, `--environment` names one of the project's environments:
 
 ```bash
-gregale cron create --app APP_ID --environment staging \
+gregale cron create --app APP_ID --env staging \
   --schedule "0 2 * * *" --command bin/rebuild-index
 ```
 

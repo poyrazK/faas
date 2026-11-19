@@ -2231,7 +2231,7 @@ gregale github repos my-api --installation-id 12345
 
 Bind GitHub, configure previews, and write an Actions workflow
 
-`gregale github setup [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--installation-id <ID>] [--deploy-branches <MAPPINGS>] [--pinned-sha <SHA>] [--pin-action] [--enable-action-updates] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-bots] [--no-preview-bots] [--preview-drafts] [--no-preview-drafts] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--wait-for <WORKFLOW>] [--dry-run] [--force] <slug>`
+`gregale github setup [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--installation-id <ID>] [--deploy-branches <MAPPINGS>] [--pinned-sha <SHA>] [--pin-action] [--enable-action-updates] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-mode <MODE>] [--preview-bots] [--no-preview-bots] [--preview-drafts] [--no-preview-drafts] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--wait-for <WORKFLOW>] [--dry-run] [--force] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2246,6 +2246,7 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--preview` | enable pull-request previews |  |
 | `--no-preview` | disable pull-request previews |  |
 | `--preview-ttl-hours <HOURS>` | preview lease in hours (1-720) |  |
+| `--preview-mode <MODE>` | how pull requests are previewed: app (the default) or branch, an environment branch of production per pull request | one of `app` · `branch` |
 | `--preview-bots` | preview pull requests opened by bots such as Dependabot |  |
 | `--no-preview-bots` | skip previews for pull requests opened by bots (the default) |  |
 | `--preview-drafts` | preview draft pull requests (the default) |  |
@@ -4085,12 +4086,14 @@ Includes pre-auth blocks, validation failures and gate rejections by status.
 
 Simulate composed edge-rule outcomes and request policies
 
-`gregale edge rule trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--verified-bot] [--verified-ai-crawler] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
+`gregale edge rule trace [--config <file|->] [--app <slug>] [--project <SLUG>] [--env <ENV>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--verified-bot] [--verified-ai-crawler] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--config <file|->` | load a versioned JSON scenario (headers array; body or body_base64); - reads stdin and is exclusive with request flags |  |
 | `--app <slug>` | app slug (required unless --config is used) |  |
+| `--project <SLUG>` | project slug (required with --environment) |  |
+| `--env <ENV>` | simulate the workload&#39;s effective policy in this project environment (requires --project) (also --environment) |  |
 | `--url <URL>` | absolute HTTP(S) request URL (required unless --config is used) |  |
 | `--method <method>` | request method (default GET) |  |
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
@@ -4514,19 +4517,27 @@ Manage reusable IP, country, host and text lists for edge rules
 
 List the account&#39;s edge-rule lists
 
-`gregale edge rule-list list`
+`gregale edge rule-list list [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | manage the lists of this company app&#39;s organization instead of your personal lists |  |
 
 #### edge rule-list get
 
 Show one list with its items
 
-`gregale edge rule-list get <name>`
+`gregale edge rule-list get [--app <SLUG>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | manage the lists of this company app&#39;s organization instead of your personal lists |  |
 
 #### edge rule-list create
 
 Create a list
 
-`gregale edge rule-list create --kind <KIND> [--item <VALUE>] [--items-file <path|->] [--description <TEXT>] <name>`
+`gregale edge rule-list create --kind <KIND> [--item <VALUE>] [--items-file <path|->] [--description <TEXT>] [--app <SLUG>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4534,6 +4545,7 @@ Create a list
 | `--item <VALUE>` | list item (repeat) |  |
 | `--items-file <path|->` | file with one item per line (# comments allowed), or - for stdin |  |
 | `--description <TEXT>` | free-text description |  |
+| `--app <SLUG>` | manage the lists of this company app&#39;s organization instead of your personal lists |  |
 
 Examples:
 
@@ -4547,7 +4559,7 @@ gregale edge rule create --app my-api --kind throttle --match-host api.example.c
 
 Edit a list; referencing rules pick up the change within seconds
 
-`gregale edge rule-list update [--add <VALUE>] [--remove <VALUE>] [--replace-file <path|->] [--description <TEXT>] <name>`
+`gregale edge rule-list update [--add <VALUE>] [--remove <VALUE>] [--replace-file <path|->] [--description <TEXT>] [--app <SLUG>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4555,16 +4567,18 @@ Edit a list; referencing rules pick up the change within seconds
 | `--remove <VALUE>` | item to remove (repeat) |  |
 | `--replace-file <path|->` | replace every item from a file, or - for stdin |  |
 | `--description <TEXT>` | new description |  |
+| `--app <SLUG>` | manage the lists of this company app&#39;s organization instead of your personal lists |  |
 
 #### edge rule-list delete
 
 Delete a list no rule references
 
-`gregale edge rule-list delete [--yes] <name>`
+`gregale edge rule-list delete [--yes] [--app <SLUG>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--yes` | accepted for consistency with edge rule delete; does not prompt |  |
+| `--app <SLUG>` | manage the lists of this company app&#39;s organization instead of your personal lists |  |
 
 ### edge cache
 
@@ -4808,6 +4822,13 @@ Follow or cancel the switch with `gregale release rollback status &lt;app&gt; &l
 
 Make, list and delete copy-on-write branches of a database
 
+`gregale postgres branch [create|list|delete] [--since <live|TIMESTAMP>] [--ttl <DURATION>] <database> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <live|TIMESTAMP>` | live (default) or an RFC3339 time inside the source&#39;s restore range (also --from) |  |
+| `--ttl <DURATION>` | purge the branch this long after it is created, from 5m to 30d (e.g. 2h, 7d) |  |
+
 Examples:
 
 ```sh
@@ -5045,7 +5066,7 @@ List cron rules
 
 Schedule a POST to an app path, or a deployment command
 
-`gregale cron create [--at <RFC3339>] [--in <DURATION>] [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
+`gregale cron create [--at <RFC3339>] [--in <DURATION>] [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>] [--env <ENV>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5066,6 +5087,7 @@ Schedule a POST to an app path, or a deployment command
 | `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | versioned failure and outcome-code rules JSON |  |
+| `--env <ENV>` | project environment the cron runs in (default: production) (also --environment) |  |
 
 Examples:
 
@@ -5411,7 +5433,7 @@ gregale job delete --interactive
 
 Dispatch a new run (fan-out N tasks)
 
-`gregale job run [--saved-job] [--wait-ready] [--image-wait-timeout <DURATION>] [--image-poll-interval <DURATION>] [--interactive] [--wait] [--results] [--out-dir <DIR>] [--all-artifacts] [--include <GLOB>] [--exclude <GLOB>] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--dry-run] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
+`gregale job run [--saved-job] [--wait-ready] [--image-wait-timeout <DURATION>] [--image-poll-interval <DURATION>] [--interactive] [--wait] [--results] [--out-dir <DIR>] [--all-artifacts] [--include <GLOB>] [--exclude <GLOB>] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--dry-run] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--arg <ARG>]... [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5433,6 +5455,7 @@ Dispatch a new run (fan-out N tasks)
 | `--retries <N>` | override retry max for this run |  |
 | `--timeout <SECONDS>` | override task timeout for this run |  |
 | `--input <ID=REF>` | repeatable input binding |  |
+| `--arg <ARG>` | command argument override (repeatable; --arg=VALUE for a value starting with -) |  |
 | `--input-manifest-uri <URI>` | account-readable input manifest object |  |
 | `--input-manifest-sha256 <DIGEST>` | SHA-256 of exact manifest bytes |  |
 | `--parallelism <N>` | maximum concurrent tasks |  |
