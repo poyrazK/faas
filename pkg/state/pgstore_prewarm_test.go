@@ -184,3 +184,46 @@ func TestPgStoreActivePrewarmFloors(t *testing.T) {
 	}
 	testActivePrewarmFloors(t, s, apps, uuid.NewString())
 }
+
+// adr: 20261107122928 amendment 3
+// TestPgStorePruneCronPrewarmIntents pins the cron pre-wake retention SQL:
+// only settled trigger=cron intents whose window ended before the cutoff go.
+func TestPgStorePruneCronPrewarmIntents(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "prewarm", "prune")
+	now := time.Now().UTC()
+	create := func(trigger string, settle bool) string {
+		t.Helper()
+		intent, err := s.CreatePrewarmIntent(ctx, appID, accountID, 1, now.Add(time.Minute), now.Add(3*time.Minute), trigger)
+		if err != nil {
+			t.Fatalf("CreatePrewarmIntent: %v", err)
+		}
+		if settle {
+			if _, claimed, err := s.ClaimPrewarmIntent(ctx, intent.ID, now); err != nil || !claimed {
+				t.Fatalf("ClaimPrewarmIntent = %v, %v", claimed, err)
+			}
+			if err := s.CompletePrewarmIntent(ctx, intent.ID, now, 1, "admitted:1"); err != nil {
+				t.Fatalf("CompletePrewarmIntent: %v", err)
+			}
+		}
+		return intent.ID
+	}
+	settledCron := create(state.PrewarmTriggerCron, true)
+	pendingCron := create(state.PrewarmTriggerCron, false)
+	settledCalendar := create(state.PrewarmTriggerCalendar, true)
+
+	if n, err := s.PruneCronPrewarmIntents(ctx, now.Add(2*time.Minute), 10); err != nil || n != 0 {
+		t.Fatalf("prune before the window ended = %d, %v; want 0", n, err)
+	}
+	if n, err := s.PruneCronPrewarmIntents(ctx, now.Add(time.Hour), 10); err != nil || n != 1 {
+		t.Fatalf("prune after the window ended = %d, %v; want 1", n, err)
+	}
+	if _, err := s.PrewarmIntentByID(ctx, settledCron); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("settled cron intent still present: %v", err)
+	}
+	for _, id := range []string{pendingCron, settledCalendar} {
+		if _, err := s.PrewarmIntentByID(ctx, id); err != nil {
+			t.Fatalf("intent %s pruned: %v", id, err)
+		}
+	}
+}
