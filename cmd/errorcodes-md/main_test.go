@@ -138,19 +138,19 @@ func TestGeneratedEntries(t *testing.T) {
 	}{
 		// Status from net/http, case-folded titles, hint capitalized, one
 		// link per page preferring the anchored one.
-		{"plan_limit_apps", "HTTP 403 · App limit reached\n\nDelete an app or upgrade the plan\n\nSee [Plans and pricing](plans.md#apps)."},
+		{"plan_limit_apps", "HTTP 403 Forbidden · App limit reached\n\nDelete an app or upgrade the plan\n\nSee [Plans and pricing](plans.md#apps)."},
 		// The edge sends Gregale's own 502 as 503.
-		{"gamma_upstream", "HTTP 503 · Upstream failed"},
+		{"gamma_upstream", "HTTP 503 Service Unavailable · Upstream failed"},
 		// Problems built under cmd/ count too.
-		{"theta_cli", "HTTP 503 · Could not reach Gregale"},
+		{"theta_cli", "HTTP 503 Service Unavailable · Could not reach Gregale"},
 		// A helper's call site supplies the code and title.
-		{"delta_helper", "HTTP 409 · Delta title"},
+		{"delta_helper", "HTTP 409 Conflict · Delta title"},
 		// Engineering material is dropped; the status stays.
-		{"epsilon_internal", "HTTP 400"},
+		{"epsilon_internal", "HTTP 400 Bad Request"},
 		// Placeholders are escaped outside code spans only.
-		{"eta_placeholder", "HTTP 400 · Eta\n\nRun `gregale logs <app>` for &lt;app>"},
+		{"eta_placeholder", "HTTP 400 Bad Request · Eta\n\nRun `gregale logs <app>` for &lt;app>"},
 		// Excluded, but a published page already names it.
-		{"alpha_hidden", "HTTP 409 · Hidden thing\n\nSee [Errors](errors.md)."},
+		{"alpha_hidden", "HTTP 409 Conflict · Hidden thing\n\nSee [Errors](errors.md)."},
 		// Declared but never built: no status the API's table knows.
 		{"omega_declared", "The response's `title` and `detail` describe the failure."},
 		{"beta_excluded", ""},
@@ -229,7 +229,7 @@ func TestStatusText(t *testing.T) {
 		want     string
 	}{
 		{map[int]int{}, ""},
-		{map[int]int{429: 1, 403: 2}, "HTTP 403 or 429"},
+		{map[int]int{429: 1, 403: 2}, "HTTP 403 Forbidden or 429 Too Many Requests"},
 		{map[int]int{400: 1, 403: 1, 404: 1, 409: 1}, "HTTP status varies by operation"},
 	}
 	for _, tt := range tests {

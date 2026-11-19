@@ -325,6 +325,9 @@ and the rewritten path; see [Order of kinds](#order-of-kinds).
 
 ### redirect
 
+A `redirect` rule answers at the edge, without calling your app, with a
+redirect from one path or host to another:
+
 ```json
 {"kind": "redirect", "match_host": "old.example.com", "match_path": "/**",
  "action": {"status_code": 308, "to": "https://new.example.com${path}", "template": true}}
@@ -521,7 +524,9 @@ unset to keep `max_body_bytes` there too. It also caps the streamed response.
             "key_fields": ["ip", "header:x-username"], "count_statuses": [401]}}
 ```
 
-A token bucket refilled at `requests_per_second` and holding `burst` tokens.
+A `throttle` rule rate-limits requests per client IP, API key or another
+key (`key_by` below). Each key gets a token bucket refilled at
+`requests_per_second` and holding `burst` tokens.
 A request that finds the bucket empty gets 429 `rate_limited`; responses on
 the route carry `X-RouteRateLimit-Limit`, `-Remaining`, `-Reset` and
 `-Policy`. Both values must stay within your plan's rate limit (see

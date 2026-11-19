@@ -35,11 +35,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/objectgc"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -279,6 +281,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
+	if sourceStorage != nil {
+		// ADR-20261115180000 / ADR-20261117190000: builderd's source deletes
+		// defer to the control plane like imaged's and vmmd's, and with
+		// FAAS_STORAGE_ACCESS=secretd its reads go through secretd grants.
+		if deferred, err := objectgc.DeferFromEnv(os.Getenv, sourceStorage, store, "builderd"); err != nil {
+			return fmt.Errorf("builderd: %w", err)
+		} else if deferred {
+			log.Info("builderd: shared-store deletes deferred to the control plane")
+		}
+		if _, closeGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, sourceStorage, "builderd", log); err != nil {
+			return err
+		} else {
+			defer closeGrants()
+		}
+	}
 	notif := dbNotifier{pool: pool}
 	resid := deps.newResidentProbe(ctx, cfg.ScheddMetricsURL)
 	// Single OpsMetrics for the daemon: builderd both records build

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -488,6 +489,8 @@ func writeEntry(b *strings.Builder, e *entry) {
 	}
 }
 
+// statusText names each status with its reason phrase ("429 Too Many
+// Requests"), the words people search the reference with.
 func statusText(statuses map[int]int) string {
 	var sts []int
 	for st := range statuses {
@@ -503,6 +506,9 @@ func statusText(statuses map[int]int) string {
 	parts := make([]string, len(sts))
 	for i, st := range sts {
 		parts[i] = strconv.Itoa(st)
+		if reason := http.StatusText(st); reason != "" {
+			parts[i] += " " + reason
+		}
 	}
 	return "HTTP " + strings.Join(parts, " or ")
 }
