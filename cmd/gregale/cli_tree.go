@@ -212,6 +212,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag experiment promote", "flags experiments ship"},
 	{"flag experiment delete", "flags experiments delete"},
 	{"flag experiment result get", "flags experiments results"},
+	{"flag experiment layer list", "flags experiments layers list"},
+	{"flag experiment layer create", "flags experiments layers create"},
+	{"flag experiment layer delete", "flags experiments layers delete"},
+	{"flag experiment holdout get", "flags experiments holdout get"},
+	{"flag experiment holdout set", "flags experiments holdout set"},
+	{"flag experiment holdout report", "flags experiments holdout report"},
 	{"flag", "flags"},
 	// ADR 20261117084505: product analytics; `analytics` is request analytics.
 	{"insight event list", "insights events"},

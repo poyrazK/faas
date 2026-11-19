@@ -21,7 +21,7 @@ type flagExperimentArgs struct {
 	Key         string `json:"key" jsonschema:"Experiment key"`
 }
 
-const flagExperimentGuidance = "Report recommendation.action and recommendation.summary as the decision, and recommendation.commands as the owner's next step; never run ship or stop on your own. Results are always-valid sequential statistics, so reading them often does not inflate false positives. A rolled_back action means a guardrail already sent every customer of the rule to control. Guardrail rates compare per-request server errors and requests slower than control's p95, with customers as units."
+const flagExperimentGuidance = "Report recommendation.action and recommendation.summary as the decision, and recommendation.commands as the owner's next step; never run ship or stop on your own. Results are always-valid sequential statistics, so reading them often does not inflate false positives. A rolled_back action means a guardrail already sent every customer of the rule to control. Guardrail rates compare per-request server errors and requests slower than control's p95, with customers as units. A bandit (results.bandit) reports each arm's best_probability and expected_loss instead of p-values; results with fixed_horizon true (percentile metrics) have no sequential guarantee, so say so."
 
 func registerFlagExperiments(s *mcp.Server, m *management) {
 	register(s, m, "gregale_list_flag_experiments", "List a project environment's flag experiments: flag, rule, control, metric, status and stop reason. Read-only.", m.listFlagExperiments)

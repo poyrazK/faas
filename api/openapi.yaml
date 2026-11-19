@@ -63753,11 +63753,12 @@ paths:
       tags: [flags]
       operationId: getProjectFlagExperimentResults
       summary: Read a flag experiment's sequential results.
-      description: "Each variant is compared with control by an always-valid mixture sequential probability ratio test, so results may be read at any time. A sample ratio mismatch against the rule's weights is reported first."
+      description: "Each variant is compared with control by an always-valid mixture sequential probability ratio test, so results may be read at any time. A sample ratio mismatch against the rule's weights is reported first. Ratio metrics use the delta method; percentile metrics a fixed-horizon bootstrap; bandits report each arm's best-arm probability and expected loss instead of p-values."
       parameters:
         - { $ref: '#/components/parameters/FlagsProjectSlug' }
         - { $ref: '#/components/parameters/FlagsEnvironment' }
         - { $ref: '#/components/parameters/FlagExperimentKey' }
+        - { name: segment, in: query, required: false, description: "Cohort key: split a binary customer experiment's results by the cohort's members.", schema: { type: string } }
       responses:
         '200':
           description: Per-variant conversion, lift, confidence sequence and status.
@@ -63767,7 +63768,141 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiment-layers:
+    get:
+      tags: [flags]
+      operationId: listProjectFlagExperimentLayers
+      summary: List the environment's experiment layers.
+      description: "Each layer with the slices its running experiments hold and the basis points still free."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      responses:
+        '200':
+          description: The environment's layers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentLayerList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [flags]
+      operationId: createProjectFlagExperimentLayer
+      summary: Create an experiment layer.
+      description: "Publishes a flag configuration with the new layer and a random seed. At most 10 layers per environment (409 flag_experiment_layer_limit)."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagExperimentLayerRequest' }
+      responses:
+        '201':
+          description: The environment's layers with the new one.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentLayerList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiment-layers/{key}:
+    delete:
+      tags: [flags]
+      operationId: deleteProjectFlagExperimentLayer
+      summary: Delete an experiment layer.
+      description: "Refused with 409 flag_experiment_running while a running experiment holds a slice of it."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the layer to delete., schema: { type: string } }
+      responses:
+        '204': { description: The layer is deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiment-holdout:
+    get:
+      tags: [flags]
+      operationId: getProjectFlagExperimentHoldout
+      summary: Read the environment holdout.
+      description: "The basis points of customers that see every running experiment's control."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      responses:
+        '200':
+          description: The holdout.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentHoldout' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [flags]
+      operationId: setProjectFlagExperimentHoldout
+      summary: Set the environment holdout.
+      description: "0 to 2000 basis points; 0 turns it off. Refused with 409 flag_experiment_running while an experiment runs, so no experiment's population changes under it."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagExperimentHoldout' }
+      responses:
+        '200':
+          description: The holdout as set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentHoldout' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiment-holdout/report:
+    get:
+      tags: [flags]
+      operationId: getProjectFlagExperimentHoldoutReport
+      summary: Compare held-out customers with everyone else.
+      description: "The cumulative effect of experimentation: the share of held-out and other active customers that sent the event in the range (default the last 30 days). Requires product analytics."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: event, in: query, required: true, description: The event whose senders count as converted., schema: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' } }
+        - { name: from, in: query, required: false, description: "Report start (RFC 3339); defaults to 30 days ago.", schema: { type: string, format: date-time } }
+        - { name: until, in: query, required: false, description: "Report end (RFC 3339); defaults to the request time.", schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: The holdout report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentHoldoutReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/projects/{slug}/environments/{environment}/insights/events:
     get:
@@ -90489,6 +90624,44 @@ components:
           oneOf:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
+        experiment: { $ref: '#/components/schemas/FlagRuleExperiment' }
+    FlagRuleExperiment:
+      description: "The running experiment of a weighted rule, set when the experiment starts and cleared when it stops. Apid writes it; a configuration update must carry it unchanged. Runtime SDKs need capabilities experiment-layers-v1 and subject-exposures-v1."
+      type: object
+      additionalProperties: false
+      required: [key, control, unit]
+      properties:
+        key: { type: string, description: Experiment key. }
+        control: { type: string, description: "The variant held-out customers see." }
+        unit: { type: string, enum: [customer, subject] }
+        layer: { type: string, description: "Exclusive layer whose slice [from, to) the experiment holds." }
+        from: { type: integer, minimum: 0, maximum: 10000 }
+        to: { type: integer, minimum: 0, maximum: 10000 }
+    FlagHoldout:
+      description: "The environment holdout: basis_points of customers, chosen by seed, see every running experiment's control."
+      type: object
+      additionalProperties: false
+      required: [seed, basis_points]
+      properties:
+        seed: { type: string }
+        basis_points: { type: integer, minimum: 0, maximum: 2000 }
+    FlagLayer:
+      description: "An exclusive experiment layer: experiments in one layer hold disjoint slices of its customers (or subjects)."
+      type: object
+      additionalProperties: false
+      required: [key, seed]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        seed: { type: string }
+    FlagRolloutMetric:
+      description: "Gates an automatic stage on a conversion event: customers the stage serves are compared with every other customer that evaluated the flag. The stage rolls back to 0 when their rate is clearly more than max_decrease lower, and advances only with min_units in each group and no such decrease."
+      type: object
+      additionalProperties: false
+      required: [event]
+      properties:
+        event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' }
+        max_decrease: { type: number, minimum: 0, maximum: 1, description: "Tolerated absolute conversion rate decrease; 0 means 0.01." }
+        min_units: { type: integer, minimum: 0, maximum: 1000000, description: "Customers each group needs before a stage advances; 0 means 100." }
     FlagLifecycleReport:
       description: Lifecycle of every flag in the current configuration.
       type: object
@@ -90571,6 +90744,7 @@ components:
           minimum: 60
           maximum: 604800
           description: Evidence lookback window; must fit within debugger retention.
+        metric: { $ref: '#/components/schemas/FlagRolloutMetric' }
     FlagRolloutPromotionRequest:
       description: Optimistic stage promotion request; an expected-version conflict requires a fresh read.
       type: object
@@ -90644,6 +90818,8 @@ components:
           type: object
           maxProperties: 100
           additionalProperties: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
+        holdout: { $ref: '#/components/schemas/FlagHoldout' }
+        layers: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/FlagLayer' } }
     FlagExperimentCreateRequest:
       description: A flag experiment to create.
       type: object
@@ -90655,13 +90831,19 @@ components:
         rule_id: { type: string, description: "The flag's weighted rule." }
         control: { type: string, description: The baseline variant. }
         metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: "The metric event; required for conversion and mean metrics, refused for funnel and retention." }
-        metric_kind: { type: string, enum: [conversion, mean, funnel, retention], description: "conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer; funnel and retention compare the share that completed the funnel or came back, and need product analytics." }
+        metric_kind: { type: string, enum: [conversion, mean, funnel, retention, ratio, percentile], description: "conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer; funnel and retention compare the share that completed the funnel or came back, and need product analytics; ratio compares the metric event's value sum over the denominator event's; percentile compares a percentile of per-customer values (fixed-horizon bootstrap)." }
         funnel: { $ref: '#/components/schemas/FlagExperimentFunnel' }
         retention: { $ref: '#/components/schemas/FlagExperimentRetention' }
         cuped: { type: boolean, description: "Adjust results for each customer's 14 days before the start (CUPED); default true." }
         mixing_lift: { type: number, exclusiveMinimum: 0, maximum: 1, description: "mSPRT mixing standard deviation: an absolute conversion-rate lift (default 0.02), or a standardized effect size for mean metrics (default 0.1)." }
         guardrails: { $ref: '#/components/schemas/FlagExperimentGuardrailsRequest' }
         start: { type: boolean, description: Start the experiment at once. }
+        unit: { type: string, enum: [customer, subject], description: "customer (default) or subject: end users of a rule with rollout_unit subject, counted from SDK exposures; subject experiments need product analytics, take a conversion, funnel or retention metric and have no guardrails." }
+        layer: { type: string, description: "Exclusive layer; the experiment holds traffic basis points of it while running." }
+        traffic: { type: integer, minimum: 1, maximum: 10000, description: "Basis points of the layer; required with layer." }
+        allocation: { type: string, enum: [fixed, bandit], description: "fixed (default) or bandit: Thompson sampling re-weights the flag's variants hourly, keeping 10% per arm; needs a binary metric and the flag's only weighted rule." }
+        denominator_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: "A ratio metric's denominator event." }
+        percentile: { type: integer, minimum: 50, maximum: 99, description: "A percentile metric's percentile." }
     FlagExperimentFunnel:
       description: "A funnel metric: a customer converts when it completes the steps in order within the window after its first exposure."
       type: object
@@ -90688,7 +90870,7 @@ components:
         pre_days: { type: integer, description: Days before the start that make each customer's covariate. }
         theta: { type: number }
         variance_reduction: { type: number, description: "Share of the metric's variance removed, 0 to 1." }
-        reason: { type: string, enum: [off, pre_period_pending, no_pre_period_variance, no_pre_period_data] }
+        reason: { type: string, enum: [off, pre_period_pending, no_pre_period_variance, no_pre_period_data, not_supported] }
     FlagExperimentComparison:
       description: "A variant's comparison with control without CUPED."
       type: object
@@ -90744,14 +90926,22 @@ components:
     FlagExperiment:
       description: A flag experiment.
       type: object
-      required: [key, flag, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, created_by, created_at, cuped]
+      required: [key, flag, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, created_by, created_at, cuped, unit, allocation]
       properties:
         key: { type: string }
         flag: { type: string }
         rule_id: { type: string }
         control: { type: string }
         metric_event: { type: string }
-        metric_kind: { type: string, enum: [conversion, mean, funnel, retention] }
+        metric_kind: { type: string, enum: [conversion, mean, funnel, retention, ratio, percentile] }
+        unit: { type: string, enum: [customer, subject] }
+        allocation: { type: string, enum: [fixed, bandit] }
+        layer: { type: string }
+        traffic: { type: integer }
+        layer_from: { type: integer, description: "Start of the layer slice held while running." }
+        layer_to: { type: integer, description: "End (exclusive) of the layer slice held while running." }
+        denominator_event: { type: string }
+        percentile: { type: integer }
         funnel: { $ref: '#/components/schemas/FlagExperimentFunnel' }
         retention: { $ref: '#/components/schemas/FlagExperimentRetention' }
         cuped: { type: boolean, description: Whether results are adjusted with CUPED. }
@@ -90796,6 +90986,8 @@ components:
             p_value: { type: number, description: Always-valid p-value (running minimum). }
             status: { type: string, enum: [significant, not_significant, insufficient_data, sample_ratio_mismatch] }
             unadjusted: { $ref: '#/components/schemas/FlagExperimentComparison' }
+            best_probability: { type: number, description: "A bandit arm's posterior probability of being best; bandits report no p-values." }
+            expected_loss: { type: number, description: "Conversion rate a bandit gives up by choosing this arm." }
     FlagExperimentResults:
       description: A flag experiment's sequential results.
       type: object
@@ -90811,6 +91003,85 @@ components:
         latency: { type: array, items: { $ref: '#/components/schemas/FlagExperimentLatency' } }
         recommendation: { $ref: '#/components/schemas/FlagExperimentRecommendation' }
         cuped: { $ref: '#/components/schemas/FlagExperimentCuped' }
+        fixed_horizon: { type: boolean, description: "Percentile results: bootstrap p-values without a sequential guarantee; read them once, at the planned end." }
+        bandit: { $ref: '#/components/schemas/FlagExperimentBandit' }
+        segments: { type: array, items: { $ref: '#/components/schemas/FlagExperimentSegment' }, description: "Results split by ?segment=COHORT: its members, then everyone else." }
+    FlagExperimentBandit:
+      description: "A bandit's posterior per arm and when it last re-weighted the rule."
+      type: object
+      required: [arms]
+      properties:
+        arms: { type: array, items: { $ref: '#/components/schemas/FlagExperimentBanditArm' } }
+        weighted_at: { type: string, format: date-time }
+    FlagExperimentBanditArm:
+      description: "One bandit arm's served weight, best-arm probability and expected loss."
+      type: object
+      required: [variant, weight, best_probability, expected_loss]
+      properties:
+        variant: { type: string }
+        weight: { type: integer }
+        best_probability: { type: number }
+        expected_loss: { type: number }
+    FlagExperimentSegment:
+      description: "Exploratory results of a cohort's members (members true) or of everyone else, with Benjamini-Hochberg adjusted p-values; segments never drive the recommendation."
+      type: object
+      required: [cohort, members, control, variants]
+      properties:
+        cohort: { type: string }
+        members: { type: boolean }
+        control: { $ref: '#/components/schemas/FlagExperimentArm' }
+        variants: { type: array, items: { $ref: '#/components/schemas/FlagExperimentVariantResult' } }
+    FlagExperimentLayer:
+      description: "An experiment layer and the slices its running experiments hold."
+      type: object
+      required: [key, slices, free]
+      properties:
+        key: { type: string }
+        slices: { type: array, items: { $ref: '#/components/schemas/FlagExperimentLayerSlice' } }
+        free: { type: integer, description: Basis points no experiment holds. }
+    FlagExperimentLayerSlice:
+      description: "The [from, to) slice of a layer one experiment holds."
+      type: object
+      required: [experiment, from, to]
+      properties:
+        experiment: { type: string }
+        from: { type: integer }
+        to: { type: integer }
+    FlagExperimentLayerList:
+      description: "An environment's experiment layers."
+      type: object
+      required: [layers]
+      properties:
+        layers: { type: array, items: { $ref: '#/components/schemas/FlagExperimentLayer' } }
+    FlagExperimentLayerRequest:
+      description: A layer to create.
+      type: object
+      additionalProperties: false
+      required: [key]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+    FlagExperimentHoldout:
+      description: "The environment holdout: basis points of customers that see every experiment's control."
+      type: object
+      additionalProperties: false
+      required: [basis_points]
+      properties:
+        basis_points: { type: integer, minimum: 0, maximum: 2000 }
+    FlagExperimentHoldoutReport:
+      description: "Held-out customers against every other customer active in the range: the share that sent the event, their difference (exposed minus held) and a 95% interval."
+      type: object
+      required: [event, from, until, basis_points, held, exposed, difference, low, high, truncated]
+      properties:
+        event: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        basis_points: { type: integer }
+        held: { $ref: '#/components/schemas/FlagExperimentArm' }
+        exposed: { $ref: '#/components/schemas/FlagExperimentArm' }
+        difference: { type: number }
+        low: { type: number }
+        high: { type: number }
+        truncated: { type: boolean, description: "True when the customer lists hit the analytics unit bound." }
     FlagExperimentGuardrail:
       description: One guardrail across the variants.
       type: object
@@ -91041,19 +91312,35 @@ components:
       description: A batch of runtime conversion events.
       type: object
       additionalProperties: false
-      required: [events]
       properties:
         events:
           type: array
-          minItems: 1
           maxItems: 100
           items: { $ref: '#/components/schemas/FlagEvent' }
+          description: "1 to 100 events, or none when the batch carries only exposures."
+        exposures:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/FlagExposure' }
+    FlagExposure:
+      description: "One end user's exposure to a running subject experiment's rule, which SDKs report at most hourly per subject and variant. Only the subject's hash is kept."
+      type: object
+      additionalProperties: false
+      required: [flag, rule_id, variant, customer_id, subject]
+      properties:
+        flag: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        rule_id: { type: string, maxLength: 64 }
+        variant: { type: string, maxLength: 128 }
+        customer_id: { type: string, format: uuid }
+        subject: { type: string, pattern: '^[!-~]{1,128}$' }
+        at: { type: string, format: date-time }
     FlagEventsResponse:
       description: Accepted and dropped events of a batch, with the month's event usage.
       type: object
       required: [accepted, dropped, month]
       properties:
         accepted: { type: integer }
+        exposures: { type: integer, description: "Exposures that matched a running subject experiment of an active customer." }
         dropped:
           type: object
           required: [quota, unknown_customer, name_limit, invalid]

@@ -392,6 +392,12 @@ touch them. The tables below map each earlier name.
 | `gregale flags experiments create` | `gregale flag experiment create` |
 | `gregale flags experiments delete` | `gregale flag experiment delete` |
 | `gregale flags experiments get` | `gregale flag experiment get` |
+| `gregale flags experiments holdout get` | `gregale flag experiment holdout get` |
+| `gregale flags experiments holdout report` | `gregale flag experiment holdout report` |
+| `gregale flags experiments holdout set` | `gregale flag experiment holdout set` |
+| `gregale flags experiments layers create` | `gregale flag experiment layer create` |
+| `gregale flags experiments layers delete` | `gregale flag experiment layer delete` |
+| `gregale flags experiments layers list` | `gregale flag experiment layer list` |
 | `gregale flags experiments list` | `gregale flag experiment list` |
 | `gregale flags experiments results` | `gregale flag experiment result get` |
 | `gregale flags experiments ship` | `gregale flag experiment promote` |

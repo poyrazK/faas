@@ -5,9 +5,17 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..models.flag_experiment_create_request_allocation import (
+    FlagExperimentCreateRequestAllocation,
+    check_flag_experiment_create_request_allocation,
+)
 from ..models.flag_experiment_create_request_metric_kind import (
     FlagExperimentCreateRequestMetricKind,
     check_flag_experiment_create_request_metric_kind,
+)
+from ..models.flag_experiment_create_request_unit import (
+    FlagExperimentCreateRequestUnit,
+    check_flag_experiment_create_request_unit,
 )
 from ..types import UNSET, Unset
 
@@ -36,7 +44,8 @@ class FlagExperimentCreateRequest:
     metric_kind: FlagExperimentCreateRequestMetricKind | Unset = UNSET
     """conversion (default) compares the share of exposed customers that sent the event; mean compares the mean
     event value per exposed customer; funnel and retention compare the share that completed the funnel or came back,
-    and need product analytics."""
+    and need product analytics; ratio compares the metric event's value sum over the denominator event's; percentile
+    compares a percentile of per-customer values (fixed-horizon bootstrap)."""
     funnel: FlagExperimentFunnel | Unset = UNSET
     """A funnel metric: a customer converts when it completes the steps in order within the window after its first
     exposure."""
@@ -51,6 +60,21 @@ class FlagExperimentCreateRequest:
     """Changes the default guardrails; both are on unless turned off."""
     start: bool | Unset = UNSET
     """Start the experiment at once."""
+    unit: FlagExperimentCreateRequestUnit | Unset = UNSET
+    """customer (default) or subject: end users of a rule with rollout_unit subject, counted from SDK exposures;
+    subject experiments need product analytics, take a conversion, funnel or retention metric and have no
+    guardrails."""
+    layer: str | Unset = UNSET
+    """Exclusive layer; the experiment holds traffic basis points of it while running."""
+    traffic: int | Unset = UNSET
+    """Basis points of the layer; required with layer."""
+    allocation: FlagExperimentCreateRequestAllocation | Unset = UNSET
+    """fixed (default) or bandit: Thompson sampling re-weights the flag's variants hourly, keeping 10% per arm;
+    needs a binary metric and the flag's only weighted rule."""
+    denominator_event: str | Unset = UNSET
+    """A ratio metric's denominator event."""
+    percentile: int | Unset = UNSET
+    """A percentile metric's percentile."""
 
     def to_dict(self) -> dict[str, Any]:
         key = self.key
@@ -85,6 +109,22 @@ class FlagExperimentCreateRequest:
 
         start = self.start
 
+        unit: str | Unset = UNSET
+        if not isinstance(self.unit, Unset):
+            unit = self.unit
+
+        layer = self.layer
+
+        traffic = self.traffic
+
+        allocation: str | Unset = UNSET
+        if not isinstance(self.allocation, Unset):
+            allocation = self.allocation
+
+        denominator_event = self.denominator_event
+
+        percentile = self.percentile
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -111,6 +151,18 @@ class FlagExperimentCreateRequest:
             field_dict["guardrails"] = guardrails
         if start is not UNSET:
             field_dict["start"] = start
+        if unit is not UNSET:
+            field_dict["unit"] = unit
+        if layer is not UNSET:
+            field_dict["layer"] = layer
+        if traffic is not UNSET:
+            field_dict["traffic"] = traffic
+        if allocation is not UNSET:
+            field_dict["allocation"] = allocation
+        if denominator_event is not UNSET:
+            field_dict["denominator_event"] = denominator_event
+        if percentile is not UNSET:
+            field_dict["percentile"] = percentile
 
         return field_dict
 
@@ -165,6 +217,28 @@ class FlagExperimentCreateRequest:
 
         start = d.pop("start", UNSET)
 
+        _unit = d.pop("unit", UNSET)
+        unit: FlagExperimentCreateRequestUnit | Unset
+        if isinstance(_unit, Unset):
+            unit = UNSET
+        else:
+            unit = check_flag_experiment_create_request_unit(_unit)
+
+        layer = d.pop("layer", UNSET)
+
+        traffic = d.pop("traffic", UNSET)
+
+        _allocation = d.pop("allocation", UNSET)
+        allocation: FlagExperimentCreateRequestAllocation | Unset
+        if isinstance(_allocation, Unset):
+            allocation = UNSET
+        else:
+            allocation = check_flag_experiment_create_request_allocation(_allocation)
+
+        denominator_event = d.pop("denominator_event", UNSET)
+
+        percentile = d.pop("percentile", UNSET)
+
         flag_experiment_create_request = cls(
             key=key,
             flag=flag,
@@ -178,6 +252,12 @@ class FlagExperimentCreateRequest:
             mixing_lift=mixing_lift,
             guardrails=guardrails,
             start=start,
+            unit=unit,
+            layer=layer,
+            traffic=traffic,
+            allocation=allocation,
+            denominator_event=denominator_event,
+            percentile=percentile,
         )
 
         return flag_experiment_create_request
