@@ -227,7 +227,12 @@ func assertFleetAdmissionRefusal(t *testing.T, node fleetAdmissionNode, process 
 		t.Fatalf("trusted cap missing: %+v", problem)
 	}
 	after := observeFleetAdmission(t, node)
-	if after.RPCs != before.RPCs+1 || after.GuestCalls != before.GuestCalls {
+	// A refusal never reaches the guest. A trusted capacity refusal (429) may
+	// be re-forwarded within the app's queue wait before it is relayed
+	// (pkg/gateway/node_busy_wait.go, #7665); an untrusted one is forwarded
+	// exactly once.
+	forwarded := after.RPCs - before.RPCs
+	if after.GuestCalls != before.GuestCalls || forwarded < 1 || (untrusted && forwarded != 1) {
 		t.Fatalf("refusal replayed or executed: before=%+v after=%+v", before, after)
 	}
 }
