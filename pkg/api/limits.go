@@ -9116,6 +9116,11 @@ const (
 	// Node cache export took about 115 s. The builder slot stays held for the
 	// run, so the bound also caps how long it delays the next build.
 	BuildCacheExportTimeoutSeconds = 600
+	// BuildCacheExportManifestMaxBytes bounds the cache export run's
+	// build.json that vmmd stages on the build's drive (ADR-20261029171525
+	// amendment 2). A build manifest is a few KiB; the bound keeps a
+	// malformed request from costing a large drive write.
+	BuildCacheExportManifestMaxBytes = 64 << 10
 	// BuildTimingMaxSteps and BuildTimingStepNameMaxBytes bound the slowest
 	// BuildKit steps a builder guest reports in build-done.json, which vmmd
 	// reads up to 1 MiB.
