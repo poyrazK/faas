@@ -272,7 +272,12 @@ func (t *Tarball) Verify(ctx context.Context, verifier CosignVerifier) (string, 
 	if err := t.hashWalk(); err != nil {
 		return "", err
 	}
+	return t.verifySignature(ctx, verifier)
+}
 
+// verifySignature is Verify's cosign half: it checks the signature over
+// t.Packed and stamps the signer's identity onto the manifest.
+func (t *Tarball) verifySignature(ctx context.Context, verifier CosignVerifier) (string, error) {
 	// 2. Cosign sig verify. PR-A commit 2's load-bearing trust
 	// bit. Note: the verifier expects the tarball BYTES; in PR-A
 	// we hand it a temp file written from Packed (cosign CLI
@@ -603,6 +608,12 @@ func (t *Tarball) hashWalk() error {
 	if err != nil {
 		return err
 	}
+	return t.hashWalkWith(entryHashes)
+}
+
+// hashWalkWith checks entryHashes (the sha256 of every regular member, keyed
+// by its cleaned archive name) against the manifest and the catalogs.
+func (t *Tarball) hashWalkWith(entryHashes map[string]string) error {
 	daemonNames := manifest.SortedHostKeys()
 	for _, name := range daemonNames {
 		wantHex, ok := t.BinSHA256[name]
