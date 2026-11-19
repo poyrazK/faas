@@ -244,6 +244,14 @@ func exerciseHostedTaskRehearsalCandidate(t *testing.T, store state.Store, pool 
 	if _, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.DecideHostedTaskRehearsal, in); err != nil {
 		t.Fatal(err)
 	}
+	runnerOpts := opts
+	runnerOpts.TaskRehearsalProvisioner = &taskrehearsal.Provisioner{AdmissionEnabled: true}
+	runnerOpts.TaskRehearsalRunner = &taskrehearsal.Runner{AdmissionEnabled: true}
+	runner := toolregistry.NewPrivateExecutor(store, runnerOpts)
+	t.Cleanup(runner.Close)
+	if out, _, err := runner.RunHostedTaskRehearsal(ctx, f.account, id, owner, plan.PlanSHA256); !errors.Is(err, state.ErrConflict) || out.ID != "" {
+		t.Fatalf("runner claimed a source without a reviewed migration entry: %v", err)
+	}
 	if out, err := f.executor.ClaimHostedTaskRehearsalCandidate(ctx, f.account.ID, id, other, plan.PlanSHA256); !errors.Is(err, state.ErrConflict) || out.Run.ID != "" {
 		t.Fatalf("another owner received the candidate: %v", err)
 	}
@@ -313,6 +321,10 @@ func exerciseHostedTaskRehearsalCandidate(t *testing.T, store state.Store, pool 
 	restarted := toolregistry.NewPrivateExecutor(f.store, opts)
 	t.Cleanup(restarted.Close)
 	reserved := replay.Run
+	runReplay, execution, err := runner.RunHostedTaskRehearsal(ctx, f.account, id, owner, plan.PlanSHA256)
+	if err != nil || runReplay.ID != reserved.ID || execution != (taskrehearsal.Execution{}) {
+		t.Fatalf("runner replay started work for an existing reservation: %v", err)
+	}
 	replayed, target, err := restarted.ProvisionHostedTaskRehearsal(ctx, f.account, id, owner, plan.PlanSHA256)
 	if err != nil || target != nil || replayed.Run.ID != reserved.ID || replayed.Run.PlanSHA256 != reserved.PlanSHA256 ||
 		!replayed.Run.ReservedAt.Equal(reserved.ReservedAt) || !replayed.Run.ApprovalExpiresAt.Equal(reserved.ApprovalExpiresAt) ||

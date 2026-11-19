@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/apid/taskrehearsal"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -16,6 +17,9 @@ import (
 // an app row that cannot pass the permanent-purge bucket guard. A PR
 // preview's databases go the same way (ADR-20261102123523).
 func (s *server) cleanupDevSessionResources(ctx context.Context, app state.App) error {
+	if err := s.taskRehearsalRunner().CleanupExpiredApp(ctx, &taskrehearsal.Provisioner{Store: s.store}, app); err != nil {
+		return err
+	}
 	if err := s.cleanupDevSessionBuckets(ctx, app); err != nil {
 		return err
 	}

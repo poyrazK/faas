@@ -4,7 +4,9 @@ import (
 	"context"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/taskrehearsal"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/tasktoolbinding"
 	"github.com/onebox-faas/faas/pkg/tasktoolrehearsal"
 	"github.com/onebox-faas/faas/pkg/tasktoolsource"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
@@ -16,6 +18,7 @@ type HostedTaskRehearsalCandidate struct {
 	Run           state.HostedTaskRehearsalRun
 	WebArchive    []byte `json:"-"`
 	WorkerArchive []byte `json:"-"`
+	bindings      tasktoolbinding.Policy
 }
 
 // ClaimHostedTaskRehearsalCandidate hands verified archives to the one caller
@@ -24,6 +27,10 @@ type HostedTaskRehearsalCandidate struct {
 // cannot spend a valid approval, while the final transaction rechecks drift
 // and expiry under lock.
 func (e *PrivateExecutor) ClaimHostedTaskRehearsalCandidate(ctx context.Context, account, id, ownerKeyID, planDigest string) (HostedTaskRehearsalCandidate, error) {
+	return e.claimHostedTaskRehearsalCandidate(ctx, account, id, ownerKeyID, planDigest, false)
+}
+
+func (e *PrivateExecutor) claimHostedTaskRehearsalCandidate(ctx context.Context, account, id, ownerKeyID, planDigest string, runner bool) (HostedTaskRehearsalCandidate, error) {
 	var zero HostedTaskRehearsalCandidate
 	journal, ok := e.store.(state.HostedTaskRehearsalStore)
 	if !ok || !toolpublication.ValidID(planDigest) {
@@ -42,7 +49,7 @@ func (e *PrivateExecutor) ClaimHostedTaskRehearsalCandidate(ctx context.Context,
 		if !view.ReadyToClaim || !e.opts.RehearsalPlanEnabled || !e.opts.SourceRetentionEnabled || !e.opts.BindingVerificationEnabled {
 			return zero, state.ErrConflict
 		}
-		candidate, err = e.packRehearsalCandidate(ctx, view.Plan)
+		candidate, err = e.packRehearsalCandidate(ctx, view.Plan, runner)
 		if err != nil {
 			return zero, err
 		}
@@ -61,7 +68,7 @@ func (e *PrivateExecutor) ClaimHostedTaskRehearsalCandidate(ctx context.Context,
 	return candidate, nil
 }
 
-func (e *PrivateExecutor) packRehearsalCandidate(ctx context.Context, plan api.HostedTaskRehearsalPlan) (HostedTaskRehearsalCandidate, error) {
+func (e *PrivateExecutor) packRehearsalCandidate(ctx context.Context, plan api.HostedTaskRehearsalPlan, runner bool) (HostedTaskRehearsalCandidate, error) {
 	var zero HostedTaskRehearsalCandidate
 	source, err := e.loadHostedTaskSource(ctx, plan.AccountID, plan.IntentID)
 	if err != nil {
@@ -69,6 +76,13 @@ func (e *PrivateExecutor) packRehearsalCandidate(ctx context.Context, plan api.H
 	}
 	if source.intent.IntentSHA256 != plan.IntentSHA256 || source.intent.ReviewSHA256 != plan.ReviewSHA256 {
 		return zero, state.ErrConflict
+	}
+	var bindings tasktoolbinding.Policy
+	if runner {
+		bindings, err = rehearsalRunnerBindings(source.entries)
+		if err != nil {
+			return zero, err
+		}
 	}
 	web, err := tasktoolsource.PackReviewedArchive(source.entries["web"], source.review.Sources["web"])
 	if err != nil {
@@ -78,5 +92,19 @@ func (e *PrivateExecutor) packRehearsalCandidate(ctx context.Context, plan api.H
 	if err != nil {
 		return zero, state.ErrConflict
 	}
-	return HostedTaskRehearsalCandidate{WebArchive: web, WorkerArchive: worker}, nil
+	return HostedTaskRehearsalCandidate{WebArchive: web, WorkerArchive: worker, bindings: bindings}, nil
+}
+
+func rehearsalRunnerBindings(sources map[string][]api.HostedTaskSourceEntry) (tasktoolbinding.Policy, error) {
+	for _, entry := range sources["worker"] {
+		if entry.Path != "tasks-migrate.js" || entry.Directory || len(entry.Content) == 0 {
+			continue
+		}
+		policy, err := reviewedHostedBindingPolicy(sources)
+		if err != nil {
+			return policy, err
+		}
+		return policy, taskrehearsal.ValidateRunnerPolicy(policy)
+	}
+	return tasktoolbinding.Policy{}, state.ErrConflict
 }
