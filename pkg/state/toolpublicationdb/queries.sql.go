@@ -353,6 +353,44 @@ func (q *Queries) HostedTaskSourceCounts(ctx context.Context, db DBTX, accountID
 	return i, err
 }
 
+const insertHostedTaskRehearsalRun = `-- name: InsertHostedTaskRehearsalRun :execrows
+INSERT INTO hosted_task_rehearsal_runs (account_id, id, run_id, plan_sha256, reserved_at, approval_expires_at)
+SELECT $1, $2, $3, $4,
+       $5, $6
+WHERE $6::timestamptz > clock_timestamp()
+AND NOT EXISTS (
+    SELECT 1 FROM api_keys AS k
+    WHERE k.account_id = $1 AND k.id = ANY($7::uuid[])
+      AND k.expires_at <= clock_timestamp()
+)
+`
+
+type InsertHostedTaskRehearsalRunParams struct {
+	AccountID         pgtype.UUID
+	ID                string
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
+	AuthorityKeys     []pgtype.UUID
+}
+
+func (q *Queries) InsertHostedTaskRehearsalRun(ctx context.Context, db DBTX, arg InsertHostedTaskRehearsalRunParams) (int64, error) {
+	result, err := db.Exec(ctx, insertHostedTaskRehearsalRun,
+		arg.AccountID,
+		arg.ID,
+		arg.RunID,
+		arg.PlanSha256,
+		arg.ReservedAt,
+		arg.ApprovalExpiresAt,
+		arg.AuthorityKeys,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertHostedTaskSourceIntent = `-- name: InsertHostedTaskSourceIntent :exec
 INSERT INTO hosted_task_source_intents(account_id,id,payload,ciphertext,expires_at) VALUES($1,$2,$3,$4,$5)
 `
@@ -1227,6 +1265,35 @@ func (q *Queries) ReadHostedTaskBindingNamespace(ctx context.Context, db DBTX, a
 		&i.EnvValue,
 		&i.EnvHas,
 		&i.Secret,
+	)
+	return i, err
+}
+
+const readHostedTaskRehearsalRun = `-- name: ReadHostedTaskRehearsalRun :one
+SELECT run_id, plan_sha256, reserved_at, approval_expires_at FROM hosted_task_rehearsal_runs
+WHERE account_id = $1 AND id = $2
+`
+
+type ReadHostedTaskRehearsalRunParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type ReadHostedTaskRehearsalRunRow struct {
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReadHostedTaskRehearsalRun(ctx context.Context, db DBTX, arg ReadHostedTaskRehearsalRunParams) (ReadHostedTaskRehearsalRunRow, error) {
+	row := db.QueryRow(ctx, readHostedTaskRehearsalRun, arg.AccountID, arg.ID)
+	var i ReadHostedTaskRehearsalRunRow
+	err := row.Scan(
+		&i.RunID,
+		&i.PlanSha256,
+		&i.ReservedAt,
+		&i.ApprovalExpiresAt,
 	)
 	return i, err
 }

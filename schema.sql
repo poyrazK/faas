@@ -43638,6 +43638,22 @@ CREATE TABLE public.hosted_task_rehearsal_plans (
 
 
 --
+-- Name: hosted_task_rehearsal_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosted_task_rehearsal_runs (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    run_id uuid NOT NULL,
+    plan_sha256 text NOT NULL,
+    reserved_at timestamp with time zone NOT NULL,
+    approval_expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT hosted_task_rehearsal_runs_check CHECK ((reserved_at < approval_expires_at)),
+    CONSTRAINT hosted_task_rehearsal_runs_plan_sha256_check CHECK ((plan_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: hosted_task_source_intents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69035,6 +69051,22 @@ ALTER TABLE ONLY public.hosted_task_binding_qualifications
 
 ALTER TABLE ONLY public.hosted_task_rehearsal_plans
     ADD CONSTRAINT hosted_task_rehearsal_plans_pkey PRIMARY KEY (account_id, id);
+
+
+--
+-- Name: hosted_task_rehearsal_runs hosted_task_rehearsal_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_rehearsal_runs
+    ADD CONSTRAINT hosted_task_rehearsal_runs_pkey PRIMARY KEY (account_id, id);
+
+
+--
+-- Name: hosted_task_rehearsal_runs hosted_task_rehearsal_runs_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_rehearsal_runs
+    ADD CONSTRAINT hosted_task_rehearsal_runs_run_id_key UNIQUE (run_id);
 
 
 --
@@ -104158,6 +104190,14 @@ ALTER TABLE ONLY public.hosted_task_binding_qualifications
 
 ALTER TABLE ONLY public.hosted_task_rehearsal_plans
     ADD CONSTRAINT hosted_task_rehearsal_plans_account_id_id_fkey FOREIGN KEY (account_id, id) REFERENCES public.hosted_task_binding_qualifications(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosted_task_rehearsal_runs hosted_task_rehearsal_runs_account_id_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_rehearsal_runs
+    ADD CONSTRAINT hosted_task_rehearsal_runs_account_id_id_fkey FOREIGN KEY (account_id, id) REFERENCES public.hosted_task_rehearsal_plans(account_id, id) ON DELETE CASCADE;
 
 
 --
