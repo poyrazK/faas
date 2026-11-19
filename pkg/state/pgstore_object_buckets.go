@@ -130,6 +130,13 @@ func reserveObjectBucketPlacedTx(ctx context.Context, tx pgx.Tx, b ObjectBucket,
 		if old.PublicRead != b.PublicRead || old.ServeAt.String != b.ServeAt || pgUUIDString(old.EnvironmentCloneSourceBucketID) != b.EnvironmentCloneSourceBucketID || pgUUIDString(old.EnvironmentCloneOperationID) != b.EnvironmentCloneOperationID {
 			return ObjectBucket{}, false, ErrConflict
 		}
+		if b.ObjectLockAtCreation {
+			// A retry asking for Object Lock must not return a bucket
+			// created without it (ADR-20261119065000).
+			if j, err := readObjectBucketObjectLock(ctx, tx, pgUUIDString(old.ID)); err != nil || !j.EnabledRequired {
+				return ObjectBucket{}, false, ErrConflict
+			}
+		}
 		return objectBucketFromSQL(old), false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -159,7 +166,40 @@ func reserveObjectBucketPlacedTx(ctx context.Context, tx pgx.Tx, b ObjectBucket,
 	if err != nil {
 		return ObjectBucket{}, false, mapErr(err)
 	}
-	return objectBucketFromSQL(out), true, nil
+	reserved := objectBucketFromSQL(out)
+	if b.ObjectLockAtCreation {
+		if err = journalObjectLockAtCreationTx(ctx, tx, reserved); err != nil {
+			return ObjectBucket{}, false, err
+		}
+	}
+	return reserved, true, nil
+}
+
+// journalObjectLockAtCreationTx checks the paying plan and records the
+// creation request in the bucket's Object Lock journal, in the reservation
+// transaction (ADR-20261119065000).
+func journalObjectLockAtCreationTx(ctx context.Context, tx pgx.Tx, b ObjectBucket) error {
+	q := sqlc.New()
+	subject, err := q.ObjectStorageSubject(ctx, tx, sqlc.ObjectStorageSubjectParams{BucketID: mustPgUUID(b.ID), AccountID: mustPgUUID(b.AccountID)})
+	if err != nil {
+		return mapErr(err)
+	}
+	limits, err := readObjectPlanLimits(ctx, tx, pgUUIDString(subject))
+	if err != nil {
+		return err
+	}
+	if err = objectLockCreationPlanError(limits); err != nil {
+		return err
+	}
+	now, err := q.ObjectVersioningNow(ctx, tx)
+	if err != nil {
+		return err
+	}
+	j, err := objectLockAtCreation(b, now.Time)
+	if err != nil {
+		return err
+	}
+	return saveObjectBucketObjectLock(ctx, tx, j, true)
 }
 
 func (s *pgCore) ListObjectBuckets(ctx context.Context, accountID, appID string) ([]ObjectBucket, error) {

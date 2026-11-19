@@ -2,7 +2,6 @@ package objectstorage
 
 import (
 	"context"
-	"errors"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -11,7 +10,9 @@ import (
 // ErrObjectLockPlan marks Object Lock protection the bucket owner's plan does
 // not include (ADR-20261111123000 decision 8). It is wrapped in a
 // state.ObjectStorageLimitError naming the limit and the observed value.
-var ErrObjectLockPlan = errors.New("object lock protection exceeds the plan")
+// It is state.ErrObjectLockPlan, so a refusal from a state transaction (a
+// bucket created with Object Lock, ADR-20261119065000) matches too.
+var ErrObjectLockPlan = state.ErrObjectLockPlan
 
 // CheckObjectLockPlan reads the limits of the plan that pays for b from store
 // and refuses the protection check finds beyond them. A store that cannot

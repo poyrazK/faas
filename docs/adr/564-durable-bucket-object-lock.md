@@ -2,6 +2,7 @@
 
 Date: 2026-10-04
 Status: Accepted
+Amended by: [ADR-20261119065000](20261119065000-object-lock-chosen-at-bucket-creation.md) (Object Lock chosen at bucket creation on creation-only backends)
 
 ## Context
 

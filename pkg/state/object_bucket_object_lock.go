@@ -2,11 +2,34 @@ package state
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// ErrObjectLockPlan marks Object Lock protection the bucket owner's plan does
+// not include; objectstorage.ErrObjectLockPlan is the same error.
+var ErrObjectLockPlan = errors.New("object lock protection exceeds the plan")
+
+// objectLockAtCreation is the journal row a bucket created with Object Lock
+// starts with (ADR-20261119065000): the accepted enablement request, written
+// in the reservation transaction so provisioning and recovery send the
+// provider's creation flag.
+func objectLockAtCreation(b ObjectBucket, now time.Time) (ObjectBucketObjectLock, error) {
+	return requestObjectBucketObjectLock(newObjectBucketObjectLock(b, now), api.ObjectBucketObjectLockConfiguration{Enabled: true}, now)
+}
+
+// objectLockCreationPlanError refuses Object Lock at creation when the plan
+// that pays for the bucket includes no Object Lock retention.
+func objectLockCreationPlanError(l api.ObjectStoragePlanLimits) error {
+	v := l.ObjectLockConfigurationViolation(api.ObjectBucketObjectLockConfiguration{Enabled: true}, false)
+	if v == nil {
+		return nil
+	}
+	return &ObjectStorageLimitError{Kind: v.Kind, Limit: v.Limit, Observed: v.Observed, Cause: ErrObjectLockPlan}
+}
 
 type ObjectBucketObjectLock struct {
 	api.ObjectBucketObjectLock
