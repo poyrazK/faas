@@ -3552,6 +3552,23 @@ groups:
           description: "builderd attributed a new faas-cp-build.slice oom_kill to the active build. The build is persisted as build_oom; use the correlated builderd log to identify build, deployment, node, and VM instance."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuilderSliceOOM.md"
 
+      # Elastic builder slots (ADR-20261118154632): a node that keeps giving
+      # borrowed builds back to tenants has a builder_slots max too high for
+      # its tenant load. Tenants are not at risk (that is what the give-back
+      # is for); builds restart and wait longer.
+      - alert: FaasBuildPreemptionsHigh
+        expr: sum by (instance) (increase(builderd_build_preemptions_total[1h])) > 6
+        for: 15m
+        labels:
+          severity: warn
+          component: builderd
+          family: builder_memory
+          public_status: internal
+        annotations:
+          summary: "A node gave more than 6 borrowed builds back to tenants in the last hour"
+          description: "Borrowed builder slots on {{ $labels.instance }} keep giving their memory back to tenants, so builds restart. Lower that node's max in builder_slots, or turn builder_elastic_slots off."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildPreemptionsHigh.md"
+
       - alert: FaasHostOOMKill
         expr: increase(node_vmstat_oom_kill[10m]) > 0
         for: 1m

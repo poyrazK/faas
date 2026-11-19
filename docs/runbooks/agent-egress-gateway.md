@@ -5,7 +5,9 @@ own WireGuard gateway and their own public addresses, apart from the tenant
 gateway's. With `egress.agent_gateway.proxy` on, agent TCP 80 and 443 pass
 through `agentproxyd`, the politeness proxy, which caps connections, refuses
 blocklisted domains and logs every connection. This runbook applies to fleets
-whose manifest declares `egress.agent_gateway`.
+whose manifest declares `egress.agent_gateway`. To take production from no
+gateway to web and browser sessions, follow
+[agent-egress-production-rollout.md](agent-egress-production-rollout.md).
 
 ## Bring-up
 

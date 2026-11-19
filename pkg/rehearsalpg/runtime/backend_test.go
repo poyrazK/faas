@@ -21,6 +21,10 @@ type memoryCatalog struct {
 	rows map[string]rehearsalpg.Resource
 }
 
+func (c *memoryCatalog) ScenarioPostgresTaskParticipants(context.Context, rehearsalpg.Resource) ([]rehearsalpg.TaskParticipant, error) {
+	return nil, nil
+}
+
 func (c *memoryCatalog) ReserveScenarioPostgres(_ context.Context, r rehearsalpg.Resource) (rehearsalpg.Resource, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

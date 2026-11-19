@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -177,6 +178,10 @@ func (m *management) applyLocalDeploy(ctx context.Context, args applyArgs) (any,
 		m.mu.Unlock()
 		return receipt, err
 	}
+	if p := m.plans[args.PlanID]; p != nil && p.localInFlight {
+		m.mu.Unlock()
+		return nil, invalid("in_progress", "this plan is already being applied; retry the same plan ID when that call returns")
+	}
 	p, err := m.checkedLocalDeploy(ctx, args.PlanID)
 	if err != nil || p.localReceipt != nil {
 		m.mu.Unlock()
@@ -185,9 +190,23 @@ func (m *management) applyLocalDeploy(ctx context.Context, args applyArgs) (any,
 		}
 		return p.localReceipt, nil
 	}
-	if p.localInFlight {
-		m.mu.Unlock()
-		return nil, invalid("in_progress", "this plan is already being applied; retry the same plan ID when that call returns")
+	if p.uploadApproval != nil {
+		receipt, err := m.checkUploadApproval(ctx, p)
+		if receipt != nil || err != nil {
+			if err == nil {
+				receipt, err = m.saveLocalDeployReceipt(p, receipt)
+			}
+			m.mu.Unlock()
+			return receipt, err
+		}
+	}
+	if p.LocalSource.Uploaded && m.opts.uploads != nil {
+		unpin, err := m.opts.uploads.pinDir(p.LocalSource.Path)
+		if err != nil {
+			m.mu.Unlock()
+			return nil, err
+		}
+		defer unpin()
 	}
 	fingerprint, _, _, err := fingerprintTree(p.LocalSource.Path)
 	if err == nil && fingerprint != p.LocalSource.Fingerprint {
@@ -213,8 +232,12 @@ func (m *management) applyLocalDeploy(ctx context.Context, args applyArgs) (any,
 	defer m.mu.Unlock()
 	p.localInFlight = false
 	if err != nil {
-		return nil, err
+		return nil, m.retainUploadApproval(ctx, p, err)
 	}
+	return m.saveLocalDeployReceipt(p, receipt)
+}
+
+func (m *management) saveLocalDeployReceipt(p *releasePlan, receipt any) (any, error) {
 	p.localReceipt = receipt
 	if err := m.persistPlans(); err != nil {
 		return nil, err
@@ -238,8 +261,13 @@ func (m *management) checkedLocalDeploy(ctx context.Context, id string) (*releas
 	if p == nil || p.Action != "local_deploy" || p.LocalSource == nil {
 		return nil, invalid("invalid_plan", "plan ID is unknown or belongs to a different action or connection")
 	}
-	if time.Now().After(p.ExpiresAt) {
+	if !time.Now().Before(p.ExpiresAt) {
 		delete(m.plans, id)
+		if p.uploadApproval != nil {
+			return nil, p.uploadApproval.problem(http.StatusGone, api.CodeApprovalExpired, "Approval expired",
+				"the original upload approval expired; inspect the app's deployments before creating a new plan",
+				api.AgentApprovalResponse{Status: api.AgentApprovalExpired})
+		}
 		return nil, invalid("plan_expired", "plan expired; inspect the app's deployments before creating a new plan")
 	}
 	account, err := m.client.Whoami(ctx)
@@ -305,19 +333,28 @@ func (m *management) runLocalDeploy(ctx context.Context, p *releasePlan) (any, e
 		// recover that upload on retry, including after approval.
 		ctx = context.WithValue(ctx, hostedCLIStateKey{}, uploadPlanCLIStateDir(source.Path))
 	}
+	if p.uploadApproval != nil {
+		args = append(args, "--resume-upload-id", p.uploadApproval.uploadID)
+	}
 	out, err := m.runCLI(ctx, args, nil)
 	if err != nil {
 		return nil, err
 	}
-	var receipt struct {
-		ID            string `json:"id"`
-		AppURL        string `json:"app_url"`
-		TimedOut      bool   `json:"timed_out"`
-		ResumeCommand string `json:"resume_command"`
-	}
+	var receipt localDeployReceipt
 	if err := json.Unmarshal(out, &receipt); err != nil || validateSegment(receipt.ID, "deployment_id") != nil {
 		return nil, invalid("invalid_response", "the CLI returned no deployment receipt; inspect the app's deployments before retrying this plan")
 	}
+	return m.localDeployResult(ctx, p, receipt)
+}
+
+type localDeployReceipt struct {
+	ID            string `json:"id"`
+	AppURL        string `json:"app_url"`
+	TimedOut      bool   `json:"timed_out"`
+	ResumeCommand string `json:"resume_command"`
+}
+
+func (m *management) localDeployResult(ctx context.Context, p *releasePlan, receipt localDeployReceipt) (any, error) {
 	app, err := m.client.GetApp(ctx, p.App)
 	if err != nil {
 		return nil, err
