@@ -22,6 +22,18 @@ faas_secretd_require_references: false
 # enforce refuses out-of-scope and unrecorded pulls once observe shows none;
 # off checks nothing.
 faas_secretd_build_registry_scope: observe
+# ADR-20261117190000: off|gcs|s3. gcs or s3 lets secretd sign 5-minute
+# per-object URLs for compute nodes (GrantStorageObjects) with the control
+# plane's store credentials. gcs needs faas_secretd_storage_bucket and a
+# service account that can signBlob for itself; s3 also needs
+# faas_secretd_storage_s3_{endpoint,region,access_key} and a secret key
+# file at faas_secretd_storage_s3_secret_key_path on the host.
+faas_secretd_storage_grants: "off"
+faas_secretd_storage_bucket: ""
+faas_secretd_storage_s3_endpoint: ""
+faas_secretd_storage_s3_region: ""
+faas_secretd_storage_s3_access_key: ""
+faas_secretd_storage_s3_secret_key_path: /etc/faas/secretd/storage-s3-secret-key
 # Loopback /metrics (faas_secretd_opens_total, faas_secretd_refusals_total),
 # scraped by the prometheus role's secretd job. Refusals are the alertable
 # compromise signal (FaasSecretdRefusedNode and friends).

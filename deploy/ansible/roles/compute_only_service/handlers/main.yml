@@ -25,6 +25,12 @@
   listen: restart faas-schedd
   when: not (faas_join_defer_service_handlers | default(false) | bool)
 
+# Storage grants apply at each daemon's next restart: reload only.
+- name: compute_only_service — reload systemd for storage grants
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: reload systemd for storage grants
+
 # The host-firewall start guard applies at the next start: reload only.
 - name: compute_only_service — reload systemd for the host-firewall start guard
   ansible.builtin.systemd_service:
