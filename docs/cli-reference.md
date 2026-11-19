@@ -1971,7 +1971,7 @@ Inspect and recover repository projects
 
 ### project preview
 
-secret
+Set or remove a pull request preview value on every service
 
 #### project preview secret
 
@@ -2512,7 +2512,7 @@ gregale app binding call public-api billing --caller-deployment v12 --target-dep
 
 #### app binding probe-policy
 
-set
+Configure or remove an outbound integration probe
 
 `gregale app binding probe-policy <set>`
 
@@ -3708,7 +3708,7 @@ Manage custom domains
 
 ### domain default
 
-set
+Set a verified domain as the app default
 
 #### domain default set
 
@@ -6332,7 +6332,7 @@ Register webhooks and deliver events to them
 
 ### webhook secret
 
-rotate
+Rotate the webhook signing secret
 
 #### webhook secret rotate
 
@@ -6352,7 +6352,7 @@ Manage one release receiver across all account apps
 
 #### webhook account secret
 
-rotate
+Replace the signing secret
 
 `gregale webhook account secret <rotate>`
 
@@ -6730,7 +6730,7 @@ Manage alert rules, channels, incidents, SLOs and checks
 
 ### alert secret
 
-rotate
+Rotate the alert&#39;s webhook secret
 
 #### alert secret rotate
 
@@ -7193,7 +7193,7 @@ Manage orgs, members and invitations
 
 ### org agent
 
-policy
+Show or set whether agents may act in the org
 
 #### org agent policy
 
@@ -7391,7 +7391,7 @@ Remove a member
 
 ### org owner
 
-set
+Transfer org ownership
 
 #### org owner set
 
