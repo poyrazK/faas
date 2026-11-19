@@ -31,21 +31,19 @@ func TestRouteProbeTargetsSkipEndedRolloutsMemStore(t *testing.T) {
 }
 
 // adr: 847
+// Only "aborted": deployments_app_scope_live_uniq forbids a completed rollout
+// beside its live predecessor, so Postgres cannot hold the "complete" case.
 func TestRouteProbeTargetsSkipEndedRolloutsPostgres(t *testing.T) {
-	for _, ended := range []string{"aborted", "complete"} {
-		t.Run(ended, func(t *testing.T) {
-			pool := pgtest.OpenMigrated(t)
-			if err := db.MigrateUp(t.Context(), pool); err != nil {
-				t.Fatal(err)
-			}
-			checkRouteProbeTargetsSkipEndedRollout(t, state.NewPgStore(pool), ended, func(t *testing.T, id, rolloutState string) {
-				t.Helper()
-				if _, err := pool.Exec(t.Context(), "UPDATE deployments SET rollout_state = $2 WHERE id = $1", id, rolloutState); err != nil {
-					t.Fatal(err)
-				}
-			})
-		})
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
 	}
+	checkRouteProbeTargetsSkipEndedRollout(t, state.NewPgStore(pool), "aborted", func(t *testing.T, id, rolloutState string) {
+		t.Helper()
+		if _, err := pool.Exec(t.Context(), "UPDATE deployments SET rollout_state = $2 WHERE id = $1", id, rolloutState); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 // checkRouteProbeTargetsSkipEndedRollout: a canary candidate that still
