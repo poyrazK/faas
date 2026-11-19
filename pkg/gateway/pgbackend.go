@@ -1934,6 +1934,37 @@ func (b *PGBackend) CapacityCount(appID string) int {
 	return n
 }
 
+// LaneCapacityCount counts the live cached instances of one serving lane of
+// the app. An exact deployment outside the production weights (a stage or
+// preview environment) is its own lane; otherwise the lane is the production
+// traffic set. Environments carry their own max_concurrency, so a warm stage
+// instance must not count against production's ceiling (prod 2026-11-19).
+func (b *PGBackend) LaneCapacityCount(appID, deploymentID string) int {
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return 0
+	}
+	production := make(map[string]bool, len(picker.weights))
+	for _, weight := range picker.weights {
+		production[weight.DeploymentID] = true
+	}
+	if deploymentID != "" && !production[deploymentID] {
+		if set := picker.sets[deploymentID]; set != nil {
+			return len(set.entries)
+		}
+		return 0
+	}
+	n := 0
+	for id, set := range picker.sets {
+		if production[id] {
+			n += len(set.entries)
+		}
+	}
+	return n
+}
+
 func (b *PGBackend) routableTargetCountLocked(appID string) int {
 	picker := b.appsPicker[appID]
 	if picker == nil {

@@ -92,7 +92,7 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 					// becomes routable soon after, the waiters re-pick and serve
 					// it once this generation completes.
 					limits := api.MustLimitsFor(app.Plan)
-					_, err = h.settleAtCapacity(wakeCtx, app, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
+					_, err = h.settleAtCapacity(wakeCtx, app, deployment, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
 						return pickPublicDeployment(h.backend, app.ID, deployment, "")
 					})
 					return err
