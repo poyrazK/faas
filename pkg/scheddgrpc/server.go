@@ -631,12 +631,18 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 	// The pre-wake clock starts before authorization so wake.boot_started
 	// accounts for the whole RPC up to Engine.Wake.
 	ctx = sched.WithEnsureWakeRPCStarted(ctx, time.Now())
+	received := time.Now()
+	s.log.Debug("schedd: ensure wake received", "app_id", req.GetAppId(), "trigger", req.GetTrigger(), "desired", req.GetDesiredInstances())
 	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
+		s.log.Debug("schedd: ensure wake unauthorized", "app_id", req.GetAppId(), "err", err)
 		return nil, err
 	}
 	start := time.Now()
 	var out sched.CoordOutcome
 	var err error
+	defer func() {
+		s.log.Debug("schedd: ensure wake done", "app_id", req.GetAppId(), "took", time.Since(received).String(), "err", err)
+	}()
 	ctx = withIncomingCorrelation(ctx)
 	desired := int(req.GetDesiredInstances())
 	spanDesired := desired

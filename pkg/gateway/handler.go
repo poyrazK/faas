@@ -9971,6 +9971,11 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 		config = configs[0]
 	}
 	policy := WakeAdmissionPolicyForAppWithWakeLimits(plan, config.overflow, config.maxQueueWaitMS, config.wakeMaxQueueDepth, config.wakeMaxQueueWaitSecs)
+	if h.log != nil {
+		// A request that joins a wake already in flight waits on that wake's
+		// leader, which may have started before a schedd restart.
+		h.log.Debug("gateway: wake gate enter", "app_id", appID, "joins_inflight", h.gate.WakeInProgress(appID), "trigger", trigger)
+	}
 	werr := h.gate.WaitWithPolicy(ctx, appID, accountID, policy,
 		func() bool {
 			// max_concurrency is a ceiling for scheduler-driven scale-up,
@@ -9979,6 +9984,13 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			return h.backend.HealthyCount(appID) == 0
 		},
 		func(ctx context.Context) error {
+			if h.log != nil {
+				leaderStart := time.Now()
+				h.log.Debug("gateway: wake leader ensure start", "app_id", appID)
+				defer func() {
+					h.log.Debug("gateway: wake leader ensure end", "app_id", appID, "took", time.Since(leaderStart).String())
+				}()
+			}
 			_, hasCapacityEnsurer := h.backend.(capacityWarmEnsurer)
 			_, hasWarmEnsurer := h.backend.(warmEnsurer)
 			if scope == "" && (hasCapacityEnsurer || hasWarmEnsurer) && h.burstPressure != nil {
