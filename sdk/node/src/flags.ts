@@ -42,10 +42,19 @@ export function parseFlagKills(value: string | null | undefined): Set<string> {
   for (const part of (value ?? '').split(',')) { const key = part.trim(); if (FLAG_KEY.test(key)) out.add(key); if (out.size >= 100) break; }
   return out;
 }
+/** The verified customer's analytics cohorts, stamped by Gregale's gateway: sorted keys, or "-" for none. */
+export const GREGALE_FLAG_COHORTS_HEADER = 'X-Faas-Flag-Cohorts';
+/** Parse a gregale.cohort value: cohort keys, or undefined when malformed. */
+export function parseFlagCohorts(value: string | null | undefined): string[] | undefined {
+  if (value === '-') return [];
+  if (!value) return undefined;
+  const keys = value.split(',');
+  return keys.length <= 20 && keys.every(k => FLAG_KEY.test(k)) ? keys : undefined;
+}
 /** Request attributes for rule conditions: gregale.* from the gateway, app.* from the application. */
 export type FlagAttributes = Record<string, string>;
 const APP_ATTRIBUTE_NAME = /^[a-z][a-z0-9_]{0,31}$/;
-const ATTRIBUTE_NAME = /^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$/;
+const ATTRIBUTE_NAME = /^(gregale\.(country|ua_family|cohort)|app\.[a-z][a-z0-9_]{0,31})$/;
 const MAX_APP_ATTRIBUTES = 16;
 export function validFlagAttributeValue(value: unknown): value is string {
   return typeof value === 'string' && /^[\x20-\x7e]{1,128}$/.test(value);
@@ -54,6 +63,14 @@ export function validFlagAttributeValue(value: unknown): value is string {
 export function matchFlagConditions(conditions: FlagCondition[] | undefined, attributes: FlagAttributes | undefined): boolean {
   for (const c of conditions ?? []) {
     const value = attributes?.[c.attribute];
+    if (c.attribute === 'gregale.cohort') {
+      // in: a member of any listed cohort; not_in: of none (ADR 20261119102741 §4).
+      const cohorts = parseFlagCohorts(value);
+      if (!cohorts) return false;
+      const member = c.values.some(v => cohorts.includes(v));
+      if (c.op === 'in' ? !member : c.op === 'not_in' ? member : true) return false;
+      continue;
+    }
     if (!validFlagAttributeValue(value)) return false;
     if (c.op === 'in') { if (!c.values.includes(value)) return false; }
     else if (c.op === 'not_in') { if (c.values.includes(value)) return false; }
@@ -72,7 +89,7 @@ const EVENT_QUEUE_MAX = 1000;
 const EVENT_FLUSH_MS = 5000;
 const EVENT_MAX_ABS_VALUE = 1_000_000_000_000;
 /** Capabilities this SDK advertises to the runtime endpoint. */
-export const GREGALE_FLAG_SDK_CAPABILITIES = 'subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2';
+export const GREGALE_FLAG_SDK_CAPABILITIES = 'subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1';
 /** Product analytics event bounds (ADR 20261117084505). */
 const EVENT_PROPERTY_KEY = /^[a-z][a-z0-9_]{0,63}$/;
 const EVENT_MAX_PROPERTIES = 10;
@@ -341,6 +358,8 @@ export class GregaleFlags {
     if (/^[A-Z]{2}$/.test(country)) attributes['gregale.country'] = country;
     const uaFamily = normalized.get(GREGALE_CLIENT_UA_FAMILY_HEADER) ?? '';
     if (FLAG_KEY.test(uaFamily)) attributes['gregale.ua_family'] = uaFamily;
+    const cohorts = normalized.get(GREGALE_FLAG_COHORTS_HEADER) ?? '';
+    if (parseFlagCohorts(cohorts)) attributes['gregale.cohort'] = cohorts;
     const request: RequestFlags = {
       customer, attributes, kills: parseFlagKills(normalized.get(GREGALE_FLAG_KILLS_HEADER)), bundle: this.bundle,
       fresh: !!this.bundle && currentAge >= 0 && currentAge <= this.maxStaleMs,

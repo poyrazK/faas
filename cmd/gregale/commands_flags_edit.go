@@ -329,13 +329,13 @@ func parseFlagsPercent(raw string) (int, error) { return flags.ParsePercent(raw)
 
 func flagsPercent(key string, bp int) flagsEdit { return flagsEdit(flags.EditPercent(key, bp)) }
 
-// flagsAttributeName expands a short attribute name: country and ua_family
-// are the gateway's, any other bare name is the application's.
+// flagsAttributeName expands a short attribute name: country, ua_family and
+// cohort are the gateway's, any other bare name is the application's.
 func flagsAttributeName(name string) string {
 	switch {
 	case strings.Contains(name, "."):
 		return name
-	case name == "country" || name == "ua_family":
+	case name == "country" || name == "ua_family" || name == "cohort":
 		return "gregale." + name
 	default:
 		return flags.AppAttributePrefix + name
@@ -356,7 +356,7 @@ func parseFlagsCondition(raw string) (flags.Condition, error) {
 		}
 		return c, nil
 	}
-	return flags.Condition{}, fmt.Errorf("--attr %q: use NAME=V1,V2 (in), NAME!=V1,V2 (not in) or NAME$=SUFFIX (ends with); NAME is country, ua_family or an app attribute", raw)
+	return flags.Condition{}, fmt.Errorf("--attr %q: use NAME=V1,V2 (in), NAME!=V1,V2 (not in) or NAME$=SUFFIX (ends with); NAME is country, ua_family, cohort or an app attribute", raw)
 }
 
 // parseFlagsInspectAttributes reads repeated NAME=VALUE options.
@@ -369,7 +369,7 @@ func parseFlagsInspectAttributes(raw []string) (map[string]string, error) {
 		name, value, ok := strings.Cut(item, "=")
 		name = flagsAttributeName(strings.TrimSpace(name))
 		if !ok || !flags.ValidAttributeName(name) || !flags.ValidAttributeValue(value) {
-			return nil, fmt.Errorf("--attr %q: use NAME=VALUE; NAME is country, ua_family or an app attribute", item)
+			return nil, fmt.Errorf("--attr %q: use NAME=VALUE; NAME is country, ua_family, cohort or an app attribute", item)
 		}
 		out[name] = value
 	}

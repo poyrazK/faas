@@ -5,6 +5,17 @@
     "groups": {},
     "flags": [
       {
+        "key": "power-tools",
+        "enabled": true,
+        "default": false,
+        "seed": "seed-power",
+        "rules": [
+          {"id": "churned-out", "attributes": [{"attribute": "gregale.cohort", "op": "in", "values": ["churned"]}], "value": false},
+          {"id": "power", "attributes": [{"attribute": "gregale.cohort", "op": "in", "values": ["power", "beta"]}], "value": true},
+          {"id": "newcomers", "attributes": [{"attribute": "gregale.cohort", "op": "not_in", "values": ["onboarded"]}], "value": true}
+        ]
+      },
+      {
         "key": "eu-checkout",
         "enabled": true,
         "default": false,
@@ -61,6 +72,11 @@
     {"name": "gateway kill beats a matching rule", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.country": "DE"}, "kills": ["eu-checkout"], "fallback": false, "value": false, "reason": "killed"},
     {"name": "gateway kill of a flag the bundle does not have yet", "flag": "brand-new", "customer": "00000000-0000-4000-8000-000000000001", "kills": ["brand-new"], "fallback": true, "value": true, "reason": "killed"},
     {"name": "gateway kill of a variant", "flag": "staff-theme", "type": "variant", "customer": "00000000-0000-4000-8000-000000000002", "attributes": {"app.email": "ann@example.com"}, "kills": ["staff-theme"], "fallback": "classic", "value": "classic", "reason": "killed"},
-    {"name": "kills of other flags do not apply", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.country": "DE"}, "kills": ["staff-theme"], "fallback": false, "value": true, "reason": "rule_match", "rule_id": "eu"}
+    {"name": "kills of other flags do not apply", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.country": "DE"}, "kills": ["staff-theme"], "fallback": false, "value": true, "reason": "rule_match", "rule_id": "eu"},
+    {"name": "cohort member of any listed cohort", "flag": "power-tools", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.cohort": "beta,onboarded"}, "fallback": false, "value": true, "reason": "rule_match", "rule_id": "power"},
+    {"name": "cohort earlier rule wins", "flag": "power-tools", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.cohort": "churned,power"}, "fallback": true, "value": false, "reason": "rule_match", "rule_id": "churned-out"},
+    {"name": "cohort none matches not_in", "flag": "power-tools", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.cohort": "-"}, "fallback": false, "value": true, "reason": "rule_match", "rule_id": "newcomers"},
+    {"name": "cohort onboarded only falls to default", "flag": "power-tools", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.cohort": "onboarded"}, "fallback": true, "value": false, "reason": "default"},
+    {"name": "cohort missing header matches nothing", "flag": "power-tools", "customer": "00000000-0000-4000-8000-000000000001", "fallback": true, "value": false, "reason": "default"}
   ]
 }

@@ -82,6 +82,10 @@ HTTP 400 Bad Request · Invalid alert rule
 
 See [Alerts](alerts.md).
 
+### `analytics_cohort_limit`
+
+HTTP 409 Conflict · Cohort limit reached
+
 ### `api_key_expired`
 
 HTTP 401 Unauthorized · API key expired

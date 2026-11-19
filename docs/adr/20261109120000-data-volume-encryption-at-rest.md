@@ -242,3 +242,10 @@ Plain volumes keep their mount options. With these changes bhs-3 rebooted to
 `running`: Tang unlocked the volume 11.5 s into boot, every mount came up, and
 nftables loaded. `TestMountsBeneathTheDataVolumeAreNofailWhenEncrypted` keeps
 every future mount beneath `/srv/fc` honest.
+
+The first reconverge after this amendment stacked the cache bind on bhs-2:
+`ansible.posix.mount` with `state: mounted` tests "already mounted" with
+`os.path.ismount`, which is false for a bind whose parent is a bind of the
+same filesystem, and on an encrypted host `/var/lib/faas` is one. The cache
+and Grype binds are therefore written to fstab as `present` and mounted only
+when `findmnt` finds nothing at the path, on every host.

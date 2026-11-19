@@ -20,7 +20,7 @@ import (
 // Conversion events for experiments (ADR 20261115163113).
 
 // flagSDKCapabilities is what this SDK advertises to the runtime endpoints.
-const flagSDKCapabilities = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2"
+const flagSDKCapabilities = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1"
 
 const (
 	flagEventBatch         = 100

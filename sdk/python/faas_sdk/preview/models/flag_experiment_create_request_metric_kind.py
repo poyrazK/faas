@@ -1,10 +1,12 @@
 from typing import Literal
 
-FlagExperimentCreateRequestMetricKind = Literal["conversion", "mean"]
+FlagExperimentCreateRequestMetricKind = Literal["conversion", "funnel", "mean", "retention"]
 
 FLAG_EXPERIMENT_CREATE_REQUEST_METRIC_KIND_VALUES: set[FlagExperimentCreateRequestMetricKind] = {
     "conversion",
+    "funnel",
     "mean",
+    "retention",
 }
 
 

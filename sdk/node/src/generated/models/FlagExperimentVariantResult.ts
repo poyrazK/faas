@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { FlagExperimentArm } from './FlagExperimentArm.js';
+import type { FlagExperimentComparison } from './FlagExperimentComparison.js';
 /**
  * One variant compared with control.
  */
@@ -25,5 +26,6 @@ export type FlagExperimentVariantResult = (FlagExperimentArm & {
    */
   p_value?: number;
   status: 'significant' | 'not_significant' | 'insufficient_data' | 'sample_ratio_mismatch';
+  unadjusted?: FlagExperimentComparison;
 });
 

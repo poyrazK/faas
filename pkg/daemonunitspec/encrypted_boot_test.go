@@ -28,6 +28,13 @@ func TestMountsBeneathTheDataVolumeAreNofailWhenEncrypted(t *testing.T) {
 				}
 				seen++
 				opts, _ := mount["opts"].(string)
+				// state=mounted checks os.path.ismount, which is false for a bind
+				// whose parent is a bind of the same filesystem (/var/lib/faas on
+				// an encrypted host): the module stacked a bind per converge.
+				if strings.Contains(opts, "bind") && mount["state"] == "mounted" {
+					t.Errorf("%s %s: %q is a bind beneath /srv/fc with state: mounted; write it as present and mount it only when findmnt finds nothing",
+						role, filepath.Base(f), task.body["name"])
+				}
 				if !strings.Contains(opts, "nofail") {
 					t.Errorf("%s %s: %q mounts beneath /srv/fc without nofail (opts %q); on an encrypted host boot waits for Tang and drops to emergency mode",
 						role, filepath.Base(f), task.body["name"], opts)
