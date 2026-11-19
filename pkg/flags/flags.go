@@ -50,7 +50,12 @@ type Condition struct {
 const (
 	AttributeCountry   = "gregale.country"
 	AttributeUAFamily  = "gregale.ua_family"
+	// AttributeCohort is the gateway-stamped cohorts of the request's
+	// customer (ADR 20261119102741 §4).
+	AttributeCohort    = "gregale.cohort"
 	AppAttributePrefix = "app."
+	// CohortsNone is the gregale.cohort value of a customer in no cohort.
+	CohortsNone = "-"
 
 	OpIn       = "in"
 	OpNotIn    = "not_in"
@@ -64,7 +69,7 @@ var (
 
 // ValidAttributeName accepts the gateway attributes and app.<name>.
 func ValidAttributeName(name string) bool {
-	if name == AttributeCountry || name == AttributeUAFamily {
+	if name == AttributeCountry || name == AttributeUAFamily || name == AttributeCohort {
 		return true
 	}
 	rest, ok := strings.CutPrefix(name, AppAttributePrefix)
@@ -88,9 +93,67 @@ func ValidAttributeValue(value string) bool {
 	return true
 }
 
+// ParseCohorts reads a gregale.cohort attribute: the sorted, comma-separated
+// cohort keys the gateway stamped, or CohortsNone for a customer in none.
+// ok is false for a malformed value, which reads as missing.
+func ParseCohorts(value string) (keys []string, ok bool) {
+	if value == CohortsNone {
+		return nil, true
+	}
+	if value == "" {
+		return nil, false
+	}
+	keys = strings.Split(value, ",")
+	if len(keys) > api.AnalyticsCohortsMaxPerEnvironment {
+		return nil, false
+	}
+	for _, k := range keys {
+		if !ValidKey(k) {
+			return nil, false
+		}
+	}
+	return keys, true
+}
+
+// FormatCohorts is the X-Faas-Flag-Cohorts value for keys: sorted and
+// comma-separated, or CohortsNone.
+func FormatCohorts(keys []string) string {
+	if len(keys) == 0 {
+		return CohortsNone
+	}
+	sorted := slices.Clone(keys)
+	slices.Sort(sorted)
+	return strings.Join(slices.Compact(sorted), ",")
+}
+
+// matchCohorts applies a gregale.cohort condition: in matches a member of
+// any listed cohort, not_in a customer in none of them.
+func matchCohorts(c Condition, value string) bool {
+	keys, ok := ParseCohorts(value)
+	if !ok {
+		return false
+	}
+	member := slices.ContainsFunc(c.Values, func(v string) bool { return slices.Contains(keys, v) })
+	switch c.Op {
+	case OpIn:
+		return member
+	case OpNotIn:
+		return !member
+	default:
+		return false
+	}
+}
+
 // MatchConditions reports whether every condition holds for attrs.
 func MatchConditions(conditions []Condition, attrs map[string]string) bool {
 	for _, c := range conditions {
+		if c.Attribute == AttributeCohort {
+			value, ok := attrs[c.Attribute]
+			if !ok || !matchCohorts(c, value) {
+				return false
+			}
+			continue
+		}
 		value, ok := attrs[c.Attribute]
 		if !ok || !ValidAttributeValue(value) {
 			return false
@@ -626,7 +689,10 @@ func validateConditions(conditions []Condition) error {
 	}
 	for _, c := range conditions {
 		if !ValidAttributeName(c.Attribute) {
-			return fmt.Errorf("invalid attribute %q: use gregale.country, gregale.ua_family or app.<name>", c.Attribute)
+			return fmt.Errorf("invalid attribute %q: use gregale.country, gregale.ua_family, gregale.cohort or app.<name>", c.Attribute)
+		}
+		if c.Attribute == AttributeCohort && c.Op == OpEndsWith {
+			return fmt.Errorf("gregale.cohort takes in or not_in")
 		}
 		switch c.Op {
 		case OpIn, OpNotIn:
@@ -647,6 +713,9 @@ func validateConditions(conditions []Condition) error {
 			}
 			if c.Attribute == AttributeCountry && !countryPattern.MatchString(v) {
 				return fmt.Errorf("gregale.country values are two uppercase letters, not %q", v)
+			}
+			if c.Attribute == AttributeCohort && !ValidKey(v) {
+				return fmt.Errorf("gregale.cohort values are cohort keys, not %q", v)
 			}
 			seen[v] = true
 		}

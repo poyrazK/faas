@@ -2872,6 +2872,32 @@ const (
 	AnalyticsSweepBatch = 10_000
 )
 
+// Experiment analytics metrics, CUPED and cohorts (ADR 20261119102741).
+// Per-plan cohort membership is Limits.AnalyticsCohortMaxMembers.
+const (
+	// ExperimentCupedPreDays is the pre-period before an experiment starts
+	// that CUPED reads each customer's covariate from.
+	ExperimentCupedPreDays = 14
+	// ExperimentRetentionMaxPeriod bounds a retention metric's period number.
+	ExperimentRetentionMaxPeriod = 12
+	// ExperimentAnalyticsUnitsPerPass bounds the customers one reconciler
+	// pass checks for funnel or retention conversions, or fills a CUPED
+	// value for, per experiment.
+	ExperimentAnalyticsUnitsPerPass = 20_000
+	// AnalyticsCohortsMaxPerEnvironment bounds an environment's cohorts.
+	AnalyticsCohortsMaxPerEnvironment = 20
+	// AnalyticsCohortMaxDays bounds a cohort's look-back, inside the plan's
+	// analytics retention.
+	AnalyticsCohortMaxDays = 90
+	// AnalyticsCohortDidNotActiveDays is the activity window a did_not
+	// cohort draws its customers from.
+	AnalyticsCohortDidNotActiveDays = 30
+	// AnalyticsCohortMaxMinCount bounds a did cohort's minimum event count.
+	AnalyticsCohortMaxMinCount = 1000
+	// AnalyticsCohortRefreshInterval is how often a cohort is recomputed.
+	AnalyticsCohortRefreshInterval = time.Hour
+)
+
 // Flag experiment bounds (ADR 20261115163113). The monthly conversion event
 // quota is per plan: Limits.FlagEventsPerMonth.
 const (
@@ -6716,6 +6742,9 @@ type Limits struct {
 	// 365. Analytics events share FlagEventsPerMonth. Provisional until the
 	// financial model carries analytics storage.
 	AnalyticsRetentionDays int
+	// AnalyticsCohortMaxMembers bounds one cohort's members (ADR
+	// 20261119102741 §3): Free 0, Hobby 1,000, Pro 10,000, Scale 100,000.
+	AnalyticsCohortMaxMembers int
 	// DebugTelemetryRequestsPerMinute (ADR-127) is the per-account
 	// rate cap on the IncrementRequestTelemetry ingest RPC. The
 	// recorder publisher reads this at startup; per-record
@@ -7319,6 +7348,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     0,
 		FlagEventsPerMonth:              0,
 		AnalyticsRetentionDays:          0,
+		AnalyticsCohortMaxMembers:       0,
 		DebugTelemetryRequestsPerMinute: 0,
 		APIRequestsPerMinute:            600,
 		DebugGuestLogExportsPerMinute:   0,
@@ -7769,6 +7799,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     3,
 		FlagEventsPerMonth:              100_000,
 		AnalyticsRetentionDays:          30,
+		AnalyticsCohortMaxMembers:       1_000,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
 		APIRequestsPerMinute:            1200,
@@ -8187,6 +8218,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     7,
 		FlagEventsPerMonth:              1_000_000,
 		AnalyticsRetentionDays:          90,
+		AnalyticsCohortMaxMembers:       10_000,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
 		APIRequestsPerMinute:            3000,
@@ -8634,6 +8666,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     14,
 		FlagEventsPerMonth:              10_000_000,
 		AnalyticsRetentionDays:          365,
+		AnalyticsCohortMaxMembers:       100_000,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
 		APIRequestsPerMinute:            6000,
@@ -12887,6 +12920,16 @@ func (p Plan) AnalyticsRetentionDays() int {
 		return 0
 	}
 	return l.AnalyticsRetentionDays
+}
+
+// AnalyticsCohortMaxMembers returns the plan's cohort member bound (ADR
+// 20261119102741 §3); 0 on unknown plans and Free.
+func (p Plan) AnalyticsCohortMaxMembers() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.AnalyticsCohortMaxMembers
 }
 
 // FlagEventsPerMonth returns the plan's monthly flag conversion event quota

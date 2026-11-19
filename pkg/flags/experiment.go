@@ -29,7 +29,11 @@ const (
 
 // ValidMetricKind reports whether kind is a metric kind.
 func ValidMetricKind(kind string) bool {
-	return kind == ExperimentMetricConversion || kind == ExperimentMetricMean
+	switch kind {
+	case ExperimentMetricConversion, ExperimentMetricMean, ExperimentMetricFunnel, ExperimentMetricRetention:
+		return true
+	}
+	return false
 }
 
 var eventNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
@@ -283,6 +287,12 @@ type ResultsInput struct {
 	MinPValues map[string]float64
 	// Kind is the metric kind; empty is conversion.
 	Kind string
+	// Cuped are the per-variant CUPED sums, or nil when CUPED does not
+	// apply, with CupedReason saying why (ADR 20261119102741 §2).
+	Cuped       []CupedArm
+	CupedReason string
+	// MinCupedPValues are the running minimum adjusted p-values.
+	MinCupedPValues map[string]float64
 }
 
 // VariantResult is one variant compared with control. Rate is the
@@ -291,6 +301,9 @@ type VariantResult struct {
 	Arm
 	Rate       float64     `json:"rate"`
 	Comparison *Comparison `json:"comparison,omitempty"`
+	// Unadjusted is the comparison without CUPED when Comparison is
+	// adjusted.
+	Unadjusted *Comparison `json:"unadjusted,omitempty"`
 	Status     string      `json:"status"`
 }
 
@@ -302,6 +315,41 @@ type Results struct {
 	Variants         []VariantResult `json:"variants"`
 	SampleRatioP     float64         `json:"sample_ratio_p_value"`
 	SampleRatioError bool            `json:"sample_ratio_mismatch"`
+	Cuped            CupedSummary    `json:"cuped"`
+}
+
+// cupedTau is the mixing scale of an adjusted comparison: the same as the
+// unadjusted one's.
+func cupedTau(in ResultsInput, control, variant Arm) float64 {
+	if in.Kind != ExperimentMetricMean {
+		return in.MixingLift
+	}
+	nc, nv := float64(control.Exposed), float64(variant.Exposed)
+	if nc+nv <= 2 {
+		return 0
+	}
+	pooled := ((nc-1)*control.Variance() + (nv-1)*variant.Variance()) / (nc + nv - 2)
+	return in.MixingLift * math.Sqrt(pooled)
+}
+
+// cupedSetup decides whether CUPED applies and returns the arms by variant.
+func cupedSetup(in ResultsInput) (CupedSummary, map[string]CupedArm, float64) {
+	if in.Cuped == nil {
+		reason := in.CupedReason
+		if reason == "" {
+			reason = CupedOff
+		}
+		return CupedSummary{Reason: reason}, nil, 0
+	}
+	theta, rho2, meanX, ok := CupedTheta(in.Cuped)
+	if !ok {
+		return CupedSummary{Reason: CupedNoVariance}, nil, 0
+	}
+	byVariant := map[string]CupedArm{}
+	for _, a := range in.Cuped {
+		byVariant[a.Variant] = a
+	}
+	return CupedSummary{Applied: true, Theta: theta, VarianceReduction: rho2}, byVariant, meanX
 }
 
 // ExperimentResults compares every non-control arm with control. A sample
@@ -338,6 +386,9 @@ func ExperimentResults(in ResultsInput) Results {
 	}
 	slices.Sort(variants)
 	enough := func(a Arm) bool { return a.Exposed >= in.MinUnits && a.Converted >= in.MinConversions }
+	var cupedArms map[string]CupedArm
+	var meanX float64
+	out.Cuped, cupedArms, meanX = cupedSetup(in)
 	for _, v := range variants {
 		arm := byVariant[v]
 		arm.Variant = v
@@ -347,6 +398,15 @@ func ExperimentResults(in ResultsInput) Results {
 				c.PValue = prev
 			}
 			r.Comparison = &c
+		}
+		if cupedArms != nil {
+			cc, err := CompareCuped(cupedArms[in.Control], cupedArms[v], out.Cuped.Theta, meanX, cupedTau(in, control, arm), in.Alpha)
+			if err == nil {
+				if prev, ok := in.MinCupedPValues[v]; ok && prev < cc.PValue {
+					cc.PValue = prev
+				}
+				r.Unadjusted, r.Comparison = r.Comparison, &cc
+			}
 		}
 		switch {
 		case out.SampleRatioError:
