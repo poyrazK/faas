@@ -599,8 +599,10 @@ type server struct {
 	// reuses the same tested transport; the client is nil-safe (the
 	// handler falls back to a degraded zero-valued payload when
 	// Prometheus isn't configured). See pkg/promql/client.go.
-	promqlClient       *promql.Client
-	alertmanagerClient *operatorobs.AlertmanagerClient
+	promqlClient              *promql.Client
+	alertmanagerClient        *operatorobs.AlertmanagerClient
+	runtimeDiagnosticsMetrics *operatorobs.RuntimeDiagnosticsMetrics
+	runtimeBuildAdmission     operatorobs.RuntimeBuildAdmission
 	// statusPagePath is the on-disk path of the static HTML served
 	// at GET /status. Empty uses /etc/faas/statuspage/index.html.
 	statusPagePath string
@@ -886,6 +888,11 @@ const anonymousAccountLabel = "anonymous"
 // through drainFlusher/flushOne).
 func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *server {
 	s.ops = ops
+	if ops == nil {
+		s.runtimeDiagnosticsMetrics = nil
+	} else if s.runtimeDiagnosticsMetrics.Registry() != ops.Registry() {
+		s.runtimeDiagnosticsMetrics = operatorobs.NewRuntimeDiagnosticsMetrics(ops.Registry(), &s.runtimeBuildAdmission)
+	}
 	s.configureInternalCIHealthMetrics(ctx)
 	if ops == nil {
 		s.domainVerificationMetrics = nil

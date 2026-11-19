@@ -176,6 +176,31 @@ type VectorSample struct {
 	Value  float64
 }
 
+const (
+	VectorFailureTransport       = "transport_error"
+	VectorFailureHTTP            = "http_error"
+	VectorFailureInvalidResponse = "invalid_response"
+	VectorFailureOther           = "other"
+)
+
+type vectorQueryError struct {
+	reason string
+	cause  error
+}
+
+func (e *vectorQueryError) Error() string { return e.cause.Error() }
+func (e *vectorQueryError) Unwrap() error { return e.cause }
+
+// VectorQueryFailure returns a fixed reason for a failed instant vector query.
+// Callers can check for cancellation and deadlines through the wrapped error.
+func VectorQueryFailure(err error) string {
+	var failure *vectorQueryError
+	if errors.As(err, &failure) {
+		return failure.reason
+	}
+	return VectorFailureOther
+}
+
 // QueryVector runs an instant query and preserves every series' labels. Rows
 // with malformed values are ignored; a non-vector response is a contract
 // error. This is used by the public-status evaluator for ALERTS{}.
@@ -216,15 +241,24 @@ func (c *Client) queryVectorAt(ctx context.Context, query string, strict bool, a
 	}
 	resp, err := c.doer.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, &vectorQueryError{reason: VectorFailureTransport, cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
-		return nil, fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		err := fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &vectorQueryError{reason: VectorFailureHTTP, cause: err}
 	}
+	rows, err := decodeVectorResponse(resp.Body, query, strict)
+	if err != nil {
+		return nil, &vectorQueryError{reason: VectorFailureInvalidResponse, cause: err}
+	}
+	return rows, nil
+}
+
+func decodeVectorResponse(body io.Reader, query string, strict bool) ([]VectorSample, error) {
 	var payload queryResponse
-	if err := decodePromQLResponse(resp.Body, &payload); err != nil {
+	if err := decodePromQLResponse(body, &payload); err != nil {
 		return nil, err
 	}
 	if err := validatePromQLSeries(len(payload.Data.Result)); err != nil {

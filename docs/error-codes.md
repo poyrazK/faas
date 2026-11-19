@@ -1796,6 +1796,13 @@ Use another sign-in method, or contact support if you need this provider.
 
 See [Authentication](auth.md), [Errors](errors.md).
 
+### `obs_runtime_busy`
+
+HTTP 429 · Runtime collection busy
+
+This apid is at its runtime collection cap. Wait for `Retry-After` or reduce
+overlapping verifiers. See [runtime collector overload](ops/post-deployment-monitoring.md#runtime-collector-overload).
+
 ### `openapi_docs_not_allowed`
 
 HTTP 402 Payment Required · Endpoint discovery unavailable on this plan; Stored route checks unavailable
