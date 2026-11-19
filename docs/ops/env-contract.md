@@ -1086,7 +1086,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STANDBY_WARMUP_SLUGS_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STATIC_EGRESS_IP_ENABLED` | apid, shared | `default` |  |  | `` | boot fallback for the static_egress_ip platform flag (ADR-1700), ignored once an operator writes platform_flag.static_egress_ip |
 | `FAAS_STATUSPAGE_PATH` | apid, shared | `unit` |  |  | `` |  |
-| `FAAS_STORAGE_ACCESS` | builderd, imaged, vmmd, shared | `dropin` |  | direct | `` | ADR-20261117190000: direct (default) reaches the shared store with the daemon's own credentials; secretd makes every GCS store under the backend fetch and write each object through a 5-minute grant secretd signs for tenants placed on this node (FAAS_SECRETD_TARGET and the node's secretd client leaf). Needs FAAS_STORAGE_DELETE_MODE=defer; listing sweeps report nothing. Set by compute_only_service (faas_storage_grants) |
+| `FAAS_STORAGE_ACCESS` | builderd, imaged, vmmd, shared | `dropin` |  | direct | `` | ADR-20261117190000: direct (default) reaches the shared store with the daemon's own credentials; secretd makes every GCS and S3 store under the backend fetch and write each object through a 5-minute grant secretd signs for tenants placed on this node (FAAS_SECRETD_TARGET and the node's secretd client leaf). Needs FAAS_STORAGE_DELETE_MODE=defer; listing sweeps report nothing. Set by compute_only_service (faas_storage_grants) |
 | `FAAS_STORAGE_BACKEND` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_DIR` | imaged, shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_MAX_BYTES` | shared | `envfile` |  |  | `` |  |

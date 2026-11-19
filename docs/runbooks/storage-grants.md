@@ -23,6 +23,12 @@ the node. Everything is off by default.
      secret key at `faas_secretd_storage_s3_secret_key_path`.
    - Check: the journal shows `storage_grants=gcs`, and
      `faas_secretd_storage_grants_total` is exported, all zero.
+   - S3 stores must honor conditional writes (`If-None-Match: *`,
+     `If-Match`): AWS S3, MinIO and R2 do. Before turning grants on for a
+     new S3 provider, run the live tests against a disposable bucket:
+     `FAAS_S3_LIVE_BUCKET=… FAAS_S3_LIVE_ENDPOINT=… FAAS_S3_LIVE_REGION=…
+     FAAS_S3_LIVE_ACCESS_KEY_ID=… FAAS_S3_LIVE_SECRET_ACCESS_KEY=…
+     go test -run LiveGrantedS3 ./pkg/storage`.
 2. **One compute node.** Set `faas_storage_grants: true` for the node and
    converge it. Then restart `faas-imaged`, `faas-builderd` and `faas-vmmd`
    on that node, in that order.

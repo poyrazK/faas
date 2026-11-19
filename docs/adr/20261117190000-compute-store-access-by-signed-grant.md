@@ -1,6 +1,6 @@
 # ADR-20261117190000: Compute reaches the shared store only through per-object signed grants
 
-- Status: Accepted (slices 1–3 implemented, off by default)
+- Status: Accepted (slices 1–4 implemented, off by default)
 - Date: 2026-11-17
 - Amends: ADR-054 (compute nodes read and write the shared artifact store
   with bucket-wide credentials)
@@ -124,5 +124,5 @@ Owner decisions (2026-11-17):
 | 1 | `pkg/storagegrant`: keyspace resolver, signer interface, GCS V4 and S3 presign signers (implemented) |
 | 2 | secretd `GrantStorageObjects`: placement checks, `storage_grant_audit`, `faas_secretd_storage_grants_total`, budget; `FAAS_SECRETD_STORAGE_GRANTS=off\|gcs\|s3` (implemented, off by default) |
 | 3 | Compute: signed-grant `gcsArtifactStore` (`storage.UseGrants`), `FAAS_STORAGE_ACCESS=secretd` in imaged, vmmd and builderd (builderd also defers deletes now), `build` key class for `sources/`, `placed_node_id` recorded by agentd, template and job-image reads for session nodes, `faas_storage_grants` drop-in (implemented, off by default). Left: a control-plane sweep of `jobs/` and `sources/` |
-| 4 | S3 artifact backend on grants (with the OVH S3 store) |
+| 4 | S3 artifact backend on grants: `head`, ETag-conditioned `create`/`replace`, and multipart uploads where `create_multipart`, every `upload_part`, `complete_multipart` (create-only or replace-that-ETag) and `abort_multipart` are each a grant; the multipart create/complete/abort are SigV4-presigned directly (the SDK presigns only object and part requests). Server-side copies report unsupported, so callers stream. Tested against a fake S3 in CI and against MinIO (`FAAS_S3_LIVE_*`) (implemented) |
 | 5 | Operations: remove compute's bucket role; runbook check that a direct read is refused |
