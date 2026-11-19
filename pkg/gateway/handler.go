@@ -8825,9 +8825,17 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// Idle reaper hook (spec §4.1): 2xx → the instance is alive. 4xx/5xx are
 	// not evidence of activity (a misconfigured client can hammer a dead
 	// instance with 401s forever and we'd never park it).
+	//
+	// A route probe (ADR-847) is platform traffic, not customer activity: it
+	// still refreshes the gateway's cached target below, but it never resets
+	// the idle timer. A probed app otherwise never parked, kept its RAM and
+	// its billed running time, and never captured a snapshot (ADR-847
+	// amendment 2026-11-19).
 	if h.lastSeen != nil && status >= 200 && status < 300 && target.InstanceID != "" {
 		now := time.Now()
-		h.lastSeen.Touch(target.InstanceID, now)
+		if !isRouteProbe(r.Context()) {
+			h.lastSeen.Touch(target.InstanceID, now)
+		}
 		if recorder, ok := h.backend.(targetActivityRecorder); ok {
 			recorder.TouchTarget(appID, target.InstanceID, now)
 		}
