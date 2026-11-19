@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-09-29
 - **Amends:** ADR-055 (per-host egress NAT). ADR-361's per-VM policy is unchanged and still runs on the compute node.
+- **Amended by:** ADR-20261117185346, amendment 2026-11-19: the gateway host's logs and metrics leave it over a `wg-obs` tunnel to the control plane.
 - **Context:** Tenant traffic has always been masqueraded out of each compute node's own interface. The address that shows up in an abuse report is therefore the node's own address, which also carries the control plane, deploys, the operator's SSH and the provider's own trust signals. The 2026-09-24 suspension ([ADR-361](361-tenant-egress-default-deny.md)) took the whole project down because tenant traffic and platform traffic shared one identity. ADR-361 made tenant egress narrow and observable. It did not give it a separate identity that can be rate limited, re-addressed, moved to a provider with an abuse desk, or cut off without touching the platform.
 - **Decision:**
   1. **Opt-in per fleet.** The manifest declares `egress.tenant_gateway` with the gateway's WireGuard `endpoint` (`host:port`), `public_key`, a private IPv4 `tunnel_cidr` (/16–/29, not overlapping the tenant bridge or the overlay), and an optional `ssh_host`. Without it, egress is unchanged.
