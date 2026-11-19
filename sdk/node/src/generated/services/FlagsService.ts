@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FeatureFlagKillResponse } from '../models/FeatureFlagKillResponse.js';
 import type { FeatureFlagVersion } from '../models/FeatureFlagVersion.js';
 import type { FlagDecision } from '../models/FlagDecision.js';
 import type { FlagEventsRequest } from '../models/FlagEventsRequest.js';
@@ -494,6 +495,52 @@ export class FlagsService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Kill one flag on the latest configuration.
+   * Requires deploy-write scope and MFA. Sets the flag's kill on the latest published configuration, so every evaluation serves the application's fallback. Takes no expected version, re-reads the configuration when another publish wins the race, and is idempotent; changed is false when the flag was already killed. Unlike other flag writes, an agent connection needs no person's approval for it. Revive a flag by publishing the configuration.
+   * @returns FeatureFlagKillResponse The flag is killed.
+   * @throws ApiError
+   */
+  public static killProjectFlag({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Application flag key to evaluate or filter retained evidence.
+     */
+    key: string,
+  }): CancelablePromise<FeatureFlagKillResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/flags/{key}/kill',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,

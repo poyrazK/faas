@@ -42,6 +42,9 @@ var actions = map[string]authz.OrgAction{
 	"POST /v1/postgres/databases/{id}/live":        authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/live/rotate": authz.OrgActionManagePostgres,
 	"DELETE /v1/postgres/databases/{id}/live":      authz.OrgActionManagePostgres,
+	// Read-only queries return rows: the members who may bind an app to the
+	// database, and so read its rows through that app (ADR-20261117215858).
+	"POST /v1/postgres/databases/{id}/query": authz.OrgActionBindPostgres,
 }
 
 func Action(pattern string) (authz.OrgAction, bool) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +50,9 @@ type ServiceOptions struct {
 }
 
 type Service struct {
+	// queriesInFlight holds the IDs of databases running an agent query, so
+	// each database runs at most one at a time in this process.
+	queriesInFlight        sync.Map
 	registry               *Registry
 	store                  Store
 	leaseDuration          time.Duration

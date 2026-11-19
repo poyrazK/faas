@@ -408,6 +408,11 @@ const (
 	ScopeStorageWrite          = "storage:write"
 	ScopeManagedPostgresManage = "postgres:manage"
 	ScopeManagedPostgresRead   = "postgres:read"
+	// ScopeDataRead returns customer data: read-only SQL rows of managed
+	// databases, queue and dead-letter message bodies, workflow inputs and
+	// outputs (ADR-20261117215858, amended 2026-11-17). The *:read metadata
+	// scopes never return those bodies.
+	ScopeDataRead = "data:read"
 	// Project-environment CI can read non-secret environment state and record
 	// qualification without gaining deployment or secret access.
 	ScopeProjectEnvironmentRead    = "project_environments:read"
@@ -472,6 +477,7 @@ var validScopes = map[string]struct{}{
 	ScopeStorageWrite:              {},
 	ScopeManagedPostgresManage:     {},
 	ScopeManagedPostgresRead:       {},
+	ScopeDataRead:                  {},
 	ScopeProjectEnvironmentRead:    {},
 	ScopeProjectEnvironmentQualify: {},
 	ScopeGithubManage:              {},
@@ -680,6 +686,7 @@ var (
 	ScopesStorageListSurface               = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite}
 	ScopesManagedPostgresManageSurface     = []string{ScopeAdmin, ScopeManagedPostgresManage}
 	ScopesManagedPostgresReadSurface       = []string{ScopeAdmin, ScopeManagedPostgresRead}
+	ScopesDataReadSurface                  = []string{ScopeAdmin, ScopeDataRead}
 	ScopesProjectEnvironmentReadSurface    = []string{ScopeAdmin, ScopeAppsRead, ScopeProjectEnvironmentRead}
 	ScopesProjectEnvironmentQualifySurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeProjectEnvironmentQualify}
 	ScopesGithubManageSurface              = []string{ScopeAdmin, ScopeGithubManage}
