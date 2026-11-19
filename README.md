@@ -239,6 +239,7 @@ make test              # unit tests; no KVM required
 make e2e-general       # real control-plane path with a fake VM boundary
 make lint              # Go and repository policy checks
 make docs-links-check  # validate customer documentation links
+make docs-commands-check  # every gregale command in the docs runs as written
 
 make test-metal        # Firecracker integration tests; KVM + root required
 make leakcheck         # assert no leaked netns, TAPs, jails, or cgroups

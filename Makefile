@@ -1739,6 +1739,10 @@ docs-links-check: ## Verify every Gregale docs URL maps to a customer page sourc
 	@$(GO) run ./cmd/docs-links-check
 	@python3 scripts/ops/check_live_docs_test.py
 
+.PHONY: docs-commands-check
+docs-commands-check: ## Verify every gregale command in the customer docs runs as written, in the command tree's names
+	@$(GO) test -count=1 -run '^(TestDocsCommandsRunAsWritten|TestDocsSpellCommandsInTheTree)$$' ./cmd/gregale
+
 .PHONY: docs-live-check
 docs-live-check: ## Verify deployed docs headings and require real 404s (DOCS_BASE_URL optional)
 	@python3 scripts/ops/check_live_docs.py $(if $(DOCS_BASE_URL),--base-url "$(DOCS_BASE_URL)")

@@ -6,10 +6,10 @@ Account settings cover identity, organizations, members, billing, and data expor
 gregale account status
 gregale account export -o export.json
 gregale orgs ls
-gregale org members ORG_ID
+gregale org members list ORG_ID
 ```
 
-Use organization-scoped keys for automation and grant members the smallest role that supports their work. `gregale org members ORG_ID` lists current membership; invitations and role changes are explicit subcommands under `gregale orgs`.
+Use organization-scoped keys for automation and grant members the smallest role that supports their work. `gregale org members list ORG_ID` lists current membership; invitations and role changes are explicit subcommands under `gregale orgs`.
 
 ## Feature availability
 
