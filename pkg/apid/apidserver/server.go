@@ -2051,6 +2051,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/evolution", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineEvolve))))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/operations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineOperations))))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/schema-approval", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineApproveSchema))))
+	s.registerRedisRoutes(mux)
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
 	mux.HandleFunc("GET /v1/postgres/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCapabilities))))
 	mux.HandleFunc("GET /v1/postgres/overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresOverage))))
@@ -2069,6 +2070,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/postgres/databases/{id}/labels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.updateDatabaseLabels))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresDatabase))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getDatabaseStatus))))
+	// ADR-20261117215858 §2: read-only SQL as the database's agent query login.
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/query", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDataReadSurface...)(s.queryManagedPostgresDatabase))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/undelete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.undeleteManagedPostgresDatabase))))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))
@@ -2485,6 +2488,8 @@ func (s *server) handler() http.Handler {
 	// ADR-20261104120000: enable the crons a full clone copied paused into a stage.
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/automation/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeEnvironmentAutomation))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.promoteFeatureFlagRollout))))
+	// ADR-20261117215858 §3: the kill switch, the one flag write agents make without approval.
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/{key}/kill", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.killFeatureFlag))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.inspectFeatureFlag)))
 	mux.Handle("GET /v1/runtime/flags", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.runtimeFeatureFlags)))
 	mux.Handle("POST /v1/runtime/flags/events", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.runtimeFeatureFlagEvents)))
@@ -3611,6 +3616,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputs))))
 	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs/files/{name...}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputFile))))
 	mux.HandleFunc("DELETE /v1/agent-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelAgentRun))))
+	// ADR-20261027090016 amendment 2: the seller decides a run's waiting tool calls.
+	mux.HandleFunc("GET /v1/agent-runs/{id}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAgentRunApprovals))))
+	mux.HandleFunc("POST /v1/agent-runs/{id}/approvals/{approval_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.decideAgentRunApproval))))
 	// ADR-20261030125501 §3: a callback URL for one thread of an agent
 	// inbox, and the token-only route a tool posts its result to.
 	mux.HandleFunc("POST /v1/agent-callbacks", s.agentCallbackCallerRoute(s.createAgentCallback))

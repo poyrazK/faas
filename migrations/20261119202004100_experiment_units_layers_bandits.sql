@@ -1,4 +1,4 @@
--- filename: 20261119173702100_experiment_units_layers_bandits.sql
+-- filename: 20261119202004100_experiment_units_layers_bandits.sql
 -- migration-compat: expand
 -- ADR 20261119173702: subject units, layer slices, bandit allocation, ratio
 -- and percentile metrics. Experiments gain their unit (customer or

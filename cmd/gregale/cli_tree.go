@@ -53,6 +53,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"api", "Manage your API: routes, OpenAPI spec, consumers and tenants", "Configure"},
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
 	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
+	{"redis", "Create and bind managed Redis-compatible (Valkey) caches", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
 	{"export", "Verify and compare saved JSON Lines exports offline", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
@@ -233,6 +234,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Data.
 	{"postgres", "postgres"},
+	{"redis", "redis"},
 	{"bucket multipart get", "bucket uploads status"},
 	{"bucket multipart cancel", "bucket uploads abort"},
 	{"bucket multipart", "bucket uploads"},

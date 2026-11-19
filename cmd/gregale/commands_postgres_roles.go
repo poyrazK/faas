@@ -231,7 +231,7 @@ func cmdPostgresRolesGrant(args []string, grant bool) int {
 	if grant {
 		name, flagName, preposition = "postgres roles grant", "to", "--to"
 	}
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "default")
 	fs := newFlagSet(name, flag.ContinueOnError)
 	modes := fs.String(flagName, "", "comma-separated access modes: migration, read_write, read_only")
 	makeDefault := false

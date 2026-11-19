@@ -422,6 +422,14 @@ HTTP 400 Bad Request
 
 ## C
 
+### `cache_shrink_needs_evict`
+
+HTTP 409 Conflict · Shrinking needs evict
+
+### `cache_waking`
+
+HTTP 503 Service Unavailable · Redis cache is waking
+
 ### `canary_step_conflict`
 
 HTTP 409 Conflict · Canary step changed
@@ -1666,6 +1674,18 @@ HTTP 503 Service Unavailable · Managed PostgreSQL unavailable
 
 See [Managed PostgreSQL](postgres.md).
 
+### `managed_redis_binding_target_missing`
+
+HTTP 409 Conflict · Cache binding target missing
+
+### `managed_redis_limit`
+
+HTTP 403 Forbidden · Managed Redis cache limit reached
+
+### `managed_redis_not_in_plan`
+
+HTTP 403 Forbidden · Managed Redis is not included in this plan
+
 ### `max_min_instances_exceeded`
 
 HTTP 422 Unprocessable Entity · Min_instances exceeds plan cap
@@ -2447,6 +2467,16 @@ HTTP 403 Forbidden · Postgres custom roles unavailable
 ### `postgres_custom_roles_unsupported`
 
 HTTP 422 Unprocessable Entity · Custom roles unsupported
+
+### `postgres_query_failed`
+
+HTTP 422 Unprocessable Entity · Query failed
+
+The statement runs read-only as a login that can read the public schema, for at most 5 seconds. Fix the statement and try again.
+
+### `postgres_query_unsupported`
+
+HTTP 501 Not Implemented · Queries unsupported
 
 ### `pr_preview_resource_unsupported`
 

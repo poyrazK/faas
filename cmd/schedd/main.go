@@ -2519,6 +2519,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		log.Info("scheduled prewarm reconciler disabled — set FAAS_PREWARM_ENABLED=1 to enable")
 	}
+	switch {
+	case cfg.CronPrewake && !prewarmEnabled(os.Getenv("FAAS_PREWARM_ENABLED")):
+		log.Warn("cron_prewake ignored: it needs the prewarm drain (FAAS_PREWARM_ENABLED=1) (ADR-20261107122928)")
+	case cfg.CronPrewake:
+		// Pre-woken seconds are unbilled only for the accounts meterd's quiet
+		// pause release decides: the same flag decision as the idle-out.
+		loop.WithCronPrewake(func(subject platformflags.Subject) bool {
+			return capabilityFlags.Enabled(platformflags.QuietPauseUnbilled, subject)
+		}, ops.Registry())
+		log.Info("cron pre-wake enabled (ADR-20261107122928)",
+			"lead_seconds", api.CronPrewakeLeadSeconds, "hold_seconds", api.CronPrewakeHoldSeconds)
+	}
 	// Issue #171: wire the recent-load mirror off the same scraper and the
 	// VMMD telemetry reader. Split-box schedulers commonly leave the local
 	// gateway metrics URL empty; the telemetry fallback keeps scale-down

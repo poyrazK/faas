@@ -9572,7 +9572,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
 	}
-	if s.sharedCachePrivate {
+	if s.sharedCachePrivate || !declaresCachePolicy(s.Header()) {
 		markSharedCachePrivate(s.Header())
 	}
 }

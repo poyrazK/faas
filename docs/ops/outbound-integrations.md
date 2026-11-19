@@ -1998,7 +1998,8 @@ broker helper. Runs therefore stream and use routes like apps.
 
 ADR-20261027090016, amendment 1. On an agent run's relay, outboundd serves MCP
 (Streamable HTTP) at `/mcp`. agentd gives the harness the full URL as
-`GREGALE_CAPABILITY_MCP_URL` when the run's version allows at least one tool.
+`GREGALE_CAPABILITY_MCP_URL` when the run's version allows, or puts in
+`approve` mode, at least one tool.
 The path exists only for agent runs. Apps, Runs and plain callers get 404.
 
 - **What a run sees.** Each request re-checks the run's lease, then reads the
@@ -2028,6 +2029,41 @@ Read a run's refusals:
 
 ```sql
 SELECT tool, decision, created_at FROM agent_run_capability_decisions WHERE run_id = '<run>' ORDER BY created_at;
+```
+
+### Approvals
+
+ADR-20261027090016 amendment 2. A tool in `approve` mode is listed, and its
+description says each call waits for the seller. A call is held in outboundd:
+
+1. outboundd writes `agent_run_approvals` (tool, SHA-256 of the arguments, the
+   first 2 KiB of them) and queues `agent_run.approval_requested` to the
+   account's agent webhooks, in one transaction.
+2. The call waits. The relay connection is silent, so a run whose version has
+   the model-wait pause on is paused and unbilled meanwhile; elsewhere the wait
+   is billed. The run's own deadline keeps running.
+3. The seller decides with `POST /v1/agent-runs/{id}/approvals/{approval_id}`
+   (`{"decision":"approve"|"deny","note":"..."}`); apid writes
+   `agent_run_approval_decisions` once, only before expiry. outboundd polls it
+   every `AgentRunApprovalPollMillis`.
+4. Approved: the call is counted against the budget and runs. Denied or
+   expired: the agent gets an error result and nothing is counted.
+
+Bounds (`pkg/api/limits.go`): a request expires after
+`AgentRunApprovalTimeoutSec` or `AgentRunApprovalDeadlineMarginSec` before the
+run's deadline, whichever is sooner; a run has at most
+`AgentRunApprovalsPendingMax` waiting. A request past either bound is refused
+at once. For a held call the relay's write deadline is lifted to the approval
+timeout plus the tool timeout. The harness's MCP client must allow a tool call
+that long (Codex: `tool_timeout_sec`).
+
+Metric: `agent_approvals_total{outcome}`, outcome `approved`, `denied`,
+`expired`, `abandoned` (the run went away while waiting) or `refused`.
+
+```sql
+SELECT p.id, p.tool, p.created_at, p.expires_at, d.decision, d.decided_by, d.decided_at
+  FROM agent_run_approvals p LEFT JOIN agent_run_approval_decisions d ON d.approval_id = p.id
+ WHERE p.run_id = '<run>' ORDER BY p.created_at;
 ```
 
 ### `web_fetch`

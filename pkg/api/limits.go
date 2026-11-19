@@ -2271,6 +2271,19 @@ const (
 	CronHistoryPrunePasses = 20
 )
 
+// Cron pre-wake (ADR-20261107122928 §4, amendment 3). schedd files a prewarm
+// intent for an app with no resident instance when one of its HTTP crons
+// fires within CronPrewakeLeadSeconds; the prewarm drain claims it at once
+// (its lead window is as long) and wakes the app, and the intent's floor
+// keeps the instance until CronPrewakeHoldSeconds after the cron's scheduled
+// time. The intents are kept CronPrewakeIntentRetention, then the hourly
+// retention sweep deletes them in CronHistoryPruneBatch passes.
+const (
+	CronPrewakeLeadSeconds     = 60
+	CronPrewakeHoldSeconds     = 120
+	CronPrewakeIntentRetention = 3 * 24 * time.Hour
+)
+
 // CronPathMaxBytes bounds the HTTP path a cron requests. The path is always
 // on the cron's own app: it starts with a single "/" and carries no host.
 const CronPathMaxBytes = 2048
@@ -11819,6 +11832,17 @@ const (
 	AgentWebFetchMaxBytes         = 1 << 20
 	AgentWebFetchTimeoutSec       = 20
 	AgentWebFetchRedirectsMax     = 5
+	// Run approvals (ADR-20261027090016 amendment 2). An approval expires
+	// after AgentRunApprovalTimeoutSec, and never later than the run's
+	// deadline less AgentRunApprovalDeadlineMarginSec. A run holds at most
+	// AgentRunApprovalsPendingMax undecided approvals; outboundd reads the
+	// decision every AgentRunApprovalPollMillis.
+	AgentRunApprovalTimeoutSec        = 3600
+	AgentRunApprovalDeadlineMarginSec = 30
+	AgentRunApprovalsPendingMax       = 8
+	AgentRunApprovalSummaryMaxBytes   = 2048
+	AgentRunApprovalNoteMaxBytes      = 1024
+	AgentRunApprovalPollMillis        = 1000
 	// Agent callbacks (ADR-20261030125501 §3): a tool posts its result to a
 	// signed per-thread URL, and apid publishes it into that thread's lane of
 	// the app's AgentInboxChannel. A token lives at most
@@ -17695,9 +17719,31 @@ const (
 	// restarted Auth app to publish a key change.
 	AuthKeyChangeWait = 5 * time.Minute
 	// AuthPasswordMinLength bounds the configurable minimum password length:
-	// GoTrue's own default is the floor, and bcrypt reads 72 bytes at most.
-	AuthPasswordMinLengthFloor   = 6
+	// the floor is NIST SP 800-63B's eight characters (GoTrue's own default
+	// of six is below it) and is also an Auth app's default; bcrypt reads 72
+	// bytes at most. The template mirrors the floor as passwordMinLength.
+	AuthPasswordMinLengthFloor   = 8
 	AuthPasswordMinLengthCeiling = 72
+	// AuthPasswordFailuresPerAddress, AuthPasswordFailuresPerAccount and
+	// AuthSecondStepFailuresPerUser are an Auth app's failed-attempt budgets
+	// in each AuthAttemptWindowSeconds, kept in its database so every
+	// instance and wake shares them: wrong passwords for one account from one
+	// client address, for one account from any address, and wrong
+	// second-step codes for one user. A spent budget answers 429 until the
+	// window ends.
+	AuthPasswordFailuresPerAddress = 10
+	AuthPasswordFailuresPerAccount = 50
+	AuthSecondStepFailuresPerUser  = 10
+	AuthAttemptWindowSeconds       = 900
+	// AuthStorageUploadDefaultBytes bounds an object uploaded through an Auth
+	// app's signed URL unless the app sets AUTH_STORAGE_MAX_UPLOAD_BYTES,
+	// which may rise to AuthStorageUploadMaxBytes (a single PUT).
+	AuthStorageUploadDefaultBytes       = 100 << 20
+	AuthStorageUploadMaxBytes     int64 = MaxObjectSinglePutBytes
+	// AuthAdminKeyDefaultDays is how long a new Auth admin key lasts unless
+	// created with --no-expiry; AuthAdminKeyMaxDays bounds --expires-in.
+	AuthAdminKeyDefaultDays = 365
+	AuthAdminKeyMaxDays     = 3650
 	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
 	// provider credentials; Apple's client secret is a signed JWT.
 	AuthProviderClientIDMaxBytes = 512

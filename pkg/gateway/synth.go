@@ -1215,9 +1215,31 @@ func (s *SynthServer) dispatchBatchRecordWithin(ctx context.Context, req batchDi
 	return batchDispatchResult{
 		ItemIdentifier: rec.ItemIdentifier,
 		Status:         batchDispatchStatusRetry,
-		Error:          fmt.Sprintf("function state=%s", out.State),
+		Error:          batchFailureDetail(out.State, statusCode, out.Result),
 		Code:           "function_state_" + string(out.State),
 	}
+}
+
+// batchFailureDetailMaxBytes bounds the response excerpt a dead letter keeps.
+const batchFailureDetailMaxBytes = 300
+
+// batchFailureDetail names what the function answered. A dead letter said
+// only "max_attempts: function state=failed", without the status or the
+// handler's message (prod 2026-11-19); the invocation record of the same
+// delivery already kept "application returned HTTP 404: {…}".
+func batchFailureDetail(state any, statusCode int, result []byte) string {
+	detail := fmt.Sprintf("function state=%v", state)
+	if statusCode != 0 {
+		detail = fmt.Sprintf("function returned HTTP %d", statusCode)
+	}
+	excerpt := strings.TrimSpace(string(result))
+	if excerpt == "" {
+		return detail
+	}
+	if len(excerpt) > batchFailureDetailMaxBytes {
+		excerpt = strings.ToValidUTF8(excerpt[:batchFailureDetailMaxBytes], "") + "…"
+	}
+	return detail + ": " + excerpt
 }
 
 // batchFailuresEnvelope is the function's response shape for

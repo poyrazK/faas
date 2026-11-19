@@ -5699,7 +5699,7 @@ var cliCommands = []cliCommand{
 				{Name: "redirect-urls", Value: "URLS", Short: "comma-separated additional allowed redirect URLs; replaces the list (none clears it)"},
 				{Name: "signup", Value: "on|off", Short: "whether anyone may sign up", ClosedSet: []string{"on", "off"}},
 				{Name: "autoconfirm", Value: "on|off", Short: "sign users in without email confirmation (development only)", ClosedSet: []string{"on", "off"}},
-				{Name: "password-min-length", Value: "N", Short: "minimum password length (6-72)"},
+				{Name: "password-min-length", Value: "N", Short: "minimum password length (8-72)"},
 				{Name: "password-require", Value: "CLASSES", Short: "character classes every password needs: lower,upper,digit,symbol, or none"},
 				{Name: "leaked-password-check", Value: "on|off", Short: "refuse passwords found in known breaches (Have I Been Pwned)", ClosedSet: []string{"on", "off"}},
 				{Name: "mfa", Value: "on|off", Short: "let users enrol an authenticator app (TOTP); enrolled users keep verifying when off", ClosedSet: []string{"on", "off"}},
@@ -5764,8 +5764,11 @@ var cliCommands = []cliCommand{
 				{Name: "revoke", Short: "Remove a key that no longer signs; its tokens stop verifying", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 			}},
 			{Name: "admin-key", Short: "Manage owner keys for user and organization administration and imports", Subcommands: []cliSub{
-				{Name: "create", Short: "Create a key; it is shown once and only its hash is stored", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
-				{Name: "list", Short: "List admin key IDs", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "create", Short: "Create a key; it is shown once and only its hash is stored", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "scopes", Value: "SCOPES", Short: "what the key may do: all, or a comma-separated list of users:read, users:write, impersonate, sso, oauth-clients, service-accounts, emails"},
+					{Name: "expires-in", Value: "DAYS", Short: "days until the key expires (default 365)"},
+					{Name: "no-expiry", Short: "the key lasts until revoked"}}},
+				{Name: "list", Short: "List admin keys with their scopes and expiry", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 				{Name: "revoke", Short: "Revoke an admin key", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 			}},
 			{Name: "users", Short: "Find, sign out, ban and delete the application's users", Subcommands: []cliSub{
@@ -6245,6 +6248,34 @@ var cliCommands = []cliCommand{
 				{Name: "config", Value: "FILE", Short: "JSON workflow with output, migrate and check argument arrays"},
 				{Name: "timeout", Value: "DURATION", Short: "entire workflow deadline (default 20m, maximum 1h)"},
 			}, Examples: []string{"gregale data-api sync notes-data --config data-api.json"}},
+		},
+	},
+	{
+		Name:    "redis",
+		DocSlug: "redis",
+		Short:   "Create and bind managed Redis-compatible (Valkey) caches",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List managed Redis caches"},
+			{Name: "create", Short: "Create a managed Redis cache", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "memory", Short: "data size in MB, a multiple of 32 up to 512 (default 128)", Value: "MB"},
+				{Name: "eviction-policy", Short: "what to evict when full (default allkeys-lru)", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
+				{Name: "idle-timeout", Short: "seconds without traffic before the cache parks (default 900)", Value: "SECONDS"},
+			}, Examples: []string{"gregale redis create sessions --memory 128"}},
+			{Name: "get", Short: "Show one managed Redis cache", Positionals: []string{"<name>"}},
+			{Name: "bind", Short: "Set the cache's connection URL on an app", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app that receives the URL", Req: true, Value: "APP"},
+				{Name: "env", Short: "environment variable (default REDIS_URL)", Value: "KEY"},
+			}, Examples: []string{"gregale redis bind sessions --app web"}},
+			{Name: "resize", Short: "Change a cache's size or eviction policy; its data is kept", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "memory", Short: "new data size in MB", Value: "MB"},
+				{Name: "eviction-policy", Short: "new eviction policy", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
+				{Name: "evict", Short: "allow shrinking below the data the cache holds"},
+			}, Examples: []string{"gregale redis resize sessions --memory 256"}},
+			{Name: "update", Short: "Move a cache to the current Valkey release; its data is kept", Positionals: []string{"<name>"}},
+			{Name: "restart", Short: "Restart a managed Redis cache; its data is kept", Positionals: []string{"<name>"}},
+			{Name: "delete", Short: "Delete a managed Redis cache and its data", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "yes", Short: "skip the typed confirmation"},
+			}},
 		},
 	},
 	{
