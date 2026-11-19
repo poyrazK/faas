@@ -263,8 +263,8 @@ hot_path:
   invocation_dispatch_concurrency: 32
 
 # Customer log archive (pkg/logarchive). OVH has no machine identity, so the
-# archive uses its own static key pair (put, get, list; the log archive key
-# in GcpToOvhMigration.md "Keys"). The key file stays on the controller and
+# archive uses its own static key pair (put, get, list, delete for account
+# erasure; the log archive key in GcpToOvhMigration.md "Keys"). The key file stays on the controller and
 # never enters this manifest. Create the bucket in the compute region with a
 # lifecycle rule that deletes faas-logs/ objects after 90 days, as on GCS,
 # and copy the GCS archive into it before the move (runbook phase 1 step 7).
