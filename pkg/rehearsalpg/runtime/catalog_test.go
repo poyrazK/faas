@@ -190,6 +190,17 @@ func TestTaskFixtureCatalogProjectsEnrolledAccess(t *testing.T) {
 			if _, err := catalog.TransitionScenarioPostgres(ctx, r, "provisioning"); err != nil {
 				t.Fatal(err)
 			}
+			participants, err := catalog.ScenarioPostgresTaskParticipants(ctx, r)
+			if err != nil || len(participants) != 2 {
+				t.Fatalf("expected enrolled runtime and observer: %v %v", participants, err)
+			}
+			expected := map[string]string{members[1].AppID: rehearsalwork.PostgresTaskRuntime, members[2].AppID: rehearsalwork.PostgresTaskObserver}
+			for _, participant := range participants {
+				if expected[participant.AppID] != participant.Access {
+					t.Fatalf("wrong participant for sealed fixture: %+v", participant)
+				}
+				delete(expected, participant.AppID)
+			}
 			for _, member := range members {
 				got, err := catalog.ScenarioPostgresForApp(ctx, member.AppID)
 				wantAccess := ""
@@ -208,6 +219,15 @@ func TestTaskFixtureCatalogProjectsEnrolledAccess(t *testing.T) {
 				if err != nil || got.ID != r.ID || got.RoleName != wantRole || got.ParticipantAccess != wantAccess {
 					t.Fatalf("fixture projection for %s: %+v %v", member.Workload, got, err)
 				}
+			}
+			r.Status = "sealing"
+			r, err = catalog.TransitionScenarioPostgres(ctx, r, "ready")
+			if err != nil {
+				t.Fatal(err)
+			}
+			participants, err = catalog.ScenarioPostgresTaskParticipants(ctx, r)
+			if err != nil || len(participants) != 2 {
+				t.Fatalf("sealing lost the enrolled roles: %v %v", participants, err)
 			}
 		})
 	}
