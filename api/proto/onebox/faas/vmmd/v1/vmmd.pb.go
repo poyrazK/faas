@@ -467,8 +467,15 @@ type AppSpec struct {
 	// HTTP liveness probe, so vmmd runs no default probe for it; an explicit
 	// liveness_probe_json still applies. An older vmmd ignores the field.
 	RoutedPortRawTcp bool `protobuf:"varint,45,opt,name=routed_port_raw_tcp,json=routedPortRawTcp,proto3" json:"routed_port_raw_tcp,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// probe_host (ADR-20261119140000) is the Host header vmmd's readiness and
+	// prime GETs send: the app's public host (`<slug>.<apps domain>`), so an app
+	// that allow-lists its host names (Django ALLOWED_HOSTS, Rails
+	// config.hosts) answers the probe as it answers traffic. Those GETs then
+	// also carry X-Forwarded-Proto: https. Empty keeps the legacy probe, which
+	// sends the instance address. An older vmmd ignores the field.
+	ProbeHost     string `protobuf:"bytes,46,opt,name=probe_host,json=probeHost,proto3" json:"probe_host,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -814,6 +821,13 @@ func (x *AppSpec) GetRoutedPortRawTcp() bool {
 		return x.RoutedPortRawTcp
 	}
 	return false
+}
+
+func (x *AppSpec) GetProbeHost() string {
+	if x != nil {
+		return x.ProbeHost
+	}
+	return ""
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -22634,7 +22648,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xcf\x10\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xee\x10\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -22688,7 +22702,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\fcpu_uncapped\x18* \x01(\bR\vcpuUncapped\x12'\n" +
 	"\x0fidentity_reload\x18+ \x01(\bR\x0eidentityReload\x12@\n" +
 	"\x1cenvironment_branch_contained\x18, \x01(\bR\x1aenvironmentBranchContained\x12-\n" +
-	"\x13routed_port_raw_tcp\x18- \x01(\bR\x10routedPortRawTcp\"\x92\b\n" +
+	"\x13routed_port_raw_tcp\x18- \x01(\bR\x10routedPortRawTcp\x12\x1d\n" +
+	"\n" +
+	"probe_host\x18. \x01(\tR\tprobeHost\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
