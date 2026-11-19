@@ -18,16 +18,16 @@ var _ CustomRoleStore = (*PostgresStore)(nil)
 // Auth binding reservations of one database (ADR-20261116213000).
 const customRoleFenceSQL = `SELECT pg_advisory_xact_lock(hashtextextended('managed_postgres_custom_roles:' || $1::text, 0))`
 
-const customRoleColumns = `account_id, database_id, name, bypass_rls, granted_to, member_of, state, revision, last_error, attempt_count, retry_at, created_at, updated_at`
+const customRoleColumns = `account_id, database_id, name, bypass_rls, granted_to, member_of, default_for, state, revision, last_error, attempt_count, retry_at, created_at, updated_at`
 
 func scanCustomRole(row pgx.Row) (CustomRole, error) {
 	var (
 		role                  CustomRole
 		accountID, databaseID pgtype.UUID
-		grants                []string
+		grants, defaults      []string
 		state                 string
 	)
-	if err := row.Scan(&accountID, &databaseID, &role.Name, &role.BypassRLS, &grants, &role.MemberOf, &state, &role.Revision,
+	if err := row.Scan(&accountID, &databaseID, &role.Name, &role.BypassRLS, &grants, &role.MemberOf, &defaults, &state, &role.Revision,
 		&role.LastError, &role.AttemptCount, &role.RetryAt, &role.CreatedAt, &role.UpdatedAt); err != nil {
 		return CustomRole{}, err
 	}
@@ -37,6 +37,9 @@ func scanCustomRole(row pgx.Row) (CustomRole, error) {
 	}
 	if role.MemberOf == nil {
 		role.MemberOf = []string{}
+	}
+	for _, access := range defaults {
+		role.DefaultFor = append(role.DefaultFor, CredentialAccess(access))
 	}
 	role.RetryAt, role.CreatedAt, role.UpdatedAt = role.RetryAt.UTC(), role.CreatedAt.UTC(), role.UpdatedAt.UTC()
 	return role, nil
@@ -156,6 +159,9 @@ func (s *PostgresStore) SaveCustomRole(ctx context.Context, role CustomRole, lim
 	if customRoleCycle(current, role.Name, role.MemberOf) {
 		return CustomRole{}, ErrInvalid
 	}
+	if customRoleDefaultTaken(current, role) != "" {
+		return CustomRole{}, ErrCustomRoleDefaultTaken
+	}
 	if role.BypassRLS {
 		var fenced bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM managed_postgres_bindings
@@ -174,13 +180,17 @@ func (s *PostgresStore) SaveCustomRole(ctx context.Context, role CustomRole, lim
 	if memberOf == nil {
 		memberOf = []string{}
 	}
+	defaults := make([]string, 0, len(role.DefaultFor))
+	for _, access := range role.DefaultFor {
+		defaults = append(defaults, string(access))
+	}
 	saved, err := scanCustomRole(tx.QueryRow(ctx, `INSERT INTO managed_postgres_custom_roles
- (database_id, account_id, name, bypass_rls, granted_to, member_of, state, revision, last_error, attempt_count, retry_at, created_at, updated_at)
- VALUES ($1, $2, $3, $4, $5, $6, 'pending', 1, '', 0, $7, $7, $7)
+ (database_id, account_id, name, bypass_rls, granted_to, member_of, default_for, state, revision, last_error, attempt_count, retry_at, created_at, updated_at)
+ VALUES ($1, $2, $3, $4, $5, $6, $8, 'pending', 1, '', 0, $7, $7, $7)
  ON CONFLICT (database_id, name) DO UPDATE SET bypass_rls = EXCLUDED.bypass_rls, granted_to = EXCLUDED.granted_to,
-   member_of = EXCLUDED.member_of, state = 'pending', revision = managed_postgres_custom_roles.revision + 1,
+   member_of = EXCLUDED.member_of, default_for = EXCLUDED.default_for, state = 'pending', revision = managed_postgres_custom_roles.revision + 1,
    last_error = '', attempt_count = 0, retry_at = EXCLUDED.retry_at, updated_at = EXCLUDED.updated_at
- RETURNING `+customRoleColumns, database, account, role.Name, role.BypassRLS, grants, memberOf, now))
+ RETURNING `+customRoleColumns, database, account, role.Name, role.BypassRLS, grants, memberOf, now, defaults))
 	if err != nil {
 		return CustomRole{}, mapPostgresError(err)
 	}

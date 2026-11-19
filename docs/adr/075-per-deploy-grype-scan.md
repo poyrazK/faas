@@ -229,3 +229,30 @@ failed the deploy with "runtime inputs changed after admission: artifact".
 Production release acceptance hit this on every org-app deploy whose scan
 finished mid-prime. Such an app now scans before the handoff, as before the
 amendment above; apps without an organization keep the deferral.
+
+### Amendment 2026-11-19: an organization's app defers again unless a standard admits it natively
+
+The 2026-11-18 amendment kept every organization's app on the serial path.
+Every production app belongs to an organization (all 471 source deploys in
+the three days to 2026-11-19), so no scan was ever deferred: 166 of 166
+scans logged after the 2026-11-18 22:36Z release ran in front of the handoff,
+15.6 s at p50 and 33.5 s at p90 of imaged's preparation time.
+
+The failure that amendment answered came from the scheduler's caller-input
+check (`state.CheckedInstanceApplicationStandardAdmission`), the one check
+that compared the deployment's scan mirrors outside ADR-435 producer
+captures. The publication guard (`application_standard_runtime_inputs_match`)
+has ignored them since ADR 20261031190030: a scan renews `scan_status` and
+`scan_result_hash` and changes nothing the instance runs, and a scan that
+parks the deployment still changes `parked_reason`, which stays compared.
+The caller-input check now ignores the mirrors in the same way, and
+MemStore's guard for a booting instance follows the PostgreSQL guard.
+
+imaged therefore defers an organization's app's scan under the conditions
+above, with one more exception: an app whose standard enrollment admits its
+instances natively (`ApplicationStandardEnrollmentRequiresNative`) keeps the
+scan in front, because native captures compare the mirrors
+(`application_standard_native_inputs_match`) and a scan mid-prime would
+invalidate the prime's native snapshot grant. A failed enrollment read also
+keeps the scan in front. On 2026-11-19 none of production's 81 organization
+apps ran under such a standard.

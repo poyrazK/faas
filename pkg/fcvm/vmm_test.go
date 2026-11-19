@@ -1156,6 +1156,61 @@ func TestHealthcheckClient_LeavesNoConnectionInGuest(t *testing.T) {
 	}
 }
 
+// TestHealthcheckProbe_ProbeHost (ADR-20261119140000): with a probe host the
+// readiness GET still dials the guest address but names the app's public host
+// and the scheme public traffic carries; without one it is the legacy probe.
+func TestHealthcheckProbe_ProbeHost(t *testing.T) {
+	type seen struct{ host, proto string }
+	got := make(chan seen, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- seen{r.Host, r.Header.Get("X-Forwarded-Proto")}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	client := newHealthcheckClient()
+
+	if ok, err := healthcheckProbe(withProbeHost(context.Background(), "my-site.gregale.dev"), client, addr, "/healthz"); !ok || err != nil {
+		t.Fatalf("probe with host = (%v, %v)", ok, err)
+	}
+	if s := <-got; s.host != "my-site.gregale.dev" || s.proto != "https" {
+		t.Fatalf("probe with host sent Host %q X-Forwarded-Proto %q, want my-site.gregale.dev and https", s.host, s.proto)
+	}
+	if ok, err := healthcheckProbe(withProbeHost(context.Background(), ""), client, addr, "/healthz"); !ok || err != nil {
+		t.Fatalf("legacy probe = (%v, %v)", ok, err)
+	}
+	if s := <-got; s.host != addr || s.proto != "" {
+		t.Fatalf("legacy probe sent Host %q X-Forwarded-Proto %q, want %q and none", s.host, s.proto, addr)
+	}
+}
+
+// TestPrimeHTTP_ProbeHost: the init-snapshot prime burst names the same host
+// as readiness, so an app that allow-lists its hosts is primed, not refused.
+func TestPrimeHTTP_ProbeHost(t *testing.T) {
+	var hosts sync.Map
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hosts.Store(r.Host, true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	rep := primeHTTP(withProbeHost(context.Background(), "my-site.gregale.dev"), addr, PrimeOptions{Path: "/healthz", Requests: 3, Budget: 2 * time.Second})
+	if rep.OK != 3 {
+		t.Fatalf("prime report %+v, want 3 OK", rep)
+	}
+	n := 0
+	hosts.Range(func(k, _ any) bool {
+		n++
+		if k != "my-site.gregale.dev" {
+			t.Errorf("prime GET sent Host %v", k)
+		}
+		return true
+	})
+	if n != 1 {
+		t.Fatalf("prime GETs sent %d distinct hosts, want 1", n)
+	}
+}
+
 // TestHealthcheckProbe_TransportError: an unrouted host (TEST-NET-1,
 // RFC 5737) yields a transport error → (false, nil) per the helper's
 // retry-friendly contract — the loop interprets that as "not ready yet".

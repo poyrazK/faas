@@ -103,6 +103,34 @@ func TestPrepareModelEnv(t *testing.T) {
 	}
 }
 
+// adr: 20261027090016 amendment 1 — a run whose version allows a tool gets
+// the capability gateway's MCP URL; one whose policy allows nothing does not.
+func TestPrepareCapabilityEnv(t *testing.T) {
+	base := agentstore.Claim{RunID: "run-1", AccountID: "acct", Plan: "pro", TimeoutSec: 120, Template: "go",
+		Harness: agentstore.Harness{Preset: "opencode"}}
+	allowed := base
+	allowed.CapabilityPolicy = &api.AgentCapabilityPolicy{Tools: []api.AgentCapabilityTool{{Name: api.AgentCapabilityWebFetch, Mode: api.AgentCapabilityAllow}}}
+	denied := base
+	denied.CapabilityPolicy = &api.AgentCapabilityPolicy{Tools: []api.AgentCapabilityTool{{Name: api.AgentCapabilityWebFetch, Mode: api.AgentCapabilityDeny}},
+		Budgets: &api.AgentCapabilityBudgets{ToolCalls: 10}}
+	for name, tc := range map[string]struct {
+		claim agentstore.Claim
+		want  string
+	}{
+		"allowed": {allowed, "http://127.0.0.1:2774/mcp"},
+		"denied":  {denied, ""},
+		"none":    {base, ""},
+	} {
+		_, req, err := prepare(tc.claim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Env[api.AgentCapabilityMCPURLEnv]; got != tc.want {
+			t.Errorf("%s: %s=%q, want %q", name, api.AgentCapabilityMCPURLEnv, got, tc.want)
+		}
+	}
+}
+
 func TestAIBudget(t *testing.T) {
 	for _, tc := range []struct {
 		plan   string

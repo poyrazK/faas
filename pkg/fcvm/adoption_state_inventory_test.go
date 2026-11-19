@@ -171,6 +171,7 @@ var adoptionInstanceInventory = map[string]string{
 	"Plan":                            "rebuilt",
 	"Port":                            "rebuilt",
 	"HealthcheckPath":                 "rebuilt",
+	"ProbeHost":                       "rebuilt", // ADR-20261119140000: liveness and readiness loops name the app host
 	"ImageHealthcheckRequired":        "rebuilt",
 	"StartupDeadlineS":                "rebuilt",
 	"RequestConcurrency":              "rebuilt",

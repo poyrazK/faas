@@ -31405,6 +31405,52 @@ COMMENT ON TABLE public.agent_run_callbacks IS 'ADR-20261030125501 gregale_run l
 
 
 --
+-- Name: agent_run_capability_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_capability_decisions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    tool text NOT NULL,
+    decision text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_run_capability_decisions_decision_check CHECK ((decision = ANY (ARRAY['denied'::text, 'budget'::text, 'disabled'::text]))),
+    CONSTRAINT agent_run_capability_decisions_tool_check CHECK (((char_length(tool) >= 1) AND (char_length(tool) <= 64)))
+);
+
+
+--
+-- Name: TABLE agent_run_capability_decisions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_capability_decisions IS 'ADR-20261027090016 amendment 1: capability calls outboundd refused, by policy (denied), exhausted budget (budget) or a tool switched off (disabled).';
+
+
+--
+-- Name: agent_run_capability_summaries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_capability_summaries (
+    run_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    tool_calls integer DEFAULT 0 NOT NULL,
+    refused_calls integer DEFAULT 0 NOT NULL,
+    first_call_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_call_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_run_capability_summaries_refused_calls_check CHECK ((refused_calls >= 0)),
+    CONSTRAINT agent_run_capability_summaries_tool_calls_check CHECK ((tool_calls >= 0))
+);
+
+
+--
+-- Name: TABLE agent_run_capability_summaries; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_capability_summaries IS 'ADR-20261027090016 amendment 1: per-run capability counts written by outboundd. tool_calls are the calls admitted against the run''s tool-call budget.';
+
+
+--
 -- Name: agent_run_outputs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -31633,6 +31679,7 @@ CREATE TABLE public.agent_versions (
     ai_budget_millicents bigint,
     deliveries jsonb DEFAULT '[]'::jsonb NOT NULL,
     pause_during_model_calls boolean DEFAULT true NOT NULL,
+    capability_policy jsonb,
     CONSTRAINT agent_versions_ai_budget_millicents_check CHECK (((ai_budget_millicents IS NULL) OR ((ai_budget_millicents >= 1) AND (ai_budget_millicents <= '1000000000000'::bigint)))),
     CONSTRAINT agent_versions_deliveries_check CHECK (((jsonb_typeof(deliveries) = 'array'::text) AND (jsonb_array_length(deliveries) <= 4))),
     CONSTRAINT agent_versions_harness_check CHECK (((harness_preset IS NULL) <> (harness_image IS NULL))),
@@ -31654,6 +31701,13 @@ CREATE TABLE public.agent_versions (
 --
 
 COMMENT ON TABLE public.agent_versions IS 'ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.';
+
+
+--
+-- Name: COLUMN agent_versions.capability_policy; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.agent_versions.capability_policy IS 'ADR-20261027090016 amendment 1: the tools a run of this version may call over the capability gateway, and its per-run tool-call budget. Written by apid; read by outboundd.';
 
 
 --
@@ -47095,6 +47149,7 @@ CREATE TABLE public.managed_postgres_custom_roles (
     retry_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    default_for text[] DEFAULT '{}'::text[] NOT NULL,
     CONSTRAINT managed_postgres_custom_roles_attempt_count_check CHECK ((attempt_count >= 0)),
     CONSTRAINT managed_postgres_custom_roles_granted_to_check CHECK ((granted_to <@ ARRAY['migration'::text, 'read_only'::text, 'read_write'::text])),
     CONSTRAINT managed_postgres_custom_roles_last_error_check CHECK ((char_length(last_error) <= 128)),
@@ -63526,6 +63581,22 @@ ALTER TABLE ONLY public.agent_run_callbacks
 
 
 --
+-- Name: agent_run_capability_decisions agent_run_capability_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_decisions
+    ADD CONSTRAINT agent_run_capability_decisions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_run_capability_summaries agent_run_capability_summaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_summaries
+    ADD CONSTRAINT agent_run_capability_summaries_pkey PRIMARY KEY (run_id);
+
+
+--
 -- Name: agent_run_outputs agent_run_outputs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63571,6 +63642,14 @@ ALTER TABLE ONLY public.agent_sandbox_task_calls
 
 ALTER TABLE ONLY public.agent_undo_records
     ADD CONSTRAINT agent_undo_records_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_versions agent_versions_capability_policy_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_versions
+    ADD CONSTRAINT agent_versions_capability_policy_check CHECK (((capability_policy IS NULL) OR (jsonb_typeof(capability_policy) = 'object'::text))) NOT VALID;
 
 
 --
@@ -70651,6 +70730,14 @@ ALTER TABLE ONLY public.managed_postgres_creation_receipts
 
 ALTER TABLE ONLY public.managed_postgres_creation_receipts
     ADD CONSTRAINT managed_postgres_creation_receipts_pkey PRIMARY KEY (kind, backend_id, resource_id);
+
+
+--
+-- Name: managed_postgres_custom_roles managed_postgres_custom_roles_default_for_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_custom_roles
+    ADD CONSTRAINT managed_postgres_custom_roles_default_for_check CHECK (((default_for <@ ARRAY['read_only'::text, 'read_write'::text]) AND (default_for <@ granted_to))) NOT VALID;
 
 
 --
@@ -77934,6 +78021,13 @@ CREATE INDEX agent_run_callbacks_endpoint_idx ON public.agent_run_callbacks USIN
 --
 
 CREATE INDEX agent_run_callbacks_undelivered_idx ON public.agent_run_callbacks USING btree (created_at) WHERE (delivered_at IS NULL);
+
+
+--
+-- Name: agent_run_capability_decisions_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_run_capability_decisions_run_idx ON public.agent_run_capability_decisions USING btree (run_id, created_at);
 
 
 --
@@ -97318,6 +97412,38 @@ ALTER TABLE ONLY public.agent_run_callbacks
 
 ALTER TABLE ONLY public.agent_run_callbacks
     ADD CONSTRAINT agent_run_callbacks_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_capability_decisions agent_run_capability_decisions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_decisions
+    ADD CONSTRAINT agent_run_capability_decisions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_capability_decisions agent_run_capability_decisions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_decisions
+    ADD CONSTRAINT agent_run_capability_decisions_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_capability_summaries agent_run_capability_summaries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_summaries
+    ADD CONSTRAINT agent_run_capability_summaries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_capability_summaries agent_run_capability_summaries_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_summaries
+    ADD CONSTRAINT agent_run_capability_summaries_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
 
 
 --
