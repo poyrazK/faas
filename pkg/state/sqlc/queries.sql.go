@@ -49545,6 +49545,7 @@ SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS s
 FROM apps a
 JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
  AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.rollout_state, ''), 'pending') IN ('pending', 'rolling_out')
  AND coalesce(nullif(d.scope, ''), 'default') = 'default'
 JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND s.deleted_at IS NULL
  AND s.traffic_percent > 0 AND coalesce(nullif(s.scope, ''), 'default') = 'default'
@@ -57162,6 +57163,7 @@ FROM route_health_gates g
 JOIN apps a ON a.id = g.app_id AND a.account_id = g.account_id AND a.status <> 'deleted'
 JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
  AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.rollout_state, ''), 'pending') IN ('pending', 'rolling_out')
  AND coalesce(nullif(d.scope, ''), 'default') = 'default'
 WHERE jsonb_path_exists(g.routes, '$[*].probe')
 ORDER BY a.id, d.id

@@ -53,6 +53,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/statelessshape"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
@@ -961,6 +962,23 @@ func loadDeclaredEnv(path string) map[string]bool {
 					continue
 				}
 				declared[strings.ToUpper(k)] = true
+			}
+		}
+	}
+	// 3. A Compose file that opts in to env import (x-gregale-env-import)
+	// supplies its services' plain `environment:` values on deploy. Doctor
+	// warned that DATABASE_URL was missing although Compose set it (prod
+	// 2026-11-19). An entry without a value comes from the host, so it
+	// still counts as missing.
+	if compose, err := reposcan.ReadComposeEnv(os.DirFS(path)); err == nil {
+		for service, entries := range compose.Services {
+			if !compose.OptedIn(service) {
+				continue
+			}
+			for key, value := range entries {
+				if value != nil && isDeclaredEnvKey(key) {
+					declared[strings.ToUpper(key)] = true
+				}
 			}
 		}
 	}
