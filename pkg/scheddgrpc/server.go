@@ -526,7 +526,13 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 //     so the gateway can treat it as a no-op.
 func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceRequest) (*scheddpb.AdmitInstanceResponse, error) {
 	const op = "AdmitInstance"
+	received := time.Now()
+	s.log.Debug("schedd: admit instance received", "app_id", req.GetAppId(), "deployment", req.GetDeploymentId(), "trigger", req.GetTrigger())
+	defer func() {
+		s.log.Debug("schedd: admit instance returned", "app_id", req.GetAppId(), "took", time.Since(received).String())
+	}()
 	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
+		s.log.Debug("schedd: admit instance unauthorized", "app_id", req.GetAppId(), "err", err)
 		return nil, err
 	}
 	start := time.Now()
