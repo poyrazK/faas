@@ -1,0 +1,16 @@
+{
+  "rule": [
+    {
+      "action": {"type": "Delete"},
+      "condition": {"age": 14, "matchesPrefix": ["faas-pg-basebackup/", "faas-cp-state/"]}
+    },
+    {
+      "action": {"type": "Delete"},
+      "condition": {"age": 16, "matchesPrefix": ["faas-pg-wal/"]}
+    },
+    {
+      "action": {"type": "AbortIncompleteMultipartUpload"},
+      "condition": {"age": 2}
+    }
+  ]
+}

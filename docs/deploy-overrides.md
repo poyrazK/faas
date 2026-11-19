@@ -11,7 +11,7 @@ hosting:
 
 `gregale.yaml` does not name the app: pass `gregale deploy --name checkout-api` the first time, or run `gregale link --app checkout-api` so later deploys from this directory update that app.
 
-`hosting.start` is the command the app runs: it replaces the command the source build produces, including a Procfile `web:` entry and the builder's detected start. Without it, Gregale keeps the built image's command and uses its own inferred start only when the image has none.
+`hosting.start` is the command the app runs: it replaces the command the source build produces, including a Procfile `web:` entry and the builder's detected start. Without it, Gregale keeps the built image's command and uses its own inferred start only when the image has none, with one exception: when the builder's own command cannot start a Flask or FastAPI app (it would run `main:app` from a source with no `main.py`, run `python main.py` that only defines the app, or find no start at all), and there is no Procfile `web:` entry, the app runs the inferred start that `gregale deploy --dry-run` shows, for example `gunicorn app:app` or `uvicorn main:app`.
 
 The CLI validates the schema before uploading source. A declared port must match the process listener, and the health endpoint should be cheap, authenticated only when necessary, and free of side effects. An app that listens on another port fails its deployment with `app_not_listening` naming both ports. Put credentials in [secrets](secrets.md), not in this file or image layers.
 

@@ -6,32 +6,57 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Conversion events for experiments (ADR 20261115163113).
 
 // flagSDKCapabilities is what this SDK advertises to the runtime endpoints.
-const flagSDKCapabilities = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1"
+const flagSDKCapabilities = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2"
 
 const (
 	flagEventBatch         = 100
 	flagEventQueueMax      = 1000
 	flagEventFlushInterval = 5 * time.Second
 	flagEventMaxAbsValue   = int64(1_000_000_000_000)
+	// Product analytics bounds (ADR 20261117084505, pkg/api/limits.go).
+	flagEventMaxProperties       = 10
+	flagEventPropertyValueMaxLen = 256
+	flagEventMaxFlags            = 32
 )
 
-var flagEventName = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
+var (
+	flagEventName        = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
+	flagEventPropertyKey = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+)
 
 type flagEvent struct {
-	Name       string `json:"name"`
-	CustomerID string `json:"customer_id"`
-	Value      int64  `json:"value,omitempty"`
-	At         string `json:"at"`
+	Name       string            `json:"name"`
+	CustomerID string            `json:"customer_id"`
+	Value      int64             `json:"value,omitempty"`
+	At         string            `json:"at"`
+	Subject    string            `json:"subject,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
+	Flags      map[string]string `json:"flags,omitempty"`
+}
+
+// TrackOptions are the optional parts of an event for TrackWith.
+type TrackOptions struct {
+	// Value is an integer, such as cents.
+	Value int64
+	// Properties are up to 10 string properties: keys match
+	// ^[a-z][a-z0-9_]{0,63}$, values are at most 256 bytes.
+	Properties map[string]string
+	// Subject overrides the subject set with WithSubject. Only its hash is stored.
+	Subject string
 }
 
 type flagEventQueue struct {
@@ -53,10 +78,32 @@ func (q *flagEventQueue) drop(n int) {
 // with a verified customer, the name or value is invalid, or the local queue
 // is full. Events are sent in batches every 5 s; Close or Flush sends the rest.
 func (f *GregaleFlags) Track(ctx context.Context, name string, value int64) bool {
+	return f.TrackWith(ctx, name, TrackOptions{Value: value})
+}
+
+// TrackWith is Track with properties and a subject (ADR 20261117084505). The
+// event also carries every flag decision the request made before the call, so
+// any event can be split by flag variant. It returns false, and counts the
+// event in DroppedEvents, when Track would or when the properties or subject
+// are invalid.
+func (f *GregaleFlags) TrackWith(ctx context.Context, name string, opts TrackOptions) bool {
 	state, err := f.requestState(ctx)
-	if err != nil || state.customer == "" || !flagEventName.MatchString(name) || value > flagEventMaxAbsValue || value < -flagEventMaxAbsValue {
+	value := opts.Value
+	if err != nil || state.customer == "" || !flagEventName.MatchString(name) || value > flagEventMaxAbsValue || value < -flagEventMaxAbsValue || !validFlagEventProperties(opts.Properties) {
 		f.events.drop(1)
 		return false
+	}
+	subject := opts.Subject
+	if subject == "" {
+		subject, _ = ctx.Value(flagSubjectContextKey{}).(string)
+	}
+	if subject != "" && !validFlagSubjectID(subject) {
+		f.events.drop(1)
+		return false
+	}
+	event := flagEvent{Name: name, CustomerID: state.customer, Value: value, At: f.now().UTC().Format(time.RFC3339Nano), Subject: subject, Flags: state.servedFlags()}
+	if len(opts.Properties) > 0 {
+		event.Properties = maps.Clone(opts.Properties)
 	}
 	q := &f.events
 	q.mu.Lock()
@@ -65,8 +112,46 @@ func (f *GregaleFlags) Track(ctx context.Context, name string, value int64) bool
 		q.dropped++
 		return false
 	}
-	q.events = append(q.events, flagEvent{Name: name, CustomerID: state.customer, Value: value, At: f.now().UTC().Format(time.RFC3339Nano)})
+	q.events = append(q.events, event)
 	return true
+}
+
+func validFlagEventProperties(properties map[string]string) bool {
+	if len(properties) > flagEventMaxProperties {
+		return false
+	}
+	for k, v := range properties {
+		if !flagEventPropertyKey.MatchString(k) || len(v) > flagEventPropertyValueMaxLen || !utf8.ValidString(v) {
+			return false
+		}
+	}
+	return true
+}
+
+// servedFlags is the served value of each flag the request evaluated, as a
+// string, at most 32 in key order.
+func (s *flagRequestState) servedFlags() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.evidence) == 0 {
+		return nil
+	}
+	keys := slices.Sorted(maps.Keys(s.evidence))
+	if len(keys) > flagEventMaxFlags {
+		keys = keys[:flagEventMaxFlags]
+	}
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		switch v := s.evidence[key].Value.(type) {
+		case bool:
+			out[key] = strconv.FormatBool(v)
+		case string:
+			out[key] = v
+		default:
+			out[key] = fmt.Sprint(v)
+		}
+	}
+	return out
 }
 
 // DroppedEvents is the number of events dropped locally or refused by the API

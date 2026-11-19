@@ -689,7 +689,7 @@ export class StorageService {
   }
   /**
    * List objects with opaque cursor pagination
-   * Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket.
+   * Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket. An environment branch's bucket lists as the branch reads it, its own objects over its parent bucket's, keys it deleted hidden; each parent object has from_parent.
    * @returns any One page, not a bucket-wide usage or billing total
    * @returns Problem Invalid request, access denied, bucket unavailable, or provider error
    * @throws ApiError
@@ -726,6 +726,10 @@ export class StorageService {
       key: string;
       size_bytes: number;
       last_modified: string;
+      /**
+       * In an environment branch's bucket, the object is read from the parent environment's bucket.
+       */
+      from_parent?: boolean;
     }>;
     next_cursor?: string;
   } | Problem> {

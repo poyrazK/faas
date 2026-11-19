@@ -689,6 +689,14 @@ func (s *Service) ListBucketObjects(w http.ResponseWriter, r *http.Request, acct
 		BucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
+	if page, handled, err := s.listOverlayBucketObjects(r.Context(), b, provider, prefix, cursor, int32(limit)); handled {
+		if err != nil {
+			BucketProblem(w, err)
+			return
+		}
+		httpkit.WriteJSON(w, 200, page)
+		return
+	}
 	if err := s.CustomerObjectRequestRecorder(b)(r.Context()); err != nil {
 		BucketProblem(w, err)
 		return

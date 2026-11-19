@@ -34,8 +34,14 @@ func withoutFullEnvironmentClone(command cliCommand) cliCommand {
 	subs := make([]cliSub, 0, len(command.Subcommands))
 	for _, sub := range command.Subcommands {
 		switch sub.Name {
-		case "clone-status", "resume-automation":
+		case "clone-status":
 			continue
+		case "resume-automation":
+			// Branches copy their parent's automation paused too
+			// (ADR-20261031193635 amendment 2026-11-17).
+			if !environmentBranchCLI() {
+				continue
+			}
 		case "create":
 			sub.Flags = slices.DeleteFunc(slices.Clone(sub.Flags), func(f cliFlag) bool {
 				return slices.Contains(fullEnvironmentCloneCreateFlags, f.Name)
