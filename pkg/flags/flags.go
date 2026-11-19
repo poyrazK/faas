@@ -48,8 +48,8 @@ type Condition struct {
 
 // Attribute names and operators (ADR 20261114150000 §2).
 const (
-	AttributeCountry   = "gregale.country"
-	AttributeUAFamily  = "gregale.ua_family"
+	AttributeCountry  = "gregale.country"
+	AttributeUAFamily = "gregale.ua_family"
 	// AttributeCohort is the gateway-stamped cohorts of the request's
 	// customer (ADR 20261119102741 §4).
 	AttributeCohort    = "gregale.cohort"

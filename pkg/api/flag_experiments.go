@@ -64,10 +64,10 @@ type FlagEventsMonth struct {
 // FlagExperimentCreateRequest creates an experiment on a variant flag's
 // weighted rule (ADR 20261115163113 §1). Start starts it at once.
 type FlagExperimentCreateRequest struct {
-	Key         string `json:"key"`
-	Flag        string `json:"flag"`
-	RuleID      string `json:"rule_id"`
-	Control     string `json:"control"`
+	Key     string `json:"key"`
+	Flag    string `json:"flag"`
+	RuleID  string `json:"rule_id"`
+	Control string `json:"control"`
 	// MetricEvent is required for conversion and mean metrics; funnel and
 	// retention metrics derive it.
 	MetricEvent string `json:"metric_event,omitempty"`
