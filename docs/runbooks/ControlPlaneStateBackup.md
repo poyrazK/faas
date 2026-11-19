@@ -44,6 +44,10 @@ on the control plane.
      - age1...
    ```
 
+   Production sets them in
+   `deploy/ansible/group_vars/control_plane/cp_state_backup.yml` (since
+   2026-11-19). The matching identity is held offline by the owner.
+
 3. Converge the control plane. The role installs
    `/etc/faas/cp-state-backup.{paths,recipients}` and starts
    `faas-cp-state-backup.timer` (daily 04:15 UTC). To run it once now:
