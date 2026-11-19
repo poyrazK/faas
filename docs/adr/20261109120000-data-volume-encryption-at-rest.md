@@ -183,3 +183,26 @@ The two remaining holders of database data get the same encrypted `/srv/fc`.
 Both apply only when the manifest has `disk_encryption`, and only to new
 hosts: an existing standby or database node with data on the plain disk is
 refused by the same checks as the control plane (rebuild it on blank disks).
+
+## Amendment 4 (2026-11-19): fleets addressed by host name
+
+The first OVH run refused to start Tang: the OVH manifest addresses its hosts
+by name (`fsn-1.gregale.dev:9091`, `bhs-2.gregale.dev:50051`), and decision 3
+bound Tang to the manifest address, which the role requires to be a private
+IP. The peer URLs had the same flaw: publicly those names resolve to
+Cloudflare, and `/etc/hosts` maps them to the vRack only once the overlay role
+runs, later in the same bootstrap. Clevis keeps the bound URLs in the LUKS
+header, so a URL must not depend on name resolution.
+
+For a host whose manifest address is a name:
+
+- the renderer emits no `faas_tang_listen_address`, so Tang binds the
+  role default, the private address the discovery play resolved
+  (`tasks/resolve_private_address.yml`: the named private card's address on
+  bare metal);
+- the renderer lists it as a peer in `faas_tang_peer_hosts` (inventory
+  names), and the storage role binds `http://<that host's resolved private
+  address>:<port>`. A peer without a resolved address stops the run before
+  anything is written.
+
+IP-addressed fleets render exactly as before.
