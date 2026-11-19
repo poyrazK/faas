@@ -21,7 +21,8 @@ off-host recovery source.
 - **Nightly basebackup**: `faas-pg-basebackup.timer` fires at 03:00 UTC;
   `faas-pg-basebackup-push.timer` fires at 03:30 UTC, copies and verifies
   every completed backup, then keeps the newest two local recovery points.
-  Remote retention is controlled by the object-store lifecycle policy.
+  Remote retention is controlled by the object-store lifecycle policy:
+  14 days of base backups, 16 of WAL (see "Remote retention").
 - **Bounded local WAL**: `faas-pg-wal-prune.timer` runs hourly. It derives
   the recovery boundary from the oldest retained basebackup, copies every
   deletion candidate off-host, verifies the bytes, and only then removes
@@ -140,6 +141,7 @@ label only when that record is a committed PASS from the last 30 days.
 | Remote basebackup count | at least local count | `rclone lsd offhostbox:faas-pg-basebackup --config /etc/faas/secrets/storage-box/rclone.conf \| wc -l` vs `ls /var/lib/pgsql/basebackup \| wc -l` |
 | Remote `du` vs local `$PG_BB_ROOT` | ±10% | provider-side storage UI |
 | `archive_command` line | local copy followed by best-effort `rclone copyto` to `offhostbox:` | `grep ^archive_command /etc/postgresql/15/main/postgresql.conf` |
+| Bucket lifecycle | the rules in `deploy/backup-lifecycle/` | `gcloud storage buckets describe gs://<bucket> --format='json(lifecycle_config)'` or `aws s3api get-bucket-lifecycle-configuration` |
 
 ## Rollback
 
@@ -198,6 +200,83 @@ If remote verification fails, stop the timer and repair access to the remote.
 Do not manually delete `/var/lib/pgsql/archive` files. The pruner deliberately
 fails before the first unlink when any candidate is missing or differs.
 
+## Remote retention
+
+The bucket's lifecycle policy is the only thing that deletes off-host
+recovery points (ADR-20261118203000). It expires:
+
+- base backups (`faas-pg-basebackup/`) and control-plane state bundles
+  (`faas-cp-state/`) after 14 days;
+- WAL (`faas-pg-wal/`) after 16 days, two days after the oldest base
+  backup it can replay onto;
+- unfinished multipart uploads after 2 days.
+
+The policy is checked in under `deploy/backup-lifecycle/`. The hosts
+push with an append-only identity and cannot delete, so an operator
+applies it with their own credentials whenever a backup bucket is
+provisioned. A bucket without it grows by about 25 GB a day, almost all
+of it WAL.
+
+Before applying it to a bucket that already holds backups, confirm last
+night's base backup was pushed and verified:
+`apid_pg_backup_last_pushed_seconds` is within 26 hours and
+`PgBaseBackupFailed` is not firing. Within about a day the policy
+deletes everything outside the window and leaves 14 nightly recovery
+points.
+
+Apply on Google Cloud Storage:
+
+```bash
+gcloud storage buckets update gs://<bucket> --lifecycle-file=deploy/backup-lifecycle/gcs.json
+```
+
+Apply on an S3-compatible store (OVHcloud's endpoint is
+`https://s3.<region>.io.cloud.ovh.net`):
+
+```bash
+aws s3api put-bucket-lifecycle-configuration --endpoint-url https://s3.bhs.io.cloud.ovh.net --bucket <bucket> --lifecycle-configuration file://deploy/backup-lifecycle/s3.json
+```
+
+OVHcloud refuses a lifecycle configuration while bucket versioning is
+suspended. Leave versioning off or enabled.
+
+Check that it is in place. Expect the rules from the checked-in file;
+an empty result means nothing is ever deleted:
+
+```bash
+gcloud storage buckets describe gs://<bucket> --format='json(lifecycle_config)'
+```
+
+```bash
+aws s3api get-bucket-lifecycle-configuration --endpoint-url https://s3.bhs.io.cloud.ovh.net --bucket <bucket>
+```
+
+**When backups stop.** If no new base backup has been verified for a
+week, remove the policy until a fresh one is, so the last good recovery
+points do not expire:
+
+```bash
+gcloud storage buckets update gs://<bucket> --clear-lifecycle
+```
+
+```bash
+aws s3api delete-bucket-lifecycle --endpoint-url https://s3.bhs.io.cloud.ovh.net --bucket <bucket>
+```
+
+**Getting back an expired object.** On GCS, objects the lifecycle
+deleted stay restorable for the bucket's soft-delete window (7 days on
+production):
+
+```bash
+gcloud storage ls --soft-deleted 'gs://<bucket>/faas-pg-basebackup/**'
+```
+
+```bash
+gcloud storage restore 'gs://<bucket>/<object>#<generation>'
+```
+
+An unversioned S3 bucket keeps nothing after expiry.
+
 ## Refs
 
 - Spec §14 M8 row.
@@ -207,3 +286,4 @@ fails before the first unlink when any candidate is missing or differs.
 - `deploy/scripts/faas-pg-wal-prune.sh` — verified local WAL retention.
 - `pkg/wire/metrics.go` — backup and WAL-retention gauges.
 - ADR-056 — design rationale.
+- ADR-20261118203000 and `deploy/backup-lifecycle/` — remote retention.

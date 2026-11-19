@@ -4872,7 +4872,7 @@ var cliCommands = []cliCommand{
 		DocSlug:   "init",
 		Short:     "Scaffold a project from a built-in template",
 		Examples:  []string{"gregale init --list", "gregale init --template hello-node --path ./my-api", "gregale init --agents --name my-api"},
-		HelpNotes: []string{"--agents sets up an existing project for coding agents: it adds a Gregale section to AGENTS.md, makes an existing CLAUDE.md import AGENTS.md, and points Gemini CLI at AGENTS.md. A second run replaces the section in place."},
+		HelpNotes: []string{"--agents sets up an existing project for coding agents: it adds a Gregale section to AGENTS.md, makes an existing CLAUDE.md import AGENTS.md, and points Gemini CLI at AGENTS.md in a project with a .gemini folder. Codex, Cursor and Antigravity read AGENTS.md on their own. A second run replaces the section in place."},
 		Flags: []cliFlag{
 			{Name: "template", Short: "template name (required unless --agents)", Value: "NAME", ClosedSet: templateNames13},
 			{Name: "path", Short: "target directory (required unless --agents, which defaults to .)", Value: "DIR"},

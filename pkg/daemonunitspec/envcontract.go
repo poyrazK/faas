@@ -751,6 +751,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_MANIFEST_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_MCP_BRIDGE_LOOPBACK", Owners: []string{"gatewayd-public"}, Source: EnvSourceDropin, Note: "ADR-20261026195952; absolute URL of the hosted management MCP bridge on the control-plane host. Unset leaves /mcp on the api. host to the compute data plane"},
 	{Name: "FAAS_MCP_HOSTED_TASK_BINDING_VERIFICATION", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261117135916; opt-in owner-selected native managed PostgreSQL Task binding qualification; bounded read-only probes, metadata receipts only, no execution authority"},
+	{Name: "FAAS_MCP_HOSTED_TASK_REHEARSAL_PLAN", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261118062934; opt-in hosted Task rehearsal plans and separate owner approval for a disposable target"},
 	{Name: "FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261116183545; opt-in encrypted authored Task source retention; only 1 enables writes, using independent Account-domain sealing; no approval or execution authority"},
 
 	{Name: "FAAS_MCP_PRIVATE_TOOL_INVOCATION", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261113200000; operator opt-in for private delegated tool execution. Unset or any value other than 1 disables execution. Enable on apid only after the tool migrations and a separate Account seal-domain identity are staged; bridge flags and independent connection consent remain required"},

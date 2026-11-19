@@ -2419,6 +2419,12 @@ from .hosted_task_binding_selection import HostedTaskBindingSelection
 from .hosted_task_binding_verification import HostedTaskBindingVerification
 from .hosted_task_binding_verification_status import HostedTaskBindingVerificationStatus
 from .hosted_task_binding_verification_version import HostedTaskBindingVerificationVersion
+from .hosted_task_rehearsal_decision import HostedTaskRehearsalDecision
+from .hosted_task_rehearsal_decision_decision import HostedTaskRehearsalDecisionDecision
+from .hosted_task_rehearsal_plan import HostedTaskRehearsalPlan
+from .hosted_task_rehearsal_plan_status import HostedTaskRehearsalPlanStatus
+from .hosted_task_rehearsal_plan_version import HostedTaskRehearsalPlanVersion
+from .hosted_task_rehearsal_prepare import HostedTaskRehearsalPrepare
 from .hosted_task_source_check import HostedTaskSourceCheck
 from .hosted_task_source_decision import HostedTaskSourceDecision
 from .hosted_task_source_decision_decision import HostedTaskSourceDecisionDecision
@@ -9429,6 +9435,12 @@ __all__ = (
     "HostedTaskBindingVerification",
     "HostedTaskBindingVerificationStatus",
     "HostedTaskBindingVerificationVersion",
+    "HostedTaskRehearsalDecision",
+    "HostedTaskRehearsalDecisionDecision",
+    "HostedTaskRehearsalPlan",
+    "HostedTaskRehearsalPlanStatus",
+    "HostedTaskRehearsalPlanVersion",
+    "HostedTaskRehearsalPrepare",
     "HostedTaskSourceCheck",
     "HostedTaskSourceDecision",
     "HostedTaskSourceDecisionDecision",

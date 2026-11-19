@@ -42,3 +42,10 @@ func appCPUBookingMillicores(app state.App) int {
 	baseline := app.RAMMB * api.AppCPUBaselineMillicoresPerGB / 1024
 	return max(1, min(usable, baseline, api.AppCPUBookingMaxMillicores))
 }
+
+// AppCPUBookingMillicores is appCPUBookingMillicores for checks outside the
+// scheduler that assert what its node ledger holds for one running instance,
+// so they follow the booking rule instead of copying it.
+func AppCPUBookingMillicores(app state.App) int {
+	return appCPUBookingMillicores(app)
+}

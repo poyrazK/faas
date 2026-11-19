@@ -7039,6 +7039,13 @@ type HostedTaskBindingQualification struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+type HostedTaskRehearsalPlan struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
 type HostedTaskSourceIntent struct {
 	AccountID  pgtype.UUID
 	ID         string
@@ -16755,6 +16762,7 @@ type SupportGrant struct {
 	ExpiresAt          pgtype.Timestamptz
 	RevokedAt          pgtype.Timestamptz
 	RevokedByAccountID pgtype.UUID
+	SummarySentAt      pgtype.Timestamptz
 }
 
 type SupportGrantRequest struct {
@@ -16767,6 +16775,9 @@ type SupportGrantRequest struct {
 	ExpiresAt          pgtype.Timestamptz
 	DecidedAt          pgtype.Timestamptz
 	DecidedByAccountID pgtype.UUID
+	AppIds             []pgtype.UUID
+	TtlSeconds         pgtype.Int4
+	ExtendsGrantID     pgtype.UUID
 }
 
 type SupportMessage struct {

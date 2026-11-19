@@ -56,6 +56,8 @@ func (s *server) newSupportAccessService() *supportaccess.Service {
 		Audit: func(ctx context.Context, kind string, subject *string, data map[string]any) {
 			s.audit.Emit(ctx, kind, subject, data)
 		},
+		DashboardURL: s.supportAccessDashboardURL,
+		Mail:         s.mailSupportAccess,
 	})
 }
 
@@ -98,11 +100,55 @@ func (s *server) supportAccessRoute(handler func(supportaccess.HTTP) accountHand
 // notifySupportAccess mails the organization's owners and admins, or a
 // personal account's owner.
 func (s *server) notifySupportAccess(ctx context.Context, kind, orgID, change string) {
+	s.mailOrgSecurityEvent(ctx, kind, orgID, change, s.supportAccessAdmins(ctx, orgID)...)
+}
+
+// supportAccessAdmins is who besides the owners hears about support access:
+// the admins, or a personal organization's owner.
+func (s *server) supportAccessAdmins(ctx context.Context, orgID string) []string {
 	also := s.orgAdminIDs(ctx, orgID)
 	if org, err := s.store.OrgByID(state.WithoutOrgAccessFence(ctx), orgID); err == nil && org.Personal && org.PersonalOwnerAccountID != nil {
 		also = append(also, *org.PersonalOwnerAccountID)
 	}
-	s.mailOrgSecurityEvent(ctx, kind, orgID, change, also...)
+	return also
+}
+
+// mailSupportAccess sends one composed mail to the same people.
+func (s *server) mailSupportAccess(ctx context.Context, kind, orgID, subject, body string) {
+	ctx = state.WithoutOrgAccessFence(ctx)
+	for _, acct := range s.orgSecurityRecipients(ctx, orgID, s.supportAccessAdmins(ctx, orgID)...) {
+		s.sendSecurityNotice(ctx, acct, kind, subject, body)
+	}
+}
+
+// supportAccessDashboardURL makes a dashboard path absolute on the platform
+// host, for a mail; without one it stays a path.
+func (s *server) supportAccessDashboardURL(path string) string {
+	if host := s.platformHost(); host != "" && host != domainUnset {
+		return "https://" + host + path
+	}
+	return path
+}
+
+// runSupportAccessSummaries mails the end-of-access summary of each support
+// grant that ended (ADR-20261116163508 amendment 1).
+func (s *server) runSupportAccessSummaries(ctx context.Context) {
+	svc := s.supportAccessService()
+	if svc == nil {
+		return
+	}
+	tick := time.NewTicker(api.SupportGrantSummaryPollInterval)
+	defer tick.Stop()
+	for {
+		if _, err := svc.SummarizeEnded(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("support_access.summary", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
 }
 
 // supportAccessGate admits an operator session to a customer app route

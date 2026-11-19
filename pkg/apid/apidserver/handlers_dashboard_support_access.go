@@ -5,8 +5,10 @@ package apidserver
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
@@ -55,13 +57,25 @@ func (s *server) renderSupportAccessDashboard(w http.ResponseWriter, r *http.Req
 	}
 	actor := actorAccount(r, acct)
 	data := dashboard.SupportAccessData{Flash: supportAccessDone[r.URL.Query().Get("done")], Error: supportAccessErrors[r.URL.Query().Get("error")]}
+	focus := strings.TrimSpace(r.URL.Query().Get("request"))
+	focused := false
 	for _, org := range s.supportManagedOrgs(r, actor) {
 		access, err := svc.Overview(r.Context(), org, actor)
 		if err != nil {
 			renderProblem(w, s.log, err)
 			return
 		}
-		item := dashboard.SupportAccessOrg{Slug: org.Slug, Name: org.Name, Personal: org.Personal, Enabled: access.Enabled, Access: access}
+		item := dashboard.SupportAccessOrg{Slug: org.Slug, Name: org.Name, Personal: org.Personal, Enabled: access.Enabled, Access: access,
+			Durations: supportDurations(0)}
+		for _, req := range access.Requests {
+			if req.Status != state.SupportRequestOpen {
+				continue
+			}
+			form := supportRequestForm(req)
+			form.Focus = focus != "" && req.ID == focus
+			focused = focused || form.Focus
+			item.Open = append(item.Open, form)
+		}
 		if lister, ok := s.store.(state.OrgAppLister); ok {
 			if apps, err := lister.ListAppsByOrg(r.Context(), org.ID); err == nil {
 				for _, app := range apps {
@@ -70,6 +84,9 @@ func (s *server) renderSupportAccessDashboard(w http.ResponseWriter, r *http.Req
 			}
 		}
 		data.Orgs = append(data.Orgs, item)
+	}
+	if focus != "" && !focused && data.Error == "" {
+		data.Error = supportAccessErrors["not_found"]
 	}
 	token, err := csrf.IssueForAuthenticatedNamed(s.sessions, dashboardSupportAccessAction, actor.ID, dashboardSupportAccessCSRFCookie)
 	if err != nil {
@@ -159,6 +176,54 @@ func (s *server) applySupportAccessForm(r *http.Request, actor state.Account, or
 		_, prob := svc.Grant(ctx, actor, org, supportGrantForm(r))
 		return prob, "granted"
 	}
+}
+
+// supportDurationChoices are the page's standard grant durations, in hours.
+var supportDurationChoices = []int{4, 24, 72, 168}
+
+// supportDurations lists the duration choices with requested selected,
+// adding it when it is not a standard one; zero selects 24 hours.
+func supportDurations(requested int) []dashboard.SupportAccessDuration {
+	if requested <= 0 {
+		requested = int(api.SupportGrantDefaultTTL / time.Hour)
+	}
+	hours := slices.Clone(supportDurationChoices)
+	if !slices.Contains(hours, requested) {
+		hours = append(hours, requested)
+		slices.Sort(hours)
+	}
+	out := make([]dashboard.SupportAccessDuration, 0, len(hours))
+	for _, h := range hours {
+		out = append(out, dashboard.SupportAccessDuration{Hours: h, Label: supportDurationLabel(h), Selected: h == requested})
+	}
+	return out
+}
+
+func supportDurationLabel(hours int) string {
+	switch {
+	case hours == 1:
+		return "1 hour"
+	case hours%24 == 0 && hours > 24:
+		return strconv.Itoa(hours/24) + " days"
+	default:
+		return strconv.Itoa(hours) + " hours"
+	}
+}
+
+// supportRequestForm fills an open request's approval form with what
+// support asked for; the customer can change any of it.
+func supportRequestForm(req api.SupportAccessRequest) dashboard.SupportAccessRequestForm {
+	asked := "all apps"
+	if len(req.Apps) > 0 {
+		asked = strings.Join(req.Apps, ", ")
+	}
+	if req.TTLHours > 0 {
+		asked += " for " + supportDurationLabel(req.TTLHours)
+	}
+	if req.Extends != "" {
+		asked = "more time on its current access to " + asked
+	}
+	return dashboard.SupportAccessRequestForm{Request: req, Asked: asked, AppsValue: strings.Join(req.Apps, ", "), Durations: supportDurations(req.TTLHours)}
 }
 
 func supportGrantForm(r *http.Request) api.CreateSupportGrantRequest {
