@@ -11775,6 +11775,17 @@ const (
 	AgentWebFetchMaxBytes         = 1 << 20
 	AgentWebFetchTimeoutSec       = 20
 	AgentWebFetchRedirectsMax     = 5
+	// Run approvals (ADR-20261027090016 amendment 2). An approval expires
+	// after AgentRunApprovalTimeoutSec, and never later than the run's
+	// deadline less AgentRunApprovalDeadlineMarginSec. A run holds at most
+	// AgentRunApprovalsPendingMax undecided approvals; outboundd reads the
+	// decision every AgentRunApprovalPollMillis.
+	AgentRunApprovalTimeoutSec        = 3600
+	AgentRunApprovalDeadlineMarginSec = 30
+	AgentRunApprovalsPendingMax       = 8
+	AgentRunApprovalSummaryMaxBytes   = 2048
+	AgentRunApprovalNoteMaxBytes      = 1024
+	AgentRunApprovalPollMillis        = 1000
 	// Agent callbacks (ADR-20261030125501 §3): a tool posts its result to a
 	// signed per-thread URL, and apid publishes it into that thread's lane of
 	// the app's AgentInboxChannel. A token lives at most

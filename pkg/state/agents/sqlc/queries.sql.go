@@ -1054,6 +1054,50 @@ func (q *Queries) GetAgentRun(ctx context.Context, db DBTX, arg GetAgentRunParam
 	return i, err
 }
 
+const getAgentRunApproval = `-- name: GetAgentRunApproval :one
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.id=$1::text::uuid AND a.run_id=$2::text::uuid AND a.account_id=$3::text::uuid
+`
+
+type GetAgentRunApprovalParams struct {
+	ApprovalID string
+	RunID      string
+	AccountID  string
+}
+
+type GetAgentRunApprovalRow struct {
+	ID               string
+	RunID            string
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	Decision         string
+	Note             string
+	DecidedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) GetAgentRunApproval(ctx context.Context, db DBTX, arg GetAgentRunApprovalParams) (GetAgentRunApprovalRow, error) {
+	row := db.QueryRow(ctx, getAgentRunApproval, arg.ApprovalID, arg.RunID, arg.AccountID)
+	var i GetAgentRunApprovalRow
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.Tool,
+		&i.ArgumentsSha256,
+		&i.ArgumentsSummary,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.Decision,
+		&i.Note,
+		&i.DecidedAt,
+	)
+	return i, err
+}
+
 const getAgentRunClaim = `-- name: GetAgentRunClaim :one
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
@@ -1861,6 +1905,40 @@ func (q *Queries) InsertAgentRun(ctx context.Context, db DBTX, arg InsertAgentRu
 	return id, err
 }
 
+const insertAgentRunApprovalDecision = `-- name: InsertAgentRunApprovalDecision :execrows
+INSERT INTO agent_run_approval_decisions (approval_id, account_id, decision, note, decided_by)
+SELECT a.id, a.account_id, $1::text, $2::text, $3::text
+ FROM agent_run_approvals a
+ WHERE a.id=$4::text::uuid AND a.run_id=$5::text::uuid
+   AND a.account_id=$6::text::uuid AND a.expires_at > now()
+ON CONFLICT (approval_id) DO NOTHING
+`
+
+type InsertAgentRunApprovalDecisionParams struct {
+	Decision   string
+	Note       string
+	DecidedBy  string
+	ApprovalID string
+	RunID      string
+	AccountID  string
+}
+
+// The decision is written once, and only before the approval expires.
+func (q *Queries) InsertAgentRunApprovalDecision(ctx context.Context, db DBTX, arg InsertAgentRunApprovalDecisionParams) (int64, error) {
+	result, err := db.Exec(ctx, insertAgentRunApprovalDecision,
+		arg.Decision,
+		arg.Note,
+		arg.DecidedBy,
+		arg.ApprovalID,
+		arg.RunID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertAgentRunCallback = `-- name: InsertAgentRunCallback :exec
 INSERT INTO agent_run_callbacks (run_id, account_id, endpoint_id, thread_id, tool_call_id, provider_call_id, issued_at)
 VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid,
@@ -2299,6 +2377,65 @@ func (q *Queries) ListAgentModelIntegrations(ctx context.Context, db DBTX, arg L
 	for rows.Next() {
 		var i ListAgentModelIntegrationsRow
 		if err := rows.Scan(&i.ID, &i.AiProvider); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentRunApprovals = `-- name: ListAgentRunApprovals :many
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.run_id=$1::text::uuid AND a.account_id=$2::text::uuid
+ ORDER BY a.created_at, a.id LIMIT $3::integer
+`
+
+type ListAgentRunApprovalsParams struct {
+	RunID     string
+	AccountID string
+	MaxRows   int32
+}
+
+type ListAgentRunApprovalsRow struct {
+	ID               string
+	RunID            string
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	Decision         string
+	Note             string
+	DecidedAt        pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 2: a run's approvals with their decisions, oldest first.
+func (q *Queries) ListAgentRunApprovals(ctx context.Context, db DBTX, arg ListAgentRunApprovalsParams) ([]ListAgentRunApprovalsRow, error) {
+	rows, err := db.Query(ctx, listAgentRunApprovals, arg.RunID, arg.AccountID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentRunApprovalsRow{}
+	for rows.Next() {
+		var i ListAgentRunApprovalsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Tool,
+			&i.ArgumentsSha256,
+			&i.ArgumentsSummary,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.Decision,
+			&i.Note,
+			&i.DecidedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

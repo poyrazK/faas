@@ -940,3 +940,26 @@ SELECT d.domain, d.refused, d.first_seen
   FROM sandbox_session_domains d JOIN sandbox_sessions s ON s.id = d.sandbox_id
  WHERE d.sandbox_id=sqlc.arg(session_id)::text::uuid AND s.account_id=sqlc.arg(account_id)::text::uuid
  ORDER BY d.first_seen, d.refused, d.domain;
+
+-- name: ListAgentRunApprovals :many
+-- ADR-20261027090016 amendment 2: a run's approvals with their decisions, oldest first.
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.run_id=sqlc.arg(run_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid
+ ORDER BY a.created_at, a.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: GetAgentRunApproval :one
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.id=sqlc.arg(approval_id)::text::uuid AND a.run_id=sqlc.arg(run_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: InsertAgentRunApprovalDecision :execrows
+-- The decision is written once, and only before the approval expires.
+INSERT INTO agent_run_approval_decisions (approval_id, account_id, decision, note, decided_by)
+SELECT a.id, a.account_id, sqlc.arg(decision)::text, sqlc.arg(note)::text, sqlc.arg(decided_by)::text
+ FROM agent_run_approvals a
+ WHERE a.id=sqlc.arg(approval_id)::text::uuid AND a.run_id=sqlc.arg(run_id)::text::uuid
+   AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.expires_at > now()
+ON CONFLICT (approval_id) DO NOTHING;
