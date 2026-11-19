@@ -3,6 +3,8 @@
 Tenant IPv4 egress leaves through one WireGuard gateway, so abuse reports name
 the gateway's address and not a compute node's. The gateway is optional; this
 runbook applies to fleets whose manifest declares `egress.tenant_gateway`.
+Sandbox web mode needs it; the production order is in
+[agent-egress-production-rollout.md](agent-egress-production-rollout.md).
 
 ## Bring-up
 

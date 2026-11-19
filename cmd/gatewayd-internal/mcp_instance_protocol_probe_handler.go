@@ -116,6 +116,7 @@ func internalMCPInstanceProtocolProbeHandler(
 		// (Hunt 14 H14-3). The deployment response check stamps them the
 		// same way.
 		api.PlatformIdentity{AppID: target.AppID, DeploymentID: target.DeploymentID, InstanceID: target.InstanceID, NodeID: target.NodeID}.ApplyGuestHeaders(guestRequest.Header)
+		applyPublicProbeScheme(guestRequest.Header)
 		guestRequest.Header.Set("x-faas-wake-id", target.WakeID)
 		guestResponse := &boundedMCPProbeResponseWriter{header: make(http.Header), cancel: cancel, maxBytes: api.MCPProbeMaxResponseBytes}
 		if serveBoundedProbe(forward(target), guestResponse, guestRequest) || guestResponse.status == 0 {

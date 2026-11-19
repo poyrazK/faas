@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
@@ -653,6 +654,11 @@ const (
 	// lets the privileged supervisor apply the per-build fence after jailer
 	// creates the instance scope.
 	BuilderCgroupParent = "faas.slice/faas-cp.slice/faas-cp-build.slice"
+	// BorrowedBuilderCgroupParent holds builder VMs on borrowed builder
+	// slots (ADR-20261118154632). It sits beside faas-cp.slice, so a
+	// borrowed build is outside the control-plane fence and uses memory the
+	// tenant slice is not using; builderd and vmmd take it back for tenants.
+	BorrowedBuilderCgroupParent = builderslots.BorrowedSlice
 	// defaultParentCgroup is the legacy 2-level hierarchy (free / hobby /
 	// pro / scale unaware) — kept as a non-empty fallback for callers
 	// that don't pass a plan through (e.g. unit tests that mock the

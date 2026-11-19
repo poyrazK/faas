@@ -94,6 +94,11 @@ func TestDeploymentResponseCheckGatewayContract(t *testing.T) {
 					if r.Header.Get("x-faas-instance") != instance.ID || r.Header.Get("x-faas-app") != app.ID || r.Header.Get("x-faas-wake-id") != instance.WakeID {
 						t.Error("forwarding bridge lost the selected replica identity")
 					}
+					// An app enforcing HTTPS must answer the check as it answers
+					// public traffic, not with a redirect to https.
+					if r.Header.Get("X-Forwarded-Proto") != "https" {
+						t.Errorf("probe X-Forwarded-Proto = %q, want https like public traffic", r.Header.Get("X-Forwarded-Proto"))
+					}
 					if _, detachable := reqbudget.FromContext(r.Context()); detachable {
 						t.Error("forwarding could detach the bounded check context")
 					}
