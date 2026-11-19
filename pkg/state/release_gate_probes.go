@@ -83,7 +83,7 @@ func (m *MemStore) ListSyntheticGateProbeTargets(_ context.Context, limit int) (
 		}
 		for _, d := range m.deployments {
 			if d.AppID != app.ID || d.Status != DeployLive || d.TrafficPercent <= 0 || d.CanaryTotalSteps <= 0 ||
-				d.CanaryStep >= d.CanaryTotalSteps || !isDefaultScope(d.Scope) {
+				d.CanaryStep >= d.CanaryTotalSteps || !rolloutInFlight(d) || !isDefaultScope(d.Scope) {
 				continue
 			}
 			for _, s := range m.deployments {

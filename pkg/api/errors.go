@@ -2354,6 +2354,11 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled, CodeEventsPaused:
 		return http.StatusServiceUnavailable
+	case CodeApplicationStandardsPending:
+		// A busy runtime-state fence or a policy update in flight; both
+		// details say to retry. Across gRPC it had no status and became a
+		// 500 on a mesh call (prod 2026-11-19).
+		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
 		// (issue #299). SLO-exempt: a CRITICAL CVE is a known
