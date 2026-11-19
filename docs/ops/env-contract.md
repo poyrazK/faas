@@ -135,6 +135,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILDERD_ROLE` | builderd, shared | `dropin` |  |  | `` |  |
 | `FAAS_BUILDER_BASE_PATH` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_BUILDER_BASE_REF` | imaged | `dropin` |  |  | `` |  |
+| `FAAS_BUILDER_SLOT_CPUS` | builderd | `dev-only` |  |  | `` | acceptance-host override of the online CPU count that caps builder_slots max (ADR-20261118154632); production leaves it unset |
 | `FAAS_BUILDER_WARM_BUILDERS` | builderd | `default` |  |  | `` | opt-in warm-builder snapshot restores; off unless set to true because restores resume a guest whose mounted drive was edited offline |
 | `FAAS_BUILDER_WARM_IDLE_MS` | builderd | `default` |  |  | `` | optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes |
 | `FAAS_BUILD_BUILDKIT_SEED` | builderd, shared | `dropin` |  |  | `` | boolean switch (ADR-20261030122204): builderd keeps a per-node BuildKit seed of the platform images Railpack builds start from, made by a seed run in an idle builder slot that first asks the artifact cache for room, and gives each Railpack build a reflink copy as the builder VM's drive2; needs a reflink-capable build-drive filesystem and vmmd and guest-init with seed drive support; code default off; ansible builderd_buildkit_seed (group_vars/compute_nodes/perf_switches.yml, false) renders zz-faas-perf-switches.conf |
