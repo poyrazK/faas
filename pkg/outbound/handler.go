@@ -69,7 +69,7 @@ type Handler struct {
 	AgentRunSpend      AgentRunSpendLedger
 	// Capabilities serves CapabilityMCPPath to agent runs (ADR-20261027090016);
 	// without it the path is not found.
-	Capabilities http.Handler
+	Capabilities       http.Handler
 	WorkflowAuthorizer WorkflowAuthorizer
 	workflowClient     *http.Client
 	CredentialResolver ManagedCredentialResolver
