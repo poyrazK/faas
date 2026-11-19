@@ -9126,6 +9126,12 @@ const (
 	// reads up to 1 MiB.
 	BuildTimingMaxSteps         = 8
 	BuildTimingStepNameMaxBytes = 160
+	// BuildLiveStepMaxLines bounds the "build step:" lines builderd writes to
+	// a deployment's build log while the build runs (retail-store feedback
+	// A3, 2026-11-17). Each is one deployment_logs row and one NOTIFY, so a
+	// generated Dockerfile with thousands of stages cannot flood either; the
+	// names share BuildTimingStepNameMaxBytes.
+	BuildLiveStepMaxLines = 300
 	// BuildDiskCapacityRetryDelay is how long a builder without room for a
 	// build drive waits before returning the build to the queue
 	// (ADR-20261029103512). The deployment watchdog's queued-build bound
