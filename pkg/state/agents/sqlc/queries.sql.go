@@ -1058,7 +1058,8 @@ const getAgentRunClaim = `-- name: GetAgentRunClaim :one
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls,
+  v.capability_policy
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=$1::text::uuid
@@ -1089,6 +1090,7 @@ type GetAgentRunClaimRow struct {
 	CheckoutInstallationID pgtype.Int8
 	QueuedAt               pgtype.Timestamptz
 	PauseDuringModelCalls  bool
+	CapabilityPolicy       []byte
 }
 
 func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (GetAgentRunClaimRow, error) {
@@ -1119,6 +1121,7 @@ func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (
 		&i.CheckoutInstallationID,
 		&i.QueuedAt,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }

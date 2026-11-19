@@ -182,6 +182,14 @@ const (
 // (ADR-20261027090018 tier 1).
 const AgentCapabilityWebFetch = "web_fetch"
 
+// AgentCapabilityMCPPath is the capability gateway's MCP endpoint under
+// GREGALE_OUTBOUND_URL, and AgentCapabilityMCPURLEnv the variable that gives
+// a run its full URL when its version allows a tool.
+const (
+	AgentCapabilityMCPPath   = "/mcp"
+	AgentCapabilityMCPURLEnv = "GREGALE_CAPABILITY_MCP_URL"
+)
+
 // AgentCapabilityTools are the tools the capability gateway has. A policy
 // names only these, so a typo is refused rather than silently matching
 // nothing.
