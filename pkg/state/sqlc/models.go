@@ -709,6 +709,25 @@ type AlertTestSend struct {
 	CompletedAt  pgtype.Timestamptz
 }
 
+type AnalyticsEvent struct {
+	ID            int64
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	CustomerID    pgtype.UUID
+	SubjectHash   []byte
+	Name          string
+	At            pgtype.Timestamptz
+	Value         int64
+	Properties    []byte
+	Flags         []byte
+}
+
+type AnalyticsPropertyKey struct {
+	EnvironmentID pgtype.UUID
+	Key           string
+	CreatedAt     pgtype.Timestamptz
+}
+
 type ApiConsumer struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID
@@ -7014,6 +7033,13 @@ type Honeytoken struct {
 }
 
 type HostedTaskBindingQualification struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+type HostedTaskRehearsalPlan struct {
 	AccountID pgtype.UUID
 	ID        string
 	Payload   []byte
@@ -16736,6 +16762,7 @@ type SupportGrant struct {
 	ExpiresAt          pgtype.Timestamptz
 	RevokedAt          pgtype.Timestamptz
 	RevokedByAccountID pgtype.UUID
+	SummarySentAt      pgtype.Timestamptz
 }
 
 type SupportGrantRequest struct {
@@ -16748,6 +16775,9 @@ type SupportGrantRequest struct {
 	ExpiresAt          pgtype.Timestamptz
 	DecidedAt          pgtype.Timestamptz
 	DecidedByAccountID pgtype.UUID
+	AppIds             []pgtype.UUID
+	TtlSeconds         pgtype.Int4
+	ExtendsGrantID     pgtype.UUID
 }
 
 type SupportMessage struct {

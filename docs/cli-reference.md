@@ -98,7 +98,7 @@ Scaffold a project from a built-in template
 
 `gregale init [--template <NAME>] [--path <DIR>] [--deploy] [--name <SLUG>] [--agents] [--dry-run] [--secrets-file <PATH>] [--list] [--no-mcp]`
 
---agents sets up an existing project for coding agents: it adds a Gregale section to AGENTS.md, makes an existing CLAUDE.md import AGENTS.md, and points Gemini CLI at AGENTS.md. A second run replaces the section in place.
+--agents sets up an existing project for coding agents: it adds a Gregale section to AGENTS.md, makes an existing CLAUDE.md import AGENTS.md, and points Gemini CLI at AGENTS.md in a project with a .gemini folder. Codex, Cursor and Antigravity read AGENTS.md on their own. A second run replaces the section in place.
 
 | Flag | Meaning | |
 |---|---|---|

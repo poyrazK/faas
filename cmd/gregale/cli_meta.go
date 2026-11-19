@@ -4872,7 +4872,7 @@ var cliCommands = []cliCommand{
 		DocSlug:   "init",
 		Short:     "Scaffold a project from a built-in template",
 		Examples:  []string{"gregale init --list", "gregale init --template hello-node --path ./my-api", "gregale init --agents --name my-api"},
-		HelpNotes: []string{"--agents sets up an existing project for coding agents: it adds a Gregale section to AGENTS.md, makes an existing CLAUDE.md import AGENTS.md, and points Gemini CLI at AGENTS.md. A second run replaces the section in place."},
+		HelpNotes: []string{"--agents sets up an existing project for coding agents: it adds a Gregale section to AGENTS.md, makes an existing CLAUDE.md import AGENTS.md, and points Gemini CLI at AGENTS.md in a project with a .gemini folder. Codex, Cursor and Antigravity read AGENTS.md on their own. A second run replaces the section in place."},
 		Flags: []cliFlag{
 			{Name: "template", Short: "template name (required unless --agents)", Value: "NAME", ClosedSet: templateNames13},
 			{Name: "path", Short: "target directory (required unless --agents, which defaults to .)", Value: "DIR"},
@@ -5448,6 +5448,26 @@ var cliCommands = []cliCommand{
 			{Name: "range", Short: "lookback window; same as --since (gregale metric --range)", Value: "WINDOW"},
 		},
 		Positionals: []string{"[<slug>]"},
+	},
+	{
+		Name:      "insights",
+		DocSlug:   "flags",
+		Short:     "Product analytics: event series, funnels, retention, flag splits",
+		HelpNotes: []string{"Events come from the Flags SDK's track(). Breakdowns take flag:KEY or property:KEY; a unit's flag value is the one on its anchor event, else its earliest event that carries the flag."},
+		Subcommands: []cliSub{
+			{Name: "events", Short: "Count an event per day or hour", Positionals: []string{"<event>"}, Flags: append(insightsMetaCommon(),
+				cliFlag{Name: "interval", Short: "day (default) or hour", Value: "INTERVAL"},
+				cliFlag{Name: "where", Short: "property filter KEY:VALUE (repeatable)", Value: "KEY:VALUE", Repeatable: true})},
+			{Name: "funnel", Short: "Count units that complete steps in order within a window", Positionals: []string{"<step>", "<step>", "[<step>...]"}, Flags: append(insightsMetaCommon(),
+				cliFlag{Name: "window", Short: "conversion window, 1h to 720h (default 168h)", Value: "DURATION"})},
+			{Name: "retention", Short: "Show how many units come back after their first start event", Positionals: []string{"<start-event>", "<return-event>"}, Flags: append(insightsMetaCommon(),
+				cliFlag{Name: "period", Short: "day (default) or week", Value: "PERIOD"},
+				cliFlag{Name: "periods", Short: "periods after the cohort, 1 to 12 (default 7)", Value: "N"})},
+			{Name: "requests", Short: "Show requests, server errors and p95 latency per value of a flag", Flags: []cliFlag{
+				{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"},
+				{Name: "flag", Short: "the flag to split by", Value: "KEY", Req: true},
+				{Name: "from", Short: "RFC 3339 time or duration ago such as 36h (default 1 day)", Value: "TIME"}, {Name: "until", Short: "RFC 3339 time or duration ago (default now)", Value: "TIME"}}},
+		},
 	},
 	{
 		Name:      "mfa",
