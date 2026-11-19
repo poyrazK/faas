@@ -407,6 +407,11 @@ touch them. The tables below map each earlier name.
 | `gregale flags unkill` | `gregale flag kill unset` |
 | `gregale github bind` | `gregale github link` |
 | `gregale incidents note` | `gregale alert incident update --note <NOTE>` |
+| `gregale insights cohorts create` | `gregale insight cohort create` |
+| `gregale insights cohorts delete` | `gregale insight cohort delete` |
+| `gregale insights cohorts get` | `gregale insight cohort get` |
+| `gregale insights cohorts list` | `gregale insight cohort list` |
+| `gregale insights cohorts refresh` | `gregale insight cohort refresh` |
 | `gregale insights events` | `gregale insight event list` |
 | `gregale insights funnel` | `gregale insight funnel get` |
 | `gregale insights requests` | `gregale insight request list` |

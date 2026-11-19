@@ -26,6 +26,7 @@ type flagExperimentPgFixture struct {
 	acct     string
 	project  string
 	env      string
+	dep      string
 	tenant   func(name string) string
 	exposure func(customer, variant string, at time.Time, status, latencyMS int32)
 }
@@ -45,7 +46,7 @@ func newFlagExperimentPgFixture(t *testing.T, slug string) flagExperimentPgFixtu
 	if err != nil {
 		t.Fatalf("environment: %v", err)
 	}
-	f := flagExperimentPgFixture{s: s, ctx: ctx, acct: acct, project: project.ID, env: env.ID}
+	f := flagExperimentPgFixture{s: s, ctx: ctx, acct: acct, project: project.ID, env: env.ID, dep: depID}
 	f.tenant = func(name string) string {
 		tn, _, err := s.CreatePlatformTenant(ctx, acct, name, name, 100)
 		if err != nil {

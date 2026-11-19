@@ -2004,6 +2004,7 @@ type Querier interface {
 	ExtendQueueLeaseReceipt(ctx context.Context, db DBTX, arg ExtendQueueLeaseReceiptParams) error
 	ExtendWorkflowRunLeaseFenced(ctx context.Context, db DBTX, arg ExtendWorkflowRunLeaseFencedParams) (int64, error)
 	ExternalTriggerReplayRecord(ctx context.Context, db DBTX, arg ExternalTriggerReplayRecordParams) (TriggerRecord, error)
+	// A failed refresh waits for the hourly retry, not the next pass.
 	FailAnalyticsCohortRefresh(ctx context.Context, db DBTX, arg FailAnalyticsCohortRefreshParams) error
 	FailAutomaticRouteCheck(ctx context.Context, db DBTX, arg FailAutomaticRouteCheckParams) (int64, error)
 	FailCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error

@@ -221,7 +221,7 @@ func (s *PgStore) ReplaceAnalyticsCohortMembers(ctx context.Context, c Analytics
 			}
 		}
 		if err := q.FinishAnalyticsCohortRefresh(ctx, tx, sqlc.FinishAnalyticsCohortRefreshParams{
-			ID: uuidToPgtype(c.ID), Truncated: truncated, Now: pgTimestamptzUTC(now), RefreshError: ""}); err != nil {
+			ID: uuidToPgtype(c.ID), Truncated: truncated, Now: pgTimestamptzUTC(now), ServedRequest: pgTimestamptzUTC(c.RefreshRequestedAt), RefreshError: ""}); err != nil {
 			return err
 		}
 		return q.NotifyAnalyticsCohortsChanged(ctx, tx, c.EnvironmentID)

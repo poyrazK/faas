@@ -193,7 +193,7 @@ func (q *Queries) DueAnalyticsCohorts(ctx context.Context, db DBTX, arg DueAnaly
 
 const failAnalyticsCohortRefresh = `-- name: FailAnalyticsCohortRefresh :exec
 UPDATE analytics_cohorts
-SET refreshed_at = $1::timestamptz, refresh_error = $2::text
+SET refreshed_at = GREATEST($1::timestamptz, refresh_requested_at), refresh_error = $2::text
 WHERE id = $3::uuid
 `
 
@@ -203,6 +203,7 @@ type FailAnalyticsCohortRefreshParams struct {
 	ID           pgtype.UUID
 }
 
+// A failed refresh waits for the hourly retry, not the next pass.
 func (q *Queries) FailAnalyticsCohortRefresh(ctx context.Context, db DBTX, arg FailAnalyticsCohortRefreshParams) error {
 	_, err := db.Exec(ctx, failAnalyticsCohortRefresh, arg.Now, arg.RefreshError, arg.ID)
 	return err
@@ -211,16 +212,20 @@ func (q *Queries) FailAnalyticsCohortRefresh(ctx context.Context, db DBTX, arg F
 const finishAnalyticsCohortRefresh = `-- name: FinishAnalyticsCohortRefresh :exec
 UPDATE analytics_cohorts
 SET members = (SELECT count(*) FROM analytics_cohort_members m WHERE m.cohort_id = $1::uuid),
-    truncated = $2::boolean, refreshed_at = $3::timestamptz,
-    refresh_error = $4::text
+    truncated = $2::boolean,
+    -- At least the request this refresh served, so clock skew between apid
+    -- and Postgres cannot leave the cohort due; a later request stays due.
+    refreshed_at = GREATEST($3::timestamptz, $4::timestamptz),
+    refresh_error = $5::text
 WHERE id = $1::uuid
 `
 
 type FinishAnalyticsCohortRefreshParams struct {
-	ID           pgtype.UUID
-	Truncated    bool
-	Now          pgtype.Timestamptz
-	RefreshError string
+	ID            pgtype.UUID
+	Truncated     bool
+	Now           pgtype.Timestamptz
+	ServedRequest pgtype.Timestamptz
+	RefreshError  string
 }
 
 func (q *Queries) FinishAnalyticsCohortRefresh(ctx context.Context, db DBTX, arg FinishAnalyticsCohortRefreshParams) error {
@@ -228,6 +233,7 @@ func (q *Queries) FinishAnalyticsCohortRefresh(ctx context.Context, db DBTX, arg
 		arg.ID,
 		arg.Truncated,
 		arg.Now,
+		arg.ServedRequest,
 		arg.RefreshError,
 	)
 	return err

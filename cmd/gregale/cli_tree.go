@@ -218,6 +218,11 @@ var cliTreeAliases = []cliTreeAlias{
 	{"insight funnel get", "insights funnel"},
 	{"insight retention get", "insights retention"},
 	{"insight request list", "insights requests"},
+	{"insight cohort list", "insights cohorts list"},
+	{"insight cohort create", "insights cohorts create"},
+	{"insight cohort get", "insights cohorts get"},
+	{"insight cohort delete", "insights cohorts delete"},
+	{"insight cohort refresh", "insights cohorts refresh"},
 	{"insight", "insights"},
 
 	// Data.

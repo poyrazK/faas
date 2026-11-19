@@ -51,13 +51,17 @@ ON CONFLICT DO NOTHING;
 -- name: FinishAnalyticsCohortRefresh :exec
 UPDATE analytics_cohorts
 SET members = (SELECT count(*) FROM analytics_cohort_members m WHERE m.cohort_id = sqlc.arg(id)::uuid),
-    truncated = sqlc.arg(truncated)::boolean, refreshed_at = sqlc.arg(now)::timestamptz,
+    truncated = sqlc.arg(truncated)::boolean,
+    -- At least the request this refresh served, so clock skew between apid
+    -- and Postgres cannot leave the cohort due; a later request stays due.
+    refreshed_at = GREATEST(sqlc.arg(now)::timestamptz, sqlc.arg(served_request)::timestamptz),
     refresh_error = sqlc.arg(refresh_error)::text
 WHERE id = sqlc.arg(id)::uuid;
 
 -- name: FailAnalyticsCohortRefresh :exec
 UPDATE analytics_cohorts
-SET refreshed_at = sqlc.arg(now)::timestamptz, refresh_error = sqlc.arg(refresh_error)::text
+-- A failed refresh waits for the hourly retry, not the next pass.
+SET refreshed_at = GREATEST(sqlc.arg(now)::timestamptz, refresh_requested_at), refresh_error = sqlc.arg(refresh_error)::text
 WHERE id = sqlc.arg(id)::uuid;
 
 -- name: AnalyticsCohortsForDeploymentCustomer :many

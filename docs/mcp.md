@@ -7147,7 +7147,7 @@ owner's request.
 
 ## Read product analytics
 
-Four read-only tools in the `diagnose` toolset query product analytics (see
+Five read-only tools in the `diagnose` toolset query product analytics (see
 [Flags](flags.md#analyze-product-events)). All take `project` and
 `environment`; the first three also take optional `from`, `until` (RFC 3339),
 `unit` (`customer` or `subject`) and `by` (`flag:KEY` or `property:KEY`).
@@ -7159,6 +7159,10 @@ Four read-only tools in the `diagnose` toolset query product analytics (see
   `periods`.
 - `gregale_get_insight_requests` takes `flag` and returns requests, server
   errors and p95 latency per variant.
+- `gregale_list_insight_cohorts` lists saved cohorts with their definition,
+  member count, the plan's member bound and the last refresh; rules target a
+  cohort with the `gregale.cohort` attribute (see
+  [Target a cohort](flags.md#target-a-cohort)).
 
 Each result carries guidance: a flag breakdown is observational, so causal
 claims need an experiment.

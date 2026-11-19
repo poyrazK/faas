@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { FlagExperiment } from './FlagExperiment.js';
 import type { FlagExperimentArm } from './FlagExperimentArm.js';
+import type { FlagExperimentCuped } from './FlagExperimentCuped.js';
 import type { FlagExperimentGuardrail } from './FlagExperimentGuardrail.js';
 import type { FlagExperimentLatency } from './FlagExperimentLatency.js';
 import type { FlagExperimentRecommendation } from './FlagExperimentRecommendation.js';
@@ -24,5 +25,6 @@ export type FlagExperimentResults = {
   guardrails?: Array<FlagExperimentGuardrail>;
   latency?: Array<FlagExperimentLatency>;
   recommendation?: FlagExperimentRecommendation;
+  cuped: FlagExperimentCuped;
 };
 

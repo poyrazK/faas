@@ -69,7 +69,7 @@ func (s *server) flagExperimentMetricFrom(req api.FlagExperimentCreateRequest, a
 		return m, invalid("funnel and retention metrics take no metric_event")
 	}
 	if !s.productAnalyticsOn(acct.ID, string(acct.Plan)) {
-		return m, api.NewProblem(http.StatusForbidden, "product_analytics_unavailable", "Product analytics unavailable",
+		return m, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Product analytics unavailable",
 			"funnel and retention metrics read product analytics events, which this account's plan does not keep")
 	}
 	if m.kind == flags.ExperimentMetricFunnel {

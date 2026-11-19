@@ -148,6 +148,9 @@ func (m *MemStore) ReplaceAnalyticsCohortMembers(_ context.Context, c AnalyticsC
 	members = slices.Compact(members)
 	m.flagEvents.cohortMembers[c.ID] = members
 	t := now.UTC()
+	if c.RefreshRequestedAt.After(t) {
+		t = c.RefreshRequestedAt.UTC()
+	}
 	stored.Members, stored.Truncated, stored.RefreshedAt, stored.RefreshError = len(members), truncated, &t, ""
 	return nil
 }
@@ -158,6 +161,9 @@ func (m *MemStore) FailAnalyticsCohortRefresh(_ context.Context, cohortID string
 	defer m.mu.Unlock()
 	if c := m.flagEventsLocked().cohortsLocked()[cohortID]; c != nil {
 		t := now.UTC()
+		if c.RefreshRequestedAt.After(t) {
+			t = c.RefreshRequestedAt
+		}
 		c.RefreshedAt, c.RefreshError = &t, msg
 	}
 	return nil

@@ -68,7 +68,9 @@ type FlagExperimentCreateRequest struct {
 	Flag        string `json:"flag"`
 	RuleID      string `json:"rule_id"`
 	Control     string `json:"control"`
-	MetricEvent string `json:"metric_event"`
+	// MetricEvent is required for conversion and mean metrics; funnel and
+	// retention metrics derive it.
+	MetricEvent string `json:"metric_event,omitempty"`
 	// MetricKind is conversion (the default) or mean (ADR 20261116190208 §2).
 	MetricKind string   `json:"metric_kind,omitempty"`
 	MixingLift *float64 `json:"mixing_lift,omitempty"`
