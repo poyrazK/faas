@@ -2029,3 +2029,25 @@ Read a run's refusals:
 ```sql
 SELECT tool, decision, created_at FROM agent_run_capability_decisions WHERE run_id = '<run>' ORDER BY created_at;
 ```
+
+### `web_fetch`
+
+The first built-in tool (ADR-20261027090018 tier 1). It sends a GET for one
+URL and returns the page's text; HTML is reduced to its visible text.
+
+- **Destinations.** It reaches only public IPv4 addresses on ports 80 and
+  443. The name is re-resolved at every connection, redirects included, and
+  the whole answer is refused if any address is not public (`pkg/publicdest`).
+- **Bounds.** At most `AgentWebFetchRedirectsMax` redirects,
+  `AgentWebFetchMaxBytes` of body (the result says when it truncated), and
+  `AgentWebFetchTimeoutSec` in all. Only text, JSON and XML types are
+  returned.
+- **Switch.** `FAAS_OUTBOUND_AGENT_WEB_FETCH=1` on outboundd. Off, the tool is
+  not listed, and a call to it is recorded as `disabled`.
+
+**Keep it off in production for now.** The fetches leave from the
+control-plane host, not from an agent egress address. ADR-20261027090016 §1
+requires tool traffic to leave through the agent egress gateway; routing
+outboundd's fetches there is its own change, after the gateway host exists
+(`docs/runbooks/agent-egress-production-rollout.md`). It is safe to switch on
+in a development fleet.
