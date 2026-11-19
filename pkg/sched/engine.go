@@ -710,6 +710,9 @@ type Engine struct {
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
 	frozenTier atomic.Bool
+	// probeHostAppsSuffix (ADR-20261119140000) is the leading-dot apps
+	// domain readiness probes name as Host; nil keeps the legacy probe.
+	probeHostAppsSuffix atomic.Pointer[string]
 	// frozenFastPath (ADR-1740, schedd `frozen_fast_path`) thaws a frozen
 	// VM from the ticket recorded when it froze; thawTickets holds them.
 	frozenFastPath atomic.Bool
@@ -4182,6 +4185,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// modes target :8080 (ADR-009/portnorm); an empty override
 		// keeps the legacy TCP probe.
 		HealthcheckPath:          healthcheckPath,
+		ProbeHost:                e.probeHostFor(app, dep),
 		HealthcheckGRPC:          healthcheckGRPC,
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		RoutedPortRawTCP:         routedPortRawTCPForApp(dep, app, healthcheckPath, healthcheckGRPC),
@@ -6357,6 +6361,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		// Issue #460 / ADR-053, ADR-057 (PR-D): per-deployment
 		// override readiness probe path. "" = legacy TCP-accept.
 		HealthcheckPath:          healthcheckPath,
+		ProbeHost:                e.probeHostFor(app, dep),
 		HealthcheckGRPC:          healthcheckGRPC,
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		RoutedPortRawTCP:         routedPortRawTCPForApp(dep, app, healthcheckPath, healthcheckGRPC),

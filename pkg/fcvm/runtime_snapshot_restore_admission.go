@@ -112,6 +112,7 @@ func (m *Manager) coldBootSpecForWake(nc netns.Config, req WakeRequest, serviceD
 		// Per-deployment readiness action. The HTTP path and gRPC
 		// mode/service are forwarded together; both target :8080.
 		HealthcheckPath:          req.HealthcheckPath,
+		ProbeHost:                req.ProbeHost,
 		HealthcheckGRPC:          req.HealthcheckGRPC,
 		HealthcheckGRPCService:   req.HealthcheckGRPCService,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,

@@ -199,6 +199,68 @@ func TestCustomRoleServiceLimitsRolesPerDatabase(t *testing.T) {
 	}
 }
 
+// TestCustomRoleServiceDefaultFor covers amendment 2's rules: a default must
+// be granted, one per access mode, kept when a request leaves it out,
+// trimmed when its grant is revoked, and handed to logins issued later.
+func TestCustomRoleServiceDefaultFor(t *testing.T) {
+	f := newCustomRoleServiceFixture(t)
+	ctx := context.Background()
+	both := []CredentialAccess{CredentialMigration, CredentialReadWrite}
+	save := func(name string, grants []CredentialAccess, defaults *[]CredentialAccess) (CustomRole, error) {
+		return f.roles.Save(ctx, SaveCustomRoleRequest{AccountID: "account-a", DatabaseID: f.database.ID, Name: name,
+			BypassRLS: name == "windmill_admin", GrantedTo: grants, DefaultFor: defaults})
+	}
+	readWrite := []CredentialAccess{CredentialSession}
+	admin, err := save("windmill_admin", both, &readWrite)
+	if err != nil || !slices.Equal(admin.DefaultFor, []CredentialAccess{CredentialReadWrite}) {
+		t.Fatalf("save default: %+v %v", admin, err)
+	}
+	if last := f.provider.applied[len(f.provider.applied)-1]; !slices.Equal(last[0].DefaultFor, []CredentialAccess{CredentialReadWrite}) {
+		t.Fatalf("provider spec default = %v", last[0].DefaultFor)
+	}
+	for name, defaults := range map[string][]CredentialAccess{
+		"migration":   {CredentialMigration},
+		"not granted": {CredentialReadOnly},
+		"data api":    {CredentialDataAPI},
+	} {
+		if _, err := save("windmill_admin", both, &defaults); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s default: %v, want ErrInvalid", name, err)
+		}
+	}
+	if _, err := save("windmill_user", both, &readWrite); !errors.Is(err, ErrCustomRoleDefaultTaken) {
+		t.Fatalf("second read_write default: %v", err)
+	}
+	// Leaving default_for out (an older client's grant) keeps it.
+	kept, err := save("windmill_admin", append(slices.Clone(both), CredentialReadOnly), nil)
+	if err != nil || !slices.Equal(kept.DefaultFor, []CredentialAccess{CredentialReadWrite}) {
+		t.Fatalf("omitted default_for: %+v %v", kept, err)
+	}
+	// A login issued later starts as the default.
+	if _, err := f.bindings.Create(ctx, CreateBindingRequest{AccountID: "account-a", DatabaseID: f.database.ID, AppID: "app-a",
+		Scope: "production", EnvironmentKey: "DATABASE_URL", Access: CredentialReadWrite}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.provider.lastIssueRequest.CustomRoleDefault; got != "windmill_admin" {
+		t.Fatalf("read_write login default = %q", got)
+	}
+	if _, err := f.bindings.Create(ctx, CreateBindingRequest{AccountID: "account-a", DatabaseID: f.database.ID, AppID: "app-a",
+		Scope: "production", EnvironmentKey: "READ_URL", Access: CredentialReadOnly}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.provider.lastIssueRequest.CustomRoleDefault; got != "" {
+		t.Fatalf("read_only login default = %q", got)
+	}
+	// Revoking read_write drops the default with it.
+	trimmed, err := save("windmill_admin", []CredentialAccess{CredentialMigration}, nil)
+	if err != nil || len(trimmed.DefaultFor) != 0 {
+		t.Fatalf("revoked grant kept its default: %+v %v", trimmed, err)
+	}
+	// Now another role may take it.
+	if _, err := save("windmill_user", both, &readWrite); err != nil {
+		t.Fatalf("default after the other was revoked: %v", err)
+	}
+}
+
 func TestValidateCustomRoleName(t *testing.T) {
 	for _, name := range []string{"windmill_user", "_app", "a", "app_role_2"} {
 		if err := ValidateCustomRoleName(name); err != nil {

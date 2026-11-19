@@ -2302,6 +2302,16 @@ const QueueBindingMaxConcurrency = 10000
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
 
+// QueuePushLaneDrainBudget and QueuePushLaneDrainMaxRecords bound one push
+// lane run (ADR-972 amendment 2026-11-19): a lane keeps claiming the next
+// record while polls return records, until either bound, then frees its slot
+// for the next tick. One record per lane per tick capped a binding at about
+// 40 deliveries/s on prod however fast the handler was.
+const (
+	QueuePushLaneDrainBudget     = time.Second
+	QueuePushLaneDrainMaxRecords = 64
+)
+
 // BrokerTriggerDispatchSlotsPerNode bounds the external broker triggers
 // (Kafka, NATS, Redis Streams, SQS-compatible) one schedd polls and delivers
 // at once, one batch per trigger (ADR-20261027162741). Each account with
@@ -9106,6 +9116,11 @@ const (
 	// Node cache export took about 115 s. The builder slot stays held for the
 	// run, so the bound also caps how long it delays the next build.
 	BuildCacheExportTimeoutSeconds = 600
+	// BuildCacheExportManifestMaxBytes bounds the cache export run's
+	// build.json that vmmd stages on the build's drive (ADR-20261029171525
+	// amendment 2). A build manifest is a few KiB; the bound keeps a
+	// malformed request from costing a large drive write.
+	BuildCacheExportManifestMaxBytes = 64 << 10
 	// BuildTimingMaxSteps and BuildTimingStepNameMaxBytes bound the slowest
 	// BuildKit steps a builder guest reports in build-done.json, which vmmd
 	// reads up to 1 MiB.
@@ -11608,6 +11623,10 @@ var (
 	// reservations plus the call's reservation.
 	AgentRunAIBudgetDefaultMillicents = [4]int64{0, 50_000, 200_000, 500_000}
 
+	// AgentToolCallsPerRunMax is one run's tool-call ceiling over the
+	// capability gateway (ADR-20261027090016 Limits), by plan.
+	AgentToolCallsPerRunMax = [4]int{0, 1_000, 5_000, 20_000}
+
 	// AgentCheckoutArchiveMaxBytes caps a checkout's compressed archive
 	// (ADR-20261027090010 §3), matching the plans' SourceTarballMaxMB.
 	AgentCheckoutArchiveMaxBytes = [4]int64{0, 100 << 20, 250 << 20, 250 << 20}
@@ -11708,6 +11727,15 @@ const (
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
+	// Capability gateway (ADR-20261027090016 amendment 1). A run makes at
+	// most AgentToolCallsPerRunMax tool calls; a policy names at most
+	// AgentCapabilityPolicyToolsMax tools. web_fetch reads at most
+	// AgentWebFetchMaxBytes of one response within AgentWebFetchTimeoutSec,
+	// following at most AgentWebFetchRedirectsMax redirects.
+	AgentCapabilityPolicyToolsMax = 64
+	AgentWebFetchMaxBytes         = 1 << 20
+	AgentWebFetchTimeoutSec       = 20
+	AgentWebFetchRedirectsMax     = 5
 	// Agent callbacks (ADR-20261030125501 §3): a tool posts its result to a
 	// signed per-thread URL, and apid publishes it into that thread's lane of
 	// the app's AgentInboxChannel. A token lives at most
@@ -14847,6 +14875,9 @@ const (
 	ObsInputHealthTargetsMax = 4096
 	// ADR-20261115080000: advisory identity uses selected critical jobs only.
 	ObsRuntimeBuildBudget = 3 * time.Second
+	// ADR-20261117202547: process-wide runtime collection admission, without queueing.
+	ObsRuntimeBuildCollectionsMax = 2
+	ObsRuntimeBuildBusyRetryAfter = time.Second
 	// ADR-20261115110000: v2 build profiles add builderd and imaged.
 	ObsRuntimeBuildJobsMax          = 8
 	ObsRuntimeBuildSamplesMax       = 4096
@@ -15466,6 +15497,13 @@ func AsyncInvocationLease(timeout time.Duration) time.Duration {
 // FunctionInterpreterMaxWorkers bounds active generated-adapter processes in
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
+
+// FunctionRunnerSlots is how many requests one function instance's generated
+// runner executes at once: its interpreter workers, each serving
+// function_concurrency requests (ADR-1342; zero or less means one).
+func FunctionRunnerSlots(functionConcurrency int) int {
+	return FunctionInterpreterMaxWorkers * max(functionConcurrency, 1)
+}
 
 // FunctionPostgresMaxPools bounds registered pool owners per interpreter.
 // It is a structural runtime bound, not a database connection entitlement.

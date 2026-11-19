@@ -1058,7 +1058,8 @@ const getAgentRunClaim = `-- name: GetAgentRunClaim :one
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls,
+  v.capability_policy
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=$1::text::uuid
@@ -1089,6 +1090,7 @@ type GetAgentRunClaimRow struct {
 	CheckoutInstallationID pgtype.Int8
 	QueuedAt               pgtype.Timestamptz
 	PauseDuringModelCalls  bool
+	CapabilityPolicy       []byte
 }
 
 func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (GetAgentRunClaimRow, error) {
@@ -1119,6 +1121,7 @@ func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (
 		&i.CheckoutInstallationID,
 		&i.QueuedAt,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }
@@ -1234,7 +1237,7 @@ func (q *Queries) GetAgentRunUsage(ctx context.Context, db DBTX, arg GetAgentRun
 
 const getAgentVersion = `-- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy FROM agent_versions
  WHERE agent_id=$1::text::uuid AND account_id=$2::text::uuid AND version=$3::integer
 `
 
@@ -1258,6 +1261,7 @@ type GetAgentVersionRow struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVersionParams) (GetAgentVersionRow, error) {
@@ -1277,6 +1281,7 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }
@@ -1943,14 +1948,14 @@ func (q *Queries) InsertAgentRunOutputs(ctx context.Context, db DBTX, arg Insert
 
 const insertAgentVersion = `-- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy)
  VALUES ($1::text::uuid,$2::integer,$3::text::uuid,
   $4::text,$5::text,$6::text[],$7::jsonb,
   $8::text,$9::integer,$10::integer,
   $11::jsonb,$12::bigint,$13::jsonb,
-  $14::boolean)
+  $14::boolean,$15::jsonb)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy
 `
 
 type InsertAgentVersionParams struct {
@@ -1968,6 +1973,7 @@ type InsertAgentVersionParams struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 type InsertAgentVersionRow struct {
@@ -1984,6 +1990,7 @@ type InsertAgentVersionRow struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAgentVersionParams) (InsertAgentVersionRow, error) {
@@ -2002,6 +2009,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		arg.AiBudgetMillicents,
 		arg.Deliveries,
 		arg.PauseDuringModelCalls,
+		arg.CapabilityPolicy,
 	)
 	var i InsertAgentVersionRow
 	err := row.Scan(
@@ -2018,6 +2026,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }

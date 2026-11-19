@@ -55,8 +55,9 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 	// transaction for the batch when the store can, not one per event
 	// (2026-11-12 throughput test: ~15–30 events/s per account).
 	pending := make([]preparedBatchEvent, 0, len(wire.Events))
+	cache := newBatchPrepareCache()
 	for index, raw := range wire.Events {
-		prepared, result := s.prepareEventBatchItem(ctx, acct, producer, raw)
+		prepared, result := s.prepareEventBatchItem(ctx, acct, producer, raw, cache)
 		if prepared.payload == nil {
 			result.Index = index
 			response.Results[index] = result
@@ -137,7 +138,7 @@ func batchEventAcceptanceResult(accountID string, envelope events.Envelope, outc
 // prepareEventBatchItem validates one batch event. A prepared event with a
 // payload is ready for acceptance; without one, the result is final
 // (rejected, or a duplicate already accepted).
-func (s *Service) prepareEventBatchItem(ctx context.Context, acct state.Account, producer string, raw json.RawMessage) (preparedBatchEvent, api.PublishEventBatchResult) {
+func (s *Service) prepareEventBatchItem(ctx context.Context, acct state.Account, producer string, raw json.RawMessage, cache *batchPrepareCache) (preparedBatchEvent, api.PublishEventBatchResult) {
 	if ctx.Err() != nil {
 		return preparedBatchEvent{}, eventNotAttempted()
 	}
@@ -158,7 +159,7 @@ func (s *Service) prepareEventBatchItem(ctx context.Context, acct state.Account,
 	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
 		return preparedBatchEvent{}, batchPublishFailure("rejected", false, AppSourceReservedProblem())
 	}
-	environment, problem := s.PublishEnvironment(ctx, acct.ID, req.EnvironmentID)
+	environment, problem := s.batchEnvironment(ctx, acct.ID, strings.TrimSpace(req.EnvironmentID), cache)
 	if problem != nil {
 		return preparedBatchEvent{}, batchPublishFailure("rejected", problem.Status >= http.StatusInternalServerError, problem)
 	}
@@ -170,30 +171,94 @@ func (s *Service) prepareEventBatchItem(ctx context.Context, acct state.Account,
 	if err != nil {
 		return preparedBatchEvent{}, batchPublishFailure("rejected", false, api.ErrValidation("invalid event data"))
 	}
-	if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
-		accepted, lookupErr := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
-		if lookupErr == nil {
-			return preparedBatchEvent{}, api.PublishEventBatchResult{Status: "duplicate", Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
-		}
-		if !errors.Is(lookupErr, state.ErrNotFound) {
-			return preparedBatchEvent{}, batchEventAcceptanceFailure(lookupErr)
-		}
-	}
-	if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, req); problem != nil {
-		return preparedBatchEvent{}, batchPublishFailure("rejected", retryable, problem)
+	// A retried event already accepted is a duplicate even when today's
+	// schema rules or envelope limit would refuse it. Acceptance finds every
+	// other duplicate itself (before any limit), so only an event about to be
+	// rejected pays for the lookup.
+	if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, req, cache); problem != nil {
+		return preparedBatchEvent{}, s.duplicateOrRejected(ctx, acct.ID, envelope, payload, batchPublishFailure("rejected", retryable, problem))
 	}
 	if !api.WorkflowEventEnvelopeFits(payload) {
-		return preparedBatchEvent{}, batchPublishFailure("rejected", false, api.ErrWorkflowEventEnvelopeTooLarge())
+		return preparedBatchEvent{}, s.duplicateOrRejected(ctx, acct.ID, envelope, payload, batchPublishFailure("rejected", false, api.ErrWorkflowEventEnvelopeTooLarge()))
 	}
 	return preparedBatchEvent{envelope: envelope, payload: payload}, api.PublishEventBatchResult{}
 }
 
-func (s *Service) batchEventSchemaProblem(ctx context.Context, accountID string, req api.PublishEventRequest) (*api.Problem, bool) {
+// duplicateOrRejected returns the event's receipt when its source and id were
+// already accepted with the same content, else the rejection.
+func (s *Service) duplicateOrRejected(ctx context.Context, accountID string, envelope events.Envelope, payload []byte, rejected api.PublishEventBatchResult) api.PublishEventBatchResult {
+	lookup, ok := s.Host.Store().(state.PublishedEventLookupStore)
+	if !ok {
+		return rejected
+	}
+	accepted, err := lookup.LookupPublishedEventAcceptance(ctx, accountID, payload)
+	if err == nil {
+		return api.PublishEventBatchResult{Status: "duplicate", Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: accountID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
+	}
+	if !errors.Is(err, state.ErrNotFound) {
+		return batchEventAcceptanceFailure(err)
+	}
+	return rejected
+}
+
+// batchPrepareCache keeps one batch's environment and schema registry
+// answers, so a batch of events of one type reads each once, not per event.
+type batchPrepareCache struct {
+	environments map[string]batchEnvironment
+	schemas      map[[3]string]batchSchema
+}
+
+type batchEnvironment struct {
+	id      string
+	problem *api.Problem
+}
+
+type batchSchema struct {
+	required bool
+	schema   json.RawMessage
+}
+
+func newBatchPrepareCache() *batchPrepareCache {
+	return &batchPrepareCache{environments: map[string]batchEnvironment{}, schemas: map[[3]string]batchSchema{}}
+}
+
+func (s *Service) batchEnvironment(ctx context.Context, accountID, requested string, cache *batchPrepareCache) (string, *api.Problem) {
+	if got, ok := cache.environments[requested]; ok {
+		return got.id, got.problem
+	}
+	id, problem := s.PublishEnvironment(ctx, accountID, requested)
+	// A failed lookup is not kept: the next event retries it.
+	if problem == nil || problem.Status < http.StatusInternalServerError {
+		cache.environments[requested] = batchEnvironment{id: id, problem: problem}
+	}
+	return id, problem
+}
+
+// batchSchemaRegistry answers publish-time schema lookups from the batch
+// cache, reading the registry on a miss.
+type batchSchemaRegistry struct {
+	state.EventSchemaStore
+	cache *batchPrepareCache
+}
+
+func (r batchSchemaRegistry) LookupEventSchemaForPublish(ctx context.Context, accountID, source, typ, version string) (bool, json.RawMessage, error) {
+	key := [3]string{source, typ, version}
+	if got, ok := r.cache.schemas[key]; ok {
+		return got.required, got.schema, nil
+	}
+	required, schema, err := r.EventSchemaStore.LookupEventSchemaForPublish(ctx, accountID, source, typ, version)
+	if err == nil {
+		r.cache.schemas[key] = batchSchema{required: required, schema: schema}
+	}
+	return required, schema, err
+}
+
+func (s *Service) batchEventSchemaProblem(ctx context.Context, accountID string, req api.PublishEventRequest, cache *batchPrepareCache) (*api.Problem, bool) {
 	registry, ok := s.Host.Store().(state.EventSchemaStore)
 	if !ok {
 		return api.ErrInternal("event schema registry"), true
 	}
-	err := state.ValidatePublishedEventSchema(ctx, registry, accountID, strings.TrimSpace(req.Source), strings.TrimSpace(req.Type), req.SchemaVersion, req.Data)
+	err := state.ValidatePublishedEventSchema(ctx, batchSchemaRegistry{EventSchemaStore: registry, cache: cache}, accountID, strings.TrimSpace(req.Source), strings.TrimSpace(req.Type), req.SchemaVersion, req.Data)
 	if err == nil {
 		return nil, false
 	}

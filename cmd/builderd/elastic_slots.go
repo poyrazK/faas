@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,7 +26,7 @@ import (
 // free. With the flag off (the default) none of them claims or cancels
 // anything.
 func startElasticSlots(ctx, runCtx context.Context, cfg *Config, store *state.PgStore, pool *pgxpool.Pool, b *builderdpkg.Builderd, pollInterval time.Duration, log *slog.Logger) {
-	elastic := builderdpkg.NewElasticSlots(builderHeartbeatNodeName(cfg), runtime.NumCPU(), builderslots.NewReader().Read, log)
+	elastic := builderdpkg.NewElasticSlots(builderHeartbeatNodeName(cfg), slotCPUs(os.Getenv), builderslots.NewReader().Read, log)
 	b.WithElasticSlots(elastic)
 	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyBuilderElasticSlots, runtimeconfig.KeyBuilderSlots},
 		func(_ context.Context, key string, value json.RawMessage, _ int64) error {
@@ -43,6 +45,18 @@ func startElasticSlots(ctx, runCtx context.Context, cfg *Config, store *state.Pg
 	for i := 1; i < api.BuilderSlotsMax; i++ {
 		go workerLoopWithMetrics(runCtx, elasticWorker{b: b, index: i}, pollInterval, log, nil)
 	}
+}
+
+// builderSlotCPUsEnv overrides the CPU count builder_slots' max is clamped to.
+// Acceptance hosts have fewer CPUs than a compute node; production leaves it
+// unset.
+const builderSlotCPUsEnv = "FAAS_BUILDER_SLOT_CPUS"
+
+func slotCPUs(getenv func(string) string) int {
+	if n, err := strconv.Atoi(getenv(builderSlotCPUsEnv)); err == nil && n > 0 {
+		return n
+	}
+	return runtime.NumCPU()
 }
 
 func applyElasticSlots(elastic *builderdpkg.ElasticSlots, key string, value json.RawMessage, log *slog.Logger) error {

@@ -182,6 +182,7 @@ type AgentVersion struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 type App struct {

@@ -69,6 +69,7 @@ func prepare(claim agentstore.Claim) (Machine, agentrunproto.Request, error) {
 		}
 	}
 	modelEnv(env, claim.Harness.Models, claim.Integrations)
+	capabilityEnv(env, claim.CapabilityPolicy)
 	if len(env) == 0 {
 		env = nil
 	}
@@ -111,6 +112,21 @@ func modelEnv(env, models, integrations map[string]string) {
 		env[variable] = agentrunproto.OutboundRelayEndpoint + "/i/" + id + shape.basePath
 		if shape.keyVar != "" && env[shape.keyVar] == "" {
 			env[shape.keyVar] = relayPlaceholderKey
+		}
+	}
+}
+
+// capabilityEnv points the harness at the capability gateway's MCP endpoint
+// when the version's policy allows a tool (ADR-20261027090016 amendment 1).
+// The gateway lists only the tools that are allowed and switched on.
+func capabilityEnv(env map[string]string, policy *api.AgentCapabilityPolicy) {
+	if policy == nil {
+		return
+	}
+	for _, tool := range policy.Tools {
+		if tool.Mode == api.AgentCapabilityAllow {
+			env[api.AgentCapabilityMCPURLEnv] = agentrunproto.OutboundRelayEndpoint + api.AgentCapabilityMCPPath
+			return
 		}
 	}
 }

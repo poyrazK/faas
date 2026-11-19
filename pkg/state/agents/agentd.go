@@ -55,6 +55,9 @@ type Claim struct {
 	// PauseDuringModelCalls is the version's model-wait pause opt-in
 	// (ADR-20261027090012 §1); a version opts out with false.
 	PauseDuringModelCalls bool
+	// CapabilityPolicy is the version's capability policy
+	// (ADR-20261027090016 amendment 1); nil allows only the models.
+	CapabilityPolicy *api.AgentCapabilityPolicy
 }
 
 // ClaimRun moves the oldest claimable queued run to starting under token.
@@ -408,6 +411,12 @@ func claimFrom(row sqlc.GetAgentRunClaimRow, token string) (Claim, error) {
 	if row.Prompt.Valid {
 		prompt := row.Prompt.String
 		c.Prompt = &prompt
+	}
+	if len(row.CapabilityPolicy) > 0 {
+		c.CapabilityPolicy = &api.AgentCapabilityPolicy{}
+		if err := json.Unmarshal(row.CapabilityPolicy, c.CapabilityPolicy); err != nil {
+			return Claim{}, fmt.Errorf("decode capability policy: %w", err)
+		}
 	}
 	return c, nil
 }

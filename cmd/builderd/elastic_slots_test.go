@@ -44,3 +44,15 @@ func TestApplyElasticSlots(t *testing.T) {
 		t.Fatalf("off: %v, enabled %t", err, elastic.Enabled())
 	}
 }
+
+func TestSlotCPUs(t *testing.T) {
+	env := func(v string) func(string) string { return func(string) string { return v } }
+	if got := slotCPUs(env("4")); got != 4 {
+		t.Fatalf("override 4 = %d", got)
+	}
+	for _, v := range []string{"", "0", "-2", "many"} {
+		if got := slotCPUs(env(v)); got < 1 {
+			t.Fatalf("%q fell back to %d CPUs, want runtime.NumCPU()", v, got)
+		}
+	}
+}

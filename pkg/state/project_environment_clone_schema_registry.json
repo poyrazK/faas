@@ -10645,6 +10645,7 @@
       "bypass_rls",
       "created_at",
       "database_id",
+      "default_for",
       "granted_to",
       "last_error",
       "member_of",
@@ -21249,6 +21250,7 @@
       "account_id",
       "agent_id",
       "ai_budget_millicents",
+      "capability_policy",
       "created_at",
       "deliveries",
       "harness_image",
@@ -21440,6 +21442,30 @@
       "lease_id",
       "reserved_millicents",
       "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_capability_summaries",
+    "columns": [
+      "account_id",
+      "first_call_at",
+      "last_call_at",
+      "refused_calls",
+      "run_id",
+      "tool_calls"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_capability_decisions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "decision",
+      "id",
+      "run_id",
+      "tool"
     ],
     "kind": "operational"
   },
@@ -22128,6 +22154,18 @@
       "expires_at",
       "id",
       "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_rehearsal_runs",
+    "columns": [
+      "account_id",
+      "approval_expires_at",
+      "id",
+      "plan_sha256",
+      "reserved_at",
+      "run_id"
     ],
     "kind": "operational"
   },

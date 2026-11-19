@@ -160,6 +160,7 @@ type MemStore struct {
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
 	hostedTaskBindings             map[string]HostedTaskBindingRecord
 	hostedTaskRehearsals           map[string]hostedTaskRehearsalRecord
+	hostedTaskRehearsalRuns        map[string]HostedTaskRehearsalRun
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -25381,6 +25382,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, record := range m.hostedTaskRehearsals {
 		if record.Plan.AccountID == id {
 			delete(m.hostedTaskRehearsals, key)
+			delete(m.hostedTaskRehearsalRuns, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

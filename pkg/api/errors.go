@@ -742,6 +742,8 @@ const (
 	// CodeAPIRateLimited is the 429 an account gets past its plan's
 	// APIRequestsPerMinute.
 	CodeAPIRateLimited = "api_rate_limited"
+	// CodeObsRuntimeBusy refuses a runtime collection before any source work.
+	CodeObsRuntimeBusy = "obs_runtime_busy"
 	// CodeColdWakeRateLimited is the 429 a client gets past the number of
 	// different parked apps it may wake through one gateway a minute (H75).
 	CodeColdWakeRateLimited = "cold_wake_rate_limited"
@@ -3405,6 +3407,16 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithHint(fmt.Sprintf("Try again in %d seconds, then sign in with valid credentials.", retryAfterS)).
 		WithDocs(docsBase + "/auth")
+}
+
+// ErrObsRuntimeBusy describes process-wide runtime collection saturation.
+// The retry interval is a hint; it does not reserve capacity or cause a retry.
+func ErrObsRuntimeBusy(observed int64) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeObsRuntimeBusy,
+		"Runtime collection busy", "The runtime collector is at capacity. Retry after the indicated delay.").
+		WithLimit(ObsRuntimeBuildCollectionsMax, observed).
+		WithHeader("Retry-After", strconv.Itoa(int(ObsRuntimeBuildBusyRetryAfter/time.Second))).
+		WithDocs("https://github.com/poyrazK/faas/blob/main/docs/ops/post-deployment-monitoring.md#runtime-collector-overload")
 }
 
 // ErrAPIRateLimited refuses an authenticated API request past the account's

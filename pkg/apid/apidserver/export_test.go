@@ -17,6 +17,7 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"io"
@@ -2659,3 +2660,7 @@ var (
 	ComposeRedisCacheName = composeRedisCacheName
 	ComposeRedisValue     = composeRedisValue
 )
+
+func (s *server) RuntimeBuildAdmissionForTest() *operatorobs.RuntimeBuildAdmission {
+	return &s.runtimeBuildAdmission
+}

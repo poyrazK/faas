@@ -240,6 +240,24 @@ func TestActiveForResolvesTheAppsOwner(t *testing.T) {
 	if active, err := ActiveFor(ctx, store, companyApp, "preview", now.Add(time.Second)); err != nil || len(active) != 0 {
 		t.Fatalf("preview scope = %+v, %v; freezes withhold only production", active, err)
 	}
+	// A developer environment or PR preview deploys into its own default
+	// scope; an owner-wide freeze must not stop `gregale dev` syncs, but a
+	// freeze set on that preview app does.
+	devApp, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, OrgID: company.ID, Slug: "dev-acme-api", PreviewOfSlug: companyApp.Slug})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active, err := ActiveFor(ctx, store, devApp, "", now.Add(time.Second)); err != nil || len(active) != 0 {
+		t.Fatalf("preview app = %+v, %v; owner-wide freezes withhold only production apps", active, err)
+	}
+	onDev, err := store.CreateReleaseFreeze(ctx, state.ReleaseFreeze{OrgID: company.ID, AppID: devApp.ID,
+		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "demo", CreatedBy: "user:test"}, api.ReleaseFreezesMax, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active, err := ActiveFor(ctx, store, devApp, "", now.Add(time.Second)); err != nil || len(active) != 1 || active[0].ID != onDev.ID {
+		t.Fatalf("preview app = %+v, %v; want only its own freeze %s", active, err, onDev.ID)
+	}
 	if _, err := ActiveForAppID(ctx, store, "00000000-0000-0000-0000-000000000000", "", now); err == nil {
 		t.Fatal("an unreadable app must fail, so runtime upgrades hold")
 	}
