@@ -383,7 +383,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err != nil || status != api.CliAuthStatusPending {
-		h.renderCliAuthError(w, r, "Code unavailable", "This code is expired or already used. Run gregale login again for a new code.")
+		h.renderCliAuthRetry(w, r, "Code unavailable")
 		return
 	}
 	acct, ok := AccountFrom(r.Context())
@@ -530,11 +530,11 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	// transitions pending → consumed + account_id in one SQL.
 	if err := h.srv.store.ClaimCliAuthCode(r.Context(), hash, acct.ID); err != nil {
 		if errors.Is(err, state.ErrConflict) {
-			h.renderCliAuthError(w, r, "Code already used", "Restart 'gregale login' to get a new code.")
+			h.renderCliAuthRetry(w, r, "Code already used")
 			return
 		}
 		if errors.Is(err, state.ErrNotFound) {
-			h.renderCliAuthError(w, r, "Code expired", "Restart 'gregale login' to get a new code.")
+			h.renderCliAuthRetry(w, r, "Code expired")
 			return
 		}
 		h.log.Error("cli_auth.claim", "err", err)
@@ -585,8 +585,20 @@ func (s *server) hostedMCPContinueURL() string {
 	return "https://api." + domain + "/mcp/oauth/continue"
 }
 
-// renderCliAuthError renders the cli_auth template with the error
-// flag set, so the form is replaced with a banner.
+func (h *cliAuthHandlers) renderCliAuthRetry(w http.ResponseWriter, r *http.Request, title string) {
+	if isMCPAuthCode(r.FormValue("code")) {
+		h.renderCliAuthError(w, r, title, "")
+		return
+	}
+	acct, _ := AccountFrom(r.Context())
+	page := dashboard.Page{
+		Title: title,
+		Body:  "cli_auth",
+		Data:  map[string]any{"CLIRetry": true, "AccountEmail": acct.Email},
+	}
+	h.renderCliAuthFailure(w, r, page)
+}
+
 func (h *cliAuthHandlers) renderCliAuthError(w http.ResponseWriter, r *http.Request, title, detail string) {
 	isMCP := isMCPAuthCode(r.FormValue("code"))
 	if isMCP {
@@ -600,6 +612,10 @@ func (h *cliAuthHandlers) renderCliAuthError(w http.ResponseWriter, r *http.Requ
 		Flash: detail,
 		Data:  map[string]any{"Error": true, "MCP": isMCP},
 	}
+	h.renderCliAuthFailure(w, r, page)
+}
+
+func (h *cliAuthHandlers) renderCliAuthFailure(w http.ResponseWriter, r *http.Request, page dashboard.Page) {
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		h.log.Error("cli_auth.render_error", "err", err)
 		renderProblem(w, h.log, err)

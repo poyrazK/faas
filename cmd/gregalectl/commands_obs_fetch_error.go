@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+const obsFetchRuntimeBusyReason = "runtime_busy"
 
 // This error owns only reviewed metadata and a safe CLI message. Never keep
 // an underlying transport/decoder error: it may contain URLs or credentials.
@@ -42,6 +46,16 @@ func obsFetchErrorReason(err error, fallback string) string {
 	return fallback
 }
 
+func obsFetchResponseFailure(section string, resp *http.Response) error {
+	if section == "runtime-builds" && resp.StatusCode == http.StatusTooManyRequests {
+		codes := resp.Header.Values(api.ErrorCodeHeader)
+		if len(codes) == 1 && codes[0] == api.CodeObsRuntimeBusy {
+			return obsFetchFailed(section, obsFetchRuntimeBusyReason, "apid runtime collector is busy (HTTP 429)", resp.StatusCode)
+		}
+	}
+	return obsFetchHTTPFailure(section, resp.StatusCode)
+}
+
 func obsFetchHTTPFailure(section string, status int) error {
 	reason := "http_error"
 	switch {
@@ -66,7 +80,7 @@ func obsFetchFailureDetails(err error) (string, *int) {
 	if errors.As(err, &failure) && failure != nil {
 		reason := "unavailable"
 		switch failure.reason {
-		case "invalid_url", "cancelled", "timeout", "transport_unavailable", "unauthorized", "forbidden", "endpoint_not_found", "rate_limited", "redirect_rejected", "server_error", "http_error", "response_read_failed", "response_too_large", "invalid_response":
+		case "invalid_url", "cancelled", "timeout", "transport_unavailable", "unauthorized", "forbidden", "endpoint_not_found", "rate_limited", obsFetchRuntimeBusyReason, "redirect_rejected", "server_error", "http_error", "response_read_failed", "response_too_large", "invalid_response":
 			reason = failure.reason
 		}
 		if failure.status >= 100 && failure.status <= 999 {

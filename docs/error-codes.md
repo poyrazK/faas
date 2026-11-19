@@ -1796,6 +1796,12 @@ Use another sign-in method, or contact support if you need this provider.
 
 See [Authentication](auth.md), [Errors](errors.md).
 
+### `obs_runtime_busy`
+
+HTTP 429 Too Many Requests · Runtime collection busy
+
+See [Errors](errors.md).
+
 ### `openapi_docs_not_allowed`
 
 HTTP 402 Payment Required · Endpoint discovery unavailable on this plan; Stored route checks unavailable
