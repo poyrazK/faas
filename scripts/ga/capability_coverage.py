@@ -155,6 +155,7 @@ RULES = [
     (r"^credhash$", "INFRA"),
     # ADR-20261115180000: shared-store object deletion on the control plane.
     (r"^objectgc$", "INFRA"),
+    (r"^storagegrant$", "INFRA"),
     # ADR-20261109170000: signd's record of the layers it signed.
     (r"^artifact-signatures$", "INFRA"),
     # ADR-20261109170000: the layer verifiers' v2-only switch.

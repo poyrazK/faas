@@ -1,6 +1,6 @@
 # Deploy a multi-service app
 
-A repository with several services (a Compose file, a workspace, or folders
+A repository with several services (a Docker Compose file, a workspace, or folders
 such as `services/api` and `services/web`) deploys as one **project**: one
 plan, one review, and services that can call each other by name.
 
