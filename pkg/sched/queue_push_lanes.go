@@ -153,13 +153,17 @@ func (l *Loop) scheduleQueuePushLanes(ctx context.Context, t sqlc.Trigger, store
 // error ends the run; the next tick submits the lane again.
 func drainQueuePushLane(ctx context.Context, dispatch func(context.Context) error) error {
 	start := time.Now()
-	for delivered := 0; ; delivered++ {
+	for delivered := 1; ; delivered++ {
 		pollCtx, report := withTriggerPollReport(ctx)
 		if err := dispatch(pollCtx); err != nil {
 			return err
 		}
-		if report.records == 0 || delivered+1 >= api.QueuePushLaneDrainMaxRecords ||
-			time.Since(start) >= api.QueuePushLaneDrainBudget || ctx.Err() != nil {
+		// A cancelled scheduler stops the lane without an error: the
+		// dispatch in progress settled its record, and shutdown is not a
+		// lane failure.
+		more := report.records > 0 && delivered < api.QueuePushLaneDrainMaxRecords &&
+			time.Since(start) < api.QueuePushLaneDrainBudget && context.Cause(ctx) == nil
+		if !more {
 			return nil
 		}
 	}
