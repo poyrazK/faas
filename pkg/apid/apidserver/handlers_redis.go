@@ -312,11 +312,11 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	previousRAM := app.RAMMB
-	rollback := func() {
-		if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{RAMMB: &previousRAM}); err != nil {
+	rollback := func(ctx context.Context) {
+		if _, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{RAMMB: &previousRAM}); err != nil {
 			s.log.Warn("apid: redis cache change rollback", "app_id", app.ID, "err", err)
 		}
-		if _, err := store.UpdateManagedValkeyCache(r.Context(), app.ID, previous.MemoryMB, previous.EvictionPolicy); err != nil {
+		if _, err := store.UpdateManagedValkeyCache(ctx, app.ID, previous.MemoryMB, previous.EvictionPolicy); err != nil {
 			s.log.Warn("apid: redis cache change rollback", "app_id", app.ID, "err", err)
 		}
 	}
@@ -339,7 +339,7 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	}
 	cache, err := store.UpdateManagedValkeyCache(r.Context(), app.ID, next.MemoryMB, next.EvictionPolicy)
 	if err != nil {
-		rollback()
+		rollback(r.Context())
 		api.WriteProblem(w, api.ErrCapacity("could not record Redis cache change"))
 		return
 	}
@@ -354,7 +354,7 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	}, false)
 	if rec.Code != http.StatusAccepted {
 		// The running VM keeps serving with its old settings.
-		rollback()
+		rollback(r.Context())
 		var problem api.Problem
 		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || problem.Code == "" {
 			api.WriteProblem(w, api.ErrCapacity("could not deploy the Redis cache change"))
