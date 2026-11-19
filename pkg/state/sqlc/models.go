@@ -709,6 +709,26 @@ type AlertTestSend struct {
 	CompletedAt  pgtype.Timestamptz
 }
 
+type AnalyticsCohort struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	Key                string
+	Definition         []byte
+	Members            int32
+	Truncated          bool
+	RefreshedAt        pgtype.Timestamptz
+	RefreshRequestedAt pgtype.Timestamptz
+	RefreshError       string
+	CreatedBy          string
+	CreatedAt          pgtype.Timestamptz
+}
+
+type AnalyticsCohortMember struct {
+	CohortID   pgtype.UUID
+	CustomerID pgtype.UUID
+}
+
 type AnalyticsEvent struct {
 	ID            int64
 	AccountID     pgtype.UUID
@@ -6767,6 +6787,9 @@ type FlagExperiment struct {
 	StopReason         string
 	Breach             []byte
 	ValueThroughDay    pgtype.Date
+	MetricDefinition   []byte
+	Cuped              bool
+	MinCupedPValues    []byte
 }
 
 type FlagExperimentLatency struct {
@@ -6788,6 +6811,7 @@ type FlagExperimentUnit struct {
 	LatencyRequests int64
 	SlowRequests    int64
 	ValueSum        int64
+	PreValue        pgtype.Float8
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.

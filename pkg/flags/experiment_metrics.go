@@ -64,6 +64,27 @@ func (d MetricDefinition) PeriodDuration() time.Duration {
 	return 24 * time.Hour
 }
 
+// Horizon is how long after first exposure a funnel or retention unit's
+// outcome is final; zero for other kinds (ADR 20261119102741 §1).
+func (d MetricDefinition) Horizon(kind string) time.Duration {
+	switch kind {
+	case ExperimentMetricFunnel:
+		return d.WindowDuration()
+	case ExperimentMetricRetention:
+		return time.Duration(d.PeriodNumber+1) * d.PeriodDuration()
+	}
+	return 0
+}
+
+// StartOffset is when after first exposure a unit's conversion window
+// opens: N periods for retention, else zero.
+func (d MetricDefinition) StartOffset(kind string) time.Duration {
+	if kind == ExperimentMetricRetention {
+		return time.Duration(d.PeriodNumber) * d.PeriodDuration()
+	}
+	return 0
+}
+
 // PrimaryEvent is the event CUPED reads for a binary metric's covariate and
 // the experiment's metric_event: the funnel's first step or the retention
 // return event.

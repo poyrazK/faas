@@ -39,18 +39,23 @@ the existing conversion mSPRT, sample ratio check and guardrails.
 
 - **funnel:** 2 to 6 steps (event name and optional property filter each)
   and a window (1 h to 720 h). A customer converts at its last step when it
-  sends step 1 after its first exposure, and each later step after the
-  previous one and within the window of its step 1.
+  sends step 1 after its first exposure and each later step after the
+  previous one, all within the window after its first exposure.
 - **retention:** a return event (optional filter), a period (`day` or
   `week`) and a period number *N* (1 to 12). A customer converts when it
-  sends the return event in [exposure + N·period, exposure + (N+1)·period).
-  Only customers whose period *N* has ended, against the experiment's
-  telemetry cursor, are counted, in every arm.
+  sends the return event in (exposure + N·period, exposure + (N+1)·period].
+
+Each customer therefore has a deadline: exposure plus the window, or plus
+(N+1) periods. Results count, in every arm, only customers whose deadline
+is at or before the experiment's telemetry cursor, so a customer's outcome
+is final when it is counted. Funnel and retention results appear one window
+or N+1 periods after the first exposures.
 
 Both read `analytics_events`, so an experiment with either metric can only
-be created where product analytics is on and the plan keeps events. The
-reconciler marks conversions for unconverted customers each pass, at most
-`ExperimentAnalyticsUnitsPerPass` customers per experiment.
+be created where product analytics is on and the plan keeps events. Each
+pass the reconciler checks unconverted customers whose deadline is less
+than 25 hours past (events may arrive up to 24 hours late), at most
+`ExperimentAnalyticsUnitsPerPass` per experiment.
 
 ### 2. CUPED
 

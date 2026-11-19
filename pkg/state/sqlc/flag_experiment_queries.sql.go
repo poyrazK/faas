@@ -237,48 +237,57 @@ func (q *Queries) AddFlagExperimentUnits(ctx context.Context, db DBTX, arg AddFl
 
 const advanceFlagExperiment = `-- name: AdvanceFlagExperiment :exec
 UPDATE flag_experiments
-SET telemetry_cursor = $1::timestamptz, min_p_values = $2::jsonb
-WHERE id = $3::uuid AND status = 'running'
+SET telemetry_cursor = $1::timestamptz, min_p_values = $2::jsonb,
+    min_cuped_p_values = $3::jsonb
+WHERE id = $4::uuid AND status = 'running'
 `
 
 type AdvanceFlagExperimentParams struct {
 	TelemetryCursor pgtype.Timestamptz
 	MinPValues      []byte
+	MinCupedPValues []byte
 	ID              pgtype.UUID
 }
 
 func (q *Queries) AdvanceFlagExperiment(ctx context.Context, db DBTX, arg AdvanceFlagExperimentParams) error {
-	_, err := db.Exec(ctx, advanceFlagExperiment, arg.TelemetryCursor, arg.MinPValues, arg.ID)
+	_, err := db.Exec(ctx, advanceFlagExperiment,
+		arg.TelemetryCursor,
+		arg.MinPValues,
+		arg.MinCupedPValues,
+		arg.ID,
+	)
 	return err
 }
 
 const createFlagExperiment = `-- name: CreateFlagExperiment :one
 INSERT INTO flag_experiments (id, account_id, project_id, environment_id, key, flag_key, rule_id, control,
-    metric_event, metric_kind, mixing_lift, weights, guardrails, created_by)
+    metric_event, metric_kind, mixing_lift, weights, guardrails, created_by, metric_definition, cuped)
 SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid,
     $5::text, $6::text, $7::text, $8::text,
     $9::text, $10::text, $11::double precision, $12::jsonb,
-    $13::jsonb, $14::text
-WHERE (SELECT count(*) FROM flag_experiments x WHERE x.environment_id = $4::uuid) < $15::bigint
-RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day
+    $13::jsonb, $14::text, $15::jsonb, $16::boolean
+WHERE (SELECT count(*) FROM flag_experiments x WHERE x.environment_id = $4::uuid) < $17::bigint
+RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values
 `
 
 type CreateFlagExperimentParams struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	ProjectID      pgtype.UUID
-	EnvironmentID  pgtype.UUID
-	Key            string
-	FlagKey        string
-	RuleID         string
-	Control        string
-	MetricEvent    string
-	MetricKind     string
-	MixingLift     float64
-	Weights        []byte
-	Guardrails     []byte
-	CreatedBy      string
-	MaxExperiments int64
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	Key              string
+	FlagKey          string
+	RuleID           string
+	Control          string
+	MetricEvent      string
+	MetricKind       string
+	MixingLift       float64
+	Weights          []byte
+	Guardrails       []byte
+	CreatedBy        string
+	MetricDefinition []byte
+	Cuped            bool
+	MaxExperiments   int64
 }
 
 func (q *Queries) CreateFlagExperiment(ctx context.Context, db DBTX, arg CreateFlagExperimentParams) (FlagExperiment, error) {
@@ -297,6 +306,8 @@ func (q *Queries) CreateFlagExperiment(ctx context.Context, db DBTX, arg CreateF
 		arg.Weights,
 		arg.Guardrails,
 		arg.CreatedBy,
+		arg.MetricDefinition,
+		arg.Cuped,
 		arg.MaxExperiments,
 	)
 	var i FlagExperiment
@@ -325,6 +336,9 @@ func (q *Queries) CreateFlagExperiment(ctx context.Context, db DBTX, arg CreateF
 		&i.StopReason,
 		&i.Breach,
 		&i.ValueThroughDay,
+		&i.MetricDefinition,
+		&i.Cuped,
+		&i.MinCupedPValues,
 	)
 	return i, err
 }
@@ -475,6 +489,124 @@ func (q *Queries) FlagExperimentArms(ctx context.Context, db DBTX, experimentID 
 	for rows.Next() {
 		var i FlagExperimentArmsRow
 		if err := rows.Scan(&i.Variant, &i.Exposed, &i.Converted); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const flagExperimentBinaryCupedArms = `-- name: FlagExperimentBinaryCupedArms :many
+SELECT variant, count(*)::bigint AS n,
+       count(converted_at)::float8 AS sum_y,
+       COALESCE(sum(pre_value), 0)::float8 AS sum_x,
+       COALESCE(sum(pre_value * pre_value), 0)::float8 AS sum_x2,
+       COALESCE(sum(pre_value) FILTER (WHERE converted_at IS NOT NULL), 0)::float8 AS sum_xy,
+       count(*) FILTER (WHERE pre_value IS NULL)::bigint AS pending
+FROM flag_experiment_units
+WHERE experiment_id = $1::uuid AND NOT crossed
+  AND first_exposed_at + make_interval(secs => $2::double precision) <= $3::timestamptz
+GROUP BY variant
+ORDER BY variant
+`
+
+type FlagExperimentBinaryCupedArmsParams struct {
+	ExperimentID   pgtype.UUID
+	HorizonSeconds float64
+	Until          pgtype.Timestamptz
+}
+
+type FlagExperimentBinaryCupedArmsRow struct {
+	Variant string
+	N       int64
+	SumY    float64
+	SumX    float64
+	SumX2   float64
+	SumXy   float64
+	Pending int64
+}
+
+// Per-variant CUPED sums of a binary metric (Y is converted) over counted
+// units, and how many counted units still lack a pre-period value. A
+// horizon of 0 counts every unit.
+func (q *Queries) FlagExperimentBinaryCupedArms(ctx context.Context, db DBTX, arg FlagExperimentBinaryCupedArmsParams) ([]FlagExperimentBinaryCupedArmsRow, error) {
+	rows, err := db.Query(ctx, flagExperimentBinaryCupedArms, arg.ExperimentID, arg.HorizonSeconds, arg.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FlagExperimentBinaryCupedArmsRow{}
+	for rows.Next() {
+		var i FlagExperimentBinaryCupedArmsRow
+		if err := rows.Scan(
+			&i.Variant,
+			&i.N,
+			&i.SumY,
+			&i.SumX,
+			&i.SumX2,
+			&i.SumXy,
+			&i.Pending,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const flagExperimentConversionCandidates = `-- name: FlagExperimentConversionCandidates :many
+SELECT customer_id, first_exposed_at
+FROM flag_experiment_units
+WHERE experiment_id = $1::uuid AND NOT crossed AND converted_at IS NULL
+  AND customer_id > $2::uuid
+  AND first_exposed_at + make_interval(secs => $3::double precision) <= $4::timestamptz
+  AND first_exposed_at + make_interval(secs => $5::double precision) > $6::timestamptz
+ORDER BY customer_id
+LIMIT $7::int
+`
+
+type FlagExperimentConversionCandidatesParams struct {
+	ExperimentID   pgtype.UUID
+	AfterCustomer  pgtype.UUID
+	StartSeconds   float64
+	Now            pgtype.Timestamptz
+	HorizonSeconds float64
+	NotBefore      pgtype.Timestamptz
+	MaxRows        int32
+}
+
+type FlagExperimentConversionCandidatesRow struct {
+	CustomerID     pgtype.UUID
+	FirstExposedAt pgtype.Timestamptz
+}
+
+// Unconverted units of a funnel or retention metric whose window has
+// started (first exposure plus start offset is at or before now) and whose
+// deadline is after not_before, in customer order after after_customer.
+func (q *Queries) FlagExperimentConversionCandidates(ctx context.Context, db DBTX, arg FlagExperimentConversionCandidatesParams) ([]FlagExperimentConversionCandidatesRow, error) {
+	rows, err := db.Query(ctx, flagExperimentConversionCandidates,
+		arg.ExperimentID,
+		arg.AfterCustomer,
+		arg.StartSeconds,
+		arg.Now,
+		arg.HorizonSeconds,
+		arg.NotBefore,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FlagExperimentConversionCandidatesRow{}
+	for rows.Next() {
+		var i FlagExperimentConversionCandidatesRow
+		if err := rows.Scan(&i.CustomerID, &i.FirstExposedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -657,6 +789,50 @@ func (q *Queries) FlagExperimentGuardrailArms(ctx context.Context, db DBTX, expe
 	return items, nil
 }
 
+const flagExperimentHorizonArms = `-- name: FlagExperimentHorizonArms :many
+SELECT variant, count(*)::bigint AS exposed, count(converted_at)::bigint AS converted
+FROM flag_experiment_units
+WHERE experiment_id = $1::uuid AND NOT crossed
+  AND first_exposed_at + make_interval(secs => $2::double precision) <= $3::timestamptz
+GROUP BY variant
+ORDER BY variant
+`
+
+type FlagExperimentHorizonArmsParams struct {
+	ExperimentID   pgtype.UUID
+	HorizonSeconds float64
+	Until          pgtype.Timestamptz
+}
+
+type FlagExperimentHorizonArmsRow struct {
+	Variant   string
+	Exposed   int64
+	Converted int64
+}
+
+// Exposed and converted units of a funnel or retention metric whose
+// deadline (first exposure plus horizon) is at or before until
+// (ADR 20261119102741 §1).
+func (q *Queries) FlagExperimentHorizonArms(ctx context.Context, db DBTX, arg FlagExperimentHorizonArmsParams) ([]FlagExperimentHorizonArmsRow, error) {
+	rows, err := db.Query(ctx, flagExperimentHorizonArms, arg.ExperimentID, arg.HorizonSeconds, arg.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FlagExperimentHorizonArmsRow{}
+	for rows.Next() {
+		var i FlagExperimentHorizonArmsRow
+		if err := rows.Scan(&i.Variant, &i.Exposed, &i.Converted); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const flagExperimentLatency = `-- name: FlagExperimentLatency :many
 SELECT variant, bucket::int AS bucket, requests FROM flag_experiment_latency
 WHERE experiment_id = $1::uuid
@@ -768,6 +944,125 @@ func (q *Queries) FlagExperimentMeanArms(ctx context.Context, db DBTX, arg FlagE
 	return items, nil
 }
 
+const flagExperimentMeanCupedArms = `-- name: FlagExperimentMeanCupedArms :many
+WITH v AS (
+    SELECT u.variant, (u.value_sum + COALESCE(o.total, 0))::float8 AS val, u.pre_value
+    FROM flag_experiment_units u
+    LEFT JOIN LATERAL (
+        SELECT sum(c.value_sum)::float8 AS total FROM flag_conversion_daily c
+        WHERE c.environment_id = $1::uuid AND c.event_name = $2::text
+          AND c.customer_id = u.customer_id AND c.day >= $3::date
+          AND c.last_at >= u.first_exposed_at
+    ) o ON true
+    WHERE u.experiment_id = $4::uuid AND NOT u.crossed
+), caps AS (
+    SELECT percentile_cont(0.01) WITHIN GROUP (ORDER BY val) AS lo,
+           percentile_cont(0.99) WITHIN GROUP (ORDER BY val) AS hi, count(*) AS n
+    FROM v
+), w AS (
+    SELECT v.variant, v.pre_value,
+           CASE WHEN caps.n >= $5::bigint THEN LEAST(GREATEST(v.val, caps.lo), caps.hi) ELSE v.val END AS y
+    FROM v CROSS JOIN caps
+)
+SELECT variant, count(*)::bigint AS n,
+       COALESCE(sum(y), 0)::float8 AS sum_y, COALESCE(sum(y * y), 0)::float8 AS sum_y2,
+       COALESCE(sum(pre_value), 0)::float8 AS sum_x, COALESCE(sum(pre_value * pre_value), 0)::float8 AS sum_x2,
+       COALESCE(sum(pre_value * y), 0)::float8 AS sum_xy,
+       count(*) FILTER (WHERE pre_value IS NULL)::bigint AS pending
+FROM w
+GROUP BY variant
+ORDER BY variant
+`
+
+type FlagExperimentMeanCupedArmsParams struct {
+	EnvironmentID pgtype.UUID
+	EventName     string
+	OpenFromDay   pgtype.Date
+	ExperimentID  pgtype.UUID
+	MinUnits      int64
+}
+
+type FlagExperimentMeanCupedArmsRow struct {
+	Variant string
+	N       int64
+	SumY    float64
+	SumY2   float64
+	SumX    float64
+	SumX2   float64
+	SumXy   float64
+	Pending int64
+}
+
+// FlagExperimentMeanArms' winsorized unit values with each unit's
+// pre-period value, summed per variant for CUPED.
+func (q *Queries) FlagExperimentMeanCupedArms(ctx context.Context, db DBTX, arg FlagExperimentMeanCupedArmsParams) ([]FlagExperimentMeanCupedArmsRow, error) {
+	rows, err := db.Query(ctx, flagExperimentMeanCupedArms,
+		arg.EnvironmentID,
+		arg.EventName,
+		arg.OpenFromDay,
+		arg.ExperimentID,
+		arg.MinUnits,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FlagExperimentMeanCupedArmsRow{}
+	for rows.Next() {
+		var i FlagExperimentMeanCupedArmsRow
+		if err := rows.Scan(
+			&i.Variant,
+			&i.N,
+			&i.SumY,
+			&i.SumY2,
+			&i.SumX,
+			&i.SumX2,
+			&i.SumXy,
+			&i.Pending,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const flagExperimentUnitsWithoutPreValue = `-- name: FlagExperimentUnitsWithoutPreValue :many
+SELECT customer_id
+FROM flag_experiment_units
+WHERE experiment_id = $1::uuid AND pre_value IS NULL
+ORDER BY customer_id
+LIMIT $2::int
+`
+
+type FlagExperimentUnitsWithoutPreValueParams struct {
+	ExperimentID pgtype.UUID
+	MaxRows      int32
+}
+
+func (q *Queries) FlagExperimentUnitsWithoutPreValue(ctx context.Context, db DBTX, arg FlagExperimentUnitsWithoutPreValueParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, flagExperimentUnitsWithoutPreValue, arg.ExperimentID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var customer_id pgtype.UUID
+		if err := rows.Scan(&customer_id); err != nil {
+			return nil, err
+		}
+		items = append(items, customer_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const foldFlagExperimentValues = `-- name: FoldFlagExperimentValues :execrows
 UPDATE flag_experiment_units u
 SET value_sum = u.value_sum + s.total
@@ -810,7 +1105,7 @@ func (q *Queries) FoldFlagExperimentValues(ctx context.Context, db DBTX, arg Fol
 }
 
 const getFlagExperiment = `-- name: GetFlagExperiment :one
-SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day FROM flag_experiments
+SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values FROM flag_experiments
 WHERE environment_id = $1::uuid AND key = $2::text
 `
 
@@ -847,12 +1142,15 @@ func (q *Queries) GetFlagExperiment(ctx context.Context, db DBTX, arg GetFlagExp
 		&i.StopReason,
 		&i.Breach,
 		&i.ValueThroughDay,
+		&i.MetricDefinition,
+		&i.Cuped,
+		&i.MinCupedPValues,
 	)
 	return i, err
 }
 
 const listFlagExperiments = `-- name: ListFlagExperiments :many
-SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day FROM flag_experiments
+SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values FROM flag_experiments
 WHERE environment_id = $1::uuid
 ORDER BY created_at DESC, key
 `
@@ -891,6 +1189,9 @@ func (q *Queries) ListFlagExperiments(ctx context.Context, db DBTX, environmentI
 			&i.StopReason,
 			&i.Breach,
 			&i.ValueThroughDay,
+			&i.MetricDefinition,
+			&i.Cuped,
+			&i.MinCupedPValues,
 		); err != nil {
 			return nil, err
 		}
@@ -903,7 +1204,7 @@ func (q *Queries) ListFlagExperiments(ctx context.Context, db DBTX, environmentI
 }
 
 const listRunningFlagExperiments = `-- name: ListRunningFlagExperiments :many
-SELECT x.id, x.account_id, x.project_id, x.environment_id, x.key, x.flag_key, x.rule_id, x.control, x.metric_event, x.metric_kind, x.status, x.mixing_lift, x.weights, x.min_p_values, x.telemetry_cursor, x.created_by, x.created_at, x.started_at, x.stopped_at, x.guardrails, x.latency_threshold_ms, x.stop_reason, x.breach, x.value_through_day, e.slug AS environment_slug, a.plan::text AS plan
+SELECT x.id, x.account_id, x.project_id, x.environment_id, x.key, x.flag_key, x.rule_id, x.control, x.metric_event, x.metric_kind, x.status, x.mixing_lift, x.weights, x.min_p_values, x.telemetry_cursor, x.created_by, x.created_at, x.started_at, x.stopped_at, x.guardrails, x.latency_threshold_ms, x.stop_reason, x.breach, x.value_through_day, x.metric_definition, x.cuped, x.min_cuped_p_values, e.slug AS environment_slug, a.plan::text AS plan
 FROM flag_experiments x
 JOIN project_environments e ON e.id = x.environment_id
 JOIN accounts a ON a.id = x.account_id
@@ -942,6 +1243,9 @@ type ListRunningFlagExperimentsRow struct {
 	StopReason         string
 	Breach             []byte
 	ValueThroughDay    pgtype.Date
+	MetricDefinition   []byte
+	Cuped              bool
+	MinCupedPValues    []byte
 	EnvironmentSlug    string
 	Plan               string
 }
@@ -980,6 +1284,9 @@ func (q *Queries) ListRunningFlagExperiments(ctx context.Context, db DBTX, arg L
 			&i.StopReason,
 			&i.Breach,
 			&i.ValueThroughDay,
+			&i.MetricDefinition,
+			&i.Cuped,
+			&i.MinCupedPValues,
 			&i.EnvironmentSlug,
 			&i.Plan,
 		); err != nil {
@@ -1051,6 +1358,29 @@ func (q *Queries) MarkFlagExperimentConversions(ctx context.Context, db DBTX, ar
 	return result.RowsAffected(), nil
 }
 
+const markFlagExperimentUnitConversions = `-- name: MarkFlagExperimentUnitConversions :execrows
+UPDATE flag_experiment_units u
+SET converted_at = c.at
+FROM (SELECT unnest($2::uuid[]) AS customer_id, unnest($3::timestamptz[]) AS at) c
+WHERE u.experiment_id = $1::uuid AND u.customer_id = c.customer_id
+  AND u.converted_at IS NULL AND c.at >= u.first_exposed_at
+`
+
+type MarkFlagExperimentUnitConversionsParams struct {
+	ExperimentID pgtype.UUID
+	CustomerIds  []pgtype.UUID
+	Ats          []pgtype.Timestamptz
+}
+
+// The arrays are parallel.
+func (q *Queries) MarkFlagExperimentUnitConversions(ctx context.Context, db DBTX, arg MarkFlagExperimentUnitConversionsParams) (int64, error) {
+	result, err := db.Exec(ctx, markFlagExperimentUnitConversions, arg.ExperimentID, arg.CustomerIds, arg.Ats)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setFlagExperimentLatencyThreshold = `-- name: SetFlagExperimentLatencyThreshold :exec
 UPDATE flag_experiments SET latency_threshold_ms = $1::int
 WHERE id = $2::uuid AND status = 'running' AND latency_threshold_ms IS NULL
@@ -1064,6 +1394,28 @@ type SetFlagExperimentLatencyThresholdParams struct {
 func (q *Queries) SetFlagExperimentLatencyThreshold(ctx context.Context, db DBTX, arg SetFlagExperimentLatencyThresholdParams) error {
 	_, err := db.Exec(ctx, setFlagExperimentLatencyThreshold, arg.LatencyThresholdMs, arg.ID)
 	return err
+}
+
+const setFlagExperimentPreValues = `-- name: SetFlagExperimentPreValues :execrows
+UPDATE flag_experiment_units u
+SET pre_value = v.pre_value
+FROM (SELECT unnest($2::uuid[]) AS customer_id, unnest($3::double precision[]) AS pre_value) v
+WHERE u.experiment_id = $1::uuid AND u.customer_id = v.customer_id AND u.pre_value IS NULL
+`
+
+type SetFlagExperimentPreValuesParams struct {
+	ExperimentID pgtype.UUID
+	CustomerIds  []pgtype.UUID
+	PreValues    []float64
+}
+
+// The arrays are parallel.
+func (q *Queries) SetFlagExperimentPreValues(ctx context.Context, db DBTX, arg SetFlagExperimentPreValuesParams) (int64, error) {
+	result, err := db.Exec(ctx, setFlagExperimentPreValues, arg.ExperimentID, arg.CustomerIds, arg.PreValues)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setFlagExperimentValueThrough = `-- name: SetFlagExperimentValueThrough :exec
@@ -1087,7 +1439,7 @@ SET status = 'running', started_at = $1::timestamptz, telemetry_cursor = $1::tim
     weights = $2::jsonb
 WHERE x.environment_id = $3::uuid AND x.key = $4::text AND x.status = 'draft'
   AND (SELECT count(*) FROM flag_experiments r WHERE r.environment_id = $3::uuid AND r.status = 'running') < $5::bigint
-RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day
+RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values
 `
 
 type StartFlagExperimentParams struct {
@@ -1133,6 +1485,9 @@ func (q *Queries) StartFlagExperiment(ctx context.Context, db DBTX, arg StartFla
 		&i.StopReason,
 		&i.Breach,
 		&i.ValueThroughDay,
+		&i.MetricDefinition,
+		&i.Cuped,
+		&i.MinCupedPValues,
 	)
 	return i, err
 }
@@ -1142,7 +1497,7 @@ UPDATE flag_experiments
 SET status = 'stopped', stopped_at = $1::timestamptz, stop_reason = $2::text,
     breach = $3::jsonb
 WHERE environment_id = $4::uuid AND key = $5::text AND status = 'running'
-RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day
+RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values
 `
 
 type StopFlagExperimentParams struct {
@@ -1187,6 +1542,9 @@ func (q *Queries) StopFlagExperiment(ctx context.Context, db DBTX, arg StopFlagE
 		&i.StopReason,
 		&i.Breach,
 		&i.ValueThroughDay,
+		&i.MetricDefinition,
+		&i.Cuped,
+		&i.MinCupedPValues,
 	)
 	return i, err
 }

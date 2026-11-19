@@ -134,7 +134,7 @@ func TestPg_FlagExperimentUnitsFromTelemetry(t *testing.T) {
 		t.Fatalf("arms = %+v crossed %d; want %+v and 1 crossed", arms, crossed, want)
 	}
 
-	if err := s.SaveFlagExperimentProgress(ctx, x.ID, start.Add(time.Hour), map[string]float64{"new": 0.4}); err != nil {
+	if err := s.SaveFlagExperimentProgress(ctx, x.ID, start.Add(time.Hour), map[string]float64{"new": 0.4}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetFlagExperiment(ctx, f.env, "checkout-v2")

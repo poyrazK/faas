@@ -76,6 +76,46 @@ type FlagExperimentCreateRequest struct {
 	// their default tolerances.
 	Guardrails *FlagExperimentGuardrailsRequest `json:"guardrails,omitempty"`
 	Start      bool                             `json:"start,omitempty"`
+	// Funnel and Retention define those metric kinds; metric_event is then
+	// derived (ADR 20261119102741 §1). Cuped turns CUPED off when false.
+	Funnel    *FlagExperimentFunnel    `json:"funnel,omitempty"`
+	Retention *FlagExperimentRetention `json:"retention,omitempty"`
+	Cuped     *bool                    `json:"cuped,omitempty"`
+}
+
+// FlagExperimentFunnel is a funnel metric: 2 to 6 steps completed within
+// Window (a Go duration, 1h to 720h) after first exposure.
+type FlagExperimentFunnel struct {
+	Steps  []InsightStepRequest `json:"steps"`
+	Window string               `json:"window"`
+}
+
+// FlagExperimentRetention is a retention metric: the return event in
+// period PeriodNumber (1 to 12) after first exposure; Period is day or week.
+type FlagExperimentRetention struct {
+	Return       InsightStepRequest `json:"return"`
+	Period       string             `json:"period"`
+	PeriodNumber int                `json:"period_number"`
+}
+
+// FlagExperimentCuped reports CUPED on an experiment's results (ADR
+// 20261119102741 §2). Reason says why it did not apply: off,
+// pre_period_pending, no_pre_period_variance or no_pre_period_data.
+type FlagExperimentCuped struct {
+	Applied           bool    `json:"applied"`
+	PreDays           int     `json:"pre_days"`
+	Theta             float64 `json:"theta,omitempty"`
+	VarianceReduction float64 `json:"variance_reduction,omitempty"`
+	Reason            string  `json:"reason,omitempty"`
+}
+
+// FlagExperimentComparison is a variant's comparison with control.
+type FlagExperimentComparison struct {
+	Lift         float64 `json:"lift"`
+	RelativeLift float64 `json:"relative_lift"`
+	Low          float64 `json:"low"`
+	High         float64 `json:"high"`
+	PValue       float64 `json:"p_value"`
 }
 
 // FlagExperimentGuardrailRequest turns one guardrail off or sets its
@@ -141,6 +181,11 @@ type FlagExperiment struct {
 	StopReason string `json:"stop_reason,omitempty"`
 	// Breach describes the guardrail breach that stopped the experiment.
 	Breach map[string]any `json:"breach,omitempty"`
+	// Funnel or Retention define those metric kinds; Cuped is whether CUPED
+	// is on (ADR 20261119102741).
+	Funnel    *FlagExperimentFunnel    `json:"funnel,omitempty"`
+	Retention *FlagExperimentRetention `json:"retention,omitempty"`
+	Cuped     bool                     `json:"cuped"`
 }
 
 // FlagExperimentList is the experiments of an environment.
@@ -171,6 +216,9 @@ type FlagExperimentVariantResult struct {
 	// Status is significant, not_significant, insufficient_data or
 	// sample_ratio_mismatch.
 	Status string `json:"status"`
+	// Unadjusted is the comparison without CUPED when the lift above is
+	// CUPED-adjusted.
+	Unadjusted *FlagExperimentComparison `json:"unadjusted,omitempty"`
 }
 
 // FlagExperimentResults is GET .../experiments/{key}/results.
@@ -188,6 +236,7 @@ type FlagExperimentResults struct {
 	// Latency is each variant's p95 latency over the experiment.
 	Latency        []FlagExperimentLatency      `json:"latency"`
 	Recommendation FlagExperimentRecommendation `json:"recommendation"`
+	Cuped          FlagExperimentCuped          `json:"cuped"`
 }
 
 // FlagExperimentGuardrail is one guardrail across the variants. Status is
