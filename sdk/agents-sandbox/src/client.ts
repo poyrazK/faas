@@ -35,6 +35,12 @@ export interface GregaleSandboxClientOptions extends SandboxClientOptions {
   tenant?: string;
   /** Start from a workspace persisted with persistSnapshot(). */
   snapshotId?: string;
+  /**
+   * Boot with the sandbox browser running: the session is ready once
+   * Chromium answers, and startBrowser() returns at once. Needs ramMb of at
+   * least 1024.
+   */
+  browser?: boolean;
   /** Visibility of ports resolveExposedPort exposes; private by default. */
   portVisibility?: 'private' | 'public';
   /** How long create and resume wait for the VM; 120 s by default. */
@@ -83,6 +89,7 @@ export class GregaleSandboxClient implements SandboxClient<GregaleSandboxClientO
         labels: options.labels,
         tenant: options.tenant,
         snapshot_id: options.snapshotId,
+        browser: options.browser || undefined,
       },
     });
     const session = this.#session(

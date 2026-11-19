@@ -357,6 +357,9 @@ func (s *Supervisor) Run() error {
 		}
 		err := s.Start()
 		if s.restartRequested.Swap(false) && !s.stopRequested.Load() {
+			// The signal reached only the direct child; a server it
+			// started may still hold the port.
+			s.reapRestartRemnants()
 			continue
 		}
 		if !s.shouldRestart(err) {

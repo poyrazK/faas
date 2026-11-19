@@ -3495,6 +3495,10 @@ message RunSandboxRequest {
     RunSandboxClose close = 3;
     RunSandboxPersistGrant persist_grant = 4;
     RunSandboxPersistRecorded persist_recorded = 5;
+    // action acts on the session's browser (ADR-20261117065818 §2). vmmd
+    // runs one at a time and answers each with action_done. An older vmmd
+    // ignores it; agentd sends one only after booted.actions.
+    RunSandboxAction action = 6;
   }
 }
 
@@ -3538,6 +3542,93 @@ message RunSandboxStart {
   // mode; a failed restore cold-boots (ADR-005), and booted reports which.
   // An older vmmd ignores it and cold-boots.
   AgentRunSnapshot snapshot = 17;
+  // browser starts the sandbox browser as the session's start command and
+  // waits for it as its ready command, after a cold boot or a restore
+  // (ADR-20261116182615 §1). vmmd owns both commands; it is refused with
+  // start_cmd. An older vmmd ignores it.
+  bool browser = 18;
+  // task makes the session a sandbox task (ADR-20261116182615 §3): vmmd
+  // runs the kind's fixed command once the session is booted and reports
+  // task_done; the caller then closes the session. An older vmmd ignores it
+  // and never reports task_done, so agentd ends a task past its timeout.
+  RunSandboxTask task = 19;
+  // egress_allow and egress_deny are a web-mode session's domain policy
+  // (ADR-20261117091026 §3): vmmd grants a name only when no deny rule
+  // matches it and allow is empty or an allow rule matches it.
+  repeated string egress_allow = 20;
+  repeated string egress_deny = 21;
+  // web_domain_log asks for the session's domain log (web_domains frames,
+  // ADR-20261117091026 §4). schedd sets it when its own caller asked, since
+  // an older reader ends a session on a frame it does not know.
+  bool web_domain_log = 22;
+}
+
+// RunSandboxAction is one browser action on a live session
+// (ADR-20261117065818 §2).
+message RunSandboxAction {
+  // action_id is agentd's, echoed on action_done.
+  string action_id = 1;
+  // kind is one of navigate, click, type, press, scroll, back, snapshot:
+  // gregale-browser act <kind>. vmmd builds the command from the validated
+  // fields below, never from shell text.
+  string kind = 2;
+  // url is navigate's page, http or https on a public host.
+  string url = 3;
+  // ref is click's and type's element, from the last snapshot.
+  int32 ref = 4;
+  // text is what type enters, at most SandboxBrowserTypeMaxChars.
+  string text = 5;
+  // submit has type press Enter after entering text.
+  bool submit = 6;
+  // key is press's key, one of a closed set.
+  string key = 7;
+  // direction is scroll's, up or down.
+  string direction = 8;
+  // max_chars bounds the page text the snapshot returns.
+  int32 max_chars = 9;
+  int64 timeout_ms = 10;
+  int64 max_output_bytes = 11;
+  // screenshot has the action also capture the viewport as a JPEG, which
+  // vmmd stores at storagekey.SandboxScreenshot (ADR-20261117065818 §5).
+  bool screenshot = 12;
+}
+
+// RunSandboxActionDone is an action's end: the command's exit code and
+// standard output, the page snapshot as JSON when it exited 0.
+message RunSandboxActionDone {
+  string action_id = 1;
+  int32 exit_code = 2;
+  bytes output = 3;
+  bool timed_out = 4;
+  bool truncated = 5;
+  // error is why the command could not run, when it never did.
+  string error = 6;
+  // screenshot_bytes is the size of the screenshot vmmd stored, or 0 when
+  // none was asked or kept.
+  int64 screenshot_bytes = 7;
+}
+
+// RunSandboxTask is a sandbox task: a closed set of kinds, each a fixed
+// command vmmd builds from validated fields, never shell text.
+message RunSandboxTask {
+  // kind is "browse": gregale-browser fetch <url>.
+  string kind = 1;
+  string url = 2;
+  // max_chars bounds the page text the fetch returns.
+  int32 max_chars = 3;
+  int64 timeout_ms = 4;
+  int64 max_output_bytes = 5;
+}
+
+// RunSandboxTaskDone is a sandbox task's end: the command's exit code and
+// standard output, capped at max_output_bytes.
+message RunSandboxTaskDone {
+  int32 exit_code = 1;
+  bytes output = 2;
+  bool timed_out = 3;
+  bool truncated = 4;
+  // error is why the command could not run, when it never did.
+  string error = 5;
 }
 
 // CaptureSandboxSnapshotRequest is the session machine to capture, without
@@ -3556,6 +3647,10 @@ message CaptureSandboxSnapshotRequest {
   string network_mode = 10;
   string namespace = 11;
   string capture_id = 12;
+  // browser captures the browser shape: vmmd prewarms Chromium (starts,
+  // waits for, stops it and deletes its profile) before the capture, so
+  // nothing that runs is in the snapshot (ADR-20261116182615 §2).
+  bool browser = 13;
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),
@@ -3580,12 +3675,40 @@ message RunSandboxEvent {
     // SandboxUsageReportSec and once more before the stream ends on close.
     // Each frame is cumulative and supersedes the last.
     AgentRunUsage usage = 8;
+    // task_done ends a sandbox task (ADR-20261116182615 §3).
+    RunSandboxTaskDone task_done = 9;
+    // action_done ends an action (ADR-20261117065818 §2).
+    RunSandboxActionDone action_done = 10;
+    // web_domains is the domains a web-mode session was granted, or refused, since
+    // the last such frame (ADR-20261117091026 §4): each grant once per
+    // registrable domain, each refusal once per name and reason.
+    RunSandboxWebDomains web_domains = 11;
   }
+}
+
+message RunSandboxWebDomains {
+  repeated RunSandboxWebDomain domains = 1;
+}
+
+message RunSandboxWebDomain {
+  // domain is the registrable domain of a grant or a budget refusal, or the
+  // name asked for of a policy or platform refusal.
+  string domain = 1;
+  // refused is empty for a grant, else "policy", "budget" or "platform".
+  string refused = 2;
+  int64 at_unix_ms = 3;
 }
 
 message RunSandboxBooted {
   WakeMethod method = 1;
   int64 boot_ms = 2;
+  // actions is set by a vmmd that runs browser actions on this session
+  // (ADR-20261117065818 §2): a browser session in web mode.
+  bool actions = 3;
+  // egress_policy is set by a vmmd that enforces a session's domain policy
+  // (ADR-20261117091026 §3); agentd closes a session with a policy that
+  // boots without it.
+  bool egress_policy = 4;
 }
 
 // RunSandboxActivity reports the session's calls, at most once a second

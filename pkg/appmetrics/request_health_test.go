@@ -122,3 +122,29 @@ func TestRequestHealth_IncompleteOrInvalidEvidence(t *testing.T) {
 		})
 	}
 }
+
+// No series for the release: unobserved while the gateway exports series
+// for other apps, unavailable when it exports none at all.
+func TestRequestHealth_UnobservedRelease(t *testing.T) {
+	for _, tt := range []struct {
+		name, live, want string
+	}{
+		{"pipeline live", `[{"value":[0,"3"]}]`, RequestsUnobservedReason},
+		{"no series anywhere", `[]`, "request_evidence_unavailable"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				result := `[]`
+				if r.URL.Query().Get("query") == `count(gateway_request_duration_by_deployment_seconds_count)` {
+					result = tt.live
+				}
+				_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":%s}}`, result)
+			}))
+			defer srv.Close()
+			out := FetchRequestHealth(t.Context(), promql.NewClient(srv.URL, srv.Client()), "app", []string{"serving"})
+			if out.Source != SourceDegraded || out.Reason != tt.want || out.RequestCount != 0 {
+				t.Fatalf("%+v", out)
+			}
+		})
+	}
+}

@@ -59,7 +59,7 @@ func TestStatusNamesLivenessPark(t *testing.T) {
 	app := livenessParkedApp("retail-ui", "a1", "d1")
 	renderCheckoutStatus(checkoutStatus{App: &app, Platform: "gregale status --platform"})
 	got := out.String()
-	for _, want := range []string{"State        parked: liveness failed\n", "! retail-ui is parked: its instances repeatedly failed liveness checks", "gregale inspect retail-ui"} {
+	for _, want := range []string{"State        parked: liveness failed\n", "! retail-ui is parked: its instances repeatedly failed liveness checks", "gregale app health retail-ui --explain"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("status missing %q:\n%s", want, got)
 		}

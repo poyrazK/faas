@@ -40,4 +40,4 @@ Checks require complete traces by default and return exit code 1 for an assertio
 
 Deploy the required handlers first. After editing and validating the definition, save a draft with `gregale workflow stored apply --app APP_SLUG --file stored_workflow.yaml --expected-version 0` for a new name. For an existing name, use its current version. Publish with `gregale workflow stored publish --app APP_SLUG --name approval-flow --expected-version VERSION --scenarios scenarios.yaml`, using the version returned by apply. This checks the saved draft before publishing and blocks publication if a scenario fails. Publishing can enable automatic starts for an event stored workflow. Review trigger settings before publishing.
 
-Docs: https://gregale.dev/docs/cli#gregale-workflow-stored
+Docs: https://gregale.dev/docs/cli-workflows

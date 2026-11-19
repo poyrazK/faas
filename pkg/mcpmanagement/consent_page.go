@@ -2,7 +2,11 @@ package mcpmanagement
 
 import (
 	"html"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // consentCapabilityChoices are the optional scopes chosen before sign-in.
@@ -33,11 +37,10 @@ func consentPage(v consentView) string {
 		}
 	}
 	hidden := `<input type="hidden" name="request_id" value="` + e(v.RequestID) + `"><input type="hidden" name="csrf" value="` + e(v.CSRF) + `">`
-	w(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect to Gregale</title></head>
-<body><main><h1>Connect to Gregale</h1><p>Client: <strong>`, e(v.Client), `</strong></p>`)
+	w(consentDocumentStart("Connect to Gregale", ""), `<p class="steps">Sign in &rarr; Review access &rarr; Return to your agent</p><h1>Connect to Gregale</h1><p>Client: <strong>`, e(v.Client), `</strong></p>`)
+	w(`<p class="fine">Complete sign-in and access review within `, strconv.Itoa(int(api.MCPBrowserAuthorizationTTL/time.Minute)), ` minutes of starting this connection.</p>`)
 	if v.Account == "" && v.LoginURL == "" {
-		w(`<label>Agent tools <select name="toolsets" form="gregale-connect">`)
+		w(`<details><summary>Tools and optional access</summary><p class="fine">Core tools cover apps, deployments, logs and health. Choosing more tools does not grant extra permissions.</p><label>Agent tools <select name="toolsets" form="gregale-connect">`)
 		for _, choice := range []struct{ value, label string }{{"core", "Core tools (default)"}, {"core,release,provision,operate", "Deploy and operate"}, {"core,diagnose,operate", "Diagnose and recover"}, {"core,build-tools,registry", "Build and publish tools"}, {"core,registry", "Discover approved tools"}, {"core,registry,invoke", "Use approved tools"}, {"all", "All available tools"}} {
 			if _, err := connectionToolsets(choice.value, v.MaximumToolsets); err == nil {
 				w(`<option value="`, e(choice.value), `">`, e(choice.label), `</option>`)
@@ -47,11 +50,12 @@ func consentPage(v consentView) string {
 		if v.Native {
 			w(`<label><input type="checkbox" name="capability" value="usage:read" form="gregale-connect"> Read usage and billing costs</label>`)
 		}
+		w(`</details>`)
 	}
 	if v.ClientHost != "" {
 		w(`<p>Published by <strong>`, e(v.ClientHost), `</strong></p>`)
 	}
-	w(`<p>Return address: `, e(v.Redirect), `</p><p>Gregale API: `, e(v.APIBase), "</p>\n")
+	w(`<details><summary>Connection details</summary><dl><dt>Return address</dt><dd>`, e(v.Redirect), `</dd><dt>Gregale server</dt><dd>`, e(v.APIBase), "</dd></dl></details>\n")
 	switch {
 	case v.Account != "":
 		w(`<p>Account: <strong>`, e(v.Account), `</strong></p>`)
@@ -124,7 +128,11 @@ func consentPage(v consentView) string {
 	case v.Native:
 		w(`<p>Sign in to Gregale to choose your account. Then return here to review the agent's access.</p>`, "\n")
 		if v.LoginURL != "" {
-			w(`<p><a href="`, e(v.LoginURL), `" target="_blank" rel="noopener noreferrer">Sign in to Gregale</a></p>`)
+			target := ` target="_blank" rel="noopener noreferrer"`
+			if v.SameTab {
+				target = ""
+			}
+			w(`<p><a class="button" href="`, e(v.LoginURL), `"`, target, `>Sign in to Gregale</a></p>`)
 		}
 		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden)
 		if v.Writes && v.LoginURL == "" {

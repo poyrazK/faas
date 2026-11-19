@@ -2732,7 +2732,7 @@ func rollbackEnvironmentAmbiguousProblem(appSlug string) *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"More than one environment serves this app",
 		fmt.Sprintf("the app serves in several environments and none is production, so a plain rollback cannot tell which one to restore. Name the release: gregale rollback %s --to <deployment|vN>", appSlug)).
-		WithDocs("https://gregale.dev/docs/deploys#rollback")
+		WithDocs("https://gregale.dev/docs/deploys#revisions")
 }
 
 // trafficSplit describes a scope whose traffic more than one deployment
@@ -2794,12 +2794,12 @@ func rollbackDuringTrafficSplitProblem(appSlug string, split trafficSplit) *api.
 		return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 			"A release is still rolling out",
 			fmt.Sprintf("the newest release is still rolling out, so traffic is split and there is no single previous release to roll back to. Stop the rollout and return its traffic to the release it replaced: gregale rollouts recover %s --action abort", appSlug)).
-			WithDocs("https://gregale.dev/docs/deploys#rollback")
+			WithDocs("https://gregale.dev/docs/deploys#revisions")
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"Traffic is split between deployments",
 		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, split.earlier)).
-		WithDocs("https://gregale.dev/docs/deploys#rollback")
+		WithDocs("https://gregale.dev/docs/deploys#revisions")
 }
 
 // rollbackAppCore performs the shared rollback state transition for the REST
@@ -3438,7 +3438,7 @@ func minInstancesAboveMaxConcurrency(minInstances, appMax int) *api.Problem {
 		"Invalid min_instances",
 		fmt.Sprintf("min_instances (%d) exceeds this app's max_concurrency (%d); raise max_concurrency or lower min_instances.", minInstances, appMax)).
 		WithLimit(int64(appMax), int64(minInstances)).
-		WithDocs("https://gregale.dev/docs/apps#min-instances")
+		WithDocs("https://gregale.dev/docs/scale-to-zero#opting-out-keep-n-instances-warm-pro-scale")
 }
 
 func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool, error) {
@@ -8141,6 +8141,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	// `current` field maps straight through without a string copy.
 	announced := make(map[state.StageName]string)
 	var lastStageStateRaw []byte
+	lastLogSeq := initialDeploymentLogSeq(ctx, s.store, id, page, beforeSeq)
 
 	// A deployment that already finished has nothing to tail. End now
 	// rather than at the first status poll: the dashboard's release
@@ -8221,8 +8222,12 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// superseded rows used to keep it open until the 10-min
 			// backstop, so a waiting `gregale deploy` sat on a
 			// cancelled build for minutes (H10-48).
+			lastLogSeq = tailDeploymentLogs(ctx, w, flusher, s.store, id, lastLogSeq)
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
 				if deploymentLogTailDone(d2.Status) {
+					// Rows written between the tail above and the
+					// terminal flip.
+					_ = tailDeploymentLogs(ctx, w, flusher, s.store, id, lastLogSeq)
 					endDeploymentLogStream(w, flusher, d2, announced, &lastStageStateRaw)
 					return
 				}

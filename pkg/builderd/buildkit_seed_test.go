@@ -341,3 +341,46 @@ func TestBuildKitSeedRetryBacksOff(t *testing.T) {
 		t.Fatal("the test's expected waits no longer follow the limits")
 	}
 }
+
+func TestBuildKitSeedAsksTheCacheForRoomFirst(t *testing.T) {
+	need := uint64(BuildDriveMinFreeBytes) + uint64(api.BuildKitSeedReserveBytes)
+	cases := []struct {
+		name      string
+		free      uint64
+		reclaimTo uint64 // free space after a reclaim; 0 leaves it unchanged
+		noReclaim bool
+		wantAsk   bool
+		wantRoom  bool
+	}{
+		{name: "room already", free: need, wantRoom: true},
+		{name: "cache gives room back", free: uint64(BuildDriveMinFreeBytes), reclaimTo: need, wantAsk: true, wantRoom: true},
+		{name: "cache cannot give enough", free: uint64(BuildDriveMinFreeBytes), reclaimTo: need - 1, wantAsk: true},
+		{name: "no cache", free: need - 1, noReclaim: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			free := tc.free
+			var asked int64
+			var reclaim BuildDriveSpaceReclaimer
+			if !tc.noReclaim {
+				reclaim = func(_ context.Context, n int64) error {
+					asked = n
+					if tc.reclaimTo != 0 {
+						free = tc.reclaimTo
+					}
+					return nil
+				}
+			}
+			room, err := buildKitSeedHasRoom(context.Background(), t.TempDir(), reclaim, func(string) (uint64, error) { return free, nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if room != tc.wantRoom {
+				t.Fatalf("room = %v, want %v", room, tc.wantRoom)
+			}
+			if (asked != 0) != tc.wantAsk || (tc.wantAsk && uint64(asked) != need) {
+				t.Fatalf("asked the cache for %d bytes, want ask=%v for %d", asked, tc.wantAsk, need)
+			}
+		})
+	}
+}

@@ -37,14 +37,25 @@ type fakeStore struct {
 	now      func() time.Time
 	sessions []agentstore.Sandbox
 	admitted agentstore.SandboxAdmission
-	queued   int // queued agent runs, which share the cap
-	err      error
+	// egress is the account's default egress policy.
+	egress agentstore.SandboxEgressPolicy
+	queued int // queued agent runs, which share the cap
+	err    error
 	// snapshots are persisted workspaces, newest first.
 	snapshots []agentstore.SandboxSnapshot
 	// ports are exposed ports by session.
 	ports map[string][]agentstore.SandboxPort
 	// templates are sandbox templates by name.
 	templates map[string]agentstore.SandboxTemplate
+	// taskCalls are browse tasks by call, and taskResults their results.
+	taskCalls   map[agentstore.SandboxTaskCall]string
+	taskResults map[string]agentstore.SandboxTaskResult
+	// openArgs is the first action of the last gregale_browser session.
+	openArgs agentstore.SandboxActionArgs
+	// actionResults are gregale_browser actions by "<session>/<seq>".
+	actionResults map[string]agentstore.SandboxActionResult
+	// domains are sessions' domain logs by session.
+	domains map[string][]agentstore.SandboxDomain
 }
 
 func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmission) (agentstore.Sandbox, error) {
@@ -69,7 +80,7 @@ func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmissi
 	sb := agentstore.Sandbox{ID: fmt.Sprintf("00000000-0000-0000-0000-%012d", len(f.sessions)+1), AccountID: a.AccountID, TenantID: a.TenantID,
 		Kind: a.Kind, Preset: a.Preset, RAMMB: a.RAMMB, NetworkMode: a.NetworkMode, State: agentstore.SandboxQueued,
 		IdleTimeoutSec: a.IdleTimeoutSec, ExpiresAt: a.ExpiresAt, Labels: a.Labels, CreatedAt: now, UpdatedAt: now, LastActivityAt: now,
-		WorkspaceSnapshotID: a.WorkspaceSnapshotID, ImageRef: a.ImageRef}
+		WorkspaceSnapshotID: a.WorkspaceSnapshotID, ImageRef: a.ImageRef, EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny}
 	f.admitted = a
 	f.sessions = append([]agentstore.Sandbox{sb}, f.sessions...)
 	if len(a.Ports) > 0 {
@@ -272,6 +283,12 @@ func TestCreateRules(t *testing.T) {
 	}
 	if len(f.store.sessions) != 0 {
 		t.Fatalf("a refused request was admitted: %+v", f.store.sessions)
+	}
+	// ADR-20261112121456 §6: the operator's switch admits web egress.
+	f.h.WebNetwork = true
+	if sb, code := f.create(t, pro(), `{"preset":"codex","network":{"mode":"web"}}`); code != http.StatusCreated ||
+		sb.Network.Mode != api.SandboxNetworkWeb || f.store.admitted.NetworkMode != api.SandboxNetworkWeb {
+		t.Fatalf("web with the switch on = %d %+v", code, sb)
 	}
 	var p api.Problem
 	if code := f.call(t, f.h.Create, pro(), http.MethodPost, "/v1/sandboxes", `{"preset":"codex","env":{"A":"1"}}`, "", &p); !strings.HasPrefix(p.Detail, "env:") {

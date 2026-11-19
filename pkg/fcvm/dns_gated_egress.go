@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -51,6 +54,114 @@ func (m *Manager) resolvedEgressRefusalLocked(inst *Instance, source netip.Addr,
 		return "network generation changed"
 	}
 	return ""
+}
+
+// admitSandboxWebDomain records name's registrable domain against a web-mode
+// session's SandboxWebDistinctDomains budget (ADR-20261112121456 §4), or
+// names why it is refused. A domain once granted stays granted. Caller holds
+// m.mu.
+func admitSandboxWebDomain(inst *Instance, name string) string {
+	// The session's domain policy comes first, so a refused name never
+	// counts against the budget (ADR-20261117091026 §3).
+	if !api.SandboxEgressAllows(inst.webAllow, inst.webDeny, name) {
+		logSandboxWebRefusal(inst, sandboxWebName(name), SandboxWebRefusedPolicy)
+		return "sandbox egress policy refuses " + sandboxWebDomain(name)
+	}
+	domain := sandboxWebDomain(name)
+	if _, ok := inst.webDomains[domain]; ok {
+		return ""
+	}
+	limit := 0
+	if inst.Lease.Plan.Valid() {
+		limit = api.SandboxWebDistinctDomains[inst.Lease.Plan.PlanIndex()]
+	}
+	if len(inst.webDomains) >= limit {
+		logSandboxWebRefusal(inst, domain, SandboxWebRefusedBudget)
+		return fmt.Sprintf("sandbox web distinct domain limit %d reached", limit)
+	}
+	if inst.webDomains == nil {
+		inst.webDomains = make(map[string]struct{})
+	}
+	inst.webDomains[domain] = struct{}{}
+	inst.webLog = append(inst.webLog, SandboxWebDomain{Domain: domain, At: time.Now()})
+	return ""
+}
+
+// Why a web-mode session was refused a domain (ADR-20261117091026 §4).
+const (
+	SandboxWebRefusedPolicy   = "policy"
+	SandboxWebRefusedBudget   = "budget"
+	SandboxWebRefusedPlatform = "platform"
+)
+
+// loggableSandboxWebName reports whether a name the platform refused is
+// plain enough to keep in a session's log: a guest's resolver can ask for
+// anything.
+func loggableSandboxWebName(name string) bool {
+	if name == "" || len(name) > 253 {
+		return false
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' && r != '.' && r != ':' {
+			return false
+		}
+	}
+	return true
+}
+
+// sandboxWebName is name as a session's log keeps it.
+func sandboxWebName(name string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+}
+
+// SandboxWebDomain is a domain a web-mode session was granted, or refused
+// (Refused names why), first at At. A grant or a budget refusal names the
+// registrable domain; a policy or platform refusal names the name asked
+// for, since those rules match names.
+type SandboxWebDomain struct {
+	Domain  string
+	Refused string
+	At      time.Time
+}
+
+// logSandboxWebRefusal records a refused domain once per reason, at most
+// SandboxEgressRefusedLogMax per session. Caller holds m.mu.
+func logSandboxWebRefusal(inst *Instance, domain, reason string) {
+	key := reason + " " + domain
+	if inst.webRefusedLogged[key] || len(inst.webRefusedLogged) >= api.SandboxEgressRefusedLogMax {
+		return
+	}
+	if inst.webRefusedLogged == nil {
+		inst.webRefusedLogged = make(map[string]bool)
+	}
+	inst.webRefusedLogged[key] = true
+	inst.webLog = append(inst.webLog, SandboxWebDomain{Domain: domain, Refused: reason, At: time.Now()})
+}
+
+// DrainSandboxWebDomains returns the domains a web-mode session's VM was
+// granted or refused since the last drain (ADR-20261117091026 §4). An
+// instance that is not live has none.
+func (m *Manager) DrainSandboxWebDomains(instance string) []SandboxWebDomain {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst := m.live[instance]
+	if inst == nil || len(inst.webLog) == 0 {
+		return nil
+	}
+	out := inst.webLog
+	inst.webLog = nil
+	return out
+}
+
+// sandboxWebDomain is the registrable domain of a name a web-mode session
+// resolved: its public suffix and one more label. A name with no known
+// suffix counts as its own domain.
+func sandboxWebDomain(name string) string {
+	name = sandboxWebName(name)
+	if d, err := publicsuffix.EffectiveTLDPlusOne(name); err == nil {
+		return d
+	}
+	return name
 }
 
 // databaseEgressKey is one address . port pair of a bound managed database
@@ -113,6 +224,17 @@ func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Add
 	gated := inst.Net.DNSGated && inst.Net.Netns != ""
 	if inst.Net.SandboxRegistries && !api.SandboxRegistryHost(name) {
 		gated = false
+	}
+	if inst.Net.SandboxWeb {
+		if !api.SandboxWebHost(name) {
+			gated = false
+			if d := sandboxWebName(name); loggableSandboxWebName(d) {
+				logSandboxWebRefusal(inst, d, SandboxWebRefusedPlatform)
+			}
+		} else if reason := admitSandboxWebDomain(inst, name); reason != "" {
+			m.mu.Unlock()
+			return resolvedEgressRefused{reason}
+		}
 	}
 	database := databasePort != 0 && inst.Net.DatabaseEgress && inst.Net.Netns != ""
 	branch := database && inst.Net.EnvironmentBranchContained && inst.environmentBranch.allows(name, databasePort)

@@ -36,6 +36,7 @@ type BindingReconcilerOptions struct {
 // never strand an upstream role or an owned app secret.
 type BindingReconciler struct {
 	cutovers            *CutoverService
+	customRoles         *CustomRoleService
 	service             *BindingService
 	interval            time.Duration
 	batchSize           int
@@ -85,8 +86,11 @@ func NewBindingReconciler(service *BindingService, options BindingReconcilerOpti
 			}
 		}
 	}
+	// Declarations live in the database store; their absence disables the sweep.
+	customRoles, _ := NewCustomRoleService(service.registry, service.databases, CustomRoleServiceOptions{ProviderTimeout: service.providerTimeout})
 	return &BindingReconciler{
 		cutovers:            cutovers,
+		customRoles:         customRoles,
 		service:             service,
 		interval:            options.Interval,
 		batchSize:           options.BatchSize,
@@ -141,6 +145,12 @@ func (r *BindingReconciler) Sweep(ctx context.Context) (BindingReconcileSummary,
 	}
 	if r.cutovers != nil {
 		if err := r.cutovers.Sweep(ctx, r.batchSize); err != nil {
+			sweepErrors = append(sweepErrors, err)
+		}
+	}
+	// Unsettled custom-role declarations are retried here (ADR-20261116213000).
+	if r.customRoles != nil {
+		if err := r.customRoles.Sweep(ctx, r.batchSize); err != nil {
 			sweepErrors = append(sweepErrors, err)
 		}
 	}

@@ -13,7 +13,52 @@ type DeleteDeferrer interface {
 	DeferDelete(ctx context.Context, key string) error
 }
 
-// DeferDeletes makes every shared remote backend under b (GCS, OCI) record
+// GenerationRetireDeferrer records an exclusive artifact's retirement:
+// delete exactly this generation, never a replacement written under the
+// same key (ADR-20261115180000 slice 2). A deferrer that lacks it makes a
+// deferring backend refuse exclusive retirement rather than delete.
+type GenerationRetireDeferrer interface {
+	DeferRetireGeneration(ctx context.Context, key string, generation int64) error
+}
+
+// DeleteGeneration deletes one generation of key from the shared store under
+// b, walking composites as DeferDeletes does. A missing generation is done;
+// a key that now holds another generation returns ErrArtifactReceiptMismatch
+// and is left alone. b must not defer (the control plane's backend).
+func DeleteGeneration(ctx context.Context, b StorageBackend, key string, generation int64) error {
+	if generation <= 0 {
+		return fmt.Errorf("storage: DeleteGeneration needs a positive generation")
+	}
+	switch be := b.(type) {
+	case *GCSStorageBackend:
+		if be.deferDelete != nil {
+			return fmt.Errorf("storage: DeleteGeneration on a deferring backend")
+		}
+		return be.deleteGeneration(ctx, key, generation)
+	case *LocalCacheBackend:
+		return DeleteGeneration(ctx, be.parent, key, generation)
+	case *PrefixRouter:
+		routed, remainder, _, err := be.dispatch(key)
+		if err != nil {
+			return err
+		}
+		return DeleteGeneration(ctx, routed, remainder, generation)
+	case *FallbackStorageBackend:
+		return DeleteGeneration(ctx, be.primary, key, generation)
+	case GenerationDeleter:
+		return be.DeleteGeneration(ctx, key, generation)
+	default:
+		return fmt.Errorf("%w: %T", ErrExclusiveRetireUnsupported, b)
+	}
+}
+
+// GenerationDeleter is a backend outside this package that deletes one
+// object generation, with DeleteGeneration's contract.
+type GenerationDeleter interface {
+	DeleteGeneration(ctx context.Context, key string, generation int64) error
+}
+
+// DeferDeletes makes every shared remote backend under b (GCS, S3, OCI) record
 // deletes through d instead of performing them. Composites are walked: the
 // read-through cache still evicts its local copy and node-local prefix
 // routes still delete their files, since only the shared store loses its
@@ -28,6 +73,9 @@ func DeferDeletes(b StorageBackend, d DeleteDeferrer) (int, error) {
 	}
 	switch be := b.(type) {
 	case *GCSStorageBackend:
+		be.deferDelete = d
+		return 1, nil
+	case *S3StorageBackend:
 		be.deferDelete = d
 		return 1, nil
 	case *OCIRegistryStorageBackend:

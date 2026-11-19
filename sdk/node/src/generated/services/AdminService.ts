@@ -36,6 +36,7 @@ import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
 import type { ObsRecordingCoverage } from '../models/ObsRecordingCoverage.js';
 import type { ObsRuleCoverage } from '../models/ObsRuleCoverage.js';
 import type { ObsRuleHealthResponse } from '../models/ObsRuleHealthResponse.js';
+import type { ObsRuntimeBuilds } from '../models/ObsRuntimeBuilds.js';
 import type { ObsServingHealth } from '../models/ObsServingHealth.js';
 import type { ObsWakeTimeline } from '../models/ObsWakeTimeline.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
@@ -1461,6 +1462,87 @@ export class AdminService {
         400: `Invalid node name or any query parameter, including an empty query.`,
         401: `code: unauthorized`,
         403: `Node notification read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect advisory running-build evidence for selected critical daemons.
+   * Requires operator read scope, MFA and the operator allowlist. Read-only,
+   * advisory identity evidence; this does not qualify or attest a deployment.
+   * Select a versioned build profile explicitly. V1 profiles single-box-v1
+   * and control-plane-v1 preserve the original critical jobs. V2 profiles
+   * single-box-v2 and control-plane-v2 additionally inspect build and
+   * image workers. Single-box expects their static scrape targets; control-plane
+   * expects them on every active configured compute-registry member, using
+   * the existing discovery scope. Telemetry input-health roles stay v1.
+   * Without a role, no sources are read and the state is unknown. Selected
+   * build jobs do not cover every daemon in the fleet. Static
+   * jobs use scrape target membership and a minimum of one. Compute jobs
+   * compare exact node and node_id labels to the active configured compute
+   * registry, so replacement nodes cannot hide missing members behind equal
+   * counts. Draining inactive and unconfigured nodes are outside this scope.
+   * Strict queries pin scrape and build-info values and original sample
+   * timestamps to one evaluation time within three seconds, using at most eight
+   * fixed job readers. Down, missing,
+   * stale, future, pre-boundary, conflicting and unknown-revision evidence
+   * never counts as matching. Freshness is 120 seconds, with 30 seconds of
+   * clock skew at the boundary. Only complete lowercase 40-character commit
+   * SHAs are compared. Target addresses and raw labels, build-time strings
+   * and raw provider errors are excluded; target_id is a SHA-256 digest.
+   * Counts cover all inspected evidence, even beyond the 32-item preview.
+   * Mixed or mismatched revisions can coexist with incomplete inventory;
+   * inspect job availability and all counts. No cached success is returned.
+   *
+   * @returns ObsRuntimeBuilds Bounded advisory build evidence; unknown and incomplete states remain explicit.
+   * @throws ApiError
+   */
+  public static getObsRuntimeBuilds({
+    release,
+    after,
+    expectedRole,
+    compareAt,
+    diagnostics,
+  }: {
+    /**
+     * Requested full source revision to compare with observed builds.
+     */
+    release: string,
+    /**
+     * RFC3339 rollout evidence boundary; retained across retries.
+     */
+    after: string,
+    /**
+     * Explicit minimum role scope; does not discover deployment intent.
+     */
+    expectedRole?: 'single-box-v1' | 'control-plane-v1' | 'single-box-v2' | 'control-plane-v2',
+    /**
+     * Optional earlier evaluation time from the previous response; at most ten minutes old and within the evidence boundary. Compares all inspected targets before previewing.
+     */
+    compareAt?: string,
+    /**
+     * Optional advisory selection with an explicit expected_role. Omit to preserve existing collection; all selects every supported group, none collects only core identity, readiness, process and loop evidence. Otherwise give distinct comma-separated group names. V1 has no advisory jobs, so all and none preserve its core-only scope. Named groups require v2 and include builder_health, handoff_health, preparation_health, build_recovery_health, app_task_health, command_cron_health, command_cron_outcomes, http_cron_delivery, delayed_task_dispatch, command_cron_timing, app_task_results, app_task_operations, post_capture_health and snapshot_prime_health. Unknown, duplicate, unsupported or empty choices are rejected. Selection changes source reads, not verification gates. Selected but unavailable evidence remains distinct from groups intentionally not selected.
+     */
+    diagnostics?: string,
+  }): CancelablePromise<ObsRuntimeBuilds> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/runtime-builds',
+      query: {
+        'release': release,
+        'after': after,
+        'expected_role': expectedRole,
+        'compare_at': compareAt,
+        'diagnostics': diagnostics,
+      },
+      errors: {
+        400: `Missing or invalid release or boundary, or unknown, empty or repeated query keys.`,
+        401: `code: unauthorized`,
+        403: `Runtime build read denied by operator scope or MFA or allowlist policy.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

@@ -260,6 +260,27 @@ Older servers reject the dedicated route. The legacy slug route remains
 bodyless-compatible; its optional `expected_app_id` fence is not a substitute
 for the dedicated route in a mixed-version fleet.
 
+### Purge a deleted app to reuse its name
+
+A deleted app keeps its slug for its seven-day restore window, so a redeploy
+under the same names (for example the same `docker-compose.yml` under a new
+project after `gregale app delete`) is refused. Restoring helps only when the
+app was a member of the project you deploy to; an app from a deleted or
+other project comes back outside it and still collides. To free the name now:
+
+```bash
+gregale app purge api --yes
+```
+
+`POST /v1/deleted-apps/{id}/purge` (empty body, deploy-write/MFA) ends that
+exact app's restore window and removes it and its stored artifacts at once.
+It cannot be undone. `200` with `purged: true` means the slug is free for
+your account; it stays reserved against other accounts for 90 days. A purge
+still held by something else answers `202` with `pending_reason`: the window
+is closed and the grace sweep finishes the purge once the reason clears. An
+app with live object storage buckets is refused with `409 app_not_purgeable`
+before anything changes; restore it and delete its buckets first.
+
 ## Open a shell in a fresh app VM
 
 `gregale app exec` runs a one-off command in a fresh VM built from the app's

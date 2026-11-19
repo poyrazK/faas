@@ -72,6 +72,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"metric", "Show app metrics, request breakdowns and the service map", "Observe"},
 	{"debug", "Inspect requests, traces, issues, profiles and regressions", "Observe"},
 	{"dashboard", "Save dashboards across apps", "Observe"},
+	{"insight", "Count product events, funnels and retention, by flag variant", "Observe"},
 	{"audit", "Search your account's audit log", "Observe"},
 	{"alert", "Manage alert rules, channels, incidents, SLOs and checks", "Observe"},
 	{"mcp", "Connect agents, host MCP servers, or call MCP tools", "Agents"},
@@ -102,6 +103,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release attempt retry", "deploy retry"},
 	{"release logs", "deploys logs"},
 	{"release wait", "deployment wait"},
+	{"release verify", "deployment verify"},
 	{"release status", "deployment status"},
 	{"release cancel", "deploys cancel"},
 	{"release retry", "deploys retry"},
@@ -149,6 +151,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app list", "apps"},
 	{"app delete", "apps rm"},
 	{"app restore", "apps restore"},
+	{"app purge", "apps purge"},
 	{"app instances", "ps"},
 	{"app park", "park"},
 	{"app wake", "wake"},
@@ -201,7 +204,21 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag kill set", "flags kill"},
 	{"flag kill unset", "flags unkill"},
 	{"flag stale list", "flags stale"},
+	{"flag experiment list", "flags experiments list"},
+	{"flag experiment create", "flags experiments create"},
+	{"flag experiment get", "flags experiments get"},
+	{"flag experiment start", "flags experiments start"},
+	{"flag experiment stop", "flags experiments stop"},
+	{"flag experiment promote", "flags experiments ship"},
+	{"flag experiment delete", "flags experiments delete"},
+	{"flag experiment result get", "flags experiments results"},
 	{"flag", "flags"},
+	// ADR 20261117084505: product analytics; `analytics` is request analytics.
+	{"insight event list", "insights events"},
+	{"insight funnel get", "insights funnel"},
+	{"insight retention get", "insights retention"},
+	{"insight request list", "insights requests"},
+	{"insight", "insights"},
 
 	// Data.
 	{"postgres", "postgres"},
@@ -350,6 +367,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"account mfa", "mfa"},
 	{"account", "account"},
 	{"org agent policy", "orgs agent-policy"},
+	{"org support", "orgs support-access"},
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},
@@ -495,6 +513,9 @@ var cliTreeAliases = []cliTreeAlias{
 	// pinned review) and guarded execution take their action as an argument.
 	{"mcp server tasks review", "mcp tasks intent"},
 	{"mcp server tasks run", "mcp tasks execution"},
+	// Retained hosted Task source review takes its action as an argument too.
+	{"mcp server tasks audit", "mcp tasks source-review"},
+	{"mcp server tasks bind", "mcp tasks bindings"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},
@@ -908,14 +929,15 @@ func rewriteAppPath(args []string) ([]string, error) {
 	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 		return args, nil
 	}
+	if isAppProjectCommand(args[1:]) {
+		// `app restart|health|update|wake --project P` runs per project
+		// app; checked before the aliases, which send `app wake` to `wake`.
+		return args, nil
+	}
 	if alias, used, ok := matchCliTreeAlias(args); ok {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
-	if isAppProjectCommand(args[1:]) {
-		// `app restart|health|update --project P` runs per project app.
-		return args, nil
-	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}
@@ -1173,10 +1195,20 @@ type cliTreeEntry struct {
 // cliTreeDiscovery is the discoverable manifest, read once per help screen.
 type cliTreeDiscovery struct {
 	commands map[string]cliCommand
+	// named answers help for a path the user typed when a logged-in CLI
+	// could not read its account view and the hidden set is only the
+	// tier-default guess: listings stay filtered, but `gregale app exec
+	// --help` shows exec's page rather than the parent's (retail-store
+	// GREG-06).
+	named map[string]cliCommand
 }
 
 func newCliTreeDiscovery() cliTreeDiscovery {
-	return cliTreeDiscoveryOf(discoverableCliCommands())
+	d := cliTreeDiscoveryOf(discoverableCliCommands())
+	if discoveryCapabilityView().unconfirmed {
+		d.named = cliTreeDiscoveryOf(visibleCliCommands()).commands
+	}
+	return d
 }
 
 // cliTreeDiscoveryOf indexes manifest, for a surface that documents more
@@ -1196,7 +1228,16 @@ func cliTreeDiscoveryOf(manifest []cliCommand) cliTreeDiscovery {
 // (ADR-20261023115741), and an operator command stays out of the tree.
 func (d cliTreeDiscovery) node(path string) (cliTreeNode, bool) {
 	words := strings.Fields(path)
+	if len(words) == 0 {
+		return cliTreeNode{}, false
+	}
 	command, ok := d.commands[words[0]]
+	if ok && command.Audience == cliAudienceCustomer {
+		if node, found := walkCliTreeNode(command, words[1:]); found {
+			return node, true
+		}
+	}
+	command, ok = d.named[words[0]]
 	if !ok || command.Audience != cliAudienceCustomer {
 		return cliTreeNode{}, false
 	}
@@ -1343,6 +1384,10 @@ func treeHelpWords(typed []string) ([]string, bool) {
 // run() then prints today's help under the typed name.
 func printTreeManifestHelp(w io.Writer, words []string) bool {
 	d := newCliTreeDiscovery()
+	if len(leadingTreeWords(words)) > 1 && d.named != nil {
+		// Help for a verb the user named; see cliTreeDiscovery.named.
+		d.commands = d.named
+	}
 	var command cliCommand
 	if noun, ok := lookupCliTreeNoun(words[0]); ok {
 		// An operator command (postgres) stays out of the tree.

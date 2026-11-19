@@ -20,6 +20,8 @@ on:
       - 'pkg/apid/mcpreadiness/**'
       - 'pkg/state/mcp_readiness_expectation.go'
       - 'pkg/apid/apidserver/private_publication*'
+      - 'pkg/apid/apidserver/hosted_task_acceptance_test.go'
+      - 'pkg/tasktoolbinding/**'
       - 'pkg/api/tool_publication*'
       - 'pkg/state/tool_publication*'
       - 'pkg/state/toolpublicationdb/**'
@@ -218,9 +220,9 @@ jobs:
 
   go-contracts:
     runs-on: ubuntu-latest
-    # Cold race compilation of the state and CLI test units can consume the
-    # former twenty-minute job budget before the final contracts execute.
-    timeout-minutes: 45
+    # A cold race build took 43 minutes before the final PostgreSQL contracts;
+    # allow both unchanged test steps to finish without the job deadline racing exit.
+    timeout-minutes: 60
     services:
       postgres:
         # Match the shared CI cache to avoid Docker Hub pull limits.
@@ -270,9 +272,10 @@ jobs:
           GOMAXPROCS: 2
         run: go test -race -p=1 ./pkg/apid/toolregistry -run '^TestReadinessPublication|^TestPrivateToolPublication|^TestManagedPublication|^TestPrivatePublicationCombinedEvidenceBudget' -count=1
 
-  # Core contracts and starter qualification use independent runners and
-  # databases; run their cold race builds in parallel.
-  starter:
+  # Keep the unchanged native race suite on a prerequisite runner. A cold
+  # build consumed 42 minutes of the 45-minute starter budget before runtime
+  # qualification could begin; starter still requires every native contract.
+  starter-contracts:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Cold race builds of the API package precede all three runtime qualifiers.
@@ -331,6 +334,53 @@ jobs:
           MCP_QUALIFICATION_MANIFEST: ${{ inputs.qualification-manifest }}
           MCP_REVIEWED_COMMIT: ${{ inputs.reviewed-commit }}
         run: python3 scripts/ci/mcp-qualification-check.py "$MCP_QUALIFICATION_MANIFEST" --commit "$MCP_REVIEWED_COMMIT"
+
+  starter:
+    if: github.event.pull_request.draft != true
+    needs: starter-contracts
+    runs-on: ubuntu-latest
+    # Native contracts must pass first; this runner retains the full runtime qualification budget.
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: mcp
+          POSTGRES_DB: mcp
+          POSTGRES_PASSWORD: mcp-ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U mcp"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Restore-only: read main's CLI shard cache instead of letting
+      # setup-go save a ~0.8 GB entry per pull-request ref, which evicted main's
+      # CI cache families from the 10 GB repository budget.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + module cache from main
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-light-test-1-${{ runner.os }}-
+            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false  # restored from main above
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            cmd/gregale/templates/mcp-node/package-lock.json
+            scripts/ops/mcp-sdk-client/package-lock.json
       - name: Build CLI and materialize starter outside the embed tree
         env:
           MCP_TASKS_TEST_DATABASE_URL: postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp
@@ -473,4 +523,6 @@ jobs:
           GOMEMLIMIT: 2GiB
           GOGC: 30
           GOMAXPROCS: 2
-        run: go test -race -v -p=1 ./pkg/apid/apidserver ./migrations -run 'TestPGHandler_RegressionTriageGuardAndReplay|TestPGHandler_DebugRegressionReopensWhenErrorsAppear|TestRegressionReviewVersionFastDefaultAndLegacyHistory|TestScopedRouteMonitor|TestScopedTelemetry|TestScopedWorkerObservation|TestWorkerRolloutObservationHTTP|TestReviewedWorkloadRollout|TestMemReviewedRollout|TestPgReviewedRollout|TestMemReviewedServiceRecovery|TestPgReviewedServiceRecovery|TestMemReviewedPinnedServiceReadiness|TestPgReviewedPinnedServiceReadiness|TestReviewedNativeSource|TestReviewedSourceRef|TestSourceRef_|TestReleaseReviewHTTP|TestMemReleaseReview|TestPgReleaseReview|TestMemReviewedNamedStaging|TestPgReviewedNamedStaging|TestPrivatePublicationExactReplicaProtocol|TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
+        run: |
+          go test -race -v -p=1 ./pkg/apid/apidserver ./migrations -run 'TestPGHandler_RegressionTriageGuardAndReplay|TestPGHandler_DebugRegressionReopensWhenErrorsAppear|TestRegressionReviewVersionFastDefaultAndLegacyHistory|TestScopedRouteMonitor|TestScopedTelemetry|TestScopedWorkerObservation|TestWorkerRolloutObservationHTTP|TestReviewedWorkloadRollout|TestMemReviewedRollout|TestPgReviewedRollout|TestMemReviewedServiceRecovery|TestPgReviewedServiceRecovery|TestMemReviewedPinnedServiceReadiness|TestPgReviewedPinnedServiceReadiness|TestReviewedNativeSource|TestReviewedSourceRef|TestSourceRef_|TestReleaseReviewHTTP|TestMemReleaseReview|TestPgReleaseReview|TestMemReviewedNamedStaging|TestPgReviewedNamedStaging|TestPrivatePublicationExactReplicaProtocol|TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
+          DATABASE_URL=postgres://mcp:mcp-ci-only@localhost:5432/mcp?sslmode=disable go test -race -v -p=1 ./pkg/apid/apidserver -run '^TestHostedTaskNativeAcceptance$' -count=1

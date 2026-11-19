@@ -1887,6 +1887,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
 		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
 		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).
+		// ADR-20261116120000 §3: a wake a baseline health probe alone causes
+		// is recorded so meterd leaves it unbilled and schedd parks it early.
+		WithPlatformProbeWakeRecorder(platformProbeWakeRecorder(pgStore, log)).
 		// ADR-732: route a fork request only when the fork, its token and
 		// its instance all check out (gateway.ForkTargetFromState), and the
 		// fork's creator still holds the app (forkTargetLoader).
@@ -2723,6 +2726,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		log.Warn("gatewayd-internal: log archive config parse failed; archive read-back disabled", "err", archiveCfgErr)
 	case !archiveCfg.Enabled():
 		log.Info("gatewayd-internal: log archive disabled (FAAS_LOG_ARCHIVE_BUCKET unset); archive read-back will return 503")
+	case archiveCfg.WriteOnly:
+		// ADR-20261110210000 slice 3l: this node's archive credentials
+		// only create objects. Archive read-back belongs to the control
+		// plane's gateways (the API host); here it answers 503.
+		log.Info("gatewayd-internal: log archive credentials are write-only on this node; archive read-back is served by the control plane")
 	default:
 		s3c, s3Err := logarchive.NewS3Client(
 			archiveCfg.Endpoint, archiveCfg.Region, archiveCfg.Bucket,
@@ -4416,7 +4424,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ObserveTCPAttempt:     chaosMatchRecorder.ObserveTCPAttempt,
 			Forward:               deps.nodeCache.Forwarding(),
 			RawForward:            deps.nodeCache.RawForwarding(),
-			RecordServiceReply:    serviceReplyRecorder(egressSink),
 			ObserveRequest:        handler.RecordServiceRequest,
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
@@ -4771,7 +4778,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if upstreams == nil {
 				upstreams = serviceDiscoveryUpstreams
 			}
-			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort} {
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort, gateway.SandboxWebDNSPort} {
 				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 				if dnsErr != nil {
 					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
@@ -4783,6 +4790,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// resolve package registries and git hosts only.
 				if dnsPort == gateway.SandboxRegistriesDNSPort {
 					dnsHandler.WithAllowedNamesOnly(api.SandboxRegistryHost)
+				}
+				// ADR-20261112121456 §2: web-mode sandbox sessions resolve
+				// public names only, never Gregale's internal ones.
+				if dnsPort == gateway.SandboxWebDNSPort {
+					dnsHandler.WithAllowedNamesOnly(api.SandboxWebHost)
 				}
 				if chaosMatchRecorder != nil {
 					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)

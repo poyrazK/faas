@@ -172,7 +172,7 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 				if err := decoder.Decode(&got); !errors.Is(err, io.EOF) {
 					t.Fatal("stdout contains more than one JSON receipt")
 				}
-			} else if !strings.Contains(stderr(), "Waiting for active requests to finish") || !strings.Contains(stdout.String(), "Application health has not been verified") {
+			} else if !strings.Contains(stderr(), "Waiting for active requests to finish") || !strings.Contains(stdout.String(), "passed their readiness checks") {
 				t.Fatalf("missing explanation: %s %s", stdout, stderr())
 			}
 		})

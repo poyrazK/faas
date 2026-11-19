@@ -65,6 +65,15 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	if _, err := customerPool.Exec(ctx, string(realtimeSchema)); err != nil {
 		t.Fatal(err)
 	}
+	// Postgres change sources (ADR-20261112140000) install changes.sql after
+	// schema.sql in the same customer database.
+	changesSchema, err := os.ReadFile("../../pkg/commit/changes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := customerPool.Exec(ctx, string(changesSchema)); err != nil {
+		t.Fatal(err)
+	}
 	customerConn, err := customerPool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +154,12 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		// customer's destination database when a mirror starts
 		// (pkg/datapipeline/engine.go); the package's own tests run this SQL there.
 		if strings.HasPrefix(pos, "../../pkg/datapipeline/") && strings.Contains(s.sql, "gregale_pipeline.") {
+			continue
+		}
+		// Auth-organization pipelines read memberships on the customer's
+		// privately resolved Auth endpoint (ADR-20261113205500), never the
+		// control catalog.
+		if strings.HasPrefix(pos, "../../pkg/datapipeline/auth_source.go:") && strings.Contains(s.sql, "gregale_auth.") {
 			continue
 		}
 		// The storage cap probe (ADR-20261025094915 step 6c) creates

@@ -83,7 +83,7 @@ of your apps to another over the internal service network goes straight to the
 target and skips the target's edge rules, `jwt`, `ip`, `waf`, `challenge` and
 `throttle` included. Which apps may make such calls is set by the service
 policy and `x-gregale-allow-callers` (see
-[Internal services](networking.md#internal-services)); check credentials in the
+[Internal services](internal-services.md#internal-services)); check credentials in the
 app itself when a caller must prove more than which app it is.
 
 Work the platform delivers on your account's behalf also skips edge rules:
@@ -170,7 +170,7 @@ A tree is at most 4 levels deep with 32 nodes; a leaf has at most 64 values;
 values and regexes are at most 256 bytes. `asn` accepts `13335` or
 `AS13335`. A client IP the gateway cannot trust, and a country or ASN it
 cannot resolve, read as missing. `verified_bot` and the AI crawler fields are
-described under [AI crawlers](security#ai-crawlers).
+described under [AI crawlers](security.md#ai-crawlers).
 
 ### Lists
 
@@ -223,7 +223,7 @@ The gateway applies the kinds in this order. A rule that answers the request
 ends it, and later kinds do not run.
 
 1. `route` picks the app that serves the request.
-2. The [penalty box](security#penalty-box) refuses clients a rule has boxed.
+2. The [penalty box](security.md#penalty-box) refuses clients a rule has boxed.
 3. App maintenance mode, then `maintenance`.
 4. `redirect`.
 5. `rewrite`, then `headers` (request headers now, response headers on the way out).
@@ -275,8 +275,8 @@ Each rule has one `kind` and an `action` object whose fields depend on it.
 | [`circuit_breaker`](#circuit_breaker) | Tunes when a failing instance is taken out | Hobby+, on request* |
 | [`async`](#async) | Accepts the request and runs it later | Hobby+, preview* |
 | [`respond`](#respond) | Answers with fixed JSON (preview apps only) | All |
-| `waf` | Checks requests against the OWASP Core Rule Set; see [Web application firewall](security#web-application-firewall) | Pro+ |
-| `challenge` | Asks browsers for a proof of work; see [Browser challenge](security#browser-challenge) | Hobby+ |
+| `waf` | Checks requests against the OWASP Core Rule Set; see [Web application firewall](security.md#web-application-firewall) | Pro+ |
+| `challenge` | Asks browsers for a proof of work; see [Browser challenge](security.md#browser-challenge) | Hobby+ |
 
 \* `retry` and `circuit_breaker` are not yet generally available, and `async`
 is in preview. Each is enabled per account: until it is enabled for yours,
@@ -285,7 +285,7 @@ to have one enabled.
 
 `ip`, `geo`, `throttle` and blocking `waf` rules can also put a client they
 keep refusing in a penalty box for the whole app; see
-[Penalty box](security#penalty-box).
+[Penalty box](security.md#penalty-box).
 
 ### route
 
@@ -324,6 +324,9 @@ pair it with a `match_path` that selects the requests you mean. Access gates
 and the rewritten path; see [Order of kinds](#order-of-kinds).
 
 ### redirect
+
+A `redirect` rule answers at the edge, without calling your app, with a
+redirect from one path or host to another:
 
 ```json
 {"kind": "redirect", "match_host": "old.example.com", "match_path": "/**",
@@ -366,7 +369,7 @@ apps or platform domain, as your app's own cookies do, so the cookie stays
 with the host that set it; your custom domain's `Domain` is kept. Request headers are changed before authentication. Use `set`, not
 `add`, for a header your app relies on, so a client cannot supply its own
 value alongside it. For common security headers,
-[Security headers on your app](security#security-headers-on-your-app) sets a
+[Security headers on your app](security.md#security-headers-on-your-app) sets a
 recommended rule.
 
 #### Credentials in request headers
@@ -458,7 +461,7 @@ Rules saved before this default keep their saved value.
 
 `mcp` turns the rule into an MCP resource-server policy, and
 `platform_tenant_external_ref_claim` maps a claim to a
-[platform tenant](platform-tenants). If the gateway cannot load the JWKS, the
+[platform tenant](platform-tenants.md). If the gateway cannot load the JWKS, the
 request gets 503 rather than passing unchecked.
 
 ### ip
@@ -521,7 +524,9 @@ unset to keep `max_body_bytes` there too. It also caps the streamed response.
             "key_fields": ["ip", "header:x-username"], "count_statuses": [401]}}
 ```
 
-A token bucket refilled at `requests_per_second` and holding `burst` tokens.
+A `throttle` rule rate-limits requests per client IP, API key or another
+key (`key_by` below). Each key gets a token bucket refilled at
+`requests_per_second` and holding `burst` tokens.
 A request that finds the bucket empty gets 429 `rate_limited`; responses on
 the route carry `X-RouteRateLimit-Limit`, `-Remaining`, `-Reset` and
 `-Policy`. Both values must stay within your plan's rate limit (see
@@ -770,7 +775,7 @@ the same time.
 
 - `gregale edge rule trace` shows which rules a request would match and
   what each would do, and can compare a proposed change; see
-  [Reusable edge-rule trace scenarios](edge-rule-trace). It includes the
+  [Reusable edge-rule trace scenarios](edge-rule-trace.md). It includes the
   `*` and host-pattern rules of your other apps with the same owner that
   cover the host, as the gateway applies them; `GET
   /v1/apps/{slug}/edge-rules?covering=true` lists them with each rule's
@@ -837,5 +842,5 @@ refused until the plan allows them again. Delete the ones you no longer need.
 | 503 `traffic_policy_unavailable` | a rule on the host the gateway cannot enforce; the detail names it, and `gregale edge rule list` warns about it |
 | 503 `request_budget_exceeded` | `budget` |
 
-Errors use the [problem format](errors); `gregale edge rule events
+Errors use the [problem format](errors.md); `gregale edge rule events
 --request-id <id>` finds the rule behind a refused request.

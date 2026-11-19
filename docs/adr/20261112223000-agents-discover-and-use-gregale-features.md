@@ -256,3 +256,68 @@ separate work, tracked by the exemption list shrinking.
   and detection can be wrong; the owner chose hint-only.
 - **Fix only the liveness flag.** That closes this gap, not the next
   API-only field or the next feature an agent cannot find.
+
+## Amendment 1 (2026-11-17): the CLI names the coding agent in its User-Agent
+
+### Context
+
+The CLI already knows when a coding agent runs it (§5), but it kept that to
+itself. Coding agents are now a planned acquisition channel, and nothing on
+the server could tell an agent's deploy from a person's: deploy audit rows
+carry `actor_via` (`api`, `cli`, `dashboard`, `github`), and the CLI's
+User-Agent named only its release and platform. Hosted MCP and agent keys
+were visible per key (agent connections), but not on the deploys they made.
+
+### Decision
+
+1. `pkg/api.CodingAgents` is the one table of markers and reported names
+   (`claude-code`, `codex`, `cursor`, `gemini-cli`). The CLI's hint (§5),
+   its User-Agent and the server's parser all read it.
+2. Run under a known agent, the CLI's User-Agent adds `; agent=<name>` to its
+   comment: `gregale/0.1.0 (linux/amd64; agent=claude-code)`. `DO_NOT_TRACK`
+   set to anything but `0` leaves it out. `GREGALE_NO_AGENT_HINT` still only
+   controls the hint. Defaults, prompts and output do not change, so §5's
+   "without changing behavior" holds.
+3. apid adds two keys to the audit payload of `app.created`, `app.deployed`,
+   `deploy.local_tarball`, `deploy.source_ref` and `upload.session_committed`
+   (`mergeAgentAudit`, beside `mergeActorAudit`):
+   - `actor_agent`: the name `api.CodingAgentFromUserAgent` reads from a
+     `gregale/` User-Agent; any name outside the table is dropped.
+   - `actor_agent_key`: `agentconnections.Kind` of the authenticated key
+     (`hosted_mcp`, `agent_key`, `app_agent`).
+   Absent values add no keys.
+4. The agent name is self-reported. It attributes usage and never grants or
+   refuses anything, so it does not reopen the header-sniffing problem
+   `deploy_actor.go` describes for `deployed_via`.
+
+No schema change: the keys live in `audit_log.data`. API keys minted by
+`gregale login` or `gregale mcp connect --headless` in an agent's shell also
+record the agent through their existing `created_ua` column.
+
+Accounts whose first agent deploy happened in their first week, by agent:
+
+```sql
+SELECT data->>'actor_agent' AS agent, count(DISTINCT l.account_id) AS accounts
+FROM audit_log l JOIN accounts a ON a.id = l.account_id
+WHERE l.kind IN ('app.deployed', 'deploy.local_tarball', 'deploy.source_ref', 'upload.session_committed')
+  AND l.data ? 'actor_agent'
+  AND l.received_at < a.created_at + interval '7 days'
+GROUP BY 1;
+```
+
+The operator overview (`GET /v1/admin/obs/overview`, `gregalectl obs
+overview`) reports the same per agent as `coding_agents`: deploys in the last
+24 hours, and accounts created in the beta funnel's 14-day window that
+deployed through the agent, with how many served a request and how many pay.
+
+### Rejected alternatives
+
+- **A `deployments.deployed_by_agent` column or a new table.** Needs a
+  migration and a CHECK for a value the client reports itself; the audit
+  payload answers the funnel question without one. Revisit if dashboards
+  need it outside the audit log.
+- **A Prometheus label on every apid request.** Counts requests, not
+  accounts, so it cannot answer "which agent-made accounts pay"; it can be
+  added later from the same parser.
+- **An opt-in flag.** Nobody would set it, and the name carries no personal
+  data. `DO_NOT_TRACK` is the conventional opt-out.

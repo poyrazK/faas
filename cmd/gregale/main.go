@@ -274,7 +274,7 @@ func run(args []string) (status int) {
 	// Help is always local and comes from the same manifest as completion and
 	// the generated reference. This also handles flags preceding --help.
 	if len(args) > 1 && args[0] != "help" && hasHelpFlag(args[1:]) {
-		if command, ok := lookupDiscoverableCommand(args[0]); ok {
+		if command, ok := lookupNamedHelpCommand(args[0]); ok {
 			if printManifestHelpAs(typed, args, command, args[1:]) {
 				return 0
 			}
@@ -315,7 +315,7 @@ func run(args []string) (status int) {
 			_, _ = fmt.Fprint(osStdout, topLevelUsage(showAll, showOperator))
 			return 0
 		}
-		if command, ok := lookupDiscoverableCommand(args[1]); ok && cliCommandAvailable(command.Name) {
+		if command, ok := lookupNamedHelpCommand(args[1]); ok && cliCommandAvailable(command.Name) {
 			if printManifestHelpAs(typed, args, command, args[2:]) {
 				return 0
 			}
@@ -451,6 +451,9 @@ func run(args []string) (status int) {
 		}
 		if len(args) > 1 && args[1] == subRestore {
 			return cmdAppsRestore(args[2:])
+		}
+		if len(args) > 1 && args[1] == "purge" {
+			return cmdAppsPurge(args[2:])
 		}
 		// `gregale apps routes <slug>` — ADR-093 Tier B item #2
 		// operator entry point. Must come before the default
@@ -593,6 +596,9 @@ func run(args []string) (status int) {
 	case "park":
 		return cmdPark(args[1:])
 	case "wake":
+		if isAppProjectCommand(args) {
+			return cmdAppProject(args)
+		}
 		return cmdWake(args[1:])
 	case "wake-ahead":
 		return cmdWakeAhead(args[1:])
@@ -620,6 +626,8 @@ func run(args []string) (status int) {
 		return cmdSites(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
+	case "insights":
+		return cmdInsights(args[1:])
 	case "flags":
 		return cmdFlags(args[1:])
 	case "product":

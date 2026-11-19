@@ -22,6 +22,23 @@ import (
 	"time"
 )
 
+// Short-lived authored-source retention preview; these are storage/admission
+// ceilings, not build limits. Expired identities remain immutable tombstones.
+const (
+	MCPInlineSourceMaxBytes                   = 96 << 10
+	HostedTaskSourceCleanupTimeout            = 5 * time.Second
+	HostedTaskSourceRoleMaxBytes              = 2 << 20
+	HostedTaskSourceRoleMaxEntries            = 1024
+	HostedTaskSourceRequestMaxBytes           = 8 << 20
+	HostedTaskSourceCiphertextMaxBytes        = 8 << 20
+	HostedTaskSourceAccountCiphertextMaxBytes = 16 << 20
+	HostedTaskSourceActivePerAccount          = 2
+	HostedTaskSourceRecordsPerAccount         = 256
+	HostedTaskSourceRetention                 = 15 * time.Minute
+	HostedTaskSourceSweepInterval             = time.Minute
+	HostedTaskSourceSweepBatch                = 128
+)
+
 // OpenAPI tool generation is offline and bounded independently of deployment
 // quotas. Generated adapters use the normal application egress and MCP limits.
 const (
@@ -298,6 +315,32 @@ const (
 	UnverifiedAccountExpiryBatch = 100
 )
 
+// Customer-granted support access (ADR-20261116163508). A grant lasts
+// SupportGrantDefaultTTL unless its owner or admin picks another duration,
+// at most SupportGrantMaxTTL, and names at most SupportGrantMaxApps apps. A
+// support request waits SupportGrantRequestTTL for a decision, and one
+// organization has at most SupportGrantMaxOpenRequests open at once. Owners
+// and admins get at most one "support changed something" mail per
+// SupportActionMailInterval; the activity log records every action.
+const (
+	SupportGrantDefaultTTL      = 24 * time.Hour
+	SupportGrantMaxTTL          = 7 * 24 * time.Hour
+	SupportGrantMaxApps         = 100
+	SupportGrantRequestTTL      = 24 * time.Hour
+	SupportGrantMaxOpenRequests = 3
+	SupportActionMailInterval   = 10 * time.Minute
+	// SupportGrantHistoryLimit is how many ended grants an organization's
+	// support-access view lists after every live one.
+	SupportGrantHistoryLimit = 50
+	// SupportReasonMinChars and SupportReasonMaxChars bound a grant's or a
+	// request's reason, in characters.
+	SupportReasonMinChars = 3
+	SupportReasonMaxChars = 400
+	// SupportGrantSummaryPollInterval is how often apid looks for ended
+	// grants to mail their end-of-access summary.
+	SupportGrantSummaryPollInterval = time.Minute
+)
+
 // EmailChangeRevertWindow is how long after a confirmed sign-in email
 // change an operator can move the account back to the previous address
 // (`gregalectl accounts revert-email`, ADR 20261110100000).
@@ -453,6 +496,12 @@ const (
 // user agent are kept (ADR-20261113160000). Afterwards meterd clears them;
 // the method, country, network owner and email domain stay with the account.
 const SignupFactsPersonalRetention = 90 * 24 * time.Hour
+
+// MCPBrowserAuthorizationTTL bounds connection setup, including sign-in, MFA
+// and consent (ADR-20261117173000). It applies to the browser transaction and
+// purpose-bound native approval code and their form tokens, not the final
+// OAuth exchange code.
+const MCPBrowserAuthorizationTTL = time.Hour
 
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
 // extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
@@ -1022,13 +1071,38 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// ImagedVerifiedBaseFiles bounds how many base artifacts one imaged remembers
+// verifying from its node cache (ADR-595 amendment 2026-11-17). One entry per
+// base key: the runtime matrix has about ten bases per architecture.
+const ImagedVerifiedBaseFiles = 64
+
+// Deploy scans deferred past the snapshot handoff (ADR-075 amendment
+// 2026-11-17). One runs at a time, so deferral never runs more Grype
+// processes than the serial scans it replaced. A full queue drops the
+// scan; the live-deployment rescan sweep picks it up. The timeout frees
+// the worker from a hung scanner: production's slowest scan in two days
+// was 4.5 minutes.
+const (
+	ImagedDeferredScanWorkers = 1
+	ImagedDeferredScanQueue   = 64
+	ImagedDeferredScanTimeout = 15 * time.Minute
+)
+
+// BuilderdVerifiedCacheArtifacts bounds how many build-cache artifacts one
+// builderd remembers the digest of, so a cache hit skips re-reading the
+// artifact to check it. A node's cache holds a few hundred entries.
+const BuilderdVerifiedCacheArtifacts = 1024
+
 // ImagedLayerReuseMaxRecords bounds the records in imaged's node-local app
 // layer reuse index, per kind (layer keys, artifact digests); the oldest go
 // first (ADR-20261112170911). A record is a few hundred bytes.
 const ImagedLayerReuseMaxRecords = 4096
 
 // ImagedLayerReuseRecordMaxBytes bounds one reuse index record imaged reads.
-const ImagedLayerReuseRecordMaxBytes = 4096
+// A record carries the layer's input and final app manifests so a runtime
+// settings change can patch the manifest instead of rebuilding; a record
+// over the bound reads as a miss.
+const ImagedLayerReuseRecordMaxBytes = 256 << 10
 
 // ImagedLayerReuseSBOMMaxBytes bounds the SBOM imaged copies for a reused app
 // layer; syft's CycloneDX JSON for a large image is a few MB.
@@ -1120,6 +1194,11 @@ const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonSc
 // arrive (ADR-20261031110037).
 const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 
+// ManagedPostgresRotationRefreshWakeDelay is how long a credential rotation's
+// restart row stays closed to outbox replay, so the app's owning scheduler
+// claims the live notification before a peer's replay worker can.
+const ManagedPostgresRotationRefreshWakeDelay = 5 * time.Second
+
 // ManagedPostgresNeonMillicentsPerEgressGB is what Neon charges Gregale per GB
 // (10^9 bytes, Neon's unit) of data transfer past its plan's organization
 // allowance ($0.10, neon.com/pricing on 2026-11-02, ADR-20261102072425).
@@ -1199,6 +1278,19 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 		return 0
 	}
 	return limits.PreviewApps * databases.DatabasesMax
+}
+
+// ManagedPostgresCustomRolesMax is how many custom group roles one managed
+// database may declare (ADR-20261116213000): none on Free, 16 on Hobby and
+// above. Unknown plans fail closed.
+func ManagedPostgresCustomRolesMax(p Plan) int {
+	if _, ok := LimitsFor(p); !ok || p == PlanFree {
+		return 0
+	}
+	if _, managed := ManagedPostgresLimitsFor(p); !managed {
+		return 0
+	}
+	return 16
 }
 
 // ManagedPostgresAllowanceBranchTTLMax is the longest TTL a branch may carry
@@ -2741,6 +2833,89 @@ const (
 	FlagsMaxOwnerBytes = 128
 )
 
+// Product analytics bounds (ADR 20261117084505). Retention is per plan:
+// Limits.AnalyticsRetentionDays; events share Limits.FlagEventsPerMonth.
+const (
+	// AnalyticsEventMaxProperties bounds an event's string properties.
+	AnalyticsEventMaxProperties = 10
+	// AnalyticsPropertyValueMaxBytes bounds one property value.
+	AnalyticsPropertyValueMaxBytes = 256
+	// AnalyticsPropertyKeysMaxPerEnvironment bounds distinct property keys
+	// per environment; a new key over the bound is dropped from the event.
+	AnalyticsPropertyKeysMaxPerEnvironment = 50
+	// AnalyticsEventMaxFlags bounds the flag decisions an event carries,
+	// the same bound as a propagated decision set.
+	AnalyticsEventMaxFlags = 32
+	// AnalyticsSubjectMaxBytes bounds an opaque end-user subject.
+	AnalyticsSubjectMaxBytes = 128
+	// AnalyticsQueryMaxDays bounds a query's range, inside the plan's
+	// retention.
+	AnalyticsQueryMaxDays = 90
+	// AnalyticsQueryMaxUnits bounds the units a funnel or retention query
+	// reads; results say when they were truncated.
+	AnalyticsQueryMaxUnits = 200_000
+	// AnalyticsMaxBreakdownValues bounds breakdown values; the rest are
+	// reported as (other).
+	AnalyticsMaxBreakdownValues = 20
+	// AnalyticsFunnelMinSteps and AnalyticsFunnelMaxSteps bound a funnel.
+	AnalyticsFunnelMinSteps = 2
+	AnalyticsFunnelMaxSteps = 6
+	// AnalyticsFunnelMinWindow and AnalyticsFunnelMaxWindow bound a
+	// funnel's conversion window.
+	AnalyticsFunnelMinWindow = time.Hour
+	AnalyticsFunnelMaxWindow = 30 * 24 * time.Hour
+	// AnalyticsRetentionMaxPeriods bounds a retention query's periods.
+	AnalyticsRetentionMaxPeriods = 12
+	// AnalyticsQueryTimeout bounds one analytics query.
+	AnalyticsQueryTimeout = 15 * time.Second
+	// AnalyticsSweepBatch bounds the events one sweep statement deletes.
+	AnalyticsSweepBatch = 10_000
+)
+
+// Flag experiment bounds (ADR 20261115163113). The monthly conversion event
+// quota is per plan: Limits.FlagEventsPerMonth.
+const (
+	// FlagExperimentsMaxRunning bounds running experiments per environment.
+	FlagExperimentsMaxRunning = 20
+	// FlagExperimentsMaxPerEnvironment bounds experiments of any status.
+	FlagExperimentsMaxPerEnvironment = 200
+	// FlagEventNamesMaxPerEnvironment bounds distinct conversion event names.
+	FlagEventNamesMaxPerEnvironment = 100
+	// FlagEventsMaxBatch bounds events in one runtime ingest call.
+	FlagEventsMaxBatch = 100
+	// FlagExperimentMinUnitsPerArm and FlagExperimentMinConversionsPerArm
+	// gate results: below them an arm reports insufficient_data.
+	FlagExperimentMinUnitsPerArm       = 100
+	FlagExperimentMinConversionsPerArm = 10
+	// FlagExperimentMixingLift is the default mSPRT mixing standard deviation
+	// (absolute conversion-rate lift), fixed when an experiment is created.
+	FlagExperimentMixingLift = 0.02
+	// FlagExperimentAlpha is the significance level of results.
+	FlagExperimentAlpha = 0.05
+	// FlagExperimentSRMAlpha flags a sample ratio mismatch.
+	FlagExperimentSRMAlpha = 0.001
+	// FlagExperimentMaxUnitsPerPass bounds new units one reconciler pass adds
+	// to one experiment.
+	FlagExperimentMaxUnitsPerPass = 50000
+	// FlagExperimentMixingEffect is the default mixing standard deviation of
+	// mean metrics, as a standardized effect size (ADR 20261116190208 §2).
+	FlagExperimentMixingEffect = 0.1
+	// FlagExperimentGuardrailErrorTolerance and
+	// FlagExperimentGuardrailLatencyTolerance are the default guardrail
+	// tolerances: the absolute increase over control in the server error
+	// rate, and in the share of requests slower than control's p95
+	// (ADR 20261116190208 §1).
+	FlagExperimentGuardrailErrorTolerance   = 0.005
+	FlagExperimentGuardrailLatencyTolerance = 0.02
+	// FlagExperimentGuardrailAlpha is the guardrails' confidence level; it is
+	// stricter than results' because a breach acts on its own.
+	FlagExperimentGuardrailAlpha = 0.01
+	// FlagExperimentGuardrailMinRequests is the requests each arm needs
+	// before a guardrail can breach, and that control needs before its p95
+	// latency is fixed as the latency threshold.
+	FlagExperimentGuardrailMinRequests = 1000
+)
+
 // Progressive rollout controls are structural bounds, not plan allowances.
 const (
 	FlagsMaxProgressiveStages                = 8
@@ -3746,6 +3921,15 @@ const (
 	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
 	// the filesystem has less than this free.
 	ArtifactCacheMinFreeBytes int64 = 8 << 30
+	// ArtifactCacheBuildFreeBytes is the free-space floor on a cache disk
+	// large enough to host builds (at least twice this): one build drive
+	// (builderd.BuildDriveMinFreeBytes, 20 GiB) plus a capture of the largest
+	// plan. Since ADR-20261114182830's owner-only eviction, builderd can no
+	// longer evict captures and app layers to make room for a build, so the
+	// eviction owner must keep this much free itself; rc.351 on production-us
+	// (2026-11-18) failed fsn-3's canary build with 18.3 GB free against the
+	// old 15% floor (16.1 GB) (ADR-20261118003000).
+	ArtifactCacheBuildFreeBytes int64 = 24 << 30
 	// SnapshotReplicaRefetchMinMargin and SnapshotReplicaRefetchCooldown
 	// bound how snapshothipd takes back a live snapshot the node cache evicted
 	// (ADR-20261115140000): only while the cache keeps this margin (or a tenth
@@ -3774,6 +3958,30 @@ const (
 	// NodeCacheSweepInterval is how often a compute node removes cached
 	// snapshot captures and runtime release bases nothing needs any more.
 	NodeCacheSweepInterval = 10 * time.Minute
+	// OwnedSnapshotRefetchAfter is how long a node waits before it fetches
+	// again a live snapshot of an app it owns that its cache evicted
+	// (ADR-20261118160000). The wait bounds the churn when the apps a node
+	// owns outgrow its cache budget; a missing replica is fetched at the
+	// next sweep.
+	OwnedSnapshotRefetchAfter = time.Hour
+	// Ownership balance (ADR-20261118160000). A new app goes to the node that
+	// owns the least app RAM for its ceiling, but nothing moved apps back
+	// after a drain or a dead node moved them off, so one drain skewed
+	// ownership for good (production-us 2026-11-17/18: 77 apps and 50 GB on
+	// one node, 1 GB on the other, three hand rebalances). The control plane
+	// moves parked apps from the node owning the largest share of its
+	// admission ceiling to the smallest once the gap exceeds
+	// OwnerBalanceTriggerSpreadPct points, until it is within
+	// OwnerBalanceTargetSpreadPct, at most OwnerBalanceMovesPerTick apps
+	// every OwnerBalanceInterval. Only apps idle (not woken and not moved)
+	// for OwnerBalanceMinIdle move, coldest first, so a busy app keeps its
+	// warm cache; the new owner fetches the moved app's snapshot before its
+	// next wake.
+	OwnerBalanceTriggerSpreadPct = 20
+	OwnerBalanceTargetSpreadPct  = 10
+	OwnerBalanceMovesPerTick     = 5
+	OwnerBalanceInterval         = time.Minute
+	OwnerBalanceMinIdle          = 24 * time.Hour
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -4177,6 +4385,89 @@ const (
 	// dropped; the app's next park queues it again.
 	SnapshotCleanRecaptureMaxAttempts = 3
 )
+
+// Elastic builder slots (ADR-20261118154632). `builder_elastic_slots` is off
+// (builderd keeps its fixed two-slot allocator and the static build slices)
+// or on (each node's `builder_slots` entry sets its reserved and total slots,
+// and slots above the reserved ones borrow idle tenant memory and give it
+// back under pressure).
+const (
+	BuilderElasticSlotsOff = "off"
+	BuilderElasticSlotsOn  = "on"
+	// DefaultBuilderElasticSlots is the compiled `builder_elastic_slots`.
+	DefaultBuilderElasticSlots = BuilderElasticSlotsOff
+
+	// BuilderSlotsDefaultReserved and BuilderSlotsDefaultMax are a node's
+	// slots when `builder_slots` names neither it nor a default: today's
+	// one guaranteed slot and two slots in all.
+	BuilderSlotsDefaultReserved = 1
+	BuilderSlotsDefaultMax      = 2
+	// BuilderReservedSlotsMax bounds a node's reserved slots. A reserved
+	// slot is funded out of tenant sizing (ADR-203's BuilderSlotReserveMB),
+	// and nodes size for exactly one until vmmd re-derives sizing live
+	// (ADR-20261118154632 step 7), so 1 is the only accepted value.
+	BuilderReservedSlotsMin = 1
+	BuilderReservedSlotsMax = 1
+	// BuilderSlotsMax bounds a node's total slots, reserved plus borrowed.
+	BuilderSlotsMax = 16
+	// BuilderSlotsNodeEntriesMax bounds how many nodes `builder_slots` names.
+	BuilderSlotsNodeEntriesMax = 64
+
+	// BorrowedBuildNeedMB is the memory one borrowed build must find before
+	// it starts: its cgroup fence (BuilderMemoryMaxMB of a BuildVMRAMMB
+	// guest; borrowed builders never capture a warm snapshot) plus
+	// BuilderSecondSlotHeadroomMB.
+	BorrowedBuildNeedMB = BuildVMRAMMB + BuildVMOverheadMB + BuilderSecondSlotHeadroomMB
+	// BuilderBorrowAdmitPct: a borrowed slot claims a build only while
+	// tenant memory, borrowed builders and the new build together stay
+	// within this percentage of the tenant slice's memory.max.
+	BuilderBorrowAdmitPct = 70
+	// BuilderBorrowGiveBackPct: above this percentage builderd cancels the
+	// newest borrowed build and returns it to the queue.
+	BuilderBorrowGiveBackPct = 85
+	// BuilderBorrowForcePct: above this percentage for
+	// BuilderBorrowForceSustain vmmd destroys the newest borrowed builder
+	// itself, covering a builderd that is stuck or restarting.
+	BuilderBorrowForcePct = 92
+	// BuilderBorrowHostFloorMB: builderd gives a borrowed build back when
+	// the host's MemAvailable drops below this, and admits one only with
+	// this much left after BorrowedBuildNeedMB.
+	BuilderBorrowHostFloorMB = 1_024
+	// BuilderBorrowHostCriticalMB: vmmd destroys the newest borrowed builder
+	// when MemAvailable stays below this for BuilderBorrowForceSustain.
+	BuilderBorrowHostCriticalMB = 512
+	// BuilderBorrowCheckInterval is how often builderd and vmmd read the
+	// node's memory while a borrowed builder runs.
+	BuilderBorrowCheckInterval = 250 * time.Millisecond
+	// BuilderBorrowForceSustain is how long vmmd's force condition must
+	// hold before it destroys a borrowed builder.
+	BuilderBorrowForceSustain = time.Second
+	// BuilderBorrowCooldown: after a give-back, the node admits no borrowed
+	// build for this long, so a node near its watermark does not start and
+	// cancel builds in a loop.
+	BuilderBorrowCooldown = 60 * time.Second
+	// BuildMaxPreemptions: a build given back this many times runs only on a
+	// reserved slot, so it cannot bounce between borrowed slots forever.
+	BuildMaxPreemptions = 2
+	// BuildPreemptionsAlertPerHour: FaasBuildPreemptionsHigh fires when a
+	// node gives back more builds than this in an hour; its `max` is too
+	// high for its tenant load.
+	BuildPreemptionsAlertPerHour = 6
+	// BorrowedBuilderCPUWeight is faas-borrowed.slice's cpu.weight;
+	// tenants and the control plane keep the default 100, so they win CPU
+	// contention with borrowed builds.
+	BorrowedBuilderCPUWeight = 10
+	// BorrowedBuilderOOMScoreAdj is every borrowed builder's Firecracker
+	// oom_score_adj: if the host still runs out of memory, the kernel kills
+	// a borrowed build before any tenant VM or daemon.
+	BorrowedBuilderOOMScoreAdj = 1000
+)
+
+// ValidBuilderElasticSlots reports whether v is a valid
+// `builder_elastic_slots`.
+func ValidBuilderElasticSlots(v string) bool {
+	return v == BuilderElasticSlotsOff || v == BuilderElasticSlotsOn
+}
 
 // ValidSnapshotCleanRecapture reports whether v is a valid
 // `snapshot_clean_recapture`.
@@ -6414,6 +6705,17 @@ type Limits struct {
 	// whose max(received_at) is older than this bound. Free=0
 	// (off), Hobby=3, Pro=7, Scale=14.
 	DebugTelemetryRetentionDays int
+	// FlagEventsPerMonth is the monthly quota of flag conversion events
+	// (ADR 20261115163113 §4): Free 0 (request telemetry is off), Hobby
+	// 100,000, Pro 1,000,000, Scale 10,000,000. Events over quota are dropped
+	// and counted, never billed. Provisional until the financial model
+	// carries it.
+	FlagEventsPerMonth int64
+	// AnalyticsRetentionDays is how long raw product analytics events are
+	// kept (ADR 20261117084505 §2): Free 0 (off), Hobby 30, Pro 90, Scale
+	// 365. Analytics events share FlagEventsPerMonth. Provisional until the
+	// financial model carries analytics storage.
+	AnalyticsRetentionDays int
 	// DebugTelemetryRequestsPerMinute (ADR-127) is the per-account
 	// rate cap on the IncrementRequestTelemetry ingest RPC. The
 	// recorder publisher reads this at startup; per-record
@@ -7015,6 +7317,8 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryEnabled:           false,
 		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
+		FlagEventsPerMonth:              0,
+		AnalyticsRetentionDays:          0,
 		DebugTelemetryRequestsPerMinute: 0,
 		APIRequestsPerMinute:            600,
 		DebugGuestLogExportsPerMinute:   0,
@@ -7463,6 +7767,8 @@ var planLimits = map[Plan]Limits{
 		// (spec §4.7).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     3,
+		FlagEventsPerMonth:              100_000,
+		AnalyticsRetentionDays:          30,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
 		APIRequestsPerMinute:            1200,
@@ -7879,6 +8185,8 @@ var planLimits = map[Plan]Limits{
 		// for the Pro plan.
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     7,
+		FlagEventsPerMonth:              1_000_000,
+		AnalyticsRetentionDays:          90,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
 		APIRequestsPerMinute:            3000,
@@ -8324,6 +8632,8 @@ var planLimits = map[Plan]Limits{
 		// would blow up Prometheus cardinality).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     14,
+		FlagEventsPerMonth:              10_000_000,
+		AnalyticsRetentionDays:          365,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
 		APIRequestsPerMinute:            6000,
@@ -8370,6 +8680,13 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// AppVMHeadroomMB is how far an app or job VM's cgroup memory.max sits
+	// above BillableRAMMB (ADR-20261116191801). A cold-booting guest touches
+	// all of its RAM, and Firecracker's own mapped pages (~16 MB) did not fit
+	// in PerVMOverheadMB: every 128 MB app OOM-killed on cold boot on prod
+	// (2026-11-15/16). Admission, billing and invariant 2 stay at
+	// BillableRAMMB; only the kill fence moves.
+	AppVMHeadroomMB = 24
 	// DatabaseVMWritebackBurstMB is how far a database VM's memory.max sits
 	// above its memory.high, which is BillableRAMMB (ADR-1027). The VM's
 	// volume writes leave host page cache charged to its cgroup; with only
@@ -8412,7 +8729,7 @@ const (
 	// holds at the idle ladder's freeze level (ADR-20261107122928): at most
 	// this percent of the node's admission ceiling. With the ADR-909 cap of
 	// MeasuredAdmissionMaxOvercommitPercent, reservations including those
-	// instances reach at most 400% of the ceiling; the measured figure still
+	// instances reach at most 450% of the ceiling; the measured figure still
 	// bounds what the node holds.
 	IdleLadderReservationDiscountMaxPercent = 200
 	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
@@ -8439,6 +8756,22 @@ const (
 	IdleLadderFaultMicrosPerPage      = 21
 	IdleLadderMaxExtraKeepGenerations = 2
 	IdleLadderCeilingRelaxWakes       = 5
+	// Kernel lockdown (ADR-20261107220000) closes the multi-gen LRU's
+	// debugfs interface, so on a locked-down host vmmd compresses through
+	// the VM cgroup's memory.reclaim and the kernel picks the coldest pages
+	// (ADR-20261107122928 amendment 1): L3 keeps IdleLadderCold1KeepPercent
+	// of the VM's memory resident, L4 IdleLadderCold2KeepPercent, and each
+	// step of an app's ceiling keeps IdleLadderExtraKeepPercent more. A
+	// level that would keep 100% compresses nothing.
+	IdleLadderCold1KeepPercent = 50
+	IdleLadderCold2KeepPercent = 25
+	IdleLadderExtraKeepPercent = 25
+	// IdleLadderColdLevel is the idle_ladder_level vmmd reports for L3 (L4
+	// reports one more). Measured admission charges an instance at L3 or L4
+	// its latest resident sample, as it does a frozen one, so the memory a
+	// compression frees reaches admission with the next sample
+	// (ADR-20261107122928 amendment 1).
+	IdleLadderColdLevel = 3
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
@@ -8459,9 +8792,12 @@ const (
 	// MeasuredAdmissionMaxOvercommitPercent caps reservations on a node
 	// under measured admission (ADR-909): Σ(ram_mb + 8) may reach this
 	// share of the admission ceiling while measured charges stay under the
-	// ceiling itself. MeasuredAdmissionSampleMaxAgeMillis is how old a node's
-	// measurement may be before admission falls back to reservations.
-	MeasuredAdmissionMaxOvercommitPercent = 200
+	// ceiling itself. 250 since ADR-909 amendment 3 (production-us measured
+	// at most 26–40% of bookings while the 200% cap refused placements); the
+	// durable node guard (admission_reserve_node) clamps at the same value.
+	// MeasuredAdmissionSampleMaxAgeMillis is how old a node's measurement may
+	// be before admission falls back to reservations.
+	MeasuredAdmissionMaxOvercommitPercent = 250
 	MeasuredAdmissionSampleMaxAgeMillis   = 2000
 	// MeasuredEvictionTargetPercent: under measured admission, when a node's
 	// measured memory exceeds its admission ceiling, schedd evicts until it
@@ -8754,10 +9090,17 @@ const (
 	BuildVMOverheadMB = 768
 	// BuilderSliceMaxMB is the faas-cp-build.slice ceiling. It leaves enough
 	// room for one guaranteed builder's full snapshot below the 6 GiB parent.
-	BuilderSliceMaxMB      = 5_120
-	BuildVMVCPU            = 2
-	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
-	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
+	BuilderSliceMaxMB = 5_120
+	// BuilderSecondSlotHeadroomMB is the free builder-slice memory a second,
+	// opportunistic build must leave after its own worst case (a full
+	// snapshot: 2 × BuildVMRAMMB + BuildVMOverheadMB). The default slice
+	// above never has that much free while a build runs, so a second build
+	// runs only where ops raised faas_cp_build_slice_memory_max (retail-store
+	// feedback A3, 2026-11-17).
+	BuilderSecondSlotHeadroomMB = 512
+	BuildVMVCPU                 = 2
+	BuildTimeoutSeconds         = 900 // 15 min build; cold rootless Railpack export needs headroom
+	BuildE2ETimeoutSeconds      = 900 // 15 min end-to-end
 	// BuildCacheExportTimeoutSeconds bounds the second builder VM that exports
 	// a deferred dependency cache (ADR-20261029171525). On rc.304 a cold
 	// Node cache export took about 115 s. The builder slot stays held for the
@@ -11149,6 +11492,69 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxBrowserRAMMBMin is the least RAM a session created with
+	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
+	// 1 GB for ordinary pages.
+	SandboxBrowserRAMMBMin = 1024
+	// SandboxTaskTimeoutSec bounds a sandbox task's command
+	// (ADR-20261116182615 §3), beyond its session's boot.
+	SandboxTaskTimeoutSec = [4]int{0, 60, 120, 120}
+	// SandboxTaskOutputMaxBytes caps the output a sandbox task returns.
+	SandboxTaskOutputMaxBytes = 256 << 10
+	// SandboxBrowseMaxChars bounds the page text gregale_browse returns;
+	// SandboxBrowseDefaultChars is its default.
+	SandboxBrowseMaxChars     = 100_000
+	SandboxBrowseDefaultChars = 20_000
+	// Interactive browser sessions (ADR-20261117065818). A session gregale_browser
+	// opens closes after SandboxBrowserIdleCloseSec with no action, and at
+	// SandboxBrowserLifetimeSec at the latest; it runs at most
+	// SandboxBrowserActionsMax actions, each within
+	// SandboxBrowserActionTimeoutSec. A snapshot's page text defaults to
+	// SandboxBrowserSnapshotDefaultChars, and type enters at most
+	// SandboxBrowserTypeMaxChars.
+	SandboxBrowserIdleCloseSec         = [4]int{0, 300, 600, 600}
+	SandboxBrowserLifetimeSec          = [4]int{0, 1800, 3600, 3600}
+	SandboxBrowserActionsMax           = [4]int{0, 200, 500, 500}
+	SandboxBrowserActionTimeoutSec     = [4]int{0, 30, 30, 30}
+	SandboxBrowserSnapshotDefaultChars = 4000
+	SandboxBrowserTypeMaxChars         = 2048
+	// SandboxScreenshotMaxBytes caps one gregale_browser screenshot; a larger
+	// one is not kept. SandboxScreenshotRetentionSec is how long a session's
+	// screenshots outlive it (ADR-20261117065818 §5).
+	SandboxScreenshotMaxBytes     = 1 << 20
+	SandboxScreenshotRetentionSec = 86_400
+	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
+	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
+	// it. A browser touches many domains per page, so it is above the per-run
+	// fetch limits of ADR-20261027090014 §4.7.
+	SandboxWebDistinctDomains = [4]int{0, 200, 1000, 5000}
+	// SandboxEgressRulesMax bounds each list of a web-mode domain policy
+	// (ADR-20261117091026 §1), an account's default and a session's own.
+	SandboxEgressRulesMax = 100
+	// SandboxEgressRefusedLogMax bounds the refused domains one session's
+	// log keeps (ADR-20261117091026 §4); its granted ones are bounded by
+	// SandboxWebDistinctDomains.
+	SandboxEgressRefusedLogMax = 1000
+
+	// AgentEgressHandshakeMaxAgeSec bounds how old the agent tunnel's latest
+	// WireGuard handshake may be when a sandbox session boots on it
+	// (ADR-20261117185346 §3). WireGuard rekeys every two minutes while
+	// traffic flows, and keepalives hold an idle tunnel's handshake fresh.
+	AgentEgressHandshakeMaxAgeSec = 180
+	// AgentEgressConnsPerVM, AgentEgressConnsPerAccountDomain and
+	// AgentEgressConnsPerDomainFleet are agentproxyd's concurrent-connection
+	// caps (ADR-20261117185346 §4): per agent VM, per account per registrable
+	// domain, and per registrable domain across every agent. A headless
+	// browser opens about six connections per host across a few dozen hosts.
+	AgentEgressConnsPerVM            = 256
+	AgentEgressConnsPerAccountDomain = 64
+	AgentEgressConnsPerDomainFleet   = 512
+	// AgentEgressRegistrationTTLSec is how long agentproxyd keeps a VM's
+	// registration without a renewal; vmmd renews well inside it.
+	AgentEgressRegistrationTTLSec = 300
+	// AgentEgressPeekTimeoutSec bounds how long agentproxyd waits for a
+	// connection's TLS ClientHello or HTTP request head.
+	AgentEgressPeekTimeoutSec = 10
 	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
 	// command.
 	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}
@@ -11678,6 +12084,48 @@ func execCmd(name string, args ...string) ([]byte, error) {
 func LimitsFor(p Plan) (Limits, bool) {
 	l, ok := planLimits[p]
 	return l, ok
+}
+
+// ResidentGBPerCustomerWarnFactor is how far a plan's resident GB per paying
+// customer may run above PlannedResidentGBPerCustomer before
+// FaasResidentGbPerCustomerHigh warns. Validation V7 accepts telemetry within
+// 1.5× of plan (spec Appendix D, ADR-20261117070932).
+const ResidentGBPerCustomerWarnFactor = 1.5
+
+// PlannedResidentConcurrency is the financial model's expected resident
+// concurrency for a plan: how many of one customer's instances run at once on
+// average (spec §1 "Expected resident concurrency (planning)", V7). It is a
+// telemetry comparison only, never an admission or billing input.
+func PlannedResidentConcurrency(p Plan) (float64, bool) {
+	switch p {
+	case PlanFree:
+		return 0.02, true
+	case PlanHobby:
+		return 0.15, true
+	case PlanPro:
+		return 0.60, true
+	case PlanScale:
+		return 3.00, true
+	}
+	return 0, false
+}
+
+// PlannedResidentGBPerCustomer is the resident GB per paying customer the
+// financial model expects of a plan: its planned resident concurrency times
+// the billable size of the plan's largest instance (RAMMB + PerVMOverheadMB).
+// meterd exports it beside the measured value so FaasResidentGbPerCustomerHigh
+// compares each plan with its own model; the §12 0.305 GB target is the blend
+// across the plan mix and says nothing about one plan (ADR-20261117070932).
+func PlannedResidentGBPerCustomer(p Plan) (float64, bool) {
+	concurrency, ok := PlannedResidentConcurrency(p)
+	if !ok {
+		return 0, false
+	}
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0, false
+	}
+	return concurrency * float64(BillableRAMMB(l.RAMMB)) / 1024, true
 }
 
 // OutboundRequestsPerDayMaxForPlan returns the maximum customer-selected
@@ -12429,6 +12877,26 @@ func (p Plan) DebugTelemetryRetentionDays() int {
 		return 0
 	}
 	return l.DebugTelemetryRetentionDays
+}
+
+// AnalyticsRetentionDays returns how long the plan keeps raw product
+// analytics events (ADR 20261117084505 §2); 0 on unknown plans and Free.
+func (p Plan) AnalyticsRetentionDays() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.AnalyticsRetentionDays
+}
+
+// FlagEventsPerMonth returns the plan's monthly flag conversion event quota
+// (ADR 20261115163113 §4); 0 on unknown plans.
+func (p Plan) FlagEventsPerMonth() int64 {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.FlagEventsPerMonth
 }
 
 // DebugTelemetryFairSharePressure is the fraction of an account's telemetry
@@ -14007,6 +14475,13 @@ func BillableRAMMB(ramMB int) int {
 	return ramMB + PerVMOverheadMB
 }
 
+// AppVMMemoryMaxMB is the per-instance cgroup memory.max of an app or job VM:
+// its billable RAM plus AppVMHeadroomMB for Firecracker's own pages
+// (ADR-20261116191801). Never use it for admission or billing.
+func AppVMMemoryMaxMB(ramMB int) int {
+	return BillableRAMMB(ramMB) + AppVMHeadroomMB
+}
+
 // SnapshotMemoryMaxMB returns the temporary per-instance memory.max used for
 // a full Firecracker snapshot. Callers must restore BillableRAMMB(ramMB) as
 // soon as the snapshot request and export path finish.
@@ -14346,6 +14821,12 @@ const (
 	// Qualification changes share a separate report-wide history budget.
 	ObsPostDeployEvidenceEventsMax       = 16
 	ObsPostDeployEvidenceHistoryBytesMax = 16 << 10
+	// ADR-20261115100001: build history records aggregate advisory changes.
+	ObsPostDeployBuildEventsMax       = 16
+	ObsPostDeployBuildHistoryBytesMax = 16 << 10
+	// ADR-20261116110000: lossless history details have an independent decoded
+	// ceiling; the encoded event array still uses the unchanged 16 KiB budget.
+	ObsPostDeployBuildHistoryDecodedBytesMax = ObsRuntimeBuildResponseMaxBytes
 
 	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
 	// expose only a bounded, unhealthy-first metadata preview.
@@ -14358,23 +14839,57 @@ const (
 	ObsRuleCoverageBudget = 3 * time.Second
 	// Critical input diagnostics pin reads to one time and bound work to six
 	// jobs, one always-instantiated readiness gauge each, and strict vectors.
-	ObsInputHealthBudget              = 3 * time.Second
-	ObsInputHealthMaxAge              = 120 * time.Second
-	ObsInputHealthLookback            = 10 * time.Minute
-	ObsInputHealthStep                = 15 * time.Second
-	ObsInputHealthJobsMax             = 6
-	ObsInputHealthTargetsMax          = 4096
-	ObsRuleCoverageItemsMax           = 200
-	ObsRuleCoverageExpectedSetsMax    = 8
-	ObsRuleCoverageExpectedFilesMax   = 8
-	ObsRuleCoverageExpressionMaxBytes = 16 * 1024
-	ObsRuleCoverageLabelsMax          = 64
-	ObsRuleCoverageLabelNameMaxBytes  = 128
-	ObsRuleCoverageLabelValueMaxBytes = 2048
-	ObsRuleCatalogMaxBytes            = 4 << 20
-	ObsRecordingDependentAlertsMax    = 5
-	ObsRecordingUnknownAlertsMax      = 5
-	ObsRecordingDependencyLinksMax    = 16384
+	ObsInputHealthBudget     = 3 * time.Second
+	ObsInputHealthMaxAge     = 120 * time.Second
+	ObsInputHealthLookback   = 10 * time.Minute
+	ObsInputHealthStep       = 15 * time.Second
+	ObsInputHealthJobsMax    = 6
+	ObsInputHealthTargetsMax = 4096
+	// ADR-20261115080000: advisory identity uses selected critical jobs only.
+	ObsRuntimeBuildBudget = 3 * time.Second
+	// ADR-20261115110000: v2 build profiles add builderd and imaged.
+	ObsRuntimeBuildJobsMax          = 8
+	ObsRuntimeBuildSamplesMax       = 4096
+	ObsRuntimeBuildNodesMax         = 1000
+	ObsRuntimeBuildPreviewMax       = 32
+	ObsRuntimeBuildVersionMaxBytes  = 128
+	ObsRuntimeBuildResponseMaxBytes = 64 << 10
+	// ADR-20261115160001: exact integer telemetry, without summing overlapping
+	// imaged recovery scopes. This is a wire safety bound, not an admission quota.
+	ObsRuntimeHandoffPendingMax int64 = 1<<53 - 1
+	// ADR-20261115170001: same exact-integer bound for preparation checkpoints.
+	ObsRuntimePreparationPendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115180001: exact integers for scheduler snapshot attempt evidence.
+	ObsRuntimeSnapshotPrimePendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115190001: exact integers for per-replica post-capture evidence.
+	ObsRuntimePostCapturePendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115200000: exact integers for fleet build recovery observations.
+	ObsRuntimeBuildRecoveryCountMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115210001: exact-integer wire safety for app-task evidence.
+	ObsRuntimeAppTaskPendingMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261116080000: exact-integer wire bound for scoped cron schedules.
+	ObsRuntimeCommandCronSchedulesMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261116090001: exact-integer bounds for local operation counters.
+	ObsRuntimeAppTaskOperationCounterMax = ObsRuntimeHandoffPendingMax
+	// ADR-20261115120001: ten closed wire readiness classes, including zeroes.
+	// ADR-20261115130000: stateless comparison of sampled daemon uptime.
+	ObsRuntimeProcessLookback           = 10 * time.Minute
+	ObsRuntimeProcessUptimeMax          = 10 * 365 * 24 * time.Hour
+	ObsRuntimeProcessStartTolerance     = ObsHealthClockSkewTolerance + time.Second
+	ObsRuntimeProcessResetTolerance     = time.Second
+	ObsRuntimeReadinessReasonsMax       = 10
+	ObsRuntimeReadinessReasonSamplesMax = ObsRuntimeBuildSamplesMax * ObsRuntimeReadinessReasonsMax
+	ObsRuleCoverageItemsMax             = 200
+	ObsRuleCoverageExpectedSetsMax      = 8
+	ObsRuleCoverageExpectedFilesMax     = 8
+	ObsRuleCoverageExpressionMaxBytes   = 16 * 1024
+	ObsRuleCoverageLabelsMax            = 64
+	ObsRuleCoverageLabelNameMaxBytes    = 128
+	ObsRuleCoverageLabelValueMaxBytes   = 2048
+	ObsRuleCatalogMaxBytes              = 4 << 20
+	ObsRecordingDependentAlertsMax      = 5
+	ObsRecordingUnknownAlertsMax        = 5
+	ObsRecordingDependencyLinksMax      = 16384
 
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
@@ -14972,6 +15487,11 @@ func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Du
 // whose setting is above one; the adapter then advertises that many slots
 // per worker.
 const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
+
+// FunctionWorkflowEnv marks a workflow function's build
+// (ADR-20261113120824 amendment 1): its adapter answers every request that is
+// not a workflow call with a 404 problem.
+const FunctionWorkflowEnv = "FAAS_FUNCTION_WORKFLOW"
 
 // PostgresPoolMaxEnv tells an app how many database connections one of its
 // instances can use (ADR-20261104141122). imaged stamps it at build time for
@@ -18152,6 +18672,83 @@ const (
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
 var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
 
+// Production protection baseline (ADR-20261116120000): the objects apid
+// creates for an enrolled app. The objectives are deliberately loose, to
+// page when something is clearly wrong rather than to define the customer's
+// real objective; customers tighten them by editing the objects.
+const (
+	ProtectionBaselineAvailabilitySLOName       = "availability"
+	ProtectionBaselineLatencySLOName            = "latency"
+	ProtectionBaselineHealthCheckName           = "health"
+	ProtectionBaselineEmailChannelName          = "account-email"
+	ProtectionBaselineAvailabilityBurnAlertName = "availability-burn"
+	ProtectionBaselineLatencyBurnAlertName      = "latency-burn"
+	ProtectionBaselineHealthAlertName           = "health-failing"
+	ProtectionBaselineAvailabilityGateName      = "availability"
+
+	// ProtectionBaselineAvailabilityObjectivePct is the availability SLO.
+	ProtectionBaselineAvailabilityObjectivePct = 99.5
+	// ProtectionBaselineLatencyObjectivePct of requests finish within
+	// ProtectionBaselineLatencyThresholdMS.
+	ProtectionBaselineLatencyObjectivePct = 99.0
+	ProtectionBaselineLatencyThresholdMS  = 1000
+	ProtectionBaselineSLOWindowDays       = 30
+	// ProtectionBaselineHealthCheckIntervalSeconds: hourly, unbilled
+	// (ADR-20261116120000 §3).
+	ProtectionBaselineHealthCheckIntervalSeconds = 3600
+	// ProtectionBaselineBurnRate is the fast-burn alert threshold: a rate
+	// that spends 2% of a 30-day budget in one hour.
+	ProtectionBaselineBurnRate = 14.4
+	// ProtectionBaselineHealthFailures consecutive failed runs fire the
+	// health alert.
+	ProtectionBaselineHealthFailures = 2
+	// ProtectionBaselineBurnWindow is the burn alerts' evaluation window
+	// (docs/slos.md: 14.4 over 1h, with the 6h burn folded in).
+	ProtectionBaselineBurnWindow = "1h"
+	// ProtectionBaselineGateActor is the release gates' created_by.
+	ProtectionBaselineGateActor = "gregale-protection"
+)
+
+// Protection baseline reconciler (ADR-20261116120000 §4): apid sweeps every
+// ProtectionReconcileSweepInterval, leases up to ProtectionReconcileBatch
+// due apps for ProtectionReconcileLease, retries an app with work left after
+// ProtectionReconcileRetry and re-checks a finished one after
+// ProtectionReconcileRecheck.
+const (
+	ProtectionReconcileSweepInterval = 30 * time.Second
+	ProtectionReconcileBatch         = 20
+	ProtectionReconcileLease         = 2 * time.Minute
+	ProtectionReconcileRetry         = 15 * time.Minute
+	ProtectionReconcileRecheck       = 24 * time.Hour
+	// ProtectionHealthProbePoll is how often apid claims due baseline
+	// health checks, at most ProtectionHealthProbeBatch at a time, probing
+	// ProtectionHealthProbeWorkers at once.
+	ProtectionHealthProbePoll    = time.Minute
+	ProtectionHealthProbeBatch   = 20
+	ProtectionHealthProbeWorkers = 4
+	// ProtectionBaselineHealthComparison and Window configure the
+	// health-failing alert (docs/synthetic-checks.md: gte 2; the window is
+	// required but ignored for this metric).
+	ProtectionBaselineHealthComparison = "gte"
+	ProtectionBaselineHealthWindow     = "1h"
+)
+
+// Unbilled probe wakes (ADR-20261116120000 §3). schedd parks an instance a
+// baseline health probe alone woke once ProtectionProbeParkGrace has passed
+// since the probe with nothing in flight and no request later than the
+// probe's end plus ProtectionProbeActivitySlack; it reads wakes from the
+// last ProtectionProbeWakeLookback. meterd leaves [woke_at, probe_done_at +
+// ProtectionProbeUnbilledTail] unbilled: the grace, one 10 s reaper tick and
+// the park itself. Wakes are kept PlatformProbeWakeRetention.
+const (
+	ProtectionProbeParkGrace     = 5 * time.Second
+	ProtectionProbeActivitySlack = 2 * time.Second
+	ProtectionProbeWakeLookback  = 10 * time.Minute
+	ProtectionProbeUnbilledTail  = 30 * time.Second
+	PlatformProbeWakeRetention   = 7 * 24 * time.Hour
+	PlatformProbeWakeDeleteBatch = 1000
+)
+
 // Event substrate benchmark workload (spec Appendix D V12,
 // docs/ops/event-substrate-benchmark.md): disposable-database bench sizes,
 // never customer quotas. Events spread over accounts so each subscription
@@ -19599,3 +20196,21 @@ const (
 	DataPipelineWorkQueryMinMillis       = int64(50)
 	DataPipelineMinutesPerDay            = 24 * 60
 )
+
+// Hosted Task binding verification inherits source-intent admission bounds.
+const (
+	HostedTaskBindingRequestMaxBytes   = 16 << 10
+	HostedTaskBindingRecordMaxBytes    = 32 << 10
+	HostedTaskBindingNamespaceMaxBytes = 128
+	HostedTaskBindingSecretMaxBytes    = 32 << 10
+	HostedTaskBindingMaxPins           = 40
+	HostedTaskBindingCatalogMaxTables  = 128
+	HostedTaskBindingPreviousKeysMax   = 16
+	HostedTaskBindingOwnerKeyMinBytes  = 32
+	HostedTaskBindingProbeTimeout      = 15 * time.Second
+	HostedTaskBindingSQLTimeout        = 5 * time.Second
+	HostedTaskBindingCleanupTimeout    = time.Second
+	HostedTaskBindingEvidenceTTL       = time.Minute
+)
+
+const HostedTaskBindingKeyIDMaxBytes = 64

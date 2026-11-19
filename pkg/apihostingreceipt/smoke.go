@@ -36,6 +36,11 @@ const (
 	// SmokeErrorInternalApp explains a skipped smoke: an internal app has no
 	// public route, so in-guest readiness is the candidate's only proof.
 	SmokeErrorInternalApp = "smoke_internal_app"
+	// SmokeErrorCandidateCrashLoop ends a verification the public route
+	// could not prove because the candidate itself kept exiting: schedd
+	// parked it for liveness exhaustion while the probe retried. It is the
+	// app's verdict, not an outage.
+	SmokeErrorCandidateCrashLoop = "smoke_candidate_crash_loop"
 )
 
 const (
@@ -346,10 +351,12 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 	switch verification {
 	case VerificationRouteConnectivity:
 		// 415 is how a gRPC server answers a non-gRPC request (the gRPC
-		// HTTP/2 spec); like 401/403/404 it proves the candidate answered.
+		// HTTP/2 spec), and 405 how a Go workflow function's
+		// ServeWorkflows answers a GET (ADR-20261113120824 amendment 1);
+		// like 401/403/404 they prove the candidate answered.
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
-			resp.StatusCode == http.StatusUnsupportedMediaType
+			resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusUnsupportedMediaType
 	case VerificationAPIRouteContract:
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden

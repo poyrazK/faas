@@ -40,6 +40,7 @@ type HTTPOptions struct {
 	AllowToolInvocation        bool
 	AllowPrivateToolInvocation bool
 	AllowToolPublishing        bool
+	AllowTaskInspection        bool
 	// Toolsets limits the tools every grant lists; nil lists all.
 	Toolsets []string
 	// Onboarding is browser (default) or the explicit api-key fallback.
@@ -100,6 +101,8 @@ type remoteServer struct {
 	cliAccounts accountSlots
 	// metadataClient fetches client metadata documents; nil disables them.
 	metadataClient *http.Client
+	// docs is shared by every connection, so the docs corpus is fetched once.
+	docs *docsLibrary
 }
 
 type grantContextKey struct{}
@@ -169,7 +172,7 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	if opts.Hosted {
 		issuer = opts.ResourceURL
 	}
-	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}}
+	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}, docs: newDocsLibrary(docsSiteURL, nil)}
 	if opts.Hosted && opts.UploadDir != "" {
 		if r.uploads, err = newUploadStore(opts.UploadDir, opts.ResourceURL); err != nil {
 			return nil, err
@@ -294,12 +297,14 @@ func (r *remoteServer) handler() http.Handler {
 	})
 }
 
+const privateContentSecurityPolicy = "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+
 func setPrivateHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", privateContentSecurityPolicy)
 }
 
 func writeOAuthJSON(w http.ResponseWriter, status int, value any) {

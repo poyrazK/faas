@@ -3,7 +3,9 @@ package imaged
 // adr: 20261112170911
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -32,7 +34,7 @@ func TestParseLayerReuse(t *testing.T) {
 func TestLayerReuseKeyCoversEveryLayerInput(t *testing.T) {
 	base := layerReuseInputs{
 		accountID: "acct", imageDigest: "sha256:img", manifest: api.AppManifest{Entrypoint: []string{"node", "index.js"}, Port: 8080},
-		guestInitDigest: "sha256:init", plan: api.PlanPro,
+		guestInitDigest: "sha256:init", plan: api.PlanPro, imagedVersion: "v1",
 	}
 	baseKey, err := layerReuseKey(base)
 	if err != nil {
@@ -46,11 +48,14 @@ func TestLayerReuseKeyCoversEveryLayerInput(t *testing.T) {
 		"image":             func(in *layerReuseInputs) { in.imageDigest = "sha256:img2" },
 		"shared runtime":    func(in *layerReuseInputs) { in.runtime = "node24" },
 		"runner base":       func(in *layerReuseInputs) { in.runtimeBaseDiffIDs = []string{"sha256:l1"} },
-		"split outcome":     func(in *layerReuseInputs) { in.runtimeReason = "content_outside_app" },
+		"start command":     func(in *layerReuseInputs) { in.startCommand = "npm start" },
 		"manifest command":  func(in *layerReuseInputs) { in.manifest.Entrypoint = []string{"node", "server.js"} },
-		"manifest env":      func(in *layerReuseInputs) { in.manifest.Env = map[string]string{"A": "1"} },
+		"manifest PATH":     func(in *layerReuseInputs) { in.manifest.Env = map[string]string{"PATH": "/opt/bin"} },
+		"manifest workdir":  func(in *layerReuseInputs) { in.manifest.WorkingDir = "/srv" },
+		"manifest user":     func(in *layerReuseInputs) { in.manifest.User = "app" },
 		"guest-init binary": func(in *layerReuseInputs) { in.guestInitDigest = "sha256:init2" },
 		"plan":              func(in *layerReuseInputs) { in.plan = api.PlanHobby },
+		"imaged build":      func(in *layerReuseInputs) { in.imagedVersion = "v2" },
 	}
 	for name, change := range changes {
 		in := base
@@ -63,11 +68,25 @@ func TestLayerReuseKeyCoversEveryLayerInput(t *testing.T) {
 			t.Errorf("changing the %s keeps the key", name)
 		}
 	}
+	// Runtime-only settings change only the embedded manifest, which reuse
+	// patches (Kroki feedback 2026-11-17).
+	for name, change := range map[string]func(*layerReuseInputs){
+		"port":        func(in *layerReuseInputs) { in.manifest.Port = 9090 },
+		"env":         func(in *layerReuseInputs) { in.manifest.Env = map[string]string{"A": "1"} },
+		"health path": func(in *layerReuseInputs) { in.manifest.Healthz = "/healthz" },
+	} {
+		in := base
+		change(&in)
+		if key, _ := layerReuseKey(in); key != baseKey {
+			t.Errorf("changing the %s changes the key; it is not layer content", name)
+		}
+	}
 	for _, missing := range []func(*layerReuseInputs){
 		func(in *layerReuseInputs) { in.accountID = "" },
 		func(in *layerReuseInputs) { in.imageDigest = "" },
 		func(in *layerReuseInputs) { in.guestInitDigest = "" },
 		func(in *layerReuseInputs) { in.plan = "" },
+		func(in *layerReuseInputs) { in.imagedVersion = "" },
 	} {
 		in := base
 		missing(&in)
@@ -137,6 +156,8 @@ func TestLayerReuseIndex(t *testing.T) {
 type reuseBuilder struct {
 	*fakeBuilder
 	republishes int
+	patches     []rootfs.ManifestPatch
+	patchErr    error
 }
 
 func (b *reuseBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
@@ -148,6 +169,26 @@ func (b *reuseBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.
 func (b *reuseBuilder) Republish(ctx context.Context, be storage.StorageBackend, key string, src rootfs.PublishedLayer) (rootfs.ArtifactIdentity, error) {
 	b.republishes++
 	return rootfs.NewBuilder(nil).Republish(ctx, be, key, src)
+}
+
+// RepublishWithManifest stands in for the debugfs patch (covered against
+// real e2fsprogs in pkg/rootfs): it publishes the source bytes plus the new
+// manifest's port, so the result has a new identity.
+func (b *reuseBuilder) RepublishWithManifest(ctx context.Context, be storage.StorageBackend, key string, p rootfs.ManifestPatch) (rootfs.ArtifactIdentity, int64, error) {
+	b.patches = append(b.patches, p)
+	if b.patchErr != nil {
+		return rootfs.ArtifactIdentity{}, 0, b.patchErr
+	}
+	src, err := os.ReadFile(p.Source.Path)
+	if err != nil {
+		return rootfs.ArtifactIdentity{}, 0, err
+	}
+	body := append(src, []byte(fmt.Sprintf(" port=%d", p.New.Port))...)
+	if err := be.Put(ctx, key, bytes.NewReader(body)); err != nil {
+		return rootfs.ArtifactIdentity{}, 0, err
+	}
+	id, err := rootfs.ReadArtifactIdentity(ctx, bytes.NewReader(body))
+	return id, 3, err
 }
 
 func TestBuildOrReuseAppLayerRepublishesARecordedLayer(t *testing.T) {
@@ -164,7 +205,7 @@ func TestBuildOrReuseAppLayerRepublishesARecordedLayer(t *testing.T) {
 	key := strings.Repeat("c", 64)
 	deploy := func(app state.App, dep string) rootfs.BuildResult {
 		t.Helper()
-		res, err := h.buildOrReuseAppLayer(ctx, key, app, state.Deployment{ID: dep}, rootfs.BuildInput{Storage: be, StorageKey: "apps/a/" + dep + ".ext4"})
+		res, err := h.buildOrReuseAppLayer(ctx, key, app, state.Deployment{ID: dep}, rootfs.BuildInput{Storage: be, StorageKey: "apps/a/" + dep + ".ext4"}, nil)
 		if err != nil {
 			t.Fatalf("deploy %s: %v", dep, err)
 		}
@@ -211,7 +252,7 @@ func TestBuildOrReuseAppLayerRepublishesARecordedLayer(t *testing.T) {
 
 	// With reuse off, nothing is looked up or recorded.
 	h.WithLayerReuse("")
-	if _, err := h.buildOrReuseAppLayer(ctx, "", app, state.Deployment{ID: "dep-5"}, rootfs.BuildInput{Storage: be, StorageKey: "apps/a/dep-5.ext4"}); err != nil {
+	if _, err := h.buildOrReuseAppLayer(ctx, "", app, state.Deployment{ID: "dep-5"}, rootfs.BuildInput{Storage: be, StorageKey: "apps/a/dep-5.ext4"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(builder.calls) != 4 {

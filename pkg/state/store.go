@@ -2206,6 +2206,10 @@ type Store interface {
 	// ownership-scoped query can otherwise miss a still-running VM on the
 	// node being drained.
 	ListInstancesOnNodeID(ctx context.Context, nodeID string) ([]Instance, error)
+	// ListResidentInstancesOnNodeID is ListInstancesOnNodeID limited to the
+	// instances that hold a VM on the node (ResidentStates), without the
+	// node's parked and terminal history. The operator node detail reads it.
+	ListResidentInstancesOnNodeID(ctx context.Context, nodeID string) ([]Instance, error)
 	// ListInstancesForLifecycleReconciliation returns live instances whose
 	// parent app or account is in a deletion state. It is the durable fallback
 	// for pg_notify: schedd uses it to destroy VMs after a missed notification
@@ -2498,6 +2502,13 @@ type Store interface {
 	// tombstone before the grace sweeper deletes external artifacts. Repeated
 	// claims are idempotent so failed artifact deletion remains retryable.
 	ClaimAppDeletion(ctx context.Context, id string) error
+	// EndAppDeleteGrace closes a deleted app's restore window now, so its
+	// owner can purge it and reuse the slug (gregale app purge). It refuses
+	// with ErrConflict while the app keeps a live object bucket, which would
+	// block the purge, so the window never closes on a purge that cannot run.
+	// A row that is not deleted, or has no deadline, returns ErrNotFound; an
+	// already expired window is left as it is.
+	EndAppDeleteGrace(ctx context.Context, id string) (App, error)
 	// ListAppDeletionArtifacts returns storage keys referenced by this app and
 	// no other app. The grace sweeper deletes these before removing database
 	// state so a failed storage operation remains durably retryable.

@@ -3,6 +3,7 @@ package apidserver
 import (
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/legal"
@@ -18,6 +19,16 @@ var loadLegal = sync.OnceValues(legal.Load)
 func publishedLegal() (legal.Config, bool) {
 	cfg, err := loadLegal()
 	return cfg, err == nil && cfg.Published()
+}
+
+// legalChangeNotice is the pending legal change the dashboard announces, or
+// "" when none is pending or the documents are unpublished.
+func legalChangeNotice() string {
+	cfg, ok := publishedLegal()
+	if !ok {
+		return ""
+	}
+	return cfg.PendingNotice(time.Now())
 }
 
 // termsPublished reports whether sign-in pages show the Terms notice.

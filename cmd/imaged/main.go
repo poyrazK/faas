@@ -366,6 +366,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	case "gcs":
 		log.Info("imaged: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("imaged: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("imaged: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
 			"apps_root", appsRoot)
@@ -561,6 +565,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
+		WithDeferredDeployScans().
 		WithReleasePrestage(prestageOnlyFromEnv(getenv)).
 		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
 		WithArtifactReplicator(artifactReplicator).
@@ -629,10 +634,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// ADR-20261020085706 amendment 13: an approved release held before its
 	// release command waits out the break-glass release pause.
 	h.WithReleasePause(startReleasePauseWatcher(ctx, store, pool, log))
-	// ADR-20261029174438: prepare several deployments at once, off by default.
-	parallelPrep, err := parseBoolEnv("FAAS_IMAGED_PARALLEL_PREP", getenv("FAAS_IMAGED_PARALLEL_PREP"))
+	// ADR-20261029174438: prepare several deployments at once, on unless
+	// FAAS_IMAGED_PARALLEL_PREP=false. db sizes imaged's direct pool from the
+	// same variable.
+	parallelPrep, err := db.ImagedParallelPrep(getenv(db.ImagedParallelPrepEnv))
 	if err != nil {
-		return err
+		return fmt.Errorf("imaged: %s must be a boolean", db.ImagedParallelPrepEnv)
 	}
 	prepWorkers := 1
 	if parallelPrep {

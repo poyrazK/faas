@@ -23,8 +23,698 @@ gregalectl obs verify-deployment \
 an RFC3339 timestamp representing the rollout evidence boundary (allowing the
 existing 30-second clock skew). Record it **after** release convergence and
 retain it across retries. Setting an older boundary weakens the freshness claim.
-The SHA labels the report; these monitoring APIs do not prove runtime identity.
-The platform workflow separately verifies fleet release convergence.
+The SHA labels the report; the three health gates do not prove runtime identity.
+Optional advisory build evidence compares observed metric identities with that
+SHA for explicitly selected critical jobs. The platform workflow separately
+verifies fleet release convergence.
+
+### Advisory running-build evidence
+
+Pass an explicit versioned build profile with `--expected-role` to include
+`runtime_builds` in the JSON and human report. For example, add
+`--expected-role control-plane-v2` to the verification command above after
+recording the same release SHA and evidence boundary. This adds one protected
+read per poll from `GET /v1/admin/obs/runtime-builds?release=...&after=...&expected_role=...`.
+Without the flag, the report explains that the role was not selected and makes
+no additional HTTP request. An older server returning 404 remains advisory
+unknown. Build evidence never changes the health gates, exit codes, stability
+window or confirmed-fault flag, and does not add another polling iteration.
+
+The original profiles remain unchanged: `single-box-v1` covers API, public
+gateway, scheduler and VM manager; `control-plane-v1` covers API, public gateway,
+control-plane scheduler, compute gateway/scheduler and VM manager. Their job
+sets and selectors are frozen independently of telemetry-input roles.
+
+`single-box-v2` and `control-plane-v2` add `builderd` and `imaged` to their
+corresponding v1 profiles. Single-box expects at least one static scrape target
+for each. Control-plane expects both on each active configured compute-registry
+member, matching the existing service-discovery scope. Select v2 when both
+services are part of the intended placement. Neither v1 nor an unset role is
+automatically upgraded. `obs input-health` keeps its two existing v1 roles and
+minimum readiness/input checks; v2 names are build profiles only.
+
+This is a selected scope, not every platform daemon. Static jobs use observed
+scrape membership and a minimum of one target. Compute jobs use exact active configured node names and
+IDs from the registry. An unexpected old node cannot replace evidence for a
+missing newly registered node merely because the counts match. Inactive and
+unconfigured nodes are outside this scope. Unavailable registry membership is
+unknown, not an empty expected fleet.
+
+`matching`, `mismatched` and `mixed` describe fresh unambiguous sampled commit
+identities. `incomplete` or `unknown` explains insufficient evidence. Mixed and
+mismatched states can coexist with missing data: always inspect per-job source
+availability and `missing`, `stale`, `unavailable` and `unexpected` counts.
+Unknown/dev revisions, down scrapes, conflicting targets/build series and
+samples older than 120 seconds or before the evidence boundary do not count as
+matches. Boundary and future checks allow the existing 30-second clock skew.
+This does not attest binaries or demonstrate continuous rollout convergence.
+
+Counts and revision diversity include the complete inspected set, even beyond
+the deterministic 32-item preview. `omitted_items` includes preview and report
+envelope omissions; `envelope_omitted_items` identifies the latter separately.
+The full report keeps its existing 1 MiB bound and removes advisory build
+preview items before other retained evidence. Summaries and job availability
+survive. Only approved node names, full SHA-256 target fingerprints, complete
+commit SHAs, bounded safe version labels and original sample clocks are saved;
+target addresses, arbitrary labels, build-time strings and raw errors are
+excluded. API responses remain within 64 KiB.
+
+The SSH collection adapter accepts the optional environment input
+`MONITORING_EXPECTED_ROLE` with any of `single-box-v1`, `control-plane-v1`,
+`single-box-v2` or `control-plane-v2`. For an explicitly selected profile:
+
+```bash
+MONITORING_EXPECTED_ROLE=control-plane-v2 \
+  python3 scripts/ci/post_deployment_monitoring.py
+```
+
+Use the existing `DESIRED_RELEASE`, `MONITORING_NOT_BEFORE`,
+`MONITORING_OPERATOR_TOKEN`, `CP_HOST` and SSH-key inputs. An empty or unset
+role preserves the existing verifier invocation; the adapter does not infer a
+role from observed targets or enable one in the deployment workflow. The
+operational owner selects the role when activating this collection input.
+Invalid nonempty roles produce `invalid_expected_role` without contacting SSH.
+Initialization still creates a private unknown artifact without remote reads.
+
+Collection forwards the role to the pinned release binary. An older CLI that
+cannot accept the flag leaves verification unknown; it is not retried with the
+role omitted. An older API returning 404, or a report without the optional
+section, remains advisory unknown (`source_endpoint_not_found` or
+`evidence_not_returned`) while preserving any valid health result.
+
+The adapter checks the optional evidence's release, role, boundary, clocks,
+closed metadata, counts and existing size limits before retaining approved
+fields. Unknown extra fields are discarded, including nested provider details.
+Malformed optional data becomes advisory `invalid_advisory_evidence`; it does
+not alter the health checks, confirmed-fault flag or verifier exit code. A
+malformed mandatory report or an untrusted transport still cannot qualify.
+
+Job summaries show advisory state, fixed source codes/status, full-set counts,
+preview omissions and per-job source availability. Observed node, target,
+version and commit labels stay in the private artifact. A mixed state can
+coexist with unknown job inventory, so inspect availability as well as counts.
+Artifact fitting removes advisory build preview items first and accounts for
+them in `omitted_items` and `envelope_omitted_items`. If advisory metadata must
+also yield to the 1 MiB bound, the section becomes unknown `report_envelope`.
+Mandatory evidence retains priority. The adapter rejects a mandatory report
+that cannot fit the serialized envelope.
+
+With the same explicit role, `runtime_builds.evidence.readiness` reports
+advisory daemon readiness independently of build matching. For example, a daemon
+can run the requested revision while `not_ready` with reason `draining` or
+`database`. Counts cover the full inspected set, including targets beyond the
+preview. Per-item `readiness` carries the original ready and active-reason sample
+clocks. Fresh successful scrapes, post-boundary samples, a complete one-hot
+reason vector and agreement with the ready gauge are required. Missing, stale,
+conflicting and unavailable observations cannot establish readiness. Only the
+ten approved metric reason codes reach artifacts and aggregate job summaries.
+An older server omitting readiness remains valid identity evidence and readiness
+is unknown.
+
+`runtime_builds.progress.readiness` records first/last ready and not-ready,
+observed losses, last loss/recovery, `ready_throughout_observed_polls`, and sticky
+incomplete evidence. A source gap interrupts continuous observed readiness;
+it does not create a loss or recovery. A later known observation can establish
+an aggregate transition across that gap. The first not-ready observation is
+not a loss from previously observed readiness. These observations describe
+aggregate selected-target state, not per-daemon lifecycle or uninterrupted
+availability between polls. Optional readiness aggregates share the existing
+build-history event ring and report envelope; sample-clock and preview changes
+do not create events. The identity state and deployment qualification remain
+independent. See [the readiness decision](../adr/20261115120001-advisory-daemon-readiness-evidence.md).
+
+With the same selected profile, `runtime_builds.evidence.process` adds advisory
+sampled process continuity from existing daemon uptime. The first fresh read is
+only a `baseline`. During later existing polls the CLI supplies the previous
+valid response clock as `compare_at`; the API compares the full inspected sets
+before previewing. No additional poll or protected HTTP read is introduced.
+A verification that passes on its first poll retains a baseline, not a claim
+of no restarts.
+
+`changed` means an observed uptime reset or later estimated process start.
+`unchanged` means no change was detected in the compared sample pairs. A fresh
+same-revision process replacement remains visible even if the daemon is ready
+and runs the requested SHA. Revision classification is `same`, `different` or
+`unknown`; it does not establish whether a rollout was planned or a process
+crashed. Current sample states distinguish fresh, missing, stale, conflicting
+and unavailable data. Counts distinguish compared/changed/unchanged pairs,
+new/removed targets, repeated samples and unavailable comparisons. Exact target
+identity includes the node ID, keeping node replacement separate from restart.
+Current expected membership defines the historical query scope.
+
+Both original uptime sample clocks and values appear only in the protected
+per-target preview. Comparisons permit the one-second producer tick and existing
+clock skew: an uptime decrease over one second or a forward estimated-start
+shift over 31 seconds indicates change. Regressed sample clocks and excessive
+backward estimated-start shifts cannot establish continuity. The comparison
+clock must precede generation, remain within ten minutes, and respect the
+release boundary. Old/missing sources and unexpected targets remain incomplete.
+These sampled observations cannot count every restart or prove uninterrupted
+process survival between polls. The optional launcher restart counter is not
+used as proof of continuity.
+
+`runtime_builds.progress.process` preserves compared-pair and observed-change
+totals, same/different/unknown revision changes, membership changes, first/last
+change observations and sticky incomplete evidence. Process summaries share the
+existing bounded history. Clock churn does not create events; distinct change
+intervals do, even when their counts match. Replayed or overlapping windows do
+not increase progress totals. The existing report fit preserves aggregates and
+progress while dropping preview items and older events first. Job summaries
+include only reviewed aggregate fields and clocks.
+
+Older APIs without process evidence keep their identity/readiness results.
+When an older API rejects `compare_at` during a rolling cutover, the next
+existing poll reads without it; no immediate retry or downgrade of the profile
+occurs. Invalid optional process evidence is isolated from build identity,
+readiness and health qualification. See [the process-continuity decision](../adr/20261115130000-sampled-daemon-process-continuity.md).
+
+The same selected profile adds advisory `runtime_builds.loop_health`. It uses
+existing watchdog reports: `runtime` for each daemon, plus scheduler `main` and
+VM-manager `sweep`. A ready process with the expected SHA and unchanged uptime
+can still report a stalled work loop. Other work loops remain outside this
+scope; a runtime heartbeat alone does not prove the daemon is doing useful work.
+
+`reported_stalls` counts independently fresh `loop_stalled=1` reports. A positive
+report stays visible when its heartbeat-age evidence is missing or unavailable:
+the aggregate is `stalled` with `incomplete=true`. Complete item states distinguish
+`stalled` and `no_reported_stall` from missing, stale, conflicting or unavailable
+evidence. A stale one does not establish a current stall. Fresh successful up
+samples, original metric clocks and the same rollout boundary/freshness rules
+apply. The producer decides its configured stall budget; age is diagnostic.
+No reported stall is a sampled report, not proof of continuous loop progress or
+an independently healthy sampler.
+
+Counts cover all inspected target-loop pairs before the separate 32-item preview.
+Fresh reported stalls appear first, then incomplete observations. Unexpected
+targets and unknown inventory prevent a complete clear aggregate. The protected
+preview retains approved loop names, safe node names, target digests, reported
+bits, bounded ages and original scrape/stall/age clocks. Addresses, arbitrary
+labels and raw provider errors are excluded. The 64 KiB API response trims loop
+detail first when needed; the CLI keeps its existing 1 MiB report envelope and
+records `loop_envelope_omitted_items` separately from source preview omissions.
+
+`runtime_builds.progress.loop_health` preserves first/last stall and complete
+clear observation, last recovery/regression, stall regressions,
+`no_reported_stall_throughout_observed_polls` and sticky incomplete evidence.
+A source gap stops the throughout claim, without inventing a fault or discarding
+a pending observed stall. A later complete clear aggregate records recovery in
+the current selected scope; it does not prove the same daemon recovered.
+Loop summaries share the existing bounded history. Routine age, sample-clock
+and preview changes do not create events, and per-target samples stay outside
+history and job summaries.
+
+Loop evidence remains advisory. Older APIs omitting it, bad optional JSON and
+invalid loop history preserve independently valid evidence and health decisions.
+The protected API adds `loop_health` around its existing typed identity response;
+CLI artifacts save it alongside `runtime_builds.evidence`. No new HTTP read,
+poll, probe, watchdog action or operational activation is added. See [the work-loop decision](../adr/20261115140001-advisory-work-loop-health.md).
+
+### Advisory builder progress and pressure
+
+The explicit v2 profiles also include `runtime_builds.builder_health`; the
+protected API returns it as optional `builder_health`. V1 profiles retain their
+existing scope. This reads existing builderd metrics within the same API call
+and evidence budget. Deployment qualification, poll timing and exits are unchanged.
+
+The worker state distinguishes waiting, working, draining and overdue work.
+Working can legitimately span the full build. The progress allowance matches
+existing rules: twice the configured poll interval plus a 60-second observation
+margin, additionally the configured busy allowance while in-flight. Initialization
+is the origin before the first completed poll; completion includes idle/error
+returns and does not establish build success. Overdue is a sampled assessment,
+without the existing alert's five-minute hold or a new execution deadline.
+
+Build and cancel queues show process-local waiting/active counts, buffered
+capacity, workers and oldest waiting age. Dispatch handoffs can raise waiting
+plus active to capacity plus workers. These notification hints are separate from
+durable fleet backlog. Slot usage/limit describe local reservations; saturation
+is capacity evidence, not a failed build or available host RAM. Do not sum these
+observations into claims about fleet capacity or unique builds.
+
+Each component requires fresh successful up and fresh original sample clocks.
+Its `observed_at` is the oldest original sample clock among its required gauges.
+Missing/stale/conflicting/unavailable components omit values. Fresh overdue
+workers remain visible when queue/slot evidence is incomplete; inspect both
+`overdue_workers` and `incomplete`. Counts cover all inspected targets, including
+those omitted from the bounded preview. Builder detail yields first under the
+existing API/report byte limits, with explicit omissions and preserved counts.
+
+`runtime_builds.progress.builder_health` preserves overdue/regression/recovery
+clocks and sticky gaps. Drain does not establish recovery; a later complete set
+of enabled workers within allowance does. This may include restarted/replaced
+processes. Aggregate changes share existing bounded history; age/clock/depth churn
+does not consume events. Older APIs and malformed optional JSON preserve other
+usable evidence. See [the builder decision](../adr/20261115150000-advisory-builder-progress-and-pressure.md).
+
+### Advisory build-to-image handoffs
+
+V2 profiles also expose `runtime_builds.handoff_health`, returned by the protected
+API as `handoff_health`. It reads existing imaged collection/backlog/recovery
+gauges within the same API request and evidence budget. Health qualification,
+exits, stability and poll scheduling stay unchanged. V1 and unset profiles retain
+their existing scope.
+
+The three components separate collection status, pending handoffs and recovery
+activity. Fresh collection metadata can report `success=false` or an expired
+last-success clock. Neither establishes zero work. Backlog values require a
+successful fresh snapshot after the evidence boundary, with coherent original
+scrape clocks. Missing/stale/conflicting/unavailable parts omit values; fresh
+pending evidence remains visible when recovery metadata is incomplete.
+
+Pending values count succeeded builds without an image-preparation checkpoint
+in each imaged recovery scope. Oldest wait starts at build finish, which can
+precede the rollout. Replica scopes can overlap through legacy owner routing:
+inspect each target and never sum pending counts into a fleet total. Aggregate
+`waiting_scopes` and `empty_scopes` count observations, not unique builds. Known
+empty requires fresh proof; no targets or unavailable inventory remain unknown.
+
+Recovery state is waiting, working, stopping or not_started, with enabled,
+inflight and attempt/completion clocks. Long image work can occupy one pass;
+there is no new stall threshold. Stopping can retain in-flight work. A completion
+is a pass return, including failure/no-op, not committed preparation or deployment
+readiness. Image-preparation phases and downstream work remain outside this scope.
+
+The preview prioritizes waiting scopes by oldest wait, then incomplete and empty
+targets. Full-set counts survive preview/report clipping with explicit omissions.
+`runtime_builds.progress.handoff_health` retains first/last waiting and complete
+empty observations, sampled empty-to-waiting transitions and sticky gaps. These
+observations do not establish successful recovery or delivery; routine clocks,
+ages and pending magnitudes do not consume bounded history. Invalid optional
+handoff data preserves all other usable evidence. See [the handoff decision](../adr/20261115160001-advisory-build-image-handoff-evidence.md).
+
+### Advisory image-preparation phases
+
+V2 profiles also expose `runtime_builds.preparation_health` (`preparation_health`
+in the protected API), using existing imaged gauges in the same request budget.
+It observes active and recoverable durable checkpoints in `preparing`,
+`layer_published`, and `scan_complete`. Collection status and observer expectation
+remain separate from each phase. A disabled observer can still have pending
+work. Failed, stale, missing or pre-boundary collection never establishes empty
+phases. Valid positive evidence survives a gap in another phase.
+
+Each phase reports `pending` and `unknown_age`. Unknown ages are included in
+pending. `oldest_phase_started_at` and `oldest_known_age_seconds` describe only
+rows with known historical timing and are absent when no known ages exist,
+including an observed empty phase. A zero oldest metric therefore never proves
+zero work. Phase age includes time waiting to resume and can precede the rollout;
+it is not the duration of a currently running step or a new stall threshold.
+
+Replica recovery scopes may overlap: inspect per-target counts and never sum
+them into a fleet total. Aggregate waiting/empty/unknown-age counts describe
+observation scopes, including each phase separately. Empty requires all three
+phases known empty; no targets stays unknown. Complete component evidence can
+still contain historical unknown ages, which remain explicit.
+
+Full-set aggregate counts survive preview/report clipping with explicit omitted
+items. The shared bounded history records phase-scope and coverage changes;
+routine ages, clocks and pending magnitudes do not consume events. Preparation
+progress retains first/last waiting and empty observations, sampled transitions
+from empty to waiting, and sticky gaps/unknown ages. Disappearing work does not
+establish preparation completion or successful deployment. Existing deployment
+qualification, exit behavior and poll scheduling remain unchanged. See the
+[preparation decision](../adr/20261115170001-advisory-image-preparation-phase-evidence.md).
+
+### Advisory snapshot priming
+
+V2 profiles expose `runtime_builds.snapshot_prime_health` (`snapshot_prime_health`
+in the protected API), using existing scheduler gauges within the same evidence
+budget. Single-box-v2 observes `schedd`; control-plane-v2 observes both `schedd`
+and `schedd-compute`. Each item retains its job and sanitized target. Scheduler
+ownership scopes may overlap: compare them separately and never sum their
+attempt counts into a fleet total.
+
+The six ordered classes are `waiting`, `release_blocked`, `active`,
+`publication_pending`, `snapshot_recorded`, and `unknown`. Per-class `pending`
+counts current attempts, including active and recorded snapshots. Positive
+evidence is therefore `nonempty`, without implying a stalled scheduler. A
+recorded snapshot does not establish deployment readiness. Collection status
+and observer expectation remain independent; disabled observation can coexist
+with nonempty classes. Usable values require fresh successful collection after
+the evidence boundary and coherent original scrape clocks. Failed, stale,
+missing or conflicting evidence never becomes empty; partial positives remain.
+
+`unknown_age` is included in `pending`. Only attempts with known timing contribute
+to `oldest_attempt_at` and `oldest_known_age_seconds`; these fields are absent
+when no known ages exist. The `unknown` class always has unknown timing. Attempt
+age can precede the rollout and accounts for stage start, release completion,
+runtime invalidation and known instance activity. It is not continuous idle
+time, execution duration, or a new stall threshold.
+
+Full-set nonempty/empty/unknown-age scope counts and per-class scope counts
+survive preview/report clipping, with explicit omissions. Empty requires all
+six classes known empty; missing targets and unknown inventory remain explicit.
+History retains class-scope and coverage changes while excluding routine clocks,
+ages and pending magnitudes. Progress retains first/last nonempty and empty
+observations, sampled empty-to-nonempty transitions and sticky gaps/unknown ages.
+Disappearing work does not prove recovery or successful deployment. Qualification,
+exit behavior and poll scheduling remain unchanged. See the
+[snapshot-priming decision](../adr/20261115180001-advisory-snapshot-priming-evidence.md).
+
+### Advisory post-capture activation
+
+V2 profiles expose `runtime_builds.post_capture_health` (`post_capture_health`
+in the protected API), using existing imaged gauges in the same request budget.
+The explicit scope is `replica_observations_of_shared_fleet`: every imaged
+replica independently observes shared fleet data. Compare these views without
+summing their deployment counts or inferring agreement. Different fresh reads
+can legitimately disagree; this is distinct from conflicting source series.
+
+The eight ordered classes are `publication_pending`, `activation_pending`,
+`dependency_held`, `compatibility_held`, `hosting_verifying`, `hosting_retry`,
+`gate_overdue`, and `unknown`. Holds and overdue gates reflect retained durable
+evidence, not an independent present-eligibility or health verdict. All positive
+class evidence is nonempty and remains advisory. Collection status and observer
+expectation are independent; disabled observation does not establish drained
+work. Usable class values require fresh successful collection after the evidence
+boundary and coherent original scrape clocks. Failed, stale, missing or
+conflicting parts never become empty; usable partial positives remain visible.
+
+Each replica view retains per-class `pending` and included `unknown_age` counts.
+Only known timing contributes to `oldest_boundary_at` and
+`oldest_known_age_seconds`; both are absent when no known ages exist, including
+empty classes. The unknown class always has unknown ages. Boundaries can be
+capture park time, init publication, or retained gate/verification evidence and
+can precede the rollout. Boundary age is not continuous time in a class,
+execution duration, or a new stall threshold.
+
+Full-set nonempty/empty/unknown-age replica-view counts and class-view counts
+survive clipping with explicit omissions. Known empty requires all eight classes
+observed empty. Bounded history records class-view and coverage changes while
+excluding routine clocks, ages and pending magnitudes. Progress retains
+first/last nonempty and empty observations, sampled empty-to-nonempty changes,
+and sticky collection gaps/unknown ages. Disappearing work does not prove
+successful activation or recovery. Deployment qualification, exits and polling
+remain unchanged. See the
+[post-capture decision](../adr/20261115190001-advisory-post-capture-activation-evidence.md).
+
+### Advisory build recovery and builder VM cleanup
+
+Explicit v2 profiles expose `runtime_builds.build_recovery_health`
+(`build_recovery_health` in the protected API), using existing apid build-recovery
+gauges within the shared request budget. Scope is
+`replica_observations_of_shared_fleet`: every apid independently observes shared
+fleet data. Compare replica views without summing build or cleanup counts.
+Different fresh views can disagree without indicating conflicting source data.
+
+Collection status, running build claims and cleanup obligations remain separate.
+Work values require fresh successful collection after the evidence boundary,
+fresh successful scraping and coherent original scrape clocks. Running evidence
+can remain usable when cleanup evidence is missing, and vice versa. Collection
+failure, missing data or stale evidence never becomes an empty fleet view.
+
+Running values contain `count`, `oldest_started_at` and `oldest_age_seconds`.
+Cleanup contains `pending`, `retried`, `oldest_created_at` and
+`oldest_age_seconds`. Retried counts outstanding obligations with recorded
+failure; it is a subset of pending, not attempts or a rate. Pending includes
+claimed and retrying obligations. Cleanup age starts at obligation creation
+and survives retries. Positive counts require valid timing; zero counts omit
+both timing fields. Ages may precede the rollout and introduce no new deadline
+or stall threshold. Running claims do not prove active VMs, and cleanup
+obligations do not prove live or leaked VMs.
+
+Aggregate counts describe replica views and component coverage. They survive
+preview/report clipping with explicit omissions. Known empty requires both
+running and cleanup observed empty. Bounded history records view-state and
+coverage changes, excluding routine clocks, ages and work magnitudes. Progress
+retains first/last nonempty and empty observations, sampled empty-to-nonempty
+changes and sticky gaps. Disappearing work does not prove successful completion
+or recovery. Deployment qualification, exits and polling remain unchanged. See
+the [build-recovery decision](../adr/20261115200000-advisory-build-recovery-and-cleanup-evidence.md).
+
+### Advisory app tasks and release commands
+
+Explicit v2 profiles expose `runtime_builds.app_task_health` (`app_task_health`
+in the protected API), reusing existing scheduler gauges. Single-box observes
+`schedd`; control-plane also observes `schedd-compute`. Scope is
+`replica_observations_of_shared_fleet`: compare scheduler views without summing
+task counts. Local handlers and worker slots are separate from shared fleet work.
+
+The fixed kinds are `release`, `manual`, `cron`. Each retains nine ordered
+classes: `queued`, `retry_wait`, `held`, `deadline_overdue`, `restoring`, `running`,
+`cancellation_pending`, `lease_expired`, `unknown`. Durable evidence requires a
+fresh successful collection after the evidence boundary, a fresh successful
+scrape and matching original clocks. Missing or failed collection stays unknown;
+usable positive evidence survives gaps in other kind/class observations.
+
+Each pair retains `pending`, included `unknown_age`, and oldest known boundary
+and age when available. Restoring, retry-wait, held and unknown classes have
+only unknown ages. Known boundaries reflect queued admission timing, running
+start, cancellation request, expired lease or missed deadline; they may precede
+the rollout and do not measure continuous residence in a class. Empty and
+entirely unknown timing omit both timing fields.
+
+Collection, observer expectation and dispatcher evidence remain independent.
+Dispatcher state distinguishes configured opt-out (`disabled`), an enabled
+inactive runner (`stopped`) and an active runner (`running`). Configured/in-use
+slots count local handlers, including restore, execution and teardown. Last
+successful claim includes empty results; busy slots need not claim. Last sweep
+includes empty sweeps. Absent clocks mean no success observed yet. These signals
+introduce no new progress deadline, execution verdict or deployment gate.
+
+Full replica-view and kind/class counts survive clipping with explicit omissions.
+Bounded history records task coverage and local activity categories, excluding
+routine clocks, ages and work/slot magnitudes. Progress retains first/last
+nonempty and complete empty observations, sampled empty-to-nonempty changes,
+and sticky gaps/unknown ages. Disappearing tasks do not prove successful command
+execution or deployment readiness. See the
+[app-task decision](../adr/20261115210001-advisory-app-task-and-release-command-evidence.md).
+
+### Advisory command-cron admission
+
+Explicit v2 profiles expose `runtime_builds.command_cron_health`
+(`command_cron_health` in the protected API). This explains command schedules
+before they produce app tasks, using existing scheduler metrics. Single-box
+observes `schedd`; control-plane also observes `schedd-compute`. Scope is
+`scheduler_ownership_scopes`: ownership and legacy fallback can overlap, so
+compare scopes without summing schedules.
+
+The ten ordered classes are `due`, `overlap_due`, `replacement_wait`,
+`deployment_missing`, `exclusive_due`, `disabled`, `suspended`, `account_held`,
+`not_due`, `unknown`. Due scopes contain any first-five class evidence. Inactive
+scopes contain disabled, suspended, account-held or not-due schedules. These
+scope categories can overlap. Nonempty includes intentional inactive schedules;
+it is not a failure or an execution verdict. Empty requires every class observed
+empty. Schedule counts do not enumerate catch-up occurrences.
+
+Durable values require fresh successful collection after the evidence boundary,
+a fresh successful scrape and coherent original sample clocks. Failed, stale or
+missing collection never becomes empty schedules; usable partial positives remain
+visible. Observer expectation and sweep activity are checked independently of
+collection success. Observer expectation describes the loop, separately from
+each schedule being enabled.
+
+Each class retains `schedules`, included `unknown_age`, and oldest known nominal
+due boundary and age when available. The last five classes have only unknown
+ages. Empty or entirely unknown timing omits both age fields. Known due timing
+uses the existing canonical timezone/DST interpretation of the first unconsumed
+boundary. It can precede the rollout and is not continuous eligibility, command
+execution delay, last successful command or a new stall threshold.
+
+Sweep values contain explicit `running`, `last_started_at` and `last_success_at`.
+The clocks are absent before a start or success is observed. Idle does not mean
+successful or disabled. Sweep success includes empty enumeration and owner
+lookup, not admission of every command. The scan also includes inline HTTP work,
+so scan activity alone cannot identify a command-runner failure.
+
+Full scope and class counts survive preview/report clipping with explicit
+omissions. Bounded history records class coverage, due/inactive scopes and sweep
+activity, excluding routine clocks, ages and schedule magnitudes. Progress retains
+first/last nonempty and complete empty observations, sampled empty-to-nonempty
+changes and sticky gaps/unknown ages. Disappearing evidence does not prove
+admission, delivery or command completion. See the
+[command-cron decision](../adr/20261116080000-advisory-command-cron-admission-evidence.md).
+
+### Advisory app-task operation outcomes
+
+V2 profiles expose `runtime_builds.app_task_operations` (`app_task_operations`
+in the protected API), using existing process-local operation counters for
+`restore`, `renew`, `execute`, `destroy` and `complete`. Scope is
+`process_local_counter_observations`. These are returned calls, not unique tasks,
+customer verdicts or a fleet backlog. Errors, cancellations, lease loss and
+capacity refusals remain separate. Execute success does not establish a
+successful customer command; cleanup and completion calls have their own
+acknowledgement semantics.
+
+First samples are baselines, so old cumulative failures are not new activity.
+Later comparisons reuse the existing pinned comparison time and uptime evidence.
+Both counter points must be fresh relative to their evaluation times, after the
+evidence boundary, and match the original scrape clocks of unchanged process
+samples. Uptime advance must match elapsed scrape time within the existing
+one-second reset tolerance. Changed/new processes, repeated samples, uncertain
+windows, source gaps and counter decreases establish no delta. Sampled
+continuity cannot rule out every intervening restart.
+
+Comparable points retain their exact nonnegative difference, including explicit
+zero. This is an observed difference between samples, not an extrapolated rate,
+exact event timestamp or execution verdict. Capacity series can be absent until
+first observed; missing series at either endpoint remain unknown, never zero.
+Each of the 35 operation/outcome signals is independent, so usable partial
+positives survive gaps elsewhere. A complete no-change claim requires complete
+comparison evidence; missing sparse capacity remains explicit.
+
+Full-set summary counts describe signals and their coverage. Per-operation
+category counts identify signals with an increase, not numbers of returned calls.
+Point values and deltas remain in the restricted target preview. Aggregates
+survive preview/report clipping with explicit omissions. Bounded history records
+comparison categories and coverage, excluding routine clocks, cumulative values
+and delta magnitudes. Progress retains first/last observed increases and sticky
+error, cancellation, lease-loss, capacity, baseline and incomplete-evidence flags.
+These observations do not establish continuous error-free operation or command
+completion. See the
+[operation-outcome decision](../adr/20261116090001-observed-app-task-operation-outcomes.md).
+
+### Advisory task completion and recovery
+
+V2 profiles expose `runtime_builds.app_task_results` (`app_task_results` in the
+protected API). This reuses `schedd_app_task_results_total` and
+`schedd_app_task_recovery_total`, separately from operation-return evidence.
+Scope is `process_local_counter_observations`: counters belong to scheduler
+processes, not unique fleet tasks.
+
+Completion acknowledgements use the returned durable row for `release`, `manual`
+and `cron`, each with ordered `succeeded`, `failed`, `timed_out`, `cancelled`,
+`queued` outcomes. Queued means a policy retry, not a terminal task result.
+Failed acknowledgements can reflect customer verdicts or platform failures; the
+counter does not identify a cause. Successful calls and acknowledgements do not
+independently prove delivery, publication, readiness or promotion.
+
+Recovery has three separate outcomes: `requeued_restores`, `failed_runs`,
+`cancelled`. These are changes reported by successful recovery sweeps, excluding
+completion acknowledgements. Expired restores can safely return to the queue
+before dispatch; recovered running tasks can have uncertain command outcomes.
+Policy retries absent from the existing sweep result are not inferred. Do not
+sum completion and recovery evidence as unique completed tasks.
+
+The same sampled comparison safeguards as operation outcomes apply: first
+samples are baselines; fresh endpoint points, unchanged process proof, matching
+original scrape clocks and coherent uptime advancement are required for an exact
+nonnegative difference, including zero. Resets, changed/new/repeated processes,
+uncertain windows and missing or stale evidence establish no delta. Sampled
+continuity cannot exclude every intervening restart. Differences are not rates
+or exact event timestamps. All 18 signals are assessed independently.
+
+Full-set coverage and per-outcome signal counts survive preview/report clipping
+with explicit omissions. Bounded history records coverage and outcome categories,
+excluding routine clocks, cumulative values and delta magnitudes. Progress keeps
+first/last increases and sticky flags for acknowledged successes, failures,
+timeouts, cancellations, queued retries and each recovery outcome. It does not
+sum overlapping poll deltas or introduce health gates, retry policy or extra
+polls. See the [completion and recovery decision](../adr/20261116100000-observed-app-task-completion-and-recovery.md).
+
+### Advisory command-cron outcomes
+
+V2 profiles expose `runtime_builds.command_cron_outcomes`
+(`command_cron_outcomes` in the protected API), using the existing scheduler
+sweep, decision and admission counters. Single-box observes `schedd`;
+control-plane also observes `schedd-compute`. Scope is
+`process_local_counter_observations`: these are local counter observations,
+not unique fleet schedules, occurrences, tasks or deliveries.
+
+The three ordered sources retain 29 outcomes. Sweep has `success`, `error`,
+`canceled`. Decision has `disabled`, `not_due`, `account_held`, `plan_limit`,
+`replacement_wait`, `not_owned`, `invalid_schedule`, `lookup_error`,
+`store_unavailable`, `no_live_deployment`, `canceled`, `legacy_queued`,
+`legacy_skipped`, `legacy_stale`, `legacy_error`. Admission has `queued`,
+`exclusive_pending`, `coalesced`, `skipped_overlap`, `missed_deadline`, `stale`,
+`deployment_unavailable`, `rejected`, `error`, `canceled`, `unknown`.
+
+Keep scheduling policy and return classifications separate from faults. A
+successful shared sweep includes inline HTTP work and does not prove every
+command was admitted. Queueing, pending exclusive work and coalescing do not
+prove execution or delivery. A rejection is not automatically an infrastructure
+failure. The admission outcome `unknown` records a returned classification;
+missing telemetry is a separate evidence gap. Do not combine families as unique
+work, or infer admission latency, command success or a new deployment gate.
+
+Comparisons use the same process proof, original scrape clocks, freshness,
+boundary and uptime-advance safeguards as app-task counters. First observations
+are baselines, including historical errors. Changes in process, resets, repeated
+samples, uncertain windows and source gaps establish no delta. Comparable points
+retain exact nonnegative sample differences, including zero; these are not
+rates or exact event times. All 29 signals are independent, and missing values
+are never zero.
+
+Full-set coverage and source/outcome signal counts survive preview/report
+clipping with explicit omissions. Bounded history uses the existing lossless
+compaction and excludes routine clocks and counter/delta magnitudes. Progress
+retains first/last increases and a fixed-order bounded union of observed
+source/outcome categories, plus sticky baselines and incomplete evidence. It
+never sums overlapping poll deltas. Commands, cron/task identities, raw targets,
+output and provider errors stay outside the artifacts. See the
+[cron-outcome decision](../adr/20261116120001-observed-command-cron-outcomes.md).
+
+Loop-health reads retain priority within the shared three-second API budget;
+these advisory counters use the remaining deadline. Missing counter evidence
+stays explicit when the source budget is exhausted.
+
+### Observed runtime evidence history
+
+With an explicit role, the verifier also retains `runtime_builds.progress` and
+`runtime_builds.history` across the polls already needed for health verification.
+The final state remains the current snapshot; history explains earlier mixed or
+mismatched revisions, incomplete coverage and unavailable sources. For example,
+a final `matching` state with `first_mismatch_at` present and
+`matching_throughout_observed_polls=false` reports recovery from an earlier
+observed mismatch. It does not claim matching builds throughout the run.
+
+Progress keeps observed-poll count, first/last observation, first/last mismatch,
+first/last matching observation, last recovery/regression and regression count.
+A later matching poll confirms observed build recovery after a mismatch, even
+when a source gap intervened. A later mismatch after matching is an observed
+regression; its exact onset during any gap is unknown. Sticky
+`observed_incomplete_evidence` and `observed_source_unavailable` flags survive
+recovery. `matching_throughout_observed_polls` requires at least one poll and
+every observed assessment to match; an unknown/incomplete poll makes it false.
+These times and flags are independent of the health stability window and do
+not affect `had_confirmed_faults`. Initial/terminal saves add no observations.
+Coordinator timestamp regressions are clamped to the preceding assessment;
+source generation clocks remain separately recorded.
+
+History covers aggregate state/reason, source HTTP status, full-set coverage and
+revision counts, and fixed job inventory/source availability. It records the
+first assessment and semantic changes, excluding routine source-clock updates,
+preview ordering and preview omissions. It does not track individual target or
+revision changes that leave these aggregates unchanged. No additional API call,
+poll or convergence gate is introduced. A run that passes on its first health
+poll has only that observed build assessment.
+
+The latest events fit within 16 events and 16 KiB of conservatively indented
+serialized event-array data. Oversized combined snapshots retain their advisory
+summaries losslessly in `compact_details` (`zlib-base64-v1`); core rollout state,
+counts, jobs, readiness and process proof remain directly readable. The CLI
+renders these summaries normally. Collection validates the decoded summaries and
+saves a freshly encoded closed projection, with an independent 64 KiB decoded
+ceiling. The encoded event array still uses the existing 16 KiB budget.
+
+If even compaction cannot fit an event, its bounded core remains and
+`omitted_sections` names the diagnostic detail that yielded.
+`detail_omitted_events` counts retained events with omitted sections, and
+`truncated` also covers those omissions. Omitted history detail does not mean
+missing source telemetry, empty work or a successful outcome. Current evidence
+and sticky progress remain separate; historical detail omitted from an event
+cannot establish its earlier diagnostic categories.
+
+Inspect `total_events`, `retained_events`, `retained_bytes`, `dropped_events`,
+`envelope_omitted_events`, `detail_omitted_events` (absent when zero), limits and
+`truncated` alongside progress. Lossless compaction is not truncation. First
+observations and recovery/regression summaries survive older-event eviction.
+Small events keep the original inline format, and old reports remain readable.
+See the [history compaction decision](../adr/20261116110000-bounded-runtime-history-compaction.md).
+
+The complete report remains bounded at 1 MiB: current advisory build preview
+items yield first, followed by oldest build events, before older
+notification/qualification history or primary detailed fault evidence. Fitting
+preserves recorder data and counts envelope omissions separately.
+
+The collection adapter retains and validates this optional pair. Historical
+source clocks stay historical; they are not reassessed as stale merely because
+collection happens later. A malformed history pair becomes
+`history_unavailable_reason=invalid_history`, preserving valid current build
+evidence, health results and exit codes. Reports without history remain
+compatible. Job summaries show the final state alongside earlier mismatch,
+matching-throughout-observed-polls and regression summaries, first/last times
+and event retention. If optional metadata must yield entirely to the artifact
+bound, `history_unavailable_reason=report_envelope` discloses the omission.
 
 Use an existing operator session, or the existing bearer fallback
 `FAAS_ADMIN_TOKEN`. The APIs enforce operator read authorization, MFA and the
@@ -730,3 +1420,157 @@ each completed local poll.
 Run local checks with `make post-deployment-monitoring-test` and
 `go test ./cmd/gregalectl`. Tests use local HTTP fixtures and an SSH stub; they
 do not contact production or send real notifications.
+
+### Advisory command-cron admission timing
+
+V2 profiles also expose `runtime_builds.command_cron_timing`, using existing
+`schedd_command_cron_admission_lag_seconds_bucket`, `_count`, and
+`schedd_command_cron_admission_lag_unknown_total` metrics. Single-box observes
+`schedd`; control-plane also observes `schedd-compute`.
+
+The 13 ordered signals are `le_1_seconds`, `le_5_seconds`, `le_15_seconds`,
+`le_30_seconds`, `le_60_seconds`, `le_120_seconds`, `le_300_seconds`,
+`le_600_seconds`, `le_1800_seconds`, `le_3600_seconds`, `le_inf`, `timed`, and
+`unknown_timestamps`. Buckets are cumulative and overlap: do not sum them.
+`le_inf` equals `timed`. Exact target deltas describe local observed returns,
+not unique tasks. Summary counts classify signals across targets and retain
+full-set coverage when target details are clipped.
+
+Delay is returned occurrence `CreatedAt - ScheduledFor`, including catch-up
+history and policy dispositions. It does not measure database commit time,
+execution start or continuous eligibility. Unknown timestamps are explicitly
+counted without fabricating zero lag. No timed observations establish no latency
+claim. No percentile, threshold verdict or new deployment gate is inferred.
+
+The histogram requires all buckets and count, coherent original clocks,
+nondecreasing cumulative counts, and a possible interval distribution.
+Comparisons retain the existing process, freshness, boundary and uptime-window
+guards. Baselines, resets, changed processes, repeated samples and incomplete
+histograms establish no timing delta. The unknown-timestamp counter remains
+independent when histogram samples are missing or inconsistent.
+
+The CLI, projected report and compact bounded history carry this advisory
+section. Sticky history preserves observed signal categories, baselines and
+uncertainty without summing overlapping poll deltas. New source reads yield to
+existing loop reads under the shared deadline; protected HTTP poll counts and
+verification gates are unchanged.
+
+### Advisory HTTP cron delivery outcomes
+
+V2 profiles expose `runtime_builds.http_cron_delivery` using existing
+`schedd_cron_delivery_total` counters. Single-box observes `schedd`; control-plane
+also observes `schedd-compute`. The five ordered outcomes are `success`, `retry`,
+`app_error`, `failed`, and `dead_letter`.
+
+These counters record settled HTTP delivery attempts, including scheduled fires
+and manual runs. They are process-local observations, not unique schedules,
+invocations or deliveries. A retry does not establish its cause or a final
+result. Application-error classification (`app_error`) remains separate from
+the producer's delivery-failure classifications (`failed`, `dead_letter`).
+Success does not prove unique or exactly-once execution. No new failure-rate
+threshold or deployment gate is inferred.
+
+Summary counts classify signals across all inspected targets; exact bounded
+target deltas count attempts. First samples are baselines, including historical
+failures. Differences require unchanged sampled process proof, fresh original
+sample clocks and coherent uptime advance. Resets, process changes, repeated
+samples, uncertain windows and missing/stale evidence establish no delta.
+Usable sibling outcomes and scheduler processes survive independent gaps.
+
+The CLI, projected report, SDKs and compact history retain these categories.
+Sticky progress preserves previously increased outcomes, baselines and source
+gaps after later quiet observations and history eviction, without summing
+overlapping poll deltas. New preview details yield first under the existing
+shared response/report limits, preserving full-set summaries and explicit
+omissions. Source reads yield to loop evidence within the shared deadline;
+protected HTTP poll counts and verification gates are unchanged.
+
+### Targeted runtime diagnostic views
+
+Use `--runtime-diagnostics` with an explicit `--expected-role` to focus advisory
+collection. Omit it to retain existing behavior. `all` selects supported groups,
+`none` requests core evidence only, and a comma-separated list selects groups:
+
+```sh
+gregalectl obs verify-deployment \
+  --release "$release" --after "$boundary" --expected-role single-box-v2 \
+  --runtime-diagnostics http_cron_delivery --token-stdin --json
+```
+
+Build identity, readiness, process evidence and loop health remain collected.
+The option does not change verification gates, extend the three-second API
+budget or increase the 64 KiB response cap. Fewer advisory queries leave more
+room for the requested target details; selected previews remain bounded.
+
+V2 supports `builder_health`, `handoff_health`, `build_recovery_health`,
+`app_task_health`, `command_cron_health`, `command_cron_outcomes`,
+`http_cron_delivery`, `delayed_task_dispatch`, `command_cron_timing`, `app_task_results`,
+`app_task_operations`, `post_capture_health`, `snapshot_prime_health` and
+`preparation_health`. V1 has no advisory jobs; both `all` and `none` retain its core-only scope. Named
+groups require v2.
+Empty, duplicate, unknown or unsupported choices are rejected. `loop_health`
+is always included and is not an advisory selector.
+
+The API accepts the same comma-separated value in `diagnostics` on
+`/v1/admin/obs/runtime-builds`. Node and Python preview SDKs expose the optional
+string parameter. Explicit requests receive a `diagnostics` descriptor containing
+canonical `selected` and `not_selected` lists. Omitted requests preserve the
+previous response shape. `not_selected` describes intent, not source health;
+a selected group can still be missing, stale or incomplete.
+
+The CLI and projected artifact add `diagnostics_source=server` when the API
+acknowledges the requested selection. On an older API's 400 response, the CLI
+retries the runtime-build read once without `diagnostics`, caches that fallback
+for the verifier run, and filters locally. Missing or inconsistent
+acknowledgements also use `diagnostics_source=client`. Client filtering preserves
+core evidence and requested details but does not establish reduced source load.
+Normal polls retain their existing protected reads; the compatibility fallback
+adds at most one runtime-build read on the first unsupported request.
+
+For the SSH collector, set `MONITORING_RUNTIME_DIAGNOSTICS` alongside
+`MONITORING_EXPECTED_ROLE`. The value is validated before SSH and passed as a
+canonical CLI argument. An empty environment value leaves the default intact.
+No operational activation is implied by adding this optional setting.
+
+Selection intent stays inline in bounded history, including compacted events.
+Past observed outcomes remain in progress when a group is later deselected.
+Intentional omissions do not create source-gap flags, but they interrupt
+continuous claims and sampled state transitions. Selected missing evidence
+still produces uncertainty. A first selection after intentional omissions is
+not itself a source failure.
+
+### Advisory delayed-task dispatch outcomes
+
+V2 profiles expose `runtime_builds.delayed_task_dispatch` from existing
+`schedd_delayed_task_dispatch_total` counters. Single-box observes `schedd`;
+control-plane also observes `schedd-compute`. Focus collection with
+`--runtime-diagnostics delayed_task_dispatch`, or set
+`MONITORING_RUNTIME_DIAGNOSTICS=delayed_task_dispatch` for the SSH collector.
+V1 remains core-only and rejects the named group.
+
+The four ordered outcomes are `success`, `retry`, `failed`, and `dead_letter`.
+They describe settled process-local attempts, not unique tasks or deliveries.
+Failed includes application errors and cannot alone identify a platform
+incident. Retry does not establish its cause or a final result. Success does
+not prove unique or exactly-once execution. Dead-letter remains a separate
+producer disposition. No new health threshold or deployment gate is inferred.
+
+First samples are baselines, including historical retries and failures.
+Comparable points retain exact nonnegative differences, including zero, only
+with unchanged sampled process proof, fresh original sample clocks and coherent
+uptime advance. Resets, changed processes, repeated samples, uncertain windows
+and missing/stale data establish no delta. Sibling outcomes and scheduler
+processes can remain usable independently.
+
+Summary counts classify signals across the full inspected target set; exact
+bounded target deltas count attempts. The CLI, preview SDKs and projected
+reports carry these fields. Sticky progress keeps previously increased outcome
+categories, baselines and source gaps after later quiet observations and
+history eviction, without summing overlapping poll differences. Selection
+intent remains separate from source availability; intentionally unselected
+collectors do not create false missing-evidence progress.
+
+New source queries yield to loop evidence under the shared deadline. Target
+previews yield first under the existing response/report caps, preserving
+full-set coverage and explicit omissions. Protected HTTP read counts and
+qualification behavior are unchanged.

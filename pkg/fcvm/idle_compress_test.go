@@ -15,6 +15,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // coldVMM is a pausing VMM with a scripted cold-page interface.
@@ -27,12 +29,22 @@ type coldVMM struct {
 	refaults    int64
 	swap        []bool
 	duringEvict func()
+	// reclaim makes it a host whose lru_gen debugfs does not open (kernel
+	// lockdown): compression keeps a share of memory, not generations.
+	reclaim  bool
+	percents []int
 }
 
 func (v *coldVMM) ColdPagesReady(Lease) bool {
 	v.cmu.Lock()
 	defer v.cmu.Unlock()
 	return !v.unready
+}
+
+func (v *coldVMM) ColdPagesByGeneration() bool {
+	v.cmu.Lock()
+	defer v.cmu.Unlock()
+	return !v.reclaim
 }
 
 func (v *coldVMM) AgeVMMemory(Lease) error {
@@ -42,12 +54,13 @@ func (v *coldVMM) AgeVMMemory(Lease) error {
 	return nil
 }
 
-func (v *coldVMM) EvictColdVMMemory(_ Lease, keep int, stop func() bool) (VMMemoryReclaim, error) {
+func (v *coldVMM) EvictColdVMMemory(_ Lease, keep ColdKeep, stop func() bool) (VMMemoryReclaim, error) {
 	if v.duringEvict != nil {
 		v.duringEvict()
 	}
 	v.cmu.Lock()
-	v.keeps = append(v.keeps, keep)
+	v.keeps = append(v.keeps, keep.Generations)
+	v.percents = append(v.percents, keep.Percent)
 	v.cmu.Unlock()
 	if stop() {
 		return VMMemoryReclaim{BeforeBytes: 600 << 20, AfterBytes: 590 << 20}, nil
@@ -324,7 +337,7 @@ func TestJailerColdPagesWritesLRUGenCommands(t *testing.T) {
 		t.Fatalf("aging command = %q", got)
 	}
 	write()
-	if _, err := v.EvictColdVMMemory(l, 2, func() bool { return false }); err != nil {
+	if _, err := v.EvictColdVMMemory(l, ColdKeep{Generations: 2, Percent: 25}, func() bool { return false }); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(); got != "- 7 0 9 200 4096" {
@@ -332,5 +345,107 @@ func TestJailerColdPagesWritesLRUGenCommands(t *testing.T) {
 	}
 	if n, err := v.VMRefaultPages(l); err != nil || n != 12 {
 		t.Fatalf("refaults = %d %v, want 12", n, err)
+	}
+}
+
+// Under kernel lockdown the lru_gen debugfs interface does not open, so L3
+// and L4 keep a share of the VM's memory instead of generations, and the
+// ceiling stops compression only when it would keep all of it.
+func TestColdCompressionKeepsAShareUnderLockdown(t *testing.T) {
+	t0 := time.Now()
+	h := newColdHarness(t, t0)
+	h.v.cmu.Lock()
+	h.v.reclaim = true
+	h.v.cmu.Unlock()
+	h.m.idleCompressPass(t0.Add(3 * time.Second))
+	h.m.idleCompressPass(t0.Add(61 * time.Second))
+	h.m.idleCompressPass(t0.Add(181 * time.Second))
+	h.v.cmu.Lock()
+	percents := append([]int(nil), h.v.percents...)
+	h.v.cmu.Unlock()
+	if len(percents) != 2 || percents[0] != api.IdleLadderCold1KeepPercent || percents[1] != api.IdleLadderCold2KeepPercent {
+		t.Fatalf("kept percents %v, want [%d %d]", percents, api.IdleLadderCold1KeepPercent, api.IdleLadderCold2KeepPercent)
+	}
+	if got := h.m.IdleLadderLevel("q", t0.Add(181*time.Second)); got != IdleCold2 {
+		t.Fatalf("level at L4 = %v, want cold_2", got)
+	}
+}
+
+func TestColdKeepCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		target        IdleLevel
+		extra         int
+		byGen, ceiled bool
+		percent       int
+	}{
+		{IdleCold1, 0, false, false, 50},
+		{IdleCold1, 1, false, false, 75},
+		{IdleCold1, 2, false, true, 100},
+		{IdleCold2, 2, false, false, 75},
+		{IdleCold1, 1, true, true, 75},
+		{IdleCold2, 1, true, false, 50},
+	} {
+		keep := coldKeepFor(tc.target, tc.extra)
+		if keep.Percent != tc.percent || keep.ceiling(tc.byGen) != tc.ceiled {
+			t.Errorf("%v extra %d byGen %v: keep %+v ceiling %v, want percent %d ceiling %v",
+				tc.target, tc.extra, tc.byGen, keep, keep.ceiling(tc.byGen), tc.percent, tc.ceiled)
+		}
+	}
+}
+
+// schedd reads the reported levels by number (api.IdleLadderFreezeLevel,
+// api.IdleLadderColdLevel).
+func TestIdleLevelNumbersMatchAPI(t *testing.T) {
+	if int(IdleFreeze) != api.IdleLadderFreezeLevel || int(IdleCold1) != api.IdleLadderColdLevel {
+		t.Fatalf("freeze %d cold_1 %d, want %d and %d", IdleFreeze, IdleCold1, api.IdleLadderFreezeLevel, api.IdleLadderColdLevel)
+	}
+}
+
+// Without the lru_gen interface the JailerVMM ages nothing and reclaims
+// through memory.reclaim until its share of the VM's memory (resident plus
+// already compressed) stays resident.
+func TestJailerColdPagesReclaimsUnderLockdown(t *testing.T) {
+	withFakeCgroupRoot(t)
+	l := Lease{Instance: "q", Plan: "pro"}
+	scope := vmCgroupScope(l)
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{
+		"memory.current": "125829120", "memory.swap.current": "0", "memory.reclaim": "",
+		// 120 MB resident, 80 MB already compressed: 200 MB in all.
+		"memory.stat": "anon 104857600\nfile 20971520\nzswapped 83886080\nzswpin 5\n",
+	} {
+		if err := os.WriteFile(filepath.Join(scope, name), []byte(value), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved := lruGenPath
+	lruGenPath = filepath.Join(t.TempDir(), "missing", "lru_gen")
+	t.Cleanup(func() { lruGenPath = saved })
+	v := &JailerVMM{}
+	if v.ColdPagesByGeneration() {
+		t.Fatal("compresses by generation without lru_gen")
+	}
+	if err := v.AgeVMMemory(l); err != nil {
+		t.Fatalf("age: %v", err)
+	}
+	reclaim := filepath.Join(scope, "memory.reclaim")
+	// Keep 25% of 200 MB: reclaim 70 MB of the 120 resident, 16 MB at a time.
+	if _, err := v.EvictColdVMMemory(l, ColdKeep{Generations: 2, Percent: 25}, func() bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(reclaim); string(raw) != "6291456" {
+		t.Fatalf("last reclaim write = %q, want the 6 MB remainder of 70 MB", raw)
+	}
+	if err := os.WriteFile(reclaim, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Keeping more than is resident reclaims nothing.
+	if _, err := v.EvictColdVMMemory(l, ColdKeep{Percent: 75}, func() bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(reclaim); len(raw) != 0 {
+		t.Fatalf("reclaim write %q when keeping 150 MB of 120 resident, want none", raw)
 	}
 }

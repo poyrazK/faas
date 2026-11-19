@@ -2285,7 +2285,7 @@ func TestWakeWritesMemoryMaxAfterBringUp(t *testing.T) {
 			if err != nil {
 				t.Fatalf("memory.max not written at %s: %v", memPath, err)
 			}
-			want := int64(planMB+api.PerVMOverheadMB) << 20
+			want := int64(api.AppVMMemoryMaxMB(planMB)) << 20
 			got := strings.TrimSpace(string(body))
 			if got != itoa(int(want)) {
 				t.Errorf("memory.max = %q, want %d", got, want)

@@ -1,0 +1,5 @@
+{
+  "load": "SELECT receipt FROM public.gregale_pipeline_tool_starts WHERE identity=$1",
+  "reserve": "INSERT INTO public.gregale_pipeline_tool_starts(identity,receipt) VALUES ($1,$2::jsonb) ON CONFLICT (identity) DO NOTHING RETURNING receipt",
+  "complete": "UPDATE public.gregale_pipeline_tool_starts SET receipt=jsonb_set(receipt,'{checkpoint}',$3::jsonb) WHERE identity=$1 AND receipt->'intent'=$2::jsonb AND (receipt->'checkpoint'='null'::jsonb OR receipt->'checkpoint'=$3::jsonb) RETURNING receipt"
+}

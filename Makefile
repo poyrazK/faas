@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd signd secretd neond hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd agentproxyd edgednsd signd secretd neond hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -490,8 +490,12 @@ migrations-land: ## Merge origin/main into a migration-carrying branch: take mai
 	python3 scripts/migrations_land.py
 
 .PHONY: agent-eval-test
-agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
+agent-eval-test: ## Unit tests of agent-eval and first-hour acceptance; no live runs (ADR-20261026152009)
 	python3 scripts/agent-eval/agent_eval_test.py
+	python3 -I scripts/first-hour/baseline_test.py
+	python3 -I scripts/first-hour/qualify_release_test.py
+	python3 -I scripts/first-hour/onboarding_test.py
+	python3 scripts/ci/start-native_test.py
 
 AGENT_EVAL_AGENTS ?= claude
 AGENT_EVAL_TOOLSETS ?= core,all
@@ -1243,6 +1247,10 @@ bootstrap-database-nodes: ansible-preflight ## ADR-1027: authorize pgproxyd on t
 bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/tenant_egress_gateway.yml
 
+.PHONY: bootstrap-agent-egress-gateway
+bootstrap-agent-egress-gateway: ansible-preflight ## ADR-20261117185346: converge the agent egress gateway, then register every compute node with it.
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/agent_egress_gateway.yml
+
 .PHONY: bootstrap-postgres-standby
 bootstrap-postgres-standby: ## ADR-1344 §8: seed and converge the warm-standby PostgreSQL replica (converge the control plane first).
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml
@@ -1509,7 +1517,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/mcpmanagement/statepg/queries.sql pkg/mcpmanagement/statepg/schema.sql "$$tmp/pkg/mcpmanagement/statepg/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/state/toolpublicationdb pkg/referrals pkg/apid/support pkg/edgecert/certpg pkg/signd/signpg pkg/secretd/secretpg pkg/neond/neondpg pkg/releasehistory pkg/state/accountrisk pkg/state/signupfacts pkg/state/abusestrikes pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/dataapibudget pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/state/toolpublicationdb pkg/referrals pkg/apid/support pkg/edgecert/certpg pkg/signd/signpg pkg/secretd/secretpg pkg/neond/neondpg pkg/releasehistory pkg/state/accountrisk pkg/state/signupfacts pkg/state/abusestrikes pkg/state/supportgrants pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/dataapibudget pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe pkg/tasktoolbinding/probedb; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \
@@ -1528,7 +1536,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/managedpostgres/connectioncapacity"; \
 	  cp pkg/managedpostgres/connectioncapacity/queries.sql pkg/managedpostgres/connectioncapacity/schema.sql "$$tmp/pkg/managedpostgres/connectioncapacity/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/state/toolpublicationdb pkg/referrals/sqlc pkg/state/accountrisk/sqlc pkg/state/signupfacts/sqlc pkg/state/abusestrikes/sqlc pkg/apid/support/sqlc pkg/edgecert/certpg/sqlc pkg/signd/signpg/sqlc pkg/secretd/secretpg/sqlc pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/dataapibudget/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
+	  for package in pkg/state/toolpublicationdb pkg/referrals/sqlc pkg/state/accountrisk/sqlc pkg/state/signupfacts/sqlc pkg/state/abusestrikes/sqlc pkg/state/supportgrants/sqlc pkg/apid/support/sqlc pkg/edgecert/certpg/sqlc pkg/signd/signpg/sqlc pkg/secretd/secretpg/sqlc pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/dataapibudget/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/tasktoolbinding/probedb pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1601,11 +1609,11 @@ spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
 	@vacuum lint -r $(VACUUM_RULES) $(SPEC)
 
 .PHONY: spec-check
-spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing-md docs-links-check ## CI gate: vacuum lint + AST parity + generated docs drift (runs in PR CI)
+spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing-md error-codes-md docs-links-check ## CI gate: vacuum lint + AST parity + generated docs drift (runs in PR CI)
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
 	# would double the wall time without adding signal.
 	@$(GO) test -count=1 -run TestSpecCompliance ./scripts/ci/speccompliance
-	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/egress-denylist.md docs/compliance/subprocessors.md docs/plans.md || \
+	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/egress-denylist.md docs/compliance/subprocessors.md docs/plans.md docs/error-codes.md || \
 	  (echo "spec-check: drift (spec or generated docs) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
 
@@ -1713,6 +1721,12 @@ focus-contract-check: ## Check FOCUS invoice projection, refresh, ownership, and
 pricing-md: ## Regenerate customer plan/pricing page from api limits
 	@$(GO) run ./cmd/pricing-md > docs/plans.md
 	@echo "pricing-md: docs/plans.md regenerated"
+
+.PHONY: error-codes-md
+error-codes-md: ## Regenerate docs/error-codes.md, the customer error code reference, from the problems the API builds
+	# Codes of unpublished areas are listed in docs/error-codes-unpublished.txt.
+	@$(GO) run ./cmd/errorcodes-md > docs/error-codes.md.tmp && mv docs/error-codes.md.tmp docs/error-codes.md || (rm -f docs/error-codes.md.tmp; exit 1)
+	@echo "error-codes-md: docs/error-codes.md regenerated"
 
 .PHONY: pricing-check
 pricing-check: ## Verify generated customer pricing is in sync
@@ -1931,12 +1945,12 @@ sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
 
 .PHONY: sdk-unit-python
 sdk-unit-python: ## Run Python SDK unit tests (no fixture required)
-	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py tests/test_flags.py tests/test_object_storage_runtime.py tests/test_trigger_batch.py
+	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py tests/test_flags.py tests/test_flags_track.py tests/test_object_storage_runtime.py tests/test_trigger_batch.py
 
 .PHONY: test-flags
 test-flags: ## Validate customer-aware flag release, SDK and request evidence against disposable Postgres
 	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is required for Flags acceptance"; exit 1)
-	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build && npm run test:build && node --test dist-test/test/flags.test.js
+	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build && npm run test:build && node --test dist-test/test/flags.test.js dist-test/test/flags-track.test.js
 	@cd sdk/go && $(GO) test -count=1 ./...
 	@$(GO) test -p 1 ./pkg/flags ./pkg/workloadidentity
 	@DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./pkg/flagsintegration
@@ -2094,3 +2108,7 @@ check-binding-runner-sync:
 .PHONY: test-data-pipeline
 test-data-pipeline: ## Real TLS Postgres replication and signed HTTP acceptance (Docker, Node, Go)
 	@$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) bash scripts/test-data-pipeline.sh
+
+.PHONY: first-hour-check
+first-hour-check: agent-eval-test ## Validate first-hour evidence and agent task graders without deploying
+	@$(GO_TEST) -p 1 ./tests/journeys -run '^TestHarnessFirstHour' -count=1

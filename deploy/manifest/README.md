@@ -15,6 +15,23 @@ CI gate both consume this directory's contents.
   its provider-neutral `private_dns: managed_hosts` adapter derives private
   addresses from Ansible host facts. Release CI materializes the release tuple
   and publishes the final `production-manifest.yaml` beside the signed bundle.
+- `production/ovh-live.template.yaml` — the OVHcloud bare-metal fleet the
+  public release moves to (`docs/runbooks/GcpToOvhMigration.md`). A copy of the
+  GCP template that changes only the hosts, the vRack overlay, the log archive
+  and the app entry; `pkg/renderer/ovh_production_manifest_test.go` fails if
+  the sections both share drift apart. Releases materialize it once
+  `production/release-template` names it.
+- `production/release-template` — the one template file name a release
+  materializes (`scripts/release-template.sh`). The tag therefore decides
+  which fleet a release targets. Change it only in its own PR, for example
+  to `ovh-live.template.yaml` at the OVHcloud cutover.
+
+Every template is published with a release, so nothing in it may be a
+credential. `scripts/check-manifest-credentials.sh` refuses private keys,
+cloud access keys, tokens, webhook URLs, passwords in URLs and inline
+`password`/`secret`/`token` values, including commented-out ones. The
+materializer runs it before it writes a byte. Credentials live in
+controller-local files that fields like `credentials_src` name by path.
 
 ## Layout
 
@@ -22,7 +39,9 @@ CI gate both consume this directory's contents.
 deploy/manifest/
 ├── README.md           (this file)
 ├── production/
-│   └── gcp-live.template.yaml
+│   ├── release-template     (names the template releases use)
+│   ├── gcp-live.template.yaml
+│   └── ovh-live.template.yaml
 └── examples/
     └── splitbox.example.yaml
 ```

@@ -54,7 +54,12 @@ func (m *Manager) CaptureSandboxSnapshot(ctx context.Context, c SandboxCapture) 
 	if !ok {
 		return nil, SnapshotInfo{}, errors.New("fcvm: this VMM cannot capture sandbox sessions")
 	}
-	if _, err := m.WakeSandbox(ctx, c.Wake); err != nil {
+	// The browser shape is captured with Chromium prewarmed and stopped,
+	// never running (ADR-20261116182615 §2), so the capture boots without
+	// the browser's commands.
+	wake := c.Wake
+	wake.Browser = false
+	if _, err := m.WakeSandbox(ctx, wake); err != nil {
 		return nil, SnapshotInfo{}, err
 	}
 	defer func() {
@@ -64,6 +69,15 @@ func (m *Manager) CaptureSandboxSnapshot(ctx context.Context, c SandboxCapture) 
 	}()
 	if err := waiter.WaitSandboxReady(ctx, c.Wake.Instance, agentRunReadyWindow); err != nil {
 		return nil, SnapshotInfo{}, fmt.Errorf("fcvm: sandbox capture: wait for guest-init: %w", err)
+	}
+	if c.Wake.Browser {
+		dialer, ok := m.vmm.(SandboxDialer)
+		if !ok {
+			return nil, SnapshotInfo{}, errors.New("fcvm: the vmm cannot dial sandbox sessions")
+		}
+		if err := prewarmSandboxBrowser(ctx, dialer, c.Wake.Instance); err != nil {
+			return nil, SnapshotInfo{}, err
+		}
 	}
 	memKey := state.SnapshotCaptureMemKey(c.Namespace, "", c.CaptureID)
 	spec := SnapshotSpec{StorageKey: memKey, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: memKey})}
@@ -75,7 +89,7 @@ func (m *Manager) CaptureSandboxSnapshot(ctx context.Context, c SandboxCapture) 
 		return nil, SnapshotInfo{}, fmt.Errorf("fcvm: sandbox capture: %w", err)
 	}
 	return &Snapshot{StorageKey: memKey, VMStateStorageKey: spec.VMStateStorageKey, FCVersion: m.fcVersion,
-		MemBytes: info.MemBytes, Networkless: c.Wake.Network != api.SandboxNetworkRegistries}, info, nil
+		MemBytes: info.MemBytes, Networkless: c.Wake.Network == api.SandboxNetworkNone}, info, nil
 }
 
 // WaitSandboxReady waits for guest-init's sandbox-ready console line.

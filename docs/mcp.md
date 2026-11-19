@@ -13,6 +13,13 @@ https://api.gregale.dev/mcp
 - **ChatGPT:** add it as a connector.
 - **Claude Code:** `claude mcp add --transport http gregale https://api.gregale.dev/mcp`.
 
+For **Antigravity**, add a remote server named `gregale` with
+`"serverUrl": "https://api.gregale.dev/mcp"` to its MCP configuration. In
+Customizations → Installed → MCP Servers, choose Authenticate. Sign in to
+Gregale, review the account and apps, and connect. Antigravity's callback
+displays an authorization code: copy it into Antigravity's authorization-code
+field and submit it to finish connecting.
+
 The client opens a Gregale page to connect:
 1. Choose what the agent may do. Inspection is always included. With write
    access you can also allow it to:
@@ -340,13 +347,13 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery, approval waits, the agent's own activity and undo |
+| `core` (default) | Context, docs search, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery, approval waits, the agent's own activity and undo |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
 | `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
 | `operate` | Configuration metadata/history/rollback, restart status, scaling, plan receipts and app costs |
 | `execute` | Local account connections only: existing jobs, run/task status, bounded logs, artifact metadata/downloads and opt-in dispatch/cancellation |
-| `build-tools` | Local authoring and opt-in hosted Node, Go and Python publication: starter files, reviewed fixtures and verified publication |
+| `build-tools` | Local authoring, opt-in hosted Node/Go/Python publication and original-key read-only Task recovery inspection |
 | `registry` | Search durable published versions and describe exact tools; personal hosted connections require exact owner-created tool grants |
 | `invoke` | Invoke exact registered versions, read durable status/results and request cancellation; hosted calls require separate invocation consent and exact owner grants |
 | `all` | Every tool allowed by the server operator (explicit opt-in) |
@@ -379,6 +386,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 |---|---|
 | `gregale_preflight` | Read-only consent, native operation authorization, release-review/health/operations compatibility and durable-state checks. `operation` is `deploy` (default), `restart`, `scale` or `env_change`; admission is checked separately. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
+| `gregale_search_docs` | Search the published docs at gregale.dev: up to 10 ranked sections (`limit`, default 5), at most two per page, each with its page, heading anchor, URL and a snippet. |
+| `gregale_get_docs_page` | One published docs page as Markdown with its heading anchors, or one `section` of it; `page` takes a slug or a gregale.dev/docs URL. Output stops at 48 KiB and says so. |
 | `gregale_list_actions` | Bounded connection-local deploy, rollback, service/worker rollout, service abort, configuration, scaling, cron, route-budget and regression-triage history for one exact app/environment, with keyset continuation. |
 | `gregale_get_action` | One recorded plan's attempts, redacted native receipts and recovery guidance; historical acceptance does not prove deployment completion. |
 | `gregale_list_environment_actions` | Connection-local promotion/rollback history for an exact project and target environment; requires consent for both environments and every project workload. |
@@ -436,6 +445,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_watch_rollout` | Bounded combined build, scoped health and native rollout observation for one exact deployment. |
 | `gregale_get_rollout` | Exact deployment lifecycle and service handoff barriers; worker completion limits are explicit. |
 | `gregale_wait_deployment` | Bounded deployment polling with terminal and pending results. |
+| `gregale_verify_application_response` | Explicit owner-authorized GET against one exact live deployment, including private apps. Requires deploy access; returns bounded application response evidence, not a public-access verdict. |
 | `gregale_plan_local_deploy` | Local connections only. Review deploying a project directory as one app through the CLI; fingerprints the files and pins the app's release state. |
 | `gregale_plan_env_change` | Local connections only. Review setting non-secret variables on an app's default scope; credential-shaped values are refused. |
 | `gregale_plan_domain`, `gregale_plan_bucket`, `gregale_plan_postgres`, `gregale_plan_cron` | Local connections only. Review attaching a custom domain, a bucket, a managed PostgreSQL database or a cron through the CLI. |
@@ -975,6 +985,132 @@ still rejects Task-enabled projects. Hosted, organization and app-scoped
 connections cannot inspect local Task plan paths. See
 [ADR 20261115072125](adr/20261115072125-agent-task-release-review.md).
 
+### Hosted Task release planning from uploads
+
+With `--allow-tool-publishing` and `build-tools`, an unscoped personal hosted
+publishing connection can call `gregale_plan_uploaded_task_tool_deploy`.
+Existing browser publishing/write consent or the personal agent key's native
+deployment authority is required to stage source. Organization, project/app and
+named-environment grants remain excluded. This planning slice supports existing
+default-environment apps and Node web/worker source with Tasks enabled; the
+worker includes `tasks-release.js`. It executes no CLI or customer code.
+
+Create one source upload per app using `gregale_create_source_upload`, upload
+the web and candidate-worker archives, then review:
+
+```json
+{
+  "web": {"app":"reports-web", "upload_id":"<web upload ID>"},
+  "worker": {"app":"reports-candidate", "upload_id":"<worker upload ID>"},
+  "observer_app":"reports-observer",
+  "observer_metric_app":"reports-candidate",
+  "previous_worker_apps":["reports-current"],
+  "release_timeout_seconds":300
+}
+```
+
+Each source can instead supply `files` using the existing bounded inline format.
+Never pass host paths or credentials. The release deadline defaults to 300
+seconds and accepts the native 1–600 second range; no release is started.
+
+The `hosted_task_source_review` response includes separate `source_sha256.web`
+and `.worker`, current `apps` identities/configuration/latest-and-serving
+baselines, web tool permissions, configured Task limits and required owner setup.
+Its `release_fingerprint` covers those facts and is independent of temporary
+upload paths. Optional `expected_source_sha256` on either source refuses changed
+content or modes compared with an earlier hosted review. A native baseline or
+reviewed policy change produces a new fingerprint. Missing or changing source
+fails before a review is returned; native reads cannot certify deployed health.
+
+Uploads are one-time, connection/account/app-bound and retain their existing
+expiry and extraction limits. Staged files are removed after review, including
+on failure. If a reply is lost, re-upload matching source or resubmit inline
+files; do not reuse a consumed archive ID. A disconnect/review retry creates no
+release effects. The tool's idempotent hint is false for this upload lifecycle.
+
+The result is `review_only`, with `ready_to_apply=false` and
+`bindings_verified=false`. Its hosted fingerprint is not a local execution
+fingerprint or an executable publication plan ID. It creates no durable intent,
+approval or invocation grant. Custom readiness-role release policies, database
+bindings, initialized schemas, retained keys and all live readiness checks still
+use their existing owner workflows. Hosted execution remains separate. See
+[ADR 20261116172002](adr/20261116172002-hosted-task-source-review.md).
+
+### Durable hosted Task source intents
+
+After `gregale_plan_uploaded_task_tool_deploy`, use
+`gregale_prepare_uploaded_task_tool_deploy` with its exact review fingerprint as
+`expected_review_sha256`, a caller-chosen lowercase SHA256 `intent_id`, and the
+same role/app/source arguments. This separate write saves the reviewed source
+privately for fifteen minutes. It requires the existing hosted publishing/write
+consent and operator publishing gate, plus native
+`FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION=1` and Account-domain sealing.
+
+Retention accepts up to **2 MiB and 1024 entries per role**, including explicit
+directories; larger projects may be reviewed but cannot be retained by this
+preview. An account can retain two active intents, 16 MiB total ciphertext and
+256 immutable identities. Get/prepare responses contain source hashes,
+permissions, configured limits, native app baselines and a fixed expiry; they
+never return source bytes or credentials.
+
+Use `gregale_get_uploaded_task_tool_deploy` with `intent_id` after reconnect or
+bridge restart. After an uncertain prepare reply, repeat the same identity and
+expected review. This retrieves the original snapshot without consuming a
+previous archive upload again. Supplied stack/digest arguments and inline bytes
+must still match. Archive retries refer to the original stored snapshot; a new
+upload ID does not replace its bytes. Prepare a new reviewed identity for new
+source. Retries never renew retention. After expiry, metadata remains and
+`source_state` is `expired`; the identity cannot be reused. Native indexed
+cleanup removes expired live ciphertext in bounded sweeps; database outages,
+backlogs and backup retention can delay physical removal.
+
+These intents always say `ready_to_apply=false`, `bindings_verified=false`, and
+`owner_authorization_required=true`. Source review approval is separate from
+credential binding, build, deployment, Task migration, fixtures and traffic authority.
+The existing uploaded planner continues to remove staged source without saving
+an intent. See [ADR 20261116183545](adr/20261116183545-hosted-task-source-intents.md).
+
+### Owner review of hosted Task source
+
+The owner uses a personal non-agent administrator connection to inspect the
+retained review, including its source digests, permissions, native app pins,
+`intent_sha256`, `review_sha256` and original `expires_at`:
+
+```sh
+gregale mcp server tasks audit get --id "$INTENT_ID" --json
+gregale mcp server tasks audit approve --id "$INTENT_ID" \
+  --intent-sha256 "$INTENT_SHA256" --review-sha256 "$REVIEW_SHA256" --json
+```
+
+Approval names both digests. It requires source retention to remain enabled,
+the original source to remain available, a fresh original requester, and exact
+native app configuration and serving baselines. Agent and MCP-login credentials
+cannot decide, even when they also carry an administrator scope. The API rechecks
+owner keys under lock; the account's MFA policy also applies. Decisions never
+renew the source's original fifteen-minute lifetime. An exact repeat retains
+the original decision time.
+
+`review_status` is `pending`, `approved`, `rejected`, `revoked`, `stale` or
+`expired`. Native GET and the hosted get tool show the last recorded observation.
+Use `gregale_check_uploaded_task_tool_deploy` with `intent_id` and
+`expected_review_sha256`, or `source-review check --id "$INTENT_ID"
+--review-sha256 "$REVIEW_SHA256"`, for a fresh native observation. The hosted
+check needs publishing/write consent because observed drift permanently makes
+the review stale. Restoring the previous facts cannot revive it.
+
+The owner can also use `source-review reject` or `source-review revoke`, naming
+the same two digests. Cancellation does not require the old requester or apps
+to remain live. Rejected, revoked, stale and expired states remain terminal;
+the CLI reports a nonzero exit when a requested decision was not reached.
+Metadata and decisions survive reconnects and native journal restarts. No API
+returns the retained source bytes. Source review approval still leaves
+`ready_to_apply=false`, `bindings_verified=false` and
+`owner_authorization_required=true`: credential qualification and execution
+need a separate owner-controlled workflow. The agent catalog gains a check
+tool and no owner decision tool.
+
+See [ADR 20261117070839](adr/20261117070839-hosted-task-source-owner-review.md).
+
 ### Durable Task release intents
 
 Local `build-tools` connections can save the reviewed Task stack before an owner
@@ -1175,6 +1311,39 @@ these bound journal size and do not change deployment quotas. Recovery history
 inspection is bounded to ten pages of up to 200 deployments per candidate role.
 See [ADR 20261115105244](adr/20261115105244-task-execution-evidence-recovery-plans.md).
 
+
+### Hosted read-only Task inspection
+
+Operators can enable `mcp-bridged --allow-task-inspection` independently of
+hosted publishing, invocation and connection writes. It defaults off. Select
+`build-tools` for the headless agent connection, using
+`Gregale-MCP-Toolsets: build-tools` on a bridge with catalog selection enabled.
+
+Use the same personal-account agent key that prepared the local release intent.
+It must retain `agent,apps:read,deploy:write`: the native journal still requires
+its original publication authority, even on a read-only MCP connection. A new,
+rotated or different key cannot inspect another requester's intent. Key expiry,
+revocation and project restrictions are rechecked natively. Browser OAuth,
+organization, project-limited and app-bound connections are excluded.
+
+Call `gregale_inspect_task_tool_recovery` or
+`gregale_plan_task_tool_recovery` with the retained identity:
+
+```json
+{"intent_id":"<64-character lowercase hex intent ID>"}
+```
+
+Both tools read native journal/deployment/serving/worker/observer evidence and
+return bounded checkpoints, observed release state, recovery blockers and next
+steps. No local CLI, source, binding profile or upload is needed. Reconnecting
+reads the same retained operation and fresh observations; it never restarts it.
+Unavailable or changing facts remain unknown. Reports omit claim/binding hashes,
+owner qualification records, credentials and paths; raw intent/operation tools
+remain local-only. `read_only` stays true, `ready_to_apply` false and
+`owner_authorization_required` true. Recovery plans cannot authorize mutations.
+Owner approval, execution, handover and recovery apply still require their
+existing local workflows and separate authority. See
+[ADR 20261116163708](adr/20261116163708-hosted-task-recovery-inspection.md).
 
 ### Owner recovery handover and qualification
 
@@ -3777,7 +3946,8 @@ Add `--allow-writes` to the agent's subprocess arguments to expose
 `gregale_apply_deploy`, `gregale_promote_deployment`, `gregale_apply_rollback`,
 `gregale_apply_environment_promotion`, `gregale_apply_environment_rollback`,
 `gregale_apply_workload_rollout`, `gregale_apply_service_abort`,
-`gregale_apply_route_budgets`, `gregale_apply_regression_action`, the secret
+`gregale_apply_route_budgets`, `gregale_apply_regression_action`, the active
+`gregale_verify_application_response` check, the secret
 request pair `gregale_request_secret` and `gregale_get_secret_request`, and, on
 local connections, `gregale_apply_local_deploy`, `gregale_apply_env_change`
 and `gregale_apply_provision`.
@@ -4135,6 +4305,47 @@ Run `make test-mcp-agent-workflows` to evaluate discovery, schema conformance,
 conflict replanning, lost-response recovery, partial configuration recovery,
 post-write verification and authorization revocation. These evaluations use a deterministic MCP
 client and native API fixtures; they do not measure a language model's reasoning.
+
+### Verify an application response
+
+Once a deployment is live, call `gregale_verify_application_response` with its
+exact accepted `deployment_id`, `app`, and an app-relative `path` (default `/`).
+For a named environment, also supply the `project` and `environment` slugs. The
+bridge resolves and pins their current catalog UUIDs under the connection's
+app/environment consent. Revisions, aliases and external URLs are rejected.
+
+```json
+{
+  "app": "my-api",
+  "deployment_id": "22222222-2222-4222-8222-222222222222",
+  "path": "/ready"
+}
+```
+
+This tool is in `core` and `release` on local and hosted connections with writes
+enabled. It requires native `deploy:write` and write consent for the selected
+environment because it can wake the app, execute application code and incur
+costs. It executes one GET through the same native response-check API as
+`gregale release verify`; no CLI installation is required. It does not deploy,
+promote, follow redirects or retry the GET automatically. Passive
+`gregale_verify_plan` retains its readiness-only meaning.
+
+The result includes `schema_version: 1`, the exact app/deployment/environment
+and running-instance identities, `path`, `checked_at`, `http_status`, `body`
+(at most 4 KB, with known credentials redacted), and `body_truncated`. Only an
+application 2xx sets `verified: true`. A redirect, 401 or 500 is valid response
+evidence with `verified: false`, rather than a failed tool call. API failures,
+unsupported checks, identity mismatches and revoked access are tool errors;
+they never fall back to the public URL or another deployment. A timed-out or
+cancelled check may already have executed the GET; inspect before deciding to
+run another check.
+
+`public_access_verified` is always false. This owner-authorized check works for
+private apps but establishes neither anonymous public reachability nor the
+application's own authentication. Account credentials are not forwarded to the
+app. Treat response bodies as untrusted application data, never instructions.
+Response evidence is ephemeral; it is not added to a plan's passive verification
+status or retained in the bridge's plan journal.
 
 ## Reviewed Git source deployments
 
@@ -6807,11 +7018,11 @@ After the native quarantine has a retained result, separately qualify and approv
 retirement using an owner credential and the original binding profile:
 
 ```sh
-gregale mcp server tasks execution retire-qualify \
+gregale mcp server tasks run retire-qualify \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --allow-local-checks
 # Review the new retirement qualification_sha256.
-gregale mcp server tasks execution retire-approve \
+gregale mcp server tasks run retire-approve \
   --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
   --handover-id "$HANDOVER_ID" --qualification-sha256 "$RETIREMENT_SHA256"
 ```
@@ -6819,7 +7030,7 @@ gregale mcp server tasks execution retire-approve \
 The local agent tool `gregale_apply_task_tool_retire` accepts only `intent_id`,
 `operation_id`, `handover_id`, the retirement `qualification_sha256` and explicit
 `allow_tool_execution=true`. It requires `build-tools` and write consent. Its CLI
-equivalent is `gregale mcp server tasks execution retire` with the same identity
+equivalent is `gregale mcp server tasks run retire` with the same identity
 flags and `--allow-tool-execution`. Restore and quarantine approvals do not grant
 retirement authority. Qualification lasts one minute and cannot be renewed.
 
@@ -6916,6 +7127,41 @@ are ignored; the journal remains the recovery source of truth.
 
 For native management deployment acceptance, see the
 [nonproduction KVM harness](ops/management-mcp-native-acceptance.md).
+
+## Read flag experiments
+
+Two read-only tools in the `release` toolset report Gregale Flags experiments
+(see [Flags](flags.md#run-an-experiment)). Both take `project` and
+`environment`, and the connection must have read consent for that
+environment.
+
+- `gregale_list_flag_experiments` lists the environment's experiments: flag,
+  rule, control, metric, status and stop reason.
+- `gregale_get_flag_experiment_results` takes `key` as well and returns the
+  results, guardrails and `recommendation` (`action`, `summary`, `commands`)
+  the CLI prints, with guidance for reporting them.
+
+Neither tool ships or stops an experiment. The recommendation's commands are
+for the owner to run; only a guardrail breach changes a flag without an
+owner's request.
+
+## Read product analytics
+
+Four read-only tools in the `diagnose` toolset query product analytics (see
+[Flags](flags.md#analyze-product-events)). All take `project` and
+`environment`; the first three also take optional `from`, `until` (RFC 3339),
+`unit` (`customer` or `subject`) and `by` (`flag:KEY` or `property:KEY`).
+
+- `gregale_get_insight_events` takes `event`, `interval` and `where`, and
+  returns the event's series.
+- `gregale_get_insight_funnel` takes 2 to 6 `steps` and a `window`.
+- `gregale_get_insight_retention` takes `start`, `return`, `period` and
+  `periods`.
+- `gregale_get_insight_requests` takes `flag` and returns requests, server
+  errors and p95 latency per variant.
+
+Each result carries guidance: a flag breakdown is observational, so causal
+claims need an experiment.
 
 ## Watch one rollout
 
@@ -9353,3 +9599,54 @@ alone does not remove that retained state. See
 [ADR 20261017191530](adr/20261017191530-mcp-readiness-pagerduty-release.md). Local tests cover memory,
 PostgreSQL restart, signatures, migration replay and client contracts; live
 PagerDuty subscription qualification remains pending.
+
+
+### Owner-qualified hosted Task bindings
+
+After approving a retained hosted source review, its personal owner can select
+existing native managed PostgreSQL bindings and run one bounded catalog probe.
+Enable both `FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION=1` and the separate
+`FAAS_MCP_HOSTED_TASK_BINDING_VERIFICATION=1` on APID; Account source sealing
+and account-bound runtime envelopes remain independent.
+
+```sh
+gregale mcp server tasks bind qualify --id INTENT \
+  --intent-sha256 INTENT_DIGEST --review-sha256 REVIEW_DIGEST \
+  --namespace QUEUE_NAMESPACE \
+  --web-database-ref secret:DATABASE_URL \
+  --worker-database-ref secret:DATABASE_URL \
+  --migration-database-ref secret:MIGRATION_URL \
+  --observer-database-ref secret:DATABASE_URL
+gregale mcp server tasks bind get --id INTENT
+gregale mcp server tasks bind revoke --id INTENT --binding-sha256 BINDING_DIGEST
+```
+
+All four references must identify one ready account-owned native database with
+runtime read/write, migration-only and observer read-only roles. Namespace and
+configured owner/payload keys must agree with the approved source and native
+apps. Selection is immutable; retries never repeat a probe. Changed selections
+require a new retained source identity and approval.
+
+Only metadata is returned. The hosted consent-gated
+`gregale_get_uploaded_task_tool_bindings` tool lets the original requester read
+status and fixed check results; agents cannot select, probe or revoke bindings.
+Evidence expires within one minute and never extends the source's original
+fifteen-minute deadline. Reads may permanently invalidate drift without probing.
+These are historical catalog/configuration observations, not retained payload
+decryption, migration compatibility, VM connectivity or execution readiness.
+All receipts keep `ready_to_apply=false`, `bindings_verified=false` and
+`owner_authorization_required=true`. No deployment or Task execution occurs.
+
+### Plan a contained hosted Task rehearsal
+
+Once a retained source review has a passing binding observation, an unscoped personal administrator API key can reserve a disposable rehearsal target. APID must enable `FAAS_MCP_HOSTED_TASK_REHEARSAL_PLAN=1`, hosted source retention, and binding verification.
+
+```bash
+gregale mcp server tasks rehearsal plan --id INTENT \
+  --intent-sha256 INTENT_DIGEST --review-sha256 REVIEW_DIGEST \
+  --binding-sha256 BINDING_DIGEST
+gregale mcp server tasks rehearsal approve --id INTENT --plan-sha256 PLAN_DIGEST
+gregale mcp server tasks rehearsal get --id INTENT
+```
+
+Review the allocated target identity, queue namespace, and fixed expiry before approving. The plan expires with the passing binding observation and retries preserve its identity and deadline. Use `rehearsal revoke --id INTENT --plan-sha256 PLAN_DIGEST` to withdraw an unconsumed approval. These commands only record planning and approval metadata. Runtime allocation, migration and candidate verification belong to the contained runner. See [the rehearsal plan ADR](adr/20261118062934-hosted-task-rehearsal-plan.md).

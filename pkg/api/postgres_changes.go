@@ -3,12 +3,13 @@ package api
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Postgres change workers (ADR-20261112140000): row changes of allowlisted
@@ -29,7 +30,7 @@ const (
 // PostgresChangeOperations is the capturable operation vocabulary.
 var PostgresChangeOperations = []string{"insert", "update", "delete"}
 
-var postgresChangeFeedName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
+var postgresChangeFeedName = lazyregexp.New(`^[a-z][a-z0-9_]{0,39}$`)
 
 // PostgresChangeFeed captures allowlisted columns of one table.
 type PostgresChangeFeed struct {

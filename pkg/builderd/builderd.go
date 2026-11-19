@@ -212,6 +212,8 @@ type Builderd struct {
 	// future opportunistic eligibility but cannot bypass this host fence.
 	slotMu      sync.Mutex
 	activeSlots int
+	// sliceFreeMB overrides the builder-slice memory read in tests.
+	sliceFreeMB func() (int, bool)
 	// sourceStorage is the optional remote source handoff used by split-box
 	// deployments. Local/single-box deployments leave it nil and continue to
 	// read the source spool directly.
@@ -1182,37 +1184,42 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 
 	dependencyCacheKey := dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef)
+	dependencyCacheSeedKey := ""
+	if dependencyCacheKey != "" && len(buildSecrets) == 0 && len(registryCreds) == 0 {
+		dependencyCacheSeedKey = dependencyCacheFamilyKey(app, fw, runtimeBaseRef)
+	}
 	vmReq := VMRequest{
-		BuildDependencyDigest: buildDependencyDigest,
-		PublicBuildURLs:       publicURLs,
-		DockerfileBuild:       dockerfileBuild,
-		GoCommand:             goCommand,
-		BuildSecrets:          buildSecrets,
-		RegistryCredentials:   registryCreds,
-		BuildID:               build.ID,
-		TenantID:              app.AccountID,
-		DeploymentID:          dep.ID,
-		SourcePath:            dep.SourcePath,
-		SourceSHA256:          srcHash,
-		SourceRoot:            dep.SourceRoot,
-		DockerfilePath:        dockerfilePath,
-		Framework:             fw,
-		Runtime:               runtimeName,
-		RuntimeBaseRef:        runtimeBaseRef,
-		IssueSourceMaps:       sourceMaps,
-		Function:              app.Type == state.AppTypeFunction,
-		SharedRuntime:         sharedRuntime != "",
-		DevWatchCommand:       watch.Command,
-		DevWatchHost:          watch.Host,
-		DependencyCacheKey:    dependencyCacheKey,
-		LayerCompression:      b.cfg.LayerCompression,
-		BuildKitSnapshotter:   b.cfg.BuildKitSnapshotter,
-		DeferCacheExport:      b.cfg.DeferCacheExport,
-		LogPath:               dep.LogPath,
-		RAMMB:                 api.BuildVMRAMMB,
-		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
-		Plan:                  string(acct.Plan),
-		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
+		BuildDependencyDigest:  buildDependencyDigest,
+		PublicBuildURLs:        publicURLs,
+		DockerfileBuild:        dockerfileBuild,
+		GoCommand:              goCommand,
+		BuildSecrets:           buildSecrets,
+		RegistryCredentials:    registryCreds,
+		BuildID:                build.ID,
+		TenantID:               app.AccountID,
+		DeploymentID:           dep.ID,
+		SourcePath:             dep.SourcePath,
+		SourceSHA256:           srcHash,
+		SourceRoot:             dep.SourceRoot,
+		DockerfilePath:         dockerfilePath,
+		Framework:              fw,
+		Runtime:                runtimeName,
+		RuntimeBaseRef:         runtimeBaseRef,
+		IssueSourceMaps:        sourceMaps,
+		Function:               app.Type == state.AppTypeFunction,
+		SharedRuntime:          sharedRuntime != "",
+		DevWatchCommand:        watch.Command,
+		DevWatchHost:           watch.Host,
+		DependencyCacheKey:     dependencyCacheKey,
+		DependencyCacheSeedKey: dependencyCacheSeedKey,
+		LayerCompression:       b.cfg.LayerCompression,
+		BuildKitSnapshotter:    b.cfg.BuildKitSnapshotter,
+		DeferCacheExport:       b.cfg.DeferCacheExport,
+		LogPath:                dep.LogPath,
+		RAMMB:                  api.BuildVMRAMMB,
+		TimeoutSec:             b.cfg.BuildTimeoutSeconds,
+		Plan:                   string(acct.Plan),
+		WarmScopeKey:           builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
 	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
 		// A build with secrets or registry credentials never restores or
@@ -1453,9 +1460,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	} else if cacheOwed {
 		b.emitBuildLog(ctx, build.ID, "dependency cache will be saved after the image is handed off\n")
 	}
-	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
-		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
-	}
+	b.emitGuestBuildLog(ctx, build.ID, "[guest build output]", out.LogTail)
 	if line := sharedRuntimeBuildLog(out.SharedRuntime); line != "" && out.ExitCode == 0 {
 		b.emitBuildLog(ctx, build.ID, line)
 	}
@@ -1626,9 +1631,7 @@ func (b *Builderd) exportDeferredCache(ctx context.Context, vm DeferredCacheVM, 
 		// goes to the deployment's build log, as a failed build's does, and
 		// never to the operator log.
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
-		if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
-			b.emitBuildLog(ctx, build.ID, "[dependency cache export output]\n"+tail+"\n")
-		}
+		b.emitGuestBuildLog(ctx, build.ID, "[dependency cache export output]", out.LogTail)
 		return
 	}
 	b.log.Info("builderd: deferred dependency cache saved", "build", build.ID,
@@ -2175,9 +2178,15 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 // failing step (production-us hunt #9: a RUN exiting 3 showed "ot complete
 // successfully: exit code: 3" and Go frames). The customer's build output gets
 // the budget first; the daemon log keeps only a short tail for operators.
+//
+// The tail used to be cut to one NOTIFY payload (3 KiB), which lost output a
+// customer printed on purpose (Kroki feedback 2026-11-17: `du` sizes printed
+// mid-build were pushed out by the export lines that followed). It is now
+// guestBuildLogTailMaxBytes and emitGuestBuildLog sends it in NOTIFY-sized
+// chunks.
 func boundedGuestBuildLogTail(raw string) string {
 	const (
-		maxBytes       = 3 * 1024
+		maxBytes       = guestBuildLogTailMaxBytes
 		daemonTail     = 512
 		daemonSection  = "\n[buildkitd]\n"
 		customerHeader = "[build]\n"

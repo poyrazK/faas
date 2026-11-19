@@ -25,6 +25,7 @@ and projects that appear in the account during a run are attributed to it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -45,7 +46,7 @@ AGENTS = ("claude", "codex", "gemini", "cursor")
 AGENT_BINARIES = {"claude": "claude", "codex": "codex", "gemini": "gemini", "cursor": "cursor-agent"}
 TOOLSETS = ("core", "release", "diagnose", "all", "none")
 SETUP_KINDS = ("deploy", "replace")
-CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps")
+CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps", "owner_response")
 FEATURE_KINDS = ("command", "file", "state")
 FEATURE_STATES = ("project_created",)
 DEFAULT_API = "https://api.gregale.dev"
@@ -693,7 +694,7 @@ def _app_evidence(gregale, slug: str, since: str = "") -> str:
 
 
 def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch=None, http_deadline_s: float = 120, created: dict | None = None,
-               since: str = "") -> list[dict]:
+               since: str = "", expected_app_id: str | None = None) -> list[dict]:
     created_apps = (created or {}).get("apps", [])
     results = []
     for check in task["checks"]:
@@ -707,6 +708,8 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
             elif kind == "http":
                 url = _app_url(gregale.get(f"/v1/apps/{slug}")) + check.get("path", "/")
                 ok, detail = http_check(url, check, deadline_s=http_deadline_s, fetch=fetch)
+            elif kind == "owner_response":
+                ok, detail = owner_response_check(gregale, slug, check, expected_app_id)
             elif kind == "serving":
                 health = gregale.get(f"/v1/apps/{slug}/health")
                 serving, latest = health.get("serving_deployment_ids") or [], health.get("latest_deployment_id", "")
@@ -730,10 +733,49 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 codes = check.get("codes") or list(DEFAULT_TRAPS)
                 hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_evidence(gregale, app, since)})
                 ok, detail = not hit, ",".join(hit)
-        except (OSError, KeyError, ValueError, urllib.error.URLError) as error:
+        except (OSError, KeyError, ValueError, subprocess.TimeoutExpired, urllib.error.URLError) as error:
             detail = f"check error: {error}"
         results.append({"kind": kind, "ok": ok, "detail": detail})
     return results
+
+
+def owner_response_check(gregale, slug: str, check: dict, expected_app_id: str | None = None) -> tuple[bool, str]:
+    """Grade a private app using the exact latest deployment, never a public URL.
+
+    The grader's own check is evidence of the final outcome, not a timestamp of
+    when the agent first verified it. It never records the private response body.
+    """
+    app = gregale.get(f"/v1/apps/{slug}")
+    if expected_app_id is not None and app.get("id") != expected_app_id:
+        return False, "the task replaced the original app identity"
+    if not app.get("require_authn"):
+        return False, "app did not retain required authentication"
+    rows = _rows(gregale.get(f"/v1/apps/{slug}/deployments?limit=20"))
+    release_ids = {row.get("id") for row in rows if row.get("id") and row.get("app_id") == app.get("id")}
+    if len(release_ids) < check.get("min_deployments", 1):
+        return False, "not enough accepted deployments for this task"
+    health = gregale.get(f"/v1/apps/{slug}/health")
+    latest = health.get("latest_deployment_id")
+    if latest not in (health.get("serving_deployment_ids") or []):
+        return False, "latest accepted deployment is not serving"
+    deployment = next((row for row in rows if row.get("id") == latest), None)
+    if not deployment or deployment.get("status") != "live" or deployment.get("app_id") != app.get("id"):
+        return False, "latest accepted deployment is not live for this app"
+    result = gregale.cli("release", "verify", latest, "--app", slug, "--path", check.get("path", "/"), timeout=60)
+    if result.returncode != 0:
+        return False, "owner-authorized verification failed"
+    evidence = json.loads(result.stdout)
+    if not isinstance(evidence, dict):
+        return False, "owner verification returned an unexpected document"
+    instance = str(evidence.get("instance_id", "")).replace("-", "")
+    body = evidence.get("body")
+    ok = (evidence.get("app_id") == app.get("id") and evidence.get("deployment_id") == latest
+          and evidence.get("scope") == "default" and not evidence.get("project_id") and not evidence.get("environment_id")
+          and re.fullmatch(r"[0-9a-f]{32}", instance) is not None and instance != "0" * 32
+          and evidence.get("verified") is True and evidence.get("public_access_verified") is False
+          and type(evidence.get("http_status")) is int and evidence["http_status"] == check.get("status", 200)
+          and isinstance(body, str) and len(body.encode("utf-8")) <= 4096 and check.get("contains", "") in body)
+    return ok, "private deployment response verified" if ok else "response identity, HTTP status or expected content did not match"
 
 
 # --- how the agent worked ---------------------------------------------------
@@ -837,10 +879,23 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
     run_dir = Path(tempfile.mkdtemp(prefix=f"agent-eval-{task['id']}-"))
     project = run_dir / "project"
     record = {"task": task["id"], "agent": agent, "toolset": toolset, "app": slug, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    record["target"] = getattr(gregale, "api", None)
+    try:
+        with Path(gregale.binary).open("rb") as binary:
+            checksum = hashlib.sha256()
+            for chunk in iter(lambda: binary.read(1024 * 1024), b""):
+                checksum.update(chunk)
+            record["cli_sha256"] = checksum.hexdigest()
+    except OSError:
+        record["cli_sha256"] = None
     created: dict = {"apps": [], "projects": []}
     before, evidence = None, ""
+    cleanup_allowed = False
     try:
         before = gregale.inventory()
+        if slug and slug in before.get("apps", set()):
+            raise EvalError("evaluation app name already exists; refusing to update an existing app")
+        cleanup_allowed = True
         if task.get("repo"):
             checkout(task["repo"]["url"], task["repo"]["commit"], project)
         else:
@@ -851,9 +906,14 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
             if step["kind"] == "replace":
                 replace_once(project / step["file"], step["old"], step["new"])
             elif step["kind"] == "deploy":
-                result = gregale.cli("deploy", "--path", str(project), "--name", slug, "--app", "--yes", cwd=project, timeout=1200)
+                flags = ("--require-authn", "--rollout", "immediate") if step.get("private") else ()
+                result = gregale.cli("deploy", "--path", str(project), "--name", slug, "--app", "--yes", *flags, cwd=project, timeout=1200)
                 if (result.returncode == 0) != (step.get("expect", "success") == "success"):
                     raise EvalError(f"setup deploy exit {result.returncode}: {result.stderr[-300:]}")
+        if task.get("retain_app_identity"):
+            record["initial_app_id"] = gregale.get(f"/v1/apps/{slug}").get("id")
+            if not record["initial_app_id"]:
+                raise EvalError("could not pin the existing app identity before the edit task")
         command, extra_env = agent_command(agent, task_prompt(task, slug, toolset), task, run_dir, project, gregale, toolset, options)
         env = {**gregale.env(), **extra_env}
         # The agent's shell `gregale` must be the binary under test.
@@ -891,7 +951,8 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         record["duration_s"] = round(time.monotonic() - started, 1)
         record.update({k: v for k, v in metrics.items() if k != "tool_inputs"})
         record["created"] = created
-        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"])
+        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"],
+                                      expected_app_id=record.get("initial_app_id"))
         record["success"] = all(check["ok"] for check in record["checks"])
         record.update(grade_features(task, metrics["commands"], project, created))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
@@ -903,7 +964,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
     except (EvalError, subprocess.TimeoutExpired, OSError, ValueError, urllib.error.URLError) as error:
         record.update(success=False, error=str(error))
     finally:
-        if not options.keep_apps:
+        if not options.keep_apps and cleanup_allowed:
             try:
                 if before is not None and not created.get("apps") and not created.get("projects"):
                     created, _ = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)

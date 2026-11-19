@@ -866,6 +866,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			srv.runAgentActivitySweep(ctx)
 		})
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPostReleaseWatchWorker(ctx) })
+		// ADR-20261116120000: create the protection baseline for enrolled apps.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProtectionReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProtectionHealthProber(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runScheduledReleaseWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runDatabaseSwitchWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.plainRollbacks().Run(ctx) })
@@ -1012,7 +1015,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startFeatureFlagLifecycleReconciler(ctx, srv, log)
-		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
+		startFlagExperimentReconciler(ctx, srv, log) // ADR 20261115163113
+		startPlatformFlagRamps(ctx, srv, log)        // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
 		srv.startIssueTrackerReminders(ctx)
@@ -1045,6 +1049,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			},
 			Audit: srv.audit, // issue #755 / PR-5.5: emit account.deleted from the sweep
 		})
+		srv.purgeDeletedApp = graceLoop.PurgeApp
 		go func() { _ = graceLoop.Run(ctx) }()
 		// Login-token cleanup (issue #165 PR #2, ADR-032). The
 		// login_tokens table backs password-reset (15-min TTL) and
@@ -1624,6 +1629,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithListenersEnabled(strings.TrimSpace(deps.getenv("FAAS_TCP_LISTENERS_ENABLED")) == "1", strings.TrimSpace(deps.getenv("FAAS_UDP_LISTENERS_ENABLED")) == "1").
 		WithReleasePhaseEnabled(releasePhaseEnabledFromEnv(deps.getenv)).
 		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
 		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
@@ -2431,6 +2437,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runRouteProbeWorker(ctx)
 	go srv.runWorkflowReadinessSubscriptionWorker(ctx)
 	go srv.runWorkflowReadinessReminderWorker(ctx)
+	go srv.runSupportAccessSummaries(ctx)
 	go srv.runApplicationStandardWorker(ctx)
 	go srv.runMigrationVerificationWorker(ctx)
 	go srv.runMigrationCutoverWorker(ctx)
@@ -2909,6 +2916,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	if srv.privateTools != nil {
+		srv.privateTools.StartSourceRetentionCleanup(ctx)
+	}
 	privateStop := context.AfterFunc(ctx, srv.stopPrivateTools)
 	defer func() { privateStop(); srv.stopPrivateTools() }()
 	defer srv.startInternalCIWorker(ctx, log)()

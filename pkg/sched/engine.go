@@ -702,6 +702,10 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*appLock // app_id -> serialisation lock, while held or awaited
+	// primeBoots holds the instance IDs of snapshot primes booting without
+	// the app lock (deploy-path review P12), so a customer park leaves them
+	// to finish and park themselves.
+	primeBoots sync.Map
 	// frozenTier (ADR-1151, schedd `frozen_tier`) freezes idle eligible
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
@@ -1038,6 +1042,11 @@ func (e *Engine) ownsInstanceApp(ctx context.Context, appID string) bool {
 	}
 	return e.ownsAppDecision(app)
 }
+
+// ClaimNodeID is the node whose apps this scheduler owns besides apps with
+// no node, or "" when it owns every app. The durable replay worker claims only
+// the wakes and restarts of these apps.
+func (e *Engine) ClaimNodeID() string { return e.claimNodeID() }
 
 // claimNodeID is the node whose apps ownsAppDecision accepts besides apps
 // with no node, or "" when this engine owns every app.
@@ -7232,9 +7241,11 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	// COLD_BOOTING. Holding the lock for the whole cold boot (up to the
 	// startup window) stalled every wake, scale-out and park of the app's
 	// serving release during each deploy (deploy-path review P12).
+	e.primeBoots.Store(ins.ID, struct{}{})
 	e.unlockApp(appID)
 	out, err := e.createRuntimeWithStandards(bootCtx, placement.NodeID, ins.ID, string(state.StateColdBooting), spec, nil, false)
 	e.lockApp(appID)
+	e.primeBoots.Delete(ins.ID)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
@@ -7779,6 +7790,22 @@ func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.A
 	return over
 }
 
+// parkSparesPrimeBoots reports whether a park of app leaves a deploy's
+// snapshot prime to finish its boot. Prime boots without the app lock
+// (deploy-path review P12) and snapshots and parks its own instance, so an
+// app the customer parked keeps no resident VM either way; destroying the
+// boot instead failed every deploy to a parked app ("teardown in progress",
+// 2026-11-16 journeys). A suspended, abuse-held, capped or over-plan app
+// still loses the prime.
+func (e *Engine) parkSparesPrimeBoots(ctx context.Context, app state.App, account state.Account) bool {
+	if app.Status != state.AppEvictedCold {
+		return false
+	}
+	unparked := app
+	unparked.Status = state.AppActive
+	return !e.appMustPark(ctx, unparked, account)
+}
+
 // ParkApp tears down every live instance of an app whose lifecycle has already
 // been changed to evicted_cold by apid. The app-level park endpoint is
 // asynchronous: apid owns the app status write, while schedd owns instance
@@ -7843,6 +7870,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if handled, count, coldErr := e.parkScenarioCold(ctx, appID); handled {
 		return count, coldErr
 	}
+	sparePrimes := e.parkSparesPrimeBoots(ctx, app, account)
 
 	// The reaper calls ParkApp for every parked app on every tick, so read
 	// live rows only: a parked app's history holds thousands of rows, each
@@ -7924,6 +7952,9 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 			e.parkFrozenLocked(ctx, fresh, "park")
 			acted++
 		case state.StateWaking, state.StateColdBooting:
+			if _, priming := e.primeBoots.Load(fresh.ID); priming && sparePrimes {
+				continue
+			}
 			// A wake drops appMu during the vmmd RPC. If the park
 			// notification wins that interleaving, destroy the in-flight
 			// VM and land the row in STOPPED; the wake's phase-4 re-read

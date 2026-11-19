@@ -915,6 +915,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case "gcs":
 		log.Info("vmmd: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("vmmd: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("vmmd: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"))
 	}
@@ -1019,6 +1023,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}()
 		log.Info("vmmd: snapshot fan-out enabled", "node_id", nodeID, "interval", fanout.Interval())
+		// ADR-20261114182830 amendment: vmmd alone evicts the shared node
+		// cache, by the tiers its fan-out sets; schedd, imaged and builderd
+		// then leave snapshot captures and app layers to it.
+		if release, ownErr := storage.ClaimCacheEvictionOwnership(storageBackend); ownErr != nil {
+			log.Warn("vmmd: node cache eviction not claimed; other daemons keep evicting oldest-first", "err", ownErr)
+		} else {
+			defer release()
+		}
 	}
 	// Issue #667 / ADR-078: single storeStamper adapter satisfies
 	// BOTH the FrameworkReadyStamper interface (PR #470-FU-B) and
@@ -1377,6 +1389,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("vmmd: DNS-gated egress disabled by FAAS_EGRESS_DNS_GATING=off")
 		mgr.WithDNSGatedEgress(false)
 	}
+	// ADR-20261112121456 §3: web-mode sandbox sessions need the tenant egress
+	// gateway; a development or test fleet may let them use the node's own
+	// address instead.
+	if strings.TrimSpace(os.Getenv("FAAS_SANDBOX_WEB_NODE_EGRESS")) == "1" {
+		log.Warn("vmmd: web-mode sandbox sessions may leave from this node's own address (FAAS_SANDBOX_WEB_NODE_EGRESS=1)")
+		mgr.WithSandboxWebNodeEgress(true)
+	}
+	// ADR-20261117185346 §3: sandbox sessions with egress leave through the
+	// agent tunnel. The switch with an incomplete tunnel refuses to start
+	// rather than leave sessions on the tenant path.
+	if strings.TrimSpace(os.Getenv("FAAS_AGENT_EGRESS_GATEWAY")) == "1" {
+		cfg, err := agentEgressConfigFromEnv(os.Getenv)
+		if err != nil {
+			return err
+		}
+		if err := mgr.SetAgentEgress(cfg); err != nil {
+			return fmt.Errorf("vmmd: %w", err)
+		}
+		log.Info("vmmd: sandbox sessions leave through the agent egress gateway", "iface", cfg.Iface, "slice", cfg.Slice.String(),
+			"proxy", cfg.Proxy != nil)
+		go mgr.RunAgentEgressRenewal(ctx)
+	}
 	// ADR-477: journal survivors remain quarantined. The legacy name reaper
 	// is only available to portable wiring without a journal.
 	preparedCleanupCtx, preparedCleanupCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -1436,6 +1470,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	})
 	mgr.SetHostIdentities(hostIdentities)
 	mgr.SetCaptureRecipient(captureRecipient)
+	sealedSnapshots, err := sealedSnapshotConfigFromEnv(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if err := sealedSnapshots.apply(mgr, jailer); err != nil {
+		return err
+	}
+	log.Info("vmmd: sealed snapshots", "chunked_format", sealedSnapshots.chunked,
+		"plaintext_cache", sealedSnapshots.cacheDir != "", "plaintext_cache_mb", sealedSnapshots.cacheBytes>>20)
 	mgr.SetRegistryIdentities(registryIdentities)
 	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
 	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
@@ -1575,6 +1618,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("vmmd: %w", err)
 	}
 	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
+	// ADR-20261116190000: this vmmd is the only one on the node now, so the
+	// base generations it does not boot need no eviction pin. The cache
+	// reclaims them under pressure; running guests keep their own links.
+	if unpinned, err := imaged.UnpinOtherBaseGenerations(storageBackend, baseGenerations, routedBases); err != nil {
+		log.Warn("vmmd: unpin other runtime base generations", "err", err)
+	} else if unpinned > 0 {
+		log.Info("vmmd: unpinned runtime base generations this release does not boot", "entries", unpinned)
+	}
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
 	// first restore after this start does not hash a base in its wake path,
@@ -1932,7 +1983,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// closed instead of failing VM hosting; plaintext TCP is never used.
 	relayDial, relayTargetErr := outboundRelayTarget(os.Getenv)
 	if relayTargetErr != nil {
-		log.Error("vmmd: outbound relay disabled", "err", relayTargetErr)
+		log.Log(ctx, outboundRelayDisabledLevel(relayTargetErr), "vmmd: outbound relay disabled", "err", relayTargetErr)
 		relayDial = nil
 	}
 	relayRecv, relayRecvErr := StartOutboundRelayReceiver(ctx, log, mgr, identitySigner, relayDial, jailer)

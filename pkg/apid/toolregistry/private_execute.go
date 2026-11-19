@@ -15,34 +15,43 @@ import (
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/tasktoolbinding"
 	"github.com/onebox-faas/faas/pkg/toolinvocation"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
 type PrivateExecutionOptions struct {
-	PublicationEnabled   bool
-	PublicationProtocols func(context.Context, api.ToolInvocationTarget, string, string, mcphosting.Contract, bool, func(http.RoundTripper) http.RoundTripper) error
-	Enabled              bool
-	Identities           func(context.Context) []*age.X25519Identity
-	ConnectionIdentities func(context.Context) []*age.X25519Identity
-	ConnectionRecipients func() ([]*age.X25519Recipient, error)
-	Endpoint             func(context.Context, state.App, state.Deployment) (string, error)
-	VerifyPin            func(context.Context, api.ToolInvocationTarget, string) error
-	HTTP                 *http.Client
-	Audit                GrantAudit
+	RehearsalPlanEnabled       bool
+	BindingVerificationEnabled bool
+	// BindingProbeConnect is a trusted driver seam for isolated native tests.
+	// Production leaves it nil and uses the public-destination TLS probe.
+	BindingProbeConnect    tasktoolbinding.Connect
+	SourceRetentionEnabled bool
+	PublicationEnabled     bool
+	PublicationProtocols   func(context.Context, api.ToolInvocationTarget, string, string, mcphosting.Contract, bool, func(http.RoundTripper) http.RoundTripper) error
+	Enabled                bool
+	Identities             func(context.Context) []*age.X25519Identity
+	ConnectionIdentities   func(context.Context) []*age.X25519Identity
+	ConnectionRecipients   func() ([]*age.X25519Recipient, error)
+	Endpoint               func(context.Context, state.App, state.Deployment) (string, error)
+	VerifyPin              func(context.Context, api.ToolInvocationTarget, string) error
+	HTTP                   *http.Client
+	Audit                  GrantAudit
 }
 
 // PrivateExecutor owns only bounded protocol workers. Secret values remain in
 // this API process and are never returned by a public credential endpoint.
 type PrivateExecutor struct {
-	store   state.Store
-	opts    PrivateExecutionOptions
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mu      sync.Mutex
-	closing bool
-	active  int
-	workers sync.WaitGroup
+	store                state.Store
+	opts                 PrivateExecutionOptions
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	mu                   sync.Mutex
+	sourceCleanupStarted bool
+	sourceCleanupCancel  context.CancelFunc
+	closing              bool
+	active               int
+	workers              sync.WaitGroup
 }
 
 func NewPrivateExecutor(store state.Store, opts PrivateExecutionOptions) *PrivateExecutor {
@@ -54,6 +63,9 @@ func (e *PrivateExecutor) Close() {
 	e.mu.Lock()
 	e.closing = true
 	e.cancel()
+	if e.sourceCleanupCancel != nil {
+		e.sourceCleanupCancel()
+	}
 	e.mu.Unlock()
 	e.workers.Wait()
 	if e.opts.HTTP != nil {

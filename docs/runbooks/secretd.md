@@ -349,9 +349,22 @@ nor rewrite it undetected. A snapshot that cannot be opened cold boots
    (a vmmd without it treats a sealed snapshot as a crash capture and fails
    the wake instead of cold booting). On a node with the runtime identity
    retired (slice 3e), vmmd must open keys through secretd
-   (`faas_vmmd_secretd_open`). Run `make test-metal` and `make leakcheck`
-   on a native KVM host, and measure the restore p95 on the reference node
-   with sealing on: it must stay under 350 ms.
+   (`faas_vmmd_secretd_open`).
+   **Fast sealed wakes (slice 3d-5).** The first metal run (2026-11-16)
+   measured sealed wakes at 6.6–7.4 s against 1.15 s unsealed, because each
+   wake decrypted the whole memory file. Once every vmmd runs a release that
+   reads the chunked format, set on every vmmd:
+   - `FAAS_VMMD_SEALED_FORMAT=v2`: captures are written in 4 MiB chunks
+     with zero chunks left out, and a wake opens them in parallel;
+   - `FAAS_VMMD_SEALED_PLAIN_CACHE_DIR=/var/lib/faas/sealed-plain` (and
+     `FAAS_VMMD_SEALED_PLAIN_CACHE_MB`, default 20480): a node keeps one
+     decrypted copy of each sealed snapshot it restored, so only its first
+     wake per capture decrypts and later wakes link the copy like an
+     unsealed snapshot. Plaintext is only ever on a node that restored the
+     app; unused copies expire after 24 h.
+   Then run `make test-metal` and `make leakcheck` on a native KVM host, and
+   measure the restore p95 on the reference node with sealing on, first
+   wakes and repeat wakes separately: repeat wakes must stay under 350 ms.
 2. **Turn on.** Set `FAAS_SCHEDD_SEAL_SNAPSHOTS=1` for schedd and restart
    it. Check: schedd logs `schedd: park and warm snapshots sealed at the
    source`; new rows carry a key
@@ -395,6 +408,34 @@ hold a grant for, and need no cluster key.
    token without an `app_id` passes as before.
 
 Back out a node by unsetting the variable and restarting schedd.
+
+### Take the control identity off compute (slice 3k-2)
+
+After step 2 holds on every compute node, the node no longer needs the
+cluster signing key at all.
+
+1. **Every compute node mints through secretd.** In Ansible, set
+   `faas_schedd_secretd_internal_svc: true` for each compute host and
+   converge. Workflow outbound (if enabled) now mints through secretd too.
+   Check that `faas_secretd_opens_total{rpc="MintWorkflowIdentity"}` rises
+   when outbound steps run and that refusals stay flat.
+2. **schedd's contract step is done.** `faas_seal_domain_control_contracted`
+   and `faas_seal_domain_delivery_contracted` are true, so no fleet identity
+   is loaded. The role refuses the retirement without it.
+3. **Retire.** Set the GitHub environment variable
+   `SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE=true` and run cd-compute. Each
+   node loses `control.age`, its previous twin and its probe result, and
+   schedd starts with `FAAS_SEAL_DOMAIN_CONTROL_RETIRED=true`. Check:
+   - the journal shows `control identity retired on this node`;
+   - compute schedds export no `faas_seal_domain_loaded{domain="control"}`
+     series (a retired domain is left out, so FaasSealDomainIdentityMissing
+     stays quiet) and the control plane's schedd reports 1;
+   - internal_only dispatches and workflow outbound steps still pass.
+
+A schedd that refuses to start names what is left (a minter that is not
+secretd, a control identity, or a fleet identity). Back out by unsetting the
+variable and running cd-compute again: the identity comes back with the next
+converge.
 
 ## Rotation
 

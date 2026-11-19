@@ -14,17 +14,19 @@ enable a preview cohort or qualify native VM lifecycle or fleet rollout.
 gregale init --template customer-operation-export --path customer-operation-export
 ```
 
-The SDK is currently internal and unpublished. Build and pack it from an
-authorized Gregale checkout, then copy the package into the generated source:
+The Node SDK is not on npm yet. Build it from its public repository,
+[gregale-dev/gregale-js](https://github.com/gregale-dev/gregale-js), then copy
+the package into the generated source:
 
 ```sh
-cd <gregale-checkout>/sdk/node
+git clone --depth 1 https://github.com/gregale-dev/gregale-js
+cd gregale-js/packages/sdk-node
 npm ci --ignore-scripts
 npm run build
 npm pack --ignore-scripts
 cd <generated-source>/customer-operation-export
 mkdir -p packages
-cp <gregale-checkout>/sdk/node/gregale-sdk-node-0.1.0.tgz packages/gregale-sdk.tgz
+cp /path/to/gregale-js/packages/sdk-node/gregale-sdk-node-*.tgz packages/gregale-sdk.tgz
 npm install --ignore-scripts
 npm test
 ```

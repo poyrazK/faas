@@ -42,9 +42,16 @@ if [ "$#" -ne 1 ] || ! cmp -s "$modules/@anthropic-ai/claude-code/bin/claude.exe
   exit 1
 fi
 
-for bin in codex opencode claude; do
+for bin in codex opencode claude playwright-mcp; do
   ln -sf "$modules/.bin/$bin" "$bindir/$bin"
 done
+# The sandbox browser's launcher (ADR-20261112121456 phase 2).
+browser=${AGENT_BASE_BROWSER:-/opt/gregale/browser/gregale-browser.mjs}
+if [ ! -f "$browser" ]; then
+  echo "agent-base: $browser is missing" >&2
+  exit 1
+fi
+ln -sf "$browser" "$bindir/gregale-browser"
 
 # Each preset reports the version the catalog pins.
 python3 -I - "$catalog" "$bindir" <<'EOF'

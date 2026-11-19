@@ -94,6 +94,7 @@ func packGitArchiveReported(srcPath string, capMB int, mode secretScanMode, buil
 
 	var totalUncompressed int64
 	archiveEntryCount := 0
+	var envFilesLeft []string
 	existingEntries := make(map[string]bool)
 	tr := tar.NewReader(gzIn)
 	for {
@@ -122,6 +123,14 @@ func packGitArchiveReported(srcPath string, capMB int, mode secretScanMode, buil
 		decision := gitArchiveSelection(name, isDir, rules)
 		if excluded[name] {
 			decision = packSelection{excluded: true, reason: "command-scoped exclusion"}
+		}
+		// A committed .env stays local too, as in local-files deploys and
+		// `gregale dev` (prod finding #42): runtime values belong in sealed
+		// env, and upstream repositories commit test fixtures there. A
+		// negated rule such as `!.env` in .gregaleignore still ships one.
+		if !isDir && !decision.excluded && localEnvFileName(name) && decision.reason != "negated ignore rule" {
+			decision = packSelection{excluded: true, reason: "local env file"}
+			envFilesLeft = append(envFilesLeft, name)
 		}
 		if err := report.observe(name, isDir, hdr.Size, decision, false); err != nil {
 			return "", 0, findings, err
@@ -227,7 +236,20 @@ func packGitArchiveReported(srcPath string, capMB int, mode secretScanMode, buil
 		return "", 0, findings, sourceUploadLimitError(capMB)
 	}
 	success = true
+	if len(envFilesLeft) > 0 {
+		PrintWarn(osStderr, "%s", committedEnvFilesNote(envFilesLeft))
+	}
 	return outPath, regularFileCount, findings, nil
+}
+
+// committedEnvFilesNote names the committed .env files a HEAD deploy left
+// out and how to set their values or ship one anyway.
+func committedEnvFilesNote(names []string) string {
+	shown := names
+	if len(shown) > maxCredentialWarningNames {
+		shown = append(append([]string(nil), shown[:maxCredentialWarningNames]...), fmt.Sprintf("and %d more", len(names)-maxCredentialWarningNames))
+	}
+	return fmt.Sprintf("not uploading committed env file(s) %s; set runtime values with `gregale env push`, or add a negated rule such as !%s to .gregaleignore to upload one", strings.Join(shown, ", "), path.Base(names[0]))
 }
 
 func writeGitArchiveBuildOnlyFiles(tw *tar.Writer, files map[string][]byte, existing map[string]bool, remaining int64, existingEntryCount int) (int, error) {

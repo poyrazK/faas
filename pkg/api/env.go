@@ -2,8 +2,9 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Customer env-var DTOs (issue #395 / ADR-045). The wire shape mirrors
@@ -49,7 +50,17 @@ type AppEnvResponse struct {
 	Key       string `json:"key"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+	// Value is the variable's plaintext, present only when the GET asks
+	// for it with ?values=true (retail-store feedback B7, 2026-11-17).
+	// Variables are non-sensitive by contract; imported Compose values
+	// and rewritten service addresses are readable this way, while
+	// sealed secrets never are.
+	Value *string `json:"value,omitempty"`
 }
+
+// EnvValuesQuery is the GET /v1/apps/{slug}/env query parameter that
+// includes each variable's value.
+const EnvValuesQuery = "values"
 
 // ScopedAppEnvResponse is the per-row shape for the nested
 // `env_by_scope` response (ADR-090 D3). The flat AppEnvResponse
@@ -66,10 +77,11 @@ type AppEnvResponse struct {
 // scope metadata in every row — a one-off nested response is
 // cheaper to render than a per-row scope string.
 type ScopedAppEnvResponse struct {
-	Scope     string `json:"scope"`
-	Key       string `json:"key"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Scope     string  `json:"scope"`
+	Key       string  `json:"key"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
+	Value     *string `json:"value,omitempty"` // with ?values=true only
 }
 
 // EnvByScope is the nested map shape returned under `env_by_scope`
@@ -107,7 +119,7 @@ type AppEnvListResponse struct {
 // mirror this pattern (migration 20261116100000000).
 const EnvKeyPattern = `^[A-Za-z][A-Za-z0-9_]*$`
 
-var envKeyRe = regexp.MustCompile(EnvKeyPattern)
+var envKeyRe = lazyregexp.New(EnvKeyPattern)
 
 // ValidateEnvKey returns nil when key matches EnvKeyPattern, is within
 // MaxSecretKeyLen bytes, and is not another spelling of a platform-provided

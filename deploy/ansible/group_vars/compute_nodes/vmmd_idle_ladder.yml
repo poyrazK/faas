@@ -18,18 +18,39 @@
 #
 # Names are canonical database node names. A node in more than one list takes
 # the strongest. Turning a node back to off is safe: the next vmmd start
-# resumes nothing it did not pause. L3/L4 (idle_ladder_compress) stay off
-# until a metal run on a zswap node.
+# resumes nothing it did not pause.
+#
+# compress (needs on): L3/L4 also compress quiet-paused VMs' cold pages into
+# the zswap pool at 60 s and 180 s of quiet. Under kernel lockdown
+# (ADR-20261107220000, every production host) it goes through memory.reclaim
+# and keeps 50% and 25% of a VM's memory resident (ADR-20261107122928
+# amendment 1); a node needs the zswap role and a release with amendment 1
+# (rc.355 or later).
 #
 # Step 1 (2026-11-12): observe on every compute node, to size L2 against this
-# week's booking peaks. Step 2: on for fsn-2.faas, then apps, then fsn-3.faas.
+# week's booking peaks.
+# Step 2 (2026-11-18): on + apps on every compute node, compress on fsn-2.faas
+# only. Both were hand-set on 2026-11-17/18 and held two 30-minute production
+# load tests (16-17 apps, a flash crowd and a cron wave): bookings peaked at
+# 290% of the admission ceiling with measured RAM at 75%, 4 of 60,877 requests
+# failed, resume p99 stayed under 20 ms and no resume or compression failed.
+# On fsn-2.faas, rc.355's memory.reclaim path kept an L3/L4 VM about 40%
+# smaller than on fsn-3.faas. Next: compress on fsn-3.faas once fsn-2.faas has
+# run it for a week.
 vmmd_idle_ladder_observe_nodes:
   - fsn-2.faas
   - fsn-3.faas
-vmmd_idle_ladder_on_nodes: []
-vmmd_idle_ladder_apps_nodes: []
+vmmd_idle_ladder_on_nodes:
+  - fsn-2.faas
+  - fsn-3.faas
+vmmd_idle_ladder_apps_nodes:
+  - fsn-2.faas
+  - fsn-3.faas
+vmmd_idle_ladder_compress_nodes:
+  - fsn-2.faas
 vmmd_idle_ladder: >-
   {{ 'on' if (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_on_nodes
      else ('observe' if (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_observe_nodes
      else 'off') }}
 vmmd_idle_ladder_apps: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_apps_nodes }}"
+vmmd_idle_ladder_compress: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_compress_nodes }}"

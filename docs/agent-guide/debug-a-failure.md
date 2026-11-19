@@ -8,7 +8,7 @@ Every failure names its code and a fix; start from the fix.
     gregale logs <app> --deployment <deployment>
 - See an app's state, park reason and recommendations:
     gregale inspect <app>
-- Run a command against the live deployment:
+- Run a command in a fresh VM of the live deployment (not the serving instance):
     gregale app exec <app> -- <command>
 - Check the source locally:
     gregale doctor

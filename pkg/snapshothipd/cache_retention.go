@@ -28,6 +28,9 @@ const runtimeReleaseKeyPrefix = "base/releases/runner-"
 // order eviction by it. nil leaves the cache to plain oldest-first eviction.
 func (r *Runner) WithCacheRetention(reader state.NodeCacheRetentionReader) *Runner {
 	r.retention = reader
+	if owned, ok := reader.(state.NodeOwnedSnapshotStore); ok {
+		r.owned = owned
+	}
 	return r
 }
 
@@ -35,17 +38,23 @@ func (r *Runner) WithCacheRetention(reader state.NodeCacheRetentionReader) *Runn
 // references.
 type cacheRetentionDecision struct {
 	ret state.NodeCacheRetention
-	now time.Time
+	// owned is what this node owns (ADR-20261118160000); empty when unread.
+	owned state.NodeOwnedSnapshots
+	now   time.Time
 }
 
-// tier is the eviction tier of key: a live snapshot's capture last, a stale
-// snapshot's capture and an unused runtime release first. A capture no row
-// references yet stays in the normal tier: it may have been cached after the
-// references were read, and the sweep removes it once it is old enough.
+// tier is the eviction tier of key: the live snapshots of apps this node owns
+// last of all, then other live snapshots, a stale snapshot's capture and an
+// unused runtime release first. A capture no row references yet stays in the
+// normal tier: it may have been cached after the references were read, and
+// the sweep removes it once it is old enough.
 func (d cacheRetentionDecision) tier(key string) int {
 	if prefix := state.SnapshotCapturePrefix(key); prefix != "" {
 		switch d.ret.Captures[prefix] {
 		case state.CaptureLive:
+			if d.owned.Captures[prefix] {
+				return storage.EvictOwned
+			}
 			return storage.EvictLast
 		case state.CaptureStale:
 			return storage.EvictFirst
@@ -56,6 +65,9 @@ func (d cacheRetentionDecision) tier(key string) int {
 	if d.ret.LiveLayers[key] {
 		// Fan-out retires a replica whose layer is gone, so a live
 		// snapshot's layer is evicted with its capture, last.
+		if d.owned.Layers[key] {
+			return storage.EvictOwned
+		}
 		return storage.EvictLast
 	}
 	if d.releaseUnused(key) {
@@ -136,7 +148,8 @@ func (r *Runner) sweepCache(ctx context.Context, now time.Time) {
 		r.log.Warn("snapshothipd: node cache retention read failed; nothing removed", "node_id", r.nodeID, "err", err)
 		return
 	}
-	d := cacheRetentionDecision{ret: ret, now: now}
+	d := cacheRetentionDecision{ret: ret, owned: r.readOwned(ctx), now: now}
+	defer r.requeueOwned(ctx)
 	for _, cache := range r.retentionCaches() {
 		cache.SetEvictionTier(d.tier)
 		entries, err := cache.LocalEntries()
@@ -168,5 +181,44 @@ func (r *Runner) sweepCache(ctx context.Context, now time.Time) {
 			r.log.Info("snapshothipd: node cache swept", "node_id", r.nodeID,
 				"snapshot_objects", captures, "runtime_release_bases", releases, "bytes", bytes)
 		}
+		// The other daemons sharing this cache leave live captures and layers
+		// to the eviction owner, so the owner holds the budget and the
+		// free-space floor here as well as on its own writes.
+		if err := cache.EnforceBudget(); err != nil {
+			r.log.Warn("snapshothipd: node cache budget enforcement failed", "node_id", r.nodeID, "err", err)
+		}
+	}
+}
+
+// readOwned reads the live snapshots of the apps this node owns. A failed
+// read keeps them in the shared live tier for this sweep.
+func (r *Runner) readOwned(ctx context.Context) state.NodeOwnedSnapshots {
+	if r.owned == nil || r.nodeID == "" {
+		return state.NodeOwnedSnapshots{}
+	}
+	owned, err := r.owned.NodeOwnedSnapshots(ctx, r.nodeID)
+	if err != nil {
+		r.log.Warn("snapshothipd: owned snapshot read failed; they share the live eviction tier this sweep", "node_id", r.nodeID, "err", err)
+		return state.NodeOwnedSnapshots{}
+	}
+	return owned
+}
+
+// requeueOwned queues a fetch of each live snapshot of an app this node owns
+// that it does not hold: one fan-out never sent here, one its cache evicted
+// (at most once per api.OwnedSnapshotRefetchAfter), or one of an app that has
+// just moved to this node (ADR-20261118160000). The next wake of an app this
+// node owns then restores from local disk.
+func (r *Runner) requeueOwned(ctx context.Context) {
+	if r.owned == nil || r.nodeID == "" || ctx.Err() != nil {
+		return
+	}
+	n, err := r.owned.RequeueOwnedSnapshotReplicas(ctx, r.nodeID, api.OwnedSnapshotRefetchAfter)
+	if err != nil {
+		r.log.Warn("snapshothipd: owned snapshot requeue failed", "node_id", r.nodeID, "err", err)
+		return
+	}
+	if n > 0 {
+		r.log.Info("snapshothipd: queued owned snapshots this node does not hold", "node_id", r.nodeID, "count", n)
 	}
 }

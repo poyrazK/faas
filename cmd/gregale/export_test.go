@@ -551,6 +551,11 @@ var LoopbackBindRegex = &loopbackBindRegex
 var McpNativeCheckWorkers = &mcpNativeCheckWorkers
 var NonInteractive = &nonInteractive
 var OsStderr = &osStderr
+var GitMetadataTimeout = &gitMetadataTimeout
+var GitSlowNoticeAfter = &gitSlowNoticeAfter
+var GitPipeWaitDelay = &gitPipeWaitDelay
+var WithProjectWaitProgress = withProjectWaitProgress
+var WaitForProjectApplyTimeouts = waitForProjectApplyTimeouts
 var OsStdin = &osStdin
 var OsStdout = &osStdout
 var ProfileOverride = &profileOverride
@@ -2919,7 +2924,8 @@ var LinkedDefaultAppName = linkedDefaultAppName
 // gregale dev findings (2026-11-15).
 var DevSourceFingerprint = devSourceFingerprint
 var DevLocalEnvExcludes = devLocalEnvExcludes
-var PackedCredentialFiles = packedCredentialFiles
+var DeployCredentialExcludes = deployCredentialExcludes
+var WithoutExcludedFindings = withoutExcludedFindings
 var ShouldExcludeWithRules = func(srcDir, rel string, isDir, dockerfile bool) bool {
 	return loadPackRules(srcDir, dockerfile).exclude(rel, isDir)
 }
@@ -2963,4 +2969,14 @@ func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretCl
 	return report.Written, err
 }
 
+// RenderAppProtection exposes renderAppProtection (ADR-20261116120000 §5).
+func RenderAppProtection(w io.Writer, slug string, resp api.AppProtectionResponse) {
+	renderAppProtection(w, slug, resp)
+}
+
 var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal
+
+// UncommittedProjectFile exposes the HEAD-deploy project-file check.
+func UncommittedProjectFile(porcelain, repoRoot, sourceDir string) (string, bool) {
+	return uncommittedProjectFile(porcelain, repoRoot, sourceDir)
+}

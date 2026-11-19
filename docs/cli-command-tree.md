@@ -103,6 +103,7 @@ touch them. The tables below map each earlier name.
 | `gregale freeze` | `gregale release freeze` |
 | `gregale functions` | `gregale function` |
 | `gregale incidents` | `gregale alert incident` |
+| `gregale insights` | `gregale insight` |
 | `gregale inspect` | `gregale app health --explain` |
 | `gregale invitations` | `gregale org` |
 | `gregale invocations` | `gregale invocation` |
@@ -177,6 +178,7 @@ touch them. The tables below map each earlier name.
 | `gregale approvals approve` | `gregale release approve` |
 | `gregale approvals off` | `gregale release approval disable` |
 | `gregale approvals reject` | `gregale release reject` |
+| `gregale apps purge` | `gregale app purge` |
 | `gregale apps restore` | `gregale app restore` |
 | `gregale apps rm` | `gregale app delete` |
 | `gregale apps streaming-cap` | `gregale app streaming-cap` |
@@ -282,6 +284,7 @@ touch them. The tables below map each earlier name.
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
 | `gregale deployment timeline` | `gregale release timeline` |
+| `gregale deployment verify` | `gregale release verify` |
 | `gregale deployment wait` | `gregale release wait` |
 | `gregale deployments alias` | `gregale release alias` |
 | `gregale deploys cancel` | `gregale release cancel` |
@@ -386,6 +389,14 @@ touch them. The tables below map each earlier name.
 | `gregale events subscriptions` | `gregale event subscription list` |
 | `gregale events workflow-backfill` | `gregale event backfill create --workflow-name <WORKFLOW-NAME>` |
 | `gregale events workflow-replay-preview` | `gregale event backfill create --workflow-name <WORKFLOW-NAME> --dry-run` |
+| `gregale flags experiments create` | `gregale flag experiment create` |
+| `gregale flags experiments delete` | `gregale flag experiment delete` |
+| `gregale flags experiments get` | `gregale flag experiment get` |
+| `gregale flags experiments list` | `gregale flag experiment list` |
+| `gregale flags experiments results` | `gregale flag experiment result get` |
+| `gregale flags experiments ship` | `gregale flag experiment promote` |
+| `gregale flags experiments start` | `gregale flag experiment start` |
+| `gregale flags experiments stop` | `gregale flag experiment stop` |
 | `gregale flags kill` | `gregale flag kill set` |
 | `gregale flags off` | `gregale flag disable` |
 | `gregale flags on` | `gregale flag enable` |
@@ -396,6 +407,10 @@ touch them. The tables below map each earlier name.
 | `gregale flags unkill` | `gregale flag kill unset` |
 | `gregale github bind` | `gregale github link` |
 | `gregale incidents note` | `gregale alert incident update --note <NOTE>` |
+| `gregale insights events` | `gregale insight event list` |
+| `gregale insights funnel` | `gregale insight funnel get` |
+| `gregale insights requests` | `gregale insight request list` |
+| `gregale insights retention` | `gregale insight retention get` |
 | `gregale invitations accept` | `gregale org invitation accept` |
 | `gregale invitations peek` | `gregale org invitation peek` |
 | `gregale issues bulk` | `gregale debug issue update --issues <ISSUES>` |
@@ -452,10 +467,12 @@ touch them. The tables below map each earlier name.
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
 | `gregale mcp task-wait` | `gregale mcp client wait` |
+| `gregale mcp tasks bindings` | `gregale mcp server tasks bind` |
 | `gregale mcp tasks execution` | `gregale mcp server tasks run` |
 | `gregale mcp tasks intent` | `gregale mcp server tasks review` |
 | `gregale mcp tasks observer` | `gregale mcp observer` |
 | `gregale mcp tasks release` | `gregale mcp server tasks deploy` |
+| `gregale mcp tasks source-review` | `gregale mcp server tasks audit` |
 | `gregale mcp tools` | `gregale mcp client tools` |
 | `gregale openapi dry-run` | `gregale api spec import --dry-run` |
 | `gregale openapi preview` | `gregale api spec apply --dry-run` |
@@ -471,6 +488,7 @@ touch them. The tables below map each earlier name.
 | `gregale orgs standards local-intent` | `gregale org standards local set` |
 | `gregale orgs standards operation abort` | `gregale org standards operation cancel` |
 | `gregale orgs standards reviews preview` | `gregale org standards reviews approve --dry-run` |
+| `gregale orgs support-access` | `gregale org support` |
 | `gregale orgs transfer-ownership` | `gregale org owner set` |
 | `gregale pipeline access` | `gregale pipeline access approve` |
 | `gregale pipeline access` | `gregale pipeline access check` |

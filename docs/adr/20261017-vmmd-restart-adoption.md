@@ -1343,3 +1343,44 @@ through the ordinary teardown, record retired, leakcheck clean.
 `TestAdoptGuestBindsTakesAnEvictedSourceFromTheGuest` and
 `TestAdoptGuestBindsRefusesAnEvictedSourceTheGuestNoLongerBinds` cover the
 unit cases.
+
+### A proven guest that adoption refuses is killed (2026-11-16)
+
+The evicted-source fix above closed one way a refused guest kept running;
+every other refusal after the proof still left one: a scope refusal
+(static egress, private network, rehearsal, egress circuits, production
+fork, admission receipt, unsupported asset, Firecracker changed, network
+unrecorded, function resources) or a failure in `adoptGuest` before the
+guest is registered. Such a guest stays in ADR-472 quarantine with its
+Firecracker running. Nothing can reach it; schedd fails its row
+(`vmmd_adoption_refused`) and the app wakes a new instance. The old one kept
+its memory and its slot, kept running its own background work and egress,
+and failed every later rollout's adoption check, because its process was
+alive, until someone killed it by PID.
+
+Decision: `killRefusedSurvivor` (pkg/fcvm/manager_adopt.go) kills such a
+guest at startup through a pidfd that still names the recorded process
+(`openAdoptedProcess`, the identity check adoption itself uses), and waits
+up to 5 s for it to exit. Only guests that passed the proof are killed; a
+record the proof did not cover is never signalled. A guest adoption
+registered (`adopt_incomplete`, `teardown_failed`) is left to the Manager's
+teardown, as before.
+
+What does not change:
+
+- The refusal stays in the adoption report, with "the guest was killed
+  through its pidfd" in its detail. A candidate that refuses guests must
+  still fail the rollout's clean-adoption check; a kill never counts as an
+  adoption.
+- The record stays quarantined with its jail, namespace and links. With its
+  process gone, the next restart's check counts it gone, so it no longer
+  blocks a no-drain restart. ADR-971 still retires it only once its
+  resources are verifiably absent; the slot stays quarantined until the
+  node drains, as for any refused record.
+
+Validation: `TestAdoptRestartSurvivorsKillsARefusedProvenGuest` (adopt
+failure and scope refusal are killed; a failed kill or an unproven record
+leaves the guest alone) and `TestMetalAdoptionRestartKillsARefusedGuest`
+(a real guest whose record the crash left marked with egress circuits passes
+the proof, is refused `egress_circuit` and is gone once the successor has
+started).

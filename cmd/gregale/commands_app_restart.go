@@ -237,26 +237,29 @@ func outputAppRestartStatus(slug string, row api.RuntimeConfigRestartStatusRespo
 	if jsonOutput {
 		return jsonOut(writeJSON(row))
 	}
-	next := row.ProgressNextStep()
+	message, next := row.ProgressMessage(), row.ProgressNextStep()
 	if row.Status == "completed" {
 		next = "Restart processing completed; application health still needs verification."
 		if ready {
-			next = "The app is ready to serve: its replicas passed their readiness checks."
+			// --wait checked readiness, so the server's "health has not been
+			// verified" line would contradict the result (prod check 2026-11-16).
+			message = "Restart processing is complete and the app's replicas passed their readiness checks."
+			next = "The app is ready to serve."
 		}
 	}
-	_, _ = fmt.Fprintf(osStdout, "Restart %s: %s\n  %s\n  attempts: %d\n  next: %s\n", row.WakeID, row.Status, row.ProgressMessage(), row.Attempts, next)
+	_, _ = fmt.Fprintf(osStdout, "Restart %s: %s\n  %s\n  attempts: %d\n  next: %s\n", row.WakeID, row.Status, message, row.Attempts, next)
 	if !row.RequestedAt.IsZero() {
 		_, _ = fmt.Fprintf(osStdout, "  Requested: %s\n", row.RequestedAt.UTC().Format(time.RFC3339))
 	}
 	if row.CompletedAt != nil {
 		_, _ = fmt.Fprintf(osStdout, "  Processing finished: %s\n", row.CompletedAt.UTC().Format(time.RFC3339))
 	}
-	command := recoveryCLI() + " app " + recoveryArgument(slug) + " restart status --wake-id " + recoveryArgument(row.WakeID) + " --wait"
+	command := recoveryCLI() + " app restart status " + recoveryArgument(slug) + " --wake-id " + recoveryArgument(row.WakeID) + " --wait"
 	switch row.Status {
 	case "completed":
-		command = recoveryCLI() + " app " + recoveryArgument(slug) + " health"
+		command = recoveryCLI() + " app health " + recoveryArgument(slug)
 	case "failed":
-		command = recoveryCLI() + " inspect " + recoveryArgument(slug)
+		command = recoveryCLI() + " app health " + recoveryArgument(slug) + " --explain"
 	}
 	_, _ = fmt.Fprintf(osStdout, "  Next command (POSIX shells):\n    %s\n", command)
 	return 0

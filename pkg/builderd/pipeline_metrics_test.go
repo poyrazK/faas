@@ -150,11 +150,11 @@ func TestPipelineMetricsSlotsConcurrentAndIdempotentRelease(t *testing.T) {
 	if !ok {
 		t.Fatal("guaranteed slot unavailable")
 	}
-	if pipelineGauge(t, reg, "builderd_build_slots_in_use") != 1 || pipelineGauge(t, reg, "builderd_build_slots_limit") != 1 {
+	if pipelineGauge(t, reg, "builderd_build_slots_in_use") != 1 || pipelineGauge(t, reg, "builderd_build_slots_limit") != 2 {
 		t.Fatal("slot gauges differ from enforced state")
 	}
 	if _, _, ok := b.acquireSlot(); ok {
-		t.Fatal("second slot admitted")
+		t.Fatal("second slot admitted without a residency probe")
 	}
 	var wg sync.WaitGroup
 	for range 20 {
@@ -166,7 +166,7 @@ func TestPipelineMetricsSlotsConcurrentAndIdempotentRelease(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if pipelineGauge(t, reg, "builderd_build_slots_in_use") != 0 || testutil.ToFloat64(b.pipeline.admission.WithLabelValues("granted")) != 1 || testutil.ToFloat64(b.pipeline.admission.WithLabelValues("limit")) != 1 {
+	if pipelineGauge(t, reg, "builderd_build_slots_in_use") != 0 || testutil.ToFloat64(b.pipeline.admission.WithLabelValues("granted")) != 1 || testutil.ToFloat64(b.pipeline.admission.WithLabelValues("policy")) != 1 {
 		t.Fatal("slot counts or repeated release incorrect")
 	}
 }

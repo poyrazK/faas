@@ -1727,7 +1727,7 @@ func toProblem(err error) *api.Problem {
 		return api.NewProblem(api.StatusForCode(api.CodeValidation), api.CodeValidation,
 			"App does not serve requests",
 			"this app runs as a background worker or job and has no request listener; give the service a published port (compose ports:) or a request execution mode to serve HTTP").
-			WithDocs("https://gregale.dev/docs/event-driven#invocations")
+			WithDocs("https://gregale.dev/docs/event-driven#invocation-history-retention")
 	}
 	if errors.Is(err, sched.ErrAtCapacity) {
 		return api.NewProblem(api.StatusForCode(api.CodeCapacity), api.CodeCapacity,

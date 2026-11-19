@@ -32,6 +32,7 @@ func pollProjectDeployment(ctx context.Context, client rolloutStatusClient, buil
 				last.Configuration = remembered
 			}
 			phase = waiting
+			projectWaitProgressFrom(ctx).observe(build, dep, waiting, done, failure)
 			if done {
 				return projectApplyWaitResult{deployment: last, ok: true, err: failure}
 			}

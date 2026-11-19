@@ -78,7 +78,8 @@ def sync_detailed(
     """List objects with opaque cursor pagination
 
      Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+    bucket. An environment branch's bucket lists as the branch reads it, its own objects over its parent
+    bucket's, keys it deleted hidden; each parent object has from_parent.
 
     Args:
         slug (str):
@@ -122,7 +123,8 @@ def sync(
     """List objects with opaque cursor pagination
 
      Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+    bucket. An environment branch's bucket lists as the branch reads it, its own objects over its parent
+    bucket's, keys it deleted hidden; each parent object has from_parent.
 
     Args:
         slug (str):
@@ -161,7 +163,8 @@ async def asyncio_detailed(
     """List objects with opaque cursor pagination
 
      Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+    bucket. An environment branch's bucket lists as the branch reads it, its own objects over its parent
+    bucket's, keys it deleted hidden; each parent object has from_parent.
 
     Args:
         slug (str):
@@ -203,7 +206,8 @@ async def asyncio(
     """List objects with opaque cursor pagination
 
      Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+    bucket. An environment branch's bucket lists as the branch reads it, its own objects over its parent
+    bucket's, keys it deleted hidden; each parent object has from_parent.
 
     Args:
         slug (str):

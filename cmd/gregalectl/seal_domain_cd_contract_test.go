@@ -39,10 +39,12 @@ func TestSealDomainCDContract(t *testing.T) {
 		},
 		{
 			workflow: ".github/workflows/cd-compute.yml",
-			// ADR-20261110210000 slices 3e, 3g-2 and 3g-3: the runtime,
-			// edge, delivery and build identities reach cd-compute only
-			// until compute is retired from them.
-			tokens: append(secrets("EDGE_TLS", "CONTROL"),
+			// ADR-20261110210000 slices 3e, 3g-2, 3g-3 and 3k-2: the
+			// runtime, edge, delivery, build and control identities reach
+			// cd-compute only until compute is retired from them.
+			tokens: append(secrets("EDGE_TLS"),
+				"SEAL_DOMAIN_CONTROL_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_RECIPIENT }}",
+				"SEAL_DOMAIN_CONTROL_AGE_KEY: ${{ vars.SEAL_DOMAIN_CONTROL_RETIRED_ON_COMPUTE != 'true' && secrets.SEAL_DOMAIN_CONTROL_AGE_KEY || '' }}",
 				"SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}",
 				"SEAL_DOMAIN_BUILD_AGE_KEY: ${{ vars.SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE != 'true' && secrets.SEAL_DOMAIN_BUILD_AGE_KEY || '' }}",
 				"SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}",

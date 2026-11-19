@@ -556,6 +556,202 @@ it does not advance a rollout or establish that a flag caused an outcome. When
 configuration or targeting rules changed during the window, rows for the same
 value may include decisions from more than one configuration version.
 
+## Run an experiment
+
+An experiment compares the variants of one weighted rule of a variant flag by
+the share of customers who, after first seeing a variant, send a conversion
+event. The flag's own allocation is the experiment: nothing else changes in
+the configuration.
+
+1. Make the behavior a variant flag with a weighted rule. An on/off test is a
+   two-variant flag (`off`, `on`); a plain percentage rollout of a boolean flag
+   cannot be an experiment, because the customers it leaves out cannot be told
+   apart from customers the rule never targeted.
+
+   ```bash
+   gregale flag create checkout --variants legacy,new --project shop
+   gregale flag rollout set checkout 100 --project shop   # everyone, split by variant weight
+   ```
+
+2. Record the conversion in the application, inside the request, for the
+   request's verified customer. Return evidence on the response as usual
+   (`flags.responseEvidence()`); exposures are read from it.
+
+   ```ts
+   await flags.runRequest(request.headers, async () => {
+     const checkout = flags.variant('checkout', 'legacy');
+     // ...
+     if (orderPlaced) flags.track('order_completed', { value: totalCents });
+   });
+   ```
+
+   Python: `flags.track("order_completed", value=total_cents)`. Go:
+   `flags.Track(ctx, "order_completed", totalCents)`. Events are sent in
+   batches every 5 s; `flush()` (Node, Python) or `Flush` (Go) sends the rest,
+   and Python's `close()` and Go's `Close()` flush first. An event without a
+   verified customer, with an invalid name (`^[a-z][a-z0-9_.-]{0,63}$`) or a
+   non-integer value is dropped and counted in `droppedEvents()`.
+
+3. Create and start the experiment, then read results whenever you like:
+
+   ```bash
+   gregale flag experiment create checkout-v2 --flag checkout --rule everyone-percent \
+     --control legacy --metric order_completed --start --project shop
+   gregale flag experiment result get checkout-v2 --project shop
+   gregale flag experiment stop checkout-v2 --project shop
+   ```
+
+Results compare each variant with control: customers exposed, customers
+converted, rate, absolute lift, a 95% confidence interval on the lift and a
+p-value. They use a sequential test (mSPRT), so looking early and often does
+not inflate false positives: a result marked `significant` stays trustworthy
+however many times you checked. A variant reports `insufficient_data` until
+each arm has 100 customers and 10 conversions. If the customers exposed do not
+match the rule's weights (`sample_ratio_mismatch`), something other than the
+flag decides who sees what, and the results are not trustworthy. Customers who
+saw more than one variant (because the rule changed) are left out and counted.
+
+Limits (`pkg/api/limits.go`): conversion events per month by plan, Free 0,
+Hobby 100,000, Pro 1,000,000, Scale 10,000,000; events over the quota are
+dropped and counted, never billed. Daily event rows are kept as long as the
+plan keeps request telemetry (Hobby 3 days, Pro 7, Scale 14); each running
+experiment keeps its own per-customer record for its whole lifetime, so
+results cover experiments longer than that. 20 running and 200 total
+experiments per environment, 100 event names per environment, one running
+experiment per rule. Units are verified customers; per-end-user (subject)
+experiments are not supported yet.
+
+### Measure a value instead of a conversion
+
+`--metric-kind mean` compares the mean event `value` per exposed customer,
+such as revenue per customer from `track('order_completed', { value:
+totalCents })`. A customer who sent nothing counts as 0. The 1% smallest and
+largest customer values are capped to the 1st and 99th percentile before the
+means are compared, so one very large order cannot decide the result. Values
+from the last two UTC days are read live; older days are folded into each
+customer's record, so results outlive the daily event rows.
+
+```bash
+gregale flag experiment create checkout-revenue --flag checkout --rule everyone-percent \
+  --control legacy --metric order_completed --metric-kind mean --start --project shop
+```
+
+### Guardrails
+
+Every experiment watches two guardrails from request telemetry, with no
+instrumentation:
+
+| Guardrail | Breached when the variant, compared with control, has | Default tolerance |
+|---|---|---|
+| `server_error_rate` | a higher share of 5xx responses (platform refusals excluded) | +0.5 percentage points |
+| `p95_latency` | a higher share of requests slower than control's p95 latency | +2 percentage points |
+
+Only requests that evaluated the experiment's rule count, and customers, not
+requests, are the units. A guardrail breaches when a 99% always-valid
+confidence interval on the difference lies wholly above the tolerance, after
+each arm has 100 customers and 1,000 requests. Control's p95 is fixed as the
+latency threshold once control has 1,000 requests; results also report each
+variant's p95.
+
+On a breach Gregale publishes a new flag configuration in which the rule
+serves control to every customer it matches, then stops the experiment with
+`stop_reason: guardrail_breach` and records the breach. Restore the previous
+configuration version to undo it (`gregale flag history`, then
+`gregale flag apply`). Change the tolerances, or turn guardrails off, when you
+create the experiment:
+
+```bash
+gregale flag experiment create checkout-v2 ... --max-error-increase 0.01 --max-slow-increase 0.05
+gregale flag experiment create checkout-v2 ... --no-guardrails
+```
+
+### Recommendations and shipping
+
+`gregale flag experiment result get` ends with a recommendation and the
+command that carries it out: `ship_variant` (a variant is significantly better
+and breaches no guardrail), `keep_control` (every significant variant is
+worse), `keep_running`, `fix_allocation` (sample ratio mismatch), `decide`
+(stopped with no significant difference) or `rolled_back`. Gregale never ships
+a variant on its own. To ship:
+
+```bash
+gregale flag experiment promote checkout-v2 new --project shop
+```
+
+`promote` publishes the rule serving that variant to every customer it matches
+and stops the experiment. MCP agents read the same results and recommendation
+with `gregale_list_flag_experiments` and
+`gregale_get_flag_experiment_results` (release toolset).
+
+## Analyze product events
+
+The same `track()` events also feed product analytics: event series, funnels
+and retention, each of which can be split by the variant a customer saw
+([ADR-20261117084505](adr/20261117084505-product-analytics-events-funnels-retention.md)).
+It is behind the `product_analytics` platform flag and needs a plan with
+analytics retention:
+
+| Plan | Raw event retention |
+|---|---|
+| Free | off |
+| Hobby | 30 days |
+| Pro | 90 days |
+| Scale | 365 days |
+
+Analytics events share the monthly event quota with experiments; an event is
+counted once.
+
+### Send properties and a subject
+
+An event may carry up to 10 string properties (keys
+`^[a-z][a-z0-9_]{0,63}$`, values up to 256 bytes; at most 50 distinct keys per
+environment) and an end-user subject. The subject defaults to the one the
+request's flags were evaluated for; Gregale stores only a hash of it. The SDK
+also attaches every flag decision the request made before the call, so any
+event can be split by variant without extra code.
+
+```ts
+flags.track('order_completed', { value: 4200, properties: { plan: 'pro' } });
+```
+
+```python
+flags.track("order_completed", 4200, properties={"plan": "pro"})
+```
+
+```go
+flags.TrackWith(ctx, "order_completed", preview.TrackOptions{Value: 4200, Properties: map[string]string{"plan": "pro"}})
+```
+
+SDKs that send these fields advertise the `track-v2` capability; older SDKs
+keep working without them.
+
+### Query
+
+```bash
+gregale insight event list --project shop --by flag:checkout --from 14d order_completed
+gregale insight funnel get --project shop --window 72h --by flag:checkout signup add_to_cart order_completed
+gregale insight retention get --project shop --period week --periods 4 signup order_completed
+gregale insight request list --project shop --flag checkout
+```
+
+- `--unit subject` counts end users instead of customers and ignores events
+  without a subject.
+- `--by flag:KEY` uses the flag value carried by the unit's earliest event in
+  the range with that flag (for a funnel, its first-step event); `(none)`
+  means the unit never sent an event with that flag. `--by property:KEY`
+  splits by a property. At most 20 values are listed; the rest are `(other)`.
+- Funnels and retention read at most 200,000 units and say `truncated` when
+  they stop; narrow the range or filter.
+- Ranges stop at the plan's retention and 90 days. `insight request list`
+  reads request telemetry and follows its shorter retention.
+
+The API routes are under
+`/v1/projects/{slug}/environments/{environment}/insights` (`GET events`,
+`POST funnel`, `POST retention`, `GET requests`; all read-only). MCP agents use
+`gregale_get_insight_events`, `gregale_get_insight_funnel`,
+`gregale_get_insight_retention` and `gregale_get_insight_requests`
+(diagnose toolset).
+
 ## Promote a guarded rollout stage
 
 Attach a progression plan to a boolean rule that selects `true`. The rule's

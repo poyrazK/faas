@@ -1105,7 +1105,10 @@ func TestRemoteDeleteRetryPreservesOrdinaryStaleRollbackSnapshot(t *testing.T) {
 	}
 	loop := &Loop{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	loop.retryRemoteDeleteBacklog(context.Background(), time.Now())
-	rows, err := store.ListSnapshotsStaleOlderThan(context.Background(), 0)
+	// A negative retention lists the row marked stale this instant too:
+	// with 0, a mark in the same clock tick as the cutoff is not "before" it
+	// and the list came back empty about 2 runs in 5.
+	rows, err := store.ListSnapshotsStaleOlderThan(context.Background(), -time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
