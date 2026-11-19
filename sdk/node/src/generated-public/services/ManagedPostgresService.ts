@@ -13,6 +13,8 @@ import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgr
 import type { ManagedPostgresConnectionBudget } from '../models/ManagedPostgresConnectionBudget.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresQueryRequest } from '../models/ManagedPostgresQueryRequest.js';
+import type { ManagedPostgresQueryResponse } from '../models/ManagedPostgresQueryResponse.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { Problem } from '../models/Problem.js';
@@ -146,6 +148,49 @@ export class ManagedPostgresService {
       },
       query: {
         'purge': purge,
+      },
+    });
+  }
+  /**
+   * Run one read-only SQL statement.
+   * Requires the data:read scope (or admin) and MFA.
+   * Runs one statement as the database's agent
+   * query login, a read-only login that reads the public schema, inside
+   * a READ ONLY transaction with a 5 s statement timeout and a 1 s lock
+   * timeout, then rolls back. Returns at most max_rows rows (default
+   * 100, at most 1000) and 1 MiB of values, each in its PostgreSQL text
+   * form or null; truncated is true when a cap stopped reading. One
+   * query per database runs at a time. A suspended database wakes and
+   * its compute is billed as usage. The SQL and rows are never logged;
+   * the audit log records a SHA-256 of the statement. Cache-Control
+   * no-store.
+   *
+   * @returns ManagedPostgresQueryResponse The rows read.
+   * @returns Problem Missing sign-in, data:read scope or MFA, a database this account does not own, an invalid request, managed databases not configured, or the rate limit.
+   * @throws ApiError
+   */
+  public static queryManagedPostgresDatabase({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresQueryRequest,
+  }): CancelablePromise<ManagedPostgresQueryResponse | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/query',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        409: `The database is not ready, or another query of it is running.`,
+        422: `PostgreSQL refused or failed the statement (postgres_query_failed); the detail carries its message and SQLSTATE.`,
+        501: `The database's backend cannot run queries (postgres_query_unsupported).`,
       },
     });
   }

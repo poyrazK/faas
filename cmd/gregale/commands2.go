@@ -1087,7 +1087,7 @@ func cmdAppsRm(args []string) int {
 			return 130
 		}
 	}
-	var revoked []string
+	var revoked, keptDatabases []string
 	if *deleteBindings {
 		ctx := context.Background()
 		app, err := client.GetApp(ctx, slug)
@@ -1102,6 +1102,7 @@ func cmdAppsRm(args []string) int {
 		if err != nil {
 			return printErr("Could not revoke a database binding", err)
 		}
+		keptDatabases = boundDatabaseNames(bindings)
 	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
 		if !*deleteBindings && strings.Contains(err.Error(), "app_has_postgres_bindings") {
@@ -1117,11 +1118,13 @@ func cmdAppsRm(args []string) int {
 		}
 		if *deleteBindings {
 			out["revoked_bindings"] = revoked
+			out["kept_databases"] = keptDatabases
 		}
 		return jsonOut(writeJSON(out))
 	}
 	if len(revoked) > 0 {
 		PrintOK(osStdout, "Revoked %d database binding(s) and deleted %s", len(revoked), slug)
+		printKeptDatabases(osStdout, keptDatabases)
 		return 0
 	}
 	PrintOK(osStdout, "Deleted %s", slug)
@@ -1759,7 +1762,19 @@ func errNegativePerInstanceConcurrency(value int) error {
 // caller: the setting is not enabled for this account yet.
 func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
 	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
-		return fmt.Errorf("--per-instance-concurrency is in early access and not enabled for this account; leave it unset to use the plan's concurrency per VM (%w)", err)
+		const detail = "--per-instance-concurrency is in early access and not enabled for this account"
+		const hint = "leave it unset to use the plan's concurrency per VM"
+		// printErr renders the APIError it finds in the chain, so a wrapped
+		// explanation never reached the screen (prod 2026-11-19 showed the
+		// raw "unknown field(s)"). Rewrite the problem itself.
+		var ae *APIError
+		if errors.As(err, &ae) {
+			explained := *ae
+			explained.Problem.Detail = detail
+			explained.Problem.Hint = hint
+			return &explained
+		}
+		return fmt.Errorf("%s; %s (%w)", detail, hint, err)
 	}
 	return err
 }
@@ -4264,7 +4279,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		code := renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
 		if !jsonOutput {
-			renderProjectEndpoints(ctx, osStdout, client, apply)
+			renderProjectEndpointsFor(ctx, osStdout, client, apply, *projectSlug, *environment)
 		}
 		return code
 	}
@@ -4344,12 +4359,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
+			creating := false
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
 				}
+				_, getErr := client.GetApp(ctx, slug)
+				creating = isNotFound(getErr)
 			}
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			if err == nil && creating {
+				rememberCreatedApp(contextDir, slug)
+			}
 		}
 		if err != nil {
 			return printErr("Could not create or fetch app", err)
@@ -5743,7 +5764,9 @@ func cmdDomains(args []string) int {
 		fmt.Printf("\nKeep them in place: the certificate is issued and renewed automatically.\n")
 		fmt.Printf("Then run 'gregale domain list' to see when verification completes.\n")
 		return 0
-	case subRm:
+	case subRm, "remove":
+		// `domain add` works, so `domain remove` was the natural undo and
+		// answered "Did you mean move?" (prod 2026-11-19).
 		// --yes / -y may come before or after the domain, like the other
 		// deletes; without it the CLI asks. It rejected a trailing --yes and
 		// deleted with no prompt (Hunt 32 H32-14).
@@ -8408,6 +8431,9 @@ func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client,
 	}
 	code := renderDeployFailure(d)
 	printBuildFailureExcerpt(ctx, c, os.Stderr, appSlug, d)
+	if c != nil {
+		printReleaseTaskOutput(ctx, c, os.Stderr, appSlug, d)
+	}
 	return code
 }
 

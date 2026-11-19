@@ -908,6 +908,17 @@ type Backend interface {
 	ScheduleMirror(ctx context.Context, appID, mirrorDeploymentID, mirrorRuleID string) (instanceID, wakeID string, err error)
 }
 
+// backendLaneCapacityCount counts the instances holding the requesting
+// lane's slots: deploymentID's environment, or production when it is empty or
+// one of the production weights. Backends without lane data fall back to the
+// app-wide count.
+func backendLaneCapacityCount(backend Backend, appID, deploymentID string) int {
+	if counter, ok := backend.(interface{ LaneCapacityCount(string, string) int }); ok {
+		return counter.LaneCapacityCount(appID, deploymentID)
+	}
+	return backendCapacityCount(backend, appID)
+}
+
 func backendCapacityCount(backend Backend, appID string) int {
 	if counter, ok := backend.(interface{ CapacityCount(string) int }); ok {
 		return counter.CapacityCount(appID)
@@ -7705,7 +7716,7 @@ haveApp:
 				if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
 					admitErr = notServing
 				} else {
-					pick, admitErr = h.settleAtCapacity(r.Context(), app, limits, maxInstances, func() PickResult {
+					pick, admitErr = h.settleAtCapacity(r.Context(), app, exactDeploymentID, limits, maxInstances, func() PickResult {
 						return pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
 					})
 					settled = admitErr == nil
@@ -7966,7 +7977,7 @@ haveApp:
 		// cached instance was evicted since. Only a true count of live
 		// instances is the customer's limit (#5709).
 		var wakeErr error
-		pick, wakeErr = h.settleAtCapacity(r.Context(), app, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
+		pick, wakeErr = h.settleAtCapacity(r.Context(), app, "", limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
 			return h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 		})
 		if wakeErr != nil {
@@ -8825,9 +8836,17 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// Idle reaper hook (spec §4.1): 2xx → the instance is alive. 4xx/5xx are
 	// not evidence of activity (a misconfigured client can hammer a dead
 	// instance with 401s forever and we'd never park it).
+	//
+	// A route probe (ADR-847) is platform traffic, not customer activity: it
+	// still refreshes the gateway's cached target below, but it never resets
+	// the idle timer. A probed app otherwise never parked, kept its RAM and
+	// its billed running time, and never captured a snapshot (ADR-847
+	// amendment 2026-11-19).
 	if h.lastSeen != nil && status >= 200 && status < 300 && target.InstanceID != "" {
 		now := time.Now()
-		h.lastSeen.Touch(target.InstanceID, now)
+		if !isRouteProbe(r.Context()) {
+			h.lastSeen.Touch(target.InstanceID, now)
+		}
 		if recorder, ok := h.backend.(targetActivityRecorder); ok {
 			recorder.TouchTarget(appID, target.InstanceID, now)
 		}

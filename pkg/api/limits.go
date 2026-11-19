@@ -2271,6 +2271,19 @@ const (
 	CronHistoryPrunePasses = 20
 )
 
+// Cron pre-wake (ADR-20261107122928 §4, amendment 3). schedd files a prewarm
+// intent for an app with no resident instance when one of its HTTP crons
+// fires within CronPrewakeLeadSeconds; the prewarm drain claims it at once
+// (its lead window is as long) and wakes the app, and the intent's floor
+// keeps the instance until CronPrewakeHoldSeconds after the cron's scheduled
+// time. The intents are kept CronPrewakeIntentRetention, then the hourly
+// retention sweep deletes them in CronHistoryPruneBatch passes.
+const (
+	CronPrewakeLeadSeconds     = 60
+	CronPrewakeHoldSeconds     = 120
+	CronPrewakeIntentRetention = 3 * 24 * time.Hour
+)
+
 // CronPathMaxBytes bounds the HTTP path a cron requests. The path is always
 // on the cron's own app: it starts with a single "/" and carries no host.
 const CronPathMaxBytes = 2048
@@ -2880,6 +2893,32 @@ const (
 	AnalyticsQueryTimeout = 15 * time.Second
 	// AnalyticsSweepBatch bounds the events one sweep statement deletes.
 	AnalyticsSweepBatch = 10_000
+)
+
+// Experiment analytics metrics, CUPED and cohorts (ADR 20261119102741).
+// Per-plan cohort membership is Limits.AnalyticsCohortMaxMembers.
+const (
+	// ExperimentCupedPreDays is the pre-period before an experiment starts
+	// that CUPED reads each customer's covariate from.
+	ExperimentCupedPreDays = 14
+	// ExperimentRetentionMaxPeriod bounds a retention metric's period number.
+	ExperimentRetentionMaxPeriod = 12
+	// ExperimentAnalyticsUnitsPerPass bounds the customers one reconciler
+	// pass checks for funnel or retention conversions, or fills a CUPED
+	// value for, per experiment.
+	ExperimentAnalyticsUnitsPerPass = 20_000
+	// AnalyticsCohortsMaxPerEnvironment bounds an environment's cohorts.
+	AnalyticsCohortsMaxPerEnvironment = 20
+	// AnalyticsCohortMaxDays bounds a cohort's look-back, inside the plan's
+	// analytics retention.
+	AnalyticsCohortMaxDays = 90
+	// AnalyticsCohortDidNotActiveDays is the activity window a did_not
+	// cohort draws its customers from.
+	AnalyticsCohortDidNotActiveDays = 30
+	// AnalyticsCohortMaxMinCount bounds a did cohort's minimum event count.
+	AnalyticsCohortMaxMinCount = 1000
+	// AnalyticsCohortRefreshInterval is how often a cohort is recomputed.
+	AnalyticsCohortRefreshInterval = time.Hour
 )
 
 // Flag experiment bounds (ADR 20261115163113). The monthly conversion event
@@ -6726,6 +6765,9 @@ type Limits struct {
 	// 365. Analytics events share FlagEventsPerMonth. Provisional until the
 	// financial model carries analytics storage.
 	AnalyticsRetentionDays int
+	// AnalyticsCohortMaxMembers bounds one cohort's members (ADR
+	// 20261119102741 §3): Free 0, Hobby 1,000, Pro 10,000, Scale 100,000.
+	AnalyticsCohortMaxMembers int
 	// DebugTelemetryRequestsPerMinute (ADR-127) is the per-account
 	// rate cap on the IncrementRequestTelemetry ingest RPC. The
 	// recorder publisher reads this at startup; per-record
@@ -7329,6 +7371,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     0,
 		FlagEventsPerMonth:              0,
 		AnalyticsRetentionDays:          0,
+		AnalyticsCohortMaxMembers:       0,
 		DebugTelemetryRequestsPerMinute: 0,
 		APIRequestsPerMinute:            600,
 		DebugGuestLogExportsPerMinute:   0,
@@ -7779,6 +7822,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     3,
 		FlagEventsPerMonth:              100_000,
 		AnalyticsRetentionDays:          30,
+		AnalyticsCohortMaxMembers:       1_000,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
 		APIRequestsPerMinute:            1200,
@@ -8197,6 +8241,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     7,
 		FlagEventsPerMonth:              1_000_000,
 		AnalyticsRetentionDays:          90,
+		AnalyticsCohortMaxMembers:       10_000,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
 		APIRequestsPerMinute:            3000,
@@ -8644,6 +8689,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     14,
 		FlagEventsPerMonth:              10_000_000,
 		AnalyticsRetentionDays:          365,
+		AnalyticsCohortMaxMembers:       100_000,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
 		APIRequestsPerMinute:            6000,
@@ -9126,6 +9172,12 @@ const (
 	// reads up to 1 MiB.
 	BuildTimingMaxSteps         = 8
 	BuildTimingStepNameMaxBytes = 160
+	// BuildLiveStepMaxLines bounds the "build step:" lines builderd writes to
+	// a deployment's build log while the build runs (retail-store feedback
+	// A3, 2026-11-17). Each is one deployment_logs row and one NOTIFY, so a
+	// generated Dockerfile with thousands of stages cannot flood either; the
+	// names share BuildTimingStepNameMaxBytes.
+	BuildLiveStepMaxLines = 300
 	// BuildDiskCapacityRetryDelay is how long a builder without room for a
 	// build drive waits before returning the build to the queue
 	// (ADR-20261029103512). The deployment watchdog's queued-build bound
@@ -12915,6 +12967,16 @@ func (p Plan) AnalyticsRetentionDays() int {
 		return 0
 	}
 	return l.AnalyticsRetentionDays
+}
+
+// AnalyticsCohortMaxMembers returns the plan's cohort member bound (ADR
+// 20261119102741 §3); 0 on unknown plans and Free.
+func (p Plan) AnalyticsCohortMaxMembers() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.AnalyticsCohortMaxMembers
 }
 
 // FlagEventsPerMonth returns the plan's monthly flag conversion event quota
@@ -17602,9 +17664,31 @@ const (
 	// restarted Auth app to publish a key change.
 	AuthKeyChangeWait = 5 * time.Minute
 	// AuthPasswordMinLength bounds the configurable minimum password length:
-	// GoTrue's own default is the floor, and bcrypt reads 72 bytes at most.
-	AuthPasswordMinLengthFloor   = 6
+	// the floor is NIST SP 800-63B's eight characters (GoTrue's own default
+	// of six is below it) and is also an Auth app's default; bcrypt reads 72
+	// bytes at most. The template mirrors the floor as passwordMinLength.
+	AuthPasswordMinLengthFloor   = 8
 	AuthPasswordMinLengthCeiling = 72
+	// AuthPasswordFailuresPerAddress, AuthPasswordFailuresPerAccount and
+	// AuthSecondStepFailuresPerUser are an Auth app's failed-attempt budgets
+	// in each AuthAttemptWindowSeconds, kept in its database so every
+	// instance and wake shares them: wrong passwords for one account from one
+	// client address, for one account from any address, and wrong
+	// second-step codes for one user. A spent budget answers 429 until the
+	// window ends.
+	AuthPasswordFailuresPerAddress = 10
+	AuthPasswordFailuresPerAccount = 50
+	AuthSecondStepFailuresPerUser  = 10
+	AuthAttemptWindowSeconds       = 900
+	// AuthStorageUploadDefaultBytes bounds an object uploaded through an Auth
+	// app's signed URL unless the app sets AUTH_STORAGE_MAX_UPLOAD_BYTES,
+	// which may rise to AuthStorageUploadMaxBytes (a single PUT).
+	AuthStorageUploadDefaultBytes       = 100 << 20
+	AuthStorageUploadMaxBytes     int64 = MaxObjectSinglePutBytes
+	// AuthAdminKeyDefaultDays is how long a new Auth admin key lasts unless
+	// created with --no-expiry; AuthAdminKeyMaxDays bounds --expires-in.
+	AuthAdminKeyDefaultDays = 365
+	AuthAdminKeyMaxDays     = 3650
 	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
 	// provider credentials; Apple's client secret is a signed JWT.
 	AuthProviderClientIDMaxBytes = 512

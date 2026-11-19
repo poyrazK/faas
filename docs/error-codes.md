@@ -82,6 +82,10 @@ HTTP 400 Bad Request · Invalid alert rule
 
 See [Alerts](alerts.md).
 
+### `analytics_cohort_limit`
+
+HTTP 409 Conflict · Cohort limit reached
+
 ### `api_key_expired`
 
 HTTP 401 Unauthorized · API key expired
@@ -2443,6 +2447,16 @@ HTTP 403 Forbidden · Postgres custom roles unavailable
 ### `postgres_custom_roles_unsupported`
 
 HTTP 422 Unprocessable Entity · Custom roles unsupported
+
+### `postgres_query_failed`
+
+HTTP 422 Unprocessable Entity · Query failed
+
+The statement runs read-only as a login that can read the public schema, for at most 5 seconds. Fix the statement and try again.
+
+### `postgres_query_unsupported`
+
+HTTP 501 Not Implemented · Queries unsupported
 
 ### `pr_preview_resource_unsupported`
 

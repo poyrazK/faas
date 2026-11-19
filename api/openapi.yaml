@@ -10678,6 +10678,56 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/postgres/databases/{id}/query:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      tags: [managed_postgres]
+      operationId: queryManagedPostgresDatabase
+      summary: Run one read-only SQL statement.
+      description: |
+        Requires the data:read scope (or admin) and MFA.
+        Runs one statement as the database's agent
+        query login, a read-only login that reads the public schema, inside
+        a READ ONLY transaction with a 5 s statement timeout and a 1 s lock
+        timeout, then rolls back. Returns at most max_rows rows (default
+        100, at most 1000) and 1 MiB of values, each in its PostgreSQL text
+        form or null; truncated is true when a cap stopped reading. One
+        query per database runs at a time. A suspended database wakes and
+        its compute is billed as usage. The SQL and rows are never logged;
+        the audit log records a SHA-256 of the statement. Cache-Control
+        no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresQueryRequest' }
+      responses:
+        '200':
+          description: The rows read.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresQueryResponse' }
+        '409':
+          description: The database is not ready, or another query of it is running.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: PostgreSQL refused or failed the statement (postgres_query_failed); the detail carries its message and SQLSTATE.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '501':
+          description: The database's backend cannot run queries (postgres_query_unsupported).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        default:
+          description: Missing sign-in, data:read scope or MFA, a database this account does not own, an invalid request, managed databases not configured, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/undelete:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -63571,6 +63621,29 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/flags/{key}/kill:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+      - { $ref: '#/components/parameters/FlagsKey' }
+    post:
+      tags: [flags]
+      operationId: killProjectFlag
+      summary: Kill one flag on the latest configuration.
+      description: Requires deploy-write scope and MFA. Sets the flag's kill on the latest published configuration, so every evaluation serves the application's fallback. Takes no expected version, re-reads the configuration when another publish wins the race, and is idempotent; changed is false when the flag was already killed. Unlike other flag writes, an agent connection needs no person's approval for it. Revive a flag by publishing the configuration.
+      responses:
+        '200':
+          description: The flag is killed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeatureFlagKillResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/runtime/flags:
     get:
       tags: [flags]
@@ -63876,6 +63949,113 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/cohorts:
+    get:
+      tags: [flags]
+      operationId: listProjectInsightCohorts
+      summary: List the environment's cohorts.
+      description: "Saved cohorts with their definition, member count, the plan's member bound and the last refresh. Flag rules target a cohort with the gregale.cohort attribute. Requires product analytics."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      responses:
+        '200':
+          description: The environment's cohorts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightCohortList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [flags]
+      operationId: createProjectInsightCohort
+      summary: Save a cohort.
+      description: "Members are computed within a minute, then hourly. At most 20 cohorts per environment (409 analytics_cohort_limit); members per cohort are bounded by plan (Hobby 1,000, Pro 10,000, Scale 100,000)."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InsightCohortRequest' }
+      responses:
+        '201':
+          description: The saved cohort, before its first refresh.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightCohort' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/cohorts/{key}:
+    get:
+      tags: [flags]
+      operationId: getProjectInsightCohort
+      summary: Read one cohort.
+      description: "A cohort's definition, member count and last refresh; a failed refresh keeps the previous members and reports refresh_error."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Cohort key., schema: { type: string } }
+      responses:
+        '200':
+          description: The cohort.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightCohort' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [flags]
+      operationId: deleteProjectInsightCohort
+      summary: Delete a cohort.
+      description: "Rules that target the cohort stop matching its customers within a minute."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the cohort to delete., schema: { type: string } }
+      responses:
+        '204': { description: The cohort is deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh:
+    post:
+      tags: [flags]
+      operationId: refreshProjectInsightCohort
+      summary: Recompute a cohort now.
+      description: "Asks for the cohort's members to be recomputed on the next reconciler pass instead of at the hourly refresh."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the cohort to recompute., schema: { type: string } }
+      responses:
+        '202':
+          description: The refresh is requested.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightCohort' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -90472,6 +90652,16 @@ components:
       properties:
         expected_version: { type: integer, format: int64, minimum: 0 }
         rule_id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+    FeatureFlagKillResponse:
+      description: A killed flag and the configuration version that holds the kill.
+      type: object
+      additionalProperties: false
+      required: [key, killed, changed, version]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        killed: { type: boolean, description: Always true. }
+        changed: { type: boolean, description: False when the flag was already killed and no configuration was published. }
+        version: { type: integer, format: int64, minimum: 1 }
     FlagRolloutPromotion:
       description: Health-gate evaluation for a progressive rollout stage. A held or complete status does not publish a new configuration version.
       type: object
@@ -90541,17 +90731,57 @@ components:
       description: A flag experiment to create.
       type: object
       additionalProperties: false
-      required: [key, flag, rule_id, control, metric_event]
+      required: [key, flag, rule_id, control]
       properties:
         key: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$' }
         flag: { type: string, description: The variant flag. }
         rule_id: { type: string, description: "The flag's weighted rule." }
         control: { type: string, description: The baseline variant. }
-        metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: The metric event. }
-        metric_kind: { type: string, enum: [conversion, mean], description: "conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer." }
+        metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: "The metric event; required for conversion and mean metrics, refused for funnel and retention." }
+        metric_kind: { type: string, enum: [conversion, mean, funnel, retention], description: "conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer; funnel and retention compare the share that completed the funnel or came back, and need product analytics." }
+        funnel: { $ref: '#/components/schemas/FlagExperimentFunnel' }
+        retention: { $ref: '#/components/schemas/FlagExperimentRetention' }
+        cuped: { type: boolean, description: "Adjust results for each customer's 14 days before the start (CUPED); default true." }
         mixing_lift: { type: number, exclusiveMinimum: 0, maximum: 1, description: "mSPRT mixing standard deviation: an absolute conversion-rate lift (default 0.02), or a standardized effect size for mean metrics (default 0.1)." }
         guardrails: { $ref: '#/components/schemas/FlagExperimentGuardrailsRequest' }
         start: { type: boolean, description: Start the experiment at once. }
+    FlagExperimentFunnel:
+      description: "A funnel metric: a customer converts when it completes the steps in order within the window after its first exposure."
+      type: object
+      additionalProperties: false
+      required: [steps, window]
+      properties:
+        steps: { type: array, minItems: 2, maxItems: 6, items: { $ref: '#/components/schemas/InsightStepRequest' } }
+        window: { type: string, description: "Go duration from first exposure, 1h to 720h." }
+    FlagExperimentRetention:
+      description: "A retention metric: a customer converts when it sends the return event in period N after its first exposure."
+      type: object
+      additionalProperties: false
+      required: [return, period, period_number]
+      properties:
+        return: { $ref: '#/components/schemas/InsightStepRequest' }
+        period: { type: string, enum: [day, week] }
+        period_number: { type: integer, minimum: 1, maximum: 12, description: "The period after exposure that counts as returning." }
+    FlagExperimentCuped:
+      description: "CUPED variance reduction on the results; reason says why it was not applied."
+      type: object
+      required: [applied, pre_days]
+      properties:
+        applied: { type: boolean }
+        pre_days: { type: integer, description: Days before the start that make each customer's covariate. }
+        theta: { type: number }
+        variance_reduction: { type: number, description: "Share of the metric's variance removed, 0 to 1." }
+        reason: { type: string, enum: [off, pre_period_pending, no_pre_period_variance, no_pre_period_data] }
+    FlagExperimentComparison:
+      description: "A variant's comparison with control without CUPED."
+      type: object
+      required: [lift, relative_lift, low, high, p_value]
+      properties:
+        lift: { type: number }
+        relative_lift: { type: number }
+        low: { type: number }
+        high: { type: number }
+        p_value: { type: number }
     FlagExperimentGuardrailRequest:
       description: Turns one guardrail off or sets its tolerance.
       type: object
@@ -90597,14 +90827,17 @@ components:
     FlagExperiment:
       description: A flag experiment.
       type: object
-      required: [key, flag, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, created_by, created_at]
+      required: [key, flag, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, created_by, created_at, cuped]
       properties:
         key: { type: string }
         flag: { type: string }
         rule_id: { type: string }
         control: { type: string }
         metric_event: { type: string }
-        metric_kind: { type: string, enum: [conversion, mean] }
+        metric_kind: { type: string, enum: [conversion, mean, funnel, retention] }
+        funnel: { $ref: '#/components/schemas/FlagExperimentFunnel' }
+        retention: { $ref: '#/components/schemas/FlagExperimentRetention' }
+        cuped: { type: boolean, description: Whether results are adjusted with CUPED. }
         status: { type: string, enum: [draft, running, stopped] }
         mixing_lift: { type: number }
         weights: { type: object, additionalProperties: { type: integer } }
@@ -90645,10 +90878,11 @@ components:
             high: { type: number, description: Upper bound of the 95% confidence sequence on lift. }
             p_value: { type: number, description: Always-valid p-value (running minimum). }
             status: { type: string, enum: [significant, not_significant, insufficient_data, sample_ratio_mismatch] }
+            unadjusted: { $ref: '#/components/schemas/FlagExperimentComparison' }
     FlagExperimentResults:
       description: A flag experiment's sequential results.
       type: object
-      required: [experiment, control, variants, sample_ratio_p_value, sample_ratio_mismatch, crossed_units]
+      required: [experiment, control, variants, sample_ratio_p_value, sample_ratio_mismatch, crossed_units, cuped]
       properties:
         experiment: { $ref: '#/components/schemas/FlagExperiment' }
         control: { $ref: '#/components/schemas/FlagExperimentArm' }
@@ -90659,6 +90893,7 @@ components:
         guardrails: { type: array, items: { $ref: '#/components/schemas/FlagExperimentGuardrail' } }
         latency: { type: array, items: { $ref: '#/components/schemas/FlagExperimentLatency' } }
         recommendation: { $ref: '#/components/schemas/FlagExperimentRecommendation' }
+        cuped: { $ref: '#/components/schemas/FlagExperimentCuped' }
     FlagExperimentGuardrail:
       description: One guardrail across the variants.
       type: object
@@ -90841,6 +91076,41 @@ components:
         server_errors: { type: integer, format: int64 }
         server_error_rate: { type: number, format: double }
         p95_ms: { type: integer, format: int64 }
+    InsightCohortRequest:
+      description: "A cohort to save. did: customers that sent the event at least min_count times in the last within_days days; did_not: customers active in the last 30 days that did not send it; funnel: customers that completed the steps within the window, starting in the last within_days days."
+      type: object
+      additionalProperties: false
+      required: [key, kind, within_days]
+      properties:
+        key: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$', description: "Cohort key, used in gregale.cohort rule conditions." }
+        kind: { type: string, enum: [did, did_not, funnel] }
+        event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: The event for did and did_not. }
+        where: { type: object, maxProperties: 10, additionalProperties: { type: string }, description: "Property values the did or did_not event must carry." }
+        within_days: { type: integer, minimum: 1, maximum: 90, description: "Look-back in days, at most the plan's analytics retention." }
+        min_count: { type: integer, minimum: 1, maximum: 1000, description: "did: minimum events (default 1)." }
+        steps: { type: array, minItems: 2, maxItems: 6, items: { $ref: '#/components/schemas/InsightStepRequest' }, description: The funnel's steps. }
+        window: { type: string, description: "funnel: Go duration from the first step to the last, 1h to 720h." }
+    InsightCohort:
+      description: "A saved cohort and its last refresh."
+      allOf:
+        - { $ref: '#/components/schemas/InsightCohortRequest' }
+        - type: object
+          required: [members, truncated, max_members, refresh_requested_at, created_by, created_at]
+          properties:
+            members: { type: integer, description: Customers in the cohort after the last refresh. }
+            truncated: { type: boolean, description: "More customers matched than max_members; the lowest customer IDs were kept." }
+            max_members: { type: integer, description: "The plan's member bound." }
+            refreshed_at: { type: string, format: date-time }
+            refresh_requested_at: { type: string, format: date-time }
+            refresh_error: { type: string, description: "Why the last refresh failed; the previous members are kept." }
+            created_by: { type: string }
+            created_at: { type: string, format: date-time }
+    InsightCohortList:
+      description: An environment's cohorts.
+      type: object
+      required: [cohorts]
+      properties:
+        cohorts: { type: array, items: { $ref: '#/components/schemas/InsightCohort' } }
     InsightRequests:
       description: Request telemetry by flag value.
       type: object
@@ -93281,6 +93551,38 @@ components:
           type: string
           format: date-time
           description: "When the response was made; a restore point must be before it."
+    ManagedPostgresQueryRequest:
+      description: One read-only SQL statement.
+      type: object
+      additionalProperties: false
+      required: [sql]
+      properties:
+        sql: { type: string, minLength: 1, maxLength: 65536, description: One statement; several are refused. }
+        max_rows: { type: integer, minimum: 1, maximum: 1000, description: Rows to return; default 100. }
+    ManagedPostgresQueryResponse:
+      description: The rows one read-only statement read.
+      type: object
+      additionalProperties: false
+      required: [database_id, columns, rows, row_count, truncated, duration_ms]
+      properties:
+        database_id: { type: string }
+        columns:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, type]
+            properties:
+              name: { type: string }
+              type: { type: string, description: 'PostgreSQL type name, or oid:N for a type the server did not name.' }
+        rows:
+          type: array
+          items:
+            type: array
+            items: { type: [string, 'null'], description: The value in PostgreSQL text form; null for NULL. }
+        row_count: { type: integer, minimum: 0 }
+        truncated: { type: boolean, description: True when the row or 1 MiB cap stopped reading before the result ended. }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
     ManagedPostgresDatabaseList:
       description: Account-scoped managed PostgreSQL database collection.
       type: object
@@ -99776,7 +100078,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, data:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection stored workflow; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
@@ -124043,7 +124345,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, data:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection stored workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
@@ -124131,7 +124433,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, data:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project." }
@@ -124166,7 +124468,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, data:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project." }

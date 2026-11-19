@@ -1126,7 +1126,33 @@ func cmdAppRename(slug, newSlug string) int {
 	// "old" from "new". The leading glyph goes through PrintOK so the
 	// §3.2 NO_COLOR rule still applies to the status-indicator half.
 	PrintOK(osStdout, "Renamed %s → %s", slug, updated.Slug)
+	if path, ok := followRenameInSavedContext(".", slug, updated.Slug); ok {
+		PrintOK(osStdout, "Updated %s to the new name", path)
+	}
 	return 0
+}
+
+// followRenameInSavedContext points the saved context that covers dir at the
+// renamed app. A context still naming the old slug made the next plain
+// `gregale deploy` create a new app under the old name, without the renamed
+// app's database, bucket or crons (prod 2026-11-19). A committed gregale.yaml
+// is the customer's file and is left alone.
+func followRenameInSavedContext(dir, oldSlug, newSlug string) (string, bool) {
+	link, path, err := findProjectContext(dir)
+	if err != nil || link.App != oldSlug || newSlug == "" {
+		return "", false
+	}
+	link.App = newSlug
+	root := filepath.Dir(filepath.Dir(path))
+	if projectContextPath(root) != path {
+		return "", false
+	}
+	saved, err := saveProjectContext(root, link)
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "warning: renamed %s but could not update %s: %v; run `gregale link --app %s` there\n", oldSlug, path, err, newSlug)
+		return "", false
+	}
+	return saved, true
 }
 
 // cmdAppRestart requests a fresh snapshot restart for an app. The server

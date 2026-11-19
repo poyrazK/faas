@@ -273,7 +273,7 @@ func (m *MemStore) ListRouteProbeTargets(_ context.Context) ([]RouteProbeTarget,
 			continue
 		}
 		for _, d := range m.deployments {
-			if d.AppID == appID && d.Status == DeployLive && d.TrafficPercent > 0 && d.CanaryTotalSteps > 0 && d.CanaryStep < d.CanaryTotalSteps && (d.Scope == "" || d.Scope == "default") {
+			if d.AppID == appID && d.Status == DeployLive && d.TrafficPercent > 0 && d.CanaryStep < d.CanaryTotalSteps && rolloutInFlight(d) && (d.Scope == "" || d.Scope == "default") {
 				out = append(out, RouteProbeTarget{AccountID: app.AccountID, AppID: appID, Slug: app.Slug, CandidateID: d.ID})
 			}
 		}
@@ -295,7 +295,7 @@ func (m *MemStore) ListDefaultRouteProbeTargets(_ context.Context) ([]RouteProbe
 			continue
 		}
 		for _, d := range m.deployments {
-			if !inScope(d, appID) || d.CanaryTotalSteps <= 0 || d.CanaryStep >= d.CanaryTotalSteps {
+			if !inScope(d, appID) || d.CanaryStep >= d.CanaryTotalSteps || !rolloutInFlight(d) {
 				continue
 			}
 			for _, stable := range m.deployments {

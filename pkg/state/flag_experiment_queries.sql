@@ -55,11 +55,11 @@ WHERE account_id = sqlc.arg(account_id)::uuid AND day < sqlc.arg(before)::date;
 
 -- name: CreateFlagExperiment :one
 INSERT INTO flag_experiments (id, account_id, project_id, environment_id, key, flag_key, rule_id, control,
-    metric_event, metric_kind, mixing_lift, weights, guardrails, created_by)
+    metric_event, metric_kind, mixing_lift, weights, guardrails, created_by, metric_definition, cuped)
 SELECT sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(environment_id)::uuid,
     sqlc.arg(key)::text, sqlc.arg(flag_key)::text, sqlc.arg(rule_id)::text, sqlc.arg(control)::text,
     sqlc.arg(metric_event)::text, sqlc.arg(metric_kind)::text, sqlc.arg(mixing_lift)::double precision, sqlc.arg(weights)::jsonb,
-    sqlc.arg(guardrails)::jsonb, sqlc.arg(created_by)::text
+    sqlc.arg(guardrails)::jsonb, sqlc.arg(created_by)::text, sqlc.arg(metric_definition)::jsonb, sqlc.arg(cuped)::boolean
 WHERE (SELECT count(*) FROM flag_experiments x WHERE x.environment_id = sqlc.arg(environment_id)::uuid) < sqlc.arg(max_experiments)::bigint
 RETURNING *;
 
@@ -174,8 +174,102 @@ WHERE experiment_id = sqlc.arg(experiment_id)::uuid AND crossed;
 
 -- name: AdvanceFlagExperiment :exec
 UPDATE flag_experiments
-SET telemetry_cursor = sqlc.arg(telemetry_cursor)::timestamptz, min_p_values = sqlc.arg(min_p_values)::jsonb
+SET telemetry_cursor = sqlc.arg(telemetry_cursor)::timestamptz, min_p_values = sqlc.arg(min_p_values)::jsonb,
+    min_cuped_p_values = sqlc.arg(min_cuped_p_values)::jsonb
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
+-- name: FlagExperimentHorizonArms :many
+-- Exposed and converted units of a funnel or retention metric whose
+-- deadline (first exposure plus horizon) is at or before until
+-- (ADR 20261119102741 §1).
+SELECT variant, count(*)::bigint AS exposed, count(converted_at)::bigint AS converted
+FROM flag_experiment_units
+WHERE experiment_id = sqlc.arg(experiment_id)::uuid AND NOT crossed
+  AND first_exposed_at + make_interval(secs => sqlc.arg(horizon_seconds)::double precision) <= sqlc.arg(until)::timestamptz
+GROUP BY variant
+ORDER BY variant;
+
+-- name: FlagExperimentConversionCandidates :many
+-- Unconverted units of a funnel or retention metric whose window has
+-- started (first exposure plus start offset is at or before now) and whose
+-- deadline is after not_before, in customer order after after_customer.
+SELECT customer_id, first_exposed_at
+FROM flag_experiment_units
+WHERE experiment_id = sqlc.arg(experiment_id)::uuid AND NOT crossed AND converted_at IS NULL
+  AND customer_id > sqlc.arg(after_customer)::uuid
+  AND first_exposed_at + make_interval(secs => sqlc.arg(start_seconds)::double precision) <= sqlc.arg(now)::timestamptz
+  AND first_exposed_at + make_interval(secs => sqlc.arg(horizon_seconds)::double precision) > sqlc.arg(not_before)::timestamptz
+ORDER BY customer_id
+LIMIT sqlc.arg(max_rows)::int;
+
+-- name: MarkFlagExperimentUnitConversions :execrows
+-- The arrays are parallel.
+UPDATE flag_experiment_units u
+SET converted_at = c.at
+FROM (SELECT unnest(sqlc.arg(customer_ids)::uuid[]) AS customer_id, unnest(sqlc.arg(ats)::timestamptz[]) AS at) c
+WHERE u.experiment_id = sqlc.arg(experiment_id)::uuid AND u.customer_id = c.customer_id
+  AND u.converted_at IS NULL AND c.at >= u.first_exposed_at;
+
+-- name: FlagExperimentUnitsWithoutPreValue :many
+SELECT customer_id
+FROM flag_experiment_units
+WHERE experiment_id = sqlc.arg(experiment_id)::uuid AND pre_value IS NULL
+ORDER BY customer_id
+LIMIT sqlc.arg(max_rows)::int;
+
+-- name: SetFlagExperimentPreValues :execrows
+-- The arrays are parallel.
+UPDATE flag_experiment_units u
+SET pre_value = v.pre_value
+FROM (SELECT unnest(sqlc.arg(customer_ids)::uuid[]) AS customer_id, unnest(sqlc.arg(pre_values)::double precision[]) AS pre_value) v
+WHERE u.experiment_id = sqlc.arg(experiment_id)::uuid AND u.customer_id = v.customer_id AND u.pre_value IS NULL;
+
+-- name: FlagExperimentBinaryCupedArms :many
+-- Per-variant CUPED sums of a binary metric (Y is converted) over counted
+-- units, and how many counted units still lack a pre-period value. A
+-- horizon of 0 counts every unit.
+SELECT variant, count(*)::bigint AS n,
+       count(converted_at)::float8 AS sum_y,
+       COALESCE(sum(pre_value), 0)::float8 AS sum_x,
+       COALESCE(sum(pre_value * pre_value), 0)::float8 AS sum_x2,
+       COALESCE(sum(pre_value) FILTER (WHERE converted_at IS NOT NULL), 0)::float8 AS sum_xy,
+       count(*) FILTER (WHERE pre_value IS NULL)::bigint AS pending
+FROM flag_experiment_units
+WHERE experiment_id = sqlc.arg(experiment_id)::uuid AND NOT crossed
+  AND first_exposed_at + make_interval(secs => sqlc.arg(horizon_seconds)::double precision) <= sqlc.arg(until)::timestamptz
+GROUP BY variant
+ORDER BY variant;
+
+-- name: FlagExperimentMeanCupedArms :many
+-- FlagExperimentMeanArms' winsorized unit values with each unit's
+-- pre-period value, summed per variant for CUPED.
+WITH v AS (
+    SELECT u.variant, (u.value_sum + COALESCE(o.total, 0))::float8 AS val, u.pre_value
+    FROM flag_experiment_units u
+    LEFT JOIN LATERAL (
+        SELECT sum(c.value_sum)::float8 AS total FROM flag_conversion_daily c
+        WHERE c.environment_id = sqlc.arg(environment_id)::uuid AND c.event_name = sqlc.arg(event_name)::text
+          AND c.customer_id = u.customer_id AND c.day >= sqlc.arg(open_from_day)::date
+          AND c.last_at >= u.first_exposed_at
+    ) o ON true
+    WHERE u.experiment_id = sqlc.arg(experiment_id)::uuid AND NOT u.crossed
+), caps AS (
+    SELECT percentile_cont(0.01) WITHIN GROUP (ORDER BY val) AS lo,
+           percentile_cont(0.99) WITHIN GROUP (ORDER BY val) AS hi, count(*) AS n
+    FROM v
+), w AS (
+    SELECT v.variant, v.pre_value,
+           CASE WHEN caps.n >= sqlc.arg(min_units)::bigint THEN LEAST(GREATEST(v.val, caps.lo), caps.hi) ELSE v.val END AS y
+    FROM v CROSS JOIN caps
+)
+SELECT variant, count(*)::bigint AS n,
+       COALESCE(sum(y), 0)::float8 AS sum_y, COALESCE(sum(y * y), 0)::float8 AS sum_y2,
+       COALESCE(sum(pre_value), 0)::float8 AS sum_x, COALESCE(sum(pre_value * pre_value), 0)::float8 AS sum_x2,
+       COALESCE(sum(pre_value * y), 0)::float8 AS sum_xy,
+       count(*) FILTER (WHERE pre_value IS NULL)::bigint AS pending
+FROM w
+GROUP BY variant
+ORDER BY variant;
 
 -- name: AddFlagExperimentLatency :exec
 -- Adds the experiment rule's requests in (from, until] to each variant's

@@ -1139,6 +1139,9 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		// ADR 20261114150000 §3: a published flag configuration may kill
 		// or revive a flag; the per-deployment kill cache is wholesale.
 		db.NotifyFeatureFlagsChanged,
+		// ADR 20261119102741 §4: a refreshed or deleted cohort changes
+		// the per-customer cohort cache, which is wholesale too.
+		db.NotifyAnalyticsCohortsChanged,
 	}
 	// With resync: a LISTEN reconnect or a full hub buffer loses notifications
 	// (ADR-1344 §5 rule 3), and the route and app caches have no TTL.
@@ -1252,6 +1255,9 @@ func flushAfterMissedNotifications(inv invalidator, log *slog.Logger) {
 	if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
 		kills.InvalidateFlagKills()
 	}
+	if cohorts, ok := inv.(interface{ InvalidateFlagCohorts() }); ok {
+		cohorts.InvalidateFlagCohorts()
+	}
 }
 
 func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw string, log *slog.Logger) (db.DeploymentRouteChangedPayload, bool) {
@@ -1359,6 +1365,10 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 	case db.NotifyFeatureFlagsChanged:
 		if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
 			kills.InvalidateFlagKills()
+		}
+	case db.NotifyAnalyticsCohortsChanged:
+		if cohorts, ok := inv.(interface{ InvalidateFlagCohorts() }); ok {
+			cohorts.InvalidateFlagCohorts()
 		}
 	case db.NotifyTrafficSecurityChanged:
 		if _, err := db.ParseTrafficSecurityChangedPayload(n.Payload); err != nil {

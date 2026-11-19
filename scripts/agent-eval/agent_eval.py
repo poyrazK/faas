@@ -835,7 +835,13 @@ def agent_command(agent: str, prompt: str, task: dict, run_dir: Path, project: P
 
 
 def cleanup(gregale: Gregale, created: dict, slug: str | None) -> list[str]:
-    """Delete what the run created; returns what could not be deleted."""
+    """Delete what the run created; returns what could not be deleted.
+
+    A deleted app keeps its name for its seven-day restore window, so the next
+    run's agent found the repository's natural name taken and deployed under a
+    suffixed one (express-hello-world-2, flask-hello-world-2, 2026-11-19).
+    Purging right after the delete frees the name; `name:<app>` marks a purge
+    that failed and left only the name held."""
     left = []
     for project_slug in created.get("projects", []):
         if gregale.cli("project", "delete", "--yes", "--detach-services", project_slug, timeout=300).returncode != 0:
@@ -843,6 +849,8 @@ def cleanup(gregale: Gregale, created: dict, slug: str | None) -> list[str]:
     for app in sorted(set(created.get("apps", [])) | ({slug} if slug else set())):
         if gregale.cli("app", "delete", "--yes", "--delete-bindings", app, timeout=300).returncode != 0:
             left.append(f"app:{app}")
+        elif gregale.cli("app", "purge", "--yes", app, timeout=300).returncode != 0:
+            left.append(f"name:{app}")
     return left
 
 

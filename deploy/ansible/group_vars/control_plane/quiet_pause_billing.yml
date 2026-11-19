@@ -1,0 +1,18 @@
+# ADR-20261023171905: meterd's quiet pause billing mode, off, shadow or on.
+# The control_plane_service role renders it into faas-meterd's
+# zz-faas-quiet-pause-unbilled.conf.
+#
+#   off     bill every running second, as before the ADR
+#   shadow  count what the pause ledger proves, bill in full
+#   on      subtract the proven paused seconds, but only for the accounts
+#           the quiet_pause_unbilled platform flag releases; every other
+#           account is counted as in shadow and billed in full
+#
+# production-us: shadow from 2026-11-17 17:19Z, on from 2026-11-19 15:56Z
+# (owner OK; both hand drop-ins until this file). The flag releases no
+# account by default. Rollout step 2 releases it to internal accounts first,
+# then to everyone after the financial-model sign-off
+# (`gregalectl flags allow` / `flags default`, docs/ops/platform-flags.md).
+#
+# Quote the value: YAML reads a bare on/off as a boolean.
+meterd_quiet_pause_unbilled: "on"

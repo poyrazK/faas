@@ -35,6 +35,9 @@ type projectServiceProgress struct {
 	service string
 	stage   string
 	done    bool
+	// step is the newest BuildKit step while the service builds; a stage
+	// change clears it.
+	step string
 }
 
 // projectWaitProgressEvent is the JSON-mode progress line.
@@ -153,7 +156,11 @@ func (p *projectWaitProgress) heartbeat() {
 	var waiting []string
 	for _, s := range p.services {
 		if !s.done {
-			waiting = append(waiting, s.service+" ("+s.stage+")")
+			detail := s.stage
+			if s.step != "" {
+				detail += " " + terminalSafe(s.step)
+			}
+			waiting = append(waiting, s.service+" ("+detail+")")
 		}
 	}
 	if len(waiting) == 0 {
