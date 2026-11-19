@@ -4945,6 +4945,11 @@ type ResumeEnvironmentAutomationResponse struct {
 	// 2026-11-14).
 	EventSubscriptionsResumed int      `json:"event_subscriptions_resumed"`
 	EventSubscriptionIDs      []string `json:"event_subscription_ids"`
+	// BucketNotificationsResumed and BucketIDs are the buckets whose copied
+	// notification rules the call resumed (ADR-20261104120000 amendment
+	// 2026-11-16).
+	BucketNotificationsResumed int      `json:"bucket_notifications_resumed"`
+	BucketIDs                  []string `json:"bucket_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a

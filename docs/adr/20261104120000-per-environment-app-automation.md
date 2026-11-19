@@ -218,8 +218,8 @@ The follow-up the previous amendment named.
 
 ## Amendment 2026-11-16: bucket notification copies
 
-Status: proposed. Closes the "not yet" above for bucket notification rules,
-with the owner's choices of 2026-11-16.
+Status: accepted (owner's choices of 2026-11-16). Closes the "not yet" above
+for bucket notification rules.
 
 ### Problem
 
@@ -292,13 +292,16 @@ stage's object events to production.
   function targets async invoke on the bucket's plan.
 - No resume quota: notification rules have no plan cap of their own, and the
   queues and functions they reach are already counted.
-- Release compatibility. The environment-scoped lookup is a query change in
-  the writer that captures notification work (apid and the object gateway's
-  store). An N-1 writer still resolves environment-blind; stage buckets with
-  rules exist only once N clones copy them, and the deploy order (data,
-  control plane, edge/node, runtime) upgrades the writers first. The
-  migration adds `clone_paused boolean NOT NULL DEFAULT false` with a trigger
-  clearing it on any rules write, expand-only.
+- A production bucket no longer reaches a queue that exists only in a stage:
+  before, the environment-blind lookup resolved it there. Stage queues are
+  dark with full clones, so no production rule is expected to rely on it.
+- Release compatibility. The environment-scoped lookup and the pause are read
+  by every writer that captures notification work (apid and the object
+  gateway). An N-1 writer resolves environment-blind and ignores
+  `clone_paused`, so it would deliver a paused copy: full clones must stay off
+  until every such writer runs N. The migration adds `clone_paused boolean
+  NOT NULL DEFAULT false`, expand-only; the writers clear it on any explicit
+  rules write, identical rules included.
 
 ### Slices
 
