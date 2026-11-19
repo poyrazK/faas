@@ -9654,11 +9654,11 @@ All receipts keep `ready_to_apply=false`, `bindings_verified=false` and
 Once a retained source review has a passing binding observation, an unscoped personal administrator API key can reserve a disposable rehearsal target. APID must enable `FAAS_MCP_HOSTED_TASK_REHEARSAL_PLAN=1`, hosted source retention, and binding verification.
 
 ```bash
-gregale mcp server tasks rehearsal plan --id INTENT \
+gregale mcp server tasks rehearse plan --id INTENT \
   --intent-sha256 INTENT_DIGEST --review-sha256 REVIEW_DIGEST \
   --binding-sha256 BINDING_DIGEST
-gregale mcp server tasks rehearsal approve --id INTENT --plan-sha256 PLAN_DIGEST
-gregale mcp server tasks rehearsal get --id INTENT
+gregale mcp server tasks rehearse approve --id INTENT --plan-sha256 PLAN_DIGEST
+gregale mcp server tasks rehearse get --id INTENT
 ```
 
 Review the allocated target identity, queue namespace, and fixed expiry before approving. The plan expires with the passing binding observation and retries preserve its identity and deadline. Use `rehearsal revoke --id INTENT --plan-sha256 PLAN_DIGEST` to withdraw an unconsumed approval. These commands only record planning and approval metadata. Runtime allocation, migration and candidate verification belong to the contained runner. See [the rehearsal plan ADR](adr/20261118062934-hosted-task-rehearsal-plan.md).

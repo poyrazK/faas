@@ -476,6 +476,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp tasks execution` | `gregale mcp server tasks run` |
 | `gregale mcp tasks intent` | `gregale mcp server tasks review` |
 | `gregale mcp tasks observer` | `gregale mcp observer` |
+| `gregale mcp tasks rehearsal` | `gregale mcp server tasks rehearse` |
 | `gregale mcp tasks release` | `gregale mcp server tasks deploy` |
 | `gregale mcp tasks source-review` | `gregale mcp server tasks audit` |
 | `gregale mcp tools` | `gregale mcp client tools` |

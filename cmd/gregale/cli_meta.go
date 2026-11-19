@@ -3237,6 +3237,7 @@ var cliCommands = []cliCommand{
 			{Name: "create-only", Group: "Confirmation and waiting", Short: "create or reserve the app without uploading a deployment"},
 			{Name: "timeout", Group: "Confirmation and waiting", Short: "readiness wait limit; seconds or duration, e.g. 10m (default: 1200s; maximum: 24h)", Value: "DURATION"},
 			{Name: "idempotency-key", Group: "Confirmation and waiting", Short: "stable logical retry key for this deployment", Value: "KEY"},
+			{Name: "resume-upload-id", Group: "Confirmation and waiting", Short: "require this existing resumable upload on retry", Value: "ID"},
 			{Name: "secrets-file", Group: "Access and secrets", Short: "seal KEY=VALUE pairs before the first deployment", Value: "PATH"},
 			{Name: "secret-scan", Group: "Access and secrets", Short: "scan .env files before packing (default: on)", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			{Name: "diff", Group: "Preview and checks", Short: "alias of --dry-run"},
