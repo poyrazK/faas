@@ -56,6 +56,20 @@ plan after approval can commit the original upload. The checkpoint stays
 outside the source tree and expires with the staged files. Each CLI invocation
 still gets a fresh home and git configuration.
 
+Amendment 2026-11-19. A native approval of a body-bound resumable upload
+commit extends the original 15-minute MCP plan to the expiry already shown on
+the approval review page. The bridge reads the approval and the complete
+upload using the same credential. It pins the app identity and reviewed
+release state and retains the existing staging reservation. The approval
+deadline remains fixed while the agent polls or retries. Other deployment
+approval paths retain their current behavior.
+
+Before applying, the bridge checks the original decision, upload and release
+state. The CLI requires the same resumable upload checkpoint on this retry.
+A missing or incompatible checkpoint stops the retry. A committed original
+upload can recover its exact release after a lost reply. The temporary plan
+and its files still belong to the current bridge process.
+
 ## Validation
 
 A bridge regression test exercises an approval response and a retry of the

@@ -67,6 +67,9 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 	return deployResumableTarball(c, ctx, slug, path, progress, nil, options...)
 }
 
+// requiredUploadIDKey is set on a hosted MCP retry of one reviewed commit.
+type requiredUploadIDKey struct{}
+
 func deployResumableTarball(c *Client, ctx context.Context, slug, path string, progress resumableUploadProgress, observe func(deployUploadIdentity) error, options ...api.UploadDeployOptions) (dep api.DeploymentResponse, sourceSHA256 string, supported bool, err error) {
 	phase := "upload"
 	outcome := deploySubmissionRejected
@@ -122,6 +125,11 @@ func deployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 	}()
 
 	state, stateFound, stateErr := loadResumableUploadState(statePath)
+	expectedUploadID, _ := ctx.Value(requiredUploadIDKey{}).(string)
+	if expectedUploadID != "" && (stateErr != nil || !stateFound || state.UploadID != expectedUploadID ||
+		!uploadStateMatches(state, c, slug, identity, info.Size(), archiveSHA256, optionsSHA256)) {
+		return api.DeploymentResponse{}, "", true, errors.New("the original upload checkpoint is missing or does not match this deploy")
+	}
 	if stateErr != nil {
 		// A corrupt local record cannot safely be resumed. It is only
 		// recovery metadata, so discard it and start a clean session.
@@ -201,7 +209,7 @@ func deployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 					return dep, archiveSHA256, true, nil
 				case "open", "":
 					if err := validateDiscoveredUpload(state, remote, info.Size()); err != nil {
-						if state.CommitAttempted {
+						if state.CommitAttempted || expectedUploadID != "" {
 							return api.DeploymentResponse{}, "", true, err
 						}
 						cancelUploadBestEffort(ctx, c, state.UploadID)
@@ -248,6 +256,9 @@ func deployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 
 		phase = "upload"
 		if session.UploadID == "" {
+			if expectedUploadID != "" {
+				return api.DeploymentResponse{}, "", true, errors.New("the original upload is no longer available")
+			}
 			if restart > 0 {
 				if _, err := f.Seek(0, io.SeekStart); err != nil {
 					return api.DeploymentResponse{}, "", true, fmt.Errorf("rewind tarball: %w", err)
@@ -319,6 +330,9 @@ func deployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			if err := observe(deployUploadIdentity{UploadID: session.UploadID, TotalSize: session.TotalSize}); err != nil {
 				return api.DeploymentResponse{}, "", true, fmt.Errorf("save upload identity: %w", err)
 			}
+		}
+		if expectedUploadID != "" && session.ReceivedBytes != session.TotalSize {
+			return api.DeploymentResponse{}, "", true, errors.New("the original upload is incomplete")
 		}
 		err = uploadSessionChunks(ctx, c, session, f, progress)
 		if err != nil {
