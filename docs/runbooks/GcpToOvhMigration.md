@@ -72,8 +72,13 @@ metric). Each app is recaptured on OVH after that boot.
 |---|---|---|---|
 | node artifact key (one per compute node) | artifacts | get, put, list; **no delete** | `storage.env` on that node |
 | control-plane artifact key | artifacts | get, put, list, delete | `storage.env` on the control node |
-| log archive key | log archive | put, get, list | `log_archive.credentials_src` on the controller |
-| backup key | backups | put, get, list, delete (WAL prune) | `/etc/faas/secrets/storage-box/rclone.conf` |
+| log archive key | log archive | put, get, list, delete (account erasure) | `log_archive.credentials_src` on the controller |
+| backup key | backups | put, get, list; **no delete** | `/etc/faas/secrets/storage-box/rclone.conf` |
+
+The policies are in `deploy/ovh/object-storage-policies/`, with the user
+for each key and each bucket's lifecycle. The backup key is append-only
+like the GCS writer role: the WAL prune deletes only local segments, and
+the bucket lifecycle removes old recovery points (ADR-20261118203000).
 
 Nodes go without delete through `FAAS_STORAGE_DELETE_MODE=defer`: deletes
 become `storage_object_deletions` rows that the control plane's object GC
