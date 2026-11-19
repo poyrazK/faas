@@ -92,6 +92,11 @@ func diagnosticProblem(p api.Problem) api.Problem {
 			// tasks) or 503 with a *_not_enabled code (tenant surfaces, private
 			// networks); retrying or checking service status cannot help.
 			p.Hint = "This feature is not enabled on this Gregale installation; ask its operator to enable it."
+		case p.Status == 503 && p.RetryAfterSeconds != nil && *p.RetryAfterSeconds > 0:
+			// The server said when to come back: the resource is busy, not
+			// Gregale down. A bucket finishing an inventory read "check service
+			// status … retrying a deploy" (prod 2026-11-19).
+			p.Hint = "The resource is busy for a moment; wait for Retry-After, then run the same command again."
 		case p.Status >= 500:
 			p.Hint = "Check Gregale's service status and run gregale config profile check. Inspect deployment status before retrying a deploy."
 		}
