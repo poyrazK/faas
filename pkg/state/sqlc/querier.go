@@ -87,6 +87,8 @@ type Querier interface {
 	ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error)
 	// Spend only grows: a change that lowers cost records nothing.
 	AddAgentBudgetSpend(ctx context.Context, db DBTX, arg AddAgentBudgetSpendParams) error
+	// Registers a property key while the environment holds fewer than max_keys.
+	AddAnalyticsPropertyKey(ctx context.Context, db DBTX, arg AddAnalyticsPropertyKeyParams) (int64, error)
 	AddCustomMetricOfKind(ctx context.Context, db DBTX, arg AddCustomMetricOfKindParams) (bool, error)
 	AddDatabaseEgress(ctx context.Context, db DBTX, arg AddDatabaseEgressParams) error
 	AddFlagConversionDaily(ctx context.Context, db DBTX, arg AddFlagConversionDailyParams) error
@@ -142,6 +144,31 @@ type Querier interface {
 	// the same request again until the window closes.
 	AgentApprovalUsedWithin(ctx context.Context, db DBTX, arg AgentApprovalUsedWithinParams) (pgtype.UUID, error)
 	AlertRuleEpisodeOpen(ctx context.Context, db DBTX, ruleID pgtype.UUID) (bool, error)
+	// Each customer's first matching event in the range.
+	AnalyticsEntriesByCustomer(ctx context.Context, db DBTX, arg AnalyticsEntriesByCustomerParams) ([]AnalyticsEntriesByCustomerRow, error)
+	// Each subject's first matching event in the range.
+	AnalyticsEntriesBySubject(ctx context.Context, db DBTX, arg AnalyticsEntriesBySubjectParams) ([]AnalyticsEntriesBySubjectRow, error)
+	// Events, units and value per time bucket and breakdown value. by_kind is
+	// property, flag or empty; a series breaks down by the event's own value.
+	AnalyticsEventSeries(ctx context.Context, db DBTX, arg AnalyticsEventSeriesParams) ([]AnalyticsEventSeriesRow, error)
+	// Each customer's first matching event after its previous step and by its
+	// deadline. The arrays are parallel.
+	AnalyticsNextStepCustomers(ctx context.Context, db DBTX, arg AnalyticsNextStepCustomersParams) ([]AnalyticsNextStepCustomersRow, error)
+	AnalyticsNextStepSubjects(ctx context.Context, db DBTX, arg AnalyticsNextStepSubjectsParams) ([]AnalyticsNextStepSubjectsRow, error)
+	// Product analytics (ADR 20261117084505).
+	AnalyticsPropertyKeysKnown(ctx context.Context, db DBTX, arg AnalyticsPropertyKeysKnownParams) ([]string, error)
+	// Requests, server errors and latency histogram buckets (5% log buckets,
+	// flags.LatencyBucket) per value of one flag, from request telemetry
+	// received in [from, until) for the project environment's apps.
+	AnalyticsRequestsByFlag(ctx context.Context, db DBTX, arg AnalyticsRequestsByFlagParams) ([]AnalyticsRequestsByFlagRow, error)
+	// Customers of each cohort and breakdown value that sent the return event in
+	// period k (1..periods) after their cohort's start. The arrays are parallel.
+	AnalyticsReturnsCustomers(ctx context.Context, db DBTX, arg AnalyticsReturnsCustomersParams) ([]AnalyticsReturnsCustomersRow, error)
+	AnalyticsReturnsSubjects(ctx context.Context, db DBTX, arg AnalyticsReturnsSubjectsParams) ([]AnalyticsReturnsSubjectsRow, error)
+	// Each customer's value for a flag on its earliest event in the range that
+	// carries it.
+	AnalyticsUnitFlagCustomers(ctx context.Context, db DBTX, arg AnalyticsUnitFlagCustomersParams) ([]AnalyticsUnitFlagCustomersRow, error)
+	AnalyticsUnitFlagSubjects(ctx context.Context, db DBTX, arg AnalyticsUnitFlagSubjectsParams) ([]AnalyticsUnitFlagSubjectsRow, error)
 	AppBasicAuthVerifier(ctx context.Context, db DBTX, sealedSha256 []byte) (string, error)
 	AppBindingRefreshInventory(ctx context.Context, db DBTX, arg AppBindingRefreshInventoryParams) ([]AppBindingRefreshInventoryRow, error)
 	AppBindingRuntimeInventory(ctx context.Context, db DBTX, arg AppBindingRuntimeInventoryParams) ([]AppBindingRuntimeInventoryRow, error)
@@ -339,6 +366,9 @@ type Querier interface {
 	BootstrapObjectStorageTimeline(ctx context.Context, db DBTX) error
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
+	// ADR-20261118154632: elastic builder slots.
+	// How many times borrowed slots gave this build back to the queue.
+	BuildPreemptions(ctx context.Context, db DBTX, buildID pgtype.UUID) (int32, error)
 	// Builder time this UTC month of the account that pays for an app
 	// (ADR-20261104132753): every build of that payer's apps that started at or
 	// after month_start, each capped at the build timeout (a running one counts up to now). A coalesced build ran
@@ -1152,6 +1182,9 @@ type Querier interface {
 	DeleteAlertChannelStandDown(ctx context.Context, db DBTX, arg DeleteAlertChannelStandDownParams) error
 	// ADR-749 slice 2: alert rule -> notification channel bindings.
 	DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error
+	// Deletes up to max_rows events of accounts on a plan without analytics
+	// retention in known_plans.
+	DeleteAnalyticsEventsOutsidePlans(ctx context.Context, db DBTX, arg DeleteAnalyticsEventsOutsidePlansParams) (int64, error)
 	DeleteApp(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAppConfigGuardSecrets(ctx context.Context, db DBTX, guardID pgtype.UUID) error
 	DeleteAppConfigVariable(ctx context.Context, db DBTX, arg DeleteAppConfigVariableParams) error
@@ -1220,6 +1253,9 @@ type Querier interface {
 	DeleteEnvironmentWorkKeyLanes(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
 	DeleteEnvironmentWorkloadServingAcks(ctx context.Context, db DBTX, graphID pgtype.UUID) error
 	DeleteEventSubscription(ctx context.Context, db DBTX, arg DeleteEventSubscriptionParams) error
+	// Deletes up to max_rows of the oldest events of accounts on plan that are
+	// older than cutoff.
+	DeleteExpiredAnalyticsEventsForPlan(ctx context.Context, db DBTX, arg DeleteExpiredAnalyticsEventsForPlanParams) (int64, error)
 	DeleteExpiredBindingVerificationRunReceipts(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
 	DeleteExpiredOperationWebhookReceipts(ctx context.Context, db DBTX, arg DeleteExpiredOperationWebhookReceiptsParams) (int64, error)
@@ -2808,6 +2844,8 @@ type Querier interface {
 	InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAlertRollbackParams) error
 	// Only channels owned by the rule's account are bound.
 	InsertAlertRuleChannels(ctx context.Context, db DBTX, arg InsertAlertRuleChannelsParams) error
+	// The arrays are parallel; an empty subject hash is no subject.
+	InsertAnalyticsEvents(ctx context.Context, db DBTX, arg InsertAnalyticsEventsParams) error
 	InsertAppConfigGuard(ctx context.Context, db DBTX, arg InsertAppConfigGuardParams) (AppConfigGuard, error)
 	InsertAppConfigRevision(ctx context.Context, db DBTX, arg InsertAppConfigRevisionParams) (AppConfigRevision, error)
 	// One row per request that hit the grouped fingerprint. No
@@ -7612,6 +7650,11 @@ type Querier interface {
 	RequestTelemetrySharedRouteLatency(ctx context.Context, db DBTX, arg RequestTelemetrySharedRouteLatencyParams) (RequestTelemetrySharedRouteLatencyRow, error)
 	RequeueFailedWorkflowStepForRetry(ctx context.Context, db DBTX, arg RequeueFailedWorkflowStepForRetryParams) (int64, error)
 	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	// Returns a running claim to the queue after a borrowed slot gave its memory
+	// back to tenants, and counts the give-back. Fenced like RequeueBuildIfClaim:
+	// a stale worker cannot requeue a newer claim. enqueued_at is untouched, so
+	// the build keeps its place in the queue.
+	RequeuePreemptedBuild(ctx context.Context, db DBTX, arg RequeuePreemptedBuildParams) (int64, error)
 	RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg RequeueWorkflowRunForRetryParams) (WorkflowRun, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
 	ReserveBillingUsageIntent(ctx context.Context, db DBTX, arg ReserveBillingUsageIntentParams) (int64, error)

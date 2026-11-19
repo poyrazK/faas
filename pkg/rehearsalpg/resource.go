@@ -13,6 +13,7 @@ import (
 type Resource struct {
 	ID, AccountID, RunID, AppID, OwnerID string
 	DatabaseName, RoleName, Status       string
+	ParticipantAccess                    string // projected from the enrolled participant, never persisted in the fixture
 	BackendSHA256                        string
 	Spec                                 Spec
 	Initial                              []Snapshot

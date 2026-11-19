@@ -400,7 +400,9 @@ func runGitCmd(gitDir string, args ...string) (string, error) {
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("%s: %w", command, err)
 	}
+	noticed := make(chan struct{})
 	notice := time.AfterFunc(gitSlowNoticeAfter, func() {
+		defer close(noticed)
 		_, _ = fmt.Fprintf(osStderr, "Waiting for `%s` in %s (local git metadata; gives up after %s)...\n", command, gitDir, timeout)
 	})
 	// A timer rather than a context: callers hold no context to pass, and
@@ -411,7 +413,11 @@ func runGitCmd(gitDir string, args ...string) (string, error) {
 		_ = cmd.Process.Kill()
 	})
 	err := cmd.Wait()
-	notice.Stop()
+	if !notice.Stop() {
+		// The notice already fired: let it finish writing before returning,
+		// so callers never race its write to stderr.
+		<-noticed
+	}
 	kill.Stop()
 	if timedOut.Load() {
 		return "", fmt.Errorf("%s did not finish within %s in %s; check that `%s` works there (a stuck core.fsmonitor daemon, a network filesystem or a very large untracked tree can stall it), or deploy from a copy outside the repository: %w",

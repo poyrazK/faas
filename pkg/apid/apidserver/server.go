@@ -2454,6 +2454,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/experiments/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteFlagExperiment))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startFlagExperiment))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.stopFlagExperiment))))
+	// ADR 20261117084505: product analytics; every route is a bounded read.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/events", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getInsightEvents)))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/funnel", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightFunnel)))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/retention", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightRetention)))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/requests", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getInsightRequests)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.shipFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentResults)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rollbackFeatureFlags))))
@@ -3174,6 +3179,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskBindings()))))
 	mux.HandleFunc("POST /v1/task-tool-source-intents/{id}/bindings/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskBindings()))))
 	mux.HandleFunc("POST /v1/task-tool-source-intents/{id}/bindings/revoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskBindings()))))
+	mux.HandleFunc("GET /v1/task-tool-source-intents/{id}/rehearsal", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskRehearsal()))))
+	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/rehearsal", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskRehearsal()))))
+	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/rehearsal/decision", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskRehearsal()))))
 
 	mux.HandleFunc("GET /v1/task-tool-release-intents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.privateTools.TaskReleaseIntent())))
 	mux.HandleFunc("PUT /v1/task-tool-release-intents/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.TaskReleaseIntent()))))

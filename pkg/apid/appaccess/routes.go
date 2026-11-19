@@ -359,6 +359,8 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/edge-rules/events":                      authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/edge-rules/waf-review":                  authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/edge-protection":                        authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/protection":                             authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/protection":                             authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/edge-protection/attack-mode":            authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/edge-rules":                            authz.OrgActionManageAppSecurity,
 	"PATCH /v1/edge-rules/{id}":                                  authz.OrgActionManageAppSecurity,

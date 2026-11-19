@@ -308,6 +308,12 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		}
 		request.PointInTime = s.now().Add(-LatestRestoreLag)
 	}
+	// The catalog stores the point with microsecond precision. A finer
+	// point (an RFC 3339 time with seven or more fractional digits) read back
+	// as a different instant, so the reservation compared unequal to its own
+	// request and the restore answered managed_postgres_conflict (production
+	// journey 2026-11-18: 13:52:38.3528715Z).
+	request.PointInTime = request.PointInTime.UTC().Truncate(time.Microsecond)
 	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() || !validBranchTTL(request.TTL) ||
 		request.WithinLimit && request.TTL > 0 {
 		return Database{}, false, ErrInvalid

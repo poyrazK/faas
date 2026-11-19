@@ -159,6 +159,7 @@ type MemStore struct {
 	toolPublications               map[string]api.ToolPublicationRecord
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
 	hostedTaskBindings             map[string]HostedTaskBindingRecord
+	hostedTaskRehearsals           map[string]hostedTaskRehearsalRecord
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -723,6 +724,9 @@ type MemStore struct {
 	// buildCoalescedWith maps a deferred build to the identical build it waits
 	// for (builds.coalesced_with, ADR-20261102100000).
 	buildCoalescedWith map[string]string
+	// buildPreemptions counts the times borrowed builder slots gave a build
+	// back to the queue (builds.preemptions, ADR-20261118154632).
+	buildPreemptions map[string]int
 	// ADR-740 developer live patches; allocated on first use.
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
@@ -1875,6 +1879,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		// Starts empty; CreateBuildProvenance fills it.
 		buildProvenance:    map[string]BuildProvenance{},
 		buildCoalescedWith: map[string]string{},
+		buildPreemptions:   map[string]int{},
 		// issue #72 / ADR-125: mirror-rules and mirror-results
 		// stores. Empty until the first create; the per-app count
 		// in CreateMirrorRuleIfUnderQuota walks the map.
@@ -25353,6 +25358,11 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, record := range m.hostedTaskBindings {
 		if record.Public.AccountID == id {
 			delete(m.hostedTaskBindings, key)
+		}
+	}
+	for key, record := range m.hostedTaskRehearsals {
+		if record.Plan.AccountID == id {
+			delete(m.hostedTaskRehearsals, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

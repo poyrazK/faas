@@ -51,7 +51,7 @@ start the developer loop after authentication; it cannot be combined with
 values and destination. TOML manifests require an explicit migration before
 using this YAML writer.
 
-## Run HTTP apps on this machine
+## Run HTTP apps locally
 
 To run your app locally, use `gregale dev --local` from an existing
 Express, FastAPI, or Go HTTP project:
@@ -79,6 +79,8 @@ across restarts. Framework config edits are handled by the framework's watcher.
 Project tools in `node_modules/.bin`, `.venv/bin`, and `venv/bin` are on PATH;
 install your application's dependencies before starting it.
 
+### Tool checks before start and reload
+
 Before connecting remote resources or starting/resetting offline Docker
 resources, local startup checks every function's runtime and detected app tools
 using the selected env-file PATH and function `env:` overrides. Missing tools
@@ -95,6 +97,8 @@ tool leaves the healthy process and its WebSocket connections serving with the
 last accepted configuration. Repair the launch inputs and save again to retry;
 the local URL stays the same when the replacement starts.
 
+### Custom start commands
+
 Override detection for a custom command (which must listen on `PORT`):
 
 ```sh
@@ -109,6 +113,8 @@ can still run its own watcher. App logs stream to the terminal. A crash
 keeps the proxy available with an unavailable response; fix the source and save
 to restart. Ctrl-C stops the app and its child processes before closing borrowed
 resources. Managed HTTP app processes currently require Linux or macOS.
+
+### Resources and env files
 
 Apps use the same remote or offline Postgres/bucket setup described below.
 `--env-file` supplies local configuration; nothing is uploaded and remote secret
@@ -131,7 +137,7 @@ overrides. Invalid, missing, or symlinked files leave the current processes
 running and report an error without echoing values. Fix the file and save to
 retry. `--no-reload` disables these CLI restarts too.
 
-## Run functions on this machine
+## Run functions locally
 
 `gregale dev --local` runs the project's Node, Python and Go functions on
 your computer, with the same adapters and runner code a deployed function

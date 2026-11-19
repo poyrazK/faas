@@ -36,6 +36,11 @@ const (
 	// SmokeErrorInternalApp explains a skipped smoke: an internal app has no
 	// public route, so in-guest readiness is the candidate's only proof.
 	SmokeErrorInternalApp = "smoke_internal_app"
+	// SmokeErrorCandidateCrashLoop ends a verification the public route
+	// could not prove because the candidate itself kept exiting: schedd
+	// parked it for liveness exhaustion while the probe retried. It is the
+	// app's verdict, not an outage.
+	SmokeErrorCandidateCrashLoop = "smoke_candidate_crash_loop"
 )
 
 const (

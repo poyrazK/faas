@@ -158,7 +158,9 @@ gregale org members invite --org acme --email ada@example.com --role developer
 
 ### Roles
 
-Each member has one role. The default for an invitation is `developer`.
+Each member has one role. The default for an invitation is `developer`;
+invite people who only need to look, such as support staff or auditors, as
+`viewer`.
 
 | Role | Can |
 |---|---|
@@ -248,8 +250,12 @@ they turn it on.
 
 ## Export and deletion
 
-Exports are rate-limited and produce an audit event; store the resulting archive securely and delete it when no longer needed.
+Export your data with `gregale account export -o export.json`
+(`--no-secrets` leaves out the sealed secret ciphertext). Exports are
+rate-limited and produce an audit event; store the resulting archive securely
+and delete it when no longer needed.
 
-Deletion requests have a grace period. Cancelling a deletion (`gregale
-account restore`, or **Restore** on the account page) needs a full-access
-API key or a browser sign-in, and emails you. Confirm the target account or organization in the command output before continuing, and revoke tokens first. The API rejects cross-organization resource references so a valid user cannot accidentally read or mutate another tenant's data.
+Delete your account with `gregale account delete`. Deletion waits 30 days, and
+until then `gregale account restore` (or **Restore** on the account page)
+cancels it. Cancelling needs a full-access API key or a browser sign-in, and
+emails you. Confirm the target account or organization in the command output before continuing, and revoke tokens first. The API rejects cross-organization resource references so a valid user cannot accidentally read or mutate another tenant's data.

@@ -257,6 +257,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerPreviewsObjectsTests(s, m)
 	registerEventsConsumers(s, m)
 	registerAuditBudgets(s, m)
+	registerInsights(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
 	registerAuthorizationLease(s)

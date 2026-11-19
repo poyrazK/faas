@@ -70,3 +70,27 @@ func TestManagedWorkPlanAndPayloadPreserveIdentity(t *testing.T) {
 		t.Fatal("proof contains credentials")
 	}
 }
+
+func TestManagedWorkTaskRolesRequireExclusiveMigrationOwner(t *testing.T) {
+	workloads := []string{"primary", "worker", "observer"}
+	for _, tc := range []struct {
+		name, primary, observer string
+		valid                   bool
+	}{
+		{"separate roles", PostgresReadWrite, PostgresTaskObserver, true},
+		{"no owner", "", PostgresTaskObserver, false},
+		{"restricted primary", PostgresTaskRuntime, PostgresTaskObserver, false},
+		{"additional owner member", PostgresReadWrite, PostgresReadWrite, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Plan{Version: 1, Primary: "primary", Participants: []Participant{
+				{Workload: "primary", Postgres: tc.primary},
+				{Workload: "worker", Async: true, Postgres: PostgresTaskRuntime},
+				{Workload: "observer", Postgres: tc.observer},
+			}}
+			if _, _, err := Normalize(p, workloads); (err == nil) != tc.valid {
+				t.Fatalf("normalize Task participant plan: %v", err)
+			}
+		})
+	}
+}

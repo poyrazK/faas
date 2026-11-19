@@ -9,7 +9,8 @@ directly.
 
 To set up one agent step by step, see
 [Deploy with Claude Code](claude-code.md), [Deploy with Codex](codex.md),
-[Deploy with Cursor](cursor.md) or [Deploy with Gemini CLI](gemini-cli.md).
+[Deploy with Cursor](cursor.md), [Deploy with Antigravity](antigravity.md) or
+[Deploy with Gemini CLI](gemini-cli.md).
 
 Starting with an empty directory and a Free account? Follow the
 [private Node quickstart](quickstart.md#deploy-a-private-node-app-on-free)
@@ -120,7 +121,8 @@ Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
 With the Gregale CLI installed, one command sets up Claude Code, Codex,
-Cursor, VS Code and Windsurf, and prints the steps for Claude Desktop:
+Cursor, VS Code, Windsurf and Antigravity, and prints the steps for Claude
+Desktop:
 
 ```sh
 gregale mcp connect
@@ -796,24 +798,30 @@ install it and log in or set `FAAS_TOKEN` first.
 agents how to deploy, check and roll back that project. Edit it like any other
 project file; the CLI never overwrites an existing one.
 
-For an existing project, add a section like this to its `AGENTS.md`, with
-your app's name:
+For an existing project, run this in its root, with your app's name:
 
-```markdown
-## Deploying
-
-This project deploys to Gregale as `my-api`.
-
-- Check first: `gregale deploy --dry-run`
-- Deploy: `gregale --non-interactive --json deploy --name my-api`
-- After a failed deploy: `gregale --non-interactive --json app health my-api --errors`,
-  then `gregale logs my-api --since 15m`
-- If a deploy exits 3, run the `resume_command` from its output; don't deploy again.
-- Don't make the app public or change secrets unless asked.
+```sh
+gregale init --agents --name my-api
 ```
 
-Codex and Cursor read `AGENTS.md` on their own. Claude Code and Gemini CLI
-need a line of setup; see [Deploy with Claude Code](claude-code.md) and
+It adds a "Deploying to Gregale" section to `AGENTS.md`, creating the file if
+the project has none. The section says how to deploy, verify, read a failed
+deploy and roll back `my-api`, and which actions need the user's OK. Without
+`--name`, it uses the app the checkout is linked to, else the directory name.
+Running it again replaces the section in place; the rest of the file stays as
+you wrote it. `--dry-run` shows the changes without writing them.
+
+Codex, Cursor and Antigravity read `AGENTS.md` on their own. For the other
+agents, the command also:
+
+- adds `@AGENTS.md` to an existing `CLAUDE.md`, since Claude Code reads
+  `AGENTS.md` by itself only when a project has no `CLAUDE.md`;
+- creates `.gemini/settings.json` naming `AGENTS.md` in a project with a
+  `.gemini` folder, where Gemini CLI keeps its project settings. An existing
+  settings file is never rewritten; the command says what to add to it.
+
+See [Deploy with Claude Code](claude-code.md),
+[Deploy with Antigravity](antigravity.md) and
 [Deploy with Gemini CLI](gemini-cli.md).
 
 ## Documentation for agents

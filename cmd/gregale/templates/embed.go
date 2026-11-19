@@ -53,6 +53,35 @@ var agentsGuide string
 
 var agentsGuideTemplate = template.Must(template.New("AGENTS.md").Parse(agentsGuide))
 
+// agentsSection is the marked Gregale section `gregale init --agents` adds
+// to an existing project's AGENTS.md. Its first and last lines are the
+// markers a later run finds to replace it in place.
+//
+//go:embed agents-section.md.tmpl
+var agentsSection string
+
+var agentsSectionTemplate = template.Must(template.New("agents-section").Parse(agentsSection))
+
+// AgentsSectionBegin and AgentsSectionEnd prefix the marker lines that
+// delimit the section AgentsSection renders.
+const (
+	AgentsSectionBegin = "<!-- gregale:begin"
+	AgentsSectionEnd   = "<!-- gregale:end"
+)
+
+// AgentsGuideMarker is a sentence of the full AGENTS.md init --template
+// writes; a file containing it already has Gregale's instructions.
+const AgentsGuideMarker = "This project runs on Gregale (https://gregale.dev)."
+
+// AgentsSection renders the marked AGENTS.md section for app.
+func AgentsSection(app string) (string, error) {
+	var out bytes.Buffer
+	if err := agentsSectionTemplate.Execute(&out, struct{ App string }{app}); err != nil {
+		return "", fmt.Errorf("render agents section: %w", err)
+	}
+	return out.String(), nil
+}
+
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
 // Go starters. Unlike a customer-owned go.mod, these generated modules are
 // platform-owned defaults and must not knowingly create images with HIGH
