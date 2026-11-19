@@ -49,7 +49,7 @@ func (t *StepTracker) Observe(line string) (string, bool) {
 		return "", false
 	}
 	name := printable(rest)
-	if name == "" || setupVertex(name) {
+	if name == "" || setupVertex(name) || statusLine(name) {
 		return "", false
 	}
 	t.emitted++
@@ -63,6 +63,27 @@ func setupVertex(name string) bool {
 		"[internal]", "[auth]", "load build definition", "load .dockerignore",
 		"load metadata for", "local context", "resolve image config",
 		"transferring ", "importing cache manifest", "building with ",
+	} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// statusLine reports a vertex line that is a status or log, not a name. A
+// stream that starts mid-build (a log-ring gap) can see one of these first
+// for a vertex; the stored tail of a production build starts with
+// "#21 extracting sha256:…" (retail-store, 2026-11-19).
+func statusLine(name string) bool {
+	if r := name[0]; r >= '0' && r <= '9' { // "0.512 npm warn …": step output
+		return true
+	}
+	for _, prefix := range []string{
+		"DONE", "CACHED", "ERROR", "CANCELED", "sha256:", "extracting ", "writing layer",
+		"writing manifest", "writing config", "preparing ", "sending ", "exporting layers",
+		"exporting manifest", "exporting config", "naming to ", "unpacking ", "resolve ",
+		"...", "WARN", "DEPRECATED",
 	} {
 		if strings.HasPrefix(name, prefix) {
 			return true

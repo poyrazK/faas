@@ -93,3 +93,29 @@ func TestLatestStep(t *testing.T) {
 		}
 	}
 }
+
+// A stream that starts mid-build sees statuses and output before any name;
+// none of them is a step (the stored tail of a production build starts at
+// "#21 extracting sha256:…").
+func TestStepTrackerSkipsStatusesSeenFirst(t *testing.T) {
+	tr := buildprogress.NewStepTracker(0, 0)
+	for _, line := range []string{
+		"#21 extracting sha256:4750d048c746b264 0.6s done",
+		"#22 preparing build cache for export 26.0s done",
+		"#23 writing layer sha256:135e54f6470786b0",
+		"#24 sending cache export",
+		"#25 0.512 npm warn deprecated glob@7",
+		"#26 DONE 12.0s",
+		"#27 CACHED",
+		"#28 sha256:aaa 12.6MB / 50.1MB 2.0s",
+		"#29 naming to docker.io/library/app done",
+		"#30 resolve docker.io/library/node:22 0.0s done",
+	} {
+		if name, ok := tr.Observe(line); ok {
+			t.Errorf("status %q reported as step %q", line, name)
+		}
+	}
+	if name, ok := tr.Observe("#31 [build 2/3] RUN npm ci"); !ok || name != "[build 2/3] RUN npm ci" {
+		t.Fatalf("real step after statuses = %q, %v", name, ok)
+	}
+}
