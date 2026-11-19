@@ -10645,6 +10645,7 @@
       "bypass_rls",
       "created_at",
       "database_id",
+      "default_for",
       "granted_to",
       "last_error",
       "member_of",
@@ -22128,6 +22129,18 @@
       "expires_at",
       "id",
       "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_rehearsal_runs",
+    "columns": [
+      "account_id",
+      "approval_expires_at",
+      "id",
+      "plan_sha256",
+      "reserved_at",
+      "run_id"
     ],
     "kind": "operational"
   },

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/agentproxy"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
@@ -44,13 +45,26 @@ const (
 var gwAddresses = []netip.Addr{netip.MustParseAddr("45.0.0.50"), netip.MustParseAddr("45.0.0.51")}
 
 // gwServer listens on the internet host and records each connection's
-// port, peer address and first line, one JSON object per line.
+// port, peer address and first line, one JSON object per line. A request
+// whose first bytes name a "hold." host is kept open without an answer
+// until the other side closes, so it stays counted against the proxy's caps.
 const gwServer = `
-import json, socket, sys, threading, time
+import json, resource, socket, sys, threading, time
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
 log = open(sys.argv[1], "a", buffering=1)
+def hold(c):
+    # Keep it open until the other side closes, then close too.
+    c.settimeout(None)
+    try:
+        while c.recv(4096):
+            pass
+    except OSError:
+        pass
+    c.close()
 def serve(port):
     s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((sys.argv[2], port)); s.listen(64)
+    s.bind((sys.argv[2], port)); s.listen(1024)
     while True:
         c, peer = s.accept()
         c.settimeout(2)
@@ -59,6 +73,9 @@ def serve(port):
         except OSError:
             data = b""
         log.write(json.dumps({"port": port, "peer": peer[0], "first": data[:200].decode("latin-1")}) + "\n")
+        if b"Host: hold." in data:
+            threading.Thread(target=hold, args=(c,), daemon=True).start()
+            continue
         try:
             c.sendall(("peer " + peer[0] + "\n").encode()); c.close()
         except OSError:
@@ -96,6 +113,20 @@ except OSError as e:
     print("error", type(e).__name__, e)
 `
 
+// gwHolder opens count connections from src, each a request naming host,
+// prints "ready" and keeps them open until it is killed.
+const gwHolder = `
+import socket, sys, time
+src, ip, port, count, host = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+conns = []
+for _ in range(count):
+    s = socket.create_connection((ip, port), timeout=5, source_address=(src, 0))
+    s.sendall(("GET / HTTP/1.1\r\nHost: " + host + "\r\n\r\n").encode())
+    conns.append(s)
+print("ready", flush=True)
+time.sleep(600)
+`
+
 // gwRegister plays vmmd's registration call from the node.
 const gwRegister = `
 import json, sys, urllib.request
@@ -126,6 +157,9 @@ type gwTopo struct {
 	nodeAddr, gwAddr, agentIP, wantEgress    netip.Addr
 	inetLog, tenantLog, proxyLog, proxyBlock string
 	proxy                                    *exec.Cmd
+	// extra are more agent VMs, as further addresses on vm1's interface,
+	// each with its own account.
+	extra []netns.AgentEgressRule
 }
 
 func gwRun(t *testing.T, argv ...string) string {
@@ -187,7 +221,11 @@ func gatewayTemplate(t *testing.T) string {
 	return "../../deploy/ansible/roles/agent_egress_gateway/templates/agent-egress-gw.nft.j2"
 }
 
-func newGatewayTopo(t *testing.T) *gwTopo {
+func newGatewayTopo(t *testing.T) *gwTopo { return newGatewayTopoWith(t, 0) }
+
+// newGatewayTopoWith adds extra agent VMs beside vm1, registered with the
+// proxy under accounts acct-extra-<i>.
+func newGatewayTopoWith(t *testing.T, extra int) *gwTopo {
 	t.Helper()
 	gwRequire(t)
 	proxyBin := agentproxydBinary(t)
@@ -203,6 +241,12 @@ func newGatewayTopo(t *testing.T) *gwTopo {
 	g.gwAddr = gwPrefix.Addr()
 	g.agentIP = g.nodeAddr.Next() // vmmd's first allocation: past the network and node addresses
 	g.wantEgress = agentproxy.AddressFor(gwAddresses, g.agentIP)
+	agentIP := g.agentIP
+	for i := range extra {
+		agentIP = agentIP.Next()
+		g.extra = append(g.extra, netns.AgentEgressRule{PerVMHostIP: netip.AddrFrom4([4]byte{10, 100, 1, byte(i + 1)}),
+			AgentIP: agentIP, AccountID: "acct-extra-" + strconv.Itoa(i), SandboxID: "sb-extra-" + strconv.Itoa(i)})
+	}
 	g.inetLog, g.tenantLog = filepath.Join(g.dir, "inet.jsonl"), filepath.Join(g.dir, "tenant.jsonl")
 	g.proxyLog, g.proxyBlock = filepath.Join(g.dir, "agentproxyd.log"), filepath.Join(g.dir, "blocklist.txt")
 
@@ -228,6 +272,9 @@ func newGatewayTopo(t *testing.T) *gwTopo {
 		gwRun(t, "ip", "-n", vm.ns, "addr", "add", vm.ip+"/16", "dev", "eth0")
 		gwRun(t, "ip", "-n", vm.ns, "link", "set", "eth0", "up")
 		gwRun(t, "ip", "-n", vm.ns, "route", "add", "default", "via", "10.100.0.1")
+	}
+	for _, r := range g.extra {
+		gwRun(t, "ip", "-n", g.vm1, "addr", "add", r.PerVMHostIP.String()+"/16", "dev", "eth0")
 	}
 
 	// The tenant path: wg-tenant to a tenant gateway that also answers for
@@ -351,6 +398,7 @@ func (g *gwTopo) nodePolicy() {
 	p.AgentEgressIface = "wg-agent"
 	p.AgentEgressRules = []netns.AgentEgressRule{{PerVMHostIP: netip.MustParseAddr(gwAgentVM), AgentIP: g.agentIP,
 		AccountID: gwAccount, SandboxID: gwSandbox}}
+	p.AgentEgressRules = append(p.AgentEgressRules, g.extra...)
 	g.in(g.node, "nft", "-f", g.script("node.nft", p.Render()))
 	mark := fmt.Sprintf("%#x/%#x", netns.AgentEgressRoutingMark, netns.AgentEgressRoutingMark)
 	gwRun(t, "ip", "-n", g.node, "-4", "rule", "add", "priority", "95", "iif", netns.TenantBridge, "fwmark", mark, "lookup", gwRouteTable)
@@ -443,8 +491,86 @@ func (g *gwTopo) read(p string) string {
 }
 
 func (g *gwTopo) register(method string) string {
-	url := "http://" + g.gwAddr.String() + ":15081/v1/registrations/" + g.agentIP.String()
-	return strings.TrimSpace(g.in(g.node, "python3", g.script("register.py", gwRegister), method, url, gwAccount, gwSandbox))
+	return g.registerAs(method, g.agentIP, gwAccount, gwSandbox)
+}
+
+func (g *gwTopo) registerAs(method string, agentIP netip.Addr, account, sandbox string) string {
+	url := "http://" + g.gwAddr.String() + ":15081/v1/registrations/" + agentIP.String()
+	return strings.TrimSpace(g.in(g.node, "python3", g.script("register.py", gwRegister), method, url, account, sandbox))
+}
+
+// hold opens count held connections from src to port 80 naming host
+// (which must start with "hold.") and waits until the internet host has
+// them all. It returns a func that closes them.
+func (g *gwTopo) hold(src netip.Addr, count int, host string) func() {
+	t := g.t
+	t.Helper()
+	before := g.countSeen(host)
+	cmd := exec.Command("ip", "netns", "exec", g.vm1, "python3", g.script("holder.py", gwHolder),
+		src.String(), gwInternet, "80", strconv.Itoa(count), host)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stop := func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }
+	t.Cleanup(stop)
+	if line, _ := bufio.NewReader(out).ReadString('\n'); strings.TrimSpace(line) != "ready" {
+		t.Fatalf("holder from %s for %s did not open its connections: %q", src, host, line)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for g.countSeen(host)-before < count {
+		if time.Now().After(deadline) {
+			t.Fatalf("internet host has %d of %d held connections for %s from %s", g.countSeen(host)-before, count, host, src)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return stop
+}
+
+// countSeen counts the internet host's connections whose request named host.
+func (g *gwTopo) countSeen(host string) int {
+	n := 0
+	for _, s := range g.seen(g.inetLog) {
+		if strings.Contains(s.First, "Host: "+host+"\r") {
+			n++
+		}
+	}
+	return n
+}
+
+// connectFrom makes one plain-HTTP request from src naming host.
+func (g *gwTopo) connectFrom(src netip.Addr, host string) string {
+	const client = `
+import socket, sys
+try:
+    s = socket.create_connection((sys.argv[2], 80), timeout=3, source_address=(sys.argv[1], 0))
+    s.sendall(("GET / HTTP/1.1\r\nHost: " + sys.argv[3] + "\r\n\r\n").encode())
+    s.settimeout(3)
+    print(s.recv(200).decode("latin-1").strip() or "error closed")
+except OSError as e:
+    print("error", type(e).__name__, e)
+`
+	return strings.TrimSpace(g.in(g.vm1, "python3", g.script("client_from.py", client), src.String(), gwInternet, host))
+}
+
+// refusal waits for a connection record from agentIP with outcome.
+func (g *gwTopo) refusal(agentIP netip.Addr, outcome string) map[string]any {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for _, r := range g.connLog() {
+			if r["outcome"] == outcome && strings.HasPrefix(fmt.Sprint(r["source"]), agentIP.String()+":") {
+				return r
+			}
+		}
+		if time.Now().After(deadline) {
+			g.t.Fatalf("no %s record from %s in the connection log: %v", outcome, agentIP, g.connLog())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (g *gwTopo) connect(vm, kind string, port int, host string) string {
@@ -595,5 +721,84 @@ func TestMetalAgentEgressGatewayRefusesOtherNodesRegistrations(t *testing.T) {
 	got := strings.TrimSpace(g.in(g.node, "python3", g.script("register.py", gwRegister), "PUT", url, gwAccount, gwSandbox))
 	if strings.HasPrefix(got, "200") {
 		t.Fatalf("node registered an address in another node's slice: %q", got)
+	}
+}
+
+// TestMetalAgentEgressGatewayCaps fills each of agentproxyd's
+// concurrent-connection caps (ADR-20261117185346 §4, pkg/api/limits.go)
+// with held connections through the real path, and checks that the next
+// connection is refused with that cap's outcome while others still pass.
+func TestMetalAgentEgressGatewayCaps(t *testing.T) {
+	perVM, perAccountDomain, perDomain := api.AgentEgressConnsPerVM, api.AgentEgressConnsPerAccountDomain, api.AgentEgressConnsPerDomainFleet
+	if perVM%perAccountDomain != 0 || perDomain%perAccountDomain != 0 {
+		t.Fatalf("caps %d/%d/%d: the test fills the larger caps in whole per-account-domain batches", perVM, perAccountDomain, perDomain)
+	}
+	// One VM for the per-VM and per-account-domain caps; enough accounts
+	// to fill the fleet cap one domain at a time, and one more to be refused.
+	fleet := perDomain/perAccountDomain + 1
+	g := newGatewayTopoWith(t, fleet)
+	if got := g.register("PUT"); got != "200" {
+		t.Fatalf("registration = %q, want 200", got)
+	}
+	for _, r := range g.extra {
+		if got := g.registerAs("PUT", r.AgentIP, r.AccountID, r.SandboxID); got != "200" {
+			t.Fatalf("registration of %s = %q, want 200", r.AgentIP, got)
+		}
+	}
+	vm := netip.MustParseAddr(gwAgentVM)
+	answered := func(got string) bool { return strings.HasPrefix(got, "peer ") }
+
+	// Per account and domain: a full batch on one domain refuses the next
+	// connection to it, and another domain still passes.
+	vmHolds := []func(){g.hold(vm, perAccountDomain, "hold.d0.test")}
+	if got := g.connectFrom(vm, "www.d0.test"); answered(got) {
+		t.Fatalf("connection %d from one account to d0.test was carried: %q", perAccountDomain+1, got)
+	}
+	if r := g.refusal(g.agentIP, agentproxy.OutcomeCapAccountDomain); r["host"] != "www.d0.test" || r["account_id"] != gwAccount {
+		t.Errorf("cap_account_domain record = %v", r)
+	}
+	if got := g.connectFrom(vm, "www.other.test"); !answered(got) {
+		t.Fatalf("another domain was refused while only d0.test is at its cap: %q", got)
+	}
+
+	// Per VM: fill the rest of the VM's cap across more domains; the next
+	// connection, to a fresh domain, is refused.
+	for i := 1; i < perVM/perAccountDomain; i++ {
+		vmHolds = append(vmHolds, g.hold(vm, perAccountDomain, "hold.d"+strconv.Itoa(i)+".test"))
+	}
+	if got := g.connectFrom(vm, "www.fresh.test"); answered(got) {
+		t.Fatalf("connection %d from one VM was carried: %q", perVM+1, got)
+	}
+	if r := g.refusal(g.agentIP, agentproxy.OutcomeCapVM); r["host"] != "www.fresh.test" {
+		t.Errorf("cap_vm record = %v", r)
+	}
+
+	// Per domain, fleet-wide: accounts each fill their own share of one
+	// domain until the fleet cap; one more account is refused there and
+	// still reaches another domain.
+	for _, r := range g.extra[:fleet-1] {
+		g.hold(r.PerVMHostIP, perAccountDomain, "hold.busy.test")
+	}
+	last := g.extra[fleet-1]
+	if got := g.connectFrom(last.PerVMHostIP, "www.busy.test"); answered(got) {
+		t.Fatalf("connection %d to busy.test across the fleet was carried: %q", perDomain+1, got)
+	}
+	if r := g.refusal(last.AgentIP, agentproxy.OutcomeCapDomainFleet); r["account_id"] != last.AccountID || r["host"] != "www.busy.test" {
+		t.Errorf("cap_domain_fleet record = %v", r)
+	}
+	if got := g.connectFrom(last.PerVMHostIP, "www.quiet.test"); !answered(got) {
+		t.Fatalf("an account under every cap was refused another domain: %q", got)
+	}
+
+	// Closed connections give their slots back.
+	for _, stop := range vmHolds {
+		stop()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for got := g.connectFrom(vm, "www.fresh.test"); !answered(got); got = g.connectFrom(vm, "www.fresh.test") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the VM closed its connections, yet is still refused: %q", got)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }

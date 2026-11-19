@@ -87,9 +87,12 @@ application response tools before starting.
 3. Call `gregale_apply_upload_deploy` with `{"plan_id":"<plan_id>"}` once
    the user has authorized deployment. Follow the
    [approval flow](#approve-an-agents-risky-requests) if Gregale returns a
-   review link. After approval, apply the same plan ID to resume the original
-   upload. Use that same plan ID to recover the receipt if the apply response
-   is lost.
+   review link. When the resumable upload commit requires approval, the same
+   plan and source stay available until the deadline shown in
+   `approval.expires_at` and on the review page. After approval, apply the same
+   plan ID to resume the original upload. If the app or its release changed
+   during review, inspect it before creating a new plan. Reuse the plan ID to
+   recover the receipt if the apply response is lost.
 4. Save `deployment.id` from the apply result. Call `gregale_wait_deployment`
    with `{"app":"fastapi-demo","deployment_id":"<deployment.id>"}`.
    If `pending` is true, poll again with the same ID. Proceed when

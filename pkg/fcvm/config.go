@@ -321,6 +321,9 @@ type ColdBootSpec struct {
 	// health.v1 Check action. Both probe types target <HostIP>:8080.
 	// Forwarded from WakeRequest by Manager.bringUp.
 	HealthcheckPath string
+	// ProbeHost (ADR-20261119140000) is the Host header readiness GETs
+	// send; empty sends the instance address.
+	ProbeHost string
 	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool

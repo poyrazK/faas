@@ -452,6 +452,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 
 - Builder VM: 2 vCPU, **2048 MB**, 8 GB scratch ext4 (thrown away), 4 GB per-app cache volume (kept, quota'd), rootfs = our `builder-base` image containing BuildKit (rootless inside the VM — inside a VM it may as well be root), Railpack, git, and the OCI exporter. No inbound network; outbound via the build egress policy (§7).
 - Semaphore: **1 builder slot** per 5 GiB parent cgroup. A second ordinary 2816 MiB builder can exceed that fence, and a snapshot builder can approach it alone, so local overcommit is disabled. Queue is FIFO per account with global fairness. Additional capacity comes from another eligible compute node.
+- Elastic builder slots (ADR-20261118154632), behind the `builder_elastic_slots` runtime config (default `off`): each node runs `builder_slots`' `reserved` slots (the slot above, funded out of tenant sizing, never preempted) plus `max - reserved` **borrowed** slots in `faas-borrowed.slice`, beside `faas-cp.slice`. A borrowed build starts only while tenant + borrowed memory + 3,328 MiB stays within 70% of the tenant slice's `memory.max`, and gives its memory back to tenants: builderd cancels and requeues the newest borrowed build above 85%, vmmd destroys one above 92% (or `MemAvailable` < 512 MiB) for 1 s, and borrowed builders run with `oom_score_adj` 1000. A build given back twice runs only on a reserved slot. Tenant admission is unchanged; builds never outrank tenant wakes. `max` is clamped to online CPUs / 2 and changes apply without a restart.
 - Timeouts: 15 min build (`api.BuildTimeoutSeconds`; ADR-791 — the original 10 min was raised for cold rootless Railpack exports). End-to-end deploy time is not separately enforced; the CLI waits build + 5 min. On timeout/OOM (VM hits its own wall — host unaffected): kill VM, mark build `failed(reason)`, requeue once if `oom` and slot was opportunistic.
 - Source in: scratch disk pre-loaded with the tarball. Image out: OCI layout written to the cache volume, hash-addressed; host copies it out after VM exit (no live channel needed — keeps the surface tiny).
 
@@ -2037,6 +2038,16 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 | `gatewayd_public_traffic_security_unverified_total` | — | same, through `pkg/gateway` `TrafficSecurityPeers.Unverified` | Answers forwarded without snapshot verification (a stamped value from such a fleet is dropped, never trusted). |
 
 ---
+
+### 12.12 Elastic builder slots (ADR-20261118154632)
+
+`builderd_build_slots_limit` reports the applied `builder_slots` max while
+`builder_elastic_slots` is on. `builderd_build_slots_reserved`,
+`builderd_build_slots_active{kind="reserved|borrowed"}` and
+`builderd_build_preemptions_total{actor="builderd|vmmd"}` describe the
+node's slots and give-backs; vmmd adds `vmmd_builder_preemptions_total` and
+`vmmd_builder_borrowed_memory_bytes`. `FaasBuildPreemptionsHigh` warns when
+a node gives back more than 6 builds an hour.
 
 ## 13. RAM budget ledger (enforced as systemd slices)
 

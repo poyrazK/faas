@@ -437,6 +437,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// Per-deployment HTTP or gRPC readiness selection. Both
 		// probe modes target <HostIP>:8080.
 		HealthcheckPath:          app.GetHealthcheckPath(),
+		ProbeHost:                app.GetProbeHost(),
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
@@ -568,6 +569,11 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Invalid buildkit seed drive", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#create")
 	}
+	cacheExportManifest, err := cacheExportManifestFromProto(req.GetBuild())
+	if err != nil {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid cache export manifest", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#create")
+	}
 	return fcvm.WakeRequest{
 		Instance: req.GetInstance(),
 		// issue #463 / ADR-069 / PR-B AC #1 — see toWakeRequest's
@@ -626,6 +632,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// path so deploy's first boot primes the same probe
 		// semantics on the freshly-deployed app.
 		HealthcheckPath:          app.GetHealthcheckPath(),
+		ProbeHost:                app.GetProbeHost(),
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
@@ -670,7 +677,35 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// ADR-20261110210000 slice 3j-3: the build a registry mirror pulls
 		// for through secretd.
 		BuildID: req.GetBuild().GetBuildId(),
+		// ADR-20261029171525 amendment 2: a deferred cache export run's
+		// build.json, staged on the build's drive before boot.
+		CacheExportManifest: cacheExportManifest,
 	}, nil
+}
+
+// cacheExportManifestFromProto returns a deferred cache export run's
+// build.json (ADR-20261029171525 amendment 2). vmmd stages only a builder's
+// manifest that asks for the cache export alone, so the field cannot turn a
+// drive into an ordinary build.
+func cacheExportManifestFromProto(b *vmmdpb.BuildSpec) ([]byte, error) {
+	raw := b.GetCacheExportManifest()
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if b.GetExportDir() == "" {
+		return nil, errors.New("vmmd: a cache export manifest needs a builder VM")
+	}
+	if len(raw) > api.BuildCacheExportManifestMaxBytes {
+		return nil, fmt.Errorf("vmmd: cache export manifest is %d bytes (max %d)", len(raw), api.BuildCacheExportManifestMaxBytes)
+	}
+	var m api.BuildManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("vmmd: cache export manifest: %w", err)
+	}
+	if !m.CacheExportOnly || m.DeferCacheExport || !m.DependencyCache {
+		return nil, errors.New("vmmd: cache export manifest must set cache_export_only and dependency_cache, and not defer_cache_export")
+	}
+	return raw, nil
 }
 
 // buildKitSeedDriveFromProto returns a builder's BuildKit seed copy

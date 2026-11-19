@@ -40,6 +40,7 @@ func (c Client) GrantObjects(ctx context.Context, requests []storagegrant.Reques
 	req := &secretdpb.GrantStorageObjectsRequest{Objects: make([]*secretdpb.StorageObjectRequest, len(requests))}
 	for i, r := range requests {
 		req.Objects[i] = &secretdpb.StorageObjectRequest{Key: r.Key, Op: string(r.Op), Generation: r.Generation,
+			Etag: r.ETag, UploadId: r.UploadID, PartNumber: r.PartNumber,
 			ContentType: r.ContentType, Metadata: r.Metadata}
 	}
 	resp, err := c.RPC.GrantStorageObjects(ctx, req)

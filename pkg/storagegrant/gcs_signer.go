@@ -48,6 +48,12 @@ func (s *GCSSigner) Sign(_ context.Context, r Request, expires time.Time) (Grant
 	if err := r.Validate(); err != nil {
 		return Grant{}, err
 	}
+	switch {
+	case r.Op == OpCreateMultipart, r.Op == OpUploadPart, r.Op == OpCompleteMultipart, r.Op == OpAbortMultipart:
+		return Grant{}, fmt.Errorf("%w: %s on GCS", ErrUnsupported, r.Op)
+	case r.Op == OpReplace && r.ETag != "":
+		return Grant{}, fmt.Errorf("%w: an ETag-conditioned replace on GCS", ErrUnsupported)
+	}
 	headers := map[string]string{}
 	query := url.Values{}
 	switch r.Op {

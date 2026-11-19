@@ -2,6 +2,7 @@ package toolregistry_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
@@ -76,7 +78,7 @@ func exerciseHostedTaskRehearsal(t *testing.T, store state.Store, pool *pgxpool.
 			tasktoolrehearsal.Validate(out, f.account.ID, id) != nil || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("want %s: %d %s", status, w.Code, w.Body)
 		}
-		for _, private := range []string{owner.ID, other.ID, "private-owner", "MIGRATION_URL", "binding-test", "db.example.com", "ClaimAcquired"} {
+		for _, private := range []string{owner.ID, other.ID, "private-owner", "MIGRATION_URL", "binding-test", "db.example.com", "ClaimAcquired", "ReservedAt", "ApprovalExpiresAt"} {
 			if strings.Contains(w.Body.String(), private) {
 				t.Fatal("private rehearsal data exposed")
 			}
@@ -105,7 +107,7 @@ func exerciseHostedTaskRehearsal(t *testing.T, store state.Store, pool *pgxpool.
 		t.Fatal("plan retry renewed immutable identity")
 	}
 	claim := state.HostedTaskRehearsalChange{OwnerKeyID: owner.ID, PlanSHA256: plan.PlanSHA256}
-	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim); err != nil || out.ClaimAcquired {
+	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim); err != nil || out.ClaimAcquired || out.Run != nil {
 		t.Fatalf("unapproved claim acquired: %v", err)
 	}
 	decision := api.HostedTaskRehearsalDecision{PlanSHA256: plan.PlanSHA256, Decision: "approve"}
@@ -120,8 +122,11 @@ func exerciseHostedTaskRehearsal(t *testing.T, store state.Store, pool *pgxpool.
 	}
 	changedOwner := claim
 	changedOwner.OwnerKeyID = other.ID
-	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, changedOwner); !errors.Is(err, state.ErrConflict) || out.ClaimAcquired {
+	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, changedOwner); !errors.Is(err, state.ErrConflict) || out.ClaimAcquired || out.Run != nil {
 		t.Fatalf("a different key acquired the approval: %v", err)
+	}
+	if pool != nil {
+		assertHostedTaskRunReservationRollback(ctx, t, pool, journal, approve, claim)
 	}
 	var wg sync.WaitGroup
 	type attempt struct {
@@ -138,10 +143,22 @@ func exerciseHostedTaskRehearsal(t *testing.T, store state.Store, pool *pgxpool.
 	wg.Wait()
 	close(attempts)
 	acquired := 0
+	var reservation state.HostedTaskRehearsalRun
 	for a := range attempts {
-		if a.err != nil || a.out.Plan.Status != tasktoolrehearsal.Claimed {
+		if a.err != nil || a.out.Plan.Status != tasktoolrehearsal.Claimed || a.out.Run == nil || a.out.Plan.ClaimedAt == nil {
 			t.Fatalf("claim failed: %+v, %v", a.out, a.err)
 		}
+		got := *a.out.Run
+		if got.ID != plan.TargetID || got.PlanSHA256 != plan.PlanSHA256 ||
+			!got.ReservedAt.Equal(*a.out.Plan.ClaimedAt) || !got.ApprovalExpiresAt.Equal(plan.ExpiresAt) {
+			t.Fatalf("run reservation did not preserve the approved plan: %+v", got)
+		}
+		if reservation.ID != "" && reservation != got {
+			t.Fatalf("concurrent claim reserved a different run: %+v", got)
+		}
+		reservation = got
+		// The result is a copy, including on the in-memory journal.
+		a.out.Run.ID = uuid.NewString()
 		if a.out.ClaimAcquired {
 			acquired++
 		}
@@ -152,7 +169,8 @@ func exerciseHostedTaskRehearsal(t *testing.T, store state.Store, pool *pgxpool.
 	if pool != nil {
 		journal = state.NewPgStore(pool)
 	}
-	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim); err != nil || out.ClaimAcquired || out.Plan.Status != tasktoolrehearsal.Claimed {
+	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim); err != nil ||
+		out.ClaimAcquired || out.Plan.Status != tasktoolrehearsal.Claimed || out.Run == nil || *out.Run != reservation {
 		t.Fatalf("durable claim replay: %+v, %v", out, err)
 	}
 	read(id, run(id, disabled, &owner, http.MethodGet, "", nil), tasktoolrehearsal.Claimed)
@@ -169,10 +187,35 @@ func exerciseHostedTaskRehearsal(t *testing.T, store state.Store, pool *pgxpool.
 		t.Fatal(err)
 	}
 	claim.PlanSHA256 = plan.PlanSHA256
-	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim); err != nil || out.ClaimAcquired || out.Plan.Status != tasktoolrehearsal.Stale {
+	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim); err != nil || out.ClaimAcquired || out.Plan.Status != tasktoolrehearsal.Stale || out.Run != nil {
 		t.Fatalf("source revocation did not fence the claim: %+v, %v", out, err)
 	}
 	read(id, run(id, disabled, &other, http.MethodGet, "", nil), tasktoolrehearsal.Stale)
+}
+
+func assertHostedTaskRunReservationRollback(ctx context.Context, t *testing.T, pool *pgxpool.Pool, journal state.HostedTaskRehearsalStore, plan api.HostedTaskRehearsalPlan, claim state.HostedTaskRehearsalChange) {
+	t.Helper()
+	// A conflicting reservation forces a native insertion failure for this
+	// fixture only. The approval must remain available after rollback.
+	if _, err := pool.Exec(ctx, `INSERT INTO hosted_task_rehearsal_runs
+		(account_id, id, run_id, plan_sha256, reserved_at, approval_expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6)`,
+		plan.AccountID, plan.IntentID, plan.TargetID, plan.PlanSHA256, plan.ApprovedAt, plan.ExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	out, err := journal.ChangeHostedTaskRehearsal(ctx, plan.AccountID, plan.IntentID, state.ClaimHostedTaskRehearsal, claim)
+	var conflict *pgconn.PgError
+	if !errors.As(err, &conflict) || conflict.Code != "23505" || out.ClaimAcquired || out.Run != nil {
+		t.Fatalf("reservation collision did not reject the claim: %+v, %v", out, err)
+	}
+	out, err = journal.ChangeHostedTaskRehearsal(ctx, plan.AccountID, plan.IntentID, state.ReadHostedTaskRehearsal, claim)
+	if err != nil || out.Plan.Status != tasktoolrehearsal.Approved || out.Plan.ClaimedAt != nil {
+		t.Fatalf("failed run reservation committed an approval claim: %+v, %v", out, err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM hosted_task_rehearsal_runs WHERE account_id=$1 AND id=$2`,
+		plan.AccountID, plan.IntentID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func completeRehearsalQualification(t *testing.T, f *hostedSourceFixture, name string) (string, api.HostedTaskRehearsalPrepare) {

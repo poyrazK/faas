@@ -2342,6 +2342,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	createOnly := fs.Bool("create-only", false, "create or reserve the app without uploading a deployment")
 	waitTimeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) for deploy completion (default %d)", defaultDeployWaitTimeoutSeconds))
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
+	// Hosted MCP passes this only when retrying one approved upload commit.
+	resumeUploadID := fs.String("resume-upload-id", "", "require this existing resumable upload on retry")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
 	// access keys, OpenAI, Anthropic, Google API, PEM private keys, and
@@ -2451,6 +2453,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["resume-upload-id"] {
+		if *resumeUploadID == "" || *idempotencyKey == "" || *sourcePath == "" || *createOnly ||
+			*image != "" || *repo != "" || *simplePlan || *dryRun || *diff || *serverDiff || *explainFiles {
+			return printErr("Invalid upload retry", errors.New("--resume-upload-id requires a directory deploy with its original idempotency key"))
+		}
+	}
 	if *explainFiles {
 		return cmdDeploySourceFiles(ctx, deploySourceFilesOptions{path: *sourcePath, source: *sourceMode, worktree: *worktree,
 			function: *function, app: *app, project: *projectDeploy || *projectSlug != "", runtime: *runtime,
@@ -2570,6 +2578,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// through to the single-app upload path and were ignored.
 	projectRequested := *deployOnly != "" || *deployExclude != "" ||
 		*deployPersistExclude || *deployShowAffected || explicit["project-slug"] || *projectDeploy
+	if *resumeUploadID != "" && (projectRequested || developerSync != nil) {
+		return printErr("Invalid upload retry", errors.New("--resume-upload-id requires a single app upload"))
+	}
 	if sourceMapErr := validateDeployIssueSourceMaps(explicit, *issueSourceMaps, *issueSourceMapDirectory,
 		*trafficPercent == 0, projectRequested || *image != "" || *repo != "" || *templateName != "" || *githubSnippet ||
 			*simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil ||
@@ -4061,6 +4072,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return runDiff(ctx, client, opts)
 	}
 
+	if *resumeUploadID != "" && *tarball == "" {
+		return printErr("Invalid upload retry", errors.New("no source archive was resolved for the original upload"))
+	}
+
 	// Phase 3 (repo decomposition) one-key provision path. Triggered
 	// by any project scope control (--project, --project-slug, --only,
 	// --exclude, --persist-exclude, or --show-affected) on a --tarball /
@@ -4598,6 +4613,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			var uploadErr error
 			uploadCtx := api.ContextWithIdempotencyKey(ctx, deployKey)
+			if *resumeUploadID != "" {
+				uploadCtx = context.WithValue(uploadCtx, requiredUploadIDKey{}, *resumeUploadID)
+			}
 			if err := execution.preparingSubmission(deployKey, "resumable", resolvedApp.ID, *tarball); err != nil {
 				return printErr("Could not save source submission", err)
 			}
@@ -4613,6 +4631,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return submissionFailed("Source submission failed", dep, uploadErr, deployKey)
 			}
 		} else {
+			if *resumeUploadID != "" {
+				return submissionFailed("Source submission failed", dep, errors.New("the deploy no longer supports its original resumable upload"), deployKey)
+			}
 			var deployErr error
 			if err := execution.preparingSubmission(deployKey, "multipart", resolvedApp.ID, *tarball); err != nil {
 				return printErr("Could not save source submission", err)

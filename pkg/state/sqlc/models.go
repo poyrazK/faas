@@ -7047,6 +7047,15 @@ type HostedTaskRehearsalPlan struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+type HostedTaskRehearsalRun struct {
+	AccountID         pgtype.UUID
+	ID                string
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
+}
+
 type HostedTaskSourceIntent struct {
 	AccountID  pgtype.UUID
 	ID         string
@@ -8933,6 +8942,7 @@ type ManagedPostgresCustomRole struct {
 	RetryAt      pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	DefaultFor   []string
 }
 
 type ManagedPostgresCutover struct {

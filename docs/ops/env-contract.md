@@ -135,6 +135,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILDERD_ROLE` | builderd, shared | `dropin` |  |  | `` |  |
 | `FAAS_BUILDER_BASE_PATH` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_BUILDER_BASE_REF` | imaged | `dropin` |  |  | `` |  |
+| `FAAS_BUILDER_SLOT_CPUS` | builderd | `dev-only` |  |  | `` | acceptance-host override of the online CPU count that caps builder_slots max (ADR-20261118154632); production leaves it unset |
 | `FAAS_BUILDER_WARM_BUILDERS` | builderd | `default` |  |  | `` | opt-in warm-builder snapshot restores; off unless set to true because restores resume a guest whose mounted drive was edited offline |
 | `FAAS_BUILDER_WARM_IDLE_MS` | builderd | `default` |  |  | `` | optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes |
 | `FAAS_BUILD_BUILDKIT_SEED` | builderd, shared | `dropin` |  |  | `` | boolean switch (ADR-20261030122204): builderd keeps a per-node BuildKit seed of the platform images Railpack builds start from, made by a seed run in an idle builder slot that first asks the artifact cache for room, and gives each Railpack build a reflink copy as the builder VM's drive2; needs a reflink-capable build-drive filesystem and vmmd and guest-init with seed drive support; code default off; ansible builderd_buildkit_seed (group_vars/compute_nodes/perf_switches.yml, false) renders zz-faas-perf-switches.conf |
@@ -840,6 +841,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_QUIET_PAUSE_OBSERVE` | vmmd | `default` |  |  | `` | optional boolean switch for ADR-1151 quiet pause observe mode: measures would-be pauses and pauses nothing; FAAS_QUIET_PAUSE (default on) wins when both are on, so observing needs FAAS_QUIET_PAUSE=false; production default is off |
 | `FAAS_QUIET_PAUSE_UNBILLED` | meterd | `default` |  |  | `` | optional off, shadow or on: whether billed residency subtracts the quiet-paused seconds the pause ledger proves (ADR-20261023171905); production default is off |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_READINESS_PROBE_APP_HOST` | schedd | `default` |  |  | `` | optional boolean switch for ADR-20261119140000: readiness and prime probes of production deployments send the app's public host and X-Forwarded-Proto https; default off; overrides readiness_probe_app_host in schedd.toml |
 | `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | operator-only durable principal channel/session revocation preview; enable on apid and every realtime node before use; on apid, the boot fallback for the realtime_access platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability, and apid keeps the preview off while any realtime node reports it lacks it (ADR 20261021080640 amendment of 2026-11-09) |
 | `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_OUTBOX` | realtimed | `default` |  |  | `` |  |
@@ -1086,7 +1088,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STANDBY_WARMUP_SLUGS_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STATIC_EGRESS_IP_ENABLED` | apid, shared | `default` |  |  | `` | boot fallback for the static_egress_ip platform flag (ADR-1700), ignored once an operator writes platform_flag.static_egress_ip |
 | `FAAS_STATUSPAGE_PATH` | apid, shared | `unit` |  |  | `` |  |
-| `FAAS_STORAGE_ACCESS` | builderd, imaged, vmmd, shared | `dropin` |  | direct | `` | ADR-20261117190000: direct (default) reaches the shared store with the daemon's own credentials; secretd makes every GCS store under the backend fetch and write each object through a 5-minute grant secretd signs for tenants placed on this node (FAAS_SECRETD_TARGET and the node's secretd client leaf). Needs FAAS_STORAGE_DELETE_MODE=defer; listing sweeps report nothing. Set by compute_only_service (faas_storage_grants) |
+| `FAAS_STORAGE_ACCESS` | builderd, imaged, vmmd, shared | `dropin` |  | direct | `` | ADR-20261117190000: direct (default) reaches the shared store with the daemon's own credentials; secretd makes every GCS and S3 store under the backend fetch and write each object through a 5-minute grant secretd signs for tenants placed on this node (FAAS_SECRETD_TARGET and the node's secretd client leaf). Needs FAAS_STORAGE_DELETE_MODE=defer; listing sweeps report nothing. Set by compute_only_service (faas_storage_grants) |
 | `FAAS_STORAGE_BACKEND` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_DIR` | imaged, shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_MAX_BYTES` | shared | `envfile` |  |  | `` |  |
