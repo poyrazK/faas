@@ -53,10 +53,10 @@ const (
 )
 
 var (
-	flagKeyPattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	flagKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 	// flagExperimentKey is an experiment key (ADR 20261119173702).
 	flagExperimentKey = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
-	flagUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	flagUUIDPattern   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 	// ErrFlagRequestMissing means a flag check ran outside this client's middleware.
 	ErrFlagRequestMissing = errors.New("faas: flag checks require GregaleFlags middleware")
