@@ -1,0 +1,218 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: Idle, missing metrics, isolated events, a brief burst and a restart stay quiet
+    interval: 30s
+    input_series:
+      - series: 'up{job="apid",instance="quiet"}'
+        values: '1x36'
+      - series: 'apid_operator_runtime_refused_collections_total{job="apid",instance="quiet"}'
+        values: '0x36'
+      - series: 'apid_operator_runtime_reports_total{job="apid",instance="quiet",outcome="deadline_exceeded"}'
+        values: '0x36'
+      - series: 'up{job="apid",instance="older"}'
+        values: '1x36'
+      - series: 'up{job="apid",instance="isolated"}'
+        values: '1x36'
+      - series: 'apid_operator_runtime_refused_collections_total{job="apid",instance="isolated"}'
+        values: '0x11 1x24'
+      - series: 'apid_operator_runtime_reports_total{job="apid",instance="isolated",outcome="deadline_exceeded"}'
+        values: '0x11 1x24'
+      - series: 'up{job="apid",instance="brief-burst"}'
+        values: '1x36'
+      - series: 'apid_operator_runtime_refused_collections_total{job="apid",instance="brief-burst"}'
+        values: '0x11 6x24'
+      - series: 'apid_operator_runtime_reports_total{job="apid",instance="brief-burst",outcome="deadline_exceeded"}'
+        values: '0x11 6x24'
+      - series: 'up{job="apid",instance="restart"}'
+        values: '1x36'
+      - series: 'apid_operator_runtime_refused_collections_total{job="apid",instance="restart"}'
+        values: '100x11 0x24'
+      - series: 'apid_operator_runtime_reports_total{job="apid",instance="restart",outcome="deadline_exceeded"}'
+        values: '100x11 0x24'
+    alert_rule_test:
+      # Just before the brief burst would complete a five-minute hold.
+      - eval_time: 10m30s
+        alertname: FaasRuntimeCollectorCapacityRefusals
+        exp_alerts: []
+      - eval_time: 10m30s
+        alertname: FaasRuntimeCollectorDeadlines
+        exp_alerts: []
+      - eval_time: 11m30s
+        alertname: FaasRuntimeCollectorCapacityRefusals
+        exp_alerts: []
+      - eval_time: 11m30s
+        alertname: FaasRuntimeCollectorDeadlines
+        exp_alerts: []
+
+  - name: Both warnings hold, fire on the affected apid and recover
+    interval: 30s
+    input_series:
+      - series: 'up{job="apid",instance="127.0.0.1:9101"}'
+        values: '1x36'
+      - series: 'apid_operator_runtime_refused_collections_total{job="apid",instance="127.0.0.1:9101"}'
+        values: '0+1x20 20x15'
+      - series: 'apid_operator_runtime_reports_total{job="apid",instance="127.0.0.1:9101",outcome="incomplete"}'
+        values: '0+10x36'
+      - series: 'apid_operator_runtime_reports_total{job="apid",instance="127.0.0.1:9101",outcome="canceled"}'
+        values: '0+10x36'
+      - series: 'apid_operator_runtime_query_attempts_total{job="apid",instance="127.0.0.1:9101",group="identity",outcome="deadline_exceeded"}'
+        values: '0+10x36'
+      - series: 'up{job="apid",instance="[fd00::2]:9101"}'
+        values: '1x36'
+      - series: 'apid_operator_runtime_reports_total{job="apid",instance="[fd00::2]:9101",outcome="deadline_exceeded"}'
+        values: '0+1x20 20x15'
+      - series: 'apid_operator_runtime_refused_collections_total{job="apid",instance="[fd00::2]:9101"}'
+        values: '0x36'
+      - series: 'up{job="apid",instance="unscrapable"}'
+        values: '0x36'
+      - series: 'apid_operator_runtime_refused_collections_total{job="apid",instance="unscrapable"}'
+        values: '0+10x36'
+      - series: 'apid_operator_runtime_reports_total{job="apid",instance="unscrapable",outcome="deadline_exceeded"}'
+        values: '0+10x36'
+      - series: 'up{job="other",instance="other"}'
+        values: '1x36'
+      - series: 'apid_operator_runtime_refused_collections_total{job="other",instance="other"}'
+        values: '0+10x36'
+      - series: 'apid_operator_runtime_reports_total{job="other",instance="other",outcome="deadline_exceeded"}'
+        values: '0+10x36'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasRuntimeCollectorCapacityRefusals
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FaasRuntimeCollectorDeadlines
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasRuntimeCollectorCapacityRefusals
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: runtime_collector
+              public_status: internal
+              job: apid
+              instance: "127.0.0.1:9101"
+            exp_annotations:
+              summary: "Runtime collector on 127.0.0.1:9101 repeatedly refuses collections"
+              description: "At least three capacity refusals per five-minute window have persisted for five minutes. Open Gregale Runtime Diagnostics and check overlapping verifiers on this apid."
+              runtime_dashboard_path: "/d/faas-runtime-diagnostics?var-apid_instance=127.0.0.1%3A9101&from=now-2h&to=now"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRuntimeCollectorCapacityRefusals.md"
+      - eval_time: 8m
+        alertname: FaasRuntimeCollectorDeadlines
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: runtime_collector
+              public_status: internal
+              job: apid
+              instance: "[fd00::2]:9101"
+              outcome: deadline_exceeded
+            exp_annotations:
+              summary: "Runtime collections on [fd00::2]:9101 repeatedly time out"
+              description: "At least three collections per five-minute window hit their deadline for five minutes. Open Gregale Runtime Diagnostics and check source read duration and outcomes by group."
+              runtime_dashboard_path: "/d/faas-runtime-diagnostics?var-apid_instance=%5Bfd00%3A%3A2%5D%3A9101&from=now-2h&to=now"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRuntimeCollectorDeadlines.md"
+      - eval_time: 16m
+        alertname: FaasRuntimeCollectorCapacityRefusals
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: FaasRuntimeCollectorDeadlines
+        exp_alerts: []
+
+  - name: Incomplete core evidence warning filters sparse or irrelevant observations
+    interval: 1m
+    input_series:
+      - series: 'up{job="apid",instance="idle"}'
+        values: '1x60'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="idle",group="readiness",outcome="incomplete"}'
+        values: '0x60'
+      - series: 'up{job="apid",instance="legacy"}'
+        values: '1x60'
+      - series: 'apid_operator_runtime_incomplete_reports_total{job="apid",instance="legacy",group="readiness"}'
+        values: '0+1x60'
+      - series: 'up{job="apid",instance="sparse"}'
+        values: '1x60'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="sparse",group="readiness",outcome="incomplete"}'
+        values: '0x4 4x55'
+      - series: 'up{job="apid",instance="reset"}'
+        values: '1x60'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="reset",group="identity",outcome="incomplete"}'
+        values: '100x5 0x54'
+      - series: 'up{job="apid",instance="low-rate"}'
+        values: '1x60'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="low-rate",group="process",outcome="complete"}'
+        values: '0+3x60'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="low-rate",group="process",outcome="incomplete"}'
+        values: '0+1x60'
+      - series: 'up{job="apid",instance="advisory"}'
+        values: '1x60'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="advisory",group="builder_health",outcome="incomplete"}'
+        values: '0+1x60'
+      - series: 'up{job="apid",instance="down"}'
+        values: '0x60'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="down",group="loop_health",outcome="incomplete"}'
+        values: '0+1x60'
+      - series: 'up{job="other",instance="other"}'
+        values: '1x60'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="other",instance="other",group="loop_health",outcome="incomplete"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasRuntimeCollectorIncompleteCoreEvidence
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: FaasRuntimeCollectorIncompleteCoreEvidence
+        exp_alerts: []
+
+  - name: Incomplete core evidence warns at the threshold after the hold and recovers
+    interval: 1m
+    input_series:
+      - series: 'up{job="apid",instance="127.0.0.2:9101"}'
+        values: '1x100'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="127.0.0.2:9101",group="readiness",outcome="incomplete"}'
+        values: '0+1x60 60x39'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="127.0.0.2:9101",group="readiness",outcome="complete"}'
+        values: '0+1x60 60+6x39'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="127.0.0.2:9101",group="identity",outcome="complete"}'
+        values: '0+20x100'
+      - series: 'up{job="apid",instance="healthy"}'
+        values: '1x100'
+      - series: 'apid_operator_runtime_group_evaluations_total{job="apid",instance="healthy",group="readiness",outcome="complete"}'
+        values: '0+20x100'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="FaasRuntimeCollectorIncompleteCoreEvidence",alertstate="pending"}'
+        eval_time: 4m30s
+        exp_samples: []
+      - expr: 'ALERTS{alertname="FaasRuntimeCollectorIncompleteCoreEvidence",alertstate="pending"}'
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ALERTS{alertname="FaasRuntimeCollectorIncompleteCoreEvidence",alertstate="pending",component="apid",family="runtime_collector",group="readiness",instance="127.0.0.2:9101",job="apid",public_status="internal",severity="warn"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 19m30s
+        alertname: FaasRuntimeCollectorIncompleteCoreEvidence
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasRuntimeCollectorIncompleteCoreEvidence
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: runtime_collector
+              public_status: internal
+              job: apid
+              group: readiness
+              instance: "127.0.0.2:9101"
+            exp_annotations:
+              summary: "Runtime readiness evidence on 127.0.0.2:9101 is repeatedly incomplete"
+              description: "50% of this core group's evaluations were incomplete in the last 30 minutes. The group has had at least 10 evaluations and an incomplete rate of at least 50% for 15 consecutive minutes."
+              runtime_dashboard_path: "/d/faas-runtime-diagnostics?var-apid_instance=127.0.0.2%3A9101&var-evidence_group=readiness&from=now-2h&to=now"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRuntimeCollectorIncompleteCoreEvidence.md"
+      - eval_time: 65m
+        alertname: FaasRuntimeCollectorIncompleteCoreEvidence
+        exp_alerts: []
