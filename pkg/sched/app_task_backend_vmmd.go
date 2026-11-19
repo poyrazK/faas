@@ -21,6 +21,9 @@ type ResolvedAppTaskRuntime struct {
 	release   func()
 	ready     func(context.Context) error
 	publish   func(context.Context, *AppTaskRestoreOutcome) error
+	// retire ends the task VM's service-mesh identity before the VM is
+	// destroyed (ADR-20261118070000). Nil when the task has none.
+	retire func(context.Context) error
 }
 
 type AppTaskRuntimeResolver func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error)
@@ -96,12 +99,12 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 			return nil, errors.Join(err, cleanupErr)
 		}
 	}
-	if resolved.Spec.App.RehearsalRunID != "" {
+	if resolved.Spec.App.RehearsalRunID != "" || resolved.publish != nil {
 		var publishErr error
 		if resolved.publish == nil {
 			publishErr = errors.New("contained command network publisher unavailable")
 		} else {
-			publishErr = resolved.publish(ctx, outcome)
+			publishErr = withAppTaskStage("network_identity", resolved.publish(ctx, outcome))
 		}
 		if publishErr != nil {
 			cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
@@ -112,7 +115,7 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 		}
 	}
 	return &routedVmmdAppTaskSession{
-		router: b.router, nodeID: resolved.NodeID, instance: outcome.Instance, release: resolved.release,
+		router: b.router, nodeID: resolved.NodeID, instance: outcome.Instance, release: resolved.release, retire: resolved.retire,
 	}, nil
 }
 
@@ -127,6 +130,7 @@ type routedVmmdAppTaskSession struct {
 	nodeID   string
 	instance string
 	release  func()
+	retire   func(context.Context) error
 	once     sync.Once
 }
 
@@ -170,6 +174,12 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 func (s *routedVmmdAppTaskSession) NodeID() string { return s.nodeID }
 
 func (s *routedVmmdAppTaskSession) Destroy(ctx context.Context) error {
+	// Retire the mesh identity first so a host address vmmd frees never
+	// names this app. Best effort: the caller lookup also requires the task
+	// to be running under its lease, which finalizing the task ends.
+	if s.retire != nil {
+		_ = s.retire(ctx)
+	}
 	if err := s.router.Destroy(ctx, s.nodeID, s.instance); err != nil {
 		return err
 	}

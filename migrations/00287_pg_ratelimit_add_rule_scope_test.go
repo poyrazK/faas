@@ -76,7 +76,7 @@ func TestMigrations_00287_PgRateLimitAddRuleScope(t *testing.T) {
 		select pg_get_constraintdef(c.oid)
 		  from pg_constraint c
 		  join pg_namespace n on n.oid = c.connamespace
-		 where c.conname = 'pg_ratelimit_counters_scope_check'
+		 where c.conname in ('pg_ratelimit_counters_scope_check', 'pg_ratelimit_counters_scope_v2_check')
 		   and n.nspname = current_schema()`).Scan(&def)
 	if err != nil {
 		t.Fatalf("query pg_ratelimit_counters_scope_check constraint: %v (closed-vocabulary CHECK must have landed)", err)

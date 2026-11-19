@@ -65,6 +65,8 @@ and its `failure_code`. Do not print credential files or copy destination URLs
 into issues. Each submission has a ten-second total deadline and a 4096-byte
 response limit; redirects and non-2xx responses fail.
 
+## Fix the failure
+
 For DNS/connection errors, check node DNS and outbound reachability. For TLS,
 check trust and the node clock. For HTTP failures, verify the provisioned
 destination and provider-side availability or throttling. For unknown failures,

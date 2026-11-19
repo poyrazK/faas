@@ -106,10 +106,10 @@ message BytesFrame {
   // app_id is set on an edge frame (ADR-20261104132753). instance_id then
   // holds the app's edge usage ID, not an instances row.
   string app_id = 7;
-  // service_reply_bytes (billing review R8-2 slice 3) is the bytes the
-  // instance sent in reply to other apps' service calls in that minute. They
-  // are internal egress; older gateways never set it.
-  uint64 service_reply_bytes = 8;
+  // service_reply_bytes is deprecated and never set: service calls never
+  // cross the veth that bills egress (ADR-1749, billing review R12). Remove
+  // after a release.
+  uint64 service_reply_bytes = 8 [deprecated = true];
 }
 
 message AckBytesRequest { repeated string event_ids = 1; }

@@ -28,3 +28,13 @@ func abandonedAcquires(pool *pgxpool.Pool) (int64, bool) {
 	}
 	return t.AbandonedAcquires(), true
 }
+
+// permissionDenied reports the tracer's SQLSTATE 42501 count for pool, or
+// false when the pool was built without it.
+func permissionDenied(pool *pgxpool.Pool) (int64, bool) {
+	t, ok := pool.Config().ConnConfig.Tracer.(*acquireAbandonTracer)
+	if !ok {
+		return 0, false
+	}
+	return t.PermissionDenied(), true
+}

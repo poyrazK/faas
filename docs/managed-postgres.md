@@ -434,7 +434,10 @@ the binding reconciler revokes that identity with retry-safe cleanup. The
 response sets `rotation_pending` while the previous identity is still retained;
 retries during that interval reuse the same generation and wake ID. If the app
 has no live deployment or resident instances, the previous identity is queued
-for cleanup immediately.
+for cleanup immediately. The refresh's outbox row stays closed to replay for
+`api.ManagedPostgresRotationRefreshWakeDelay` (5 s), like every other runtime
+restart, so the app's owning scheduler claims the live notification before a
+peer scheduler's replay worker can take it.
 
 ## Neon backend configuration
 
@@ -892,6 +895,11 @@ database owes only the window it was deleted in, which closed less than
 `usage.stale_after_seconds` ago. Admission waits for it only while the account's
 recorded month is at or above 90% of any monthly ceiling
 ([ADR-20261115190000](adr/20261115190000-managed-postgres-final-window-headroom-grace.md)).
+`latest_window_pending` is advisory in the same way: a live database's only
+uncollected window is the one that just closed (the provider publishes an hour's
+usage some minutes after it ends), or it was created in that window. A second
+uncollected window is `coverage_incomplete` (or `coverage_missing`) and blocks
+(amendment 1).
 Shared restores use their root's evidence. Unknown
 legacy tombstones have no confirmed terminal deadline. A disabled policy reports
 no blockers, while retaining identity and coverage metadata. Empty reasons do not

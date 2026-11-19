@@ -36,7 +36,7 @@ func TestMappedAppSlugAdmission(t *testing.T) {
 		looked = slug
 		return state.App{Slug: slug, AccountID: "foreign"}, nil
 	}, []reposcan.Workload{{Name: "api", AppSlug: "shop-api"}}, nil)
-	if err != nil || looked != "shop-api" || len(SlugHolderReasons("mine", []reposcan.Workload{{Name: "api", AppSlug: "shop-api"}}, holders)) != 1 {
+	if err != nil || looked != "shop-api" || len(SlugHolderReasons("mine", "", []reposcan.Workload{{Name: "api", AppSlug: "shop-api"}}, holders)) != 1 {
 		t.Fatal(looked, err)
 	}
 }

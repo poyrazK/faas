@@ -23,7 +23,7 @@ type sandboxRouter struct {
 func (r *sandboxRouter) RunSandbox(ctx context.Context, nodeID string, spec sched.SandboxSpec, hooks sched.SandboxHooks, control <-chan sched.SandboxControl) error {
 	r.nodeID, r.spec, r.resident = nodeID, spec, r.ledger.ResidentFor(spec.Instance)
 	if hooks.Booted != nil {
-		if err := hooks.Booted(ctx, "WAKE_COLD_BOOT", 10); err != nil {
+		if err := hooks.Booted(ctx, sched.SandboxBooted{Method: "WAKE_COLD_BOOT", BootMs: 10}); err != nil {
 			return err
 		}
 	}

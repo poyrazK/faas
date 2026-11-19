@@ -1,6 +1,6 @@
 # Progressive rollouts
 
-A new revision reaches traffic in stages. Deploy it dark first, let Gregale move it through canary stages on evidence, and keep a user on one revision while it does.
+A new revision reaches traffic in stages. Deploy it dark first, optionally mirror live traffic to it, let Gregale move it through canary stages on evidence, and keep a user on one revision while it does.
 
 ## Dark deployments
 
@@ -33,7 +33,72 @@ promoting; the receipt omits `promotion_command` in that case.
 `--no-wait` returns once the dark deployment is queued, before a preview URL
 is guaranteed to be live.
 
+## Traffic mirroring
+
+Mirroring copies a share of live production traffic to a new version of the
+app (a second revision) and compares its answers with the serving one, without
+affecting callers: they always get the serving revision's response, and the
+copy's response is discarded after the comparison. It is in preview, on the
+Pro and Scale plans.
+
+Stage the candidate dark, then mirror to it:
+
+```bash
+gregale deploy --no-traffic                                   # stages v44 beside v43
+gregale release mirror create --app my-api --source v43 --mirror v44 --percent 10
+gregale release mirror summary --app my-api --id RULE_ID --window 24h
+```
+
+The summary counts the requests mirrored and how many answered differently:
+status code, response shape (JSON schema) and, with `--include-body`, response
+value, plus the mean and p99 latency difference and crashes. Bodies are
+compared by hash; raw response bodies are never stored.
+
+- **What is copied:** a 5% sample unless `--percent` (0 to 100) says
+  otherwise. Only methods other than POST, PUT, PATCH and DELETE, unless
+  `--allow-unsafe-methods`; with it, the copy really runs those requests
+  against the candidate, which can write to your database or call other
+  services. Requests with bodies over 64 KiB are not copied, and a copy gets
+  at most 5 seconds.
+- **Headers:** `Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key`,
+  `Proxy-Authorization` and `WWW-Authenticate` are always removed from the
+  copy. `--redact-header NAME` removes more.
+- **Limits:** one mirror rule per app on Pro, three on Scale
+  (`422 mirror_rule_quota_exceeded`). Both revisions must be live and
+  different revisions of the same app. Other plans get
+  `403 plan_mirror_not_allowed`.
+- **Cost:** the candidate wakes for the copies and its running time is billed
+  like any other instance.
+
+Change or stop a rule:
+
+```bash
+gregale release mirror update --app my-api --id RULE_ID --percent 25
+gregale release mirror update --app my-api --id RULE_ID --disable
+gregale release mirror delete --app my-api --id RULE_ID
+```
+
+`gregale release mirror replay --app my-api --id RULE_ID --file corpus.json`
+replays up to 100 saved requests (8 MiB in all) against the rule's candidate
+revision. POST, PUT, PATCH and DELETE requests need `--allow-unsafe-methods`
+on the command line; the flag in the file alone is ignored.
+
 ## How a rollout proceeds
+
+An exact application response check can pass as soon as the new deployment
+is live, while older revisions still serve part of the traffic. Use the
+accepted deployment UUID from the deploy receipt for each milestone.
+
+```bash
+gregale release wait DEPLOYMENT_UUID --app my-api
+gregale release verify DEPLOYMENT_UUID --app my-api --path /
+gregale release wait DEPLOYMENT_UUID --app my-api --rollout --timeout 10m
+```
+
+The final wait follows the canary to 100% traffic. Direct traffic promotion
+is blocked while the canary is active. Use `gregale release traffic status my-api`
+to see the current step or repeat the wait with the same UUID after an
+interruption.
 
 
 Instead of moving all traffic at once, shift it in stages and let the platform
@@ -58,6 +123,22 @@ traffic before deploying:
 ```bash
 gregale release canary simulate my-api --canary-preset balanced
 ```
+
+### Canary ladders
+
+Each ladder (canary preset) is a list of traffic shares and how long the new
+revision holds each one before moving on:
+
+| Preset | Stages | Used by |
+|---|---|---|
+| `adaptive` | 1% → 10% → 50% → 100%; each stage moves on after 1 minute once the evidence is clean, else after 2 minutes | `--rollout safe`, and every production release by default |
+| `aggressive` | 5% → 50% → 100%, 1 minute each | `--rollout fast` |
+| `balanced` (also `1-10-50-100`) | 1% → 10% → 50% → 100%, 2 minutes each | |
+| `slow` | 1% → 10% → 100%, 5 minutes each | |
+| `custom` | the stages you give in `--canary-stages`, as `percent@duration` | |
+| `none` | all traffic at once, like `--rollout immediate` | |
+
+An unknown name fails with `invalid_canary_preset`.
 
 Promotion is health-gated. If an alert rule with a `rollback` or `demote`
 action is firing, the ladder holds at its current stage rather than advancing.

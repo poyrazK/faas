@@ -101,4 +101,10 @@ round to themselves), `egress_overage.go:55,78` (a zero row adds nothing; the
 saturation bound equals the sum), `statement_invoice.go:257` `<=`→`<` (a zero
 fee line is dropped at finish), and the `<`→`<=` boundaries in the invoice
 line sort at `statement_invoice.go:289-297` (each compares values the
-preceding `!=` proved different).
+preceding `!=` proved different). In API consumer pricing:
+`api_consumer_pricing.go:366` `||`→`&&` (negative units still fail the
+overflow test, since `maxInt64-units` wraps), `:469` (no allowance left
+covers `min(0, units) = 0`) and `:488`/`:489` sign boundaries (a zero-amount
+bucket adds nothing). The platform tenant month survivors left
+(`platform_tenant_month_statements.go` `priceTenantMonth` and
+`BuildTenantMonthStatement`) need a whole-month statement fixture.

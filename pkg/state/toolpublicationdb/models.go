@@ -47,6 +47,14 @@ type AppCustomMetric struct {
 	ObservedAt pgtype.Timestamptz
 }
 
+type AppEnv struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+	Key       string
+	Value     string
+}
+
 type AppSecret struct {
 	AccountID                        pgtype.UUID
 	AppID                            pgtype.UUID
@@ -56,6 +64,8 @@ type AppSecret struct {
 	ManagedPostgresBindingID         pgtype.UUID
 	ManagedObjectStorageCredentialID pgtype.UUID
 	ManagedCredentialRef             pgtype.Text
+	SecretVersion                    int64
+	ManagedCredentialGeneration      pgtype.Int8
 }
 
 type Deployment struct {
@@ -74,11 +84,54 @@ type DeploymentMcpReadinessEvidence struct {
 	Evidence     []byte
 }
 
+type HostedTaskBindingQualification struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+type HostedTaskRehearsalPlan struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+type HostedTaskSourceIntent struct {
+	AccountID  pgtype.UUID
+	ID         string
+	Payload    []byte
+	Ciphertext []byte
+	ExpiresAt  pgtype.Timestamptz
+}
+
 type Instance struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
 	State        string
+}
+
+type ManagedPostgresBinding struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	DatabaseAccountID    pgtype.UUID
+	DatabaseID           pgtype.UUID
+	AppID                pgtype.UUID
+	Scope                string
+	EnvironmentKey       string
+	CredentialRef        pgtype.Text
+	CredentialGeneration int64
+	State                string
+	Access               string
+	DeletedAt            pgtype.Timestamptz
+}
+
+type ManagedPostgresDatabase struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	State     string
 }
 
 type Org struct {

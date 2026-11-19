@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -69,6 +70,9 @@ func (r *flagExperimentReconciler) warn(ctx context.Context, msg string, err err
 }
 
 func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
+	// Retention holds whatever the flags say: raw analytics events past
+	// their plan's retention go even while analytics or flags are off.
+	r.sweepAnalytics(ctx, now)
 	if !r.server.platformFlagOn(platformflags.CustomerFlags) {
 		return
 	}
@@ -95,7 +99,29 @@ func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
 		if err := r.advance(xCtx, x, now); err != nil {
 			r.warn(ctx, "flag experiments: advance failed", err, "experiment", x.ID)
 		}
+		if err := r.guard(xCtx, x, now); err != nil {
+			r.warn(ctx, "flag experiments: guardrail check failed", err, "experiment", x.ID)
+		}
 		cancel()
+	}
+}
+
+// analyticsSweepBatches bounds the delete statements one pass runs per plan.
+const analyticsSweepBatches = 20
+
+// sweepAnalytics deletes product analytics events past each plan's
+// analytics retention (ADR 20261117084505 §2).
+func (r *flagExperimentReconciler) sweepAnalytics(ctx context.Context, now time.Time) {
+	store, ok := r.server.store.(state.AnalyticsStore)
+	if !ok {
+		return
+	}
+	retention := map[string]int{}
+	for _, p := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		retention[string(p)] = p.AnalyticsRetentionDays()
+	}
+	if _, err := store.SweepAnalyticsEvents(ctx, now, retention, api.AnalyticsSweepBatch, analyticsSweepBatches); err != nil {
+		r.warn(ctx, "product analytics: retention sweep failed", err)
 	}
 }
 
@@ -122,7 +148,15 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 		}
 		from = end
 	}
-	arms, _, err := r.store.FlagExperimentArms(ctx, x.ID)
+	if from.Before(x.TelemetryCursor) {
+		from = x.TelemetryCursor
+	}
+	if x.MetricKind == flags.ExperimentMetricMean {
+		if err := r.foldValues(ctx, &x, now, from); err != nil {
+			return err
+		}
+	}
+	arms, _, err := r.store.FlagExperimentArms(ctx, x, api.FlagExperimentMinUnitsPerArm)
 	if err != nil {
 		return err
 	}
@@ -138,8 +172,99 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 			minP[v.Variant] = v.Comparison.PValue
 		}
 	}
-	if from.Before(x.TelemetryCursor) {
-		from = x.TelemetryCursor
-	}
 	return r.store.SaveFlagExperimentProgress(ctx, x.ID, from, minP)
+}
+
+// guard fixes the latency threshold and checks the guardrails on the units
+// already recorded. It runs even when a pass failed to read new telemetry,
+// so a slow telemetry read never delays a rollback.
+func (r *flagExperimentReconciler) guard(ctx context.Context, x state.FlagExperiment, now time.Time) error {
+	if err := r.fixLatencyThreshold(ctx, &x); err != nil {
+		return err
+	}
+	return r.checkGuardrails(ctx, x, now)
+}
+
+// foldValues adds closed days of the metric's values to the units: days
+// before yesterday, whose events can no longer arrive (FlagEventMaxAge),
+// and before the telemetry cursor's day, so every unit exposed on a folded
+// day already exists (ADR 20261116190208 §2).
+func (r *flagExperimentReconciler) foldValues(ctx context.Context, x *state.FlagExperiment, now, cursor time.Time) error {
+	through := utcMidnight(now).AddDate(0, 0, -2)
+	if c := utcMidnight(cursor).AddDate(0, 0, -1); c.Before(through) {
+		through = c
+	}
+	if x.ValueThroughDay != nil && !through.After(*x.ValueThroughDay) {
+		return nil
+	}
+	if x.StartedAt != nil && through.Before(utcMidnight(*x.StartedAt)) {
+		return nil
+	}
+	if err := r.store.FoldFlagExperimentValues(ctx, *x, through); err != nil {
+		return err
+	}
+	x.ValueThroughDay = &through
+	return nil
+}
+
+func utcMidnight(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// fixLatencyThreshold fixes control's p95 latency as the latency threshold
+// once control has enough requests.
+func (r *flagExperimentReconciler) fixLatencyThreshold(ctx context.Context, x *state.FlagExperiment) error {
+	if x.LatencyThresholdMS != nil || x.Guardrails.P95Latency.Disabled {
+		return nil
+	}
+	hist, err := r.store.FlagExperimentLatency(ctx, x.ID)
+	if err != nil {
+		return err
+	}
+	var n int64
+	for _, c := range hist[x.Control] {
+		n += c
+	}
+	if n < api.FlagExperimentGuardrailMinRequests {
+		return nil
+	}
+	ms := int(flags.HistogramQuantile(hist[x.Control], 0.95))
+	if err := r.store.SetFlagExperimentLatencyThreshold(ctx, x.ID, ms); err != nil {
+		return err
+	}
+	x.LatencyThresholdMS = &ms
+	return nil
+}
+
+// checkGuardrails stops a breached experiment and sends every customer of
+// its rule to control (ADR 20261116190208 §1).
+func (r *flagExperimentReconciler) checkGuardrails(ctx context.Context, x state.FlagExperiment, now time.Time) error {
+	errs, slow, err := r.store.FlagExperimentGuardrailArms(ctx, x.ID)
+	if err != nil {
+		return err
+	}
+	g, v, breached := flags.Breach(flagExperimentGuardrails(x, errs, slow))
+	if !breached {
+		return nil
+	}
+	version, err := r.server.serveFlagExperimentVariant(ctx, x, x.Control, flagExperimentGuardrailActor)
+	rolledBack := err == nil
+	if err != nil && !errors.Is(err, errFlagExperimentRuleChanged) {
+		return err
+	}
+	breach := breachRecord(g, v, version, rolledBack)
+	if _, err := r.store.StopFlagExperiment(ctx, x.EnvironmentID, x.Key, now, flags.StopGuardrailBreach, breach); err != nil && !errors.Is(err, state.ErrNotFound) {
+		return err
+	}
+	if r.server.audit != nil {
+		r.server.audit.EmitAs(ctx, flagExperimentGuardrailActor, "flags.experiment_guardrail_breached", &x.AccountID, map[string]any{
+			"project_id": x.ProjectID, "environment_id": x.EnvironmentID, "experiment": x.Key, "flag": x.FlagKey,
+			"rule_id": x.RuleID, "control": x.Control, "breach": breach})
+	}
+	if r.log != nil {
+		r.log.WarnContext(ctx, "flag experiments: guardrail breached", "experiment", x.ID, "guardrail", g.Name,
+			"variant", v.Variant, "rolled_back", rolledBack, "config_version", version)
+	}
+	return nil
 }

@@ -724,7 +724,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return 0, nil
 		},
-		LvFcUsedPct: fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
+		AdmissionBytes: admissionBytesSource(cfg.MeasuredAdmission, ownerNodeID, &residencyReader),
+		LvFcUsedPct:    fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
 	})
 	engine, err := sched.NewEngine(ctx, store, ledger, vmmRouter, sched.PoolNotifier{Pool: pool}, fcVersion, log)
 	if err != nil {
@@ -1751,6 +1752,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.Role == role.RoleControlPlane && store != nil {
 		go runOwnerAuthorityMetrics(ctx, ops.Registry(), store, time.Minute, log)
 	}
+	// ADR-20261118160000: the control plane moves parked, long-idle apps back
+	// toward the least owned node, which nothing did after a drain. Every
+	// move is a compare-and-set on apps.node_id, so it is safe under either
+	// owner authority. On unless an operator turns it off.
+	if cfg.Role == role.RoleControlPlane {
+		if os.Getenv("FAAS_OWNER_BALANCE") != "off" {
+			go engine.NewOwnerBalancer().Run(ctx)
+		} else {
+			log.Warn("schedd: ownership balance off (FAAS_OWNER_BALANCE=off)")
+		}
+	}
 	if os.Getenv("FAAS_SCHEDD_OBJECT_GC") == "1" {
 		// ADR-20261115180000: the control plane deletes shared-store objects
 		// compute nodes asked to delete (FAAS_STORAGE_DELETE_MODE=defer),
@@ -2774,12 +2786,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// subscriber acknowledges rows after dispatching the same handler; this
 	// worker only sees rows that remain pending after the wakeup grace period.
 	go func() {
-		err := db.RunNotificationOutbox(ctx, pool, "schedd",
+		// Only the app's owner claims its wake or restart; peers skip the
+		// row instead of claiming and deferring it.
+		err := db.RunNotificationOutboxForAppOwner(ctx, pool, "schedd", engine.ClaimNodeID(),
 			[]string{db.NotifyAppWake, db.NotifyRuntimeConfigRestart, db.NotifySnapshotPrime}, durableReplayHandler(ctx, loop.HandleDurableNotification), log)
 		if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}
 	}()
+	go newNotificationOutboxMetrics(ops.Registry()).run(ctx, pool, log)
 	if privateNetworkSubscriber != nil || privateNetworkPolicySubscriber != nil || privateNetworkPeeringSubscriber != nil || privateNetworkFabricDeletionSubscriber != nil {
 		// Private-network mutations have their own durable channel because an
 		// attachment policy update must converge immediately, while a peering
@@ -3459,6 +3474,27 @@ func floorPlan(acct state.Account) api.Plan {
 // errNodeResidencyUnmeasured keeps fcvm_resident_ram_pct at its previous
 // value until this node has a fresh measurement (ADR 20261102072403).
 var errNodeResidencyUnmeasured = errors.New("schedd: this node's residency is not measured yet")
+
+// admissionBytesSource feeds fcvm_admission_ram_pct, which the RAM page reads:
+// under measured admission (ADR-909) this node's measured memory. Bookings may
+// reach MeasuredAdmissionMaxOvercommitPercent of the ceiling by design, so the
+// page on fcvm_resident_ram_pct fired on a node with a third of its memory in
+// use (prod, 2026-11-16). Reservation admission, and a single-box scheduler
+// with no node of its own, get nil: the gauge then reports the bookings, which
+// is what admission counts there.
+func admissionBytesSource(measured bool, nodeID string, reader *atomic.Pointer[instancestats.Reader]) func(context.Context) (int64, error) {
+	if !measured || nodeID == "" {
+		return nil
+	}
+	return func(context.Context) (int64, error) {
+		if r := reader.Load(); r != nil {
+			if mb, _, ok := r.MeasuredMB(nodeID, time.Now()); ok {
+				return int64(mb) << 20, nil
+			}
+		}
+		return 0, errNodeResidencyUnmeasured
+	}
+}
 
 type schedFloorLedger struct {
 	ledger *sched.NodeLedger

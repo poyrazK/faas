@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/imagechain"
@@ -121,14 +122,22 @@ func (h *Handler) reuseVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 	if !baseCacheParentMatches(ctx, store, in, r) {
 		return BaseStageResult{}, false, nil
 	}
+	started := time.Now()
 	if !h.verifiedBaseArtifactReusable(ctx, r, in.Artifact) {
 		return BaseStageResult{}, false, nil
 	}
+	checked := time.Now()
 	image, err := imagechain.Validate(in.ImageChain, in.SourceDigest, in.SelectedDigest)
 	if err != nil {
 		return BaseStageResult{}, false, err
 	}
 	result, err := h.finishVerifiedBase(ctx, r, producer, image.Config.Digest, true)
+	if err == nil && h.log != nil {
+		// ADR-595 amendment 2026-11-17: what a reuse still costs once the
+		// cache file's hash is remembered.
+		h.log.Info("imaged: reused verified base", "key", r.key,
+			"check_ms", checked.Sub(started).Milliseconds(), "finish_ms", time.Since(checked).Milliseconds())
+	}
 	return result, err == nil, err
 }
 
@@ -139,8 +148,8 @@ func (h *Handler) reuseVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 // producer, the other node would then do the same, and every swap stales
 // in-flight scan publications and every snapshot on that base (H10-101).
 func (h *Handler) verifiedBaseArtifactReusable(ctx context.Context, r verifiedBaseRequest, artifact imagechain.BaseArtifact) bool {
-	if checkStoredBaseArtifact(ctx, r.be, artifact) != nil {
-		if !refreshCachedBase(ctx, r.be, artifact.StorageKey) || checkStoredBaseArtifact(ctx, r.be, artifact) != nil {
+	if h.checkCachedBaseArtifact(ctx, r.be, artifact) != nil {
+		if !refreshCachedBase(ctx, r.be, artifact.StorageKey) || h.checkCachedBaseArtifact(ctx, r.be, artifact) != nil {
 			return false
 		}
 	}
@@ -181,15 +190,7 @@ func checkStoredBaseArtifact(ctx context.Context, be storage.StorageBackend, exp
 	if err != nil {
 		return err
 	}
-	identity, readErr := rootfs.ReadArtifactIdentity(ctx, io.LimitReader(rc, expected.Bytes+1))
-	closeErr := rc.Close()
-	if err := errors.Join(readErr, closeErr); err != nil {
-		return err
-	}
-	if identity.Digest != expected.Digest || identity.Bytes != expected.Bytes {
-		return fmt.Errorf("imaged: stored base differs from produced artifact")
-	}
-	return nil
+	return verifyBaseArtifactBytes(ctx, rc, expected)
 }
 
 func pullVerifiedBaseLayers(ctx context.Context, r verifiedBaseRequest, prepared preparedContainerWorkload, start int) ([]io.ReadCloser, error) {
@@ -321,7 +322,7 @@ func (h *Handler) publishVerifiedBase(ctx context.Context, r verifiedBaseRequest
 	if result.ImageKey != r.key || result.GuestInitDigest != baseGuestDigest(r.guestDigest) {
 		return state.BaseImageProducer{}, fmt.Errorf("imaged: base conversion binding mismatch")
 	}
-	if err := checkStoredBaseArtifact(ctx, r.be, artifact); err != nil {
+	if err := h.checkCachedBaseArtifact(ctx, r.be, artifact); err != nil {
 		return state.BaseImageProducer{}, err
 	}
 	if err := h.validateBaseArtifact(ctx, r.be, r.key); err != nil {

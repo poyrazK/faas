@@ -469,6 +469,9 @@ type Instance struct {
 	// it serves sandbox calls, and only for that session. WakeSandbox sets
 	// it.
 	SandboxID string
+	// agentEgressIP is the VM's address in this node's agent tunnel slice
+	// (ADR-20261117185346 §2); invalid for a VM on the tenant path.
+	agentEgressIP netip.Addr
 	// AgentRunRelay is the run principal of the VM's relay; host-only.
 	AgentRunRelay *AgentRunRelay `json:"-"`
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).
@@ -762,6 +765,14 @@ type Instance struct {
 	// was granted, which SandboxWebDistinctDomains bounds
 	// (ADR-20261112121456 §4).
 	webDomains map[string]struct{}
+	// webAllow and webDeny are the session's domain policy
+	// (ADR-20261117091026 §3); both empty is none.
+	webAllow, webDeny []string
+	// webLog holds the domains granted or refused since vmmd last drained
+	// them (ADR-20261117091026 §4); webRefusedLogged bounds the refused
+	// ones a session reports.
+	webLog           []SandboxWebDomain
+	webRefusedLogged map[string]bool
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -1026,6 +1037,9 @@ type Manager struct {
 	// anchorNetns re-creates an adopted guest's netns binding; tests replace
 	// it. nil uses anchorAdoptedNetns.
 	anchorNetns func(name string, pid int, want resourceFileIdentity) (*resourceAsset, error)
+	// killRefused ends a proven guest that adoption refused
+	// (killRefusedSurvivor); nil uses killProvenGuest. Tests replace it.
+	killRefused func(resourceProcessIdentity) error
 	// adoption writes version-7 adoption blocks once EnableAdoptionRecords
 	// is called; nil writes none. Atomic so state changes can mark an
 	// instance whether or not they hold mu.
@@ -1244,6 +1258,9 @@ type Manager struct {
 	// captureRecipient, when set, is what crash-capture keys are sealed to
 	// in place of the first host identity's recipient (slice 3e).
 	captureRecipient *age.X25519Recipient
+	// sealChunked makes sealed captures use crashcrypt's v2 format (slice
+	// 3d-5).
+	sealChunked bool
 	// captureKeys caches sealed snapshot keys opened through secretd
 	// (ADR-20261110210000 slice 3d-3) so a sealed wake pays the round trip
 	// once per capture, not on every restore.
@@ -1425,6 +1442,9 @@ type Manager struct {
 	// host policy so concurrent static-egress and SMTP allowlist changes
 	// cannot overwrite each other's fields.
 	hostPolicyMu sync.Mutex
+	// agentEgress is the agent tunnel (ADR-20261117185346, agent_egress.go);
+	// its maps are guarded by mu. Zero keeps sandboxes on the tenant path.
+	agentEgress agentEgressState
 
 	// Quiet pause (ADR-1151; quiet_pause.go). quietActivity is nil unless
 	// vmmd.toml enables quiet pause. quietMu guards quietStates and is a
@@ -1665,6 +1685,7 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 			AppID:        inst.AppID,
 		})
 	}
+	agentRules := m.agentEgressRulesLocked()
 	for id, starting := range m.staticEgressStarting {
 		if m.live[id] != nil {
 			continue
@@ -1690,6 +1711,9 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 	next := *cur
 	next.SMTPAllowlistRules = rules
 	next.StaticEgressRules = staticRules
+	if cfg := m.agentEgress.cfg; cfg != nil {
+		next.AgentEgressIface, next.AgentEgressRules = cfg.Iface, agentRules
+	}
 	next.StaticEgressBlockedSources = blockedSources
 	next.PrivateNetworkBridges = privateBridges
 	if next.TenantEgressIface != "" && len(staticRules) > 0 {
@@ -4088,6 +4112,11 @@ type WakeRequest struct {
 	// public-names resolver). Empty is no network.
 	sandboxID      string
 	sandboxNetwork string
+	// sandboxEgressAllow and sandboxEgressDeny are a web-mode session's
+	// domain policy (ADR-20261117091026 §3), set on the instance before it
+	// boots so no name escapes it.
+	sandboxEgressAllow []string
+	sandboxEgressDeny  []string
 	// sandboxManifest marks a session booted from an image: LayerKey is
 	// a full-rootfs job image, and vmmd stages sandbox.json on its private
 	// drive1 before boot (Lease.SandboxManifest). It holds that file.
@@ -5449,6 +5478,15 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := m.prepareStaticEgressWake(ctx, req, qualificationOnly); err != nil {
 		return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
 	}
+	undoAgentEgress, agentErr := m.prepareAgentEgressWake(ctx, req, lease)
+	if agentErr != nil {
+		return nil, fmt.Errorf("wake %s: %w", req.Instance, agentErr)
+	}
+	defer func() {
+		if err != nil {
+			undoAgentEgress()
+		}
+	}()
 	// Issue #679 / PR-A: cache the per-app slice BEFORE the
 	// operator-bundle merge so SetEgressOperatorBundle can read
 	// the authoritative per-app set on a subsequent bundle
@@ -5844,6 +5882,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
 		environmentBranch:      req.environmentBranch,
+		webAllow:               slices.Clone(req.sandboxEgressAllow),
+		webDeny:                slices.Clone(req.sandboxEgressDeny),
 		StaticEgressExcluded:   req.StaticEgressExcluded,
 		PrivateNetworkExcluded: req.privateNetworkExcluded,
 		WakeID:                 wakeID, NodeID: fields.NodeID,
@@ -5996,6 +6036,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		delete(m.waking, req.Instance)
 		m.adoptBootingEgressLocked(inst)
+		m.agentEgressStartedLocked(inst)
 		m.live[req.Instance] = inst
 		m.recordProvenWorkerLocked(inst)
 		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {

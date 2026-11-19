@@ -19,8 +19,18 @@ const (
 	ExperimentStopped = "stopped"
 )
 
-// ExperimentMetricConversion is the only metric kind in ADR 20261115163113.
-const ExperimentMetricConversion = "conversion"
+// Metric kinds: conversion compares the share of exposed customers that
+// sent the event (ADR 20261115163113); mean compares the mean event value
+// per exposed customer (ADR 20261116190208 §2).
+const (
+	ExperimentMetricConversion = "conversion"
+	ExperimentMetricMean       = "mean"
+)
+
+// ValidMetricKind reports whether kind is a metric kind.
+func ValidMetricKind(kind string) bool {
+	return kind == ExperimentMetricConversion || kind == ExperimentMetricMean
+}
 
 var eventNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
 
@@ -70,11 +80,47 @@ func ExperimentRule(cfg Config, flagKey, ruleID, control string) (Rule, Flag, er
 	return r, f, nil
 }
 
-// Arm is one variant's exposed and converted units.
+// Arm is one variant's exposed and converted units. For mean metrics,
+// Converted counts units with a non-zero value and Sum and SumSq are the sum
+// and sum of squares of the units' (winsorized) values.
 type Arm struct {
-	Variant   string `json:"variant"`
-	Exposed   int64  `json:"exposed"`
-	Converted int64  `json:"converted"`
+	Variant   string  `json:"variant"`
+	Exposed   int64   `json:"exposed"`
+	Converted int64   `json:"converted"`
+	Sum       float64 `json:"sum,omitempty"`
+	SumSq     float64 `json:"sum_sq,omitempty"`
+}
+
+// Mean is the mean value per exposed unit, 0 with no exposures.
+func (a Arm) Mean() float64 {
+	if a.Exposed <= 0 {
+		return 0
+	}
+	return a.Sum / float64(a.Exposed)
+}
+
+// Variance is the sample variance of the units' values.
+func (a Arm) Variance() float64 {
+	if a.Exposed < 2 {
+		return 0
+	}
+	n := float64(a.Exposed)
+	m := a.Sum / n
+	return math.Max(0, (a.SumSq-n*m*m)/(n-1))
+}
+
+// CompareMeans runs the mSPRT on the difference of the arms' means. The
+// mixing standard deviation is effect times the pooled standard deviation,
+// so effect is a standardized effect size (ADR 20261116190208 §2).
+func CompareMeans(control, variant Arm, effect, alpha float64) (Comparison, error) {
+	if control.Exposed < 2 || variant.Exposed < 2 {
+		return Comparison{}, errNoVariance
+	}
+	vc, vv := control.Variance(), variant.Variance()
+	nc, nv := float64(control.Exposed), float64(variant.Exposed)
+	pooled := ((nc-1)*vc + (nv-1)*vv) / (nc + nv - 2)
+	v := vc/nc + vv/nv
+	return compareNormal(variant.Variant, control.Mean(), variant.Mean(), v, effect*math.Sqrt(pooled), alpha)
 }
 
 // Rate is the conversion rate, 0 with no exposures.
@@ -108,20 +154,28 @@ func CompareSequential(control, variant Arm, tau, alpha float64) (Comparison, er
 	}
 	pc, pv := control.Rate(), variant.Rate()
 	v := pc*(1-pc)/float64(control.Exposed) + pv*(1-pv)/float64(variant.Exposed)
-	if v <= 0 || tau <= 0 || alpha <= 0 || alpha >= 1 {
+	return compareNormal(variant.Variant, pc, pv, v, tau, alpha)
+}
+
+// compareNormal is the mSPRT for a difference of two estimates whose
+// sampling variance is v, with a normal mixture of standard deviation tau
+// over the true difference. Low and High are the always-valid confidence
+// sequence at level alpha.
+func compareNormal(variant string, control, treated, v, tau, alpha float64) (Comparison, error) {
+	if !(v > 0) || !(tau > 0) || alpha <= 0 || alpha >= 1 || math.IsInf(v, 0) {
 		return Comparison{}, errNoVariance
 	}
 	t2 := tau * tau
-	delta := pv - pc
+	delta := treated - control
 	logLambda := 0.5*math.Log(v/(v+t2)) + t2*delta*delta/(2*v*(v+t2))
 	p := 1.0
 	if logLambda > 0 {
 		p = math.Exp(-logLambda)
 	}
 	half := math.Sqrt((v * (v + t2) / t2) * (math.Log((v+t2)/v) + 2*math.Log(1/alpha)))
-	c := Comparison{Variant: variant.Variant, Lift: delta, Low: delta - half, High: delta + half, PValue: math.Min(1, p)}
-	if pc > 0 {
-		c.RelativeLift = delta / pc
+	c := Comparison{Variant: variant, Lift: delta, Low: delta - half, High: delta + half, PValue: math.Min(1, p)}
+	if control != 0 {
+		c.RelativeLift = delta / math.Abs(control)
 	}
 	return c, nil
 }
@@ -227,9 +281,12 @@ type ResultsInput struct {
 	// MinPValues are the running minimum p-values the reconciler stored per
 	// variant; the always-valid p-value is the minimum over time.
 	MinPValues map[string]float64
+	// Kind is the metric kind; empty is conversion.
+	Kind string
 }
 
-// VariantResult is one variant compared with control.
+// VariantResult is one variant compared with control. Rate is the
+// conversion rate, or the mean value per unit for mean metrics.
 type VariantResult struct {
 	Arm
 	Rate       float64     `json:"rate"`
@@ -237,7 +294,8 @@ type VariantResult struct {
 	Status     string      `json:"status"`
 }
 
-// Results is an experiment's report.
+// Results is an experiment's report. ControlRate is the control's
+// conversion rate, or its mean value per unit for mean metrics.
 type Results struct {
 	Control          Arm             `json:"control"`
 	ControlRate      float64         `json:"control_rate"`
@@ -266,7 +324,12 @@ func ExperimentResults(in ResultsInput) Results {
 	out.SampleRatioError = out.SampleRatioP < in.SRMAlpha
 	control := byVariant[in.Control]
 	control.Variant = in.Control
-	out.Control, out.ControlRate = control, control.Rate()
+	value := Arm.Rate
+	compare := CompareSequential
+	if in.Kind == ExperimentMetricMean {
+		value, compare = Arm.Mean, CompareMeans
+	}
+	out.Control, out.ControlRate = control, value(control)
 	variants := make([]string, 0, len(in.Weights))
 	for v := range in.Weights {
 		if v != in.Control {
@@ -278,8 +341,8 @@ func ExperimentResults(in ResultsInput) Results {
 	for _, v := range variants {
 		arm := byVariant[v]
 		arm.Variant = v
-		r := VariantResult{Arm: arm, Rate: arm.Rate()}
-		if c, err := CompareSequential(control, arm, in.MixingLift, in.Alpha); err == nil {
+		r := VariantResult{Arm: arm, Rate: value(arm)}
+		if c, err := compare(control, arm, in.MixingLift, in.Alpha); err == nil {
 			if prev, ok := in.MinPValues[v]; ok && prev < c.PValue {
 				c.PValue = prev
 			}

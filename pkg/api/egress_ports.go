@@ -47,7 +47,7 @@ func ErrPlanEgressPortsNotAllowed(p Plan) *Problem {
 		"Plan doesn't allow extra egress ports",
 		fmt.Sprintf("the %s plan can reach TCP 80 and 443 only; upgrade to Pro or Scale to declare extra ports.", p)).
 		WithLimit(0, 1).
-		WithDocs(docsBase + "/apps#egress-ports")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrEgressPortsTooMany (ADR-361) is returned when the declared extra ports
@@ -57,7 +57,7 @@ func ErrEgressPortsTooMany(got, maxPorts int) *Problem {
 		"Too many egress ports",
 		fmt.Sprintf("egress_ports has %d ports; plan caps it at %d.", got, maxPorts)).
 		WithLimit(int64(maxPorts), int64(got)).
-		WithDocs(docsBase + "/apps#egress-ports")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrInvalidEgressPort (ADR-361) is returned for an out-of-range or
@@ -66,5 +66,5 @@ func ErrInvalidEgressPort(port int, reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidEgressPort,
 		"Invalid egress port",
 		fmt.Sprintf("egress port %d is not allowed: %s.", port, reason)).
-		WithDocs(docsBase + "/apps#egress-ports")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }

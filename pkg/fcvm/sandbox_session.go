@@ -100,6 +100,16 @@ type SandboxWakeRequest struct {
 	StartCmd     string
 	ReadyCmd     string
 	ReadyTimeout time.Duration
+	// Browser starts the sandbox browser as the session's start and ready
+	// commands, after a cold boot or a restore (ADR-20261116182615 §1). Its
+	// commands are vmmd's; a session with commands of its own or an image
+	// drive cannot have it.
+	Browser bool
+	// EgressAllow and EgressDeny are a web-mode session's domain policy
+	// (ADR-20261117091026 §3): the resolver's grant refuses a name the
+	// policy does not allow. vmmd validated them.
+	EgressAllow []string
+	EgressDeny  []string
 	// Snapshot restores the session from a warm snapshot CaptureSandboxSnapshot
 	// took of the same drives and machine (ADR-20261027090013 §12), and
 	// falls back to a cold boot (ADR-005). It was captured before the
@@ -150,8 +160,12 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 	} else if req.StartCmd != "" || req.ReadyCmd != "" {
 		return nil, errors.New("fcvm: sandbox commands need an image drive")
 	}
+	if req.Browser && (req.ImageKey != "" || req.StartCmd != "" || req.ReadyCmd != "") {
+		return nil, errors.New("fcvm: the sandbox browser goes with a preset session, without commands of its own")
+	}
 	inst, err := m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, sandboxNetwork: network,
+		sandboxEgressAllow: req.EgressAllow, sandboxEgressDeny: req.EgressDeny,
 		sandboxManifest: manifest, AccountID: req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: layer, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter, Snapshot: req.Snapshot,
@@ -173,13 +187,63 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		return destroy(err)
 	}
 	// A cold boot ran the commands from its manifest; a restore's snapshot
-	// was captured before them.
-	if inst.Method == WakeRestore && (req.StartCmd != "" || req.ReadyCmd != "") {
+	// was captured before them. The browser's commands have no manifest, so
+	// they run here after either.
+	switch {
+	case req.Browser:
+		if err := startSandboxTemplate(ctx, dialer, sandboxBrowserCommands(req)); err != nil {
+			return destroy(err)
+		}
+	case inst.Method == WakeRestore && (req.StartCmd != "" || req.ReadyCmd != ""):
 		if err := startSandboxTemplate(ctx, dialer, req); err != nil {
 			return destroy(err)
 		}
 	}
 	return inst, nil
+}
+
+// The sandbox browser's commands (ADR-20261116182615 §1): gregale-browser
+// in agent-base starts Chromium and its CDP relay; its --wait polls the
+// relay. vmmd owns them; no caller supplies them.
+const (
+	sandboxBrowserStartCmd     = "gregale-browser"
+	sandboxBrowserReadyCmd     = "gregale-browser --wait 2"
+	sandboxBrowserReadyTimeout = 45 * time.Second
+	// sandboxBrowserPrewarmTimeout bounds the capture's prewarm.
+	sandboxBrowserPrewarmTimeout = 90 * time.Second
+	// sandboxBrowserPrewarmOutputBytes bounds the prewarm's output, which
+	// nobody reads.
+	sandboxBrowserPrewarmOutputBytes = 64 << 10
+)
+
+// sandboxBrowserCommands is req with the browser's commands.
+func sandboxBrowserCommands(req SandboxWakeRequest) SandboxWakeRequest {
+	req.StartCmd, req.ReadyCmd, req.ReadyTimeout = sandboxBrowserStartCmd, sandboxBrowserReadyCmd, sandboxBrowserReadyTimeout
+	return req
+}
+
+// prewarmSandboxBrowser runs gregale-browser --prewarm in a capture's VM:
+// it starts Chromium, waits for it, stops it and deletes its profile, so
+// Chromium's files are in the snapshot's page cache and nothing that runs is
+// (ADR-20261116182615 §2).
+func prewarmSandboxBrowser(ctx context.Context, dialer SandboxDialer, instance string) error {
+	ctx, cancel := context.WithTimeout(ctx, sandboxBrowserPrewarmTimeout+sandboxTemplateStartSlack)
+	defer cancel()
+	conn, err := dialer.DialSandbox(ctx, instance)
+	if err != nil {
+		return fmt.Errorf("fcvm: sandbox %s browser prewarm: %w", instance, err)
+	}
+	defer func() { _ = conn.Close() }()
+	var res sandboxproto.ExecResult
+	op := sandboxproto.Request{Op: sandboxproto.OpExec, Argv: []string{sandboxBrowserStartCmd, "--prewarm"},
+		TimeoutMillis: sandboxBrowserPrewarmTimeout.Milliseconds(), MaxOutputBytes: sandboxBrowserPrewarmOutputBytes}
+	if err := sandboxproto.Do(ctx, conn, op, func(uint32, []byte) error { return nil }, &res); err != nil {
+		return fmt.Errorf("fcvm: sandbox %s browser prewarm: %w", instance, err)
+	}
+	if res.ExitCode != 0 || res.TimedOut || res.Signal != 0 {
+		return fmt.Errorf("fcvm: sandbox %s browser prewarm exited %d (signal %d, timed out %v)", instance, res.ExitCode, res.Signal, res.TimedOut)
+	}
+	return nil
 }
 
 // sandboxTemplateStartSlack is the time template_start may take beyond the
@@ -273,16 +337,64 @@ var errSandboxWebNeedsGateway = errors.New("sandbox web egress needs the tenant 
 
 // sandboxWebEgressRefusal reports why this node cannot boot a web-mode
 // session, or nil. It fails closed: without DNS gating, or without the
-// ADR-372 gateway unless the operator allowed node egress for a test fleet.
+// agent tunnel or the ADR-372 gateway unless the operator allowed node
+// egress for a test fleet.
 func (m *Manager) sandboxWebEgressRefusal() error {
 	if m.dnsGatingOff {
 		return errors.New("sandbox web egress needs DNS-gated egress, which this vmmd has switched off")
 	}
-	if m.sandboxWebNodeEgress {
+	if m.sandboxWebNodeEgress || m.agentEgressOn() {
+		// The agent tunnel carries the session (ADR-20261117185346), and
+		// prepareAgentEgressWake refuses the boot when it cannot.
 		return nil
 	}
 	if p := netns.ActiveHostPolicyForRender(); p == nil || strings.TrimSpace(p.TenantEgressIface) == "" {
 		return errSandboxWebNeedsGateway
 	}
 	return nil
+}
+
+// SandboxTaskResult is a sandbox task command's end (ADR-20261116182615 §3):
+// its exit code and standard output, capped at the task's limit.
+type SandboxTaskResult struct {
+	ExitCode  int
+	Output    []byte
+	TimedOut  bool
+	Truncated bool
+}
+
+// RunSandboxTask runs argv in sandboxID's VM as the session's user, bounded
+// by timeout, and returns its exit code and at most maxOutput bytes of its
+// standard output. Standard error is discarded.
+func (m *Manager) RunSandboxTask(ctx context.Context, instance, sandboxID string, argv []string, timeout time.Duration, maxOutput int64) (SandboxTaskResult, error) {
+	if len(argv) == 0 || timeout <= 0 || maxOutput <= 0 {
+		return SandboxTaskResult{}, errors.New("fcvm: incomplete sandbox task")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout+sandboxTemplateStartSlack)
+	defer cancel()
+	conn, err := m.DialSandboxSession(ctx, instance, sandboxID)
+	if err != nil {
+		return SandboxTaskResult{}, fmt.Errorf("fcvm: sandbox %s task: %w", instance, err)
+	}
+	defer func() { _ = conn.Close() }()
+	var out SandboxTaskResult
+	collect := func(stream uint32, data []byte) error {
+		if stream != sandboxproto.FrameStdout {
+			return nil
+		}
+		room := maxOutput - int64(len(out.Output))
+		if int64(len(data)) > room {
+			data, out.Truncated = data[:max(room, 0)], true
+		}
+		out.Output = append(out.Output, data...)
+		return nil
+	}
+	var res sandboxproto.ExecResult
+	op := sandboxproto.Request{Op: sandboxproto.OpExec, Argv: argv, TimeoutMillis: timeout.Milliseconds(), MaxOutputBytes: maxOutput}
+	if err := sandboxproto.Do(ctx, conn, op, collect, &res); err != nil {
+		return SandboxTaskResult{}, fmt.Errorf("fcvm: sandbox %s task: %w", instance, err)
+	}
+	out.ExitCode, out.TimedOut = res.ExitCode, res.TimedOut
+	out.Truncated = out.Truncated || res.OutputTruncated
+	return out, nil
 }

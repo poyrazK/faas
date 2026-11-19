@@ -9,9 +9,12 @@ from attrs import field as _attrs_field
 
 from ..models.flag_experiment_metric_kind import FlagExperimentMetricKind, check_flag_experiment_metric_kind
 from ..models.flag_experiment_status import FlagExperimentStatus, check_flag_experiment_status
+from ..models.flag_experiment_stop_reason import FlagExperimentStopReason, check_flag_experiment_stop_reason
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.flag_experiment_breach import FlagExperimentBreach
+    from ..models.flag_experiment_guardrail_settings import FlagExperimentGuardrailSettings
     from ..models.flag_experiment_weights import FlagExperimentWeights
 
 
@@ -37,6 +40,13 @@ class FlagExperiment:
     stopped_at: datetime.datetime | Unset = UNSET
     analyzed_until: datetime.datetime | Unset = UNSET
     """End of the request telemetry the results cover."""
+    guardrails: FlagExperimentGuardrailSettings | Unset = UNSET
+    """An experiment's guardrails."""
+    latency_threshold_ms: int | Unset = UNSET
+    """Control's p95 latency, fixed once control has enough requests."""
+    stop_reason: FlagExperimentStopReason | Unset = UNSET
+    breach: FlagExperimentBreach | Unset = UNSET
+    """The guardrail breach that stopped the experiment."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +84,20 @@ class FlagExperiment:
         if not isinstance(self.analyzed_until, Unset):
             analyzed_until = self.analyzed_until.isoformat()
 
+        guardrails: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.guardrails, Unset):
+            guardrails = self.guardrails.to_dict()
+
+        latency_threshold_ms = self.latency_threshold_ms
+
+        stop_reason: str | Unset = UNSET
+        if not isinstance(self.stop_reason, Unset):
+            stop_reason = self.stop_reason
+
+        breach: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.breach, Unset):
+            breach = self.breach.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -97,11 +121,21 @@ class FlagExperiment:
             field_dict["stopped_at"] = stopped_at
         if analyzed_until is not UNSET:
             field_dict["analyzed_until"] = analyzed_until
+        if guardrails is not UNSET:
+            field_dict["guardrails"] = guardrails
+        if latency_threshold_ms is not UNSET:
+            field_dict["latency_threshold_ms"] = latency_threshold_ms
+        if stop_reason is not UNSET:
+            field_dict["stop_reason"] = stop_reason
+        if breach is not UNSET:
+            field_dict["breach"] = breach
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.flag_experiment_breach import FlagExperimentBreach
+        from ..models.flag_experiment_guardrail_settings import FlagExperimentGuardrailSettings
         from ..models.flag_experiment_weights import FlagExperimentWeights
 
         d = dict(src_dict)
@@ -148,6 +182,29 @@ class FlagExperiment:
         else:
             analyzed_until = datetime.datetime.fromisoformat(_analyzed_until)
 
+        _guardrails = d.pop("guardrails", UNSET)
+        guardrails: FlagExperimentGuardrailSettings | Unset
+        if isinstance(_guardrails, Unset):
+            guardrails = UNSET
+        else:
+            guardrails = FlagExperimentGuardrailSettings.from_dict(_guardrails)
+
+        latency_threshold_ms = d.pop("latency_threshold_ms", UNSET)
+
+        _stop_reason = d.pop("stop_reason", UNSET)
+        stop_reason: FlagExperimentStopReason | Unset
+        if isinstance(_stop_reason, Unset):
+            stop_reason = UNSET
+        else:
+            stop_reason = check_flag_experiment_stop_reason(_stop_reason)
+
+        _breach = d.pop("breach", UNSET)
+        breach: FlagExperimentBreach | Unset
+        if isinstance(_breach, Unset):
+            breach = UNSET
+        else:
+            breach = FlagExperimentBreach.from_dict(_breach)
+
         flag_experiment = cls(
             key=key,
             flag=flag,
@@ -163,6 +220,10 @@ class FlagExperiment:
             started_at=started_at,
             stopped_at=stopped_at,
             analyzed_until=analyzed_until,
+            guardrails=guardrails,
+            latency_threshold_ms=latency_threshold_ms,
+            stop_reason=stop_reason,
+            breach=breach,
         )
 
         flag_experiment.additional_properties = d

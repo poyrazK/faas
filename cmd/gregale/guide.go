@@ -10,6 +10,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // guidePage is one task an agent or a person looks up with `gregale guide
@@ -42,12 +44,13 @@ var guidePages = []guidePage{
 			{Do: "Preview the deploy; read its \"For this repo\" section", Command: "gregale deploy --dry-run"},
 			{Do: "Deploy", Command: "gregale deploy --yes"},
 			{Do: "Deploy a published image instead of source", Command: "gregale deploy --image <image>@sha256:<digest> --name <app>"},
-			{Do: "Serve the public URL without a Gregale API key", Command: "gregale app update <app> --no-require-authn"},
+			{Do: "Verify a response from the accepted deployment (including private apps)", Command: "gregale release verify <deployment> --app <app> --path /"},
+			{Do: "Optionally allow anonymous public requests", Command: "gregale app update <app> --no-require-authn"},
 			{Do: "Check serving health", Command: "gregale app health <app>"},
 		},
 		Notes: []string{
 			"A Compose file or several services: see `gregale guide compose-project`.",
-			"Public URLs answer 401 without a Gregale API key until --no-require-authn.",
+			"A private URL can return 401 without credentials after a successful deploy. release verify checks the exact deployment using owner access; it does not verify anonymous public access.",
 			"A source build must answer HTTP GET /healthz on its port; see `gregale guide health-checks`.",
 		},
 	},
@@ -136,7 +139,7 @@ var guidePages = []guidePage{
 			{Do: "Read an app's logs", Command: "gregale logs <app>"},
 			{Do: "Read a failed deployment's build and startup logs", Command: "gregale logs <app> --deployment <deployment>"},
 			{Do: "See an app's state, park reason and recommendations", Command: "gregale inspect <app>"},
-			{Do: "Run a command against the live deployment", Command: "gregale app exec <app> -- <command>"},
+			{Do: "Run a command in a fresh VM of the live deployment (not the serving instance)", Command: "gregale app exec <app> -- <command>"},
 			{Do: "Check the source locally", Command: "gregale doctor"},
 		},
 		Notes: []string{
@@ -225,26 +228,17 @@ func cmdGuide(args []string) int {
 	return 0
 }
 
-// agentMarkers are the environment variables coding agents set in the
-// shells they run, confirmed against each agent's release (2026-11-14:
-// Claude Code, Gemini CLI, Codex CLI, Cursor agent).
-var agentMarkers = []string{"CLAUDECODE", "GEMINI_CLI", "CODEX_THREAD_ID", "CODEX_SANDBOX", "CURSOR_AGENT"}
-
 const agentHint = "Agent: run `gregale guide` for a task index; `gregale deploy --dry-run` lists the features this repo uses."
 
-// runByAgent reports a known agent marker, unless GREGALE_NO_AGENT_HINT=1.
-// It only adds a pointer on stderr (ADR-20261112223000 §5): no default,
-// prompt or successful command's stdout changes.
+// runByAgent reports a known agent marker (api.CodingAgents), unless
+// GREGALE_NO_AGENT_HINT=1. It only adds a pointer on stderr
+// (ADR-20261112223000 §5): no default, prompt or successful command's
+// stdout changes.
 func runByAgent() bool {
 	if os.Getenv("GREGALE_NO_AGENT_HINT") == "1" {
 		return false
 	}
-	for _, marker := range agentMarkers {
-		if os.Getenv(marker) != "" {
-			return true
-		}
-	}
-	return false
+	return api.CodingAgentFromEnv(os.Getenv) != ""
 }
 
 // printAgentHint writes the pointer once per process.

@@ -157,6 +157,9 @@ type jobRegistryCredentialKey struct {
 type MemStore struct {
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
+	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
+	hostedTaskBindings             map[string]HostedTaskBindingRecord
+	hostedTaskRehearsals           map[string]hostedTaskRehearsalRecord
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -169,8 +172,16 @@ type MemStore struct {
 	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
 	basicAuthVerifiers map[string]string
 	// platformAlertNotices mirror platform_alert_notices (ADR-20261115194000).
-	platformAlertNotices        []PlatformAlertNotice
-	platformAlertMeta           map[string]platformAlertNoticeMeta
+	platformAlertNotices []PlatformAlertNotice
+	platformAlertMeta    map[string]platformAlertNoticeMeta
+	// appProtection and appProtectionObjects mirror app_protection and
+	// app_protection_objects (ADR-20261116120000); allocated on first use.
+	appProtection              map[string]AppProtection
+	appProtectionObjects       map[string]map[AppProtectionItem]AppProtectionObject
+	appProtectionLeases        map[string]appProtectionLease
+	appProtectionHealthProbeAt map[string]time.Time
+	// platformProbeWakes mirror platform_probe_wakes (ADR-20261116120000).
+	platformProbeWakes          []PlatformProbeWake
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
@@ -714,6 +725,9 @@ type MemStore struct {
 	// buildCoalescedWith maps a deferred build to the identical build it waits
 	// for (builds.coalesced_with, ADR-20261102100000).
 	buildCoalescedWith map[string]string
+	// buildPreemptions counts the times borrowed builder slots gave a build
+	// back to the queue (builds.preemptions, ADR-20261118154632).
+	buildPreemptions map[string]int
 	// ADR-740 developer live patches; allocated on first use.
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
@@ -1115,6 +1129,9 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appTaskNetworks mirrors app_task_networks (ADR-20261118070000), keyed
+	// by task id; created on first use.
+	appTaskNetworks map[string]appTaskNetwork
 	// appTaskCapacityWaits mirrors app_tasks.capacity_wait_started_at.
 	appTaskCapacityWaits map[string]time.Time
 	// releaseOutcomeChecks mirrors release_outcome_checks (ADR-1448
@@ -1172,6 +1189,8 @@ type MemStore struct {
 	oauthLinks map[string]OAuthLink
 	// accountFlow holds email changes and display names (account_flow.go).
 	accountFlow memAccountFlow
+	// supportGrants holds customer-granted support access (support_grants.go).
+	supportGrants memSupportGrants
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -1861,6 +1880,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		// Starts empty; CreateBuildProvenance fills it.
 		buildProvenance:    map[string]BuildProvenance{},
 		buildCoalescedWith: map[string]string{},
+		buildPreemptions:   map[string]int{},
 		// issue #72 / ADR-125: mirror-rules and mirror-results
 		// stores. Empty until the first create; the per-app count
 		// in CreateMirrorRuleIfUnderQuota walks the map.
@@ -7864,6 +7884,25 @@ func (m *MemStore) ClaimAppDeletion(_ context.Context, id string) error {
 	}
 	m.appDeletionClaims[id] = struct{}{}
 	return nil
+}
+
+func (m *MemStore) EndAppDeleteGrace(_ context.Context, id string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok || a.Status != AppDeleted || a.DeleteGraceUntil == nil {
+		return App{}, ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return App{}, ErrConflict
+		}
+	}
+	if now := time.Now(); a.DeleteGraceUntil.After(now) {
+		a.DeleteGraceUntil = &now
+		m.apps[id] = a
+	}
+	return a, nil
 }
 
 func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
@@ -20654,7 +20693,7 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 }
 
 // AppendNetworkUsageObservationExcludingInternal mirrors PgStore (billing
-// review R8-2). MemStore keeps no gateway service reply queue.
+// review R8-2).
 func (m *MemStore) AppendNetworkUsageObservationExcludingInternal(_ context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internalCumulative int64) (int64, int64, int64, error) {
 	if internalCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
@@ -20684,6 +20723,7 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 
 	billingAccountID := m.usage[usageIndex].AccountID
 	checkpoint := m.networkUsageCheckpoints[instanceID]
+	previousTxValid := checkpoint.netTxValid
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
 		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
@@ -20709,7 +20749,7 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 	if internal != nil {
 		var nextPending int64
 		excluded, nextPending = internalEgressStep(checkpoint.internalTx, checkpoint.internalTxValid,
-			checkpoint.internalTxPending, 0, *internal, netTxDelta)
+			previousTxValid, checkpoint.internalTxPending, *internal, netTxDelta)
 		netTxDelta -= excluded
 		checkpoint.internalTx = *internal
 		checkpoint.internalTxValid = true
@@ -25326,6 +25366,21 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, record := range m.toolPublications {
 		if record.AccountID == id {
 			delete(m.toolPublications, key)
+		}
+	}
+	for key, row := range m.hostedTaskSourceIntents {
+		if row.Record.AccountID == id {
+			delete(m.hostedTaskSourceIntents, key)
+		}
+	}
+	for key, record := range m.hostedTaskBindings {
+		if record.Public.AccountID == id {
+			delete(m.hostedTaskBindings, key)
+		}
+	}
+	for key, record := range m.hostedTaskRehearsals {
+		if record.Plan.AccountID == id {
+			delete(m.hostedTaskRehearsals, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

@@ -51,3 +51,26 @@ credentials; native API behavior is covered separately by the integration fixtur
 Live acceptance still requires releasing the bridge and retrying Antigravity
 after any active sign-in rate-limit window. A local fixture is not evidence of
 a production release or a completed user connection.
+
+## Native approval follow-up (2026-11-17)
+
+The native `/cli-auth` approval is another form boundary: the console POST
+returns to `https://api.<platform>/mcp/oauth/continue`. Leaving a 303 on this
+leg still blocks the connection under the console's `form-action 'self'`.
+Chromium reproduced this with the native template and policy: the server
+received the POST, but the cross-origin continuation was never requested.
+
+Apply the same HTML-document handoff after the native code is claimed. The
+destination still comes exclusively from the configured platform domain.
+Explicit HTML requests receive a meta refresh and fallback link; other clients
+retain the 303. The native nonce CSP is unchanged, and the document is uncached
+and suppresses its referrer. CSRF, recent sign-in, scope binding and single-use
+claims run before rendering this document.
+
+The native MCP approval also shows the signed-in account, requested access,
+credential lifetime and remaining review step separately. Optional project
+selection uses a bounded list; its existing unchecked-means-all behavior is
+stated before approval. Connection codes move into details because this flow
+does not require copying them. CLI code-entry and loopback warnings retain
+their existing behavior. Used MCP codes direct the person back to their agent,
+without asserting that an earlier approval never happened.

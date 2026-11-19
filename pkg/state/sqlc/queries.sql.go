@@ -7208,6 +7208,21 @@ WITH candidate AS (
             AND notification_outbox_target_node(channel, payload) IN ('', $4::text)))
       AND ((state = 'pending' AND available_at <= now()) OR
            (state = 'processing' AND lease_until <= clock_timestamp()))
+      -- With app_owner set, an app_wake or runtime_config_restart row is
+      -- claimable only by the schedd that owns its app (an app with no node
+      -- is anyone's; a row whose app id is unreadable or gone is left to the
+      -- handler). Without it a peer claimed the row and deferred it, and the
+      -- owner could lose every replay (production 2026-11-16).
+      AND ($5::text = '' OR channel NOT IN ('app_wake', 'runtime_config_restart') OR
+           NOT EXISTS (
+             SELECT 1 FROM apps a
+             -- Nested CASE fixes the evaluation order: a poison payload must
+             -- not fail every claim.
+             WHERE a.id = CASE WHEN pg_input_is_valid(payload, 'jsonb') THEN
+                            CASE WHEN pg_input_is_valid(payload::jsonb ->> 'app_id', 'uuid')
+                                 THEN (payload::jsonb ->> 'app_id')::uuid END END
+               AND a.node_id IS NOT NULL
+               AND a.node_id::text <> $5::text))
     ORDER BY id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -7227,6 +7242,7 @@ type ClaimNotificationForNodeParams struct {
 	LeaseMilliseconds int64
 	Channels          []string
 	NodeID            string
+	AppOwner          string
 }
 
 type ClaimNotificationForNodeRow struct {
@@ -7243,6 +7259,7 @@ func (q *Queries) ClaimNotificationForNode(ctx context.Context, db DBTX, arg Cla
 		arg.LeaseMilliseconds,
 		arg.Channels,
 		arg.NodeID,
+		arg.AppOwner,
 	)
 	var i ClaimNotificationForNodeRow
 	err := row.Scan(
@@ -57232,6 +57249,9 @@ SELECT c.id, c.account_id, c.app_id, c.name, c.method, c.path, c.expected_status
  (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
 FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
 WHERE c.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal'
+  AND NOT EXISTS (SELECT 1 FROM app_protection_objects o
+                   WHERE o.app_id = c.app_id AND o.item = 'health_check'
+                     AND o.status = 'created' AND o.object_id = c.id::text)
 ORDER BY c.id
 `
 
@@ -57256,6 +57276,8 @@ type ListRunnableSyntheticChecksRow struct {
 // Every enabled check on a live public app, with its app slug and last run
 // time; the runner decides which are due. The public edge does not serve an
 // internal app, so its checks wait until it is public (ADR-20261031144636).
+// A protection-baseline health check is probed by apid, unbilled, not here
+// (ADR-20261116120000 §3).
 func (q *Queries) ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error) {
 	rows, err := db.Query(ctx, listRunnableSyntheticChecks)
 	if err != nil {
@@ -68475,6 +68497,44 @@ func (q *Queries) NotificationClaimAttempts(ctx context.Context, db DBTX, arg No
 	var attempts int32
 	err := row.Scan(&attempts)
 	return attempts, err
+}
+
+const notificationOutboxBacklog = `-- name: NotificationOutboxBacklog :many
+SELECT channel, count(*)::bigint AS undelivered,
+       COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(created_at))), 0)::double precision AS oldest_seconds
+FROM notification_outbox
+WHERE state IN ('pending', 'processing')
+GROUP BY channel
+ORDER BY channel
+`
+
+type NotificationOutboxBacklogRow struct {
+	Channel       string
+	Undelivered   int64
+	OldestSeconds float64
+}
+
+// Undelivered durable handoffs per channel: how many, and the age of the
+// oldest. The claim indexes cover exactly these states, so this reads only the
+// live backlog, never the retained history.
+func (q *Queries) NotificationOutboxBacklog(ctx context.Context, db DBTX) ([]NotificationOutboxBacklogRow, error) {
+	rows, err := db.Query(ctx, notificationOutboxBacklog)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationOutboxBacklogRow{}
+	for rows.Next() {
+		var i NotificationOutboxBacklogRow
+		if err := rows.Scan(&i.Channel, &i.Undelivered, &i.OldestSeconds); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const notifyAlertRollbackTraffic = `-- name: NotifyAlertRollbackTraffic :exec
@@ -82924,12 +82984,13 @@ WITH previous AS (
  AND payload::jsonb->>'wake_id'=$2::text
  ORDER BY (state IN ('pending','processing')) DESC,id DESC LIMIT 1 FOR UPDATE
 ), retried AS (
- UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp(),
+ UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp()+make_interval(secs=>$3::double precision),
  claimed_by=NULL,claimed_at=NULL,lease_until=NULL,delivered_at=NULL,last_error=NULL
  WHERE id IN (SELECT id FROM previous) AND state IN ('delivered','dead_letter') RETURNING id,payload
 ), inserted AS (
- INSERT INTO notification_outbox(channel,payload)
- SELECT 'runtime_config_restart',json_build_object('app_id',$1::text,'wake_id',$2::text)::text
+ INSERT INTO notification_outbox(channel,payload,available_at)
+ SELECT 'runtime_config_restart',json_build_object('app_id',$1::text,'wake_id',$2::text)::text,
+ clock_timestamp()+make_interval(secs=>$3::double precision)
  WHERE NOT EXISTS (SELECT 1 FROM previous) RETURNING id,payload
 )
 SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbox_id',id,'_notification_payload',payload)::text)
@@ -82937,14 +82998,21 @@ SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbo
 `
 
 type QueueManagedPostgresRotationRefreshParams struct {
-	AppID  string
-	WakeID string
+	AppID            string
+	WakeID           string
+	WakeDelaySeconds float64
 }
 
 // App and binding locks serialize publication, retries and old-worker repair.
 // Replay terminal handoffs under the same wake ID until retirement is proven.
+// Like every runtime_config_restart, the row opens to replay only after the
+// wake delay: every schedd's replay worker polls the outbox, and a row that
+// opened at once could be claimed by a peer before the app's owner claimed the
+// live notification. The owner's claim then found the row leased, and the
+// peer's deferral returned it to a replay the owner never won (production
+// 2026-11-16: a credential rotation's restart stayed pending for hours).
 func (q *Queries) QueueManagedPostgresRotationRefresh(ctx context.Context, db DBTX, arg QueueManagedPostgresRotationRefreshParams) error {
-	_, err := db.Exec(ctx, queueManagedPostgresRotationRefresh, arg.AppID, arg.WakeID)
+	_, err := db.Exec(ctx, queueManagedPostgresRotationRefresh, arg.AppID, arg.WakeID, arg.WakeDelaySeconds)
 	return err
 }
 

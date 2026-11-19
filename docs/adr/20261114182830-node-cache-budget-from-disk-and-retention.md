@@ -118,3 +118,43 @@ form one eviction unit, aged by the newest of them, evicted whole and only
 whole; a pinned or protected member keeps the whole capture. The app and
 sidecar layers of deployments with a non-stale snapshot (keyed as fan-out
 claims them) join the live captures in the last tier and are never swept.
+
+## Amendment 1 — The lv-fc warn sits above the cache's floor (2026-11-16)
+
+**Problem.** Spec §12 warns when `lv_fc_used_pct` passes 80%. With decision 1
+a node's artifact cache fills `/srv/fc` to the disk less the 15% reserve and
+evicts to defend it, so a healthy node with a full cache reads about 85% and
+`FaasLvFcUsageHighWarn` fires on it permanently. On 2026-11-16 both
+production nodes read 80–82%, still filling toward that point (fsn-3 rose
+from 55% in a week), with eviction working.
+
+**Decision.** `FaasLvFcUsageHighWarn` fires above 87% (for 10 minutes): past
+the floor, where eviction is not keeping up or something outside the cache
+fills the disk. The page stays at 90%, which is also where imaged's
+budget-pressure GC starts (`api.SnapshotBudgetAlarmPct`). Spec §12's 80% warn
+reads 87% for a disk the artifact cache shares. The constant is tied to
+`api.ArtifactCacheReservePercent`; a change to the reserve moves it.
+
+**Operator step done.** `FAAS_STORAGE_CACHE_MAX_BYTES` was removed from
+`/etc/faas/storage.env` on both production compute nodes on 2026-11-16
+(backup `storage.env.bak-20261116-cachecap`); it takes effect as each daemon
+restarts. Before that, with 21 GB free, vmmd evicted 114 snapshot replicas from
+compute-2's cache in 24 hours.
+
+
+## Amendment 2026-11-17: vmmd alone evicts what it ranks
+
+vmmd, schedd, imaged and builderd all open the compute node's cache
+directory, but only vmmd ranks entries (the tiers come from its fan-out).
+With the 48 GiB cap back on production-us from 2026-11-16 00:00 to the
+rc.349 restart on 2026-11-17 13:07 UTC, the others' oldest-first eviction
+deleted live app layers, and fan-out retired about 80 replicas for it.
+
+Decision: vmmd holds an advisory lock on `.eviction-owner` in the cache root
+while it runs. While the lock is held, another process using the directory
+never evicts a snapshot capture (`snap/`) or an app layer (`apps/`,
+`layers/`); it can still free bases, kernels and scans, so builderd's
+pre-build reclaim keeps working. vmmd enforces the budget and the free-space
+floor on every node cache sweep, not only on its own writes. Without vmmd
+(a control-plane node) every process evicts as before, and the kernel
+releases the lock when vmmd exits.

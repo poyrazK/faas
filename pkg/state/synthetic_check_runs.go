@@ -143,8 +143,13 @@ func (m *MemStore) ListRunnableSyntheticChecks(_ context.Context) ([]RunnableSyn
 		if !ok || app.Status == AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			continue
 		}
+		baseline := m.appProtectionObjects[appID][AppProtectionHealthCheck]
 		for _, c := range checks {
 			if !c.Enabled {
+				continue
+			}
+			if baseline.Status == AppProtectionObjectCreated && baseline.ObjectID == c.ID {
+				// Probed by apid, unbilled (ADR-20261116120000 §3).
 				continue
 			}
 			r := RunnableSyntheticCheck{SyntheticCheck: c, AppSlug: app.Slug}

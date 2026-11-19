@@ -11,7 +11,7 @@ T = TypeVar("T", bound="FlagExperimentArm")
 
 @_attrs_define
 class FlagExperimentArm:
-    """One variant's exposed and converted customers."""
+    """One variant's exposed customers; rate is the conversion rate, or the mean value per customer for mean metrics."""
 
     variant: str
     exposed: int

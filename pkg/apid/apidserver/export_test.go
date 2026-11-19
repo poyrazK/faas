@@ -17,6 +17,7 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"io"
 	"log/slog"
@@ -928,6 +929,9 @@ func (r *appSecretCredentialSink) Identities() *func() []*age.X25519Identity { r
 func (r *appSecretCredentialSink) Probe() *func(context.Context, string, managedpostgres.CredentialAccess, int) error {
 	return &r.probe
 }
+func (r *appSecretCredentialSink) CutoverProbe() *func(context.Context, managedpostgres.Cutover, managedpostgres.CutoverCredential, managedpostgres.Database) error {
+	return &r.cutoverProbe
+}
 
 // Members of auditor
 func (r *auditor) CloseSignal() *chan struct{}    { return &r.closeSignal }
@@ -1378,6 +1382,13 @@ func (r *server) GetQueueBindingStatus(p0 http.ResponseWriter, p1 *http.Request,
 func (r *server) HandleBillingEventWithOptions(p0 context.Context, p1 billing.Event, p2 state.Account, p3 bool) error {
 	return r.handleBillingEventWithOptions(p0, p1, p2, p3)
 }
+
+// SetPrivateExecutorForTest supplies fixture keys and a catalog dialer before
+// the production route table binds its handlers.
+func (r *server) SetPrivateExecutorForTest(executor *toolregistry.PrivateExecutor) {
+	r.privateToolsOnce.Do(func() { r.privateTools = executor })
+}
+
 func (r *server) Handler() http.Handler { return r.handler() }
 
 func (r *server) ConfigureMailOutbox(ctx context.Context, pool *pgxpool.Pool, getenv func(string) string) error {
@@ -2357,6 +2368,15 @@ func CapabilitiesWithInstallationGates(crashSnapshots, forks, profiling bool) *h
 	return recorder
 }
 
+// CapabilitiesWithRuntimeGates runs GET /v1/capabilities for a Pro account
+// with the app-task API and the TCP/UDP listener gates set; no managed
+// PostgreSQL bindings are configured.
+func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAppTaskAPIEnabled(appTasks).WithListenersEnabled(tcp, udp).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
 func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
@@ -2369,6 +2389,13 @@ var ReleasePhaseEnabledFromEnv = releasePhaseEnabledFromEnv
 var MintMCPAuthCodeForTest = mintMCPAuthCode
 var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
 var MCPCodeScopesForTest = mcpCodeScopes
+
+var NewCLIAuthTestServerForTest = newCliAuthTestServer
+var RenderCLIAuthForTestAs = renderCliAuthForTestAs
+
+func (h *cliAuthTestServer) SessionCookieForTest(csrf string) *http.Cookie {
+	return &http.Cookie{Name: sessionCookie, Value: h.sessionCookies[csrf]}
+}
 
 var ALookupFunc = &aLookupFunc
 var AAAALookupFunc = &aaaaLookupFunc

@@ -17,6 +17,10 @@ import shlex
 import subprocess
 import tempfile
 
+import post_deployment_diagnostics as diagnostics
+from post_deployment_builds import (
+    ROLES, fit_runtime_builds, project_runtime_builds, runtime_build_summary, unknown_builds,
+)
 
 SCOPE = "post_deployment_monitoring"
 CHECKS = ("serving_probes", "notification_pipeline", "notification_receivers")
@@ -104,12 +108,24 @@ def report_valid(report, release, after, code):
     return isinstance(report.get("had_confirmed_faults"), bool) and isinstance(report.get("attempts"), int)
 
 
-def collect(release, after, token, host, key):
+def collect(release, after, token, host, key, expected_role="", runtime_diagnostics=""):
+    if expected_role not in ("", *ROLES):
+        return None, "invalid_expected_role", 3
+    selection = None
+    if runtime_diagnostics:
+        try:
+            selection = diagnostics.parse(expected_role,runtime_diagnostics)
+        except (ValueError, TypeError, AttributeError):
+            return None, "invalid_runtime_diagnostics", 3
     # Both active-pointer reads are read-only. Pin the binary path as well so
     # an overlapping rollout cannot silently change the verifier implementation.
     expected = "/opt/faas/releases/" + release
     args = ["env", "FAAS_APID_URL=http://127.0.0.1:8080", expected + "/bin/gregalectl", "obs", "verify-deployment", "--release", release,
             "--after", after, "--token-stdin", "--json"]
+    if expected_role:
+        args += ["--expected-role", expected_role]
+    if selection is not None:
+        args += ["--runtime-diagnostics", diagnostics.query_value(selection)]
     pointer = 'test "$(readlink -f /opt/faas/current)" = ' + shlex.quote(expected)
     remote = pointer + " || exit 64\n" + shlex.join(args) + "\nresult=$?\n" + pointer + ' || exit 64\nexit "$result"'
     command = ["ssh", "-T", "-i", key, "-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes",
@@ -135,6 +151,12 @@ def collect(release, after, token, host, key):
             report = json.load(output, parse_constant=reject_constant, parse_float=finite_float)
             if not report_valid(report, release, after, result.returncode):
                 return None, "invalid_verification_report", 3
+            if "runtime_builds" in report or expected_role:
+                report["runtime_builds"] = project_runtime_builds(report.get("runtime_builds"), expected_role, release, after,
+                                                                 report.get("attempts"), report.get("started_at"), selection if selection is not None else False)
+                fit_runtime_builds(report, REPORT_MAX_BYTES)
+            if len(json.dumps(report, allow_nan=False, indent=2).encode()) + 1 > REPORT_MAX_BYTES:
+                return None, "invalid_verification_report", 3
         except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
             return None, "invalid_verification_report", 3
     return report, "", result.returncode
@@ -148,6 +170,7 @@ def summarize(report):
         text += "Confirmed faults were observed during verification. Inspect the evidence artifact for their causes and any recorded recovery.\n\n"
     for check in report["checks"]:
         text += "- " + check["name"] + ": " + check["state"] + (" (" + check["reason"] + ")" if check["reason"] else "") + "\n"
+    text += runtime_build_summary(report)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as output:
@@ -165,21 +188,39 @@ def main():
         return 2
     path = Path(os.environ.get("MONITORING_REPORT", "post-deployment-monitoring.json"))
     after = boundary(os.environ.get("MONITORING_NOT_BEFORE", ""))
+    expected_role = os.environ.get("MONITORING_EXPECTED_ROLE", "")
+    runtime_diagnostics = os.environ.get("MONITORING_RUNTIME_DIAGNOSTICS", "")
+    diagnostic_selection = None
+    diagnostic_error = False
+    if runtime_diagnostics:
+        try:
+            diagnostic_selection = diagnostics.parse(expected_role,runtime_diagnostics)
+        except (ValueError,TypeError,AttributeError):
+            diagnostic_error = True
     report = fallback(release, after, "verification_not_started" if options.initialize else "verification_not_completed")
+    if expected_role:
+        reason = "verification_not_started" if options.initialize else "verification_not_completed"
+        report["runtime_builds"] = unknown_builds(reason if expected_role in ROLES else "invalid_expected_role")
+    if diagnostic_selection is not None:
+        report["runtime_builds"].update(diagnostics=diagnostic_selection,diagnostics_source="client")
     write_report(path, report)
     if options.initialize:
         return 0
     token, host = os.environ.get("MONITORING_OPERATOR_TOKEN", ""), os.environ.get("CP_HOST", "")
     key = os.environ.get("MONITORING_SSH_KEY", os.path.expanduser("~/.ssh/deploy_key"))
     code = 3
-    if after is None:
+    if expected_role not in ("", *ROLES):
+        report["reason"] = "invalid_expected_role"
+    elif diagnostic_error:
+        report["reason"] = "invalid_runtime_diagnostics"
+    elif after is None:
         report["reason"] = "rollout_boundary_unavailable"
     elif not token.strip() or len(token.encode()) > 4096 or any(char in token for char in "\r\n\x00"):
         report["reason"] = "operator_credential_unavailable"
     elif not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]{0,252}", host):
         report["reason"] = "ssh_host_unavailable"
     else:
-        result, reason, code = collect(release, after, token, host, key)
+        result, reason, code = collect(release, after, token, host, key, expected_role, runtime_diagnostics)
         if result is not None:
             report = result
         else:
@@ -187,6 +228,10 @@ def main():
     if code == 3 and report["attempts"] == 0:
         for check in report["checks"]:
             check["reason"] = report["reason"]
+        if expected_role and report.get("runtime_builds", {}).get("reason") == "verification_not_completed":
+            report["runtime_builds"] = unknown_builds(report["reason"])
+    if diagnostic_selection is not None and "diagnostics" not in report.get("runtime_builds", {}):
+        report.setdefault("runtime_builds", unknown_builds(report["reason"])).update(diagnostics=diagnostic_selection,diagnostics_source="client")
     write_report(path, report)
     summarize(report)
     return code

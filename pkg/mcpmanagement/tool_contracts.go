@@ -60,6 +60,9 @@ func toolOutputSchema(name string) map[string]any {
 }
 
 func toolSuccessSchema(name string) map[string]any {
+	if name == "gregale_verify_application_response" {
+		return applicationResponseSchema()
+	}
 	if name == "gregale_get_tool_connection" {
 		return map[string]any{"type": "object", "required": []string{"grant_id", "app", "app_id", "version", "name", "state"}, "properties": map[string]any{"grant_id": map[string]any{"type": "string"}, "app": map[string]any{"type": "string"}, "app_id": map[string]any{"type": "string"}, "version": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"}, "state": map[string]any{"type": "string", "enum": []string{"ready", "refresh_required", "refreshing", "reconnect_required"}}, "expires_at": map[string]any{"type": "string"}, "recovery_action": map[string]any{"type": "string"}}, "additionalProperties": false}
 	}
@@ -137,6 +140,18 @@ func toolSuccessSchema(name string) map[string]any {
 		props["bill_estimate_available"] = map[string]any{"type": "boolean", "const": false}
 		props["meters"] = map[string]any{"type": "array", "items": map[string]any{"type": "object", "required": []string{"meter", "coverage", "quantity", "net_millicents", "allocations"}}}
 		props["missing_bill_components"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+	case name == "gregale_search_docs":
+		required = []string{"query", "results", "retrieved_at", "next"}
+		add("string", "query", "next")
+		add("boolean", "stale")
+		props["results"] = map[string]any{"type": "array", "items": map[string]any{"type": "object", "required": []string{"page", "title", "url", "snippet"}}}
+		props["retrieved_at"] = map[string]any{"type": "string", "format": "date-time"}
+	case name == "gregale_get_docs_page":
+		required = []string{"page", "title", "url", "markdown", "headings", "retrieved_at"}
+		add("string", "page", "title", "summary", "url", "section", "markdown", "next")
+		add("boolean", "truncated", "stale")
+		props["headings"] = map[string]any{"type": "array", "items": map[string]any{"type": "object"}}
+		props["retrieved_at"] = map[string]any{"type": "string", "format": "date-time"}
 	case name == "gregale_get_app":
 		required = []string{"id", "slug", "status"}
 		add("string", "id", "slug", "type", "status", "url", "canonical_url")
@@ -157,6 +172,9 @@ func toolSuccessSchema(name string) map[string]any {
 func toolIdempotent(name string, readOnly bool) bool {
 	if name == "gregale_plan_task_tool_deploy" || name == "gregale_plan_task_tool_recovery" {
 		return true // Read-only reviews create no durable plan or release state.
+	}
+	if name == "gregale_prepare_uploaded_task_tool_deploy" || name == "gregale_check_uploaded_task_tool_deploy" {
+		return true
 	}
 	if name == "gregale_start_job" || name == "gregale_cancel_job_run" {
 		return true // Caller-stable dispatch key, or native repeat-safe cancellation.

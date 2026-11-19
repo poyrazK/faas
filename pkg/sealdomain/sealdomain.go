@@ -208,6 +208,7 @@ var registry = []Spec{
 		cols("accounts", "mfa_secret_encrypted"),
 		cols("tool_oauth_connections", "credentials_ciphertext"),
 		cols("tool_oauth_authorizations", "flow_ciphertext"),
+		cols("hosted_task_source_intents", "ciphertext"),
 		// apid seals a managed workflow's plan and its workflow worker
 		// opens it; schedd never reads it.
 		cols("agent_execution_workflows", "sealed_plan"),

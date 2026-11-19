@@ -329,6 +329,14 @@ cgroups:
   slice: faas-cp.slice
   controllers: "memory,cpu,io,pids"
 
+# Control-plane artifact signer (ADR-20261109170000,
+# docs/runbooks/artifact-signer-rollout.md step 2): signd on the control plane
+# signs app layers and compute imaged signs through it. Needs the fleet
+# sign.key at /etc/faas/secrets/sign.key on the control plane first.
+# retire_compute_key (step 4) stays off until the full resign is clean.
+artifact_signer:
+  enabled: true
+
 # Workload-identity tokens for queue workers (ADR-1141). Off until an
 # operator runs `gregalectl workload-identity init --out DIR` on the
 # controller and uncomments this with that DIR; converge the control plane

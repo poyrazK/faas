@@ -3072,15 +3072,16 @@ func envBuilderBase(t *testing.T) string {
 // because they don't tag themselves 'faas-builderd'. Avoids the stderr-polling
 // race against startProc's bytes.Buffer (which the stop() path owns
 // exclusively).
+//
+// pg_stat_activity spans the whole cluster, and every e2e test shares it, so
+// the probe counts only sessions on the harness's own database (see
+// sessionListens).
 func (h *Harness) waitBuilderdListens(d time.Duration) error {
 	h.T.Helper()
 	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		var ready bool
-		if err := h.Pool.QueryRow(context.Background(),
-			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = 'faas-builderd')`,
-		).Scan(&ready); err == nil && ready {
+		if ready, err := sessionConnected(context.Background(), h.Pool, "faas-builderd"); err == nil && ready {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -3097,46 +3098,124 @@ func (h *Harness) waitBuilderdListens(d time.Duration) error {
 // Without a label, the email is "e2e+<plan>@test.example" — one account per
 // plan per run. With a label, the email is "e2e+<plan>+<label>@test.example"
 // so each call produces a distinct account.
-// waitImagedListens waits until imaged subscribes to deployment_changed. Its
-// process being up is not enough: it stages bases before it subscribes, and a
-// notify sent before the subscription is lost — imaged's sweep only revisits
-// deployments older than staleDeploymentThreshold (2h).
+// waitImagedListens waits until imaged holds a LISTEN session. Its process
+// being up is not enough: it stages bases before it subscribes, and a notify
+// sent before the subscription is lost — imaged's sweep only revisits
+// deployments older than staleDeploymentThreshold (2h). A session named
+// faas-imaged-direct whose last statement is a LISTEN proves imaged keeps
+// that session off its ordinary query pool.
 //
-// A LISTEN in pg_stat_activity does not prove it either. imaged shares one
-// LISTEN backend between all its subscribers (pkg/db notify hub), and an
-// early one makes that backend show LISTEN within milliseconds while the
-// deploy loop is still minutes from subscribing. The managed Redis metal runs
-// of 2026-11-17 reported "subscribed after 203ms", imaged then staged bases
-// for 4.5 minutes, and the fixture's deployment, posted in between, stayed
-// pending. Loop.Run subscribes before its first select, and that select's
-// one-shot FC sweep logs "imaged: fc sweep" on every outcome, so that line
-// is the subscription's own evidence.
-func (h *Harness) waitImagedListens(d time.Duration, out fmt.Stringer) error {
+// That session is the notify hub's one LISTEN connection (ADR-190), which an
+// earlier subscriber can open while imaged is still staging and scanning
+// bases. A LISTEN alone therefore passed 208 ms after start while imaged
+// subscribed to deployment_changed four minutes later, and the deployment the
+// test created in between stayed pending (financial-system run, 2026-11-17).
+// imaged logs "imaged ready" just before its loop subscribes, so the wait also
+// needs that line and a LISTEN issued at or after it.
+func (h *Harness) waitImagedListens(d time.Duration, imaged *exec.Cmd) error {
 	h.T.Helper()
 	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
+	var readyAt time.Time
+	var readySeen time.Time
 	for time.Now().Before(deadline) {
-		ok, err := sessionListens(context.Background(), h.Pool, "faas-imaged-direct")
-		if err == nil && ok && strings.Contains(out.String(), imagedSubscribedLog) {
-			return nil
+		if readyAt.IsZero() {
+			if at, ok := imagedReadyLogged(imaged); ok {
+				readyAt, readySeen = at, time.Now()
+			}
+		}
+		if !readyAt.IsZero() {
+			// The loop subscribes within milliseconds of the ready line. If
+			// every channel was already LISTENed by an earlier subscriber, no
+			// new LISTEN follows it; any LISTEN then suffices after a grace.
+			since := readyAt
+			if time.Since(readySeen) > 5*time.Second {
+				since = time.Time{}
+			}
+			ok, err := sessionListensSince(context.Background(), h.Pool, "faas-imaged-direct", since)
+			if err == nil && ok {
+				return nil
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("imaged did not log %q with a faas-imaged-direct LISTEN session within %s", imagedSubscribedLog, d)
+	if readyAt.IsZero() {
+		return fmt.Errorf("imaged did not log %q within %s", imagedReadyMsg, d)
+	}
+	return fmt.Errorf("no application_name='faas-imaged-direct' session holding a LISTEN in pg_stat_activity within %s", d)
 }
 
-// imagedSubscribedLog is the first line imaged's deploy loop logs after it
-// subscribes (see waitImagedListens).
-const imagedSubscribedLog = "imaged: fc sweep"
+const imagedReadyMsg = "imaged ready"
+
+// imagedReadyLogged returns the time of imaged's ready line, if logged.
+func imagedReadyLogged(cmd *exec.Cmd) (time.Time, bool) {
+	if cmd == nil {
+		return time.Time{}, false
+	}
+	out, ok := cmd.Stdout.(*safeBuffer)
+	if !ok {
+		return time.Time{}, false
+	}
+	for line := range strings.SplitSeq(out.String(), "\n") {
+		var entry struct {
+			Time time.Time `json:"time"`
+			Msg  string    `json:"msg"`
+		}
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Msg == imagedReadyMsg {
+			return entry.Time, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// sessionListensSince is sessionListens limited to a LISTEN that started at
+// or after since; a zero since accepts any.
+func sessionListensSince(ctx context.Context, pool *pgxpool.Pool, appName string, since time.Time) (bool, error) {
+	if since.IsZero() {
+		return sessionListens(ctx, pool, appName)
+	}
+	var ok bool
+	err := pool.QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM pg_stat_activity
+		    WHERE application_name = $1 AND datname = current_database()
+		      AND query ILIKE 'LISTEN %' AND query_start >= $2
+		 )`, appName, since).Scan(&ok)
+	return ok, err
+}
+
+// sessionConnected reports whether a session with the given application_name
+// is connected to pool's database; sessionListens says why the database.
+func sessionConnected(ctx context.Context, pool *pgxpool.Pool, appName string) (bool, error) {
+	var ok bool
+	err := pool.QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM pg_stat_activity
+		    WHERE application_name = $1 AND datname = current_database()
+		 )`, appName).Scan(&ok)
+	return ok, err
+}
 
 // sessionListens reports whether a session with the given application_name
-// has issued a LISTEN — the shape of a daemon's notify subscription.
+// has issued a LISTEN on pool's database — the shape of a daemon's notify
+// subscription.
+//
+// pg_stat_activity lists every session in the cluster, and all e2e tests share
+// one cluster, each on its own database cloned from the migrated template.
+// Without the datname filter, another test's imaged, or one a killed run left
+// behind, satisfied the wait: TestBuildKitSeedMetal (gregale-internal-test-1,
+// 2026-11-17 22:31Z) saw "imaged subscribed after 1.929s" while its own imaged
+// staged the builder base for another ~40 s, and the first deploy failed on the
+// stale base's scan placeholder. In schema mode (pgtest.Open without
+// FAAS_PGTEST_TEMPLATE_DATABASE) tests share a database and this filter cannot
+// tell them apart.
 func sessionListens(ctx context.Context, pool *pgxpool.Pool, appName string) (bool, error) {
 	var ok bool
 	err := pool.QueryRow(ctx,
 		`SELECT EXISTS (
 		   SELECT 1 FROM pg_stat_activity
-		    WHERE application_name = $1 AND query ILIKE 'LISTEN %'
+		    WHERE application_name = $1 AND datname = current_database()
+		      AND query ILIKE 'LISTEN %'
 		 )`, appName).Scan(&ok)
 	return ok, err
 }
@@ -3559,8 +3638,8 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// extraEnv last so a caller can override a harness default — a test
 	// that needs FAAS_STORAGE_ROOT somewhere writable, for instance.
 	env = append(env, extraEnv...)
-	imagedProc := startProc(t, bin, "imaged", env)
-	h.procs = append(h.procs, imagedProc)
+	imagedCmd := startProc(t, bin, "imaged", env)
+	h.procs = append(h.procs, imagedCmd)
 	// imaged is not ready when its process is up. It stages the builder
 	// base first — 70s on faas-acceptance-1 in smoke run 35157946150 —
 	// and only then subscribes to deployment_changed. Start used to return
@@ -3578,7 +3657,7 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	if v, err := time.ParseDuration(os.Getenv("FAAS_E2E_IMAGED_READY_TIMEOUT")); err == nil && v > ready {
 		ready = v
 	}
-	if err := h.waitImagedListens(ready, imagedProc.Stdout.(fmt.Stringer)); err != nil {
+	if err := h.waitImagedListens(ready, imagedCmd); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run

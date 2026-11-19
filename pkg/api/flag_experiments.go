@@ -28,7 +28,18 @@ type FlagEvent struct {
 	CustomerID string    `json:"customer_id"`
 	Value      int64     `json:"value,omitempty"`
 	At         time.Time `json:"at,omitempty"`
+	// Subject, Properties and Flags are product analytics (ADR
+	// 20261117084505 §1): an opaque end-user subject, stored only as a
+	// hash; up to AnalyticsEventMaxProperties string properties; and the
+	// flag decisions of the event's request, flag key to served value.
+	Subject    string            `json:"subject,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
+	Flags      map[string]string `json:"flags,omitempty"`
 }
+
+// FlagSDKTrackV2Capability marks a runtime SDK whose track() events carry
+// subjects, properties and flag decisions (ADR 20261117084505 §4).
+const FlagSDKTrackV2Capability = "track-v2"
 
 // FlagEventsRequest is POST /v1/runtime/flags/events.
 type FlagEventsRequest struct {
@@ -53,13 +64,56 @@ type FlagEventsMonth struct {
 // FlagExperimentCreateRequest creates an experiment on a variant flag's
 // weighted rule (ADR 20261115163113 §1). Start starts it at once.
 type FlagExperimentCreateRequest struct {
-	Key         string   `json:"key"`
-	Flag        string   `json:"flag"`
-	RuleID      string   `json:"rule_id"`
-	Control     string   `json:"control"`
-	MetricEvent string   `json:"metric_event"`
-	MixingLift  *float64 `json:"mixing_lift,omitempty"`
-	Start       bool     `json:"start,omitempty"`
+	Key         string `json:"key"`
+	Flag        string `json:"flag"`
+	RuleID      string `json:"rule_id"`
+	Control     string `json:"control"`
+	MetricEvent string `json:"metric_event"`
+	// MetricKind is conversion (the default) or mean (ADR 20261116190208 §2).
+	MetricKind string   `json:"metric_kind,omitempty"`
+	MixingLift *float64 `json:"mixing_lift,omitempty"`
+	// Guardrails changes the default guardrails; omitted keeps both on with
+	// their default tolerances.
+	Guardrails *FlagExperimentGuardrailsRequest `json:"guardrails,omitempty"`
+	Start      bool                             `json:"start,omitempty"`
+}
+
+// FlagExperimentGuardrailRequest turns one guardrail off or sets its
+// tolerance.
+type FlagExperimentGuardrailRequest struct {
+	Disabled    bool     `json:"disabled,omitempty"`
+	MaxIncrease *float64 `json:"max_increase,omitempty"`
+}
+
+// FlagExperimentGuardrailsRequest sets an experiment's guardrails.
+type FlagExperimentGuardrailsRequest struct {
+	ServerErrorRate *FlagExperimentGuardrailRequest `json:"server_error_rate,omitempty"`
+	P95Latency      *FlagExperimentGuardrailRequest `json:"p95_latency,omitempty"`
+}
+
+// FlagExperimentGuardrailSetting is one guardrail as configured.
+type FlagExperimentGuardrailSetting struct {
+	Enabled     bool    `json:"enabled"`
+	MaxIncrease float64 `json:"max_increase"`
+}
+
+// FlagExperimentGuardrailSettings are an experiment's guardrails.
+type FlagExperimentGuardrailSettings struct {
+	ServerErrorRate FlagExperimentGuardrailSetting `json:"server_error_rate"`
+	P95Latency      FlagExperimentGuardrailSetting `json:"p95_latency"`
+}
+
+// FlagExperimentShipRequest ships one variant to every customer of the
+// experiment's rule.
+type FlagExperimentShipRequest struct {
+	Variant string `json:"variant"`
+}
+
+// FlagExperimentShipResponse is the stopped experiment and the published
+// flag configuration version.
+type FlagExperimentShipResponse struct {
+	Experiment    FlagExperiment `json:"experiment"`
+	ConfigVersion int64          `json:"config_version"`
 }
 
 // FlagExperiment is an experiment as the API reports it.
@@ -78,7 +132,15 @@ type FlagExperiment struct {
 	StartedAt   *time.Time     `json:"started_at,omitempty"`
 	StoppedAt   *time.Time     `json:"stopped_at,omitempty"`
 	// AnalyzedUntil is the end of the request telemetry the results cover.
-	AnalyzedUntil *time.Time `json:"analyzed_until,omitempty"`
+	AnalyzedUntil *time.Time                      `json:"analyzed_until,omitempty"`
+	Guardrails    FlagExperimentGuardrailSettings `json:"guardrails"`
+	// LatencyThresholdMS is control's p95 latency, fixed once control has
+	// enough requests; the p95 guardrail compares requests slower than it.
+	LatencyThresholdMS *int `json:"latency_threshold_ms,omitempty"`
+	// StopReason is manual, guardrail_breach or shipped once stopped.
+	StopReason string `json:"stop_reason,omitempty"`
+	// Breach describes the guardrail breach that stopped the experiment.
+	Breach map[string]any `json:"breach,omitempty"`
 }
 
 // FlagExperimentList is the experiments of an environment.
@@ -86,7 +148,9 @@ type FlagExperimentList struct {
 	Experiments []FlagExperiment `json:"experiments"`
 }
 
-// FlagExperimentArm is one variant's exposed and converted customers.
+// FlagExperimentArm is one variant's exposed and converted customers. Rate
+// is the conversion rate, or the mean value per exposed customer for mean
+// metrics, where Converted counts customers with a non-zero value.
 type FlagExperimentArm struct {
 	Variant   string  `json:"variant"`
 	Exposed   int64   `json:"exposed"`
@@ -118,6 +182,54 @@ type FlagExperimentResults struct {
 	SampleRatioMismatch bool                          `json:"sample_ratio_mismatch"`
 	// CrossedUnits saw more than one variant and are left out.
 	CrossedUnits int64 `json:"crossed_units"`
+	// Guardrails compare each variant's server error rate and slow request
+	// share with control.
+	Guardrails []FlagExperimentGuardrail `json:"guardrails"`
+	// Latency is each variant's p95 latency over the experiment.
+	Latency        []FlagExperimentLatency      `json:"latency"`
+	Recommendation FlagExperimentRecommendation `json:"recommendation"`
+}
+
+// FlagExperimentGuardrail is one guardrail across the variants. Status is
+// ok, breached or insufficient_data.
+type FlagExperimentGuardrail struct {
+	Name      string                           `json:"name"`
+	Tolerance float64                          `json:"tolerance"`
+	Status    string                           `json:"status"`
+	Variants  []FlagExperimentGuardrailVariant `json:"variants"`
+}
+
+// FlagExperimentGuardrailVariant compares one variant's rate with
+// control's. Difference is variant minus control; Low and High bound it
+// with a 99% confidence sequence.
+type FlagExperimentGuardrailVariant struct {
+	Variant      string   `json:"variant"`
+	ControlRate  float64  `json:"control_rate"`
+	VariantRate  float64  `json:"variant_rate"`
+	ControlUnits int64    `json:"control_units"`
+	VariantUnits int64    `json:"variant_units"`
+	Difference   *float64 `json:"difference,omitempty"`
+	Low          *float64 `json:"low,omitempty"`
+	High         *float64 `json:"high,omitempty"`
+	Status       string   `json:"status"`
+}
+
+// FlagExperimentLatency is one variant's p95 latency, from a histogram with
+// 5% buckets.
+type FlagExperimentLatency struct {
+	Variant  string `json:"variant"`
+	Requests int64  `json:"requests"`
+	P95MS    int64  `json:"p95_ms"`
+}
+
+// FlagExperimentRecommendation says what to do with the results: action is
+// rolled_back, fix_allocation, ship_variant, keep_control, keep_running or
+// decide. Commands carry it out; Gregale never ships on its own.
+type FlagExperimentRecommendation struct {
+	Action   string   `json:"action"`
+	Variant  string   `json:"variant,omitempty"`
+	Summary  string   `json:"summary"`
+	Commands []string `json:"commands,omitempty"`
 }
 
 // FlagEventsResponse answers a runtime event batch.

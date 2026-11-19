@@ -11,11 +11,18 @@ import (
 // never satisfies require_authn or public_auth=bearer, which take the owning
 // account's API key; saying only "present it as Bearer <token>" left callers
 // who did exactly that with no way forward (prod CLI e2e 2026-11-14).
+//
+// Without a key, the detail also names the owner's way to open the app: a
+// coding agent that deployed an app and curled it got only "present a
+// bearer", then searched the CLI help for how to serve it publicly (agent
+// eval baseline 2026-11-17). --no-require-authn opens both gates that answer
+// here, require_authn and the default public_auth=bearer.
 func missingBearerDetail(tok string) string {
 	if strings.HasPrefix(tok, api.ConsumerKeyPrefix) {
 		return "this app's platform auth takes the owning account's API key (" + api.APIKeyPrefix + "…); API consumer keys (" +
 			api.ConsumerKeyPrefix + "…) do not satisfy it. To authenticate your API's callers with consumer keys, open the app's " +
 			"platform auth (gregale app <slug> --public-auth open --no-require-authn) and set --consumer-auth-mode required"
 	}
-	return "this app requires an API key; present it as `Authorization: Bearer <token>`"
+	return "this app requires an API key; present it as `Authorization: Bearer <token>`. " +
+		"To serve it without one, the app's owner runs `gregale app <slug> --no-require-authn`"
 }

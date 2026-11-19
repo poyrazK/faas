@@ -25,6 +25,8 @@ type liveCallerFixture struct {
 	ordinaryReads int
 	// instance is the row InstanceByID returns; nil answers ErrNotFound.
 	instance *state.Instance
+	// rehearsalRun is the app's rehearsal run; "" is an ordinary app.
+	rehearsalRun string
 }
 
 func (f *liveCallerFixture) InstanceByID(_ context.Context, id string) (state.Instance, error) {
@@ -36,6 +38,10 @@ func (f *liveCallerFixture) InstanceByID(_ context.Context, id string) (state.In
 
 func (f *liveCallerFixture) ResolveServiceCaller(_ context.Context, _ *vmmdpb.ResolveServiceCallerRequest, _ ...grpc.CallOption) (*vmmdpb.ResolveServiceCallerResponse, error) {
 	return f.live, f.err
+}
+
+func (f *liveCallerFixture) ScenarioRehearsalNetworkRun(context.Context, string) (string, error) {
+	return f.rehearsalRun, nil
 }
 
 func (f *liveCallerFixture) AppTaskByID(context.Context, string, string, string) (state.AppTask, error) {
@@ -147,6 +153,7 @@ func TestContainedCommandCallerRequiresExactLiveTaskAndRecorderSource(t *testing
 			f := managedLiveCallerFixture()
 			f.task.BindingVerification = nil
 			f.rows = []state.Instance{{ID: f.task.ID, AppID: f.task.AppID, DeploymentID: f.task.DeploymentID}}
+			f.rehearsalRun = "run-1"
 			test.edit(f)
 			rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
 			if err != nil || (len(rows) == 1) != test.want {
@@ -247,6 +254,37 @@ func TestBootingServiceCallerRequiresMatchingBootingRow(t *testing.T) {
 			}
 			if identity := identityForHostIP(rows, "compute-a", "10.100.0.9"); identity.appID != "caller" {
 				t.Fatalf("resolver rejected the booting caller: %+v", identity)
+			}
+		})
+	}
+}
+
+// An ordinary `app exec` task calls its app's services as its app; a task of
+// an app inside a rehearsal run, a stale task or a reused address does not.
+func TestExecTaskCallerActsAsItsApp(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(*liveCallerFixture)
+		want bool
+	}{
+		{"ordinary exec task", func(*liveCallerFixture) {}, true},
+		{"rehearsal app", func(f *liveCallerFixture) { f.rehearsalRun = "run-1" }, false},
+		{"stale serving row on the address", func(f *liveCallerFixture) { f.rows = []state.Instance{{ID: "other", AppID: "other"}} }, false},
+		{"task not running", func(f *liveCallerFixture) { f.task.Status = state.AppTaskSucceeded }, false},
+		{"expired lease", func(f *liveCallerFixture) { expired := time.Now().Add(-time.Second); f.task.LeaseExpiresAt = &expired }, false},
+		{"vmmd names another app", func(f *liveCallerFixture) { f.live.AppId = "other" }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := managedLiveCallerFixture()
+			f.task.BindingVerification = nil
+			f.rows = nil
+			test.edit(f)
+			rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
+			if err != nil || (len(rows) == 1) != test.want {
+				t.Fatalf("exec caller = %+v, %v", rows, err)
+			}
+			if test.want && (rows[0].AppID != f.task.AppID || rows[0].DeploymentID != f.task.DeploymentID) {
+				t.Fatalf("exec caller identity = %+v, want the task's app", rows[0])
 			}
 		})
 	}

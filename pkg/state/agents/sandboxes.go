@@ -63,6 +63,13 @@ type Sandbox struct {
 	// ImageRef is the seller image the session boots, normalized; empty for
 	// a preset.
 	ImageRef string
+	// Browser is a session created with the sandbox browser running
+	// (ADR-20261116182615 §1).
+	Browser bool
+	// EgressAllow and EgressDeny are the web-mode domain policy the session
+	// was admitted under (ADR-20261117091026 §2); empty is none.
+	EgressAllow []string
+	EgressDeny  []string
 }
 
 // SandboxAdmission is a session to admit. QueuedMax is the plan's
@@ -89,8 +96,16 @@ type SandboxAdmission struct {
 	// TemplateID boots the session from a sandbox template's newest
 	// finished build; ImageRef is then template:<name>.
 	TemplateID string
+	// Browser boots the session with the sandbox browser running.
+	Browser bool
+	// Task makes the session a sandbox task (ADR-20261116182615 §3).
+	Task *SandboxTask
 	// Ports are exposed with the session (ExposeSandboxPort's rows).
 	Ports []SandboxPort
+	// EgressAllow and EgressDeny are the session's effective web-mode domain
+	// policy (ADR-20261117091026 §2), fixed at admission.
+	EgressAllow []string
+	EgressDeny  []string
 }
 
 // SandboxFilter narrows a session listing. Before pages backwards from a
@@ -109,47 +124,58 @@ func (s *Store) CreateSandbox(ctx context.Context, a SandboxAdmission) (Sandbox,
 	}
 	var id string
 	err = s.locked(ctx, a.AccountID, func(tx pgx.Tx) error {
-		if err := s.checkTenant(ctx, tx, a.AccountID, a.TenantID); err != nil {
-			return err
-		}
-		if a.WorkspaceSnapshotID != "" {
-			if err := s.usableSnapshot(ctx, tx, a.AccountID, a.WorkspaceSnapshotID); err != nil {
-				return err
-			}
-		}
-		runs, err := s.q.CountQueuedAgentRuns(ctx, tx, a.AccountID)
-		if err != nil {
-			return fmt.Errorf("count queued runs: %w", err)
-		}
-		sessions, err := s.q.CountQueuedSandboxSessions(ctx, tx, a.AccountID)
-		if err != nil {
-			return fmt.Errorf("count queued sessions: %w", err)
-		}
-		if queued := int(runs + sessions); queued >= a.QueuedMax {
-			return &LimitError{Limit: "AgentRunQueuedPerAccount", Max: a.QueuedMax, Observed: queued}
-		}
-		id, err = s.q.InsertSandboxSession(ctx, tx, sqlc.InsertSandboxSessionParams{AccountID: a.AccountID, TenantID: optText(a.TenantID),
-			Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
-			ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID),
-			ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID)})
-		if err != nil {
-			return fmt.Errorf("insert sandbox session: %w", err)
-		}
-		for _, p := range a.Ports {
-			if p.Port < 1 || p.Port > 65535 || (p.Visibility != SandboxPortPrivate && p.Visibility != SandboxPortPublic) {
-				return fmt.Errorf("insert sandbox session: invalid port %d or visibility %q", p.Port, p.Visibility)
-			}
-			if _, err := s.q.UpsertSandboxPort(ctx, tx, sqlc.UpsertSandboxPortParams{SandboxID: id, AccountID: a.AccountID,
-				Port: int32(p.Port), Visibility: p.Visibility}); err != nil {
-				return fmt.Errorf("insert sandbox port: %w", err)
-			}
-		}
-		return nil
+		id, err = s.insertSandbox(ctx, tx, a, labels)
+		return err
 	})
 	if err != nil {
 		return Sandbox{}, err
 	}
 	return s.Sandbox(ctx, a.AccountID, id)
+}
+
+// insertSandbox admits a session within the account's lock.
+func (s *Store) insertSandbox(ctx context.Context, tx pgx.Tx, a SandboxAdmission, labels []byte) (string, error) {
+	if err := s.checkTenant(ctx, tx, a.AccountID, a.TenantID); err != nil {
+		return "", err
+	}
+	if a.WorkspaceSnapshotID != "" {
+		if err := s.usableSnapshot(ctx, tx, a.AccountID, a.WorkspaceSnapshotID); err != nil {
+			return "", err
+		}
+	}
+	runs, err := s.q.CountQueuedAgentRuns(ctx, tx, a.AccountID)
+	if err != nil {
+		return "", fmt.Errorf("count queued runs: %w", err)
+	}
+	sessions, err := s.q.CountQueuedSandboxSessions(ctx, tx, a.AccountID)
+	if err != nil {
+		return "", fmt.Errorf("count queued sessions: %w", err)
+	}
+	if queued := int(runs + sessions); queued >= a.QueuedMax {
+		return "", &LimitError{Limit: "AgentRunQueuedPerAccount", Max: a.QueuedMax, Observed: queued}
+	}
+	params := sqlc.InsertSandboxSessionParams{AccountID: a.AccountID, TenantID: optText(a.TenantID),
+		Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
+		ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID),
+		ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID), Browser: a.Browser,
+		EgressAllow: optRules(a.EgressAllow), EgressDeny: optRules(a.EgressDeny)}
+	if a.Task != nil {
+		params.TaskKind, params.TaskUrl, params.TaskMaxChars = optText(a.Task.Kind), optText(a.Task.URL), optInt(a.Task.MaxChars)
+	}
+	id, err := s.q.InsertSandboxSession(ctx, tx, params)
+	if err != nil {
+		return "", fmt.Errorf("insert sandbox session: %w", err)
+	}
+	for _, p := range a.Ports {
+		if p.Port < 1 || p.Port > 65535 || (p.Visibility != SandboxPortPrivate && p.Visibility != SandboxPortPublic) {
+			return "", fmt.Errorf("insert sandbox session: invalid port %d or visibility %q", p.Port, p.Visibility)
+		}
+		if _, err := s.q.UpsertSandboxPort(ctx, tx, sqlc.UpsertSandboxPortParams{SandboxID: id, AccountID: a.AccountID,
+			Port: int32(p.Port), Visibility: p.Visibility}); err != nil {
+			return "", fmt.Errorf("insert sandbox port: %w", err)
+		}
+	}
+	return id, nil
 }
 
 // checkTenant requires an active platform tenant of the account; no tenant
@@ -251,7 +277,8 @@ func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 		ExpiresAt: row.ExpiresAt.Time.UTC(), OutcomeCode: row.OutcomeCode.String, OutcomeMessage: row.OutcomeMessage.String,
 		CloseRequestedAt: optTime(row.CloseRequestedAt), LastActivityAt: row.LastActivityAt.Time.UTC(),
 		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(), ClosedAt: optTime(row.ClosedAt),
-		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef}
+		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef, Browser: row.Browser,
+		EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny}
 	if err := json.Unmarshal(row.Labels, &sb.Labels); err != nil {
 		return Sandbox{}, fmt.Errorf("decode sandbox labels: %w", err)
 	}
@@ -263,4 +290,50 @@ func nonNilLabels(labels map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return labels
+}
+
+// optRules is a policy list as stored: NULL when empty, so a session
+// without a policy reads as one.
+func optRules(rules []string) []string {
+	if len(rules) == 0 {
+		return nil
+	}
+	return rules
+}
+
+// SandboxEgressPolicy is an account's default web-mode domain policy
+// (ADR-20261117091026 §2).
+type SandboxEgressPolicy struct {
+	Allow     []string
+	Deny      []string
+	UpdatedAt time.Time
+}
+
+// SandboxEgressPolicy reads the account's default policy; an account without
+// one has the empty policy.
+func (s *Store) SandboxEgressPolicy(ctx context.Context, accountID string) (SandboxEgressPolicy, error) {
+	row, err := s.q.GetSandboxEgressPolicy(ctx, s.pool, accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SandboxEgressPolicy{Allow: []string{}, Deny: []string{}}, nil
+	}
+	if err != nil {
+		return SandboxEgressPolicy{}, fmt.Errorf("read sandbox egress policy: %w", err)
+	}
+	return SandboxEgressPolicy{Allow: row.AllowRules, Deny: row.DenyRules, UpdatedAt: row.UpdatedAt.Time.UTC()}, nil
+}
+
+// PutSandboxEgressPolicy replaces the account's default policy. Sessions
+// already admitted keep theirs.
+func (s *Store) PutSandboxEgressPolicy(ctx context.Context, accountID string, allow, deny []string) (SandboxEgressPolicy, error) {
+	if allow == nil {
+		allow = []string{}
+	}
+	if deny == nil {
+		deny = []string{}
+	}
+	row, err := s.q.PutSandboxEgressPolicy(ctx, s.pool, sqlc.PutSandboxEgressPolicyParams{AccountID: accountID, AllowRules: allow, DenyRules: deny})
+	if err != nil {
+		return SandboxEgressPolicy{}, fmt.Errorf("put sandbox egress policy: %w", err)
+	}
+	return SandboxEgressPolicy{Allow: row.AllowRules, Deny: row.DenyRules, UpdatedAt: row.UpdatedAt.Time.UTC()}, nil
 }

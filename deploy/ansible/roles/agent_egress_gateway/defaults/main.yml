@@ -1,0 +1,44 @@
+---
+# ADR-20261117185346: the agent egress gateway half. The manifest generator
+# sets these on the agent_egress_gateway inventory host when
+# egress.agent_gateway is declared. It may be the tenant gateway's host: the
+# interface, key, firewall table and public addresses are all its own.
+faas_agent_egress_iface: wg-agent
+faas_agent_egress_gateway_public_key: ''
+faas_agent_egress_tunnel_cidr: ''
+faas_agent_egress_listen_port: 51821
+# The public addresses agent traffic leaves from. The operator assigns them
+# to the public NIC; the role checks they are there and never adds them.
+faas_agent_egress_addresses: []
+faas_agent_egress_gateway_public_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
+faas_agent_egress_mtu: 1420
+
+# agentproxyd, the politeness proxy (ADR-20261117185346 §4). The manifest
+# generator sets faas_agentproxyd_enabled from egress.agent_gateway.proxy.
+# Off, the gateway forwards agent traffic directly and nodes register
+# nothing.
+faas_agentproxyd_enabled: false
+faas_agentproxyd_registration_port: 15081
+# Where nftables redirects agent TCP 80 and 443, on the gateway's tunnel
+# address.
+faas_agentproxyd_http_port: 15080
+faas_agentproxyd_tls_port: 15443
+faas_agentproxyd_metrics_listen: 127.0.0.1:9473
+# The connection log (ADR-20261117185346 §5) lives in agentproxyd's own
+# journal namespace on the gateway, so the host's 7-day journal bound does
+# not cut it short: abuse desks report days to weeks after the traffic.
+# 30 days matches the egress flow log (ADR-371). One line is ~400 bytes;
+# 4 GiB holds ~10 million connections.
+faas_agentproxyd_log_retention: 30day
+faas_agentproxyd_log_max_use: 4G
+faas_agentproxyd_log_keep_free: 2G
+faas_agent_egress_node_prefix: 22
+
+# Release carrying agentproxyd. Paths on the Ansible controller: the signed
+# release tarball, its cosign bundle and the release's git SHA, as for a
+# database node. Empty keeps the release already installed.
+faas_agent_egress_release_tarball: ""
+faas_agent_egress_release_signature: ""
+faas_agent_egress_release_git_sha: ""
+# cosign binary on the controller, installed to verify the release.
+faas_agent_egress_cosign_source: ""

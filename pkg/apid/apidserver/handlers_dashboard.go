@@ -2124,6 +2124,7 @@ func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountVi
 		AppCount:                   n,
 		EmailVerified:              acct.EmailVerified(),
 		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
+		LegalNotice:                legalChangeNotice(),
 	}
 }
 
@@ -3774,7 +3775,7 @@ func (s *server) renderDomainDoctor(w http.ResponseWriter, r *http.Request, log 
 			"Gregale could not complete the domain checks right now.",
 		).WithHeader("Retry-After", "30").
 			WithHint("Wait a moment, then run the domain check again.").
-			WithDocs("https://gregale.dev/docs/domains#doctor"))
+			WithDocs("https://gregale.dev/docs/domains"))
 		return
 	}
 	view := dashboard.DomainDoctorView{

@@ -187,3 +187,45 @@ faas_sdk/models/vulnerability.py`; sdk-go is hand-curated. Open
 follow-up: persist all of `vulnerability.fix.versions[]` as a
 slice if a CVE ever carries multiple fixed versions (grype
 currently emits one fixed-version string per CVE).
+
+### Scans that gate nothing run after the snapshot handoff (2026-11-17)
+
+Decision 2 put the scan off the deploy's path; the image preparation
+pipeline (ADR-463) later ran it in front of the snapshot handoff for every
+app. In production every app was `security_policy=off`, so 631 deploys in
+three days waited for a result nothing read: 17.6 s at p50 and 42 s at p90
+of the 1,091 scans logged on both compute nodes over two days, 88% of them
+fresh Grype runs.
+
+imaged now hands the deployment to snapshot preparation first and queues
+the scan when the deploy cannot depend on it: `security_policy` is `off` or
+`warn`, the app does not require signed images, and the deployment has no
+ADR-435 runtime producer (that route requires complete evidence in every
+mode). Enforce mode, signed images and producer evidence keep the scan in
+front, unchanged; so does any doubt, such as a failed producer lookup.
+
+- The `security_scan` stage still records the gate; for a deferred scan it
+  passes at once. `scan_status` stays empty until the scan lands, which the
+  API and dashboard already show as "scan pending".
+- The scan is queued only after the handoff checkpoint commits, so a crash
+  at any earlier checkpoint resumes there and queues it exactly once.
+- One deferred scan runs at a time per imaged (`api.ImagedDeferredScanWorkers`)
+  and at most `api.ImagedDeferredScanQueue` wait, so deferral never runs
+  more Grype processes than the serial scans it replaced. A scan dropped
+  from a full queue, or lost with a restart, is picked up by the
+  live-deployment rescan sweep, which treats a deployment with no scan as
+  due; the sweep skips a deployment whose deferred scan is still queued or
+  running on its node.
+- The "per-deploy scan stamped" log carries `deferred` so the change can be
+  read in production.
+
+### Amendment 2026-11-18: an organization's app keeps its scan in front
+
+An organization's app runs under application standards, and each of its
+instances captures the deployment's `scan_status` and `scan_result_hash` at
+admission (ADR-595). A deferred scan that landed during the snapshot prime
+changed those mirrors under the prime instance, and the caller-input check
+failed the deploy with "runtime inputs changed after admission: artifact".
+Production release acceptance hit this on every org-app deploy whose scan
+finished mid-prime. Such an app now scans before the handoff, as before the
+amendment above; apps without an organization keep the deferral.

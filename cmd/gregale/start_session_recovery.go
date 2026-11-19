@@ -53,13 +53,13 @@ func (r *startRunner) chooseRecovery() (resume, proceed bool, err error) {
 		r.statePath = contextPath
 		return false, true, nil
 	}
-	if saved.PendingSubmission != nil {
+	if saved.PendingSubmission != nil || saved.ProjectSessionID != "" {
 		label := "Check pending launch for " + saved.AppSlug
 		if saved.Project != "" {
 			label += " (" + saved.Project + ", environment " + scopeOrDefault(saved.Environment) + ")"
 		}
 		choices := []string{label, "Finish and keep the recovery record"}
-		if saved.PendingSubmission.Transport == "resumable" && saved.PendingSubmission.UploadID != "" {
+		if saved.PendingSubmission != nil && saved.PendingSubmission.Transport == "resumable" && saved.PendingSubmission.UploadID != "" {
 			choices = append(choices, "Cancel an unfinished upload so source can be reviewed again")
 		}
 		choice, err := r.prompt.choose(r.ctx, "A source submission needs recovery before another launch.", choices, 0)

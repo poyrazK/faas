@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
 	"io"
 	"net/http"
 	"os"
@@ -39,7 +40,7 @@ const (
 	unpackFactor             = 4
 	maxUploadEntries         = 10_000
 	maxInlineFiles           = 200
-	maxInlineBytes           = 96 << 10
+	maxInlineBytes           = api.MCPInlineSourceMaxBytes
 	maxUploadPath            = 1024
 )
 
@@ -112,7 +113,7 @@ func (u *uploadStore) pruneLocked() {
 	}
 	for dir, d := range u.dirs {
 		if now.After(d.expires) {
-			_ = os.RemoveAll(dir)
+			removeUploadPlanFiles(dir)
 			delete(u.dirs, dir)
 		}
 	}
@@ -303,7 +304,16 @@ func (u *uploadStore) removeDir(dir string) {
 	u.mu.Lock()
 	delete(u.dirs, dir)
 	u.mu.Unlock()
+	removeUploadPlanFiles(dir)
+}
+
+// The CLI checkpoint lives beside the source, so the source fingerprint and
+// deployment archive never include it. Only the bridge chooses the path.
+func uploadPlanCLIStateDir(dir string) string { return dir + ".cli-state" }
+
+func removeUploadPlanFiles(dir string) {
 	_ = os.RemoveAll(dir)
+	_ = os.RemoveAll(uploadPlanCLIStateDir(dir))
 }
 
 // uploadPath validates one archive or inline path: relative, no empty, "."

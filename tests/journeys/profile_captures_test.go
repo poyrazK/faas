@@ -23,11 +23,21 @@ func TestProfileCaptures(t *testing.T) {
 	slug, base := tg.deployProbe(t, "captures")
 	s := newStory(t)
 	var first, second string
+	// The capture step skips on an installation with on-demand profiling
+	// off; every later step reads its capture, so it skips too instead of
+	// calling a route that does not exist (journeys 2026-11-16).
+	needCapture := func(t *testing.T) {
+		t.Helper()
+		if first == "" {
+			t.Skip("no capture: the capture step did not produce one")
+		}
+	}
 
 	s.step("capture", func(t *testing.T) {
 		first = tg.captureUnderLoad(t, slug, base, "cpu,heap")
 	})
 	s.check("capture_listed", func(t *testing.T) {
+		needCapture(t)
 		list := object(t, tg.ok(t, time.Minute, "debug", "captures", slug).stdout)
 		captures, _ := field(list, "captures").([]any)
 		for _, c := range captures {
@@ -41,6 +51,7 @@ func TestProfileCaptures(t *testing.T) {
 		t.Fatalf("capture %s not listed: %s", first, compact(list))
 	})
 	s.check("pprof_download", func(t *testing.T) {
+		needCapture(t)
 		dir := t.TempDir()
 		tg.ok(t, 2*time.Minute, "debug", "captures", slug, first, "--output", dir)
 		for _, kind := range []string{"cpu", "heap"} {
@@ -51,6 +62,7 @@ func TestProfileCaptures(t *testing.T) {
 		}
 	})
 	s.check("capture_diff", func(t *testing.T) {
+		needCapture(t)
 		second = tg.captureUnderLoad(t, slug, base, "heap")
 		diff := object(t, tg.ok(t, 2*time.Minute, "debug", "capture-diff", slug, second, "--base", first).stdout)
 		if str(diff, "kind") != "heap" || str(diff, "unit") != "bytes" {
@@ -58,6 +70,7 @@ func TestProfileCaptures(t *testing.T) {
 		}
 	})
 	s.step("delete", func(t *testing.T) {
+		needCapture(t)
 		doc := object(t, tg.ok(t, time.Minute, "debug", "captures", slug, first, "--delete").stdout)
 		if deleted, _ := field(doc, "deleted").(bool); !deleted {
 			t.Fatalf("delete: %s", compact(doc))

@@ -942,6 +942,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyRuntimeConfigRestart,
 		db.NotifyDeploymentChanged,
 		db.NotifySnapshotPrime,
+		db.NotifyLayerPublished,                  // ADR-038 amendment 2026-11-17: verify a layer before its prime.
 		db.NotifyCronRunNow,                      // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
 		db.NotifyAppDelete,                       // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
 		db.NotifyJobChanged,                      // issue #1184: wake job dispatch and reconcile cancelled task VMs on the existing LISTEN.
@@ -2324,9 +2325,9 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 }
 
 // finishFailedPrime decides what a prime that failed after its retries does
-// to the deployment: a shutdown or a node-capacity refusal inside
-// api.SnapshotPrimeCapacityMaxWait leaves it snapshotting for prime recovery;
-// anything else fails it.
+// to the deployment: a shutdown, or a node-capacity or financial compute
+// authority refusal inside api.SnapshotPrimeCapacityMaxWait, leaves it
+// snapshotting for prime recovery; anything else fails it.
 func (l *Loop) finishFailedPrime(ctx context.Context, appID, deploymentID string, attempts int, err error) {
 	if snapshotPrimeInterruptedByShutdown(ctx, err) {
 		l.log.Info("sched: snapshot prime interrupted by daemon shutdown; leaving deployment recoverable",
@@ -2334,7 +2335,7 @@ func (l *Loop) finishFailedPrime(ctx context.Context, appID, deploymentID string
 		return
 	}
 	if l.engine.primeAwaitsCapacity(ctx, deploymentID, err) {
-		l.log.Info("sched: snapshot prime refused for node capacity; prime recovery will retry",
+		l.log.Info("sched: snapshot prime refused for node capacity or compute authority; prime recovery will retry",
 			"app", appID, "deployment", deploymentID, "max_wait", api.SnapshotPrimeCapacityMaxWait, "err", err)
 		return
 	}
@@ -2477,6 +2478,8 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 //     replica target; other transitions remain informational.
 //   - snapshot_prime: imaged finished building a deployment's layer; boot it
 //     once, snapshot it, and park it (spec §5 step 6, ADR-018).
+//   - layer_published: imaged stored and replicated a deployment's layer;
+//     verify it now so its prime does not (ADR-038 amendment 2026-11-17).
 func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppWake:
@@ -2607,6 +2610,8 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			return
 		}
 		l.dispatchPrime(ctx, p.AppID, p.DeploymentID)
+	case db.NotifyLayerPublished:
+		l.dispatchLayerVerify(ctx, n.Payload)
 	case db.NotifyCronRunNow:
 		// PR-D / issue #791: fire-now wake. The notify payload is
 		// informational (the row in cron_fire_now_requests is the
@@ -2911,6 +2916,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	liveByApp := l.reaperLiveInstances(ctx, store, apps)
+	probeWakes := l.recentPlatformProbeWakes(ctx, now)
 	for _, a := range apps {
 		plan := api.Plan("")
 		ladderHold := false
@@ -2979,13 +2985,14 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// ADR-072: carrier for the post-snapshot
 				// app-wide max floor enrichment. Empty on legacy
 				// rows that pre-date the per-deployment column.
-				DeploymentID: ins.DeploymentID,
-				RAMMB:        ins.RAMMB,
-				LastRequest:  lastRequest,
-				Started:      ins.StartedAt,
-				IdleTimeoutS: a.IdleTimeoutS,
-				AppType:      string(a.Type),
-				NodeID:       ins.NodeID,
+				DeploymentID:    ins.DeploymentID,
+				RAMMB:           ins.RAMMB,
+				LastRequest:     lastRequest,
+				Started:         ins.StartedAt,
+				ProbeWakeDoneAt: probeWakes[ins.ID],
+				IdleTimeoutS:    a.IdleTimeoutS,
+				AppType:         string(a.Type),
+				NodeID:          ins.NodeID,
 				// Filled with the pinned environment policy below.
 				MinInstances:           planCappedFloor(plan, a.EffectiveMinInstances()),
 				WarmPoolSize:           a.WarmPoolSize,
@@ -3219,12 +3226,35 @@ func (l *Loop) dispatchReaper(ctx context.Context) {
 func (l *Loop) parkFromReaper(ctx context.Context, info InstanceInfo, allowNewRequests bool) error {
 	parkCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
 	defer cancel()
+	guest := l.freshGuestActivity(info.Instance)
+	if info.probeOnly() {
+		// A probe-only instance's open flows are the gateway's keep-alive
+		// connections (ADR-20261116120000 §3); only work in flight or a
+		// new request keeps it.
+		guest = l.requestsInFlight(info.Instance)
+	}
 	return l.engine.ParkIdle(parkCtx, info.Instance, IdleParkCheck{
 		LastRequest:      info.LastRequest,
 		RequestCount:     info.RequestCount,
 		AllowNewRequests: allowNewRequests,
-		Guest:            l.freshGuestActivity(info.Instance),
+		Guest:            guest,
 	})
+}
+
+// recentPlatformProbeWakes reads the probe wake ledger for the reaper tick:
+// each instance's latest unbilled health probe end. A store without the
+// ledger, or a failed read, leaves every instance on its idle timeout.
+func (l *Loop) recentPlatformProbeWakes(ctx context.Context, now time.Time) map[string]time.Time {
+	ledger, ok := l.engine.store.(state.PlatformProbeWakeStore)
+	if !ok {
+		return nil
+	}
+	wakes, err := ledger.RecentPlatformProbeWakes(ctx, now.Add(-api.ProtectionProbeWakeLookback))
+	if err != nil {
+		l.log.Warn("reaper: platform probe wakes", "err", err)
+		return nil
+	}
+	return wakes
 }
 
 // supersededDrainPoll is how often a superseded release's busy instances are

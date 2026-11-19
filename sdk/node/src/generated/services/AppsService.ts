@@ -17,6 +17,7 @@ import type { ApplyAppScalingRequest } from '../models/ApplyAppScalingRequest.js
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
 import type { AppOperationPreview } from '../models/AppOperationPreview.js';
+import type { AppProtectionResponse } from '../models/AppProtectionResponse.js';
 import type { AppReleaseReview } from '../models/AppReleaseReview.js';
 import type { AppResourceInventoryResponse } from '../models/AppResourceInventoryResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
@@ -85,6 +86,7 @@ import type { DebugStatusResponse } from '../models/DebugStatusResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeletedAppListResponse } from '../models/DeletedAppListResponse.js';
+import type { DeletedAppPurgeResponse } from '../models/DeletedAppPurgeResponse.js';
 import type { DeletedAppSummary } from '../models/DeletedAppSummary.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
@@ -206,6 +208,7 @@ import type { SaveProfileInvestigationRequest } from '../models/SaveProfileInves
 import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
 import type { ServiceBindingExplanation } from '../models/ServiceBindingExplanation.js';
 import type { ServiceWakeAheadResponse } from '../models/ServiceWakeAheadResponse.js';
+import type { SetAppProtectionRequest } from '../models/SetAppProtectionRequest.js';
 import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetEnvironmentRouteBudgetsRequest } from '../models/SetEnvironmentRouteBudgetsRequest.js';
@@ -2339,6 +2342,59 @@ export class AppsService {
     });
   }
   /**
+   * Permanently remove a deleted app now, freeing its slug.
+   * Ends the app's restore window at once and removes the app and its stored
+   * artifacts, so the same account can reuse the slug (for example to redeploy
+   * a Compose project after a teardown). This cannot be undone. Requires
+   * deploy-write, MFA completion and trusted browser origin for cookie
+   * authentication. Refused with 409 app_not_purgeable, before the window
+   * closes, while the app still has object storage buckets. When something
+   * else still holds the app the response is 202 with pending_reason; the
+   * window stays closed and the grace sweep finishes the purge.
+   *
+   * @returns DeletedAppPurgeResponse The app is gone and its slug is free for this account.
+   * @throws ApiError
+   */
+  public static purgeDeletedApp({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Exact account-owned deleted-app ID to remove permanently, from the deleted-app inventory.
+     */
+    id: string,
+    /**
+     * Optional empty object; no fields are accepted.
+     */
+    requestBody?: Record<string, any>,
+  }): CancelablePromise<DeletedAppPurgeResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/deleted-apps/{id}/purge',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Restore an app during its deletion grace window.
    * Bodyless legacy callers remain supported. An optional expected_app_id
    * fences the selected identity on updated servers. For mixed-version
@@ -2838,6 +2894,61 @@ export class AppsService {
       path: {
         'slug': slug,
         'id': id,
+      },
+    });
+  }
+  /**
+   * Show the app's production protection
+   * Reports whether the app is enrolled in production protection and the state of each protection object: the availability and latency SLOs, the health check, the account email channel, the alert rules and the availability release gate. The health check is run by the platform without billing its requests. An app created before protection was available reports state none.
+   * @returns AppProtectionResponse The app's production protection.
+   * @throws ApiError
+   */
+  public static getAppProtection({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppProtectionResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/protection',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Turn the app's production protection on or off
+   * on enrolls the app, including one created before protection was available, and sets up the protection objects after its next live production deploy. off deletes the protection objects the customer has not changed; changed objects, objects a kept alert rule or release gate still uses, and the account email channel stay.
+   * @returns AppProtectionResponse The app's production protection after the change.
+   * @throws ApiError
+   */
+  public static setAppProtection({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetAppProtectionRequest,
+  }): CancelablePromise<AppProtectionResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/protection',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        404: `code: not_found`,
       },
     });
   }

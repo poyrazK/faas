@@ -56,7 +56,7 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 	image, _ := e2etest.HelloImageAboveBase("library/financial-system", body)
 	ref := registry.AddImage("library/financial-system", image)
-	provider := financialfixture.NewProvider(t, 2000)
+	provider := financialfixture.NewProvider(t, api.EgressOverageMillicentsPerGiB)
 	// vmmd reads FAAS_VMMD_DBURL, not DATABASE_URL. Without it vmmd kept its
 	// direct pool through the outage below and went on buying egress credits
 	// (lane B eaedb-20261025T054949: both byte gates freshly reset).
@@ -82,7 +82,7 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 	month := financial.ComputeMonth(time.Now())
 	for _, p := range []financial.Price{
 		{Version: "native-system-compute", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 50 * api.SecondsPerGBHour},
-		{Version: "native-system-egress", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1 << 30, MillicentsPerUnit: 2000, IncludedQuantity: 1 << 30},
+		{Version: "native-system-egress", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1 << 30, MillicentsPerUnit: api.EgressOverageMillicentsPerGiB, IncludedQuantity: 1 << 30},
 	} {
 		if _, err := s.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: account, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: p}); err != nil {
 			t.Fatal(err)

@@ -1,11 +1,34 @@
 # Errors
 
-Gregale errors use RFC 9457 JSON. The `code` is stable for automation;
+A Gregale API error response uses RFC 9457 Problem Details JSON
+(`Content-Type: application/problem+json`). The `code` is stable for automation;
 `detail` names the observed value or failing stage; `docs_url` points to the
 relevant recovery guide. CLI output preserves those fields and the next
 command when one is known. `type` defaults to `about:blank` when no specific
 problem URI is supplied. `instance` identifies the specific occurrence when
 the caller supplies an occurrence URI.
+
+An error response looks like this:
+
+```json
+{
+  "type": "about:blank",
+  "title": "App limit reached",
+  "status": 403,
+  "code": "plan_limit_apps",
+  "detail": "free plan allows 1 deployed app(s); you have 1.",
+  "limit": 1,
+  "observed": 1,
+  "docs_url": "https://gregale.dev/docs/plans#at-a-glance"
+}
+```
+
+A limit error carries the plan's `limit` and the `observed` value. Some codes
+add fields of their own, such as `retry_after_seconds`.
+
+The [error code reference](error-codes.md) lists every code with the HTTP
+status it is sent with, its title and hint, and the page that explains it.
+This page covers the codes you are most likely to meet and what to do next.
 
 On app and API requests, Gregale sends its own timeouts and failed
 connections to your app as 503 rather than 502 or 504. The response carries

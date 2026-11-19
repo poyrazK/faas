@@ -8,7 +8,10 @@
 export type ScenarioManagedWorkParticipant = {
   workload: string;
   async?: boolean;
-  postgres?: 'read_write';
+  /**
+   * Access to the disposable PostgreSQL fixture. Task roles require seeded Task tables and a sole read_write primary.
+   */
+  postgres?: 'read_write' | 'task_runtime' | 'task_observer';
   objects?: 'read' | 'read_write';
 };
 

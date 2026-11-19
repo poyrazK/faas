@@ -337,6 +337,13 @@ from .app_private_network_attachment_status import AppPrivateNetworkAttachmentSt
 from .app_private_network_node_status import AppPrivateNetworkNodeStatus
 from .app_private_network_node_status_fabric_status import AppPrivateNetworkNodeStatusFabricStatus
 from .app_private_network_node_status_route_status import AppPrivateNetworkNodeStatusRouteStatus
+from .app_protection_item_status import AppProtectionItemStatus
+from .app_protection_item_status_item import AppProtectionItemStatusItem
+from .app_protection_item_status_kind import AppProtectionItemStatusKind
+from .app_protection_item_status_reason import AppProtectionItemStatusReason
+from .app_protection_item_status_state import AppProtectionItemStatusState
+from .app_protection_response import AppProtectionResponse
+from .app_protection_response_state import AppProtectionResponseState
 from .app_publish_event_request import AppPublishEventRequest
 from .app_publish_event_response import AppPublishEventResponse
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
@@ -1355,6 +1362,8 @@ from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOp
 from .delete_financial_budget_request import DeleteFinancialBudgetRequest
 from .delete_secret_prefer import DeleteSecretPrefer
 from .deleted_app_list_response import DeletedAppListResponse
+from .deleted_app_purge_response import DeletedAppPurgeResponse
+from .deleted_app_purge_response_pending_reason import DeletedAppPurgeResponsePendingReason
 from .deleted_app_summary import DeletedAppSummary
 from .deleted_app_summary_restore_blocker import DeletedAppSummaryRestoreBlocker
 from .deliver_app_event_request import DeliverAppEventRequest
@@ -2245,6 +2254,8 @@ from .flag_decision_reason import FlagDecisionReason
 from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
 from .flag_event import FlagEvent
+from .flag_event_flags import FlagEventFlags
+from .flag_event_properties import FlagEventProperties
 from .flag_events_request import FlagEventsRequest
 from .flag_events_response import FlagEventsResponse
 from .flag_events_response_dropped import FlagEventsResponseDropped
@@ -2253,11 +2264,28 @@ from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
 from .flag_experiment import FlagExperiment
 from .flag_experiment_arm import FlagExperimentArm
+from .flag_experiment_breach import FlagExperimentBreach
 from .flag_experiment_create_request import FlagExperimentCreateRequest
+from .flag_experiment_create_request_metric_kind import FlagExperimentCreateRequestMetricKind
+from .flag_experiment_guardrail import FlagExperimentGuardrail
+from .flag_experiment_guardrail_name import FlagExperimentGuardrailName
+from .flag_experiment_guardrail_request import FlagExperimentGuardrailRequest
+from .flag_experiment_guardrail_setting import FlagExperimentGuardrailSetting
+from .flag_experiment_guardrail_settings import FlagExperimentGuardrailSettings
+from .flag_experiment_guardrail_status import FlagExperimentGuardrailStatus
+from .flag_experiment_guardrail_variant import FlagExperimentGuardrailVariant
+from .flag_experiment_guardrail_variant_status import FlagExperimentGuardrailVariantStatus
+from .flag_experiment_guardrails_request import FlagExperimentGuardrailsRequest
+from .flag_experiment_latency import FlagExperimentLatency
 from .flag_experiment_list import FlagExperimentList
 from .flag_experiment_metric_kind import FlagExperimentMetricKind
+from .flag_experiment_recommendation import FlagExperimentRecommendation
+from .flag_experiment_recommendation_action import FlagExperimentRecommendationAction
 from .flag_experiment_results import FlagExperimentResults
+from .flag_experiment_ship_request import FlagExperimentShipRequest
+from .flag_experiment_ship_response import FlagExperimentShipResponse
 from .flag_experiment_status import FlagExperimentStatus
+from .flag_experiment_stop_reason import FlagExperimentStopReason
 from .flag_experiment_variant_result import FlagExperimentVariantResult
 from .flag_experiment_variant_result_status import FlagExperimentVariantResultStatus
 from .flag_experiment_weights import FlagExperimentWeights
@@ -2327,9 +2355,12 @@ from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_obs_input_health_expected_role import GetObsInputHealthExpectedRole
 from .get_obs_recording_coverage_expected_set import GetObsRecordingCoverageExpectedSet
 from .get_obs_rule_coverage_expected_set import GetObsRuleCoverageExpectedSet
+from .get_obs_runtime_builds_expected_role import GetObsRuntimeBuildsExpectedRole
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
 from .get_profile_capture_view_kind import GetProfileCaptureViewKind
+from .get_project_insight_events_interval import GetProjectInsightEventsInterval
+from .get_project_insight_events_unit import GetProjectInsightEventsUnit
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
 from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
@@ -2380,6 +2411,34 @@ from .guarded_debug_regression_action_request import GuardedDebugRegressionActio
 from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
 from .held_link_review import HeldLinkReview
 from .held_links_response import HeldLinksResponse
+from .hosted_task_binding_check import HostedTaskBindingCheck
+from .hosted_task_binding_result import HostedTaskBindingResult
+from .hosted_task_binding_result_name import HostedTaskBindingResultName
+from .hosted_task_binding_result_status import HostedTaskBindingResultStatus
+from .hosted_task_binding_selection import HostedTaskBindingSelection
+from .hosted_task_binding_verification import HostedTaskBindingVerification
+from .hosted_task_binding_verification_status import HostedTaskBindingVerificationStatus
+from .hosted_task_binding_verification_version import HostedTaskBindingVerificationVersion
+from .hosted_task_rehearsal_decision import HostedTaskRehearsalDecision
+from .hosted_task_rehearsal_decision_decision import HostedTaskRehearsalDecisionDecision
+from .hosted_task_rehearsal_plan import HostedTaskRehearsalPlan
+from .hosted_task_rehearsal_plan_status import HostedTaskRehearsalPlanStatus
+from .hosted_task_rehearsal_plan_version import HostedTaskRehearsalPlanVersion
+from .hosted_task_rehearsal_prepare import HostedTaskRehearsalPrepare
+from .hosted_task_source_check import HostedTaskSourceCheck
+from .hosted_task_source_decision import HostedTaskSourceDecision
+from .hosted_task_source_decision_decision import HostedTaskSourceDecisionDecision
+from .hosted_task_source_entry import HostedTaskSourceEntry
+from .hosted_task_source_entry_mode import HostedTaskSourceEntryMode
+from .hosted_task_source_intent import HostedTaskSourceIntent
+from .hosted_task_source_intent_review_status import HostedTaskSourceIntentReviewStatus
+from .hosted_task_source_intent_source_state import HostedTaskSourceIntentSourceState
+from .hosted_task_source_intent_version import HostedTaskSourceIntentVersion
+from .hosted_task_source_prepare import HostedTaskSourcePrepare
+from .hosted_task_source_prepare_sources import HostedTaskSourcePrepareSources
+from .hosted_task_source_review import HostedTaskSourceReview
+from .hosted_task_source_review_kind import HostedTaskSourceReviewKind
+from .hosted_task_source_review_source_sha_256 import HostedTaskSourceReviewSourceSha256
 from .hosting_route_check_result import HostingRouteCheckResult
 from .hosting_route_check_result_status import HostingRouteCheckResultStatus
 from .hosting_route_check_set import HostingRouteCheckSet
@@ -2417,6 +2476,27 @@ from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
+from .insight_event_point import InsightEventPoint
+from .insight_event_series import InsightEventSeries
+from .insight_event_series_interval import InsightEventSeriesInterval
+from .insight_event_series_unit import InsightEventSeriesUnit
+from .insight_funnel import InsightFunnel
+from .insight_funnel_breakdown import InsightFunnelBreakdown
+from .insight_funnel_request import InsightFunnelRequest
+from .insight_funnel_request_unit import InsightFunnelRequestUnit
+from .insight_funnel_step import InsightFunnelStep
+from .insight_funnel_unit import InsightFunnelUnit
+from .insight_request_variant import InsightRequestVariant
+from .insight_requests import InsightRequests
+from .insight_retention import InsightRetention
+from .insight_retention_period import InsightRetentionPeriod
+from .insight_retention_request import InsightRetentionRequest
+from .insight_retention_request_period import InsightRetentionRequestPeriod
+from .insight_retention_request_unit import InsightRetentionRequestUnit
+from .insight_retention_row import InsightRetentionRow
+from .insight_retention_unit import InsightRetentionUnit
+from .insight_step_request import InsightStepRequest
+from .insight_step_request_where import InsightStepRequestWhere
 from .inspect_durable_entity_quota_migration_response_200 import InspectDurableEntityQuotaMigrationResponse200
 from .inspect_durable_entity_quota_policy_response_200 import InspectDurableEntityQuotaPolicyResponse200
 from .inspect_durable_entity_registry_cleanup_response_200 import InspectDurableEntityRegistryCleanupResponse200
@@ -2632,6 +2712,7 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_env_values import ListEnvValues
 from .list_environment_git_releases_request import ListEnvironmentGitReleasesRequest
 from .list_environment_git_releases_response import ListEnvironmentGitReleasesResponse
 from .list_event_acknowledgment_history_page_kind import ListEventAcknowledgmentHistoryPageKind
@@ -3473,6 +3554,249 @@ from .obs_rule_health_item_state import ObsRuleHealthItemState
 from .obs_rule_health_response import ObsRuleHealthResponse
 from .obs_rule_health_response_state import ObsRuleHealthResponseState
 from .obs_rule_health_totals import ObsRuleHealthTotals
+from .obs_runtime_app_task_class import ObsRuntimeAppTaskClass
+from .obs_runtime_app_task_class_counts import ObsRuntimeAppTaskClassCounts
+from .obs_runtime_app_task_class_name import ObsRuntimeAppTaskClassName
+from .obs_runtime_app_task_class_state import ObsRuntimeAppTaskClassState
+from .obs_runtime_app_task_class_values import ObsRuntimeAppTaskClassValues
+from .obs_runtime_app_task_counts import ObsRuntimeAppTaskCounts
+from .obs_runtime_app_task_dispatch import ObsRuntimeAppTaskDispatch
+from .obs_runtime_app_task_dispatch_state import ObsRuntimeAppTaskDispatchState
+from .obs_runtime_app_task_dispatch_values import ObsRuntimeAppTaskDispatchValues
+from .obs_runtime_app_task_health import ObsRuntimeAppTaskHealth
+from .obs_runtime_app_task_health_reason import ObsRuntimeAppTaskHealthReason
+from .obs_runtime_app_task_health_scope import ObsRuntimeAppTaskHealthScope
+from .obs_runtime_app_task_health_state import ObsRuntimeAppTaskHealthState
+from .obs_runtime_app_task_item import ObsRuntimeAppTaskItem
+from .obs_runtime_app_task_item_job import ObsRuntimeAppTaskItemJob
+from .obs_runtime_app_task_item_state import ObsRuntimeAppTaskItemState
+from .obs_runtime_app_task_kind_name import ObsRuntimeAppTaskKindName
+from .obs_runtime_app_task_observation import ObsRuntimeAppTaskObservation
+from .obs_runtime_app_task_observation_state import ObsRuntimeAppTaskObservationState
+from .obs_runtime_app_task_observation_values import ObsRuntimeAppTaskObservationValues
+from .obs_runtime_app_task_operation_counts import ObsRuntimeAppTaskOperationCounts
+from .obs_runtime_app_task_operation_item import ObsRuntimeAppTaskOperationItem
+from .obs_runtime_app_task_operation_item_job import ObsRuntimeAppTaskOperationItemJob
+from .obs_runtime_app_task_operation_name import ObsRuntimeAppTaskOperationName
+from .obs_runtime_app_task_operation_outcome import ObsRuntimeAppTaskOperationOutcome
+from .obs_runtime_app_task_operation_point import ObsRuntimeAppTaskOperationPoint
+from .obs_runtime_app_task_operation_reason import ObsRuntimeAppTaskOperationReason
+from .obs_runtime_app_task_operation_signal import ObsRuntimeAppTaskOperationSignal
+from .obs_runtime_app_task_operation_signal_state import ObsRuntimeAppTaskOperationSignalState
+from .obs_runtime_app_task_operation_summary import ObsRuntimeAppTaskOperationSummary
+from .obs_runtime_app_task_operations import ObsRuntimeAppTaskOperations
+from .obs_runtime_app_task_operations_reason import ObsRuntimeAppTaskOperationsReason
+from .obs_runtime_app_task_operations_scope import ObsRuntimeAppTaskOperationsScope
+from .obs_runtime_app_task_operations_state import ObsRuntimeAppTaskOperationsState
+from .obs_runtime_app_task_result_counts import ObsRuntimeAppTaskResultCounts
+from .obs_runtime_app_task_result_item import ObsRuntimeAppTaskResultItem
+from .obs_runtime_app_task_result_item_job import ObsRuntimeAppTaskResultItemJob
+from .obs_runtime_app_task_result_name import ObsRuntimeAppTaskResultName
+from .obs_runtime_app_task_result_outcome import ObsRuntimeAppTaskResultOutcome
+from .obs_runtime_app_task_result_signal import ObsRuntimeAppTaskResultSignal
+from .obs_runtime_app_task_result_signal_state import ObsRuntimeAppTaskResultSignalState
+from .obs_runtime_app_task_result_source import ObsRuntimeAppTaskResultSource
+from .obs_runtime_app_task_results import ObsRuntimeAppTaskResults
+from .obs_runtime_app_task_results_reason import ObsRuntimeAppTaskResultsReason
+from .obs_runtime_app_task_results_scope import ObsRuntimeAppTaskResultsScope
+from .obs_runtime_app_task_results_state import ObsRuntimeAppTaskResultsState
+from .obs_runtime_build_counts import ObsRuntimeBuildCounts
+from .obs_runtime_build_item import ObsRuntimeBuildItem
+from .obs_runtime_build_item_state import ObsRuntimeBuildItemState
+from .obs_runtime_build_job import ObsRuntimeBuildJob
+from .obs_runtime_build_job_inventory_source import ObsRuntimeBuildJobInventorySource
+from .obs_runtime_build_job_state import ObsRuntimeBuildJobState
+from .obs_runtime_build_recovery_cleanup import ObsRuntimeBuildRecoveryCleanup
+from .obs_runtime_build_recovery_cleanup_state import ObsRuntimeBuildRecoveryCleanupState
+from .obs_runtime_build_recovery_cleanup_values import ObsRuntimeBuildRecoveryCleanupValues
+from .obs_runtime_build_recovery_counts import ObsRuntimeBuildRecoveryCounts
+from .obs_runtime_build_recovery_health import ObsRuntimeBuildRecoveryHealth
+from .obs_runtime_build_recovery_health_reason import ObsRuntimeBuildRecoveryHealthReason
+from .obs_runtime_build_recovery_health_scope import ObsRuntimeBuildRecoveryHealthScope
+from .obs_runtime_build_recovery_health_state import ObsRuntimeBuildRecoveryHealthState
+from .obs_runtime_build_recovery_item import ObsRuntimeBuildRecoveryItem
+from .obs_runtime_build_recovery_item_job import ObsRuntimeBuildRecoveryItemJob
+from .obs_runtime_build_recovery_item_state import ObsRuntimeBuildRecoveryItemState
+from .obs_runtime_build_recovery_running import ObsRuntimeBuildRecoveryRunning
+from .obs_runtime_build_recovery_running_state import ObsRuntimeBuildRecoveryRunningState
+from .obs_runtime_build_recovery_running_values import ObsRuntimeBuildRecoveryRunningValues
+from .obs_runtime_builder_counts import ObsRuntimeBuilderCounts
+from .obs_runtime_builder_evidence_reason import ObsRuntimeBuilderEvidenceReason
+from .obs_runtime_builder_health import ObsRuntimeBuilderHealth
+from .obs_runtime_builder_health_reason import ObsRuntimeBuilderHealthReason
+from .obs_runtime_builder_health_state import ObsRuntimeBuilderHealthState
+from .obs_runtime_builder_item import ObsRuntimeBuilderItem
+from .obs_runtime_builder_item_state import ObsRuntimeBuilderItemState
+from .obs_runtime_builder_queue import ObsRuntimeBuilderQueue
+from .obs_runtime_builder_queue_queue import ObsRuntimeBuilderQueueQueue
+from .obs_runtime_builder_queue_state import ObsRuntimeBuilderQueueState
+from .obs_runtime_builder_queue_values import ObsRuntimeBuilderQueueValues
+from .obs_runtime_builder_slot_values import ObsRuntimeBuilderSlotValues
+from .obs_runtime_builder_slots import ObsRuntimeBuilderSlots
+from .obs_runtime_builder_slots_state import ObsRuntimeBuilderSlotsState
+from .obs_runtime_builder_worker import ObsRuntimeBuilderWorker
+from .obs_runtime_builder_worker_state import ObsRuntimeBuilderWorkerState
+from .obs_runtime_builder_worker_values import ObsRuntimeBuilderWorkerValues
+from .obs_runtime_builds import ObsRuntimeBuilds
+from .obs_runtime_builds_expected_role import ObsRuntimeBuildsExpectedRole
+from .obs_runtime_builds_max_age_seconds import ObsRuntimeBuildsMaxAgeSeconds
+from .obs_runtime_builds_scope import ObsRuntimeBuildsScope
+from .obs_runtime_builds_state import ObsRuntimeBuildsState
+from .obs_runtime_command_cron_class import ObsRuntimeCommandCronClass
+from .obs_runtime_command_cron_class_counts import ObsRuntimeCommandCronClassCounts
+from .obs_runtime_command_cron_class_name import ObsRuntimeCommandCronClassName
+from .obs_runtime_command_cron_class_state import ObsRuntimeCommandCronClassState
+from .obs_runtime_command_cron_class_values import ObsRuntimeCommandCronClassValues
+from .obs_runtime_command_cron_counts import ObsRuntimeCommandCronCounts
+from .obs_runtime_command_cron_health import ObsRuntimeCommandCronHealth
+from .obs_runtime_command_cron_health_reason import ObsRuntimeCommandCronHealthReason
+from .obs_runtime_command_cron_health_scope import ObsRuntimeCommandCronHealthScope
+from .obs_runtime_command_cron_health_state import ObsRuntimeCommandCronHealthState
+from .obs_runtime_command_cron_item import ObsRuntimeCommandCronItem
+from .obs_runtime_command_cron_item_job import ObsRuntimeCommandCronItemJob
+from .obs_runtime_command_cron_item_state import ObsRuntimeCommandCronItemState
+from .obs_runtime_command_cron_observation import ObsRuntimeCommandCronObservation
+from .obs_runtime_command_cron_observation_state import ObsRuntimeCommandCronObservationState
+from .obs_runtime_command_cron_observation_values import ObsRuntimeCommandCronObservationValues
+from .obs_runtime_command_cron_outcome_counts import ObsRuntimeCommandCronOutcomeCounts
+from .obs_runtime_command_cron_outcome_item import ObsRuntimeCommandCronOutcomeItem
+from .obs_runtime_command_cron_outcome_item_job import ObsRuntimeCommandCronOutcomeItemJob
+from .obs_runtime_command_cron_outcome_name import ObsRuntimeCommandCronOutcomeName
+from .obs_runtime_command_cron_outcome_signal import ObsRuntimeCommandCronOutcomeSignal
+from .obs_runtime_command_cron_outcome_signal_state import ObsRuntimeCommandCronOutcomeSignalState
+from .obs_runtime_command_cron_outcome_source import ObsRuntimeCommandCronOutcomeSource
+from .obs_runtime_command_cron_outcome_summary import ObsRuntimeCommandCronOutcomeSummary
+from .obs_runtime_command_cron_outcomes import ObsRuntimeCommandCronOutcomes
+from .obs_runtime_command_cron_outcomes_reason import ObsRuntimeCommandCronOutcomesReason
+from .obs_runtime_command_cron_outcomes_scope import ObsRuntimeCommandCronOutcomesScope
+from .obs_runtime_command_cron_outcomes_state import ObsRuntimeCommandCronOutcomesState
+from .obs_runtime_command_cron_sweep import ObsRuntimeCommandCronSweep
+from .obs_runtime_command_cron_sweep_state import ObsRuntimeCommandCronSweepState
+from .obs_runtime_command_cron_sweep_values import ObsRuntimeCommandCronSweepValues
+from .obs_runtime_command_cron_timing import ObsRuntimeCommandCronTiming
+from .obs_runtime_command_cron_timing_counts import ObsRuntimeCommandCronTimingCounts
+from .obs_runtime_command_cron_timing_item import ObsRuntimeCommandCronTimingItem
+from .obs_runtime_command_cron_timing_item_job import ObsRuntimeCommandCronTimingItemJob
+from .obs_runtime_command_cron_timing_name import ObsRuntimeCommandCronTimingName
+from .obs_runtime_command_cron_timing_reason import ObsRuntimeCommandCronTimingReason
+from .obs_runtime_command_cron_timing_scope import ObsRuntimeCommandCronTimingScope
+from .obs_runtime_command_cron_timing_signal import ObsRuntimeCommandCronTimingSignal
+from .obs_runtime_command_cron_timing_signal_state import ObsRuntimeCommandCronTimingSignalState
+from .obs_runtime_command_cron_timing_signal_summary import ObsRuntimeCommandCronTimingSignalSummary
+from .obs_runtime_command_cron_timing_state import ObsRuntimeCommandCronTimingState
+from .obs_runtime_delayed_task_dispatch import ObsRuntimeDelayedTaskDispatch
+from .obs_runtime_delayed_task_dispatch_counts import ObsRuntimeDelayedTaskDispatchCounts
+from .obs_runtime_delayed_task_dispatch_item import ObsRuntimeDelayedTaskDispatchItem
+from .obs_runtime_delayed_task_dispatch_item_job import ObsRuntimeDelayedTaskDispatchItemJob
+from .obs_runtime_delayed_task_dispatch_name import ObsRuntimeDelayedTaskDispatchName
+from .obs_runtime_delayed_task_dispatch_outcome_summary import ObsRuntimeDelayedTaskDispatchOutcomeSummary
+from .obs_runtime_delayed_task_dispatch_reason import ObsRuntimeDelayedTaskDispatchReason
+from .obs_runtime_delayed_task_dispatch_scope import ObsRuntimeDelayedTaskDispatchScope
+from .obs_runtime_delayed_task_dispatch_signal import ObsRuntimeDelayedTaskDispatchSignal
+from .obs_runtime_delayed_task_dispatch_signal_state import ObsRuntimeDelayedTaskDispatchSignalState
+from .obs_runtime_delayed_task_dispatch_state import ObsRuntimeDelayedTaskDispatchState
+from .obs_runtime_diagnostic_group import ObsRuntimeDiagnosticGroup
+from .obs_runtime_diagnostics import ObsRuntimeDiagnostics
+from .obs_runtime_diagnostics_scope import ObsRuntimeDiagnosticsScope
+from .obs_runtime_handoff_backlog import ObsRuntimeHandoffBacklog
+from .obs_runtime_handoff_backlog_state import ObsRuntimeHandoffBacklogState
+from .obs_runtime_handoff_backlog_values import ObsRuntimeHandoffBacklogValues
+from .obs_runtime_handoff_collection import ObsRuntimeHandoffCollection
+from .obs_runtime_handoff_collection_state import ObsRuntimeHandoffCollectionState
+from .obs_runtime_handoff_collection_values import ObsRuntimeHandoffCollectionValues
+from .obs_runtime_handoff_counts import ObsRuntimeHandoffCounts
+from .obs_runtime_handoff_evidence_reason import ObsRuntimeHandoffEvidenceReason
+from .obs_runtime_handoff_health import ObsRuntimeHandoffHealth
+from .obs_runtime_handoff_health_reason import ObsRuntimeHandoffHealthReason
+from .obs_runtime_handoff_health_state import ObsRuntimeHandoffHealthState
+from .obs_runtime_handoff_item import ObsRuntimeHandoffItem
+from .obs_runtime_handoff_item_state import ObsRuntimeHandoffItemState
+from .obs_runtime_handoff_recovery import ObsRuntimeHandoffRecovery
+from .obs_runtime_handoff_recovery_state import ObsRuntimeHandoffRecoveryState
+from .obs_runtime_handoff_recovery_values import ObsRuntimeHandoffRecoveryValues
+from .obs_runtime_http_cron_delivery import ObsRuntimeHTTPCronDelivery
+from .obs_runtime_http_cron_delivery_counts import ObsRuntimeHTTPCronDeliveryCounts
+from .obs_runtime_http_cron_delivery_item import ObsRuntimeHTTPCronDeliveryItem
+from .obs_runtime_http_cron_delivery_item_job import ObsRuntimeHTTPCronDeliveryItemJob
+from .obs_runtime_http_cron_delivery_name import ObsRuntimeHTTPCronDeliveryName
+from .obs_runtime_http_cron_delivery_outcome_summary import ObsRuntimeHTTPCronDeliveryOutcomeSummary
+from .obs_runtime_http_cron_delivery_reason import ObsRuntimeHTTPCronDeliveryReason
+from .obs_runtime_http_cron_delivery_scope import ObsRuntimeHTTPCronDeliveryScope
+from .obs_runtime_http_cron_delivery_signal import ObsRuntimeHTTPCronDeliverySignal
+from .obs_runtime_http_cron_delivery_signal_state import ObsRuntimeHTTPCronDeliverySignalState
+from .obs_runtime_http_cron_delivery_state import ObsRuntimeHTTPCronDeliveryState
+from .obs_runtime_loop_counts import ObsRuntimeLoopCounts
+from .obs_runtime_loop_health import ObsRuntimeLoopHealth
+from .obs_runtime_loop_health_reason import ObsRuntimeLoopHealthReason
+from .obs_runtime_loop_health_state import ObsRuntimeLoopHealthState
+from .obs_runtime_loop_item import ObsRuntimeLoopItem
+from .obs_runtime_loop_item_loop import ObsRuntimeLoopItemLoop
+from .obs_runtime_loop_item_reason import ObsRuntimeLoopItemReason
+from .obs_runtime_loop_item_state import ObsRuntimeLoopItemState
+from .obs_runtime_post_capture_class import ObsRuntimePostCaptureClass
+from .obs_runtime_post_capture_class_counts import ObsRuntimePostCaptureClassCounts
+from .obs_runtime_post_capture_class_name import ObsRuntimePostCaptureClassName
+from .obs_runtime_post_capture_class_state import ObsRuntimePostCaptureClassState
+from .obs_runtime_post_capture_class_values import ObsRuntimePostCaptureClassValues
+from .obs_runtime_post_capture_counts import ObsRuntimePostCaptureCounts
+from .obs_runtime_post_capture_health import ObsRuntimePostCaptureHealth
+from .obs_runtime_post_capture_health_reason import ObsRuntimePostCaptureHealthReason
+from .obs_runtime_post_capture_health_scope import ObsRuntimePostCaptureHealthScope
+from .obs_runtime_post_capture_health_state import ObsRuntimePostCaptureHealthState
+from .obs_runtime_post_capture_item import ObsRuntimePostCaptureItem
+from .obs_runtime_post_capture_item_job import ObsRuntimePostCaptureItemJob
+from .obs_runtime_post_capture_item_state import ObsRuntimePostCaptureItemState
+from .obs_runtime_post_capture_observation import ObsRuntimePostCaptureObservation
+from .obs_runtime_post_capture_observation_state import ObsRuntimePostCaptureObservationState
+from .obs_runtime_post_capture_observation_values import ObsRuntimePostCaptureObservationValues
+from .obs_runtime_preparation_counts import ObsRuntimePreparationCounts
+from .obs_runtime_preparation_health import ObsRuntimePreparationHealth
+from .obs_runtime_preparation_health_reason import ObsRuntimePreparationHealthReason
+from .obs_runtime_preparation_health_state import ObsRuntimePreparationHealthState
+from .obs_runtime_preparation_item import ObsRuntimePreparationItem
+from .obs_runtime_preparation_item_state import ObsRuntimePreparationItemState
+from .obs_runtime_preparation_observation import ObsRuntimePreparationObservation
+from .obs_runtime_preparation_observation_state import ObsRuntimePreparationObservationState
+from .obs_runtime_preparation_observation_values import ObsRuntimePreparationObservationValues
+from .obs_runtime_preparation_phase import ObsRuntimePreparationPhase
+from .obs_runtime_preparation_phase_counts import ObsRuntimePreparationPhaseCounts
+from .obs_runtime_preparation_phase_name import ObsRuntimePreparationPhaseName
+from .obs_runtime_preparation_phase_state import ObsRuntimePreparationPhaseState
+from .obs_runtime_preparation_phase_values import ObsRuntimePreparationPhaseValues
+from .obs_runtime_process import ObsRuntimeProcess
+from .obs_runtime_process_counts import ObsRuntimeProcessCounts
+from .obs_runtime_process_item import ObsRuntimeProcessItem
+from .obs_runtime_process_item_comparison import ObsRuntimeProcessItemComparison
+from .obs_runtime_process_item_comparison_reason import ObsRuntimeProcessItemComparisonReason
+from .obs_runtime_process_item_reason import ObsRuntimeProcessItemReason
+from .obs_runtime_process_item_revision_relation import ObsRuntimeProcessItemRevisionRelation
+from .obs_runtime_process_item_state import ObsRuntimeProcessItemState
+from .obs_runtime_process_reason import ObsRuntimeProcessReason
+from .obs_runtime_process_state import ObsRuntimeProcessState
+from .obs_runtime_readiness import ObsRuntimeReadiness
+from .obs_runtime_readiness_counts import ObsRuntimeReadinessCounts
+from .obs_runtime_readiness_item import ObsRuntimeReadinessItem
+from .obs_runtime_readiness_item_reason import ObsRuntimeReadinessItemReason
+from .obs_runtime_readiness_item_state import ObsRuntimeReadinessItemState
+from .obs_runtime_readiness_reason import ObsRuntimeReadinessReason
+from .obs_runtime_readiness_reason_count import ObsRuntimeReadinessReasonCount
+from .obs_runtime_readiness_reason_count_reason import ObsRuntimeReadinessReasonCountReason
+from .obs_runtime_readiness_state import ObsRuntimeReadinessState
+from .obs_runtime_snapshot_prime_class import ObsRuntimeSnapshotPrimeClass
+from .obs_runtime_snapshot_prime_class_counts import ObsRuntimeSnapshotPrimeClassCounts
+from .obs_runtime_snapshot_prime_class_name import ObsRuntimeSnapshotPrimeClassName
+from .obs_runtime_snapshot_prime_class_state import ObsRuntimeSnapshotPrimeClassState
+from .obs_runtime_snapshot_prime_class_values import ObsRuntimeSnapshotPrimeClassValues
+from .obs_runtime_snapshot_prime_counts import ObsRuntimeSnapshotPrimeCounts
+from .obs_runtime_snapshot_prime_health import ObsRuntimeSnapshotPrimeHealth
+from .obs_runtime_snapshot_prime_health_reason import ObsRuntimeSnapshotPrimeHealthReason
+from .obs_runtime_snapshot_prime_health_state import ObsRuntimeSnapshotPrimeHealthState
+from .obs_runtime_snapshot_prime_item import ObsRuntimeSnapshotPrimeItem
+from .obs_runtime_snapshot_prime_item_job import ObsRuntimeSnapshotPrimeItemJob
+from .obs_runtime_snapshot_prime_item_state import ObsRuntimeSnapshotPrimeItemState
+from .obs_runtime_snapshot_prime_observation import ObsRuntimeSnapshotPrimeObservation
+from .obs_runtime_snapshot_prime_observation_state import ObsRuntimeSnapshotPrimeObservationState
+from .obs_runtime_snapshot_prime_observation_values import ObsRuntimeSnapshotPrimeObservationValues
 from .obs_serving_health import ObsServingHealth
 from .obs_serving_health_state import ObsServingHealthState
 from .obs_serving_probe import ObsServingProbe
@@ -5027,6 +5351,7 @@ from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeCha
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .publish_stored_workflow_request import PublishStoredWorkflowRequest
+from .purge_deleted_app_body import PurgeDeletedAppBody
 from .push_outbound_ai_prompt_version_request import PushOutboundAIPromptVersionRequest
 from .push_outbound_ai_prompt_version_request_defaults import PushOutboundAIPromptVersionRequestDefaults
 from .push_outbound_ai_prompt_version_response import PushOutboundAIPromptVersionResponse
@@ -5916,6 +6241,8 @@ from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
+from .set_app_protection_request import SetAppProtectionRequest
+from .set_app_protection_request_state import SetAppProtectionRequestState
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
@@ -6168,6 +6495,12 @@ from .synthetic_check_response_method import SyntheticCheckResponseMethod
 from .synthetic_check_results import SyntheticCheckResults
 from .synthetic_check_run import SyntheticCheckRun
 from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
+from .task_release_review import TaskReleaseReview
+from .task_release_review_status import TaskReleaseReviewStatus
+from .task_release_review_tool_scopes import TaskReleaseReviewToolScopes
+from .task_release_review_version import TaskReleaseReviewVersion
+from .task_release_review_worker_runtime import TaskReleaseReviewWorkerRuntime
+from .task_review_limits import TaskReviewLimits
 from .task_tool_quarantine import TaskToolQuarantine
 from .task_tool_quarantine_decision import TaskToolQuarantineDecision
 from .task_tool_quarantine_request import TaskToolQuarantineRequest
@@ -7189,6 +7522,13 @@ __all__ = (
     "AppPrivateNetworkNodeStatus",
     "AppPrivateNetworkNodeStatusFabricStatus",
     "AppPrivateNetworkNodeStatusRouteStatus",
+    "AppProtectionItemStatus",
+    "AppProtectionItemStatusItem",
+    "AppProtectionItemStatusKind",
+    "AppProtectionItemStatusReason",
+    "AppProtectionItemStatusState",
+    "AppProtectionResponse",
+    "AppProtectionResponseState",
     "AppPublishEventRequest",
     "AppPublishEventResponse",
     "AppRegistryCredentialListResponse",
@@ -8076,6 +8416,8 @@ __all__ = (
     "DelegatedToolInvocationIntent",
     "DeleteAccountSessionBody",
     "DeletedAppListResponse",
+    "DeletedAppPurgeResponse",
+    "DeletedAppPurgeResponsePendingReason",
     "DeletedAppSummary",
     "DeletedAppSummaryRestoreBlocker",
     "DeleteDeploymentScopeExclusionResponse200",
@@ -8932,6 +9274,8 @@ __all__ = (
     "FlagDecisionSource",
     "FlagDecisionType",
     "FlagEvent",
+    "FlagEventFlags",
+    "FlagEventProperties",
     "FlagEventsRequest",
     "FlagEventsResponse",
     "FlagEventsResponseDropped",
@@ -8940,11 +9284,28 @@ __all__ = (
     "FlagEvidencePage",
     "FlagExperiment",
     "FlagExperimentArm",
+    "FlagExperimentBreach",
     "FlagExperimentCreateRequest",
+    "FlagExperimentCreateRequestMetricKind",
+    "FlagExperimentGuardrail",
+    "FlagExperimentGuardrailName",
+    "FlagExperimentGuardrailRequest",
+    "FlagExperimentGuardrailSetting",
+    "FlagExperimentGuardrailSettings",
+    "FlagExperimentGuardrailsRequest",
+    "FlagExperimentGuardrailStatus",
+    "FlagExperimentGuardrailVariant",
+    "FlagExperimentGuardrailVariantStatus",
+    "FlagExperimentLatency",
     "FlagExperimentList",
     "FlagExperimentMetricKind",
+    "FlagExperimentRecommendation",
+    "FlagExperimentRecommendationAction",
     "FlagExperimentResults",
+    "FlagExperimentShipRequest",
+    "FlagExperimentShipResponse",
     "FlagExperimentStatus",
+    "FlagExperimentStopReason",
     "FlagExperimentVariantResult",
     "FlagExperimentVariantResultStatus",
     "FlagExperimentWeights",
@@ -9012,9 +9373,12 @@ __all__ = (
     "GetObsInputHealthExpectedRole",
     "GetObsRecordingCoverageExpectedSet",
     "GetObsRuleCoverageExpectedSet",
+    "GetObsRuntimeBuildsExpectedRole",
     "GetOpenAPISpecJSONResponse200",
     "GetOutboundAIPriceCatalogProvider",
     "GetProfileCaptureViewKind",
+    "GetProjectInsightEventsInterval",
+    "GetProjectInsightEventsUnit",
     "GetRouteHealthInvestigationCustomerGroupBy",
     "GetRouteHealthInvestigationMethod",
     "GetRouteHealthInvestigationSignal",
@@ -9063,6 +9427,34 @@ __all__ = (
     "GuardedDebugRegressionActionRequestAction",
     "HeldLinkReview",
     "HeldLinksResponse",
+    "HostedTaskBindingCheck",
+    "HostedTaskBindingResult",
+    "HostedTaskBindingResultName",
+    "HostedTaskBindingResultStatus",
+    "HostedTaskBindingSelection",
+    "HostedTaskBindingVerification",
+    "HostedTaskBindingVerificationStatus",
+    "HostedTaskBindingVerificationVersion",
+    "HostedTaskRehearsalDecision",
+    "HostedTaskRehearsalDecisionDecision",
+    "HostedTaskRehearsalPlan",
+    "HostedTaskRehearsalPlanStatus",
+    "HostedTaskRehearsalPlanVersion",
+    "HostedTaskRehearsalPrepare",
+    "HostedTaskSourceCheck",
+    "HostedTaskSourceDecision",
+    "HostedTaskSourceDecisionDecision",
+    "HostedTaskSourceEntry",
+    "HostedTaskSourceEntryMode",
+    "HostedTaskSourceIntent",
+    "HostedTaskSourceIntentReviewStatus",
+    "HostedTaskSourceIntentSourceState",
+    "HostedTaskSourceIntentVersion",
+    "HostedTaskSourcePrepare",
+    "HostedTaskSourcePrepareSources",
+    "HostedTaskSourceReview",
+    "HostedTaskSourceReviewKind",
+    "HostedTaskSourceReviewSourceSha256",
     "HostingRouteCheckResult",
     "HostingRouteCheckResultStatus",
     "HostingRouteCheckSet",
@@ -9100,6 +9492,27 @@ __all__ = (
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
+    "InsightEventPoint",
+    "InsightEventSeries",
+    "InsightEventSeriesInterval",
+    "InsightEventSeriesUnit",
+    "InsightFunnel",
+    "InsightFunnelBreakdown",
+    "InsightFunnelRequest",
+    "InsightFunnelRequestUnit",
+    "InsightFunnelStep",
+    "InsightFunnelUnit",
+    "InsightRequests",
+    "InsightRequestVariant",
+    "InsightRetention",
+    "InsightRetentionPeriod",
+    "InsightRetentionRequest",
+    "InsightRetentionRequestPeriod",
+    "InsightRetentionRequestUnit",
+    "InsightRetentionRow",
+    "InsightRetentionUnit",
+    "InsightStepRequest",
+    "InsightStepRequestWhere",
     "InspectDurableEntityQuotaMigrationResponse200",
     "InspectDurableEntityQuotaPolicyResponse200",
     "InspectDurableEntityRegistryCleanupResponse200",
@@ -9309,6 +9722,7 @@ __all__ = (
     "ListEdgeRuleListsResponse",
     "ListEnvironmentGitReleasesRequest",
     "ListEnvironmentGitReleasesResponse",
+    "ListEnvValues",
     "ListEventAcknowledgmentHistoryPageKind",
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
@@ -10090,6 +10504,249 @@ __all__ = (
     "ObsRuleHealthResponse",
     "ObsRuleHealthResponseState",
     "ObsRuleHealthTotals",
+    "ObsRuntimeAppTaskClass",
+    "ObsRuntimeAppTaskClassCounts",
+    "ObsRuntimeAppTaskClassName",
+    "ObsRuntimeAppTaskClassState",
+    "ObsRuntimeAppTaskClassValues",
+    "ObsRuntimeAppTaskCounts",
+    "ObsRuntimeAppTaskDispatch",
+    "ObsRuntimeAppTaskDispatchState",
+    "ObsRuntimeAppTaskDispatchValues",
+    "ObsRuntimeAppTaskHealth",
+    "ObsRuntimeAppTaskHealthReason",
+    "ObsRuntimeAppTaskHealthScope",
+    "ObsRuntimeAppTaskHealthState",
+    "ObsRuntimeAppTaskItem",
+    "ObsRuntimeAppTaskItemJob",
+    "ObsRuntimeAppTaskItemState",
+    "ObsRuntimeAppTaskKindName",
+    "ObsRuntimeAppTaskObservation",
+    "ObsRuntimeAppTaskObservationState",
+    "ObsRuntimeAppTaskObservationValues",
+    "ObsRuntimeAppTaskOperationCounts",
+    "ObsRuntimeAppTaskOperationItem",
+    "ObsRuntimeAppTaskOperationItemJob",
+    "ObsRuntimeAppTaskOperationName",
+    "ObsRuntimeAppTaskOperationOutcome",
+    "ObsRuntimeAppTaskOperationPoint",
+    "ObsRuntimeAppTaskOperationReason",
+    "ObsRuntimeAppTaskOperations",
+    "ObsRuntimeAppTaskOperationSignal",
+    "ObsRuntimeAppTaskOperationSignalState",
+    "ObsRuntimeAppTaskOperationsReason",
+    "ObsRuntimeAppTaskOperationsScope",
+    "ObsRuntimeAppTaskOperationsState",
+    "ObsRuntimeAppTaskOperationSummary",
+    "ObsRuntimeAppTaskResultCounts",
+    "ObsRuntimeAppTaskResultItem",
+    "ObsRuntimeAppTaskResultItemJob",
+    "ObsRuntimeAppTaskResultName",
+    "ObsRuntimeAppTaskResultOutcome",
+    "ObsRuntimeAppTaskResults",
+    "ObsRuntimeAppTaskResultSignal",
+    "ObsRuntimeAppTaskResultSignalState",
+    "ObsRuntimeAppTaskResultSource",
+    "ObsRuntimeAppTaskResultsReason",
+    "ObsRuntimeAppTaskResultsScope",
+    "ObsRuntimeAppTaskResultsState",
+    "ObsRuntimeBuildCounts",
+    "ObsRuntimeBuilderCounts",
+    "ObsRuntimeBuilderEvidenceReason",
+    "ObsRuntimeBuilderHealth",
+    "ObsRuntimeBuilderHealthReason",
+    "ObsRuntimeBuilderHealthState",
+    "ObsRuntimeBuilderItem",
+    "ObsRuntimeBuilderItemState",
+    "ObsRuntimeBuilderQueue",
+    "ObsRuntimeBuilderQueueQueue",
+    "ObsRuntimeBuilderQueueState",
+    "ObsRuntimeBuilderQueueValues",
+    "ObsRuntimeBuilderSlots",
+    "ObsRuntimeBuilderSlotsState",
+    "ObsRuntimeBuilderSlotValues",
+    "ObsRuntimeBuilderWorker",
+    "ObsRuntimeBuilderWorkerState",
+    "ObsRuntimeBuilderWorkerValues",
+    "ObsRuntimeBuildItem",
+    "ObsRuntimeBuildItemState",
+    "ObsRuntimeBuildJob",
+    "ObsRuntimeBuildJobInventorySource",
+    "ObsRuntimeBuildJobState",
+    "ObsRuntimeBuildRecoveryCleanup",
+    "ObsRuntimeBuildRecoveryCleanupState",
+    "ObsRuntimeBuildRecoveryCleanupValues",
+    "ObsRuntimeBuildRecoveryCounts",
+    "ObsRuntimeBuildRecoveryHealth",
+    "ObsRuntimeBuildRecoveryHealthReason",
+    "ObsRuntimeBuildRecoveryHealthScope",
+    "ObsRuntimeBuildRecoveryHealthState",
+    "ObsRuntimeBuildRecoveryItem",
+    "ObsRuntimeBuildRecoveryItemJob",
+    "ObsRuntimeBuildRecoveryItemState",
+    "ObsRuntimeBuildRecoveryRunning",
+    "ObsRuntimeBuildRecoveryRunningState",
+    "ObsRuntimeBuildRecoveryRunningValues",
+    "ObsRuntimeBuilds",
+    "ObsRuntimeBuildsExpectedRole",
+    "ObsRuntimeBuildsMaxAgeSeconds",
+    "ObsRuntimeBuildsScope",
+    "ObsRuntimeBuildsState",
+    "ObsRuntimeCommandCronClass",
+    "ObsRuntimeCommandCronClassCounts",
+    "ObsRuntimeCommandCronClassName",
+    "ObsRuntimeCommandCronClassState",
+    "ObsRuntimeCommandCronClassValues",
+    "ObsRuntimeCommandCronCounts",
+    "ObsRuntimeCommandCronHealth",
+    "ObsRuntimeCommandCronHealthReason",
+    "ObsRuntimeCommandCronHealthScope",
+    "ObsRuntimeCommandCronHealthState",
+    "ObsRuntimeCommandCronItem",
+    "ObsRuntimeCommandCronItemJob",
+    "ObsRuntimeCommandCronItemState",
+    "ObsRuntimeCommandCronObservation",
+    "ObsRuntimeCommandCronObservationState",
+    "ObsRuntimeCommandCronObservationValues",
+    "ObsRuntimeCommandCronOutcomeCounts",
+    "ObsRuntimeCommandCronOutcomeItem",
+    "ObsRuntimeCommandCronOutcomeItemJob",
+    "ObsRuntimeCommandCronOutcomeName",
+    "ObsRuntimeCommandCronOutcomes",
+    "ObsRuntimeCommandCronOutcomeSignal",
+    "ObsRuntimeCommandCronOutcomeSignalState",
+    "ObsRuntimeCommandCronOutcomeSource",
+    "ObsRuntimeCommandCronOutcomesReason",
+    "ObsRuntimeCommandCronOutcomesScope",
+    "ObsRuntimeCommandCronOutcomesState",
+    "ObsRuntimeCommandCronOutcomeSummary",
+    "ObsRuntimeCommandCronSweep",
+    "ObsRuntimeCommandCronSweepState",
+    "ObsRuntimeCommandCronSweepValues",
+    "ObsRuntimeCommandCronTiming",
+    "ObsRuntimeCommandCronTimingCounts",
+    "ObsRuntimeCommandCronTimingItem",
+    "ObsRuntimeCommandCronTimingItemJob",
+    "ObsRuntimeCommandCronTimingName",
+    "ObsRuntimeCommandCronTimingReason",
+    "ObsRuntimeCommandCronTimingScope",
+    "ObsRuntimeCommandCronTimingSignal",
+    "ObsRuntimeCommandCronTimingSignalState",
+    "ObsRuntimeCommandCronTimingSignalSummary",
+    "ObsRuntimeCommandCronTimingState",
+    "ObsRuntimeDelayedTaskDispatch",
+    "ObsRuntimeDelayedTaskDispatchCounts",
+    "ObsRuntimeDelayedTaskDispatchItem",
+    "ObsRuntimeDelayedTaskDispatchItemJob",
+    "ObsRuntimeDelayedTaskDispatchName",
+    "ObsRuntimeDelayedTaskDispatchOutcomeSummary",
+    "ObsRuntimeDelayedTaskDispatchReason",
+    "ObsRuntimeDelayedTaskDispatchScope",
+    "ObsRuntimeDelayedTaskDispatchSignal",
+    "ObsRuntimeDelayedTaskDispatchSignalState",
+    "ObsRuntimeDelayedTaskDispatchState",
+    "ObsRuntimeDiagnosticGroup",
+    "ObsRuntimeDiagnostics",
+    "ObsRuntimeDiagnosticsScope",
+    "ObsRuntimeHandoffBacklog",
+    "ObsRuntimeHandoffBacklogState",
+    "ObsRuntimeHandoffBacklogValues",
+    "ObsRuntimeHandoffCollection",
+    "ObsRuntimeHandoffCollectionState",
+    "ObsRuntimeHandoffCollectionValues",
+    "ObsRuntimeHandoffCounts",
+    "ObsRuntimeHandoffEvidenceReason",
+    "ObsRuntimeHandoffHealth",
+    "ObsRuntimeHandoffHealthReason",
+    "ObsRuntimeHandoffHealthState",
+    "ObsRuntimeHandoffItem",
+    "ObsRuntimeHandoffItemState",
+    "ObsRuntimeHandoffRecovery",
+    "ObsRuntimeHandoffRecoveryState",
+    "ObsRuntimeHandoffRecoveryValues",
+    "ObsRuntimeHTTPCronDelivery",
+    "ObsRuntimeHTTPCronDeliveryCounts",
+    "ObsRuntimeHTTPCronDeliveryItem",
+    "ObsRuntimeHTTPCronDeliveryItemJob",
+    "ObsRuntimeHTTPCronDeliveryName",
+    "ObsRuntimeHTTPCronDeliveryOutcomeSummary",
+    "ObsRuntimeHTTPCronDeliveryReason",
+    "ObsRuntimeHTTPCronDeliveryScope",
+    "ObsRuntimeHTTPCronDeliverySignal",
+    "ObsRuntimeHTTPCronDeliverySignalState",
+    "ObsRuntimeHTTPCronDeliveryState",
+    "ObsRuntimeLoopCounts",
+    "ObsRuntimeLoopHealth",
+    "ObsRuntimeLoopHealthReason",
+    "ObsRuntimeLoopHealthState",
+    "ObsRuntimeLoopItem",
+    "ObsRuntimeLoopItemLoop",
+    "ObsRuntimeLoopItemReason",
+    "ObsRuntimeLoopItemState",
+    "ObsRuntimePostCaptureClass",
+    "ObsRuntimePostCaptureClassCounts",
+    "ObsRuntimePostCaptureClassName",
+    "ObsRuntimePostCaptureClassState",
+    "ObsRuntimePostCaptureClassValues",
+    "ObsRuntimePostCaptureCounts",
+    "ObsRuntimePostCaptureHealth",
+    "ObsRuntimePostCaptureHealthReason",
+    "ObsRuntimePostCaptureHealthScope",
+    "ObsRuntimePostCaptureHealthState",
+    "ObsRuntimePostCaptureItem",
+    "ObsRuntimePostCaptureItemJob",
+    "ObsRuntimePostCaptureItemState",
+    "ObsRuntimePostCaptureObservation",
+    "ObsRuntimePostCaptureObservationState",
+    "ObsRuntimePostCaptureObservationValues",
+    "ObsRuntimePreparationCounts",
+    "ObsRuntimePreparationHealth",
+    "ObsRuntimePreparationHealthReason",
+    "ObsRuntimePreparationHealthState",
+    "ObsRuntimePreparationItem",
+    "ObsRuntimePreparationItemState",
+    "ObsRuntimePreparationObservation",
+    "ObsRuntimePreparationObservationState",
+    "ObsRuntimePreparationObservationValues",
+    "ObsRuntimePreparationPhase",
+    "ObsRuntimePreparationPhaseCounts",
+    "ObsRuntimePreparationPhaseName",
+    "ObsRuntimePreparationPhaseState",
+    "ObsRuntimePreparationPhaseValues",
+    "ObsRuntimeProcess",
+    "ObsRuntimeProcessCounts",
+    "ObsRuntimeProcessItem",
+    "ObsRuntimeProcessItemComparison",
+    "ObsRuntimeProcessItemComparisonReason",
+    "ObsRuntimeProcessItemReason",
+    "ObsRuntimeProcessItemRevisionRelation",
+    "ObsRuntimeProcessItemState",
+    "ObsRuntimeProcessReason",
+    "ObsRuntimeProcessState",
+    "ObsRuntimeReadiness",
+    "ObsRuntimeReadinessCounts",
+    "ObsRuntimeReadinessItem",
+    "ObsRuntimeReadinessItemReason",
+    "ObsRuntimeReadinessItemState",
+    "ObsRuntimeReadinessReason",
+    "ObsRuntimeReadinessReasonCount",
+    "ObsRuntimeReadinessReasonCountReason",
+    "ObsRuntimeReadinessState",
+    "ObsRuntimeSnapshotPrimeClass",
+    "ObsRuntimeSnapshotPrimeClassCounts",
+    "ObsRuntimeSnapshotPrimeClassName",
+    "ObsRuntimeSnapshotPrimeClassState",
+    "ObsRuntimeSnapshotPrimeClassValues",
+    "ObsRuntimeSnapshotPrimeCounts",
+    "ObsRuntimeSnapshotPrimeHealth",
+    "ObsRuntimeSnapshotPrimeHealthReason",
+    "ObsRuntimeSnapshotPrimeHealthState",
+    "ObsRuntimeSnapshotPrimeItem",
+    "ObsRuntimeSnapshotPrimeItemJob",
+    "ObsRuntimeSnapshotPrimeItemState",
+    "ObsRuntimeSnapshotPrimeObservation",
+    "ObsRuntimeSnapshotPrimeObservationState",
+    "ObsRuntimeSnapshotPrimeObservationValues",
     "ObsServingHealth",
     "ObsServingHealthState",
     "ObsServingProbe",
@@ -11482,6 +12139,7 @@ __all__ = (
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PublishStoredWorkflowRequest",
+    "PurgeDeletedAppBody",
     "PushOutboundAIPromptVersionRequest",
     "PushOutboundAIPromptVersionRequestDefaults",
     "PushOutboundAIPromptVersionResponse",
@@ -12356,6 +13014,8 @@ __all__ = (
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetApplicationStandardLocalIntentRequest",
+    "SetAppProtectionRequest",
+    "SetAppProtectionRequestState",
     "SetAppStaticEgressIPRequest",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",
@@ -12591,6 +13251,12 @@ __all__ = (
     "SyntheticCheckResults",
     "SyntheticCheckRun",
     "SyntheticCheckRunErrorClass",
+    "TaskReleaseReview",
+    "TaskReleaseReviewStatus",
+    "TaskReleaseReviewToolScopes",
+    "TaskReleaseReviewVersion",
+    "TaskReleaseReviewWorkerRuntime",
+    "TaskReviewLimits",
     "TaskToolQuarantine",
     "TaskToolQuarantineDecision",
     "TaskToolQuarantineRequest",

@@ -344,6 +344,10 @@
     # policy rules exempt them from the gateway tunnel.
     - role: tenant_egress_client
       when: faas_join_converge_roles | default(none) is none or 'tenant_egress_client' in faas_join_converge_roles
+    # ADR-20261117185346: the agent tunnel beside the tenant one; a no-op
+    # without egress.agent_gateway.
+    - role: agent_egress_client
+      when: faas_join_converge_roles | default(none) is none or 'agent_egress_client' in faas_join_converge_roles
     - role: node_exporter
       when: faas_join_converge_roles | default(none) is none or 'node_exporter' in faas_join_converge_roles
     - role: gcp_ops_agent

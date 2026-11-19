@@ -58,13 +58,20 @@ func LayerReuseDir(cacheRoot string) string {
 
 // layerReuseFormat versions the key; bump it when Build writes anything new
 // into an app layer. v2 names the shared runner split's inputs instead of
-// its result (ADR-20261112170911 amendment 1).
-const layerReuseFormat = "app-layer-reuse/v2"
+// its result (ADR-20261112170911 amendment 1). v3 keys on the manifest's
+// layer content fields only and records the manifests, so a runtime settings
+// change patches the embedded manifest instead of converting again.
+const layerReuseFormat = "app-layer-reuse/v3"
 
 // layerReuseInputs determines everything rootfs.Builder.Build writes into an
 // app layer, plus the account the layer may be reused in. They are known
 // before imaged reads the image's layers, so a reuse never reads them.
 type layerReuseInputs struct {
+	// kind separates how the layer was converted: a built source image
+	// ("" for the original source path), a registry image's above-base
+	// delta, or a companion's whole image. The same image digest makes a
+	// different layer under each.
+	kind        string
 	accountID   string
 	imageDigest string
 	// runtime and runtimeBaseDiffIDs describe the shared runner base the
@@ -87,13 +94,17 @@ func layerReuseKey(in layerReuseInputs) (string, error) {
 	if in.accountID == "" || in.imageDigest == "" || in.guestInitDigest == "" || in.plan == "" || in.imagedVersion == "" {
 		return "", errors.New("layer reuse key needs the account, image digest, guest-init digest, plan and imaged version")
 	}
-	manifest, err := json.Marshal(in.manifest)
+	manifest, err := json.Marshal(layerContentManifest(in.manifest))
 	if err != nil {
 		return "", fmt.Errorf("layer reuse key: manifest: %w", err)
 	}
 	h := sha256.New()
-	for _, part := range []string{layerReuseFormat, in.accountID, in.imageDigest, in.runtime,
-		strings.Join(in.runtimeBaseDiffIDs, ","), in.startCommand, string(manifest), in.guestInitDigest, string(in.plan), in.imagedVersion} {
+	parts := []string{layerReuseFormat, in.accountID, in.imageDigest, in.runtime,
+		strings.Join(in.runtimeBaseDiffIDs, ","), in.startCommand, string(manifest), in.guestInitDigest, string(in.plan), in.imagedVersion}
+	if in.kind != "" {
+		parts = append(parts, "kind:"+in.kind)
+	}
+	for _, part := range parts {
 		_, _ = fmt.Fprintf(h, "%d:%s\n", len(part), part)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -111,6 +122,11 @@ type layerReuseRecord struct {
 	SBOMKey         string `json:"sbom_key,omitempty"`
 	GuestInitDigest string `json:"guest_init_digest"`
 	RunnerDigest    string `json:"runner_digest,omitempty"`
+	// InputManifest is the manifest the layer was built or patched for,
+	// before the shared runner split; FinalManifest is the one embedded in
+	// it.
+	InputManifest *api.AppManifest `json:"input_manifest,omitempty"`
+	FinalManifest *api.AppManifest `json:"final_manifest,omitempty"`
 }
 
 func (r layerReuseRecord) valid() bool {
@@ -309,6 +325,12 @@ type layerRepublisher interface {
 	Republish(ctx context.Context, be storage.StorageBackend, key string, src rootfs.PublishedLayer) (rootfs.ArtifactIdentity, error)
 }
 
+// layerManifestPatcher can republish an earlier layer with a different
+// embedded manifest; *rootfs.Builder is one.
+type layerManifestPatcher interface {
+	RepublishWithManifest(ctx context.Context, be storage.StorageBackend, key string, p rootfs.ManifestPatch) (rootfs.ArtifactIdentity, int64, error)
+}
+
 // WithLayerReuse turns on app layer reuse with its index in dir
 // (ADR-20261112170911). An empty dir turns it off. Call before serving.
 func (h *Handler) WithLayerReuse(dir string) *Handler {
@@ -322,9 +344,9 @@ func (h *Handler) WithLayerReuse(dir string) *Handler {
 func newLayerReuseMetric(reg prometheus.Registerer) *prometheus.CounterVec {
 	m := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "imaged_app_layer_reuse_total",
-		Help: "App layer reuse decisions (ADR-20261112170911) by outcome: hit republished an earlier layer; miss found none; source_gone, failed and mismatch fell back to a build.",
+		Help: "App layer reuse decisions (ADR-20261112170911) by outcome: hit republished an earlier layer; patched republished it with a new embedded manifest; miss found none; source_gone, failed and mismatch fell back to a build.",
 	}, []string{"outcome"})
-	for _, outcome := range []string{"hit", "miss", "source_gone", "failed", "mismatch"} {
+	for _, outcome := range []string{"hit", "patched", "miss", "source_gone", "failed", "mismatch"} {
 		m.WithLabelValues(outcome)
 	}
 	if err := reg.Register(m); err != nil {
@@ -350,6 +372,14 @@ func (h *Handler) observeLayerReuse(outcome string) {
 // app manifest before any shared runner split; baseDiffIDs are the runner
 // base's layers when runtime names one.
 func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDigest, runtime string, baseDiffIDs []string, manifest api.AppManifest) string {
+	return h.layerReuseKeyFor(app, layerReuseInputs{accountID: app.AccountID, imageDigest: imageDigest, runtime: runtime,
+		runtimeBaseDiffIDs: baseDiffIDs, startCommand: app.StartCommand, manifest: manifest, plan: acct.Plan})
+}
+
+// layerReuseKeyFor completes in with this imaged's guest-init digest and
+// build, and returns its key, or "" when reuse is off or the inputs cannot
+// be identified.
+func (h *Handler) layerReuseKeyFor(app state.App, in layerReuseInputs) string {
 	if h.layerReuse == nil {
 		return ""
 	}
@@ -358,9 +388,7 @@ func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDiges
 		h.log.Warn("imaged: layer reuse: guest-init digest", "err", err)
 		return ""
 	}
-	in := layerReuseInputs{accountID: app.AccountID, imageDigest: imageDigest, runtime: runtime,
-		runtimeBaseDiffIDs: baseDiffIDs, startCommand: app.StartCommand, manifest: manifest,
-		guestInitDigest: guestInit, plan: acct.Plan, imagedVersion: wire.Version}
+	in.guestInitDigest, in.imagedVersion = guestInit, wire.Version
 	key, err := layerReuseKey(in)
 	if err != nil {
 		h.log.Warn("imaged: layer reuse key", "app", app.Slug, "err", err)
@@ -377,9 +405,13 @@ func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDiges
 func (h *Handler) buildOrReuseAppLayer(ctx context.Context, key string, app state.App, dep state.Deployment, in rootfs.BuildInput, prepare func(*rootfs.BuildInput) (func(), error)) (rootfs.BuildResult, error) {
 	if key != "" {
 		if result, ok := h.reuseAppLayer(ctx, key, app, dep, in); ok {
+			markLayerPhase(ctx, "reuse")
 			return result, nil
 		}
 	}
+	// prepare rewrites in.Manifest (and its Env map) for the shared runner
+	// split; keep the input to record beside the result.
+	input, inputOK := cloneManifest(in.Manifest)
 	if prepare != nil {
 		cleanup, err := prepare(&in)
 		if err != nil {
@@ -389,9 +421,18 @@ func (h *Handler) buildOrReuseAppLayer(ctx context.Context, key string, app stat
 	}
 	result, err := h.buildAppLayer(ctx, in)
 	if err == nil && key != "" {
-		h.recordAppLayer(key, app, dep, result, true)
+		var manifests *layerManifests
+		if inputOK {
+			manifests = &layerManifests{input: input, final: in.Manifest}
+		}
+		h.recordAppLayer(key, app, dep, result, manifests, true)
 	}
 	return result, err
+}
+
+// layerManifests are the manifests a recorded layer was made for.
+type layerManifests struct {
+	input, final api.AppManifest
 }
 
 func (h *Handler) reuseAppLayer(ctx context.Context, key string, app state.App, dep state.Deployment, in rootfs.BuildInput) (rootfs.BuildResult, bool) {
@@ -415,34 +456,80 @@ func (h *Handler) reuseAppLayer(ctx context.Context, key string, app state.App, 
 		h.observeLayerReuse("source_gone")
 		return rootfs.BuildResult{}, false
 	}
+	// The key covers only the manifest's layer content fields, so the record
+	// must say which manifest its layer embeds. The same input manifest
+	// republishes the bytes as they are; other runtime settings patch the
+	// embedded manifest (and the new digest is scanned again).
+	if rec.InputManifest == nil || rec.FinalManifest == nil {
+		h.observeLayerReuse("mismatch")
+		return rootfs.BuildResult{}, false
+	}
+	manifests := &layerManifests{input: *rec.InputManifest, final: *rec.FinalManifest}
+	source := rootfs.PublishedLayer{Path: src, Digest: rec.ArtifactDigest, Bytes: rec.ArtifactBytes}
+	outcome := "hit"
 	start := time.Now()
-	identity, err := republisher.Republish(ctx, in.Storage, in.StorageKey, rootfs.PublishedLayer{Path: src, Digest: rec.ArtifactDigest, Bytes: rec.ArtifactBytes})
+	var identity rootfs.ArtifactIdentity
+	var contentDelta int64
+	var err error
+	if manifestsEqual(manifests.input, in.Manifest) {
+		identity, err = republisher.Republish(ctx, in.Storage, in.StorageKey, source)
+	} else {
+		outcome = "patched"
+		patcher, ok := h.builder.(layerManifestPatcher)
+		if !ok {
+			h.observeLayerReuse("mismatch")
+			return rootfs.BuildResult{}, false
+		}
+		final, ok := splitManifest(in.Manifest, manifests.input, manifests.final)
+		if !ok {
+			h.observeLayerReuse("mismatch")
+			return rootfs.BuildResult{}, false
+		}
+		identity, contentDelta, err = patcher.RepublishWithManifest(ctx, in.Storage, in.StorageKey, rootfs.ManifestPatch{Source: source, Old: manifests.final, New: final})
+		if errors.Is(err, rootfs.ErrManifestPatchUnsupported) {
+			// The recorded layer stays valid for its own manifest.
+			h.observeLayerReuse("failed")
+			h.log.Warn("imaged: layer manifest patch unsupported; building the layer", "app", app.Slug, "deployment", dep.ID, "source_deployment", rec.DeploymentID, "err", err)
+			return rootfs.BuildResult{}, false
+		}
+		manifests = &layerManifests{input: in.Manifest, final: final}
+	}
 	if err != nil {
 		h.layerReuse.drop(key)
 		h.observeLayerReuse("failed")
 		h.log.Warn("imaged: layer reuse failed; building the layer", "app", app.Slug, "deployment", dep.ID, "source_deployment", rec.DeploymentID, "err", err)
 		return rootfs.BuildResult{}, false
 	}
+	if outcome == "patched" {
+		imageProgressf(ctx, "image unchanged; reused deployment %s's filesystem with the new runtime settings in %s", rec.DeploymentID, progressElapsed(start))
+	} else {
+		imageProgressf(ctx, "image unchanged; reused deployment %s's filesystem in %s", rec.DeploymentID, progressElapsed(start))
+	}
 	h.layerDigests.record(in.Storage, in.StorageKey, identity.Digest)
 	result := rootfs.BuildResult{
-		ImageKey: in.StorageKey, SizeMB: rec.SizeMB, ContentBytes: rec.ContentBytes,
+		ImageKey: in.StorageKey, SizeMB: rec.SizeMB, ContentBytes: rec.ContentBytes + contentDelta,
 		ArtifactDigest: identity.Digest, ArtifactBytes: identity.Bytes,
 		SBOMKey:      h.copySBOM(ctx, in.Storage, rec.SBOMKey, in.SBOMStorageKey),
 		RunnerDigest: rec.RunnerDigest, GuestInitDigest: rec.GuestInitDigest,
 	}
 	// The newest copy is the likeliest to stay cached and uncollected. The
-	// scan source stays the deployment that was scanned.
-	h.recordAppLayer(key, app, dep, result, false)
-	h.observeLayerReuse("hit")
-	h.log.Info("imaged: reused app layer", "app", app.Slug, "deployment", dep.ID,
+	// scan source stays the deployment that was scanned; a patched layer has
+	// a new digest and no scan source, so it is scanned.
+	h.recordAppLayer(key, app, dep, result, manifests, false)
+	h.observeLayerReuse(outcome)
+	h.log.Info("imaged: reused app layer", "app", app.Slug, "deployment", dep.ID, "outcome", outcome,
 		"source_deployment", rec.DeploymentID, "bytes", identity.Bytes, "ms", time.Since(start).Milliseconds())
 	return result, true
 }
 
-func (h *Handler) recordAppLayer(key string, app state.App, dep state.Deployment, result rootfs.BuildResult, scanSource bool) {
+func (h *Handler) recordAppLayer(key string, app state.App, dep state.Deployment, result rootfs.BuildResult, manifests *layerManifests, scanSource bool) {
 	rec := layerReuseRecord{AccountID: app.AccountID, DeploymentID: dep.ID, StorageKey: result.ImageKey,
 		ArtifactDigest: result.ArtifactDigest, ArtifactBytes: result.ArtifactBytes, ContentBytes: result.ContentBytes,
 		SizeMB: result.SizeMB, SBOMKey: result.SBOMKey, GuestInitDigest: result.GuestInitDigest, RunnerDigest: result.RunnerDigest}
+	if manifests != nil {
+		input, final := manifests.input, manifests.final
+		rec.InputManifest, rec.FinalManifest = &input, &final
+	}
 	if !rec.valid() {
 		return
 	}
