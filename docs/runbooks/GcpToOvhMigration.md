@@ -53,7 +53,10 @@ metric). Each app is recaptured on OVH after that boot.
       the release: every app cold-boots once on cutover day, and 128 MB apps
       ran out of memory on cold boot without it.
 - [ ] One OVH Additional IP per compute node for the app entry (`entry_ipv4`,
-      ADR-20261103163954 §2).
+      ADR-20261103163954 §2), routed to that server. No role puts it on
+      the host: add it to the public card in its own netplan file
+      (`/etc/netplan/61-entry-ip.yaml`, `addresses: [<ip>/32]` under the
+      card named in `50-cloud-init.yaml`) and check it answers ping.
 - [ ] OVH account: 2FA on every login, API tokens scoped and listed, IPMI and
       rescue mode understood (disk encryption, ADR-20261109120000, covers
       the rescue-mode risk to data volumes).
