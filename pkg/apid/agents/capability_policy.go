@@ -35,12 +35,9 @@ func validCapabilityPolicy(in *api.AgentCapabilityPolicy, plan api.Plan) (*api.A
 				strings.Join(api.AgentCapabilityTools, ", ")))
 		case seen[t.Name]:
 			return nil, api.ErrValidation(fmt.Sprintf("capability_policy.tools[%d]: %s is named twice", i, t.Name))
-		case t.Mode == api.AgentCapabilityApprove:
-			return nil, api.ErrValidation(fmt.Sprintf("capability_policy.tools[%d].mode %q is not available yet: run approvals have not shipped",
-				i, api.AgentCapabilityApprove))
-		case t.Mode != api.AgentCapabilityAllow && t.Mode != api.AgentCapabilityDeny:
-			return nil, api.ErrValidation(fmt.Sprintf("capability_policy.tools[%d].mode must be %q or %q", i,
-				api.AgentCapabilityAllow, api.AgentCapabilityDeny))
+		case t.Mode != api.AgentCapabilityAllow && t.Mode != api.AgentCapabilityApprove && t.Mode != api.AgentCapabilityDeny:
+			return nil, api.ErrValidation(fmt.Sprintf("capability_policy.tools[%d].mode must be %q, %q or %q", i,
+				api.AgentCapabilityAllow, api.AgentCapabilityApprove, api.AgentCapabilityDeny))
 		}
 		seen[t.Name] = true
 		out.Tools = append(out.Tools, api.AgentCapabilityTool{Name: t.Name, Mode: t.Mode})

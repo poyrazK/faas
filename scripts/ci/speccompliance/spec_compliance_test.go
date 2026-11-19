@@ -524,6 +524,8 @@ var routeExclude = map[string]bool{
 	"GET /v1/agent-runs":                                        true,
 	"GET /v1/agent-runs/{id}":                                   true,
 	"DELETE /v1/agent-runs/{id}":                                true,
+	"GET /v1/agent-runs/{id}/approvals":                         true,
+	"POST /v1/agent-runs/{id}/approvals/{approval_id}":          true,
 	"GET /v1/agent-runs/{id}/outputs":                           true,
 	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
 

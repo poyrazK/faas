@@ -21,6 +21,14 @@ func TestAgentCapabilityPolicy(t *testing.T) {
 	if !p.Allows(api.AgentCapabilityWebFetch) || p.Allows("web_search") {
 		t.Error("allow lists only the tools it names")
 	}
+	// Amendment 2: approve lists the tool but does not allow it outright.
+	p.Tools[0].Mode = api.AgentCapabilityApprove
+	if p.Allows(api.AgentCapabilityWebFetch) || !p.Lists(api.AgentCapabilityWebFetch) ||
+		p.Mode(api.AgentCapabilityWebFetch) != api.AgentCapabilityApprove || p.Mode("web_search") != api.AgentCapabilityDeny ||
+		none.Mode(api.AgentCapabilityWebFetch) != api.AgentCapabilityDeny || none.Lists(api.AgentCapabilityWebFetch) {
+		t.Error("approve mode: listed, not allowed; unnamed tools deny")
+	}
+	p.Tools[0].Mode = api.AgentCapabilityAllow
 	for _, tc := range []struct {
 		policy *api.AgentCapabilityPolicy
 		plan   api.Plan

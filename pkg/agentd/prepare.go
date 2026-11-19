@@ -124,7 +124,7 @@ func capabilityEnv(env map[string]string, policy *api.AgentCapabilityPolicy) {
 		return
 	}
 	for _, tool := range policy.Tools {
-		if tool.Mode == api.AgentCapabilityAllow {
+		if tool.Mode == api.AgentCapabilityAllow || tool.Mode == api.AgentCapabilityApprove {
 			env[api.AgentCapabilityMCPURLEnv] = agentrunproto.OutboundRelayEndpoint + api.AgentCapabilityMCPPath
 			return
 		}

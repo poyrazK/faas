@@ -371,3 +371,21 @@ CREATE TABLE sandbox_templates (
  updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE (account_id, name)
 );
+CREATE TABLE agent_run_approvals (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ run_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ tool text NOT NULL,
+ arguments_sha256 text NOT NULL,
+ arguments_summary text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ expires_at timestamptz NOT NULL
+);
+CREATE TABLE agent_run_approval_decisions (
+ approval_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ decision text NOT NULL,
+ note text NOT NULL DEFAULT '',
+ decided_by text NOT NULL DEFAULT '',
+ decided_at timestamptz NOT NULL DEFAULT now()
+);
