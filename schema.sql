@@ -32003,6 +32003,37 @@ COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, w
 
 
 --
+-- Name: analytics_cohort_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_cohort_members (
+    cohort_id uuid NOT NULL,
+    customer_id uuid NOT NULL
+);
+
+
+--
+-- Name: analytics_cohorts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_cohorts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    key text NOT NULL,
+    definition jsonb NOT NULL,
+    members integer DEFAULT 0 NOT NULL,
+    truncated boolean DEFAULT false NOT NULL,
+    refreshed_at timestamp with time zone,
+    refresh_requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    refresh_error text DEFAULT ''::text NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT analytics_cohorts_chk CHECK (((key ~ '^[a-z][a-z0-9_-]{0,63}$'::text) AND (jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'kind'::text) = ANY (ARRAY['did'::text, 'did_not'::text, 'funnel'::text])) AND (members >= 0) AND (length(refresh_error) <= 512) AND ((length(created_by) >= 1) AND (length(created_by) <= 256))))
+);
+
+
+--
 -- Name: analytics_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43137,6 +43168,7 @@ CREATE TABLE public.flag_experiment_units (
     latency_requests bigint DEFAULT 0 NOT NULL,
     slow_requests bigint DEFAULT 0 NOT NULL,
     value_sum bigint DEFAULT 0 NOT NULL,
+    pre_value double precision,
     CONSTRAINT flag_experiment_units_chk CHECK ((((length(variant) >= 1) AND (length(variant) <= 128)) AND ((converted_at IS NULL) OR (converted_at >= first_exposed_at)))),
     CONSTRAINT flag_experiment_units_counts_chk CHECK (((requests >= 0) AND ((errors >= 0) AND (errors <= requests)) AND ((latency_requests >= 0) AND (latency_requests <= requests)) AND ((slow_requests >= 0) AND (slow_requests <= latency_requests))))
 );
@@ -43171,7 +43203,10 @@ CREATE TABLE public.flag_experiments (
     stop_reason text DEFAULT ''::text NOT NULL,
     breach jsonb,
     value_through_day date,
-    CONSTRAINT flag_experiments_v2_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL))))
+    metric_definition jsonb DEFAULT '{}'::jsonb NOT NULL,
+    cuped boolean DEFAULT true NOT NULL,
+    min_cuped_p_values jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT flag_experiments_v3_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text, 'funnel'::text, 'retention'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(min_cuped_p_values) = 'object'::text) AND (jsonb_typeof(metric_definition) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL))))
 );
 
 
@@ -63765,6 +63800,30 @@ ALTER TABLE ONLY public.alert_test_sends
 
 
 --
+-- Name: analytics_cohort_members analytics_cohort_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohort_members
+    ADD CONSTRAINT analytics_cohort_members_pkey PRIMARY KEY (cohort_id, customer_id);
+
+
+--
+-- Name: analytics_cohorts analytics_cohorts_env_key_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohorts
+    ADD CONSTRAINT analytics_cohorts_env_key_uniq UNIQUE (environment_id, key);
+
+
+--
+-- Name: analytics_cohorts analytics_cohorts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohorts
+    ADD CONSTRAINT analytics_cohorts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: analytics_events analytics_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78301,6 +78360,20 @@ CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btre
 --
 
 CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (created_at) WHERE (state <> 'done'::text);
+
+
+--
+-- Name: analytics_cohort_members_customer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_cohort_members_customer_idx ON public.analytics_cohort_members USING btree (customer_id);
+
+
+--
+-- Name: analytics_cohorts_refresh_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_cohorts_refresh_idx ON public.analytics_cohorts USING btree (refresh_requested_at);
 
 
 --
@@ -97700,6 +97773,38 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_test_sends
     ADD CONSTRAINT alert_test_sends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_cohort_members analytics_cohort_members_cohort_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohort_members
+    ADD CONSTRAINT analytics_cohort_members_cohort_id_fkey FOREIGN KEY (cohort_id) REFERENCES public.analytics_cohorts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_cohort_members analytics_cohort_members_customer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohort_members
+    ADD CONSTRAINT analytics_cohort_members_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_cohorts analytics_cohorts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohorts
+    ADD CONSTRAINT analytics_cohorts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_cohorts analytics_cohorts_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohorts
+    ADD CONSTRAINT analytics_cohorts_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

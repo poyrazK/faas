@@ -18,6 +18,9 @@ type flagRequestAttributes struct {
 	// kills looks up the target deployment's kill list; nil when the
 	// backend does not stamp kills.
 	kills flagKillSource
+	// cohorts looks up the customer's cohorts in the target deployment's
+	// environment; nil when the backend does not stamp them.
+	cohorts flagCohortSource
 }
 
 // withFlagRequestAttributes resolves the client's country and browser family
@@ -37,6 +40,9 @@ func (h *Handler) withFlagRequestAttributes(r *http.Request) *http.Request {
 	}
 	if source, ok := h.backend.(flagKillSource); ok {
 		attrs.kills = source
+	}
+	if source, ok := h.backend.(flagCohortSource); ok {
+		attrs.cohorts = source
 	}
 	return r.WithContext(context.WithValue(r.Context(), flagRequestAttributesKey{}, attrs))
 }

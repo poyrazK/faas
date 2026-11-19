@@ -37,6 +37,13 @@ const (
 	// application fallback for them before consulting their cached bundle
 	// (ADR 20261114150000 §3). Clients cannot author it.
 	FlagKillsHeader = "X-Faas-Flag-Kills"
+	// FlagCohortsHeader lists, comma-separated and sorted, the analytics
+	// cohorts of the request's deployment environment that contain the
+	// verified customer, or "-" for none. SDKs read it as the gregale.cohort
+	// attribute (ADR 20261119102741 §4). Clients cannot author it.
+	FlagCohortsHeader = "X-Faas-Flag-Cohorts"
+	// FlagSDKCohortCapability advertises an SDK that reads gregale.cohort.
+	FlagSDKCohortCapability = "cohort-targeting-v1"
 	// FlagSDKKillCapability advertises an SDK that understands killed flags;
 	// older SDKs get bundles without them, so they fall back as flag_missing.
 	FlagSDKKillCapability = "kill-v1"
@@ -168,6 +175,9 @@ type PlatformIdentity struct {
 	// FlagKills is the sorted, comma-separated kill list of the target
 	// deployment's environment (ADR 20261114150000 §3).
 	FlagKills string
+	// FlagCohorts is the cohorts of the verified customer in the target
+	// deployment's environment (ADR 20261119102741 §4).
+	FlagCohorts string
 }
 
 // ApplyGuestHeaders clears any inbound platform claims and stamps the
@@ -199,6 +209,7 @@ func (i PlatformIdentity) ApplyGuestHeaders(h http.Header) {
 	set(ClientCountryHeader, i.ClientCountry)
 	set(ClientUAFamilyHeader, i.ClientUAFamily)
 	set(FlagKillsHeader, i.FlagKills)
+	set(FlagCohortsHeader, i.FlagCohorts)
 	set("X-Faas-App", i.AppID)
 	set("X-Faas-Instance", i.InstanceID)
 	set("X-Faas-Node", i.NodeID)
@@ -293,7 +304,7 @@ var guestIdentityHeaderNames = map[string]struct{}{
 	"x-faas-tenant-id": {}, "x-faas-platform-tenant-id": {}, "x-faas-instance-id": {}, "x-faas-node-id": {},
 	"x-faas-region": {}, "x-faas-commit-sha": {}, "x-faas-deployment-tag": {},
 	"x-faas-deployment-created-at": {}, "x-faas-image-digest": {}, "x-faas-flag-context": {},
-	"x-faas-client-country": {}, "x-faas-client-ua-family": {}, "x-faas-flag-kills": {},
+	"x-faas-client-country": {}, "x-faas-client-ua-family": {}, "x-faas-flag-kills": {}, "x-faas-flag-cohorts": {},
 	"x-gregale-operation-id": {}, "x-gregale-operation-generation": {}, "x-gregale-operation-result-version": {},
 	"x-gregale-customer-operation-id": {}, "x-gregale-operation-attempt": {}, "x-gregale-operation-capability": {},
 }

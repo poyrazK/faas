@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -29,7 +30,14 @@ func cmdFlagsExperiments(args []string) int {
 	rule := fs.String("rule", "", "create: the flag's weighted rule ID")
 	control := fs.String("control", "", "create: the baseline variant")
 	metric := fs.String("metric", "", "create: the metric event name")
-	kind := fs.String("metric-kind", "", "create: conversion (default) or mean (mean event value per customer)")
+	kind := fs.String("metric-kind", "", "create: conversion (default), mean (mean event value per customer), funnel or retention")
+	var steps repeatedFlag
+	fs.Var(&steps, "step", "create: funnel step event (repeatable, 2 to 6)")
+	window := fs.String("window", "", "create: funnel window after first exposure, 1h to 720h")
+	returnEvent := fs.String("return-event", "", "create: retention return event")
+	period := fs.String("period", "", "create: retention period, day or week")
+	periodNumber := fs.Int("period-number", 0, "create: retention period N after exposure, 1 to 12")
+	noCuped := fs.Bool("no-cuped", false, "create: turn CUPED variance reduction off")
 	lift := fs.String("mixing-lift", "", "create: mSPRT mixing lift (absolute, default 0.02; standardized for mean, default 0.1)")
 	maxErrors := fs.String("max-error-increase", "", "create: server error rate guardrail tolerance (absolute, default 0.005)")
 	maxSlow := fs.String("max-slow-increase", "", "create: p95 latency guardrail tolerance, as the share of requests slower than control's p95 (default 0.02)")
@@ -65,6 +73,7 @@ func cmdFlagsExperiments(args []string) int {
 	case "create":
 		req := api.FlagExperimentCreateRequest{Key: key, Flag: *flagKey, RuleID: *rule, Control: *control, MetricEvent: *metric,
 			MetricKind: *kind, Start: *start}
+		flagsExperimentMetric(&req, steps, *window, *returnEvent, *period, *periodNumber, *noCuped)
 		guardrails := &api.FlagExperimentGuardrailsRequest{ServerErrorRate: &api.FlagExperimentGuardrailRequest{Disabled: *noGuardrails},
 			P95Latency: &api.FlagExperimentGuardrailRequest{Disabled: *noGuardrails}}
 		for _, n := range []struct {
@@ -162,16 +171,66 @@ func flagsExperimentOut(x api.FlagExperiment, err error) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(x))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Experiment %s on %s/%s (control %s, metric %s %s): %s\n", x.Key, x.Flag, x.RuleID, x.Control, x.MetricKind, x.MetricEvent, x.Status)
+	_, _ = fmt.Fprintf(osStdout, "Experiment %s on %s/%s (control %s, metric %s): %s\n", x.Key, x.Flag, x.RuleID, x.Control, flagsExperimentMetricText(x), x.Status)
 	if x.StopReason == "guardrail_breach" {
 		_, _ = fmt.Fprintf(osStdout, "Stopped by a guardrail: %v\n", x.Breach)
 	}
 	return 0
 }
 
+// flagsExperimentMetric adds a funnel or retention definition and the CUPED
+// switch (ADR 20261119102741); apid validates them.
+func flagsExperimentMetric(req *api.FlagExperimentCreateRequest, steps []string, window, returnEvent, period string, periodNumber int, noCuped bool) {
+	if len(steps) > 0 || window != "" {
+		f := &api.FlagExperimentFunnel{Window: window}
+		for _, s := range steps {
+			f.Steps = append(f.Steps, api.InsightStepRequest{Event: s})
+		}
+		req.Funnel = f
+	}
+	if returnEvent != "" || period != "" || periodNumber != 0 {
+		req.Retention = &api.FlagExperimentRetention{Return: api.InsightStepRequest{Event: returnEvent}, Period: period, PeriodNumber: periodNumber}
+	}
+	if noCuped {
+		off := false
+		req.Cuped = &off
+	}
+}
+
+// flagsExperimentMetricText names an experiment's metric.
+func flagsExperimentMetricText(x api.FlagExperiment) string {
+	switch {
+	case x.Funnel != nil:
+		names := make([]string, 0, len(x.Funnel.Steps))
+		for _, s := range x.Funnel.Steps {
+			names = append(names, s.Event)
+		}
+		return fmt.Sprintf("funnel %s within %s", strings.Join(names, " > "), x.Funnel.Window)
+	case x.Retention != nil:
+		return fmt.Sprintf("retention %s in %s %d", x.Retention.Return.Event, x.Retention.Period, x.Retention.PeriodNumber)
+	}
+	return x.MetricKind + " " + x.MetricEvent
+}
+
+func printFlagsExperimentCuped(res api.FlagExperimentResults) {
+	c := res.Cuped
+	if !c.Applied {
+		if c.Reason != "" && c.Reason != "off" {
+			_, _ = fmt.Fprintf(osStdout, "CUPED not applied (%s); results are unadjusted.\n", strings.ReplaceAll(c.Reason, "_", " "))
+		}
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "CUPED: adjusted for each customer's %d days before the start; variance reduced by %.0f%%.\n", c.PreDays, 100*c.VarianceReduction)
+	for _, v := range res.Variants {
+		if u := v.Unadjusted; u != nil {
+			_, _ = fmt.Fprintf(osStdout, "  %s unadjusted: lift %+.4g, interval [%+.4g, %+.4g], p %.3g\n", v.Variant, u.Lift, u.Low, u.High, u.PValue)
+		}
+	}
+}
+
 func printFlagsExperimentResults(res api.FlagExperimentResults) {
 	x := res.Experiment
-	_, _ = fmt.Fprintf(osStdout, "Experiment %s (%s): %s against control %s, metric %s\n", x.Key, x.Status, x.Flag, x.Control, x.MetricEvent)
+	_, _ = fmt.Fprintf(osStdout, "Experiment %s (%s): %s against control %s, metric %s\n", x.Key, x.Status, x.Flag, x.Control, flagsExperimentMetricText(x))
 	if res.SampleRatioMismatch {
 		_, _ = fmt.Fprintf(osStdout, "Sample ratio mismatch (p=%.2g): customers were not allocated as configured; results are not trustworthy.\n", res.SampleRatioPValue)
 	}
@@ -215,6 +274,7 @@ func printFlagsExperimentResults(res api.FlagExperimentResults) {
 	if res.CrossedUnits > 0 {
 		_, _ = fmt.Fprintf(osStdout, "%d customers saw more than one variant and are left out.\n", res.CrossedUnits)
 	}
+	printFlagsExperimentCuped(res)
 	printFlagsExperimentGuardrails(res)
 	r := res.Recommendation
 	if r.Action == "" {

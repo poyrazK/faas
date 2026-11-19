@@ -38,6 +38,9 @@ const (
 	// GregaleFlagKillsHeader lists the flags killed in the request's
 	// environment, stamped by Gregale's gateway.
 	GregaleFlagKillsHeader = "X-Faas-Flag-Kills"
+	// GregaleFlagCohortsHeader lists the verified customer's analytics
+	// cohorts, "-" for none; rules read it as gregale.cohort.
+	GregaleFlagCohortsHeader = "X-Faas-Flag-Cohorts"
 
 	maxFlagEvidence          = 32
 	maxFlagEvidenceBytes     = 16 << 10
