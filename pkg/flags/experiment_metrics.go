@@ -24,7 +24,9 @@ const (
 )
 
 // BinaryMetric reports whether kind counts converted customers.
-func BinaryMetric(kind string) bool { return kind != ExperimentMetricMean }
+func BinaryMetric(kind string) bool {
+	return kind == "" || kind == ExperimentMetricConversion || kind == ExperimentMetricFunnel || kind == ExperimentMetricRetention
+}
 
 // AnalyticsMetric reports whether kind reads product analytics events.
 func AnalyticsMetric(kind string) bool {

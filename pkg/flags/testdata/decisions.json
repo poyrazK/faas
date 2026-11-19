@@ -3,7 +3,31 @@
     "environment_id": "00000000-0000-4000-8000-0000000000e1",
     "version": 7,
     "groups": {},
+    "holdout": {"seed": "seed-holdout", "basis_points": 1000},
+    "layers": [{"key": "checkout-layer", "seed": "seed-layer"}],
     "flags": [
+      {
+        "key": "layered-checkout",
+        "type": "variant",
+        "enabled": true,
+        "default": "control",
+        "seed": "seed-layered",
+        "variants": [{"key": "control", "weight": 5000}, {"key": "new", "weight": 5000}],
+        "rules": [
+          {"id": "weighted", "rollout": 10000, "experiment": {"key": "layered", "control": "control", "unit": "customer", "layer": "checkout-layer", "from": 0, "to": 5000}}
+        ]
+      },
+      {
+        "key": "subject-checkout",
+        "type": "variant",
+        "enabled": true,
+        "default": "control",
+        "seed": "seed-subject",
+        "variants": [{"key": "control", "weight": 5000}, {"key": "new", "weight": 5000}],
+        "rules": [
+          {"id": "by-user", "customers": ["00000000-0000-4000-8000-000000000101", "00000000-0000-4000-8000-000000000106", "00000000-0000-4000-8000-000000000110"], "rollout": 10000, "rollout_unit": "subject", "experiment": {"key": "by-user", "control": "control", "unit": "subject"}}
+        ]
+      },
       {
         "key": "power-tools",
         "enabled": true,
@@ -58,6 +82,14 @@
     ]
   },
   "cases": [
+    {"name": "layer slice and weights pick control", "flag": "layered-checkout", "type": "variant", "customer": "00000000-0000-4000-8000-000000000103", "fallback": "x", "value": "control", "reason": "rule_match", "rule_id": "weighted"},
+    {"name": "layer slice and weights pick new", "flag": "layered-checkout", "type": "variant", "customer": "00000000-0000-4000-8000-000000000104", "fallback": "x", "value": "new", "reason": "rule_match", "rule_id": "weighted"},
+    {"name": "outside the layer slice falls through", "flag": "layered-checkout", "type": "variant", "customer": "00000000-0000-4000-8000-000000000101", "fallback": "x", "value": "control", "reason": "default"},
+    {"name": "held-out customer sees control", "flag": "layered-checkout", "type": "variant", "customer": "00000000-0000-4000-8000-000000000110", "fallback": "x", "value": "control", "reason": "holdout", "rule_id": "weighted"},
+    {"name": "subject experiment allocates by subject", "flag": "subject-checkout", "type": "variant", "customer": "00000000-0000-4000-8000-000000000101", "subject": "user-7", "fallback": "x", "value": "new", "reason": "rule_match", "rule_id": "by-user"},
+    {"name": "subject experiment control", "flag": "subject-checkout", "type": "variant", "customer": "00000000-0000-4000-8000-000000000106", "subject": "user-7", "fallback": "x", "value": "control", "reason": "rule_match", "rule_id": "by-user"},
+    {"name": "holdout is per customer in subject experiments", "flag": "subject-checkout", "type": "variant", "customer": "00000000-0000-4000-8000-000000000110", "subject": "user-7", "fallback": "x", "value": "control", "reason": "holdout", "rule_id": "by-user"},
+    {"name": "subject experiment without a subject", "flag": "subject-checkout", "type": "variant", "customer": "00000000-0000-4000-8000-000000000101", "fallback": "x", "value": "control", "reason": "subject_missing"},
     {"name": "country in list", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.country": "DE"}, "fallback": false, "value": true, "reason": "rule_match", "rule_id": "eu"},
     {"name": "country not in list", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "attributes": {"gregale.country": "US"}, "fallback": false, "value": false, "reason": "default"},
     {"name": "country missing", "flag": "eu-checkout", "customer": "00000000-0000-4000-8000-000000000001", "fallback": true, "value": false, "reason": "default"},
