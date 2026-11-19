@@ -87,8 +87,8 @@ or ID. `--region` is needed only when a database is created.
 
 ## Connect an app
 
-Attach a database to an app, and Gregale delivers its connection URL as an app
-secret:
+To connect an app to Postgres, attach the database to it. Gregale delivers
+the connection URL as an app secret:
 
 ```sh
 gregale postgres attach orders my-api --env DATABASE_URL
@@ -101,8 +101,11 @@ gregale postgres attach orders my-api --env DATABASE_URL
 - A bound app can reach its database on every plan. Other destinations on port
   5432 stay closed unless the app declares that egress port (Pro and Scale).
 
-Or declare the database in `gregale.yaml`, and `gregale deploy` binds it
-before it starts the new compute:
+### Declare the database in gregale.yaml
+
+Instead of `gregale postgres attach`, you can declare the database in
+`gregale.yaml`, and `gregale deploy` binds it before it starts the new
+compute:
 
 ```yaml
 databases:

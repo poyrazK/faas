@@ -6,6 +6,8 @@ These are the same limits the API enforces: this page is generated from them. Pr
 
 ## At a glance
 
+What each plan gets: how many apps you can deploy, how much RAM each instance has, and the rest of its limits. [What each limit means](#what-each-limit-means) explains every column.
+
 | Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App egress / month | App layer | Idle timeout | Max request timeout |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | **Free** | $0 | 1 | 1 | 1 | 1 | 256 MB | 20 | 10 GiB | 256 MB | 1m | 30s |
