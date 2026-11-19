@@ -27,10 +27,6 @@ type nodeBusySignal struct{ busy atomic.Bool }
 
 type nodeBusySignalKey struct{}
 
-func withNodeBusySignal(ctx context.Context, s *nodeBusySignal) context.Context {
-	return context.WithValue(ctx, nodeBusySignalKey{}, s)
-}
-
 // markNodeBusy records that the node refused the request for capacity. It is
 // called before the refusal is written, so the writer can hold it.
 func markNodeBusy(ctx context.Context) {
@@ -138,7 +134,7 @@ func waitOutNodeBusy(wait time.Duration, forward retryAttempt, repick func(prev 
 			}
 			signal := &nodeBusySignal{}
 			writer := newNodeBusyWriter(dst, signal)
-			forward(writer, attempt.WithContext(withNodeBusySignal(attempt.Context(), signal)), selected)
+			forward(writer, attempt.WithContext(context.WithValue(req.Context(), nodeBusySignalKey{}, signal)), selected)
 			if !writer.held {
 				return
 			}
