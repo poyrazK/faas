@@ -231,7 +231,9 @@ func (s *server) getAccountDeadLetterEvent(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrInternal("account dead-letter apps"))
 		return
 	}
-	writeJSON(w, http.StatusOK, accountDeadLetterEventResponse(ev, appSlugs))
+	out := accountDeadLetterEventResponse(ev, appSlugs)
+	s.addDeadLetterReplayHistory(r, ev, &out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *server) replayAccountDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
