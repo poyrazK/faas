@@ -39,6 +39,11 @@ func (s *Service) reconcileBucketObjectLockRow(ctx context.Context, buckets stat
 	if err != nil {
 		return err
 	}
+	// A bucket created with Object Lock journals its request before the
+	// provider bucket exists; wait for provisioning (ADR-20261119065000).
+	if b.State == "provisioning" {
+		return nil
+	}
 	if s.Host.ObjectStorage() == nil {
 		return s.deferBucketObjectLockRow(ctx, st, row)
 	}

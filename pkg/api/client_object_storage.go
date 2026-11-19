@@ -29,6 +29,8 @@ type CreateObjectBucketRequest struct {
 	Region  string `json:"region,omitempty"`
 	Public  bool   `json:"public,omitempty"`
 	ServeAt string `json:"serve_at,omitempty"`
+	// ObjectLock creates the bucket with Object Lock (ADR-20261119065000).
+	ObjectLock bool `json:"object_lock,omitempty"`
 }
 
 // BucketObject is one item from the upstream object listing, not a usage bill.
