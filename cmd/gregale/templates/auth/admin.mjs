@@ -18,12 +18,49 @@ import { adminRoute as serviceAccountsRoute } from './serviceaccounts.mjs'
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-// adminKeyHashes lists each admin key's ID (the secret name's suffix) and
-// SHA-256, so actions such as impersonation record which key acted.
+// Admin key scopes. A key holds 'all' or a list of these; each /admin/v1
+// route needs one (requiredScope), and a route no scope names needs 'all',
+// so a route added later is closed to narrower keys until it is mapped.
+export const adminScopes = Object.freeze(['users:read', 'users:write', 'impersonate', 'sso', 'oauth-clients', 'service-accounts', 'emails'])
+
+// adminKeyHashes lists each admin key's ID (the secret name's suffix),
+// SHA-256, scopes and expiry, so actions such as impersonation record which
+// key acted. AUTH_ADMIN_KEY_<ID> holds the hex digest, optionally followed
+// by ;scopes=<a,b> and ;expires=<Unix seconds>; a bare digest, as keys made
+// before scopes existed are, holds every scope and never expires.
 export function adminKeyHashes(env) {
-  return Object.entries(env)
-    .filter(([k, v]) => /^AUTH_ADMIN_KEY_[0-9A-F]{8}$/.test(k) && typeof v === 'string' && /^[0-9a-f]{64}$/.test(v))
-    .map(([k, v]) => ({ id: k.slice(-8), hash: Buffer.from(v, 'hex') }))
+  const keys = []
+  for (const [name, value] of Object.entries(env)) {
+    if (!/^AUTH_ADMIN_KEY_[0-9A-F]{8}$/.test(name) || typeof value !== 'string') continue
+    const match = /^([0-9a-f]{64})(?:;scopes=([a-z:,-]{1,200}))?(?:;expires=([1-9][0-9]{9}))?$/.exec(value)
+    if (!match) continue
+    const scopes = match[2] ? [...new Set(match[2].split(','))] : ['all']
+    if (!scopes.every(scope => scope === 'all' || adminScopes.includes(scope))) continue
+    keys.push({ id: name.slice(-8), hash: Buffer.from(match[1], 'hex'), scopes: scopes.includes('all') ? ['all'] : scopes.sort(), expiresAt: match[3] ? Number(match[3]) * 1000 : null })
+  }
+  return keys
+}
+
+// adminKeySummary is what /settings/v1 reports of the admin keys, so the
+// CLI can list them: IDs, scopes and expiry, never a digest.
+export function adminKeySummary(keys) {
+  return keys.map(key => ({ id: key.id, scopes: key.scopes, expires_at: key.expiresAt === null ? null : new Date(key.expiresAt).toISOString() }))
+}
+
+// requiredScope names the scope an /admin/v1 request needs.
+export function requiredScope(method, parts) {
+  const reads = method === 'GET'
+  if (parts[0] === 'impersonations' || (parts[0] === 'users' && parts[2] === 'impersonate')) return 'impersonate'
+  if (parts[0] === 'sso') return 'sso'
+  if (parts[0] === 'oauth') return 'oauth-clients'
+  if (parts[0] === 'service-accounts') return 'service-accounts'
+  if (parts[0] === 'emails') return 'emails'
+  if (['users', 'signups', 'activity', 'orgs'].includes(parts[0])) return reads ? 'users:read' : 'users:write'
+  return 'all'
+}
+
+export function keyAllows(key, scope) {
+  return key.scopes.includes('all') || (scope !== 'all' && (key.scopes.includes(scope) || (scope === 'users:read' && key.scopes.includes('users:write'))))
 }
 
 export function newAdminKey() {
@@ -31,13 +68,13 @@ export function newAdminKey() {
   return { key, hash: createHash('sha256').update(key).digest('hex') }
 }
 
-// keyMatches returns the ID of the admin key presented, or null.
+// keyMatches returns the admin key presented, or null.
 function keyMatches(keys, header) {
   const key = /^Bearer (gaak_[A-Za-z0-9_-]{43})$/.exec(header ?? '')?.[1]
   if (!key) return null
   const presented = createHash('sha256').update(key).digest()
   // Compare against every hash so timing does not reveal which key matched.
-  return keys.reduce((found, { id, hash }) => timingSafeEqual(hash, presented) ? id : found, null)
+  return keys.reduce((found, candidate) => timingSafeEqual(candidate.hash, presented) ? candidate : found, null)
 }
 
 // signingKey picks the one ES256 key in GOTRUE_JWT_KEYS that signs. GoTrue
@@ -373,7 +410,7 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
 }
 
 // createAdminHandler serves /admin/v1. Without a key it does not exist.
-export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {}, impersonation = null, serviceAccounts = false }) {
+export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {}, impersonation = null, serviceAccounts = false, now = Date.now }) {
   const allowed = new Set(origins)
   return async (req, res) => {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -387,9 +424,12 @@ export function createAdminHandler({ pool, admin, keys, origins = [], external, 
       return res.end()
     }
     try {
-      const keyId = keyMatches(keys, req.headers.authorization)
-      if (!keyId) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
+      const key = keyMatches(keys, req.headers.authorization)
+      if (!key) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
+      if (key.expiresAt !== null && key.expiresAt <= now()) { req.resume(); throw new HTTPError(401, 'admin_key_expired') }
       const url = new URL(req.url, 'http://admin.invalid')
+      if (!keyAllows(key, requiredScope(req.method, url.pathname.replace(/^\/admin\/v1/, '').split('/').filter(Boolean)))) { req.resume(); throw new HTTPError(403, 'admin_key_scope') }
+      const keyId = key.id
       const body = await readJSON(req, limits.adminBodyBytes)
       const [status, payload] = await adminRoute({ pool, admin, external, emails, impersonation, serviceAccounts, keyId }, req.method, url, body)
       reply(status, payload)

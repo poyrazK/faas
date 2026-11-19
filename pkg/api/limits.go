@@ -17651,9 +17651,31 @@ const (
 	// restarted Auth app to publish a key change.
 	AuthKeyChangeWait = 5 * time.Minute
 	// AuthPasswordMinLength bounds the configurable minimum password length:
-	// GoTrue's own default is the floor, and bcrypt reads 72 bytes at most.
-	AuthPasswordMinLengthFloor   = 6
+	// the floor is NIST SP 800-63B's eight characters (GoTrue's own default
+	// of six is below it) and is also an Auth app's default; bcrypt reads 72
+	// bytes at most. The template mirrors the floor as passwordMinLength.
+	AuthPasswordMinLengthFloor   = 8
 	AuthPasswordMinLengthCeiling = 72
+	// AuthPasswordFailuresPerAddress, AuthPasswordFailuresPerAccount and
+	// AuthSecondStepFailuresPerUser are an Auth app's failed-attempt budgets
+	// in each AuthAttemptWindowSeconds, kept in its database so every
+	// instance and wake shares them: wrong passwords for one account from one
+	// client address, for one account from any address, and wrong
+	// second-step codes for one user. A spent budget answers 429 until the
+	// window ends.
+	AuthPasswordFailuresPerAddress = 10
+	AuthPasswordFailuresPerAccount = 50
+	AuthSecondStepFailuresPerUser  = 10
+	AuthAttemptWindowSeconds       = 900
+	// AuthStorageUploadDefaultBytes bounds an object uploaded through an Auth
+	// app's signed URL unless the app sets AUTH_STORAGE_MAX_UPLOAD_BYTES,
+	// which may rise to AuthStorageUploadMaxBytes (a single PUT).
+	AuthStorageUploadDefaultBytes       = 100 << 20
+	AuthStorageUploadMaxBytes     int64 = MaxObjectSinglePutBytes
+	// AuthAdminKeyDefaultDays is how long a new Auth admin key lasts unless
+	// created with --no-expiry; AuthAdminKeyMaxDays bounds --expires-in.
+	AuthAdminKeyDefaultDays = 365
+	AuthAdminKeyMaxDays     = 3650
 	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
 	// provider credentials; Apple's client secret is a signed JWT.
 	AuthProviderClientIDMaxBytes = 512
