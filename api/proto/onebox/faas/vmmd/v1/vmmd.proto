@@ -1033,6 +1033,13 @@ message AppSpec {
   // HTTP liveness probe, so vmmd runs no default probe for it; an explicit
   // liveness_probe_json still applies. An older vmmd ignores the field.
   bool routed_port_raw_tcp = 45;
+  // probe_host (ADR-20261119140000) is the Host header vmmd's readiness and
+  // prime GETs send: the app's public host (`<slug>.<apps domain>`), so an app
+  // that allow-lists its host names (Django ALLOWED_HOSTS, Rails
+  // config.hosts) answers the probe as it answers traffic. Those GETs then
+  // also carry X-Forwarded-Proto: https. Empty keeps the legacy probe, which
+  // sends the instance address. An older vmmd ignores the field.
+  string probe_host = 46;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's

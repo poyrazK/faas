@@ -1991,6 +1991,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("idle ladder idle-out enabled (ADR-20261107122928)",
 			"snapshot_after_seconds", api.IdleLadderSnapshotAfterSeconds)
 	}
+	if cfg.ReadinessProbeAppHost {
+		engine.EnableReadinessProbeAppHost(cfg.GetAppsDomain(os.Getenv))
+		log.Info("schedd: readiness probes send the app's public host (ADR-20261119140000)")
+	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
 		if cfg.FrozenTierApps {

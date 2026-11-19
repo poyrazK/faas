@@ -655,6 +655,8 @@ type Instance struct {
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
 	HealthcheckPath string
+	// ProbeHost is WakeRequest.ProbeHost, kept for the prime burst.
+	ProbeHost       string
 	HealthcheckGRPC bool
 	// HealthcheckGRPCService is the health.v1 service gRPC readiness checked;
 	// plan-default liveness checks the same service.
@@ -2421,11 +2423,14 @@ type LivenessProbeConfig struct {
 	GRPC                     bool
 	GRPCService              string
 	Port                     int
-	PeriodSeconds            int
-	TimeoutSeconds           int
-	ConsecutiveFailures      int
-	CooldownSeconds          int
-	IdleResetOnDestroy       bool
+	// Host (ADR-20261119140000) is the Host header guest-init's HTTP probe
+	// sends, with X-Forwarded-Proto: https; empty keeps 127.0.0.1:<port>.
+	Host                string
+	PeriodSeconds       int
+	TimeoutSeconds      int
+	ConsecutiveFailures int
+	CooldownSeconds     int
+	IdleResetOnDestroy  bool
 	// UnpromisedPath marks an HTTP probe of the plan-default path on an app
 	// whose startup contract never proved that path: its readiness was a
 	// declared path such as /actuator/health, or its TCP listener (a direct
@@ -2816,6 +2821,7 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 		if inst.Port > 0 && inst.Port <= 65535 {
 			cfg.Port = inst.Port
 		}
+		cfg.Host = inst.ProbeHost
 	}
 	m.mu.Unlock()
 	if m.livenessStarter == nil {
@@ -4238,6 +4244,9 @@ type WakeRequest struct {
 	// customer bind there. The path is stamped on Instance for readers
 	// that resolve it without a second request lookup.
 	HealthcheckPath string
+	// ProbeHost (ADR-20261119140000) is the Host header readiness and prime
+	// GETs send; empty sends the instance address (legacy).
+	ProbeHost string
 	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
@@ -5893,7 +5902,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		StaticEgressExcluded:   req.StaticEgressExcluded,
 		PrivateNetworkExcluded: req.privateNetworkExcluded,
 		WakeID:                 wakeID, NodeID: fields.NodeID,
-		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
+		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, ProbeHost: req.ProbeHost, HealthcheckGRPC: req.HealthcheckGRPC,
 		HealthcheckGRPCService:   req.HealthcheckGRPCService,
 		RoutedPortRawTCP:         req.RoutedPortRawTCP,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
@@ -6231,6 +6240,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// Per-deployment readiness action. The HTTP path and gRPC
 			// mode/service are forwarded together; both target :8080.
 			HealthcheckPath:          req.HealthcheckPath,
+			ProbeHost:                req.ProbeHost,
 			HealthcheckGRPC:          req.HealthcheckGRPC,
 			HealthcheckGRPCService:   req.HealthcheckGRPCService,
 			ImageHealthcheckRequired: req.ImageHealthcheckRequired,

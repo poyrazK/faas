@@ -437,6 +437,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// Per-deployment HTTP or gRPC readiness selection. Both
 		// probe modes target <HostIP>:8080.
 		HealthcheckPath:          app.GetHealthcheckPath(),
+		ProbeHost:                app.GetProbeHost(),
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
@@ -626,6 +627,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// path so deploy's first boot primes the same probe
 		// semantics on the freshly-deployed app.
 		HealthcheckPath:          app.GetHealthcheckPath(),
+		ProbeHost:                app.GetProbeHost(),
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
