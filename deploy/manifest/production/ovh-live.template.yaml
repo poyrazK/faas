@@ -72,6 +72,10 @@ fleet:
       # The server's own address (ns5012237). OVH routes it to the host
       # directly, so it is not a forwarding rule as on GCP.
       public_ipv4: 15.235.50.108
+      # OVH Additional IP (order 23355595, routed to ns5012237), on eno1np0
+      # through /etc/netplan/61-entry-ip.yaml: the public entry address,
+      # 443 only, never the address the host is managed on.
+      entry_ipv4: 51.222.39.227
       # Samsung PM9A3 960 GB, the disk the OS is not on.
       storage_device: /dev/disk/by-id/nvme-SAMSUNG_MZQL2960HCJR-00A07_S64FNE0T104409
     - name: bhs-3
@@ -80,6 +84,8 @@ fleet:
       tags: ["ovh-vrack"]
       # ns5012238.
       public_ipv4: 15.235.50.109
+      # Additional IP routed to ns5012238, as on bhs-2.
+      entry_ipv4: 51.222.39.228
       storage_device: /dev/disk/by-id/nvme-SAMSUNG_MZQL2960HCJR-00A07_S64FNE0T104422
 
 daemons:
@@ -230,15 +236,45 @@ public_edge:
   # two nodes measured 508/539/513. Turn back on only once local first serves
   # a share proportional to the node's ready instances.
   local_first: false
-  # App traffic reaches the OVH edges through the Cloudflare tunnel only, as
-  # on GCP before 2026-11-02. The direct entry the GCP fleet pilots
-  # (entry: both, front: none, edgednsd's direct-pilot.gregale.dev records)
-  # needs one OVH Additional IP per compute node as entry_ipv4: the entry
-  # address takes 443 from everyone and drops everything else, SSH included,
-  # so it must not be the address the host is managed on
-  # (ADR-20261103163954 §2). Order those, then restore the GCP template's
-  # entry/front/dns block here with `entry_ipv4:` on bhs-2 and bhs-3.
-  entry: tunnel
+  # ADR-20261102081618: the edges also take TLS on 443 at their entry
+  # address (entry_ipv4, an OVH Additional IP), beside the Cloudflare tunnel.
+  entry: both
+  # ADR-20261103163954: nothing in front of the direct-entry names. Clients
+  # reach the edges on their entry addresses, which take 443 from everyone
+  # and nothing else (the entry-address firewall, ahead of sshd); the edges
+  # apply the per-client limits themselves. Names not listed under dns stay
+  # on the tunnel, untouched.
+  front: none
+  # ADR-20261103163954 pilot: edgednsd keeps direct-pilot.gregale.dev's
+  # DNS-only A records (TTL 60) pointed at the edges that are ready. An edge
+  # is ready only once it has loaded the certificate below, so no record
+  # points at an edge that cannot serve it. edgednsd runs on the control
+  # plane, so one fleet writes these records at a time: GCP's until the
+  # switchover promotes this one.
+  dns:
+    zone_id: c0baeb8d33b48ec1704766edcb695394
+    names: ["direct-pilot.gregale.dev"]
+    live: true
+    # §3: edgednsd orders the apps domains' certificate from Let's Encrypt
+    # with DNS-01 and stores it with its key sealed to the edge-tls seal
+    # domain; each edge serves it, its key opened in memory. A failed order
+    # is retried after 1 h, doubling to 12 h; meanwhile the pilot host has no
+    # records and nothing else changes.
+    certificate:
+      names: ["*.gregale.dev"]
+      ca: letsencrypt
+      serve: letsencrypt
+      # Pages on a publicly trusted certificate under gregale.dev that
+      # edgednsd did not issue. Allowed, as Certificate Transparency listed
+      # them on 2026-11-04: Cloudflare's Universal SSL certificate
+      # (gregale.dev, *.gregale.dev), which the proxied platform hosts use, a
+      # certificate for the apex alone, and operations.gregale.dev's (Vercel).
+      # sales.gregale.dev, the sales frontend on Vercel
+      # (ADR-20261111113147), was added on 2026-11-13: its certificate
+      # (Google Trust Services, issued 2026-11-12) is the one the site serves.
+      transparency:
+        domain: gregale.dev
+        allow_names: ["gregale.dev", "*.gregale.dev", "operations.gregale.dev", "sales.gregale.dev"]
 
 # Request- and wake-path switches on the compute nodes, each measured on
 # production by hand before it moved here (2026-11-06): the node journals
